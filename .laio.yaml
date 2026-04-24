@@ -1,0 +1,26 @@
+---
+name: nu-agent
+
+path: .
+
+pane_cmd_delay: 2000
+
+windows:
+  - name: code
+    panes:
+      - name: Editor
+        flex: 2
+        commands:
+          - command: nvim
+      - name: Harness
+        flex: 1
+        commands:
+          - command: ^opencode
+            args:
+              - --port
+
+  - name: misc
+    flex_direction: row
+    panes:
+      - flex: 1
+      - flex: 1
