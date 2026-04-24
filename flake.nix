@@ -1,5 +1,5 @@
 {
-  description = "A test harness framework for orchestrating and validating complex system behavior";
+  description = "Nushell agent plugin";
 
   inputs = {
     base-nixpkgs.url = "github:ck3mp3r/flakes?dir=base-nixpkgs";
@@ -38,7 +38,7 @@
         ];
         pkgs = import inputs.nixpkgs {inherit system overlays;};
 
-        cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
+        cargoToml = fromTOML (builtins.readFile ./Cargo.toml);
         cargoLock = {lockFile = ./Cargo.lock;};
         # Install data for pre-built releases
       in {
