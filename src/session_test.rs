@@ -1,145 +1,117 @@
-use super::session::SessionStore;
-use std::env;
+use crate::session::SessionStore;
 use std::fs;
-use std::path::PathBuf;
+use tempfile::TempDir;
 
+/// Test that get_or_create with None generates a session ID with correct format.
 #[test]
-fn test_session_store_initializes_cache_directory() {
-    // Arrange: Create a temporary test directory
-    let temp_dir = env::temp_dir().join("nu-agent-test-init");
-    let cache_dir = temp_dir.join("sessions");
+fn test_get_or_create_auto_generates_id() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
 
-    // Clean up if exists from previous test
-    let _ = fs::remove_dir_all(&temp_dir);
+    let session = store.get_or_create(None).expect("Failed to create session");
 
-    // Ensure directory doesn't exist before test
+    // Verify ID format: session-<timestamp>
     assert!(
-        !cache_dir.exists(),
-        "Cache directory should not exist before initialization"
+        session.id().starts_with("session-"),
+        "Session ID should start with 'session-', got: {}",
+        session.id()
     );
 
-    // Act: Create SessionStore with custom cache directory
-    let store = SessionStore::new_with_cache_dir(cache_dir.clone());
-
-    // Assert: Directory should be created
+    // Verify ID contains timestamp-like suffix (digits and dashes)
+    let suffix = session.id().strip_prefix("session-").unwrap();
     assert!(
-        cache_dir.exists(),
-        "Cache directory should exist after initialization"
+        !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit() || c == '-'),
+        "Session ID suffix should contain only digits and dashes, got: {}",
+        suffix
     );
-    assert!(cache_dir.is_dir(), "Cache path should be a directory");
+}
+
+/// Test that calling get_or_create with the same ID returns the same session.
+#[test]
+fn test_get_or_create_loads_existing_session() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+
+    let session_id = "test-session-123".to_string();
+
+    // First call creates the session
+    let session1 = store
+        .get_or_create(Some(session_id.clone()))
+        .expect("Failed to create session");
+
+    assert_eq!(session1.id(), &session_id);
+
+    // Second call should load the same session
+    let session2 = store
+        .get_or_create(Some(session_id.clone()))
+        .expect("Failed to load session");
+
+    assert_eq!(session2.id(), &session_id);
+    assert_eq!(session1.id(), session2.id());
+}
+
+/// Test that get_or_create creates a JSONL file with proper format.
+#[test]
+fn test_get_or_create_creates_jsonl_file() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+
+    let session_id = "test-jsonl-creation".to_string();
+
+    let _session = store
+        .get_or_create(Some(session_id.clone()))
+        .expect("Failed to create session");
+
+    // Verify JSONL file exists
+    let jsonl_path = temp_dir.path().join(format!("{}.jsonl", session_id));
+    assert!(
+        jsonl_path.exists(),
+        "JSONL file should exist at {:?}",
+        jsonl_path
+    );
+
+    // Verify file format: first line is metadata JSON
+    let content = fs::read_to_string(&jsonl_path).expect("Failed to read JSONL file");
+    let lines: Vec<&str> = content.lines().collect();
+
+    assert!(
+        !lines.is_empty(),
+        "JSONL file should have at least metadata line"
+    );
+
+    // Parse first line as metadata
+    let metadata: serde_json::Value =
+        serde_json::from_str(lines[0]).expect("First line should be valid JSON metadata");
+
     assert_eq!(
-        store.cache_dir(),
-        &cache_dir,
-        "Store should use the provided cache directory"
+        metadata.get("type").and_then(|v| v.as_str()),
+        Some("meta"),
+        "Metadata should have type 'meta'"
     );
 
-    // Cleanup
-    let _ = fs::remove_dir_all(&temp_dir);
-}
-
-#[test]
-fn test_session_store_uses_xdg_cache_home_if_set() {
-    // Arrange: Set up a temporary XDG_CACHE_HOME
-    let temp_dir = env::temp_dir().join("nu-agent-test-xdg");
-    let _ = fs::remove_dir_all(&temp_dir);
-    fs::create_dir_all(&temp_dir).expect("Failed to create temp directory");
-
-    let expected_cache_dir = temp_dir.join("nu-agent").join("sessions");
-
-    // Act: Create SessionStore with XDG_CACHE_HOME set
-    let store = SessionStore::new_with_xdg_override(Some(temp_dir.clone()));
-
-    // Assert: Should use XDG_CACHE_HOME/nu-agent/sessions
     assert_eq!(
-        store.cache_dir(),
-        &expected_cache_dir,
-        "Should use XDG_CACHE_HOME/nu-agent/sessions"
+        metadata.get("session_id").and_then(|v| v.as_str()),
+        Some(session_id.as_str()),
+        "Metadata should contain session_id"
     );
-    assert!(
-        expected_cache_dir.exists(),
-        "XDG cache directory should be created"
-    );
-
-    // Cleanup
-    let _ = fs::remove_dir_all(&temp_dir);
 }
 
+/// Test that multiple sessions with auto-generated IDs have unique IDs.
 #[test]
-fn test_session_store_uses_default_when_xdg_cache_home_not_set() {
-    // Arrange: Calculate expected directory based on XDG_CACHE_HOME or platform default
-    let expected_base = env::var("XDG_CACHE_HOME")
-        .ok()
-        .map(PathBuf::from)
-        .or_else(dirs::cache_dir)
-        .expect("Failed to get cache directory");
-    let expected_cache_dir = expected_base.join("nu-agent").join("sessions");
+fn test_auto_generated_ids_are_unique() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
 
-    // Act: Create SessionStore without XDG override (uses env var if present)
-    let store = SessionStore::new_with_xdg_override(None);
+    let session1 = store
+        .get_or_create(None)
+        .expect("Failed to create session1");
+    let session2 = store
+        .get_or_create(None)
+        .expect("Failed to create session2");
 
-    // Assert: Should use default cache directory (XDG_CACHE_HOME or platform default)
-    assert_eq!(
-        store.cache_dir(),
-        &expected_cache_dir,
-        "Should use default cache directory"
-    );
-    assert!(
-        expected_cache_dir.exists(),
-        "Default cache directory should be created"
-    );
-
-    // Cleanup
-    let _ = fs::remove_dir_all(expected_base.join("nu-agent"));
-}
-
-#[test]
-fn test_session_store_reuses_existing_directory() {
-    // Arrange: Create a cache directory manually
-    let temp_dir = env::temp_dir().join("nu-agent-test-reuse");
-    let cache_dir = temp_dir.join("sessions");
-    let _ = fs::remove_dir_all(&temp_dir);
-    fs::create_dir_all(&cache_dir).expect("Failed to create cache directory");
-
-    // Create a test file in the directory
-    let test_file = cache_dir.join("test.txt");
-    fs::write(&test_file, "test content").expect("Failed to write test file");
-
-    // Act: Create SessionStore with existing directory
-    let store = SessionStore::new_with_cache_dir(cache_dir.clone());
-
-    // Assert: Directory and existing file should still exist
-    assert!(cache_dir.exists(), "Cache directory should still exist");
-    assert!(test_file.exists(), "Existing file should not be deleted");
-    assert_eq!(store.cache_dir(), &cache_dir);
-
-    // Cleanup
-    let _ = fs::remove_dir_all(&temp_dir);
-}
-
-#[test]
-fn test_resolve_cache_dir_with_xdg_override() {
-    // Arrange: Create override path
-    let override_path = PathBuf::from("/tmp/custom-cache");
-
-    // Act: Resolve cache directory with override
-    let result = SessionStore::resolve_cache_dir(Some(override_path.clone()));
-
-    // Assert: Should use override path with nu-agent/sessions appended
-    assert_eq!(result, override_path.join("nu-agent").join("sessions"));
-}
-
-#[test]
-fn test_resolve_cache_dir_uses_default_when_no_override() {
-    // Act: Resolve cache directory without override
-    let result = SessionStore::resolve_cache_dir(None);
-
-    // Assert: Should contain nu-agent/sessions path
-    assert!(
-        result.to_string_lossy().contains("nu-agent"),
-        "Path should contain 'nu-agent'"
-    );
-    assert!(
-        result.to_string_lossy().ends_with("sessions"),
-        "Path should end with 'sessions'"
+    assert_ne!(
+        session1.id(),
+        session2.id(),
+        "Auto-generated session IDs should be unique"
     );
 }

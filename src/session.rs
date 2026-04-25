@@ -1,3 +1,5 @@
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -13,6 +15,38 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone)]
 pub struct SessionStore {
     cache_dir: PathBuf,
+}
+
+/// Represents a session with its ID and metadata.
+/// For now, this is a minimal struct that will be expanded in later tasks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Session {
+    id: String,
+    created_at: DateTime<Utc>,
+}
+
+impl Session {
+    /// Returns the session ID.
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// Creates a new session with the given ID.
+    fn new(id: String) -> Self {
+        Self {
+            id,
+            created_at: Utc::now(),
+        }
+    }
+}
+
+/// Metadata stored as the first line of a JSONL file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SessionMetadata {
+    #[serde(rename = "type")]
+    metadata_type: String,
+    session_id: String,
+    created_at: DateTime<Utc>,
 }
 
 impl SessionStore {
@@ -60,6 +94,99 @@ impl SessionStore {
     /// Returns the cache directory path.
     pub fn cache_dir(&self) -> &Path {
         &self.cache_dir
+    }
+
+    /// Gets an existing session or creates a new one.
+    ///
+    /// If `id` is None, auto-generates a session ID with format `session-<timestamp>`.
+    /// If the session file exists, loads it from JSONL. Otherwise, creates a new session
+    /// and writes it to a JSONL file.
+    ///
+    /// # Arguments
+    /// * `id` - Optional session ID. If None, generates `session-YYYYMMDD-HHMMSS`.
+    ///
+    /// # Returns
+    /// A Session instance, either loaded or newly created.
+    ///
+    /// # Errors
+    /// Returns an error if file operations fail or JSONL parsing fails.
+    pub fn get_or_create(&self, id: Option<String>) -> io::Result<Session> {
+        let session_id = id.unwrap_or_else(|| self.generate_session_id());
+        let session_path = self.session_path(&session_id);
+
+        if session_path.exists() {
+            self.load_session(&session_id)
+        } else {
+            let session = Session::new(session_id);
+            self.save_session(&session)?;
+            Ok(session)
+        }
+    }
+
+    /// Generates a unique session ID with format: session-YYYYMMDD-HHMMSS-micros
+    fn generate_session_id(&self) -> String {
+        let now = Utc::now();
+        format!(
+            "session-{}-{}",
+            now.format("%Y%m%d-%H%M%S"),
+            now.timestamp_subsec_micros()
+        )
+    }
+
+    /// Returns the path to a session's JSONL file.
+    fn session_path(&self, session_id: &str) -> PathBuf {
+        self.cache_dir.join(format!("{}.jsonl", session_id))
+    }
+
+    /// Loads a session from its JSONL file.
+    ///
+    /// The first line contains metadata, subsequent lines contain messages (not implemented yet).
+    fn load_session(&self, session_id: &str) -> io::Result<Session> {
+        let path = self.session_path(session_id);
+        let content = fs::read_to_string(&path)?;
+
+        let mut lines = content.lines();
+        let metadata_line = lines
+            .next()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Empty JSONL file"))?;
+
+        let metadata: SessionMetadata = serde_json::from_str(metadata_line).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Failed to parse metadata: {}", e),
+            )
+        })?;
+
+        Ok(Session {
+            id: metadata.session_id,
+            created_at: metadata.created_at,
+        })
+    }
+
+    /// Saves a session to its JSONL file.
+    ///
+    /// Creates the file with metadata as the first line.
+    fn save_session(&self, session: &Session) -> io::Result<()> {
+        let path = self.session_path(&session.id);
+
+        let metadata = SessionMetadata {
+            metadata_type: "meta".to_string(),
+            session_id: session.id.clone(),
+            created_at: session.created_at,
+        };
+
+        let metadata_json = serde_json::to_string(&metadata).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Failed to serialize metadata: {}", e),
+            )
+        })?;
+
+        let mut content = metadata_json;
+        content.push('\n');
+
+        fs::write(&path, content)?;
+        Ok(())
     }
 
     /// Resolves the cache directory according to XDG Base Directory specification.
