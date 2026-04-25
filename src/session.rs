@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::io;
+use std::fs::{self, OpenOptions};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 /// SessionStore manages session storage using XDG Base Directory specification.
@@ -38,6 +38,41 @@ impl Session {
             created_at: Utc::now(),
         }
     }
+
+    /// Appends a message to the session's JSONL file.
+    ///
+    /// The message is serialized as JSON and appended as a new line to the file.
+    /// The metadata line (first line) is not modified.
+    ///
+    /// # Arguments
+    /// * `store` - The SessionStore used to resolve the file path
+    /// * `message` - The message to append
+    ///
+    /// # Returns
+    /// Ok(()) if the message was successfully appended, Err otherwise.
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - The message cannot be serialized to JSON
+    /// - The file cannot be opened or written to
+    pub fn append_message(&mut self, store: &SessionStore, message: Message) -> io::Result<()> {
+        let path = store.session_path(&self.id);
+
+        // Serialize message to JSON
+        let message_json = serde_json::to_string(&message).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Failed to serialize message: {}", e),
+            )
+        })?;
+
+        // Open file in append mode and write the message line
+        let mut file = OpenOptions::new().append(true).open(&path)?;
+
+        writeln!(file, "{}", message_json)?;
+
+        Ok(())
+    }
 }
 
 /// Metadata stored as the first line of a JSONL file.
@@ -47,6 +82,27 @@ struct SessionMetadata {
     metadata_type: String,
     session_id: String,
     created_at: DateTime<Utc>,
+}
+
+/// Represents a message in a session.
+/// Messages are appended to the JSONL file after the metadata line.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Message {
+    role: String,
+    content: String,
+    timestamp: DateTime<Utc>,
+}
+
+impl Message {
+    /// Creates a new message with the given role and content.
+    /// The timestamp is automatically set to the current time.
+    pub fn new(role: String, content: String) -> Self {
+        Self {
+            role,
+            content,
+            timestamp: Utc::now(),
+        }
+    }
 }
 
 impl SessionStore {
