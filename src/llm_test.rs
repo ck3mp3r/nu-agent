@@ -318,6 +318,79 @@ fn test_format_response_empty() {
     assert_eq!(record.get("response").unwrap().as_str().unwrap(), "");
 }
 
+#[test]
+fn test_format_response_includes_meta_field() {
+    let config = Config {
+        provider: "openai".to_string(),
+        model: "gpt-4".to_string(),
+        ..cfg("openai")
+    };
+
+    let response = "Test response";
+    let value = format_response(response, &config, Span::unknown());
+
+    let record = value.as_record().expect("Should be a record");
+
+    // Verify _meta field exists
+    assert!(
+        record.contains("_meta"),
+        "_meta field should exist in response record"
+    );
+
+    // Verify _meta is a record
+    let meta = record.get("_meta").expect("_meta field should exist");
+    let meta_record = meta
+        .as_record()
+        .expect("_meta should be a record");
+
+    // Verify _meta contains required fields
+    assert!(
+        meta_record.contains("session_id"),
+        "_meta should contain session_id"
+    );
+    assert!(
+        meta_record.contains("compacted"),
+        "_meta should contain compacted"
+    );
+    assert!(
+        meta_record.contains("compaction_count"),
+        "_meta should contain compaction_count"
+    );
+    assert!(
+        meta_record.contains("tool_calls"),
+        "_meta should contain tool_calls"
+    );
+
+    // Verify default values (placeholders for now)
+    assert_eq!(
+        meta_record.get("session_id").unwrap().as_str().unwrap(),
+        "temp",
+        "session_id should default to 'temp'"
+    );
+    assert_eq!(
+        meta_record.get("compacted").unwrap().as_bool().unwrap(),
+        false,
+        "compacted should default to false"
+    );
+    assert_eq!(
+        meta_record.get("compaction_count").unwrap().as_int().unwrap(),
+        0,
+        "compaction_count should default to 0"
+    );
+
+    // Verify tool_calls is an empty list
+    let tool_calls = meta_record.get("tool_calls").unwrap();
+    assert!(
+        tool_calls.as_list().is_ok(),
+        "tool_calls should be a list"
+    );
+    assert_eq!(
+        tool_calls.as_list().unwrap().len(),
+        0,
+        "tool_calls should be empty by default"
+    );
+}
+
 // ============================================================================
 // Compile-time verification: backend types are properly exposed
 // ============================================================================

@@ -176,6 +176,11 @@ async fn call_github_copilot(config: &Config, prompt: &str) -> Result<String, La
 /// - `model`: The model used (String)
 /// - `provider`: The provider used (String)
 /// - `timestamp`: ISO8601 timestamp of when the response was created (String)
+/// - `_meta`: Metadata record containing:
+///   - `session_id`: Session identifier (String, currently "temp")
+///   - `compacted`: Whether context has been compacted (Bool, default false)
+///   - `compaction_count`: Number of times context was compacted (Int, default 0)
+///   - `tool_calls`: List of tool calls made (List, default empty)
 ///
 /// # Arguments
 /// * `response` - The LLM response text
@@ -189,6 +194,31 @@ pub fn format_response(response: &str, config: &Config, span: Span) -> Value {
 
     let timestamp = Utc::now().to_rfc3339();
 
+    // Create _meta record with placeholder values
+    let meta_record = Value::record(
+        vec![
+            (
+                "session_id".to_string(),
+                Value::string("temp", span),
+            ),
+            (
+                "compacted".to_string(),
+                Value::bool(false, span),
+            ),
+            (
+                "compaction_count".to_string(),
+                Value::int(0, span),
+            ),
+            (
+                "tool_calls".to_string(),
+                Value::list(vec![], span),
+            ),
+        ]
+        .into_iter()
+        .collect(),
+        span,
+    );
+
     Value::record(
         vec![
             ("response".to_string(), Value::string(response, span)),
@@ -198,6 +228,7 @@ pub fn format_response(response: &str, config: &Config, span: Span) -> Value {
                 Value::string(&config.provider, span),
             ),
             ("timestamp".to_string(), Value::string(timestamp, span)),
+            ("_meta".to_string(), meta_record),
         ]
         .into_iter()
         .collect(),
