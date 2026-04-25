@@ -196,18 +196,38 @@ async fn call_anthropic(config: &Config, prompt: &str) -> Result<String, Labeled
     // Check for API key
     let api_key = get_api_key(config, "anthropic")?;
 
-    if api_key.is_none() {
-        return Err(LabeledError::new("Missing API key").with_label(
+    let key = api_key.ok_or_else(|| {
+        LabeledError::new("Missing API key").with_label(
             "ANTHROPIC_API_KEY not set and no api_key in config",
             nu_protocol::Span::unknown(),
-        ));
+        )
+    })?;
+
+    // Create client - support base_url override for testing
+    let client = if let Some(base_url) = &config.base_url {
+        anthropic::Client::builder()
+            .api_key(key)
+            .base_url(base_url.clone())
+            .build()
+            .map_err(|e| LabeledError::new(format!("Failed to create Anthropic client: {}", e)))?
+    } else if config.api_key.is_some() {
+        anthropic::Client::builder()
+            .api_key(key)
+            .build()
+            .map_err(|e| LabeledError::new(format!("Failed to create Anthropic client: {}", e)))?
+    } else {
+        anthropic::Client::from_env()
+    };
+
+    // Create agent with model - Anthropic requires max_tokens
+    let mut agent_builder = client.agent(&config.model);
+    
+    // Set max_tokens if provided (Anthropic requires this)
+    if let Some(max_tokens) = config.max_tokens {
+        agent_builder = agent_builder.max_tokens(max_tokens as u64);
     }
-
-    // Create client - Anthropic doesn't support base_url override in the same way
-    let client = anthropic::Client::from_env();
-
-    // Create agent with model
-    let agent = client.agent(&config.model).build();
+    
+    let agent = agent_builder.build();
 
     // Call LLM
     use rig::completion::Prompt;
