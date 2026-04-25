@@ -57,3 +57,8 @@ Cargo.lock.msrv
 
 # c5t tool database
 .c5t/
+
+
+# Added by cargo
+
+/target
