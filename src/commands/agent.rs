@@ -43,10 +43,8 @@ pub fn extract_prompt_from_input(input: &Value) -> Result<String, LabeledError> 
     if let Ok(prompt_str) = input.as_str() {
         // Check for empty string
         if prompt_str.trim().is_empty() {
-            return Err(
-                LabeledError::new("Empty prompt")
-                    .with_label("Prompt cannot be empty", input.span())
-            );
+            return Err(LabeledError::new("Empty prompt")
+                .with_label("Prompt cannot be empty", input.span()));
         }
         return Ok(prompt_str.to_string());
     }
@@ -67,20 +65,18 @@ pub fn extract_prompt_from_input(input: &Value) -> Result<String, LabeledError> 
 
         // Check for empty string
         if prompt_str.trim().is_empty() {
-            return Err(
-                LabeledError::new("Empty prompt")
-                    .with_label("Prompt cannot be empty", prompt_value.span())
-            );
+            return Err(LabeledError::new("Empty prompt")
+                .with_label("Prompt cannot be empty", prompt_value.span()));
         }
 
         return Ok(prompt_str.to_string());
     }
 
     // Neither string nor record - error
-    Err(
-        LabeledError::new("Invalid input type")
-            .with_label("Expected a string prompt or record with 'prompt' field", input.span())
-    )
+    Err(LabeledError::new("Invalid input type").with_label(
+        "Expected a string prompt or record with 'prompt' field",
+        input.span(),
+    ))
 }
 
 /// Extract optional context string from input Value.

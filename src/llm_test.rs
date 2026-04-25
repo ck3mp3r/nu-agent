@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::llm::{
-    call_llm, format_response, parse_github_copilot_backend, resolve_api_key, route_provider,
-    ProviderRoute,
+    ProviderRoute, call_llm, format_response, parse_github_copilot_backend, resolve_api_key,
+    route_provider,
 };
 use nu_protocol::Span;
 
@@ -145,7 +145,10 @@ fn does_not_read_generated_github_copilot_api_key_env_var() {
     unsafe { std::env::set_var("GITHUB-COPILOT_API_KEY", "should-not-read") };
     let result = resolve_api_key(&cfg("github-copilot"), "github-copilot");
     unsafe { std::env::remove_var("GITHUB-COPILOT_API_KEY") };
-    assert!(result.is_err(), "Should error when only wrong env var is set");
+    assert!(
+        result.is_err(),
+        "Should error when only wrong env var is set"
+    );
 }
 
 #[test]
@@ -191,20 +194,24 @@ fn parses_openai_backend() {
 fn rejects_provider_string_without_github_copilot_prefix() {
     let result = parse_github_copilot_backend("anthropic");
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .msg
-        .contains("Invalid GitHub Copilot provider format"));
+    assert!(
+        result
+            .unwrap_err()
+            .msg
+            .contains("Invalid GitHub Copilot provider format")
+    );
 }
 
 #[test]
 fn rejects_empty_backend_after_prefix() {
     let result = parse_github_copilot_backend("github-copilot/");
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .msg
-        .contains("Invalid GitHub Copilot provider format"));
+    assert!(
+        result
+            .unwrap_err()
+            .msg
+            .contains("Invalid GitHub Copilot provider format")
+    );
 }
 
 // ============================================================================
@@ -269,7 +276,11 @@ async fn call_llm_returns_err_for_unknown_github_copilot_backend() {
         "Unexpected error: {}",
         msg
     );
-    assert!(msg.contains("foobar"), "Backend name missing from error: {}", msg);
+    assert!(
+        msg.contains("foobar"),
+        "Backend name missing from error: {}",
+        msg
+    );
 }
 
 // ============================================================================
@@ -300,9 +311,7 @@ fn test_format_response_basic() {
 
     let timestamp = record.get("timestamp").unwrap().as_str().unwrap();
     assert!(timestamp.contains('T'));
-    assert!(
-        timestamp.contains('Z') || timestamp.contains('+') || timestamp.contains('-')
-    );
+    assert!(timestamp.contains('Z') || timestamp.contains('+') || timestamp.contains('-'));
 }
 
 #[test]
@@ -339,9 +348,7 @@ fn test_format_response_includes_meta_field() {
 
     // Verify _meta is a record
     let meta = record.get("_meta").expect("_meta field should exist");
-    let meta_record = meta
-        .as_record()
-        .expect("_meta should be a record");
+    let meta_record = meta.as_record().expect("_meta should be a record");
 
     // Verify _meta contains required fields
     assert!(
@@ -373,17 +380,18 @@ fn test_format_response_includes_meta_field() {
         "compacted should default to false"
     );
     assert_eq!(
-        meta_record.get("compaction_count").unwrap().as_int().unwrap(),
+        meta_record
+            .get("compaction_count")
+            .unwrap()
+            .as_int()
+            .unwrap(),
         0,
         "compaction_count should default to 0"
     );
 
     // Verify tool_calls is an empty list
     let tool_calls = meta_record.get("tool_calls").unwrap();
-    assert!(
-        tool_calls.as_list().is_ok(),
-        "tool_calls should be a list"
-    );
+    assert!(tool_calls.as_list().is_ok(), "tool_calls should be a list");
     assert_eq!(
         tool_calls.as_list().unwrap().len(),
         0,

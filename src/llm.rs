@@ -110,10 +110,9 @@ pub async fn call_llm(config: &Config, prompt: &str) -> Result<String, LabeledEr
         ProviderRoute::Anthropic => call_anthropic(config, prompt).await,
         ProviderRoute::Ollama => call_ollama(config, prompt).await,
         ProviderRoute::GitHubCopilot { .. } => call_github_copilot(config, prompt).await,
-        ProviderRoute::Unsupported(name) => Err(LabeledError::new(format!(
-            "Unsupported provider: {}",
-            name
-        ))),
+        ProviderRoute::Unsupported(name) => {
+            Err(LabeledError::new(format!("Unsupported provider: {}", name)))
+        }
     }
 }
 
@@ -197,22 +196,10 @@ pub fn format_response(response: &str, config: &Config, span: Span) -> Value {
     // Create _meta record with placeholder values
     let meta_record = Value::record(
         vec![
-            (
-                "session_id".to_string(),
-                Value::string("temp", span),
-            ),
-            (
-                "compacted".to_string(),
-                Value::bool(false, span),
-            ),
-            (
-                "compaction_count".to_string(),
-                Value::int(0, span),
-            ),
-            (
-                "tool_calls".to_string(),
-                Value::list(vec![], span),
-            ),
+            ("session_id".to_string(), Value::string("temp", span)),
+            ("compacted".to_string(), Value::bool(false, span)),
+            ("compaction_count".to_string(), Value::int(0, span)),
+            ("tool_calls".to_string(), Value::list(vec![], span)),
         ]
         .into_iter()
         .collect(),

@@ -1,7 +1,7 @@
 // Closure execution prototype tests
 //
 // RESEARCH FINDINGS:
-// 
+//
 // EngineInterface DOES support closure execution via eval_closure() method!
 // See: https://docs.rs/nu-plugin/latest/nu_plugin/struct.EngineInterface.html
 //
@@ -19,7 +19,7 @@
 // ❌ Only available during command execution (not in unit tests)
 //
 // APPROACH 2 (FALLBACK): MCP via `nu --mcp`
-// ✅ Can be tested independently  
+// ✅ Can be tested independently
 // ✅ Could work from any context
 // ❌ Process overhead (spawn, stdio communication)
 // ❌ Requires MCP client implementation
@@ -36,10 +36,10 @@
 // - Pass a closure as argument via Nushell
 // - Verify the closure executes correctly
 
-use nu_protocol::{engine::Closure, BlockId, Span, Spanned, Value};
+use nu_protocol::{BlockId, Span, Spanned, Value, engine::Closure};
 
 /// Mock closure executor trait for testing
-/// 
+///
 /// In production, EngineInterface implements this.
 /// In tests, we can mock it.
 pub trait ClosureExecutor {
@@ -91,7 +91,7 @@ mod tests {
     fn test_closure_executor_trait() {
         // GREEN: This test demonstrates the pattern we'll use
         let executor = MockClosureExecutor;
-        
+
         // Create a dummy closure (in real usage, this comes from user input)
         let closure = Spanned {
             item: Closure {
@@ -100,11 +100,12 @@ mod tests {
             },
             span: Span::unknown(),
         };
-        
+
         // Execute closure with argument 5
-        let result = execute_tool_closure(&executor, &closure, vec![Value::int(5, Span::unknown())])
-            .expect("Closure execution should succeed");
-        
+        let result =
+            execute_tool_closure(&executor, &closure, vec![Value::int(5, Span::unknown())])
+                .expect("Closure execution should succeed");
+
         // Verify result is 6
         assert_eq!(result.as_int().unwrap(), 6);
     }
@@ -120,15 +121,18 @@ mod tests {
             },
             span: Span::unknown(),
         };
-        
+
         // Our mock only uses first arg, but this shows the pattern
         let result = execute_tool_closure(
             &executor,
             &closure,
-            vec![Value::int(10, Span::unknown()), Value::int(20, Span::unknown())],
+            vec![
+                Value::int(10, Span::unknown()),
+                Value::int(20, Span::unknown()),
+            ],
         )
         .expect("Should execute");
-        
+
         assert_eq!(result.as_int().unwrap(), 11);
     }
 }

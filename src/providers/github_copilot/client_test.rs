@@ -68,7 +68,7 @@ fn anthropic_extension_capabilities_use_anthropic_backend() {
     // Verify that AnthropicExt's Capabilities use AnthropicBackend
     // This is a compile-time verification - if it compiles, it's correct
     use rig::client::Capabilities;
-    
+
     // We can't easily extract the inner type of Capable, but we can verify
     // that the Capabilities implementation exists and compiles
     type _Caps = GitHubCopilotAnthropicExt;
@@ -81,7 +81,7 @@ fn openai_extension_capabilities_use_openai_backend() {
     // Verify that OpenAIExt's Capabilities use OpenAIBackend
     // This is a compile-time verification - if it compiles, it's correct
     use rig::client::Capabilities;
-    
+
     type _Caps = GitHubCopilotOpenAIExt;
     fn _assert<H: rig::http_client::HttpClientExt, C: Capabilities<H>>() {}
     _assert::<reqwest::Client, _Caps>();

@@ -1,6 +1,6 @@
 use nu_protocol::Value;
 
-use super::{extract_prompt_from_input, extract_context_from_input, merge_prompt_with_context};
+use super::{extract_context_from_input, extract_prompt_from_input, merge_prompt_with_context};
 
 #[test]
 fn test_extract_prompt_from_string() {

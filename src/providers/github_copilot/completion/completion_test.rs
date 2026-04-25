@@ -5,9 +5,13 @@ use serde_json;
 #[test]
 fn completion_model_can_be_instantiated() {
     // This test verifies the CompletionModel struct can be created with proper types
-    fn _assert_type<B: crate::providers::github_copilot::GitHubCopilotBackend, H: rig::http_client::HttpClientExt>(
-        _model: super::CompletionModel<B, H>
-    ) {}
+    fn _assert_type<
+        B: crate::providers::github_copilot::GitHubCopilotBackend,
+        H: rig::http_client::HttpClientExt,
+    >(
+        _model: super::CompletionModel<B, H>,
+    ) {
+    }
 
     // Test passes if code compiles
 }
@@ -82,7 +86,10 @@ fn parses_github_copilot_error_with_error_field() {
     }"#;
 
     let result = serde_json::from_str::<super::GitHubCopilotError>(json);
-    assert!(result.is_ok(), "Should parse error with nested error object");
+    assert!(
+        result.is_ok(),
+        "Should parse error with nested error object"
+    );
     let error = result.unwrap();
     assert!(error.error.is_some());
     assert_eq!(error.error.unwrap().message, "Invalid authentication");
@@ -129,15 +136,19 @@ fn handles_empty_error_response() {
 fn completion_model_can_be_generic_over_backend() {
     // Verify CompletionModel can be parameterized with different backends
     use crate::providers::github_copilot::{AnthropicBackend, OpenAIBackend};
-    
-    fn _assert_type<B: crate::providers::github_copilot::GitHubCopilotBackend, H: rig::http_client::HttpClientExt>(
-        _model: super::CompletionModel<B, H>
-    ) {}
-    
+
+    fn _assert_type<
+        B: crate::providers::github_copilot::GitHubCopilotBackend,
+        H: rig::http_client::HttpClientExt,
+    >(
+        _model: super::CompletionModel<B, H>,
+    ) {
+    }
+
     // Use the imported types to avoid unused warning
     let _: Option<AnthropicBackend> = None;
     let _: Option<OpenAIBackend> = None;
-    
+
     // Test passes if code compiles
 }
 
@@ -145,10 +156,10 @@ fn completion_model_can_be_generic_over_backend() {
 fn completion_model_anthropic_backend_implements_traits() {
     // Verify CompletionModel<AnthropicBackend> implements required traits
     use crate::providers::github_copilot::AnthropicBackend;
-    
+
     fn _assert_clone<T: Clone>() {}
     _assert_clone::<super::CompletionModel<AnthropicBackend>>();
-    
+
     fn _assert_completion_model<T: rig::completion::request::CompletionModel>() {}
     _assert_completion_model::<super::CompletionModel<AnthropicBackend>>();
 }
@@ -157,10 +168,10 @@ fn completion_model_anthropic_backend_implements_traits() {
 fn completion_model_openai_backend_implements_traits() {
     // Verify CompletionModel<OpenAIBackend> implements required traits
     use crate::providers::github_copilot::OpenAIBackend;
-    
+
     fn _assert_clone<T: Clone>() {}
     _assert_clone::<super::CompletionModel<OpenAIBackend>>();
-    
+
     fn _assert_completion_model<T: rig::completion::request::CompletionModel>() {}
     _assert_completion_model::<super::CompletionModel<OpenAIBackend>>();
 }

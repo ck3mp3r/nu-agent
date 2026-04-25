@@ -59,7 +59,7 @@ struct ErrorDetail {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct GitHubCopilotChoice {
     #[serde(default)]
-    pub index: Option<usize>,  // Optional - Claude responses omit this
+    pub index: Option<usize>, // Optional - Claude responses omit this
     pub message: rig::providers::openai::completion::Message,
     #[serde(default)]
     pub finish_reason: Option<String>,
@@ -70,10 +70,10 @@ pub struct GitHubCopilotChoice {
 impl From<GitHubCopilotChoice> for rig::providers::openai::completion::Choice {
     fn from(choice: GitHubCopilotChoice) -> Self {
         Self {
-            index: choice.index.unwrap_or(0),  // Default to 0 if missing
+            index: choice.index.unwrap_or(0), // Default to 0 if missing
             message: choice.message,
             finish_reason: choice.finish_reason.unwrap_or_else(|| "stop".to_string()),
-            logprobs: None,  // Ignore logprobs for now
+            logprobs: None, // Ignore logprobs for now
         }
     }
 }
@@ -83,9 +83,9 @@ impl From<GitHubCopilotChoice> for rig::providers::openai::completion::Choice {
 pub struct GitHubCopilotCompletionResponse {
     pub id: String,
     #[serde(default)]
-    pub object: Option<String>,  // Optional - GitHub Copilot sometimes omits this
+    pub object: Option<String>, // Optional - GitHub Copilot sometimes omits this
     #[serde(default)]
-    pub created: Option<u64>,    // Optional - GitHub Copilot sometimes omits this
+    pub created: Option<u64>, // Optional - GitHub Copilot sometimes omits this
     pub model: String,
     pub choices: Vec<GitHubCopilotChoice>,
     #[serde(default)]
@@ -94,12 +94,16 @@ pub struct GitHubCopilotCompletionResponse {
     pub system_fingerprint: Option<String>,
 }
 
-impl From<GitHubCopilotCompletionResponse> for rig::providers::openai::completion::CompletionResponse {
+impl From<GitHubCopilotCompletionResponse>
+    for rig::providers::openai::completion::CompletionResponse
+{
     fn from(response: GitHubCopilotCompletionResponse) -> Self {
         Self {
             id: response.id,
-            object: response.object.unwrap_or_else(|| "chat.completion".to_string()),
-            created: response.created.unwrap_or(0),  // Default to 0 if missing
+            object: response
+                .object
+                .unwrap_or_else(|| "chat.completion".to_string()),
+            created: response.created.unwrap_or(0), // Default to 0 if missing
             model: response.model,
             choices: response.choices.into_iter().map(|c| c.into()).collect(),
             usage: response.usage,
@@ -217,10 +221,7 @@ where
                 "Copilot-Integration-Id",
                 HeaderValue::from_static("vscode-chat"),
             );
-            headers.insert(
-                "editor-version",
-                HeaderValue::from_static("vscode/1.85.0"),
-            );
+            headers.insert("editor-version", HeaderValue::from_static("vscode/1.85.0"));
             headers.insert(
                 "editor-plugin-version",
                 HeaderValue::from_static("copilot-chat/0.11.1"),
@@ -229,10 +230,7 @@ where
                 "openai-organization",
                 HeaderValue::from_static("github-copilot"),
             );
-            headers.insert(
-                "openai-intent",
-                HeaderValue::from_static(intent),
-            );
+            headers.insert("openai-intent", HeaderValue::from_static(intent));
         }
 
         let req = req
@@ -257,7 +255,8 @@ where
             match serde_json::from_str::<GitHubCopilotCompletionResponse>(&text) {
                 Ok(response) => {
                     // Convert to OpenAI format for rig compatibility
-                    let openai_response: rig::providers::openai::completion::CompletionResponse = response.into();
+                    let openai_response: rig::providers::openai::completion::CompletionResponse =
+                        response.into();
                     openai_response.try_into()
                 }
                 Err(parse_err) => {

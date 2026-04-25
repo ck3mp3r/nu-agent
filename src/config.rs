@@ -280,7 +280,7 @@ impl PluginConfig {
     pub fn resolve_model(&self, model_spec: &str) -> Result<Config, String> {
         // Parse provider/model format - support both 2-part and 3-part formats
         let parts: Vec<&str> = model_spec.split('/').collect();
-        
+
         let (provider_name, model_name) = match parts.len() {
             2 => {
                 // Traditional format: "openai/gpt-4"
