@@ -24,29 +24,63 @@ impl EngineConfigInterface for EngineInterface {
 
 /// Extract prompt string from input Value.
 ///
+/// Supports two input formats:
+/// 1. String input: "prompt text"
+/// 2. Record input: {prompt: "prompt text", context?: "...", model?: "...", tools?: [...]}
+///
 /// # Arguments
-/// * `input` - The input Value, expected to be a String
+/// * `input` - The input Value, expected to be a String or Record with 'prompt' field
 ///
 /// # Returns
 /// The prompt string, or error if input is invalid
 ///
 /// # Errors
-/// - Input is not a String
-/// - Input is an empty String
+/// - Input is not a String or Record
+/// - Record input missing 'prompt' field
+/// - Prompt is empty or contains only whitespace
 pub fn extract_prompt_from_input(input: &Value) -> Result<String, LabeledError> {
-    // Extract string from Value
-    let prompt = input.as_str().map_err(|_| {
-        LabeledError::new("Invalid input type").with_label("Expected a string prompt", input.span())
-    })?;
-
-    // Check for empty string
-    if prompt.trim().is_empty() {
-        return Err(
-            LabeledError::new("Empty prompt").with_label("Prompt cannot be empty", input.span())
-        );
+    // Try to extract as string first (original behavior)
+    if let Ok(prompt_str) = input.as_str() {
+        // Check for empty string
+        if prompt_str.trim().is_empty() {
+            return Err(
+                LabeledError::new("Empty prompt")
+                    .with_label("Prompt cannot be empty", input.span())
+            );
+        }
+        return Ok(prompt_str.to_string());
     }
 
-    Ok(prompt.to_string())
+    // Try to extract as record
+    if let Ok(record) = input.as_record() {
+        // Look for 'prompt' field
+        let prompt_value = record.get("prompt").ok_or_else(|| {
+            LabeledError::new("Missing required field")
+                .with_label("Record input must have 'prompt' field", input.span())
+        })?;
+
+        // Extract string from prompt field
+        let prompt_str = prompt_value.as_str().map_err(|_| {
+            LabeledError::new("Invalid prompt type")
+                .with_label("'prompt' field must be a string", prompt_value.span())
+        })?;
+
+        // Check for empty string
+        if prompt_str.trim().is_empty() {
+            return Err(
+                LabeledError::new("Empty prompt")
+                    .with_label("Prompt cannot be empty", prompt_value.span())
+            );
+        }
+
+        return Ok(prompt_str.to_string());
+    }
+
+    // Neither string nor record - error
+    Err(
+        LabeledError::new("Invalid input type")
+            .with_label("Expected a string prompt or record with 'prompt' field", input.span())
+    )
 }
 
 pub struct Agent;
@@ -64,7 +98,10 @@ impl SimplePluginCommand for Agent {
 
     fn signature(&self) -> Signature {
         Signature::build(PluginCommand::name(self))
-            .input_output_type(Type::String, Type::Record(vec![].into()))
+            .input_output_types(vec![
+                (Type::String, Type::Record(vec![].into())),
+                (Type::Record(vec![].into()), Type::Record(vec![].into())),
+            ])
             .category(Category::Experimental)
             .named(
                 "provider",

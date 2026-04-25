@@ -967,3 +967,122 @@ mod new_plugin_config_tests {
         assert_eq!(config.model, "gpt-4");
     }
 }
+
+// ============================================================================
+// Record Input Tests - Test record input with prompt and optional fields
+// ============================================================================
+
+mod record_input_tests {
+    use crate::commands::agent::extract_prompt_from_input;
+    use nu_protocol::Value;
+
+    #[test]
+    fn extract_prompt_from_string_input() {
+        // Test existing functionality - string input
+        let input = Value::test_string("test prompt");
+        let result = extract_prompt_from_input(&input);
+        
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "test prompt");
+    }
+
+    #[test]
+    fn extract_prompt_from_record_input_with_prompt_field() {
+        // RED: Test record input with {prompt: "test"}
+        // This will fail because extract_prompt_from_input currently only accepts String
+        
+        let input = Value::test_record(
+            vec![("prompt".to_string(), Value::test_string("test prompt"))]
+                .into_iter()
+                .collect(),
+        );
+        
+        let result = extract_prompt_from_input(&input);
+        
+        // Expected: should extract "test prompt" from record
+        assert!(result.is_ok(), "Failed to extract prompt from record: {:?}", result);
+        assert_eq!(result.unwrap(), "test prompt");
+    }
+
+    #[test]
+    fn extract_prompt_from_record_rejects_missing_prompt_field() {
+        // RED: Test that record without prompt field fails
+        
+        let input = Value::test_record(
+            vec![("context".to_string(), Value::test_string("some context"))]
+                .into_iter()
+                .collect(),
+        );
+        
+        let result = extract_prompt_from_input(&input);
+        
+        // Should fail with clear error about missing prompt
+        assert!(result.is_err(), "Should reject record without prompt field");
+        
+        let err = result.unwrap_err();
+        assert!(
+            err.msg.contains("prompt") || err.msg.contains("required"),
+            "Error should mention missing prompt: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn extract_prompt_from_record_rejects_empty_prompt() {
+        // RED: Test that record with empty prompt fails
+        
+        let input = Value::test_record(
+            vec![("prompt".to_string(), Value::test_string(""))]
+                .into_iter()
+                .collect(),
+        );
+        
+        let result = extract_prompt_from_input(&input);
+        
+        // Should fail for empty prompt
+        assert!(result.is_err(), "Should reject empty prompt");
+        
+        let err = result.unwrap_err();
+        assert!(
+            err.msg.contains("empty") || err.msg.contains("prompt"),
+            "Error should mention empty prompt: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn extract_prompt_from_record_with_optional_fields() {
+        // RED: Test that record with optional fields (context, model) still works
+        // For now, we just need to extract the prompt, optional fields are ignored
+        
+        let input = Value::test_record(
+            vec![
+                ("prompt".to_string(), Value::test_string("test prompt")),
+                ("context".to_string(), Value::test_string("some context")),
+                ("model".to_string(), Value::test_string("openai/gpt-3.5-turbo")),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        
+        let result = extract_prompt_from_input(&input);
+        
+        assert!(result.is_ok(), "Failed to extract prompt from record with optional fields: {:?}", result);
+        assert_eq!(result.unwrap(), "test prompt");
+    }
+
+    #[test]
+    fn extract_prompt_rejects_invalid_types() {
+        // Test that non-string, non-record inputs fail
+        
+        let input = Value::test_int(123);
+        let result = extract_prompt_from_input(&input);
+        
+        assert!(result.is_err(), "Should reject integer input");
+        
+        let input = Value::test_bool(true);
+        let result = extract_prompt_from_input(&input);
+        
+        assert!(result.is_err(), "Should reject boolean input");
+    }
+}

@@ -34,6 +34,7 @@ fn test_extract_prompt_from_invalid_type_int() {
 
 #[test]
 fn test_extract_prompt_from_invalid_type_record() {
+    // Record without 'prompt' field should fail
     let input = Value::test_record(
         vec![("key".to_string(), Value::test_string("value"))]
             .into_iter()
@@ -43,8 +44,12 @@ fn test_extract_prompt_from_invalid_type_record() {
 
     assert!(result.is_err());
     let err = result.unwrap_err();
-    // Check that error indicates wrong type
-    assert!(err.msg.contains("Invalid input type") || err.msg.contains("Expected a string"));
+    // Check that error indicates missing prompt field
+    assert!(
+        err.msg.contains("Missing required field") || err.msg.contains("prompt"),
+        "Error message should mention missing prompt field, got: {}",
+        err.msg
+    );
 }
 
 #[test]
