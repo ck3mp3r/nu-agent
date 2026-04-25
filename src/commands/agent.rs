@@ -83,6 +83,67 @@ pub fn extract_prompt_from_input(input: &Value) -> Result<String, LabeledError> 
     )
 }
 
+/// Extract optional context string from input Value.
+///
+/// Supports two input formats:
+/// 1. String input: Returns None (no context field available)
+/// 2. Record input: Returns Some(context) if 'context' field exists, None otherwise
+///
+/// # Arguments
+/// * `input` - The input Value
+///
+/// # Returns
+/// Optional context string, or error if context field has invalid type
+///
+/// # Errors
+/// - Context field exists but is not a string
+pub fn extract_context_from_input(input: &Value) -> Result<Option<String>, LabeledError> {
+    // String input has no context field
+    if input.as_str().is_ok() {
+        return Ok(None);
+    }
+
+    // Try to extract as record
+    if let Ok(record) = input.as_record() {
+        // Look for optional 'context' field
+        if let Some(context_value) = record.get("context") {
+            // Extract string from context field
+            let context_str = context_value.as_str().map_err(|_| {
+                LabeledError::new("Invalid context type")
+                    .with_label("'context' field must be a string", context_value.span())
+            })?;
+
+            return Ok(Some(context_str.to_string()));
+        }
+
+        // No context field - that's OK
+        return Ok(None);
+    }
+
+    // Neither string nor record - no context
+    Ok(None)
+}
+
+/// Merge optional context with prompt for LLM call.
+///
+/// If context is provided and non-empty, prepends it to the prompt with clear separation.
+/// Empty or whitespace-only context is treated as None.
+///
+/// # Arguments
+/// * `prompt` - The main prompt text
+/// * `context` - Optional context to prepend to the prompt
+///
+/// # Returns
+/// Combined prompt string with context prepended if provided
+pub fn merge_prompt_with_context(prompt: &str, context: Option<&str>) -> String {
+    match context {
+        Some(ctx) if !ctx.trim().is_empty() => {
+            format!("{}\n\n---\n\n{}", ctx, prompt)
+        }
+        _ => prompt.to_string(),
+    }
+}
+
 pub struct Agent;
 
 impl SimplePluginCommand for Agent {
@@ -178,12 +239,18 @@ impl SimplePluginCommand for Agent {
         // Extract prompt from input
         let prompt = extract_prompt_from_input(input)?;
 
+        // Extract optional context from input
+        let context = extract_context_from_input(input)?;
+
+        // Merge context into prompt for LLM call
+        let merged_prompt = merge_prompt_with_context(&prompt, context.as_deref());
+
         // Call LLM (async operation - we need to block on it)
         let runtime = tokio::runtime::Runtime::new()
             .map_err(|e| LabeledError::new(format!("Failed to create async runtime: {}", e)))?;
 
         let response = runtime
-            .block_on(crate::llm::call_llm(&config, &prompt))
+            .block_on(crate::llm::call_llm(&config, &merged_prompt))
             .map_err(|e| {
                 LabeledError::new(format!("LLM call failed: {}", e.msg))
                     .with_label(e.msg, call.head)
