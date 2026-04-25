@@ -197,3 +197,112 @@ fn test_append_message_writes_jsonl() {
         Some("Hello")
     );
 }
+
+/// Test that load_session reads messages from JSONL file.
+#[test]
+fn test_load_session_with_messages() {
+    use crate::session::Message;
+
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+
+    let session_id = "test-load-messages".to_string();
+    let mut session = store
+        .get_or_create(Some(session_id.clone()))
+        .expect("Failed to create session");
+
+    // Append some messages
+    let msg1 = Message::new("user".to_string(), "Hello".to_string());
+    let msg2 = Message::new("assistant".to_string(), "Hi there".to_string());
+    let msg3 = Message::new("user".to_string(), "How are you?".to_string());
+
+    session
+        .append_message(&store, msg1)
+        .expect("Failed to append message 1");
+    session
+        .append_message(&store, msg2)
+        .expect("Failed to append message 2");
+    session
+        .append_message(&store, msg3)
+        .expect("Failed to append message 3");
+
+    // Now load the session
+    let loaded_session = store
+        .load_session(&session_id)
+        .expect("Failed to load session");
+
+    // Verify session ID matches
+    assert_eq!(loaded_session.id(), session_id);
+
+    // Verify messages were loaded
+    let messages = loaded_session.messages();
+    assert_eq!(messages.len(), 3, "Should have loaded 3 messages");
+
+    // Verify message content
+    assert_eq!(messages[0].role(), "user");
+    assert_eq!(messages[0].content(), "Hello");
+
+    assert_eq!(messages[1].role(), "assistant");
+    assert_eq!(messages[1].content(), "Hi there");
+
+    assert_eq!(messages[2].role(), "user");
+    assert_eq!(messages[2].content(), "How are you?");
+}
+
+/// Test that load_session handles empty session (metadata only).
+#[test]
+fn test_load_session_empty_messages() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+
+    let session_id = "test-empty-session".to_string();
+    let _session = store
+        .get_or_create(Some(session_id.clone()))
+        .expect("Failed to create session");
+
+    // Load session without adding messages
+    let loaded_session = store
+        .load_session(&session_id)
+        .expect("Failed to load session");
+
+    assert_eq!(loaded_session.id(), session_id);
+    assert_eq!(
+        loaded_session.messages().len(),
+        0,
+        "Should have no messages"
+    );
+}
+
+/// Test that load_session handles malformed JSONL.
+#[test]
+fn test_load_session_malformed_jsonl() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+
+    let session_id = "test-malformed".to_string();
+
+    // Create a malformed JSONL file manually
+    let jsonl_path = temp_dir.path().join(format!("{}.jsonl", session_id));
+    let malformed_content = r#"{"type":"meta","session_id":"test-malformed","created_at":"2024-01-01T00:00:00Z"}
+{"role":"user","content":"valid message","timestamp":"2024-01-01T00:00:01Z"}
+this is not valid json
+{"role":"user","content":"another valid","timestamp":"2024-01-01T00:00:02Z"}"#;
+
+    fs::write(&jsonl_path, malformed_content).expect("Failed to write malformed file");
+
+    // Load should return an error
+    let result = store.load_session(&session_id);
+    assert!(
+        result.is_err(),
+        "Loading malformed JSONL should return an error"
+    );
+
+    // Verify error message mentions JSON parsing
+    let error = result.unwrap_err();
+    let error_msg = error.to_string().to_lowercase();
+    assert!(
+        error_msg.contains("json") || error_msg.contains("parse") || error_msg.contains("message"),
+        "Error should mention JSON parsing issue, got: {}",
+        error
+    );
+}

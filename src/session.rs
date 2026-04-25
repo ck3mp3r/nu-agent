@@ -23,6 +23,7 @@ pub struct SessionStore {
 pub struct Session {
     id: String,
     created_at: DateTime<Utc>,
+    messages: Vec<Message>,
 }
 
 impl Session {
@@ -31,11 +32,17 @@ impl Session {
         &self.id
     }
 
+    /// Returns a reference to the messages in this session.
+    pub fn messages(&self) -> &[Message] {
+        &self.messages
+    }
+
     /// Creates a new session with the given ID.
     fn new(id: String) -> Self {
         Self {
             id,
             created_at: Utc::now(),
+            messages: Vec::new(),
         }
     }
 
@@ -102,6 +109,16 @@ impl Message {
             content,
             timestamp: Utc::now(),
         }
+    }
+
+    /// Returns the message role.
+    pub fn role(&self) -> &str {
+        &self.role
+    }
+
+    /// Returns the message content.
+    pub fn content(&self) -> &str {
+        &self.content
     }
 }
 
@@ -196,8 +213,21 @@ impl SessionStore {
 
     /// Loads a session from its JSONL file.
     ///
-    /// The first line contains metadata, subsequent lines contain messages (not implemented yet).
-    fn load_session(&self, session_id: &str) -> io::Result<Session> {
+    /// The first line contains metadata, subsequent lines contain messages.
+    ///
+    /// # Arguments
+    /// * `session_id` - The ID of the session to load
+    ///
+    /// # Returns
+    /// A Session with its metadata and messages loaded from the JSONL file.
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - The file cannot be read
+    /// - The file is empty (no metadata line)
+    /// - The metadata line cannot be parsed as JSON
+    /// - Any message line cannot be parsed as JSON
+    pub fn load_session(&self, session_id: &str) -> io::Result<Session> {
         let path = self.session_path(session_id);
         let content = fs::read_to_string(&path)?;
 
@@ -213,9 +243,28 @@ impl SessionStore {
             )
         })?;
 
+        // Parse all remaining lines as messages
+        let mut messages = Vec::new();
+        for (line_num, line) in lines.enumerate() {
+            // Skip empty lines
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            let message: Message = serde_json::from_str(line).map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Failed to parse message on line {}: {}", line_num + 2, e),
+                )
+            })?;
+
+            messages.push(message);
+        }
+
         Ok(Session {
             id: metadata.session_id,
             created_at: metadata.created_at,
+            messages,
         })
     }
 
