@@ -25,7 +25,7 @@
     ...
   }:
     flake-parts.lib.mkFlake {inherit inputs;} {
-      systems = ["aarch64-darwin" "aarch64-linux" "x86_64-linux"];
+      systems = ["aarch64-darwin" "aarch64-linux" "x86_64-darwin" "x86_64-linux"];
       perSystem = {
         config,
         system,
@@ -40,8 +40,21 @@
 
         cargoToml = fromTOML (builtins.readFile ./Cargo.toml);
         cargoLock = {lockFile = ./Cargo.lock;};
-        # Install data for pre-built releases
+
+        # Import packaging logic
+        packaging = import ./nix/packaging.nix {
+          inherit
+            inputs
+            system
+            pkgs
+            cargoToml
+            cargoLock
+            overlays
+            ;
+        };
       in {
+        inherit (packaging) apps packages;
+
         devShells = {
           # Regular shell for development
           default = import ./nix/dev.nix {
@@ -59,6 +72,7 @@
 
       flake = {
         overlays.default = final: prev: {
+          nu-agent = self.packages.default;
         };
       };
     };

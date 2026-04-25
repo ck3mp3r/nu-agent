@@ -1,0 +1,18 @@
+pre-commit:
+  commands:
+    trailing-whitespace:
+      run: >
+        git diff --cached --name-only --diff-filter=ACM |
+        while IFS= read -r f; do sed -i '' 's/[[:space:]]*$//' "$f" && git add "$f"; done
+      glob: "*.{rs,toml,yml,yaml,md,json}"
+    rustfmt:
+      run: cargo fmt && git diff --name-only | xargs git add
+      glob: "*.rs"
+    clippy:
+      run: cargo clippy -- -D warnings
+      glob: "*.rs"
+
+pre-push:
+  commands:
+    tests:
+      run: cargo test

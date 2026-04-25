@@ -1,0 +1,160 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  packages: write
+  contents: write
+  actions: read
+  checks: read
+  deployments: read
+  issues: read
+  pull-requests: read
+  id-token: write
+
+jobs:
+  prep-release:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.prep.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref }}
+
+      - name: Setup Nu Tools
+        uses: ck3mp3r/actions/nu-tools@main
+
+      - name: Prepare release
+        id: prep
+        shell: nu {0}
+        run: |
+          use nu-tools *
+          setup-git-user
+
+          let current_version = (open Cargo.toml).package.version
+          let latest_tag = (get-latest-tag)
+          let version = (semver-calculate $latest_tag $current_version | create-release-branch)
+          update-cargo-version $version | commit-files $"Prepare release ($version)"
+          $"version=($version)" | save --append $env.GITHUB_OUTPUT
+
+  build:
+    needs: prep-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            nix_system: x86_64-linux
+          - os: macos-15
+            nix_system: x86_64-darwin
+          - os: macos-15
+            nix_system: aarch64-darwin
+          - os: ubuntu-24.04-arm
+            nix_system: aarch64-linux
+    steps:
+      - name: Checkout release branch
+        uses: actions/checkout@v6
+        with:
+          ref: release/${{ needs.prep-release.outputs.version }}
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v22
+        with:
+          github-token: ${{github.token}}
+
+      - name: Build archive for ${{ matrix.nix_system }}
+        run: nix build .#archive --print-build-logs
+
+      - name: Copy build outputs for uniqueness
+        run: |
+          # Archive package creates generic filenames, so we rename them with system suffix
+          cp result/nu-agent.tgz ${{ github.workspace }}/nu-agent-${{ needs.prep-release.outputs.version }}-${{ matrix.nix_system }}.tgz
+          cp result/nu-agent.sha256 ${{ github.workspace }}/nu-agent-${{ needs.prep-release.outputs.version }}-${{ matrix.nix_system }}.sha256
+          cp result/nu-agent-nix.sha256 ${{ github.workspace }}/nu-agent-${{ needs.prep-release.outputs.version }}-${{ matrix.nix_system }}-nix.sha256
+
+      - name: Upload build outputs as artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: nu-agent-assets-${{ matrix.nix_system }}
+          path: |
+            ${{ github.workspace }}/nu-agent-${{ needs.prep-release.outputs.version }}-${{ matrix.nix_system }}.tgz
+            ${{ github.workspace }}/nu-agent-${{ needs.prep-release.outputs.version }}-${{ matrix.nix_system }}.sha256
+            ${{ github.workspace }}/nu-agent-${{ needs.prep-release.outputs.version }}-${{ matrix.nix_system }}-nix.sha256
+
+  finalize-release:
+    needs:
+      - prep-release
+      - build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@v3
+        id: token
+        with:
+          app-id: ${{ secrets.BOT_ID }}
+          private-key: ${{ secrets.BOT }}
+
+      - name: Checkout release branch
+        uses: actions/checkout@v6
+        with:
+          ref: release/${{ needs.prep-release.outputs.version }}
+          fetch-depth: 0
+          token: ${{ steps.token.outputs.token }}
+
+      - name: Setup Nu Tools
+        uses: ck3mp3r/actions/nu-tools@main
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: ./artifacts
+
+      - name: Finalize release
+        shell: nu {0}
+        run: |
+          use nu-tools *
+          setup-git-user
+
+          let version = "${{ needs.prep-release.outputs.version }}"
+
+          # Generate platform data and commit
+          generate-platform-data-for $version "nu-agent" "./artifacts" | commit-files $"Add platform data for release ($version)"
+
+          # Prepare architecture data with hashes
+          let architectures = [
+            {
+              name: "aarch64-darwin"
+              hash: (open $"./artifacts/nu-agent-assets-aarch64-darwin/nu-agent-($version)-aarch64-darwin.sha256" | str trim)
+            }
+            {
+              name: "aarch64-linux"
+              hash: (open $"./artifacts/nu-agent-assets-aarch64-linux/nu-agent-($version)-aarch64-linux.sha256" | str trim)
+            }
+            {
+              name: "x86_64-darwin"
+              hash: (open $"./artifacts/nu-agent-assets-x86_64-darwin/nu-agent-($version)-x86_64-darwin.sha256" | str trim)
+            }
+            {
+              name: "x86_64-linux"
+              hash: (open $"./artifacts/nu-agent-assets-x86_64-linux/nu-agent-($version)-x86_64-linux.sha256" | str trim)
+            }
+          ]
+
+          # Update Homebrew formula
+          open Formula/nu-agent.rb | update-homebrew-formula $version "nu-agent" $architectures | save --force Formula/nu-agent.rb
+
+          # Commit the formula update
+          ["Formula/nu-agent.rb"] | commit-files $"Update Homebrew formula for ($version)"
+
+          # Merge and cleanup
+          merge-and-cleanup $version
+
+          # Create release and upload artifacts using gh CLI
+          create-github-release $version
+          glob "./artifacts/**/*.*" | upload-release-artifacts $version
+
+        env:
+          GITHUB_TOKEN: ${{ steps.token.outputs.token }}
