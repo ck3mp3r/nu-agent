@@ -4,6 +4,87 @@ use nu_protocol::{LabeledError, Span, Value};
 use rig::client::{CompletionClient, ProviderClient};
 use rig::providers::{anthropic, ollama, openai};
 
+/// Routing decision for which provider to use.
+#[derive(Debug, PartialEq)]
+pub(crate) enum ProviderRoute {
+    OpenAI,
+    Anthropic,
+    Ollama,
+    GitHubCopilot { backend: String },
+    Unsupported(String),
+}
+
+/// Determine which provider to route to based on config.
+///
+/// Pure function: no I/O, no HTTP, no rig client creation.
+pub(crate) fn route_provider(config: &Config) -> ProviderRoute {
+    // 3-part format: "github-copilot/backend"
+    if config.provider.starts_with("github-copilot/") {
+        let backend = config
+            .provider
+            .strip_prefix("github-copilot/")
+            .unwrap_or("")
+            .to_string();
+        return ProviderRoute::GitHubCopilot { backend };
+    }
+
+    // Legacy routing: use provider_impl or provider name
+    let provider_name = config.provider_impl.as_deref().unwrap_or(&config.provider);
+
+    match provider_name {
+        // Legacy: "openai" or "github-copilot" with a githubcopilot base_url
+        "github-copilot" | "openai"
+            if config
+                .base_url
+                .as_ref()
+                .is_some_and(|u| u.contains("githubcopilot")) =>
+        {
+            ProviderRoute::GitHubCopilot {
+                backend: String::new(),
+            }
+        }
+        "openai" => ProviderRoute::OpenAI,
+        "anthropic" => ProviderRoute::Anthropic,
+        "ollama" => ProviderRoute::Ollama,
+        other => ProviderRoute::Unsupported(other.to_string()),
+    }
+}
+
+/// Parse the backend name from a "github-copilot/<backend>" provider string.
+///
+/// Pure function: no I/O.
+pub(crate) fn parse_github_copilot_backend(provider: &str) -> Result<&str, LabeledError> {
+    provider
+        .strip_prefix("github-copilot/")
+        .filter(|b| !b.is_empty())
+        .ok_or_else(|| LabeledError::new("Invalid GitHub Copilot provider format"))
+}
+
+/// Resolve the API key for a given provider.
+///
+/// Returns the config api_key if set, otherwise reads the appropriate env var.
+/// Special case: github-copilot reads GITHUB_TOKEN instead of GITHUB-COPILOT_API_KEY.
+///
+/// Pure function w.r.t. config; reads env vars.
+pub(crate) fn resolve_api_key(config: &Config, provider: &str) -> Result<String, LabeledError> {
+    if let Some(ref key) = config.api_key {
+        return Ok(key.clone());
+    }
+
+    let env_var = if provider == "github-copilot" || provider.starts_with("github-copilot/") {
+        "GITHUB_TOKEN".to_string()
+    } else {
+        format!("{}_API_KEY", provider.to_uppercase())
+    };
+
+    std::env::var(&env_var).map_err(|_| {
+        LabeledError::new("Missing API key").with_label(
+            format!("{} not set and no api_key in config", env_var),
+            nu_protocol::Span::unknown(),
+        )
+    })
+}
+
 /// Call an LLM with the given prompt and configuration.
 ///
 /// Creates the appropriate provider client based on config.provider,
@@ -24,46 +105,25 @@ use rig::providers::{anthropic, ollama, openai};
 /// - Invalid configuration
 /// - API errors (network, rate limits, etc.)
 pub async fn call_llm(config: &Config, prompt: &str) -> Result<String, LabeledError> {
-    // Check if provider starts with "github-copilot/" (3-part format: github-copilot/backend/model)
-    if config.provider.starts_with("github-copilot/") {
-        call_github_copilot(config, prompt).await
-    } else {
-        // Legacy routing: use provider_impl or provider name (2-part format: provider/model)
-        let provider_name = config.provider_impl.as_deref().unwrap_or(&config.provider);
-        
-        match provider_name {
-            "github-copilot" | "openai" if config.base_url.is_some() && config.base_url.as_ref().unwrap().contains("githubcopilot") => {
-                call_github_copilot(config, prompt).await
-            }
-            "openai" => call_openai(config, prompt).await,
-            "anthropic" => call_anthropic(config, prompt).await,
-            "ollama" => call_ollama(config, prompt).await,
-            _ => Err(LabeledError::new(format!(
-                "Unsupported provider: {}",
-                provider_name
-            ))),
-        }
+    match route_provider(config) {
+        ProviderRoute::OpenAI => call_openai(config, prompt).await,
+        ProviderRoute::Anthropic => call_anthropic(config, prompt).await,
+        ProviderRoute::Ollama => call_ollama(config, prompt).await,
+        ProviderRoute::GitHubCopilot { .. } => call_github_copilot(config, prompt).await,
+        ProviderRoute::Unsupported(name) => Err(LabeledError::new(format!(
+            "Unsupported provider: {}",
+            name
+        ))),
     }
 }
 
 async fn call_github_copilot(config: &Config, prompt: &str) -> Result<String, LabeledError> {
-    let api_key = if let Some(ref key) = config.api_key {
-            key.clone()
-        } else {
-            std::env::var("GITHUB_TOKEN")
-                .map_err(|_| {
-                LabeledError::new("Missing API key").with_label(
-                    "GITHUB_TOKEN not set and no api_key in config",
-                    nu_protocol::Span::unknown(),
-                )
-            })?
-    };
-    
+    let api_key = resolve_api_key(config, "github-copilot")?;
+
     // Parse backend from provider: "github-copilot/anthropic" -> "anthropic"
-    let backend = config.provider.strip_prefix("github-copilot/")
-        .ok_or_else(|| LabeledError::new("Invalid GitHub Copilot provider format"))?;
-    
-    // Create the base GitHub Copilot client (legacy Client type)
+    let backend = parse_github_copilot_backend(&config.provider)?;
+
+    // Create the base GitHub Copilot client
     let client = if let Some(url) = &config.base_url {
         github_copilot::Client::builder()
             .api_key(api_key)
@@ -76,23 +136,36 @@ async fn call_github_copilot(config: &Config, prompt: &str) -> Result<String, La
             .build()
             .map_err(|e| LabeledError::new(format!("Failed to create client: {}", e)))?
     };
-    
-    // Import Prompt trait for .prompt() method
+
     use rig::completion::Prompt;
-    
-    // Create CompletionModel with appropriate backend and wrap in an agent
+
     match backend {
         "anthropic" => {
-            let model = github_copilot::completion::CompletionModel::<github_copilot::AnthropicBackend, _>::new(client, &config.model);
+            let model = github_copilot::completion::CompletionModel::<
+                github_copilot::AnthropicBackend,
+                _,
+            >::new(client, &config.model);
             let agent = rig::agent::AgentBuilder::new(model).build();
-            agent.prompt(prompt).await.map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))
+            agent
+                .prompt(prompt)
+                .await
+                .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))
         }
         "openai" => {
-            let model = github_copilot::completion::CompletionModel::<github_copilot::OpenAIBackend, _>::new(client, &config.model);
+            let model = github_copilot::completion::CompletionModel::<
+                github_copilot::OpenAIBackend,
+                _,
+            >::new(client, &config.model);
             let agent = rig::agent::AgentBuilder::new(model).build();
-            agent.prompt(prompt).await.map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))
+            agent
+                .prompt(prompt)
+                .await
+                .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))
         }
-        _ => Err(LabeledError::new(format!("Unknown GitHub Copilot backend: {}", backend))),
+        _ => Err(LabeledError::new(format!(
+            "Unknown GitHub Copilot backend: {}",
+            backend
+        ))),
     }
 }
 
@@ -132,59 +205,26 @@ pub fn format_response(response: &str, config: &Config, span: Span) -> Value {
     )
 }
 
-/// Helper function to check if API key is available (from config or env)
-fn get_api_key(config: &Config, provider: &str) -> Result<Option<String>, LabeledError> {
-    if let Some(ref api_key) = config.api_key {
-        return Ok(Some(api_key.clone()));
-    }
-
-    // Special case: github-copilot uses GITHUB_TOKEN
-    let env_var = if provider == "github-copilot" {
-        "GITHUB_TOKEN".to_string()
-    } else {
-        format!("{}_API_KEY", provider.to_uppercase())
-    };
-    
-    match std::env::var(&env_var) {
-        Ok(key) => Ok(Some(key)),
-        Err(_) => Ok(None),
-    }
-}
-
 async fn call_openai(config: &Config, prompt: &str) -> Result<String, LabeledError> {
-    // Check for API key
-    let api_key = get_api_key(config, &config.provider)?;
+    let key = resolve_api_key(config, &config.provider.clone())?;
 
-    let key = api_key.ok_or_else(|| {
-        LabeledError::new("Missing API key").with_label(
-            "OPENAI_API_KEY not set and no api_key in config",
-            nu_protocol::Span::unknown(),
-        )
-    })?;
-
-    // Create client
     let client = if let Some(base_url) = &config.base_url {
-        // Use builder for base_url override
         openai::Client::builder()
             .api_key(key)
             .base_url(base_url.clone())
             .build()
             .map_err(|e| LabeledError::new(format!("Failed to create OpenAI client: {}", e)))?
     } else if config.api_key.is_some() {
-        // Use builder if explicit API key is provided in config
         openai::Client::builder()
             .api_key(key)
             .build()
             .map_err(|e| LabeledError::new(format!("Failed to create OpenAI client: {}", e)))?
     } else {
-        // Use from_env() only when using env var (no config overrides)
         openai::Client::from_env()
     };
 
-    // Create agent with model
     let agent = client.agent(&config.model).build();
 
-    // Call LLM
     use rig::completion::Prompt;
     agent
         .prompt(prompt)
@@ -193,17 +233,8 @@ async fn call_openai(config: &Config, prompt: &str) -> Result<String, LabeledErr
 }
 
 async fn call_anthropic(config: &Config, prompt: &str) -> Result<String, LabeledError> {
-    // Check for API key
-    let api_key = get_api_key(config, "anthropic")?;
+    let key = resolve_api_key(config, "anthropic")?;
 
-    let key = api_key.ok_or_else(|| {
-        LabeledError::new("Missing API key").with_label(
-            "ANTHROPIC_API_KEY not set and no api_key in config",
-            nu_protocol::Span::unknown(),
-        )
-    })?;
-
-    // Create client - support base_url override for testing
     let client = if let Some(base_url) = &config.base_url {
         anthropic::Client::builder()
             .api_key(key)
@@ -219,17 +250,14 @@ async fn call_anthropic(config: &Config, prompt: &str) -> Result<String, Labeled
         anthropic::Client::from_env()
     };
 
-    // Create agent with model - Anthropic requires max_tokens
     let mut agent_builder = client.agent(&config.model);
-    
-    // Set max_tokens if provided (Anthropic requires this)
+
     if let Some(max_tokens) = config.max_tokens {
         agent_builder = agent_builder.max_tokens(max_tokens as u64);
     }
-    
+
     let agent = agent_builder.build();
 
-    // Call LLM
     use rig::completion::Prompt;
     agent
         .prompt(prompt)
@@ -238,30 +266,25 @@ async fn call_anthropic(config: &Config, prompt: &str) -> Result<String, Labeled
 }
 
 async fn call_ollama(config: &Config, prompt: &str) -> Result<String, LabeledError> {
-    // Ollama doesn't require an API key
     let base_url = config
         .base_url
         .as_deref()
         .unwrap_or("http://localhost:11434");
 
-    // Create client with base URL
     let client = ollama::Client::builder()
         .api_key(rig::client::Nothing)
         .base_url(base_url)
         .build()
         .map_err(|e| LabeledError::new(format!("Failed to create Ollama client: {}", e)))?;
 
-    // Create agent with model
     let agent = client.agent(&config.model).build();
 
-    // Call LLM
     use rig::completion::Prompt;
     agent
         .prompt(prompt)
         .await
         .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))
 }
-
 
 #[cfg(test)]
 #[path = "llm_test.rs"]

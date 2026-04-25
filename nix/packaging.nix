@@ -44,8 +44,7 @@
     src = ../.;
     packageName = "nu-agent";
     archiveAndHash = false;
-    nativeBuildInputs = [];
-    extraArgs = {};
+    nativeBuildInputs = [pkgs.pkg-config];
   };
 
   # Build archive packages (creates archive with system name)
@@ -64,8 +63,7 @@
     src = ../.;
     packageName = "archive";
     archiveAndHash = true;
-    nativeBuildInputs = [];
-    extraArgs = {};
+    nativeBuildInputs = [pkgs.pkg-config];
   };
 in {
   # Export all package outputs
