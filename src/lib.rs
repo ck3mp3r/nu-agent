@@ -7,4 +7,7 @@ pub mod providers;
 #[cfg(test)]
 mod plugin_test;
 
+#[cfg(test)]
+mod closure_execution_test;
+
 pub use plugin::AgentPlugin;
