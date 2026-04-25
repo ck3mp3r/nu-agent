@@ -31,13 +31,21 @@ Configure the plugin in your Nushell config (`$nu.config-path`):
 
 ```nu
 $env.config.plugins.agent = {
-  model: "github-copilot/claude-sonnet-4.5"
+  model: "github-copilot/anthropic/claude-sonnet-4.5"
   providers: {
-    github-copilot: {
+    "github-copilot/anthropic": {
+      provider_impl: "openai"  # GitHub Copilot uses OpenAI-compatible API
       api_key: $env.GITHUB_TOKEN  # Uses gh CLI OAuth token
       base_url: "https://api.individual.githubcopilot.com"  # Required for personal accounts
       models: {
         "claude-sonnet-4.5": {}
+      }
+    }
+    "github-copilot/openai": {
+      provider_impl: "openai"
+      api_key: $env.GITHUB_TOKEN
+      base_url: "https://api.individual.githubcopilot.com"
+      models: {
         "gpt-4o": {}
         "gpt-4o-mini": {}
       }
@@ -50,9 +58,10 @@ $env.config.plugins.agent = {
 ```nu
 # Default endpoint works in Actions (no base_url override needed)
 $env.config.plugins.agent = {
-  model: "github-copilot/claude-sonnet-4.5"
+  model: "github-copilot/anthropic/claude-sonnet-4.5"
   providers: {
-    github-copilot: {
+    "github-copilot/anthropic": {
+      provider_impl: "openai"
       api_key: $env.GITHUB_TOKEN  # Actions GITHUB_TOKEN
       models: {
         "claude-sonnet-4.5": {}
@@ -139,7 +148,7 @@ $env.config.plugins.agent = {
 # {
 #   response: "...",
 #   model: "claude-sonnet-4.5",
-#   provider: "github-copilot",
+#   provider: "github-copilot/anthropic",
 #   timestamp: "2026-04-24T22:29:28Z"
 # }
 
