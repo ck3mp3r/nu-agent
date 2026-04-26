@@ -473,6 +473,27 @@ impl SimplePluginCommand for Agent {
         // Track all tool calls executed during the agent loop
         let mut executed_tool_calls: Vec<rig::completion::AssistantContent> = Vec::new();
 
+        // Create audit log directory ONCE before agent loop
+        // This follows the Single Responsibility Principle: the logger only logs,
+        // the caller is responsible for ensuring the directory exists
+        let log_dir = crate::utils::xdg::data_dir()
+            .map_err(|e| LabeledError::new(format!("XDG data directory error: {}", e)))?
+            .join("nu-agent");
+        std::fs::create_dir_all(&log_dir).map_err(|e| {
+            LabeledError::new(format!("Failed to create audit log directory: {}", e))
+        })?;
+        let log_path = log_dir.join("tool_audit.log");
+
+        // Create AuditLogger ONCE with pre-existing directory
+        let audit_logger = std::sync::Arc::new(crate::tools::audit::AuditLogger::new(log_path));
+
+        // Create ToolExecutor ONCE with engine, audit logger, and timeout
+        let tool_executor = crate::tools::executor::ToolExecutor::new(
+            std::sync::Arc::new(engine.clone()),
+            audit_logger,
+            tool_timeout,
+        );
+
         // Agent loop: process tool calls if present
         let max_tool_turns = config.max_tool_turns.unwrap_or(5);
         let mut tool_turn = 0;
@@ -482,19 +503,6 @@ impl SimplePluginCommand for Agent {
 
             // Capture tool calls that were executed this turn
             executed_tool_calls.extend(llm_response.tool_calls.clone());
-
-            // Create AuditLogger for this tool execution turn
-            let audit_logger =
-                std::sync::Arc::new(crate::tools::audit::AuditLogger::new().map_err(|e| {
-                    LabeledError::new(format!("Failed to create audit logger: {}", e))
-                })?);
-
-            // Create ToolExecutor with engine, audit logger, and timeout
-            let tool_executor = crate::tools::executor::ToolExecutor::new(
-                std::sync::Arc::new(engine.clone()),
-                audit_logger,
-                tool_timeout,
-            );
 
             // Execute tool calls
             let tool_results = runtime

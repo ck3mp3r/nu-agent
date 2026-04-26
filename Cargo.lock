@@ -1772,7 +1772,6 @@ name = "nu_plugin_agent"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "dirs",
  "nu-plugin",
  "nu-protocol",
  "reqwest",

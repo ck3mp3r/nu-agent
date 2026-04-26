@@ -5,6 +5,7 @@ pub mod plugin;
 pub mod providers;
 pub mod session;
 pub mod tools;
+pub mod utils;
 
 #[cfg(test)]
 mod closure_execution_test;

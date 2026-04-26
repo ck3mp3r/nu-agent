@@ -769,7 +769,7 @@ impl SessionStore {
     pub(crate) fn resolve_cache_dir(xdg_cache_home: Option<PathBuf>) -> PathBuf {
         let base = xdg_cache_home
             .or_else(|| std::env::var("XDG_CACHE_HOME").ok().map(PathBuf::from))
-            .or_else(dirs::cache_dir)
+            .or_else(|| crate::utils::xdg::cache_dir().ok())
             .expect("Failed to determine cache directory: XDG_CACHE_HOME not set and no platform default available");
 
         base.join("nu-agent").join("sessions")
