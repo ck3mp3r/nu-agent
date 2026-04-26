@@ -36,7 +36,7 @@ impl Plugin for AgentPlugin {
 
     fn commands(&self) -> Vec<Box<dyn PluginCommand<Plugin = Self>>> {
         vec![
-            Box::new(Agent),
+            Box::new(Agent::new(self.session_store.clone())),
             Box::new(AgentSessionClear::new(self.session_store.clone())),
             Box::new(AgentSessionInspect::new(self.session_store.clone())),
             Box::new(AgentSessionList::new(self.session_store.clone())),

@@ -140,7 +140,62 @@ pub fn merge_prompt_with_context(prompt: &str, context: Option<&str>) -> String 
     }
 }
 
-pub struct Agent;
+/// Extracts and validates session flags from the evaluated call.
+///
+/// Returns a tuple of (session_id, new_session, no_session).
+/// Validates that flags are mutually exclusive.
+///
+/// # Arguments
+/// * `call` - The EvaluatedCall containing session flags
+///
+/// # Returns
+/// A tuple of (Option<String>, bool, bool) representing the session flags.
+///
+/// # Errors
+/// Returns an error if:
+/// - Multiple session flags are provided together
+pub fn extract_and_validate_session_flags(
+    call: &EvaluatedCall,
+) -> Result<(Option<String>, bool, bool), LabeledError> {
+    // Extract flags
+    let session_id = call.get_flag::<String>("session").ok().flatten();
+    let new_session = call
+        .get_flag::<bool>("new-session")
+        .ok()
+        .flatten()
+        .unwrap_or(false);
+    let no_session = call
+        .get_flag::<bool>("no-session")
+        .ok()
+        .flatten()
+        .unwrap_or(false);
+
+    // Count how many flags are set
+    let flag_count = (if session_id.is_some() { 1 } else { 0 })
+        + (if new_session { 1 } else { 0 })
+        + (if no_session { 1 } else { 0 });
+
+    // Validate mutual exclusion
+    if flag_count > 1 {
+        return Err(LabeledError::new("Conflicting session flags").with_label(
+            "Only one of --session, --new-session, or --no-session can be used",
+            call.head,
+        ));
+    }
+
+    Ok((session_id, new_session, no_session))
+}
+
+pub struct Agent {
+    store: crate::session::SessionStore,
+}
+
+impl Agent {
+    /// Creates a new Agent command with the given SessionStore.
+    pub fn new(store: crate::session::SessionStore) -> Self {
+        Self { store }
+    }
+}
 
 impl SimplePluginCommand for Agent {
     type Plugin = AgentPlugin;
@@ -219,6 +274,22 @@ impl SimplePluginCommand for Agent {
                 "Maximum tool calling turns",
                 None,
             )
+            .named(
+                "session",
+                nu_protocol::SyntaxShape::String,
+                "Session ID to use (auto-creates if doesn't exist)",
+                None,
+            )
+            .switch(
+                "new-session",
+                "Force create new session with auto-generated ID",
+                None,
+            )
+            .switch(
+                "no-session",
+                "Disable session management (ephemeral mode, default)",
+                None,
+            )
     }
 
     fn run(
@@ -228,6 +299,9 @@ impl SimplePluginCommand for Agent {
         call: &EvaluatedCall,
         input: &Value,
     ) -> Result<Value, LabeledError> {
+        // Validate session flags
+        let (session_id, new_session, no_session) = extract_and_validate_session_flags(call)?;
+
         // Resolve configuration from all sources with proper precedence:
         // default < env < plugin < flags
         let config = resolve_config(engine, call)?;
@@ -238,8 +312,57 @@ impl SimplePluginCommand for Agent {
         // Extract optional context from input
         let context = extract_context_from_input(input)?;
 
-        // Merge context into prompt for LLM call
-        let merged_prompt = merge_prompt_with_context(&prompt, context.as_deref());
+        // Determine if we should use a session
+        let use_session = session_id.is_some() || new_session;
+        let mut session_opt = None;
+        let mut final_session_id = None;
+
+        // Load or create session if requested
+        if use_session && !no_session {
+            let id = if let Some(id) = session_id {
+                id
+            } else if new_session {
+                // Generate auto session ID: session-YYYYMMDD-HHMMSS-micros
+                use chrono::Utc;
+                let now = Utc::now();
+                format!(
+                    "session-{}-{}",
+                    now.format("%Y%m%d-%H%M%S"),
+                    now.timestamp_subsec_micros()
+                )
+            } else {
+                unreachable!()
+            };
+
+            // Load or create the session
+            let session = self
+                .store
+                .get_or_create(Some(id.clone()))
+                .map_err(|e| LabeledError::new(format!("Failed to load/create session: {}", e)))?;
+
+            final_session_id = Some(id);
+            session_opt = Some(session);
+        }
+
+        // Build prompt with session history if available
+        let mut merged_prompt = merge_prompt_with_context(&prompt, context.as_deref());
+
+        if let Some(ref session) = session_opt {
+            // Prepend session history to the prompt
+            let history = session
+                .messages()
+                .iter()
+                .map(|msg| format!("{}: {}", msg.role(), msg.content()))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+
+            if !history.is_empty() {
+                merged_prompt = format!(
+                    "Previous conversation:\n{}\n\n---\n\n{}",
+                    history, merged_prompt
+                );
+            }
+        }
 
         // Call LLM (async operation - we need to block on it)
         let runtime = tokio::runtime::Runtime::new()
@@ -252,8 +375,72 @@ impl SimplePluginCommand for Agent {
                     .with_label(e.msg, call.head)
             })?;
 
-        // Format response as Nushell Value
-        Ok(crate::llm::format_response(&response, &config, call.head))
+        // Save messages to session if active
+        let mut message_count = 0;
+        let mut compaction_count = 0;
+
+        if let Some(mut session) = session_opt {
+            // Create and save user message
+            let user_msg = crate::session::Message::new("user".to_string(), prompt.clone());
+            session
+                .add_message(&self.store, user_msg)
+                .map_err(|e| LabeledError::new(format!("Failed to save user message: {}", e)))?;
+
+            // Create and save assistant message
+            let assistant_msg =
+                crate::session::Message::new("assistant".to_string(), response.clone());
+            session
+                .add_message(&self.store, assistant_msg)
+                .map_err(|e| {
+                    LabeledError::new(format!("Failed to save assistant message: {}", e))
+                })?;
+
+            // Check for compaction
+            let _compacted = session.maybe_compact(&self.store).map_err(|e| {
+                // Log warning but don't fail the command
+                eprintln!("Warning: Session compaction failed: {}", e);
+            });
+
+            // Get session stats for metadata
+            message_count = session.messages().len();
+            compaction_count = session.compaction_count();
+        }
+
+        // Format response with session metadata
+        let response_value = crate::llm::format_response(&response, &config, call.head);
+
+        // Add session metadata to response if session was used
+        if let Some(session_id) = final_session_id {
+            // Extract existing record
+            if let Ok(record) = response_value.as_record() {
+                let mut new_record = record.clone();
+
+                // Update _meta field with session info
+                if let Some(meta_value) = new_record.get("_meta") {
+                    if let Ok(meta_record) = meta_value.as_record() {
+                        let mut new_meta = meta_record.clone();
+                        new_meta.insert(
+                            "session_id".to_string(),
+                            Value::string(session_id, call.head),
+                        );
+                        new_meta.insert(
+                            "message_count".to_string(),
+                            Value::int(message_count as i64, call.head),
+                        );
+                        new_meta.insert(
+                            "compaction_count".to_string(),
+                            Value::int(compaction_count as i64, call.head),
+                        );
+
+                        new_record.insert("_meta".to_string(), Value::record(new_meta, call.head));
+
+                        return Ok(Value::record(new_record, call.head));
+                    }
+                }
+            }
+        }
+
+        Ok(response_value)
     }
 }
 
