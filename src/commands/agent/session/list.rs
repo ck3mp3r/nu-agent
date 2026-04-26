@@ -68,7 +68,3 @@ impl SimplePluginCommand for AgentSessionList {
         Ok(Value::list(session_values, call.head))
     }
 }
-
-#[cfg(test)]
-#[path = "agent_session_list_test.rs"]
-mod agent_session_list_test;

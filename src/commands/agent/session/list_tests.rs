@@ -1,4 +1,4 @@
-use crate::commands::agent_session_list::AgentSessionList;
+use super::AgentSessionList;
 use crate::session::{Message, SessionStore};
 use nu_plugin::SimplePluginCommand;
 use tempfile::TempDir;

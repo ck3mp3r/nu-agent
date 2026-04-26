@@ -1,9 +1,7 @@
 use nu_plugin::{Plugin, PluginCommand};
 
 use crate::commands::agent::Agent;
-use crate::commands::agent_session_clear::AgentSessionClear;
-use crate::commands::agent_session_inspect::AgentSessionInspect;
-use crate::commands::agent_session_list::AgentSessionList;
+use crate::commands::agent::session::{AgentSessionClear, AgentSessionInspect, AgentSessionList};
 use crate::session::SessionStore;
 
 pub struct AgentPlugin {
@@ -45,3 +43,6 @@ impl Plugin for AgentPlugin {
         ]
     }
 }
+
+#[cfg(test)]
+mod tests;

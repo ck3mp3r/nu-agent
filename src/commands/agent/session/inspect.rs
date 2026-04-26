@@ -103,7 +103,3 @@ impl SimplePluginCommand for AgentSessionInspect {
         Ok(Value::record(session_record, call.head))
     }
 }
-
-#[cfg(test)]
-#[path = "agent_session_inspect_test.rs"]
-mod agent_session_inspect_test;

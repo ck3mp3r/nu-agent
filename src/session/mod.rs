@@ -824,3 +824,6 @@ impl Default for SessionStore {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests;

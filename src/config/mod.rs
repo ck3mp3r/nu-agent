@@ -619,5 +619,4 @@ impl Default for Config {
 }
 
 #[cfg(test)]
-#[path = "config_test.rs"]
 mod tests;

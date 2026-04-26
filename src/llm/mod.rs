@@ -305,5 +305,4 @@ async fn call_ollama(config: &Config, prompt: &str) -> Result<String, LabeledErr
 }
 
 #[cfg(test)]
-#[path = "llm_test.rs"]
 mod tests;

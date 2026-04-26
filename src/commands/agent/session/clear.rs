@@ -51,7 +51,3 @@ impl SimplePluginCommand for AgentSessionClear {
         Ok(Value::nothing(call.head))
     }
 }
-
-#[cfg(test)]
-#[path = "agent_session_clear_test.rs"]
-mod agent_session_clear_test;

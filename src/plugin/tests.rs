@@ -1,4 +1,4 @@
-use crate::plugin::AgentPlugin;
+use super::AgentPlugin;
 use nu_plugin::Plugin;
 
 #[test]

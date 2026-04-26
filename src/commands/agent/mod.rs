@@ -518,10 +518,10 @@ fn resolve_with_old_config(
     Ok(config)
 }
 
-#[cfg(test)]
-#[path = "agent_test.rs"]
-mod agent_test;
+pub mod session;
 
 #[cfg(test)]
-#[path = "prompt_test.rs"]
-mod prompt_test;
+mod tests;
+
+#[cfg(test)]
+mod prompt_tests;
