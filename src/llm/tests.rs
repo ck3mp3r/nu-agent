@@ -296,7 +296,7 @@ fn test_format_response_basic() {
     };
 
     let response = "This is a test response from the LLM.";
-    let value = format_response(response, &config, Span::unknown());
+    let value = format_response(response, &config, None, 0, Span::unknown());
 
     let record = value.as_record().expect("Should be a record");
 
@@ -322,7 +322,7 @@ fn test_format_response_empty() {
         ..cfg("anthropic")
     };
 
-    let value = format_response("", &config, Span::unknown());
+    let value = format_response("", &config, None, 0, Span::unknown());
     let record = value.as_record().expect("Should be a record");
     assert_eq!(record.get("response").unwrap().as_str().unwrap(), "");
 }
@@ -336,7 +336,7 @@ fn test_format_response_includes_meta_field() {
     };
 
     let response = "Test response";
-    let value = format_response(response, &config, Span::unknown());
+    let value = format_response(response, &config, None, 0, Span::unknown());
 
     let record = value.as_record().expect("Should be a record");
 
@@ -350,11 +350,7 @@ fn test_format_response_includes_meta_field() {
     let meta = record.get("_meta").expect("_meta field should exist");
     let meta_record = meta.as_record().expect("_meta should be a record");
 
-    // Verify _meta contains required fields
-    assert!(
-        meta_record.contains("session_id"),
-        "_meta should contain session_id"
-    );
+    // Verify _meta contains required fields (session_id is optional)
     assert!(
         meta_record.contains("compacted"),
         "_meta should contain compacted"
@@ -368,15 +364,14 @@ fn test_format_response_includes_meta_field() {
         "_meta should contain tool_calls"
     );
 
-    // Verify default values (placeholders for now)
-    assert_eq!(
-        meta_record.get("session_id").unwrap().as_str().unwrap(),
-        "temp",
-        "session_id should default to 'temp'"
+    // Verify default values when no session_id is provided
+    assert!(
+        meta_record.get("session_id").is_none(),
+        "session_id should not be present when None is passed"
     );
     assert!(
         !meta_record.get("compacted").unwrap().as_bool().unwrap(),
-        "compacted should default to false"
+        "compacted should be false when compaction_count is 0"
     );
     assert_eq!(
         meta_record
@@ -385,7 +380,7 @@ fn test_format_response_includes_meta_field() {
             .as_int()
             .unwrap(),
         0,
-        "compaction_count should default to 0"
+        "compaction_count should be 0 when passed as 0"
     );
 
     // Verify tool_calls is an empty list
@@ -395,6 +390,54 @@ fn test_format_response_includes_meta_field() {
         tool_calls.as_list().unwrap().len(),
         0,
         "tool_calls should be empty by default"
+    );
+}
+
+#[test]
+fn test_format_response_with_session_metadata() {
+    let config = Config {
+        provider: "openai".to_string(),
+        model: "gpt-4".to_string(),
+        ..cfg("openai")
+    };
+
+    let response = "Test response";
+    let session_id = Some("abc123de");
+    let compaction_count = 3;
+    let value = format_response(
+        response,
+        &config,
+        session_id,
+        compaction_count,
+        Span::unknown(),
+    );
+
+    let record = value.as_record().expect("Should be a record");
+    let meta = record.get("_meta").expect("_meta field should exist");
+    let meta_record = meta.as_record().expect("_meta should be a record");
+
+    // Verify session_id is present
+    assert_eq!(
+        meta_record.get("session_id").unwrap().as_str().unwrap(),
+        "abc123de",
+        "session_id should match provided value"
+    );
+
+    // Verify compacted is true when compaction_count > 0
+    assert!(
+        meta_record.get("compacted").unwrap().as_bool().unwrap(),
+        "compacted should be true when compaction_count > 0"
+    );
+
+    // Verify compaction_count matches
+    assert_eq!(
+        meta_record
+            .get("compaction_count")
+            .unwrap()
+            .as_int()
+            .unwrap(),
+        3,
+        "compaction_count should match provided value"
     );
 }
 

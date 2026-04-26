@@ -156,34 +156,20 @@ pub fn merge_prompt_with_context(prompt: &str, context: Option<&str>) -> String 
 /// - Multiple session flags are provided together
 pub fn extract_and_validate_session_flags(
     call: &EvaluatedCall,
-) -> Result<(Option<String>, bool, bool), LabeledError> {
+) -> Result<(Option<String>, bool), LabeledError> {
     // Extract flags
     let session_id = call.get_flag::<String>("session").ok().flatten();
-    let new_session = call
-        .get_flag::<bool>("new-session")
-        .ok()
-        .flatten()
-        .unwrap_or(false);
-    let no_session = call
-        .get_flag::<bool>("no-session")
-        .ok()
-        .flatten()
-        .unwrap_or(false);
+    let new_session = call.has_flag("new-session")?;
 
-    // Count how many flags are set
-    let flag_count = (if session_id.is_some() { 1 } else { 0 })
-        + (if new_session { 1 } else { 0 })
-        + (if no_session { 1 } else { 0 });
-
-    // Validate mutual exclusion
-    if flag_count > 1 {
+    // Validate mutual exclusion: can't use both --session and --new-session
+    if session_id.is_some() && new_session {
         return Err(LabeledError::new("Conflicting session flags").with_label(
-            "Only one of --session, --new-session, or --no-session can be used",
+            "Cannot use both --session and --new-session together",
             call.head,
         ));
     }
 
-    Ok((session_id, new_session, no_session))
+    Ok((session_id, new_session))
 }
 
 pub struct Agent {
@@ -282,12 +268,7 @@ impl SimplePluginCommand for Agent {
             )
             .switch(
                 "new-session",
-                "Force create new session with auto-generated ID",
-                None,
-            )
-            .switch(
-                "no-session",
-                "Disable session management (ephemeral mode, default)",
+                "Create new session with auto-generated ID",
                 None,
             )
     }
@@ -300,7 +281,7 @@ impl SimplePluginCommand for Agent {
         input: &Value,
     ) -> Result<Value, LabeledError> {
         // Validate session flags
-        let (session_id, new_session, no_session) = extract_and_validate_session_flags(call)?;
+        let (session_id, new_session) = extract_and_validate_session_flags(call)?;
 
         // Resolve configuration from all sources with proper precedence:
         // default < env < plugin < flags
@@ -318,7 +299,7 @@ impl SimplePluginCommand for Agent {
         let mut final_session_id = None;
 
         // Load or create session if requested
-        if use_session && !no_session {
+        if use_session {
             let id = if let Some(id) = session_id {
                 id
             } else if new_session {
@@ -407,35 +388,33 @@ impl SimplePluginCommand for Agent {
         }
 
         // Format response with session metadata
-        let response_value = crate::llm::format_response(&response, &config, call.head);
+        let response_value = crate::llm::format_response(
+            &response,
+            &config,
+            final_session_id.as_deref(),
+            compaction_count,
+            call.head,
+        );
 
-        // Add session metadata to response if session was used
-        if let Some(session_id) = final_session_id {
+        // Add message_count to _meta if session was used
+        if final_session_id.is_some() {
             // Extract existing record
             if let Ok(record) = response_value.as_record() {
                 let mut new_record = record.clone();
 
-                // Update _meta field with session info
-                if let Some(meta_value) = new_record.get("_meta") {
-                    if let Ok(meta_record) = meta_value.as_record() {
-                        let mut new_meta = meta_record.clone();
-                        new_meta.insert(
-                            "session_id".to_string(),
-                            Value::string(session_id, call.head),
-                        );
-                        new_meta.insert(
-                            "message_count".to_string(),
-                            Value::int(message_count as i64, call.head),
-                        );
-                        new_meta.insert(
-                            "compaction_count".to_string(),
-                            Value::int(compaction_count as i64, call.head),
-                        );
+                // Update _meta field with message_count
+                if let Some(meta_value) = new_record.get("_meta")
+                    && let Ok(meta_record) = meta_value.as_record()
+                {
+                    let mut new_meta = meta_record.clone();
+                    new_meta.insert(
+                        "message_count".to_string(),
+                        Value::int(message_count as i64, call.head),
+                    );
 
-                        new_record.insert("_meta".to_string(), Value::record(new_meta, call.head));
+                    new_record.insert("_meta".to_string(), Value::record(new_meta, call.head));
 
-                        return Ok(Value::record(new_record, call.head));
-                    }
+                    return Ok(Value::record(new_record, call.head));
                 }
             }
         }

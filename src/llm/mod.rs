@@ -176,35 +176,51 @@ async fn call_github_copilot(config: &Config, prompt: &str) -> Result<String, La
 /// - `provider`: The provider used (String)
 /// - `timestamp`: ISO8601 timestamp of when the response was created (String)
 /// - `_meta`: Metadata record containing:
-///   - `session_id`: Session identifier (String, currently "temp")
-///   - `compacted`: Whether context has been compacted (Bool, default false)
-///   - `compaction_count`: Number of times context was compacted (Int, default 0)
+///   - `session_id`: Session identifier (String, optional - only included if Some)
+///   - `compacted`: Whether context has been compacted (Bool, derived from compaction_count > 0)
+///   - `compaction_count`: Number of times context was compacted (Int)
 ///   - `tool_calls`: List of tool calls made (List, default empty)
 ///
 /// # Arguments
 /// * `response` - The LLM response text
 /// * `config` - The configuration used for the request
+/// * `session_id` - Optional session identifier
+/// * `compaction_count` - Number of context compactions
 /// * `span` - The span for the Value
 ///
 /// # Returns
 /// A Value::Record containing the response and metadata
-pub fn format_response(response: &str, config: &Config, span: Span) -> Value {
+pub fn format_response(
+    response: &str,
+    config: &Config,
+    session_id: Option<&str>,
+    compaction_count: usize,
+    span: Span,
+) -> Value {
     use chrono::Utc;
 
     let timestamp = Utc::now().to_rfc3339();
 
-    // Create _meta record with placeholder values
-    let meta_record = Value::record(
-        vec![
-            ("session_id".to_string(), Value::string("temp", span)),
-            ("compacted".to_string(), Value::bool(false, span)),
-            ("compaction_count".to_string(), Value::int(0, span)),
-            ("tool_calls".to_string(), Value::list(vec![], span)),
-        ]
-        .into_iter()
-        .collect(),
-        span,
-    );
+    // Build _meta record fields
+    let mut meta_fields = vec![];
+
+    // Add session_id only if provided
+    if let Some(id) = session_id {
+        meta_fields.push(("session_id".to_string(), Value::string(id, span)));
+    }
+
+    // Add compaction metadata
+    meta_fields.push((
+        "compacted".to_string(),
+        Value::bool(compaction_count > 0, span),
+    ));
+    meta_fields.push((
+        "compaction_count".to_string(),
+        Value::int(compaction_count as i64, span),
+    ));
+    meta_fields.push(("tool_calls".to_string(), Value::list(vec![], span)));
+
+    let meta_record = Value::record(meta_fields.into_iter().collect(), span);
 
     Value::record(
         vec![
