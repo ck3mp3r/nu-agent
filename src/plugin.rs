@@ -1,6 +1,7 @@
 use nu_plugin::{Plugin, PluginCommand};
 
 use crate::commands::agent::Agent;
+use crate::commands::agent_session_inspect::AgentSessionInspect;
 use crate::commands::agent_session_list::AgentSessionList;
 use crate::session::SessionStore;
 
@@ -37,6 +38,7 @@ impl Plugin for AgentPlugin {
     fn commands(&self) -> Vec<Box<dyn PluginCommand<Plugin = Self>>> {
         vec![
             Box::new(Agent),
+            Box::new(AgentSessionInspect::new(self.session_store.clone())),
             Box::new(AgentSessionList::new(self.session_store.clone())),
         ]
     }

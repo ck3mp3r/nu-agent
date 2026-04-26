@@ -109,6 +109,16 @@ impl Session {
         &self.config
     }
 
+    /// Returns the session creation timestamp.
+    pub fn created_at(&self) -> &DateTime<Utc> {
+        &self.created_at
+    }
+
+    /// Returns the compaction count.
+    pub fn compaction_count(&self) -> usize {
+        self.compaction_count
+    }
+
     /// Adds a message to the session.
     ///
     /// This method appends the message to the session's messages vector and
@@ -468,6 +478,11 @@ impl Message {
     /// Returns the message content.
     pub fn content(&self) -> &str {
         &self.content
+    }
+
+    /// Returns the message timestamp.
+    pub fn timestamp(&self) -> &DateTime<Utc> {
+        &self.timestamp
     }
 }
 
