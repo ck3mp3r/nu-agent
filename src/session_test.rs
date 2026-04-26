@@ -198,6 +198,107 @@ fn test_append_message_writes_jsonl() {
     );
 }
 
+/// Test that list_sessions returns correct metadata for multiple sessions.
+#[test]
+fn test_list_sessions_returns_correct_metadata() {
+    use crate::session::Message;
+
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+
+    // Create 3 sessions with different numbers of messages
+    let session1_id = "test-session-1".to_string();
+    let mut session1 = store
+        .get_or_create(Some(session1_id.clone()))
+        .expect("Failed to create session1");
+
+    session1
+        .append_message(&store, Message::new("user".to_string(), "msg1".to_string()))
+        .expect("Failed to append to session1");
+    session1
+        .append_message(
+            &store,
+            Message::new("assistant".to_string(), "msg2".to_string()),
+        )
+        .expect("Failed to append to session1");
+
+    let session2_id = "test-session-2".to_string();
+    let mut session2 = store
+        .get_or_create(Some(session2_id.clone()))
+        .expect("Failed to create session2");
+
+    session2
+        .append_message(&store, Message::new("user".to_string(), "msg1".to_string()))
+        .expect("Failed to append to session2");
+
+    let session3_id = "test-session-3".to_string();
+    let _session3 = store
+        .get_or_create(Some(session3_id.clone()))
+        .expect("Failed to create session3");
+
+    // List sessions
+    let sessions = store.list_sessions().expect("Failed to list sessions");
+
+    // Should have 3 sessions
+    assert_eq!(sessions.len(), 3, "Should list 3 sessions");
+
+    // Find each session in the list
+    let s1 = sessions
+        .iter()
+        .find(|s| s.id == session1_id)
+        .expect("Should find session1");
+    let s2 = sessions
+        .iter()
+        .find(|s| s.id == session2_id)
+        .expect("Should find session2");
+    let s3 = sessions
+        .iter()
+        .find(|s| s.id == session3_id)
+        .expect("Should find session3");
+
+    // Verify message counts
+    assert_eq!(s1.message_count, 2, "Session1 should have 2 messages");
+    assert_eq!(s2.message_count, 1, "Session2 should have 1 message");
+    assert_eq!(s3.message_count, 0, "Session3 should have 0 messages");
+
+    // Verify all have compaction_count 0 (not implemented yet)
+    assert_eq!(s1.compaction_count, 0);
+    assert_eq!(s2.compaction_count, 0);
+    assert_eq!(s3.compaction_count, 0);
+
+    // Verify last_active is set (should be created_at for now)
+    assert!(
+        s1.last_active.timestamp() > 0,
+        "Should have valid timestamp"
+    );
+    assert!(
+        s2.last_active.timestamp() > 0,
+        "Should have valid timestamp"
+    );
+    assert!(
+        s3.last_active.timestamp() > 0,
+        "Should have valid timestamp"
+    );
+}
+
+/// Test that list_sessions returns empty vector for empty cache directory.
+#[test]
+fn test_list_sessions_empty_directory() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+
+    // List sessions in empty directory
+    let sessions = store
+        .list_sessions()
+        .expect("Failed to list sessions in empty directory");
+
+    assert_eq!(
+        sessions.len(),
+        0,
+        "Should return empty list for empty directory"
+    );
+}
+
 /// Test that load_session reads messages from JSONL file.
 #[test]
 fn test_load_session_with_messages() {

@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
 /// SessionStore manages session storage using XDG Base Directory specification.
@@ -24,6 +24,20 @@ pub struct Session {
     id: String,
     created_at: DateTime<Utc>,
     messages: Vec<Message>,
+}
+
+/// Information about a session, extracted from metadata without loading all messages.
+/// Used for listing sessions efficiently.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SessionInfo {
+    /// Session identifier
+    pub id: String,
+    /// Number of messages in the session (excluding metadata line)
+    pub message_count: usize,
+    /// Number of compactions performed on this session
+    pub compaction_count: usize,
+    /// Timestamp of last activity (currently same as created_at)
+    pub last_active: DateTime<Utc>,
 }
 
 impl Session {
@@ -265,6 +279,101 @@ impl SessionStore {
             id: metadata.session_id,
             created_at: metadata.created_at,
             messages,
+        })
+    }
+
+    /// Lists all sessions in the cache directory with their metadata.
+    ///
+    /// Reads all .jsonl files in the cache directory and extracts metadata
+    /// from the first line of each file. Does not load full message content.
+    ///
+    /// # Returns
+    /// A vector of SessionInfo containing session metadata and statistics.
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - The cache directory cannot be read
+    /// - Any session file cannot be read
+    /// - Any metadata line cannot be parsed as JSON
+    pub fn list_sessions(&self) -> io::Result<Vec<SessionInfo>> {
+        let mut sessions = Vec::new();
+
+        // Read all entries in cache directory
+        let entries = match fs::read_dir(&self.cache_dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                // Directory doesn't exist yet, return empty list
+                return Ok(sessions);
+            }
+            Err(e) => return Err(e),
+        };
+
+        for entry in entries {
+            let entry = entry?;
+            let path = entry.path();
+
+            // Only process .jsonl files
+            if path.extension().and_then(|s| s.to_str()) != Some("jsonl") {
+                continue;
+            }
+
+            // Extract session info from this file
+            if let Ok(info) = self.extract_session_info(&path) {
+                sessions.push(info);
+            }
+        }
+
+        Ok(sessions)
+    }
+
+    /// Extracts session info from a JSONL file by reading only the metadata line
+    /// and counting message lines.
+    ///
+    /// # Arguments
+    /// * `path` - Path to the session JSONL file
+    ///
+    /// # Returns
+    /// SessionInfo with extracted metadata and statistics.
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - The file cannot be opened
+    /// - The file is empty (no metadata line)
+    /// - The metadata line cannot be parsed as JSON
+    fn extract_session_info(&self, path: &Path) -> io::Result<SessionInfo> {
+        let file = fs::File::open(path)?;
+        let mut reader = BufReader::new(file);
+
+        // Read first line (metadata)
+        let mut metadata_line = String::new();
+        reader.read_line(&mut metadata_line)?;
+
+        if metadata_line.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Empty JSONL file",
+            ));
+        }
+
+        let metadata: SessionMetadata = serde_json::from_str(&metadata_line).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Failed to parse metadata: {}", e),
+            )
+        })?;
+
+        // Count remaining non-empty lines (messages)
+        let message_count = reader
+            .lines()
+            .map_while(Result::ok)
+            .filter(|line| !line.trim().is_empty())
+            .count();
+
+        Ok(SessionInfo {
+            id: metadata.session_id,
+            message_count,
+            compaction_count: 0, // Not implemented yet, will be added in future tasks
+            last_active: metadata.created_at, // For now, use created_at as last_active
         })
     }
 
