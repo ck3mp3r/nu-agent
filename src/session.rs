@@ -788,6 +788,35 @@ impl SessionStore {
         }
         Ok(())
     }
+
+    /// Deletes a session by removing its JSONL file from the cache directory.
+    ///
+    /// # Arguments
+    /// * `session_id` - The ID of the session to delete
+    ///
+    /// # Returns
+    /// Ok(()) if the session was successfully deleted.
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - The session file doesn't exist (io::ErrorKind::NotFound)
+    /// - The file cannot be deleted due to permissions or other I/O errors
+    pub fn delete_session(&self, session_id: &str) -> io::Result<()> {
+        let path = self.session_path(session_id);
+
+        // Check if the file exists before attempting to delete
+        if !path.exists() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("Session '{}' not found", session_id),
+            ));
+        }
+
+        // Delete the file
+        fs::remove_file(&path)?;
+
+        Ok(())
+    }
 }
 
 impl Default for SessionStore {
