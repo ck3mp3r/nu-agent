@@ -17,17 +17,31 @@ pub struct SessionStore {
     cache_dir: PathBuf,
 }
 
+/// Strategy for compacting messages when threshold is exceeded.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum CompactionStrategy {
+    /// Summarize messages using LLM (tasks 1.11)
+    Summarize,
+    /// Truncate oldest messages (task 1.12)
+    Truncate,
+    /// Keep sliding window of recent messages (task 1.13)
+    Sliding,
+}
+
 /// Configuration for session behavior.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionConfig {
     /// Maximum number of messages before compaction is triggered.
     pub compaction_threshold: usize,
+    /// Strategy to use for compaction.
+    pub compaction_strategy: CompactionStrategy,
 }
 
 impl Default for SessionConfig {
     fn default() -> Self {
         Self {
-            compaction_threshold: 100, // Default threshold
+            compaction_threshold: 100,                         // Default threshold
+            compaction_strategy: CompactionStrategy::Truncate, // Default strategy
         }
     }
 }
@@ -119,6 +133,82 @@ impl Session {
             self.trigger_compaction_placeholder();
         }
 
+        Ok(())
+    }
+
+    /// Checks if compaction is needed and performs it using the configured strategy.
+    ///
+    /// Compaction is triggered when the number of messages exceeds the configured
+    /// `compaction_threshold`. The specific compaction strategy is determined by
+    /// `config.compaction_strategy`.
+    ///
+    /// # Arguments
+    /// * `store` - The SessionStore used to resolve file paths
+    ///
+    /// # Returns
+    /// Ok(true) if compaction was triggered and performed, Ok(false) if no compaction
+    /// was needed, or Err if compaction failed.
+    ///
+    /// # Errors
+    /// Returns an error if the chosen compaction strategy fails.
+    pub fn maybe_compact(&mut self, store: &SessionStore) -> io::Result<bool> {
+        // Check if we exceed the threshold
+        if self.messages.len() <= self.config.compaction_threshold {
+            return Ok(false);
+        }
+
+        // Trigger compaction based on strategy
+        match self.config.compaction_strategy {
+            CompactionStrategy::Summarize => self.compact_summarize(store),
+            CompactionStrategy::Truncate => self.compact_truncate(store),
+            CompactionStrategy::Sliding => self.compact_sliding(store),
+        }?;
+
+        Ok(true)
+    }
+
+    /// Compacts messages using summarization strategy.
+    ///
+    /// This is a placeholder stub for task 1.11.
+    /// Future implementation will use LLM to summarize older messages.
+    ///
+    /// # Arguments
+    /// * `store` - The SessionStore used for file operations
+    ///
+    /// # Returns
+    /// Ok(()) when summarization succeeds.
+    fn compact_summarize(&mut self, _store: &SessionStore) -> io::Result<()> {
+        // Stub: Implementation in task 1.11
+        Ok(())
+    }
+
+    /// Compacts messages using truncation strategy.
+    ///
+    /// This is a placeholder stub for task 1.12.
+    /// Future implementation will remove oldest messages to stay under threshold.
+    ///
+    /// # Arguments
+    /// * `store` - The SessionStore used for file operations
+    ///
+    /// # Returns
+    /// Ok(()) when truncation succeeds.
+    fn compact_truncate(&mut self, _store: &SessionStore) -> io::Result<()> {
+        // Stub: Implementation in task 1.12
+        Ok(())
+    }
+
+    /// Compacts messages using sliding window strategy.
+    ///
+    /// This is a placeholder stub for task 1.13.
+    /// Future implementation will keep a sliding window of recent messages.
+    ///
+    /// # Arguments
+    /// * `store` - The SessionStore used for file operations
+    ///
+    /// # Returns
+    /// Ok(()) when sliding window compaction succeeds.
+    fn compact_sliding(&mut self, _store: &SessionStore) -> io::Result<()> {
+        // Stub: Implementation in task 1.13
         Ok(())
     }
 

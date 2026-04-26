@@ -463,6 +463,7 @@ fn test_add_message_triggers_compaction_on_threshold() {
     // Set compaction threshold to 3
     session.set_config(SessionConfig {
         compaction_threshold: 3,
+        compaction_strategy: crate::session::CompactionStrategy::Truncate,
     });
 
     // Add messages up to threshold
@@ -493,4 +494,156 @@ fn test_add_message_triggers_compaction_on_threshold() {
     // Should have triggered compaction (placeholder behavior for now)
     // For now, we just verify the method doesn't panic and still adds the message
     assert_eq!(session.messages().len(), 4);
+}
+
+/// Test that maybe_compact checks message count against threshold.
+/// With threshold=5, adding 6 messages should trigger compaction.
+#[test]
+fn test_maybe_compact_triggers_on_threshold() {
+    use crate::session::{Message, SessionConfig};
+
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+
+    let session_id = "test-maybe-compact".to_string();
+    let mut session = store
+        .get_or_create(Some(session_id.clone()))
+        .expect("Failed to create session");
+
+    // Set threshold to 5
+    session.set_config(SessionConfig {
+        compaction_threshold: 5,
+        compaction_strategy: crate::session::CompactionStrategy::Truncate,
+    });
+
+    // Add 6 messages (1 over threshold)
+    for i in 0..6 {
+        session
+            .add_message(
+                &store,
+                Message::new("user".to_string(), format!("msg{}", i)),
+            )
+            .expect("Failed to add message");
+    }
+
+    // Call maybe_compact
+    let compacted = session
+        .maybe_compact(&store)
+        .expect("maybe_compact should succeed");
+
+    // Should have triggered compaction
+    assert!(compacted, "Should have triggered compaction");
+}
+
+/// Test that maybe_compact does NOT trigger when under threshold.
+#[test]
+fn test_maybe_compact_does_not_trigger_under_threshold() {
+    use crate::session::{Message, SessionConfig};
+
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+
+    let session_id = "test-no-compact".to_string();
+    let mut session = store
+        .get_or_create(Some(session_id.clone()))
+        .expect("Failed to create session");
+
+    // Set threshold to 10
+    session.set_config(SessionConfig {
+        compaction_threshold: 10,
+        compaction_strategy: crate::session::CompactionStrategy::Truncate,
+    });
+
+    // Add only 5 messages (well under threshold)
+    for i in 0..5 {
+        session
+            .add_message(
+                &store,
+                Message::new("user".to_string(), format!("msg{}", i)),
+            )
+            .expect("Failed to add message");
+    }
+
+    // Call maybe_compact
+    let compacted = session
+        .maybe_compact(&store)
+        .expect("maybe_compact should succeed");
+
+    // Should NOT have triggered compaction
+    assert!(!compacted, "Should not trigger compaction under threshold");
+}
+
+/// Test that maybe_compact works with Summarize strategy.
+#[test]
+fn test_maybe_compact_summarize_strategy() {
+    use crate::session::{Message, SessionConfig};
+
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+
+    let session_id = "test-summarize".to_string();
+    let mut session = store
+        .get_or_create(Some(session_id.clone()))
+        .expect("Failed to create session");
+
+    session.set_config(SessionConfig {
+        compaction_threshold: 3,
+        compaction_strategy: crate::session::CompactionStrategy::Summarize,
+    });
+
+    // Add 4 messages (over threshold)
+    for i in 0..4 {
+        session
+            .add_message(
+                &store,
+                Message::new("user".to_string(), format!("msg{}", i)),
+            )
+            .expect("Failed to add message");
+    }
+
+    // Should succeed (even if strategy is stubbed)
+    let compacted = session
+        .maybe_compact(&store)
+        .expect("maybe_compact should succeed");
+
+    assert!(
+        compacted,
+        "Should trigger compaction with Summarize strategy"
+    );
+}
+
+/// Test that maybe_compact works with Sliding strategy.
+#[test]
+fn test_maybe_compact_sliding_strategy() {
+    use crate::session::{Message, SessionConfig};
+
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+
+    let session_id = "test-sliding".to_string();
+    let mut session = store
+        .get_or_create(Some(session_id.clone()))
+        .expect("Failed to create session");
+
+    session.set_config(SessionConfig {
+        compaction_threshold: 3,
+        compaction_strategy: crate::session::CompactionStrategy::Sliding,
+    });
+
+    // Add 4 messages (over threshold)
+    for i in 0..4 {
+        session
+            .add_message(
+                &store,
+                Message::new("user".to_string(), format!("msg{}", i)),
+            )
+            .expect("Failed to add message");
+    }
+
+    // Should succeed (even if strategy is stubbed)
+    let compacted = session
+        .maybe_compact(&store)
+        .expect("maybe_compact should succeed");
+
+    assert!(compacted, "Should trigger compaction with Sliding strategy");
 }
