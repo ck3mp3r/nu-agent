@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use tempfile::NamedTempFile;
 
 /// SessionStore manages session storage using XDG Base Directory specification.
 /// Sessions are stored in JSONL format in the cache directory.
@@ -323,8 +324,26 @@ impl Session {
             content.push('\n');
         }
 
-        // Write the complete file
-        fs::write(&path, content)?;
+        // Atomic write pattern: write to temp file in same directory, then rename
+        // This ensures crash-safety - if we crash during write, original file is intact
+        let parent_dir = path
+            .parent()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Invalid path"))?;
+
+        // Create temp file in the same directory as target (required for atomic rename)
+        let mut temp_file = NamedTempFile::new_in(parent_dir)?;
+
+        // Write all content to temp file
+        temp_file.write_all(content.as_bytes())?;
+
+        // Sync to disk before rename to ensure data is persisted
+        temp_file.flush()?;
+        temp_file.as_file().sync_all()?;
+
+        // Atomic rename: this is crash-safe - either succeeds completely or fails completely
+        // If we crash here, temp file exists but original is intact
+        // If rename succeeds, temp file becomes the new file atomically
+        temp_file.persist(&path)?;
 
         Ok(())
     }

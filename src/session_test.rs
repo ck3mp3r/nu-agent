@@ -1,5 +1,6 @@
 use crate::session::SessionStore;
 use std::fs;
+use std::os::unix::fs::MetadataExt;
 use tempfile::TempDir;
 
 /// Test that get_or_create with None generates a session ID with correct format.
@@ -1010,4 +1011,177 @@ fn test_compact_summarize_replaces_old_with_summary() {
     assert_eq!(loaded_session.messages()[1].content(), "msg12");
     assert_eq!(loaded_session.messages()[2].content(), "msg13");
     assert_eq!(loaded_session.messages()[3].content(), "msg14");
+}
+
+/// Test that rewrite_jsonl uses atomic writes via temp file + rename pattern.
+///
+/// This test verifies the crash-safety of JSONL rewriting by:
+/// 1. Creating a session with messages
+/// 2. Triggering compaction (which calls rewrite_jsonl)
+/// 3. Verifying final file is correct after rename
+/// 4. Verifying no temp files remain after successful write
+///
+/// The atomic pattern prevents corruption: if the process crashes during write,
+/// the original file remains intact (temp file exists but original is untouched).
+#[test]
+fn test_rewrite_jsonl_uses_atomic_writes() {
+    use crate::session::Message;
+
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+
+    let session_id = "test-atomic-write".to_string();
+    let mut session = store
+        .get_or_create(Some(session_id.clone()))
+        .expect("Failed to create session");
+
+    // Add messages to trigger compaction (need to exceed threshold of 100)
+    for i in 0..105 {
+        session
+            .add_message(
+                &store,
+                Message::new("user".to_string(), format!("message {}", i)),
+            )
+            .expect("Failed to add message");
+    }
+
+    // Get the final session file path
+    let jsonl_path = temp_dir.path().join(format!("{}.jsonl", session_id));
+    let dir_path = jsonl_path.parent().expect("Should have parent dir");
+
+    // Track files that exist during the write operation
+    // This is a challenge because the write happens synchronously
+    // Instead, we'll verify the implementation by checking:
+    // 1. That rewrite_jsonl doesn't corrupt on partial writes
+    // 2. That temp files are cleaned up
+
+    // Store original content before compaction
+    let original_content = fs::read_to_string(&jsonl_path).expect("Failed to read original file");
+    let original_lines: Vec<&str> = original_content.lines().collect();
+    let original_line_count = original_lines.len();
+
+    // Trigger compaction (which calls rewrite_jsonl internally)
+    let compacted = session
+        .maybe_compact(&store)
+        .expect("Failed to compact session");
+    assert!(compacted, "Compaction should have been triggered");
+
+    // After compaction, verify:
+    // 1. Final file exists and is valid
+    assert!(jsonl_path.exists(), "Final JSONL file should exist");
+
+    let content = fs::read_to_string(&jsonl_path).expect("Failed to read final file");
+    let lines: Vec<&str> = content.lines().collect();
+
+    // Should have metadata + kept messages after compaction
+    // Default sliding window keeps last 10 messages
+    assert!(
+        lines.len() >= 11,
+        "Should have at least 1 metadata line + 10 message lines, got {}",
+        lines.len()
+    );
+
+    // Verify we actually reduced the file size (compaction happened)
+    assert!(
+        lines.len() < original_line_count,
+        "File should be smaller after compaction: before={}, after={}",
+        original_line_count,
+        lines.len()
+    );
+
+    // 2. No temp files should remain after successful write
+    let temp_files: Vec<_> = fs::read_dir(dir_path)
+        .expect("Failed to read directory")
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            // Check for any tempfile patterns (tempfile crate uses various patterns)
+            name_str.starts_with(".tmp") || name_str.contains(".tmp") || name_str.starts_with("tmp")
+        })
+        .collect();
+
+    assert_eq!(
+        temp_files.len(),
+        0,
+        "No temp files should remain after atomic write completes. Found: {:?}",
+        temp_files.iter().map(|e| e.file_name()).collect::<Vec<_>>()
+    );
+
+    // 3. Verify metadata and compaction count
+    let metadata: serde_json::Value =
+        serde_json::from_str(lines[0]).expect("First line should be valid metadata");
+
+    assert_eq!(metadata.get("type").and_then(|v| v.as_str()), Some("meta"));
+    assert_eq!(
+        metadata.get("compaction_count").and_then(|v| v.as_u64()),
+        Some(1),
+        "Compaction count should be 1 after first compaction"
+    );
+
+    // 4. Verify all message lines are valid JSON
+    for (i, line) in lines.iter().enumerate().skip(1) {
+        serde_json::from_str::<serde_json::Value>(line)
+            .unwrap_or_else(|e| panic!("Line {} should be valid JSON: {}", i, e));
+    }
+}
+
+/// Test that verifies atomic write pattern is actually implemented.
+///
+/// This is a more direct test that checks implementation details:
+/// - File should be written to a temp location first
+/// - Then atomically renamed to final location
+///
+/// This test will FAIL with current implementation (fs::write) and
+/// PASS when tempfile + persist pattern is implemented.
+#[test]
+fn test_atomic_write_implementation() {
+    use crate::session::Message;
+
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+
+    let session_id = "test-atomic-impl".to_string();
+    let mut session = store
+        .get_or_create(Some(session_id.clone()))
+        .expect("Failed to create session");
+
+    // Add many messages to exceed compaction threshold
+    for i in 0..105 {
+        session
+            .add_message(
+                &store,
+                Message::new("user".to_string(), format!("message {}", i)),
+            )
+            .expect("Failed to add message");
+    }
+
+    let jsonl_path = temp_dir.path().join(format!("{}.jsonl", session_id));
+
+    // Read original file metadata to check if it gets replaced atomically
+    let original_metadata = fs::metadata(&jsonl_path).expect("Original file should exist");
+    let original_inode = original_metadata.ino();
+
+    // Small delay to ensure different timestamp
+    std::thread::sleep(std::time::Duration::from_millis(10));
+
+    // Trigger compaction
+    session
+        .maybe_compact(&store)
+        .expect("Compaction should succeed");
+
+    // After atomic rename, the inode should be DIFFERENT
+    // because rename() replaces the target file
+    let new_metadata = fs::metadata(&jsonl_path).expect("New file should exist");
+    let new_inode = new_metadata.ino();
+
+    // This assertion will FAIL with fs::write (same inode)
+    // and PASS with atomic rename (different inode)
+    assert_ne!(
+        original_inode, new_inode,
+        "Atomic write should result in different inode (temp file renamed). \
+         Current implementation uses fs::write which modifies in-place. \
+         Expected: temp file created -> written -> renamed (new inode). \
+         Got: same inode (non-atomic in-place write)"
+    );
 }
