@@ -349,12 +349,15 @@ impl SimplePluginCommand for Agent {
         let runtime = tokio::runtime::Runtime::new()
             .map_err(|e| LabeledError::new(format!("Failed to create async runtime: {}", e)))?;
 
-        let response = runtime
+        let llm_response = runtime
             .block_on(crate::llm::call_llm(&config, &merged_prompt))
             .map_err(|e| {
                 LabeledError::new(format!("LLM call failed: {}", e.msg))
                     .with_label(e.msg, call.head)
             })?;
+
+        // Extract text for session storage
+        let response_text = llm_response.text.clone();
 
         // Save messages to session if active
         let mut message_count = 0;
@@ -369,7 +372,7 @@ impl SimplePluginCommand for Agent {
 
             // Create and save assistant message
             let assistant_msg =
-                crate::session::Message::new("assistant".to_string(), response.clone());
+                crate::session::Message::new("assistant".to_string(), response_text.clone());
             session
                 .add_message(&self.store, assistant_msg)
                 .map_err(|e| {
@@ -389,7 +392,7 @@ impl SimplePluginCommand for Agent {
 
         // Format response with session metadata
         let response_value = crate::llm::format_response(
-            &response,
+            &llm_response,
             &config,
             final_session_id.as_deref(),
             compaction_count,

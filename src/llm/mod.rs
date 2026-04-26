@@ -4,6 +4,43 @@ use nu_protocol::{LabeledError, Span, Value};
 use rig::client::{CompletionClient, ProviderClient};
 use rig::providers::{anthropic, ollama, openai};
 
+/// Token usage statistics from LLM response.
+///
+/// Decoupled from rig's Usage type to:
+/// - Simplify testing (no dependency on rig in tests)
+/// - Enable future extensions (e.g., cost estimation)
+/// - Clean conversion to Nushell records
+#[derive(Debug, Clone, PartialEq)]
+pub struct LlmUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub total_tokens: u64,
+    pub cached_input_tokens: u64,
+    pub cache_creation_input_tokens: u64,
+}
+
+impl From<rig::completion::request::Usage> for LlmUsage {
+    fn from(usage: rig::completion::request::Usage) -> Self {
+        Self {
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
+            total_tokens: usage.total_tokens,
+            cached_input_tokens: usage.cached_input_tokens,
+            cache_creation_input_tokens: usage.cache_creation_input_tokens,
+        }
+    }
+}
+
+/// LLM response with text and usage statistics.
+///
+/// Returned by call_llm() to provide both the response text
+/// and token usage information for tracking and cost estimation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LlmResponse {
+    pub text: String,
+    pub usage: LlmUsage,
+}
+
 /// Routing decision for which provider to use.
 #[derive(Debug, PartialEq)]
 pub(crate) enum ProviderRoute {
@@ -88,7 +125,7 @@ pub(crate) fn resolve_api_key(config: &Config, provider: &str) -> Result<String,
 /// Call an LLM with the given prompt and configuration.
 ///
 /// Creates the appropriate provider client based on config.provider,
-/// sends the prompt, and returns the response.
+/// sends the prompt, and returns the response with usage statistics.
 ///
 /// Supports: openai, anthropic, ollama (custom providers via provider_impl)
 ///
@@ -97,14 +134,14 @@ pub(crate) fn resolve_api_key(config: &Config, provider: &str) -> Result<String,
 /// * `prompt` - The prompt to send to the LLM
 ///
 /// # Returns
-/// The LLM response as a string, or error if the call fails
+/// The LLM response with text and usage statistics, or error if the call fails
 ///
 /// # Errors
 /// - Missing API key when required (checks env var if config.api_key is None)
 /// - Unsupported provider
 /// - Invalid configuration
 /// - API errors (network, rate limits, etc.)
-pub async fn call_llm(config: &Config, prompt: &str) -> Result<String, LabeledError> {
+pub async fn call_llm(config: &Config, prompt: &str) -> Result<LlmResponse, LabeledError> {
     match route_provider(config) {
         ProviderRoute::OpenAI => call_openai(config, prompt).await,
         ProviderRoute::Anthropic => call_anthropic(config, prompt).await,
@@ -116,7 +153,7 @@ pub async fn call_llm(config: &Config, prompt: &str) -> Result<String, LabeledEr
     }
 }
 
-async fn call_github_copilot(config: &Config, prompt: &str) -> Result<String, LabeledError> {
+async fn call_github_copilot(config: &Config, prompt: &str) -> Result<LlmResponse, LabeledError> {
     let api_key = resolve_api_key(config, "github-copilot")?;
 
     // Parse backend from provider: "github-copilot/anthropic" -> "anthropic"
@@ -136,7 +173,7 @@ async fn call_github_copilot(config: &Config, prompt: &str) -> Result<String, La
             .map_err(|e| LabeledError::new(format!("Failed to create client: {}", e)))?
     };
 
-    use rig::completion::Prompt;
+    use rig::completion::Completion;
 
     match backend {
         "anthropic" => {
@@ -145,10 +182,28 @@ async fn call_github_copilot(config: &Config, prompt: &str) -> Result<String, La
                 _,
             >::new(client, &config.model);
             let agent = rig::agent::AgentBuilder::new(model).build();
-            agent
-                .prompt(prompt)
+            let builder = agent
+                .completion(prompt, Vec::<rig::completion::Message>::new())
                 .await
-                .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))
+                .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))?;
+            let completion_response = builder
+                .send()
+                .await
+                .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))?;
+
+            // Extract text from choice (OneOrMany<AssistantContent>)
+            // OneOrMany implements IntoIterator, extract first content item
+            let text = completion_response
+                .choice
+                .into_iter()
+                .next()
+                .and_then(|content| match content {
+                    rig::completion::AssistantContent::Text(text) => Some(text.to_string()),
+                    _ => None,
+                })
+                .unwrap_or_else(String::new);
+            let usage = completion_response.usage.into();
+            Ok(LlmResponse { text, usage })
         }
         "openai" => {
             let model = github_copilot::completion::CompletionModel::<
@@ -156,10 +211,28 @@ async fn call_github_copilot(config: &Config, prompt: &str) -> Result<String, La
                 _,
             >::new(client, &config.model);
             let agent = rig::agent::AgentBuilder::new(model).build();
-            agent
-                .prompt(prompt)
+            let builder = agent
+                .completion(prompt, Vec::<rig::completion::Message>::new())
                 .await
-                .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))
+                .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))?;
+            let completion_response = builder
+                .send()
+                .await
+                .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))?;
+
+            // Extract text from choice (OneOrMany<AssistantContent>)
+            // OneOrMany implements IntoIterator, extract first content item
+            let text = completion_response
+                .choice
+                .into_iter()
+                .next()
+                .and_then(|content| match content {
+                    rig::completion::AssistantContent::Text(text) => Some(text.to_string()),
+                    _ => None,
+                })
+                .unwrap_or_else(String::new);
+            let usage = completion_response.usage.into();
+            Ok(LlmResponse { text, usage })
         }
         _ => Err(LabeledError::new(format!(
             "Unknown GitHub Copilot backend: {}",
@@ -180,9 +253,15 @@ async fn call_github_copilot(config: &Config, prompt: &str) -> Result<String, La
 ///   - `compacted`: Whether context has been compacted (Bool, derived from compaction_count > 0)
 ///   - `compaction_count`: Number of times context was compacted (Int)
 ///   - `tool_calls`: List of tool calls made (List, default empty)
+///   - `usage`: Token usage statistics record containing:
+///     - `input_tokens`: Input tokens used (Int)
+///     - `output_tokens`: Output tokens used (Int)
+///     - `total_tokens`: Total tokens used (Int)
+///     - `cached_input_tokens`: Cached input tokens (Int)
+///     - `cache_creation_input_tokens`: Cache creation tokens (Int)
 ///
 /// # Arguments
-/// * `response` - The LLM response text
+/// * `llm_response` - The LLM response with text and usage
 /// * `config` - The configuration used for the request
 /// * `session_id` - Optional session identifier
 /// * `compaction_count` - Number of context compactions
@@ -191,7 +270,7 @@ async fn call_github_copilot(config: &Config, prompt: &str) -> Result<String, La
 /// # Returns
 /// A Value::Record containing the response and metadata
 pub fn format_response(
-    response: &str,
+    llm_response: &LlmResponse,
     config: &Config,
     session_id: Option<&str>,
     compaction_count: usize,
@@ -200,6 +279,35 @@ pub fn format_response(
     use chrono::Utc;
 
     let timestamp = Utc::now().to_rfc3339();
+
+    // Build usage record
+    let usage_record = Value::record(
+        vec![
+            (
+                "input_tokens".to_string(),
+                Value::int(llm_response.usage.input_tokens as i64, span),
+            ),
+            (
+                "output_tokens".to_string(),
+                Value::int(llm_response.usage.output_tokens as i64, span),
+            ),
+            (
+                "total_tokens".to_string(),
+                Value::int(llm_response.usage.total_tokens as i64, span),
+            ),
+            (
+                "cached_input_tokens".to_string(),
+                Value::int(llm_response.usage.cached_input_tokens as i64, span),
+            ),
+            (
+                "cache_creation_input_tokens".to_string(),
+                Value::int(llm_response.usage.cache_creation_input_tokens as i64, span),
+            ),
+        ]
+        .into_iter()
+        .collect(),
+        span,
+    );
 
     // Build _meta record fields
     let mut meta_fields = vec![];
@@ -220,11 +328,17 @@ pub fn format_response(
     ));
     meta_fields.push(("tool_calls".to_string(), Value::list(vec![], span)));
 
+    // Add usage record
+    meta_fields.push(("usage".to_string(), usage_record));
+
     let meta_record = Value::record(meta_fields.into_iter().collect(), span);
 
     Value::record(
         vec![
-            ("response".to_string(), Value::string(response, span)),
+            (
+                "response".to_string(),
+                Value::string(&llm_response.text, span),
+            ),
             ("model".to_string(), Value::string(&config.model, span)),
             (
                 "provider".to_string(),
@@ -239,7 +353,7 @@ pub fn format_response(
     )
 }
 
-async fn call_openai(config: &Config, prompt: &str) -> Result<String, LabeledError> {
+async fn call_openai(config: &Config, prompt: &str) -> Result<LlmResponse, LabeledError> {
     let key = resolve_api_key(config, &config.provider.clone())?;
 
     let client = if let Some(base_url) = &config.base_url {
@@ -259,14 +373,31 @@ async fn call_openai(config: &Config, prompt: &str) -> Result<String, LabeledErr
 
     let agent = client.agent(&config.model).build();
 
-    use rig::completion::Prompt;
-    agent
-        .prompt(prompt)
+    use rig::completion::Completion;
+    let builder = agent
+        .completion(prompt, Vec::<rig::completion::Message>::new())
         .await
-        .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))
+        .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))?;
+    let completion_response = builder
+        .send()
+        .await
+        .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))?;
+
+    // Extract text from choice (OneOrMany<AssistantContent>)
+    let text = completion_response
+        .choice
+        .into_iter()
+        .next()
+        .and_then(|content| match content {
+            rig::completion::AssistantContent::Text(text) => Some(text.to_string()),
+            _ => None,
+        })
+        .unwrap_or_else(String::new);
+    let usage = completion_response.usage.into();
+    Ok(LlmResponse { text, usage })
 }
 
-async fn call_anthropic(config: &Config, prompt: &str) -> Result<String, LabeledError> {
+async fn call_anthropic(config: &Config, prompt: &str) -> Result<LlmResponse, LabeledError> {
     let key = resolve_api_key(config, "anthropic")?;
 
     let client = if let Some(base_url) = &config.base_url {
@@ -292,14 +423,31 @@ async fn call_anthropic(config: &Config, prompt: &str) -> Result<String, Labeled
 
     let agent = agent_builder.build();
 
-    use rig::completion::Prompt;
-    agent
-        .prompt(prompt)
+    use rig::completion::Completion;
+    let builder = agent
+        .completion(prompt, Vec::<rig::completion::Message>::new())
         .await
-        .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))
+        .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))?;
+    let completion_response = builder
+        .send()
+        .await
+        .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))?;
+
+    // Extract text from choice (OneOrMany<AssistantContent>)
+    let text = completion_response
+        .choice
+        .into_iter()
+        .next()
+        .and_then(|content| match content {
+            rig::completion::AssistantContent::Text(text) => Some(text.to_string()),
+            _ => None,
+        })
+        .unwrap_or_else(String::new);
+    let usage = completion_response.usage.into();
+    Ok(LlmResponse { text, usage })
 }
 
-async fn call_ollama(config: &Config, prompt: &str) -> Result<String, LabeledError> {
+async fn call_ollama(config: &Config, prompt: &str) -> Result<LlmResponse, LabeledError> {
     let base_url = config
         .base_url
         .as_deref()
@@ -313,11 +461,28 @@ async fn call_ollama(config: &Config, prompt: &str) -> Result<String, LabeledErr
 
     let agent = client.agent(&config.model).build();
 
-    use rig::completion::Prompt;
-    agent
-        .prompt(prompt)
+    use rig::completion::Completion;
+    let builder = agent
+        .completion(prompt, Vec::<rig::completion::Message>::new())
         .await
-        .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))
+        .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))?;
+    let completion_response = builder
+        .send()
+        .await
+        .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))?;
+
+    // Extract text from choice (OneOrMany<AssistantContent>)
+    let text = completion_response
+        .choice
+        .into_iter()
+        .next()
+        .and_then(|content| match content {
+            rig::completion::AssistantContent::Text(text) => Some(text.to_string()),
+            _ => None,
+        })
+        .unwrap_or_else(String::new);
+    let usage = completion_response.usage.into();
+    Ok(LlmResponse { text, usage })
 }
 
 #[cfg(test)]

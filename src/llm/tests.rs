@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::llm::{
-    ProviderRoute, call_llm, format_response, parse_github_copilot_backend, resolve_api_key,
-    route_provider,
+    LlmResponse, LlmUsage, ProviderRoute, call_llm, format_response, parse_github_copilot_backend,
+    resolve_api_key, route_provider,
 };
 use nu_protocol::Span;
 
@@ -28,6 +28,19 @@ fn cfg_with_key(provider: &str, key: &str) -> Config {
     Config {
         api_key: Some(key.to_string()),
         ..cfg(provider)
+    }
+}
+
+fn test_llm_response(text: &str) -> LlmResponse {
+    LlmResponse {
+        text: text.to_string(),
+        usage: LlmUsage {
+            input_tokens: 100,
+            output_tokens: 50,
+            total_tokens: 150,
+            cached_input_tokens: 10,
+            cache_creation_input_tokens: 5,
+        },
     }
 }
 
@@ -295,8 +308,9 @@ fn test_format_response_basic() {
         ..cfg("openai")
     };
 
-    let response = "This is a test response from the LLM.";
-    let value = format_response(response, &config, None, 0, Span::unknown());
+    let response_text = "This is a test response from the LLM.";
+    let llm_response = test_llm_response(response_text);
+    let value = format_response(&llm_response, &config, None, 0, Span::unknown());
 
     let record = value.as_record().expect("Should be a record");
 
@@ -305,7 +319,10 @@ fn test_format_response_basic() {
     assert!(record.contains("provider"));
     assert!(record.contains("timestamp"));
 
-    assert_eq!(record.get("response").unwrap().as_str().unwrap(), response);
+    assert_eq!(
+        record.get("response").unwrap().as_str().unwrap(),
+        response_text
+    );
     assert_eq!(record.get("model").unwrap().as_str().unwrap(), "gpt-4");
     assert_eq!(record.get("provider").unwrap().as_str().unwrap(), "openai");
 
@@ -322,7 +339,8 @@ fn test_format_response_empty() {
         ..cfg("anthropic")
     };
 
-    let value = format_response("", &config, None, 0, Span::unknown());
+    let llm_response = test_llm_response("");
+    let value = format_response(&llm_response, &config, None, 0, Span::unknown());
     let record = value.as_record().expect("Should be a record");
     assert_eq!(record.get("response").unwrap().as_str().unwrap(), "");
 }
@@ -335,8 +353,8 @@ fn test_format_response_includes_meta_field() {
         ..cfg("openai")
     };
 
-    let response = "Test response";
-    let value = format_response(response, &config, None, 0, Span::unknown());
+    let llm_response = test_llm_response("Test response");
+    let value = format_response(&llm_response, &config, None, 0, Span::unknown());
 
     let record = value.as_record().expect("Should be a record");
 
@@ -362,6 +380,40 @@ fn test_format_response_includes_meta_field() {
     assert!(
         meta_record.contains("tool_calls"),
         "_meta should contain tool_calls"
+    );
+    assert!(meta_record.contains("usage"), "_meta should contain usage");
+
+    // Verify usage record exists and has correct fields
+    let usage = meta_record.get("usage").unwrap();
+    let usage_record = usage.as_record().expect("usage should be a record");
+
+    assert_eq!(
+        usage_record.get("input_tokens").unwrap().as_int().unwrap(),
+        100
+    );
+    assert_eq!(
+        usage_record.get("output_tokens").unwrap().as_int().unwrap(),
+        50
+    );
+    assert_eq!(
+        usage_record.get("total_tokens").unwrap().as_int().unwrap(),
+        150
+    );
+    assert_eq!(
+        usage_record
+            .get("cached_input_tokens")
+            .unwrap()
+            .as_int()
+            .unwrap(),
+        10
+    );
+    assert_eq!(
+        usage_record
+            .get("cache_creation_input_tokens")
+            .unwrap()
+            .as_int()
+            .unwrap(),
+        5
     );
 
     // Verify default values when no session_id is provided
@@ -401,11 +453,11 @@ fn test_format_response_with_session_metadata() {
         ..cfg("openai")
     };
 
-    let response = "Test response";
+    let llm_response = test_llm_response("Test response");
     let session_id = Some("abc123de");
     let compaction_count = 3;
     let value = format_response(
-        response,
+        &llm_response,
         &config,
         session_id,
         compaction_count,
@@ -459,4 +511,98 @@ fn github_copilot_backend_types_exist() {
 
     assert_eq!(AnthropicBackend.backend_name(), "anthropic");
     assert_eq!(OpenAIBackend.backend_name(), "openai");
+}
+
+// ============================================================================
+// LlmUsage and LlmResponse tests — pure data structures
+// ============================================================================
+
+#[test]
+fn llm_usage_struct_has_all_fields() {
+    use crate::llm::LlmUsage;
+
+    let usage = LlmUsage {
+        input_tokens: 100,
+        output_tokens: 50,
+        total_tokens: 150,
+        cached_input_tokens: 20,
+        cache_creation_input_tokens: 10,
+    };
+
+    assert_eq!(usage.input_tokens, 100);
+    assert_eq!(usage.output_tokens, 50);
+    assert_eq!(usage.total_tokens, 150);
+    assert_eq!(usage.cached_input_tokens, 20);
+    assert_eq!(usage.cache_creation_input_tokens, 10);
+}
+
+#[test]
+fn llm_response_struct_has_text_and_usage() {
+    use crate::llm::{LlmResponse, LlmUsage};
+
+    let usage = LlmUsage {
+        input_tokens: 100,
+        output_tokens: 50,
+        total_tokens: 150,
+        cached_input_tokens: 20,
+        cache_creation_input_tokens: 10,
+    };
+
+    let response = LlmResponse {
+        text: "Hello, world!".to_string(),
+        usage,
+    };
+
+    assert_eq!(response.text, "Hello, world!");
+    assert_eq!(response.usage.input_tokens, 100);
+    assert_eq!(response.usage.output_tokens, 50);
+}
+
+#[test]
+fn llm_usage_converts_from_rig_usage() {
+    use crate::llm::LlmUsage;
+    use rig::completion::request::Usage as RigUsage;
+
+    let rig_usage = RigUsage {
+        input_tokens: 200,
+        output_tokens: 75,
+        total_tokens: 275,
+        cached_input_tokens: 30,
+        cache_creation_input_tokens: 15,
+    };
+
+    let llm_usage: LlmUsage = rig_usage.into();
+
+    assert_eq!(llm_usage.input_tokens, 200);
+    assert_eq!(llm_usage.output_tokens, 75);
+    assert_eq!(llm_usage.total_tokens, 275);
+    assert_eq!(llm_usage.cached_input_tokens, 30);
+    assert_eq!(llm_usage.cache_creation_input_tokens, 15);
+}
+
+// ============================================================================
+// call_llm() return type tests - verifying LlmResponse
+// ============================================================================
+
+// Note: These tests verify that call_llm() *would* return LlmResponse,
+// but we can't actually test the async implementation without real API calls.
+// We verify the signature change compiles and the error path works.
+
+#[tokio::test]
+#[serial_test::serial]
+async fn test_call_llm_would_return_llm_response_not_string() {
+    // This test verifies the signature changed from Result<String, _> to Result<LlmResponse, _>
+    // We can only test error cases without real API calls
+    unsafe { std::env::remove_var("OPENAI_API_KEY") };
+
+    let result = call_llm(&cfg("openai"), "test prompt").await;
+
+    // This should be Err since no API key
+    assert!(result.is_err());
+
+    // If it were Ok, the type would be LlmResponse (compile-time check)
+    // Uncomment to verify compile error if Result<String> was returned:
+    // if let Ok(response) = result {
+    //     let _usage = response.usage;  // Would fail if response was String
+    // }
 }

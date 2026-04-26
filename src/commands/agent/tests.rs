@@ -1149,23 +1149,6 @@ mod session_flags_tests {
         );
     }
 
-    #[test]
-    fn agent_command_signature_has_no_session_flag() {
-        // RED: Test that --no-session flag exists
-        let (agent, _temp_dir) = create_test_agent();
-        let sig = SimplePluginCommand::signature(&agent);
-
-        let no_session_flag = sig.named.iter().find(|f| f.long == "no-session");
-        assert!(no_session_flag.is_some(), "Missing --no-session flag");
-
-        let flag = no_session_flag.unwrap();
-        // Should be a switch (no argument)
-        assert_eq!(flag.arg, None, "--no-session should be a switch");
-        assert!(
-            !flag.desc.is_empty(),
-            "Missing description for --no-session"
-        );
-    }
 }
 
 // Tests for session flag validation
@@ -1178,7 +1161,6 @@ mod session_validation_tests {
     fn create_mock_call_with_session_flags(
         session: Option<&str>,
         new_session: bool,
-        no_session: bool,
     ) -> EvaluatedCall {
         let mut named = vec![];
 
@@ -1202,16 +1184,6 @@ mod session_validation_tests {
             ));
         }
 
-        if no_session {
-            named.push((
-                Spanned {
-                    item: "no-session".to_string(),
-                    span: Span::test_data(),
-                },
-                Some(Value::test_bool(true)),
-            ));
-        }
-
         EvaluatedCall {
             head: Span::test_data(),
             positional: vec![],
@@ -1222,59 +1194,43 @@ mod session_validation_tests {
     #[test]
     fn validate_session_flags_accepts_session_id_only() {
         // RED: Test that --session <id> alone is valid
-        let call = create_mock_call_with_session_flags(Some("my-session"), false, false);
+        let call = create_mock_call_with_session_flags(Some("my-session"), false);
         let result = extract_and_validate_session_flags(&call);
 
         assert!(result.is_ok(), "Should accept --session alone");
-        let (session_id, new_session, no_session) = result.unwrap();
+        let (session_id, new_session) = result.unwrap();
         assert_eq!(session_id, Some("my-session".to_string()));
         assert!(!new_session);
-        assert!(!no_session);
     }
 
     #[test]
     fn validate_session_flags_accepts_new_session_only() {
         // RED: Test that --new-session alone is valid
-        let call = create_mock_call_with_session_flags(None, true, false);
+        let call = create_mock_call_with_session_flags(None, true);
         let result = extract_and_validate_session_flags(&call);
 
         assert!(result.is_ok(), "Should accept --new-session alone");
-        let (session_id, new_session, no_session) = result.unwrap();
+        let (session_id, new_session) = result.unwrap();
         assert!(session_id.is_none());
         assert!(new_session);
-        assert!(!no_session);
-    }
-
-    #[test]
-    fn validate_session_flags_accepts_no_session_only() {
-        // RED: Test that --no-session alone is valid
-        let call = create_mock_call_with_session_flags(None, false, true);
-        let result = extract_and_validate_session_flags(&call);
-
-        assert!(result.is_ok(), "Should accept --no-session alone");
-        let (session_id, new_session, no_session) = result.unwrap();
-        assert!(session_id.is_none());
-        assert!(!new_session);
-        assert!(no_session);
     }
 
     #[test]
     fn validate_session_flags_accepts_no_flags() {
         // RED: Test that no session flags is valid (default behavior)
-        let call = create_mock_call_with_session_flags(None, false, false);
+        let call = create_mock_call_with_session_flags(None, false);
         let result = extract_and_validate_session_flags(&call);
 
         assert!(result.is_ok(), "Should accept no session flags");
-        let (session_id, new_session, no_session) = result.unwrap();
+        let (session_id, new_session) = result.unwrap();
         assert!(session_id.is_none());
         assert!(!new_session);
-        assert!(!no_session);
     }
 
     #[test]
     fn validate_session_flags_rejects_session_and_new_session() {
         // RED: Test that --session and --new-session together is invalid
-        let call = create_mock_call_with_session_flags(Some("my-session"), true, false);
+        let call = create_mock_call_with_session_flags(Some("my-session"), true);
         let result = extract_and_validate_session_flags(&call);
 
         assert!(
@@ -1283,46 +1239,7 @@ mod session_validation_tests {
         );
         let err = result.unwrap_err();
         assert!(err.msg.contains("Conflicting") || err.msg.contains("exclusive"));
-    }
-
-    #[test]
-    fn validate_session_flags_rejects_session_and_no_session() {
-        // RED: Test that --session and --no-session together is invalid
-        let call = create_mock_call_with_session_flags(Some("my-session"), false, true);
-        let result = extract_and_validate_session_flags(&call);
-
-        assert!(
-            result.is_err(),
-            "Should reject --session and --no-session together"
-        );
-        let err = result.unwrap_err();
-        assert!(err.msg.contains("Conflicting") || err.msg.contains("exclusive"));
-    }
-
-    #[test]
-    fn validate_session_flags_rejects_new_session_and_no_session() {
-        // RED: Test that --new-session and --no-session together is invalid
-        let call = create_mock_call_with_session_flags(None, true, true);
-        let result = extract_and_validate_session_flags(&call);
-
-        assert!(
-            result.is_err(),
-            "Should reject --new-session and --no-session together"
-        );
-        let err = result.unwrap_err();
-        assert!(err.msg.contains("Conflicting") || err.msg.contains("exclusive"));
-    }
-
-    #[test]
-    fn validate_session_flags_rejects_all_three() {
-        // RED: Test that all three flags together is invalid
-        let call = create_mock_call_with_session_flags(Some("my-session"), true, true);
-        let result = extract_and_validate_session_flags(&call);
-
-        assert!(result.is_err(), "Should reject all three flags together");
-        let err = result.unwrap_err();
-        assert!(err.msg.contains("Conflicting") || err.msg.contains("exclusive"));
-    }
+}
 }
 
 // Integration tests for session functionality
@@ -1456,60 +1373,43 @@ mod session_integration_tests {
     #[test]
     fn extract_session_flags_with_session_id() {
         // Test extracting --session flag
-        let call = create_mock_call_with_session_flags(Some("my-session"), false, false);
+        let call = create_mock_call_with_session_flags(Some("my-session"), false);
         let result = extract_and_validate_session_flags(&call);
 
         assert!(result.is_ok());
-        let (session_id, new_session, no_session) = result.unwrap();
+        let (session_id, new_session) = result.unwrap();
         assert_eq!(session_id, Some("my-session".to_string()));
         assert!(!new_session);
-        assert!(!no_session);
     }
 
     #[test]
     fn extract_session_flags_with_new_session() {
         // Test extracting --new-session flag
-        let call = create_mock_call_with_session_flags(None, true, false);
+        let call = create_mock_call_with_session_flags(None, true);
         let result = extract_and_validate_session_flags(&call);
 
         assert!(result.is_ok());
-        let (session_id, new_session, no_session) = result.unwrap();
+        let (session_id, new_session) = result.unwrap();
         assert!(session_id.is_none());
         assert!(new_session);
-        assert!(!no_session);
-    }
-
-    #[test]
-    fn extract_session_flags_with_no_session() {
-        // Test extracting --no-session flag
-        let call = create_mock_call_with_session_flags(None, false, true);
-        let result = extract_and_validate_session_flags(&call);
-
-        assert!(result.is_ok());
-        let (session_id, new_session, no_session) = result.unwrap();
-        assert!(session_id.is_none());
-        assert!(!new_session);
-        assert!(no_session);
     }
 
     #[test]
     fn extract_session_flags_default_no_flags() {
         // Test default behavior (no session flags)
-        let call = create_mock_call_with_session_flags(None, false, false);
+        let call = create_mock_call_with_session_flags(None, false);
         let result = extract_and_validate_session_flags(&call);
 
         assert!(result.is_ok());
-        let (session_id, new_session, no_session) = result.unwrap();
+        let (session_id, new_session) = result.unwrap();
         assert!(session_id.is_none());
         assert!(!new_session);
-        assert!(!no_session);
     }
 
     /// Helper to create a mock EvaluatedCall for testing (imported from session_validation_tests)
     fn create_mock_call_with_session_flags(
         session: Option<&str>,
         new_session: bool,
-        no_session: bool,
     ) -> EvaluatedCall {
         let mut named = vec![];
 
@@ -1527,16 +1427,6 @@ mod session_integration_tests {
             named.push((
                 Spanned {
                     item: "new-session".to_string(),
-                    span: Span::test_data(),
-                },
-                Some(Value::test_bool(true)),
-            ));
-        }
-
-        if no_session {
-            named.push((
-                Spanned {
-                    item: "no-session".to_string(),
                     span: Span::test_data(),
                 },
                 Some(Value::test_bool(true)),
