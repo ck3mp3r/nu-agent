@@ -41,6 +41,7 @@ fn test_llm_response(text: &str) -> LlmResponse {
             cached_input_tokens: 10,
             cache_creation_input_tokens: 5,
         },
+        tool_calls: vec![],
     }
 }
 
@@ -236,7 +237,7 @@ fn rejects_empty_backend_after_prefix() {
 async fn test_call_llm_missing_api_key() {
     unsafe { std::env::remove_var("OPENAI_API_KEY") };
 
-    let result = call_llm(&cfg("openai"), "test prompt").await;
+    let result = call_llm(&cfg("openai"), "test prompt", vec![]).await;
     assert!(result.is_err());
 
     let err = result.unwrap_err();
@@ -250,7 +251,7 @@ async fn test_call_llm_missing_api_key() {
 #[tokio::test]
 async fn test_call_llm_unsupported_provider() {
     let config = cfg_with_key("unsupported", "key");
-    let result = call_llm(&config, "test prompt").await;
+    let result = call_llm(&config, "test prompt", vec![]).await;
     assert!(result.is_err());
 
     let err = result.unwrap_err();
@@ -262,7 +263,7 @@ async fn test_call_llm_unsupported_provider() {
 async fn call_llm_returns_err_for_missing_anthropic_key() {
     unsafe { std::env::remove_var("ANTHROPIC_API_KEY") };
 
-    let result = call_llm(&cfg("anthropic"), "test prompt").await;
+    let result = call_llm(&cfg("anthropic"), "test prompt", vec![]).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().msg.contains("Missing API key"));
 }
@@ -272,7 +273,7 @@ async fn call_llm_returns_err_for_missing_anthropic_key() {
 async fn call_llm_returns_err_for_missing_github_token() {
     unsafe { std::env::remove_var("GITHUB_TOKEN") };
 
-    let result = call_llm(&cfg("github-copilot/anthropic"), "test prompt").await;
+    let result = call_llm(&cfg("github-copilot/anthropic"), "test prompt", vec![]).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().msg.contains("Missing API key"));
 }
@@ -281,7 +282,7 @@ async fn call_llm_returns_err_for_missing_github_token() {
 #[ignore]
 async fn call_llm_returns_err_for_unknown_github_copilot_backend() {
     let config = cfg_with_key("github-copilot/foobar", "ghp-key");
-    let result = call_llm(&config, "test prompt").await;
+    let result = call_llm(&config, "test prompt", vec![]).await;
     assert!(result.is_err());
     let msg = result.unwrap_err().msg;
     assert!(
@@ -551,6 +552,7 @@ fn llm_response_struct_has_text_and_usage() {
     let response = LlmResponse {
         text: "Hello, world!".to_string(),
         usage,
+        tool_calls: vec![],
     };
 
     assert_eq!(response.text, "Hello, world!");
@@ -595,7 +597,7 @@ async fn test_call_llm_would_return_llm_response_not_string() {
     // We can only test error cases without real API calls
     unsafe { std::env::remove_var("OPENAI_API_KEY") };
 
-    let result = call_llm(&cfg("openai"), "test prompt").await;
+    let result = call_llm(&cfg("openai"), "test prompt", vec![]).await;
 
     // This should be Err since no API key
     assert!(result.is_err());
@@ -605,4 +607,46 @@ async fn test_call_llm_would_return_llm_response_not_string() {
     // if let Ok(response) = result {
     //     let _usage = response.usage;  // Would fail if response was String
     // }
+}
+
+// ============================================================================
+// Tool definitions parameter tests
+// ============================================================================
+
+#[tokio::test]
+async fn call_llm_accepts_empty_tool_definitions() {
+    // RED: Test that call_llm accepts tools parameter (even if empty)
+    // This should compile and not fail due to empty tools
+    let tools = vec![];
+    let result = call_llm(&cfg("openai"), "test prompt", tools).await;
+
+    // Expected to fail due to no API key, but function signature should accept tools
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn call_llm_accepts_tool_definitions() {
+    // RED: Test that call_llm accepts actual tool definitions
+    use rig::completion::ToolDefinition;
+    use serde_json::json;
+
+    let tools = vec![ToolDefinition {
+        name: "add".to_string(),
+        description: "Add two numbers".to_string(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "args": {
+                    "type": "array",
+                    "items": {}
+                }
+            },
+            "required": ["args"]
+        }),
+    }];
+
+    let result = call_llm(&cfg("openai"), "test prompt", tools).await;
+
+    // Expected to fail due to no API key, but function should accept tools
+    assert!(result.is_err());
 }

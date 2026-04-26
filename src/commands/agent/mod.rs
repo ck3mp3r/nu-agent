@@ -6,6 +6,8 @@ use crate::{
     config::{Config, PluginConfig},
 };
 
+mod tool_handler;
+
 /// Trait abstracting the engine interface functionality needed for config resolution.
 ///
 /// This allows us to mock the EngineInterface for testing without needing
@@ -172,6 +174,84 @@ pub fn extract_and_validate_session_flags(
     Ok((session_id, new_session))
 }
 
+/// Extract and parse closures from --tools flag.
+///
+/// Returns a HashMap of tool name to Spanned<Closure>, filtering out any non-closure values.
+/// If the flag is not provided or is not a record, returns an empty HashMap.
+///
+/// # Arguments
+/// * `call` - The EvaluatedCall containing the --tools flag
+///
+/// # Returns
+/// HashMap of tool names to spanned closures
+pub fn extract_tools_from_call(
+    call: &EvaluatedCall,
+) -> Result<
+    std::collections::HashMap<String, nu_protocol::Spanned<nu_protocol::engine::Closure>>,
+    LabeledError,
+> {
+    use std::collections::HashMap;
+
+    // Try to get --tools flag
+    let tools_value: Option<Value> = call.get_flag("tools").ok().flatten();
+
+    match tools_value {
+        Some(Value::Record { val, .. }) => {
+            // Filter and extract closures from the record
+            let closures = val
+                .iter()
+                .filter_map(|(name, value)| {
+                    if let Value::Closure {
+                        val, internal_span, ..
+                    } = value
+                    {
+                        // val is a Box<Closure>, need to deref and clone
+                        // Wrap with span to preserve source location
+                        Some((
+                            name.to_string(),
+                            nu_protocol::Spanned {
+                                item: (**val).clone(),
+                                span: *internal_span,
+                            },
+                        ))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            Ok(closures)
+        }
+        Some(_) => {
+            // Non-record value provided - return empty HashMap (graceful handling)
+            Ok(HashMap::new())
+        }
+        None => {
+            // Flag not provided - return empty HashMap
+            Ok(HashMap::new())
+        }
+    }
+}
+
+/// Extract and parse --tool-timeout flag.
+///
+/// Returns a Duration parsed from Nushell duration value (i64 nanoseconds).
+/// If the flag is not provided, returns default of 30 seconds.
+///
+/// # Arguments
+/// * `call` - The EvaluatedCall containing the --tool-timeout flag
+///
+/// # Returns
+/// Duration for tool execution timeout
+pub fn extract_tool_timeout(call: &EvaluatedCall) -> std::time::Duration {
+    // Extract the flag value (i64 nanoseconds)
+    let timeout_nanos: Option<i64> = call.get_flag("tool-timeout").ok().flatten();
+
+    // Convert to Duration, defaulting to 30 seconds
+    timeout_nanos
+        .map(|nanos| std::time::Duration::from_nanos(nanos as u64))
+        .unwrap_or(std::time::Duration::from_secs(30))
+}
+
 pub struct Agent {
     store: crate::session::SessionStore,
 }
@@ -261,6 +341,18 @@ impl SimplePluginCommand for Agent {
                 None,
             )
             .named(
+                "tools",
+                nu_protocol::SyntaxShape::Record(vec![]),
+                "Record of tool closures: {name: closure, ...}",
+                None,
+            )
+            .named(
+                "tool-timeout",
+                nu_protocol::SyntaxShape::Duration,
+                "Timeout for tool execution (default: 30sec)",
+                Some('t'),
+            )
+            .named(
                 "session",
                 nu_protocol::SyntaxShape::String,
                 "Session ID to use (auto-creates if doesn't exist)",
@@ -286,6 +378,23 @@ impl SimplePluginCommand for Agent {
         // Resolve configuration from all sources with proper precedence:
         // default < env < plugin < flags
         let config = resolve_config(engine, call)?;
+
+        // Extract tool timeout for ToolExecutor
+        let tool_timeout = extract_tool_timeout(call);
+
+        // Extract tools from --tools flag and build ClosureRegistry
+        let tools_map = extract_tools_from_call(call)?;
+        let mut closure_registry = crate::tools::closure::ClosureRegistry::new();
+        for (name, closure) in &tools_map {
+            closure_registry.register(name.clone(), closure.clone());
+        }
+
+        // Convert closures to tool definitions for LLM
+        use crate::tools::closure::closure_to_tool_definition;
+        let tool_definitions: Vec<rig::completion::ToolDefinition> = tools_map
+            .iter()
+            .map(|(name, closure)| closure_to_tool_definition(name.clone(), closure, engine, None))
+            .collect();
 
         // Extract prompt from input
         let prompt = extract_prompt_from_input(input)?;
@@ -345,19 +454,100 @@ impl SimplePluginCommand for Agent {
             }
         }
 
-        // Call LLM (async operation - we need to block on it)
+        // Create async runtime for LLM and tool execution
         let runtime = tokio::runtime::Runtime::new()
             .map_err(|e| LabeledError::new(format!("Failed to create async runtime: {}", e)))?;
 
-        let llm_response = runtime
-            .block_on(crate::llm::call_llm(&config, &merged_prompt))
+        // Call LLM and handle tool execution loop
+        let mut llm_response = runtime
+            .block_on(crate::llm::call_llm(
+                &config,
+                &merged_prompt,
+                tool_definitions.clone(),
+            ))
             .map_err(|e| {
                 LabeledError::new(format!("LLM call failed: {}", e.msg))
                     .with_label(e.msg, call.head)
             })?;
 
+        // Track all tool calls executed during the agent loop
+        let mut executed_tool_calls: Vec<rig::completion::AssistantContent> = Vec::new();
+
+        // Agent loop: process tool calls if present
+        let max_tool_turns = config.max_tool_turns.unwrap_or(5);
+        let mut tool_turn = 0;
+
+        while !llm_response.tool_calls.is_empty() && tool_turn < max_tool_turns {
+            tool_turn += 1;
+
+            // Capture tool calls that were executed this turn
+            executed_tool_calls.extend(llm_response.tool_calls.clone());
+
+            // Create AuditLogger for this tool execution turn
+            let audit_logger =
+                std::sync::Arc::new(crate::tools::audit::AuditLogger::new().map_err(|e| {
+                    LabeledError::new(format!("Failed to create audit logger: {}", e))
+                })?);
+
+            // Create ToolExecutor with engine, audit logger, and timeout
+            let tool_executor = crate::tools::executor::ToolExecutor::new(
+                std::sync::Arc::new(engine.clone()),
+                audit_logger,
+                tool_timeout,
+            );
+
+            // Execute tool calls
+            let tool_results = runtime
+                .block_on(tool_handler::handle_tool_calls(
+                    llm_response.tool_calls.clone(),
+                    &closure_registry,
+                    &tool_executor,
+                    engine,
+                    call.head,
+                ))
+                .map_err(|e| {
+                    LabeledError::new(format!("Tool execution failed: {}", e))
+                        .with_label(e.to_string(), call.head)
+                })?;
+
+            // Build conversation history with tool results
+            // Format: previous prompt + assistant response with tool calls + tool results
+            let mut conversation = vec![
+                format!("User: {}", merged_prompt),
+                format!("Assistant: {}", llm_response.text),
+            ];
+
+            // Add tool results to conversation
+            for result in &tool_results {
+                conversation.push(format!(
+                    "Tool '{}' result: {}",
+                    result.tool_call_id, result.content
+                ));
+            }
+
+            // Join conversation and make another LLM call
+            let conversation_text = conversation.join("\n\n");
+            llm_response = runtime
+                .block_on(crate::llm::call_llm(
+                    &config,
+                    &conversation_text,
+                    tool_definitions.clone(),
+                ))
+                .map_err(|e| {
+                    LabeledError::new(format!("LLM call failed: {}", e.msg))
+                        .with_label(e.msg, call.head)
+                })?;
+        }
+
+        // Build final response with all executed tool calls
+        let final_response = crate::llm::LlmResponse {
+            text: llm_response.text.clone(),
+            usage: llm_response.usage.clone(),
+            tool_calls: executed_tool_calls,
+        };
+
         // Extract text for session storage
-        let response_text = llm_response.text.clone();
+        let response_text = final_response.text.clone();
 
         // Save messages to session if active
         let mut message_count = 0;
@@ -392,7 +582,7 @@ impl SimplePluginCommand for Agent {
 
         // Format response with session metadata
         let response_value = crate::llm::format_response(
-            &llm_response,
+            &final_response,
             &config,
             final_session_id.as_deref(),
             compaction_count,

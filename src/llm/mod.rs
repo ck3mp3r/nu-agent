@@ -2,6 +2,7 @@ use crate::config::Config;
 use crate::providers::github_copilot;
 use nu_protocol::{LabeledError, Span, Value};
 use rig::client::{CompletionClient, ProviderClient};
+use rig::completion::message::AssistantContent;
 use rig::providers::{anthropic, ollama, openai};
 
 /// Token usage statistics from LLM response.
@@ -31,14 +32,15 @@ impl From<rig::completion::request::Usage> for LlmUsage {
     }
 }
 
-/// LLM response with text and usage statistics.
+/// LLM response with text, usage statistics, and tool calls.
 ///
-/// Returned by call_llm() to provide both the response text
-/// and token usage information for tracking and cost estimation.
+/// Returned by call_llm() to provide the response text, token usage information,
+/// and any tool calls requested by the LLM.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LlmResponse {
     pub text: String,
     pub usage: LlmUsage,
+    pub tool_calls: Vec<AssistantContent>,
 }
 
 /// Routing decision for which provider to use.
@@ -132,6 +134,7 @@ pub(crate) fn resolve_api_key(config: &Config, provider: &str) -> Result<String,
 /// # Arguments
 /// * `config` - Configuration with provider, model, and auth details
 /// * `prompt` - The prompt to send to the LLM
+/// * `tools` - Tool definitions to pass to the LLM (empty vec if no tools)
 ///
 /// # Returns
 /// The LLM response with text and usage statistics, or error if the call fails
@@ -141,19 +144,27 @@ pub(crate) fn resolve_api_key(config: &Config, provider: &str) -> Result<String,
 /// - Unsupported provider
 /// - Invalid configuration
 /// - API errors (network, rate limits, etc.)
-pub async fn call_llm(config: &Config, prompt: &str) -> Result<LlmResponse, LabeledError> {
+pub async fn call_llm(
+    config: &Config,
+    prompt: &str,
+    tools: Vec<rig::completion::ToolDefinition>,
+) -> Result<LlmResponse, LabeledError> {
     match route_provider(config) {
-        ProviderRoute::OpenAI => call_openai(config, prompt).await,
-        ProviderRoute::Anthropic => call_anthropic(config, prompt).await,
-        ProviderRoute::Ollama => call_ollama(config, prompt).await,
-        ProviderRoute::GitHubCopilot { .. } => call_github_copilot(config, prompt).await,
+        ProviderRoute::OpenAI => call_openai(config, prompt, tools).await,
+        ProviderRoute::Anthropic => call_anthropic(config, prompt, tools).await,
+        ProviderRoute::Ollama => call_ollama(config, prompt, tools).await,
+        ProviderRoute::GitHubCopilot { .. } => call_github_copilot(config, prompt, tools).await,
         ProviderRoute::Unsupported(name) => {
             Err(LabeledError::new(format!("Unsupported provider: {}", name)))
         }
     }
 }
 
-async fn call_github_copilot(config: &Config, prompt: &str) -> Result<LlmResponse, LabeledError> {
+async fn call_github_copilot(
+    config: &Config,
+    prompt: &str,
+    tools: Vec<rig::completion::ToolDefinition>,
+) -> Result<LlmResponse, LabeledError> {
     let api_key = resolve_api_key(config, "github-copilot")?;
 
     // Parse backend from provider: "github-copilot/anthropic" -> "anthropic"
@@ -181,58 +192,90 @@ async fn call_github_copilot(config: &Config, prompt: &str) -> Result<LlmRespons
                 github_copilot::AnthropicBackend,
                 _,
             >::new(client, &config.model);
+
             let agent = rig::agent::AgentBuilder::new(model).build();
+
             let builder = agent
                 .completion(prompt, Vec::<rig::completion::Message>::new())
                 .await
-                .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))?;
+                .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))?
+                .tools(tools);
             let completion_response = builder
                 .send()
                 .await
                 .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))?;
 
-            // Extract text from choice (OneOrMany<AssistantContent>)
-            // OneOrMany implements IntoIterator, extract first content item
-            let text = completion_response
-                .choice
-                .into_iter()
-                .next()
-                .and_then(|content| match content {
-                    rig::completion::AssistantContent::Text(text) => Some(text.to_string()),
-                    _ => None,
-                })
-                .unwrap_or_else(String::new);
+            // Extract text and tool calls from choice (OneOrMany<AssistantContent>)
+            let mut text_parts = Vec::new();
+            let mut tool_calls = Vec::new();
+
+            for content in completion_response.choice {
+                match content {
+                    rig::completion::AssistantContent::Text(t) => {
+                        text_parts.push(t.to_string());
+                    }
+                    tool_call @ rig::completion::AssistantContent::ToolCall(_) => {
+                        tool_calls.push(tool_call);
+                    }
+                    _ => {
+                        // Ignore Reasoning, Image, and any future variants
+                    }
+                }
+            }
+
+            let text = text_parts.join("\n");
             let usage = completion_response.usage.into();
-            Ok(LlmResponse { text, usage })
+
+            Ok(LlmResponse {
+                text,
+                usage,
+                tool_calls,
+            })
         }
         "openai" => {
             let model = github_copilot::completion::CompletionModel::<
                 github_copilot::OpenAIBackend,
                 _,
             >::new(client, &config.model);
+
             let agent = rig::agent::AgentBuilder::new(model).build();
+
             let builder = agent
                 .completion(prompt, Vec::<rig::completion::Message>::new())
                 .await
-                .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))?;
+                .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))?
+                .tools(tools);
             let completion_response = builder
                 .send()
                 .await
                 .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))?;
 
-            // Extract text from choice (OneOrMany<AssistantContent>)
-            // OneOrMany implements IntoIterator, extract first content item
-            let text = completion_response
-                .choice
-                .into_iter()
-                .next()
-                .and_then(|content| match content {
-                    rig::completion::AssistantContent::Text(text) => Some(text.to_string()),
-                    _ => None,
-                })
-                .unwrap_or_else(String::new);
+            // Extract text and tool calls from choice (OneOrMany<AssistantContent>)
+            let mut text_parts = Vec::new();
+            let mut tool_calls = Vec::new();
+
+            for content in completion_response.choice {
+                match content {
+                    rig::completion::AssistantContent::Text(t) => {
+                        text_parts.push(t.to_string());
+                    }
+                    tool_call @ rig::completion::AssistantContent::ToolCall(_) => {
+                        tool_calls.push(tool_call);
+                    }
+                    _ => {
+                        // Ignore Reasoning, Image, and any future variants
+                    }
+                }
+            }
+
+            let text = text_parts.join("\n");
             let usage = completion_response.usage.into();
-            Ok(LlmResponse { text, usage })
+
+            Ok(LlmResponse {
+                text,
+                usage,
+                tool_calls,
+            })
         }
         _ => Err(LabeledError::new(format!(
             "Unknown GitHub Copilot backend: {}",
@@ -326,7 +369,39 @@ pub fn format_response(
         "compaction_count".to_string(),
         Value::int(compaction_count as i64, span),
     ));
-    meta_fields.push(("tool_calls".to_string(), Value::list(vec![], span)));
+
+    // Convert tool_calls to Nushell values
+    let tool_calls_list: Vec<Value> = llm_response
+        .tool_calls
+        .iter()
+        .filter_map(|content| {
+            if let AssistantContent::ToolCall(tool_call) = content {
+                Some(Value::record(
+                    vec![
+                        ("id".to_string(), Value::string(&tool_call.id, span)),
+                        (
+                            "name".to_string(),
+                            Value::string(&tool_call.function.name, span),
+                        ),
+                        (
+                            "arguments".to_string(),
+                            Value::string(
+                                serde_json::to_string(&tool_call.function.arguments)
+                                    .unwrap_or_default(),
+                                span,
+                            ),
+                        ),
+                    ]
+                    .into_iter()
+                    .collect(),
+                    span,
+                ))
+            } else {
+                None
+            }
+        })
+        .collect();
+    meta_fields.push(("tool_calls".to_string(), Value::list(tool_calls_list, span)));
 
     // Add usage record
     meta_fields.push(("usage".to_string(), usage_record));
@@ -353,7 +428,11 @@ pub fn format_response(
     )
 }
 
-async fn call_openai(config: &Config, prompt: &str) -> Result<LlmResponse, LabeledError> {
+async fn call_openai(
+    config: &Config,
+    prompt: &str,
+    tools: Vec<rig::completion::ToolDefinition>,
+) -> Result<LlmResponse, LabeledError> {
     let key = resolve_api_key(config, &config.provider.clone())?;
 
     let client = if let Some(base_url) = &config.base_url {
@@ -368,36 +447,58 @@ async fn call_openai(config: &Config, prompt: &str) -> Result<LlmResponse, Label
             .build()
             .map_err(|e| LabeledError::new(format!("Failed to create OpenAI client: {}", e)))?
     } else {
-        openai::Client::from_env()
+        return Err(LabeledError::new(
+            "OpenAI requires an API key via --api-key or OPENAI_API_KEY".to_string(),
+        ));
     };
 
-    let agent = client.agent(&config.model).build();
+    let model = openai::Client::completion_model(&client, &config.model);
+    let agent = rig::agent::AgentBuilder::new(model).build();
 
     use rig::completion::Completion;
     let builder = agent
         .completion(prompt, Vec::<rig::completion::Message>::new())
         .await
-        .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))?;
+        .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))?
+        .tools(tools);
     let completion_response = builder
         .send()
         .await
         .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))?;
 
-    // Extract text from choice (OneOrMany<AssistantContent>)
-    let text = completion_response
-        .choice
-        .into_iter()
-        .next()
-        .and_then(|content| match content {
-            rig::completion::AssistantContent::Text(text) => Some(text.to_string()),
-            _ => None,
-        })
-        .unwrap_or_else(String::new);
+    // Extract text and tool calls from choice (OneOrMany<AssistantContent>)
+    let mut text_parts = Vec::new();
+    let mut tool_calls = Vec::new();
+
+    for content in completion_response.choice {
+        match content {
+            rig::completion::AssistantContent::Text(t) => {
+                text_parts.push(t.to_string());
+            }
+            tool_call @ rig::completion::AssistantContent::ToolCall(_) => {
+                tool_calls.push(tool_call);
+            }
+            _ => {
+                // Ignore Reasoning, Image, and any future variants
+            }
+        }
+    }
+
+    let text = text_parts.join("\n");
     let usage = completion_response.usage.into();
-    Ok(LlmResponse { text, usage })
+
+    Ok(LlmResponse {
+        text,
+        usage,
+        tool_calls,
+    })
 }
 
-async fn call_anthropic(config: &Config, prompt: &str) -> Result<LlmResponse, LabeledError> {
+async fn call_anthropic(
+    config: &Config,
+    prompt: &str,
+    tools: Vec<rig::completion::ToolDefinition>,
+) -> Result<LlmResponse, LabeledError> {
     let key = resolve_api_key(config, "anthropic")?;
 
     let client = if let Some(base_url) = &config.base_url {
@@ -427,27 +528,46 @@ async fn call_anthropic(config: &Config, prompt: &str) -> Result<LlmResponse, La
     let builder = agent
         .completion(prompt, Vec::<rig::completion::Message>::new())
         .await
-        .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))?;
+        .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))?
+        .tools(tools);
     let completion_response = builder
         .send()
         .await
         .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))?;
 
-    // Extract text from choice (OneOrMany<AssistantContent>)
-    let text = completion_response
-        .choice
-        .into_iter()
-        .next()
-        .and_then(|content| match content {
-            rig::completion::AssistantContent::Text(text) => Some(text.to_string()),
-            _ => None,
-        })
-        .unwrap_or_else(String::new);
+    // Extract text and tool calls from choice (OneOrMany<AssistantContent>)
+    let mut text_parts = Vec::new();
+    let mut tool_calls = Vec::new();
+
+    for content in completion_response.choice {
+        match content {
+            rig::completion::AssistantContent::Text(t) => {
+                text_parts.push(t.to_string());
+            }
+            tool_call @ rig::completion::AssistantContent::ToolCall(_) => {
+                tool_calls.push(tool_call);
+            }
+            _ => {
+                // Ignore Reasoning, Image, and any future variants
+            }
+        }
+    }
+
+    let text = text_parts.join("\n");
     let usage = completion_response.usage.into();
-    Ok(LlmResponse { text, usage })
+
+    Ok(LlmResponse {
+        text,
+        usage,
+        tool_calls,
+    })
 }
 
-async fn call_ollama(config: &Config, prompt: &str) -> Result<LlmResponse, LabeledError> {
+async fn call_ollama(
+    config: &Config,
+    prompt: &str,
+    tools: Vec<rig::completion::ToolDefinition>,
+) -> Result<LlmResponse, LabeledError> {
     let base_url = config
         .base_url
         .as_deref()
@@ -465,24 +585,39 @@ async fn call_ollama(config: &Config, prompt: &str) -> Result<LlmResponse, Label
     let builder = agent
         .completion(prompt, Vec::<rig::completion::Message>::new())
         .await
-        .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))?;
+        .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))?
+        .tools(tools);
     let completion_response = builder
         .send()
         .await
         .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))?;
 
-    // Extract text from choice (OneOrMany<AssistantContent>)
-    let text = completion_response
-        .choice
-        .into_iter()
-        .next()
-        .and_then(|content| match content {
-            rig::completion::AssistantContent::Text(text) => Some(text.to_string()),
-            _ => None,
-        })
-        .unwrap_or_else(String::new);
+    // Extract text and tool calls from choice (OneOrMany<AssistantContent>)
+    let mut text_parts = Vec::new();
+    let mut tool_calls = Vec::new();
+
+    for content in completion_response.choice {
+        match content {
+            rig::completion::AssistantContent::Text(t) => {
+                text_parts.push(t.to_string());
+            }
+            tool_call @ rig::completion::AssistantContent::ToolCall(_) => {
+                tool_calls.push(tool_call);
+            }
+            _ => {
+                // Ignore Reasoning, Image, and any future variants
+            }
+        }
+    }
+
+    let text = text_parts.join("\n");
     let usage = completion_response.usage.into();
-    Ok(LlmResponse { text, usage })
+
+    Ok(LlmResponse {
+        text,
+        usage,
+        tool_calls,
+    })
 }
 
 #[cfg(test)]

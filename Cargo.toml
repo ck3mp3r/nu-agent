@@ -16,12 +16,13 @@ nu-plugin = "0.112.2"
 nu-protocol = "0.112.2"
 rig = { package = "rig-core", version = "0.35.0" }
 tokio = { version = "1.52.1", features = ["full"] }
-chrono = "0.4"
+thiserror = "2.0"
+chrono = { version = "0.4", features = ["serde"] }
 reqwest = { version = "0.13", default-features = false, features = ["json"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-dirs = "5.0"
-tempfile = "3.15"
+dirs = "6.0"
+tempfile = "3.14"
 
 [dev-dependencies]
 serial_test = "3.4.0"

@@ -1,0 +1,163 @@
+use super::*;
+use nu_protocol::{Span, Value};
+use serde_json::json;
+
+#[test]
+fn json_to_nu_value_converts_string() {
+    let json = json!("hello");
+    let span = Span::test_data();
+    let result = json_to_nu_value(&json, span).unwrap();
+
+    assert_eq!(result.as_str().unwrap(), "hello");
+}
+
+#[test]
+fn json_to_nu_value_converts_number() {
+    let json = json!(42);
+    let span = Span::test_data();
+    let result = json_to_nu_value(&json, span).unwrap();
+
+    assert_eq!(result.as_int().unwrap(), 42);
+}
+
+#[test]
+fn json_to_nu_value_converts_float() {
+    let json = json!(2.5);
+    let span = Span::test_data();
+    let result = json_to_nu_value(&json, span).unwrap();
+
+    assert_eq!(result.as_float().unwrap(), 2.5);
+}
+
+#[test]
+fn json_to_nu_value_converts_bool() {
+    let json_true = json!(true);
+    let json_false = json!(false);
+    let span = Span::test_data();
+
+    let result_true = json_to_nu_value(&json_true, span).unwrap();
+    let result_false = json_to_nu_value(&json_false, span).unwrap();
+
+    assert!(result_true.as_bool().unwrap());
+    assert!(!result_false.as_bool().unwrap());
+}
+
+#[test]
+fn json_to_nu_value_converts_null() {
+    let json = json!(null);
+    let span = Span::test_data();
+    let result = json_to_nu_value(&json, span).unwrap();
+
+    assert!(result.is_nothing());
+}
+
+#[test]
+fn json_to_nu_value_converts_array() {
+    let json = json!([1, 2, 3]);
+    let span = Span::test_data();
+    let result = json_to_nu_value(&json, span).unwrap();
+
+    let list = result.as_list().unwrap();
+    assert_eq!(list.len(), 3);
+    assert_eq!(list[0].as_int().unwrap(), 1);
+    assert_eq!(list[1].as_int().unwrap(), 2);
+    assert_eq!(list[2].as_int().unwrap(), 3);
+}
+
+#[test]
+fn json_to_nu_value_converts_object() {
+    let json = json!({"name": "test", "value": 42});
+    let span = Span::test_data();
+    let result = json_to_nu_value(&json, span).unwrap();
+
+    let record = result.as_record().unwrap();
+    assert_eq!(record.get("name").unwrap().as_str().unwrap(), "test");
+    assert_eq!(record.get("value").unwrap().as_int().unwrap(), 42);
+}
+
+#[test]
+fn nu_value_to_json_converts_string() {
+    let value = Value::string("hello", Span::test_data());
+    let result = nu_value_to_json(&value).unwrap();
+
+    assert_eq!(result, json!("hello"));
+}
+
+#[test]
+fn nu_value_to_json_converts_int() {
+    let value = Value::int(42, Span::test_data());
+    let result = nu_value_to_json(&value).unwrap();
+
+    assert_eq!(result, json!(42));
+}
+
+#[test]
+fn nu_value_to_json_converts_float() {
+    let value = Value::float(2.5, Span::test_data());
+    let result = nu_value_to_json(&value).unwrap();
+
+    assert_eq!(result, json!(2.5));
+}
+
+#[test]
+fn nu_value_to_json_converts_bool() {
+    let value_true = Value::bool(true, Span::test_data());
+    let value_false = Value::bool(false, Span::test_data());
+
+    let result_true = nu_value_to_json(&value_true).unwrap();
+    let result_false = nu_value_to_json(&value_false).unwrap();
+
+    assert_eq!(result_true, json!(true));
+    assert_eq!(result_false, json!(false));
+}
+
+#[test]
+fn nu_value_to_json_converts_nothing() {
+    let value = Value::nothing(Span::test_data());
+    let result = nu_value_to_json(&value).unwrap();
+
+    assert_eq!(result, json!(null));
+}
+
+#[test]
+fn nu_value_to_json_converts_list() {
+    let value = Value::list(
+        vec![
+            Value::int(1, Span::test_data()),
+            Value::int(2, Span::test_data()),
+            Value::int(3, Span::test_data()),
+        ],
+        Span::test_data(),
+    );
+    let result = nu_value_to_json(&value).unwrap();
+
+    assert_eq!(result, json!([1, 2, 3]));
+}
+
+#[test]
+fn nu_value_to_json_converts_record() {
+    let mut record = nu_protocol::record!();
+    record.insert("name".to_string(), Value::string("test", Span::test_data()));
+    record.insert("value".to_string(), Value::int(42, Span::test_data()));
+
+    let value = Value::record(record, Span::test_data());
+    let result = nu_value_to_json(&value).unwrap();
+
+    assert_eq!(result, json!({"name": "test", "value": 42}));
+}
+
+#[test]
+fn nu_value_to_json_handles_nested_structures() {
+    let inner_record = Value::record(
+        nu_protocol::record!(
+            "x" => Value::int(1, Span::test_data()),
+            "y" => Value::int(2, Span::test_data())
+        ),
+        Span::test_data(),
+    );
+
+    let value = Value::list(vec![inner_record], Span::test_data());
+    let result = nu_value_to_json(&value).unwrap();
+
+    assert_eq!(result, json!([{"x": 1, "y": 2}]));
+}

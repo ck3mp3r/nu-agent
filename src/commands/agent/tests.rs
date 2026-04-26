@@ -1,4 +1,7 @@
-use crate::commands::agent::{Agent, EngineConfigInterface, extract_flag_config};
+use crate::commands::agent::{
+    Agent, EngineConfigInterface, extract_flag_config, extract_tool_timeout,
+    extract_tools_from_call,
+};
 use crate::config::Config;
 use crate::session::SessionStore;
 use nu_plugin::{EvaluatedCall, SimplePluginCommand};
@@ -162,6 +165,20 @@ fn agent_command_signature_has_max_turns_flag() {
         flag.unwrap().arg,
         Some(SyntaxShape::Int),
         "Wrong type for --max-turns"
+    );
+}
+
+#[test]
+fn agent_command_signature_has_tools_flag() {
+    let (agent, _temp_dir) = create_test_agent();
+    let sig = SimplePluginCommand::signature(&agent);
+
+    let flag = sig.named.iter().find(|f| f.long == "tools");
+    assert!(flag.is_some(), "Missing --tools flag");
+    assert_eq!(
+        flag.unwrap().arg,
+        Some(SyntaxShape::Record(vec![])),
+        "Wrong type for --tools (should be Record)"
     );
 }
 
@@ -1148,7 +1165,6 @@ mod session_flags_tests {
             "Missing description for --new-session"
         );
     }
-
 }
 
 // Tests for session flag validation
@@ -1239,7 +1255,7 @@ mod session_validation_tests {
         );
         let err = result.unwrap_err();
         assert!(err.msg.contains("Conflicting") || err.msg.contains("exclusive"));
-}
+    }
 }
 
 // Integration tests for session functionality
@@ -1438,5 +1454,170 @@ mod session_integration_tests {
             positional: vec![],
             named,
         }
+    }
+
+    #[test]
+    fn extract_tools_from_call_missing_flag() {
+        // Test with no --tools flag
+        let call = create_test_call(vec![]);
+        let result = extract_tools_from_call(&call);
+
+        assert!(result.is_ok());
+        let tools = result.unwrap();
+        assert_eq!(tools.len(), 0);
+    }
+
+    #[test]
+    fn extract_tools_from_call_empty_record() {
+        // Test with empty record
+        use nu_protocol::Record;
+        let call = create_test_call(vec![("tools", Value::test_record(Record::new()))]);
+        let result = extract_tools_from_call(&call);
+
+        assert!(result.is_ok());
+        let tools = result.unwrap();
+        assert_eq!(tools.len(), 0);
+    }
+
+    #[test]
+    fn extract_tools_from_call_with_closures() {
+        // Test with record containing closures
+        use nu_protocol::{BlockId, Record, engine::Closure};
+
+        let mut record = Record::new();
+        record.insert(
+            "add".to_string(),
+            Value::test_closure(Closure {
+                block_id: BlockId::new(1),
+                captures: vec![],
+            }),
+        );
+        record.insert(
+            "multiply".to_string(),
+            Value::test_closure(Closure {
+                block_id: BlockId::new(2),
+                captures: vec![],
+            }),
+        );
+
+        let call = create_test_call(vec![("tools", Value::test_record(record))]);
+        let result = extract_tools_from_call(&call);
+
+        assert!(result.is_ok());
+        let tools = result.unwrap();
+        assert_eq!(tools.len(), 2);
+        assert!(tools.contains_key("add"));
+        assert!(tools.contains_key("multiply"));
+    }
+
+    #[test]
+    fn extract_tools_from_call_filters_non_closures() {
+        // Test that non-closure values are filtered out
+        use nu_protocol::{BlockId, Record, engine::Closure};
+
+        let mut record = Record::new();
+        record.insert(
+            "add".to_string(),
+            Value::test_closure(Closure {
+                block_id: BlockId::new(1),
+                captures: vec![],
+            }),
+        );
+        record.insert("name".to_string(), Value::test_string("not a closure"));
+        record.insert("count".to_string(), Value::test_int(42));
+        record.insert(
+            "multiply".to_string(),
+            Value::test_closure(Closure {
+                block_id: BlockId::new(2),
+                captures: vec![],
+            }),
+        );
+
+        let call = create_test_call(vec![("tools", Value::test_record(record))]);
+        let result = extract_tools_from_call(&call);
+
+        assert!(result.is_ok());
+        let tools = result.unwrap();
+        // Only closures should be extracted
+        assert_eq!(tools.len(), 2);
+        assert!(tools.contains_key("add"));
+        assert!(tools.contains_key("multiply"));
+        assert!(!tools.contains_key("name"));
+        assert!(!tools.contains_key("count"));
+    }
+
+    #[test]
+    fn extract_tools_from_call_non_record_value() {
+        // Test with non-record value (graceful handling)
+        let call = create_test_call(vec![("tools", Value::test_string("not a record"))]);
+        let result = extract_tools_from_call(&call);
+
+        assert!(result.is_ok());
+        let tools = result.unwrap();
+        assert_eq!(tools.len(), 0);
+    }
+}
+
+// Tests for --tool-timeout flag parsing
+mod tool_timeout_tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn parses_tool_timeout_flag() {
+        // Test parsing Duration from Nushell duration value (i64 nanoseconds)
+        // Nushell represents durations as i64 nanoseconds
+        // 5 seconds = 5_000_000_000 nanoseconds
+        let timeout_nanos = 5_000_000_000i64;
+        let call = create_test_call(vec![("tool-timeout", Value::test_duration(timeout_nanos))]);
+
+        // Use the helper function to extract timeout
+        let timeout = extract_tool_timeout(&call);
+
+        assert_eq!(timeout, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn defaults_to_30_seconds_when_flag_missing() {
+        // Test default behavior when flag is not provided
+        let call = create_test_call(vec![]);
+
+        // Use the helper function (should return default)
+        let timeout = extract_tool_timeout(&call);
+
+        assert_eq!(timeout, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn parses_millisecond_timeout() {
+        // Test parsing smaller duration (100ms = 100_000_000 nanoseconds)
+        let timeout_nanos = 100_000_000i64;
+        let call = create_test_call(vec![("tool-timeout", Value::test_duration(timeout_nanos))]);
+
+        let timeout = extract_tool_timeout(&call);
+
+        assert_eq!(timeout, Duration::from_millis(100));
+    }
+
+    #[test]
+    fn agent_signature_has_tool_timeout_flag() {
+        // Test that the signature includes --tool-timeout flag
+        let (agent, _temp_dir) = create_test_agent();
+        let sig = SimplePluginCommand::signature(&agent);
+
+        let flag = sig.named.iter().find(|f| f.long == "tool-timeout");
+        assert!(flag.is_some(), "Missing --tool-timeout flag");
+
+        let flag = flag.unwrap();
+        assert_eq!(flag.short, Some('t'), "Missing -t short flag");
+        assert_eq!(
+            flag.arg,
+            Some(SyntaxShape::Duration),
+            "Wrong type for --tool-timeout"
+        );
+        assert!(
+            !flag.desc.is_empty(),
+            "Missing description for --tool-timeout"
+        );
     }
 }
