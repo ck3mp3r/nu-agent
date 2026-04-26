@@ -861,3 +861,153 @@ fn test_compact_sliding_window_slides_correctly() {
     assert_eq!(session.messages()[1].content(), "msg6");
     assert_eq!(session.messages()[2].content(), "msg7");
 }
+
+/// Test that LLM-based summarization is called with old messages.
+/// Add 20 messages, configure to keep 5 recent, verify LLM called with 15 old messages.
+#[test]
+fn test_compact_summarize_calls_llm_with_old_messages() {
+    use crate::session::{Message, SessionConfig};
+    use std::sync::{Arc, Mutex};
+
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+
+    let session_id = "test-summarize-llm-call".to_string();
+    let mut session = store
+        .get_or_create(Some(session_id.clone()))
+        .expect("Failed to create session");
+
+    // Configure: threshold=10, keep_recent=5, strategy=Summarize
+    session.set_config(SessionConfig {
+        compaction_threshold: 10,
+        compaction_strategy: crate::session::CompactionStrategy::Summarize,
+        keep_recent: 5,
+    });
+
+    // Track what messages were passed to the summarizer
+    let summarized_messages = Arc::new(Mutex::new(Vec::new()));
+    let summarized_messages_clone = Arc::clone(&summarized_messages);
+
+    // Create mock summarizer that records input
+    let mock_summarizer = move |messages: &[Message]| -> std::io::Result<String> {
+        let mut tracked = summarized_messages_clone.lock().unwrap();
+        for msg in messages {
+            tracked.push(msg.content().to_string());
+        }
+        Ok("Summary of conversation".to_string())
+    };
+
+    // Add 20 messages (well over threshold)
+    for i in 0..20 {
+        session
+            .add_message(
+                &store,
+                Message::new("user".to_string(), format!("msg{}", i)),
+            )
+            .expect("Failed to add message");
+    }
+
+    // Verify we have 20 messages before compaction
+    assert_eq!(session.messages().len(), 20);
+
+    // Trigger compaction with mock summarizer
+    session
+        .compact_summarize_with(&store, mock_summarizer)
+        .expect("Compaction should succeed");
+
+    // Verify LLM was called with the 15 old messages (keeping 5 recent)
+    let summarized = summarized_messages.lock().unwrap();
+    assert_eq!(
+        summarized.len(),
+        15,
+        "Should summarize 15 old messages (20 total - 5 recent)"
+    );
+
+    // Verify the correct messages were summarized (msg0 through msg14)
+    for i in 0..15 {
+        assert_eq!(
+            summarized[i],
+            format!("msg{}", i),
+            "Message {} should be summarized",
+            i
+        );
+    }
+}
+
+/// Test that summarize compaction replaces old messages with summary and preserves recent messages.
+#[test]
+fn test_compact_summarize_replaces_old_with_summary() {
+    use crate::session::{Message, SessionConfig};
+
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+
+    let session_id = "test-summarize-replace".to_string();
+    let mut session = store
+        .get_or_create(Some(session_id.clone()))
+        .expect("Failed to create session");
+
+    // Configure: threshold=10, keep_recent=3, strategy=Summarize
+    session.set_config(SessionConfig {
+        compaction_threshold: 10,
+        compaction_strategy: crate::session::CompactionStrategy::Summarize,
+        keep_recent: 3,
+    });
+
+    // Mock summarizer that returns a fixed summary
+    let mock_summarizer = |_messages: &[Message]| -> std::io::Result<String> {
+        Ok("SUMMARY: Previous conversation context".to_string())
+    };
+
+    // Add 15 messages (over threshold)
+    for i in 0..15 {
+        session
+            .add_message(
+                &store,
+                Message::new("user".to_string(), format!("msg{}", i)),
+            )
+            .expect("Failed to add message");
+    }
+
+    // Verify we have 15 messages before compaction
+    assert_eq!(session.messages().len(), 15);
+
+    // Trigger compaction with mock summarizer
+    session
+        .compact_summarize_with(&store, mock_summarizer)
+        .expect("Compaction should succeed");
+
+    // After compaction, should have: 1 summary message + 3 recent = 4 messages
+    assert_eq!(
+        session.messages().len(),
+        4,
+        "Should have 1 summary + 3 recent messages"
+    );
+
+    // Verify first message is the summary
+    assert_eq!(session.messages()[0].role(), "system");
+    assert_eq!(
+        session.messages()[0].content(),
+        "SUMMARY: Previous conversation context"
+    );
+
+    // Verify last 3 messages are the recent ones (msg12, msg13, msg14)
+    assert_eq!(session.messages()[1].content(), "msg12");
+    assert_eq!(session.messages()[2].content(), "msg13");
+    assert_eq!(session.messages()[3].content(), "msg14");
+
+    // Reload session from disk to verify persistence
+    let loaded_session = store
+        .load_session(&session_id)
+        .expect("Failed to reload session");
+
+    assert_eq!(loaded_session.messages().len(), 4);
+    assert_eq!(loaded_session.messages()[0].role(), "system");
+    assert_eq!(
+        loaded_session.messages()[0].content(),
+        "SUMMARY: Previous conversation context"
+    );
+    assert_eq!(loaded_session.messages()[1].content(), "msg12");
+    assert_eq!(loaded_session.messages()[2].content(), "msg13");
+    assert_eq!(loaded_session.messages()[3].content(), "msg14");
+}

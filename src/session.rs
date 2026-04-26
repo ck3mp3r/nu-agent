@@ -173,10 +173,65 @@ impl Session {
         Ok(true)
     }
 
+    /// Compacts messages using summarization strategy with a custom summarizer function.
+    ///
+    /// Splits messages into "old" (to be summarized) and "recent" (to keep at full fidelity).
+    /// The summarizer function is called with old messages and returns a summary string.
+    /// The summary replaces all old messages as a single "system" role message.
+    ///
+    /// # Arguments
+    /// * `store` - The SessionStore used for file operations
+    /// * `summarizer` - Function that takes messages and returns a summary string
+    ///
+    /// # Returns
+    /// Ok(()) when summarization succeeds.
+    ///
+    /// # Errors
+    /// Returns an error if the summarizer fails or file operations fail.
+    pub fn compact_summarize_with<F>(
+        &mut self,
+        store: &SessionStore,
+        summarizer: F,
+    ) -> io::Result<()>
+    where
+        F: FnOnce(&[Message]) -> io::Result<String>,
+    {
+        let keep_count = self.config.keep_recent;
+
+        // If we have fewer messages than keep_recent, nothing to do
+        if self.messages.len() <= keep_count {
+            return Ok(());
+        }
+
+        // Split messages into old (to summarize) and recent (to keep)
+        let split_index = self.messages.len() - keep_count;
+        let old_messages = &self.messages[..split_index];
+        let recent_messages = &self.messages[split_index..];
+
+        // Call summarizer with old messages
+        let summary = summarizer(old_messages)?;
+
+        // Create summary message with "system" role
+        let summary_message = Message::new("system".to_string(), summary);
+
+        // Replace messages: [summary] + recent messages
+        let mut new_messages = vec![summary_message];
+        new_messages.extend_from_slice(recent_messages);
+        self.messages = new_messages;
+
+        // Increment compaction count
+        self.compaction_count += 1;
+
+        // Rewrite the JSONL file with updated metadata and compacted messages
+        self.rewrite_jsonl(store)?;
+
+        Ok(())
+    }
+
     /// Compacts messages using summarization strategy.
     ///
-    /// This is a placeholder stub for task 1.11.
-    /// Future implementation will use LLM to summarize older messages.
+    /// This is a stub that will be implemented once we have LLM integration in the Session.
+    /// For now, it just returns Ok(()).
     ///
     /// # Arguments
     /// * `store` - The SessionStore used for file operations
@@ -184,7 +239,8 @@ impl Session {
     /// # Returns
     /// Ok(()) when summarization succeeds.
     fn compact_summarize(&mut self, _store: &SessionStore) -> io::Result<()> {
-        // Stub: Implementation in task 1.11
+        // Stub: Full LLM integration will be implemented in future tasks
+        // For now, tests use compact_summarize_with() directly with mock summarizers
         Ok(())
     }
 
