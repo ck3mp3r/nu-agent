@@ -718,3 +718,146 @@ fn test_compact_truncate_keeps_recent_messages() {
     assert_eq!(loaded_session.messages()[0].content(), "msg8");
     assert_eq!(loaded_session.messages()[1].content(), "msg9");
 }
+
+/// Test sliding window compaction strategy.
+/// With keep_recent=3, add 10 messages, verify only last 3 remain.
+#[test]
+fn test_compact_sliding_window_keeps_last_n_messages() {
+    use crate::session::{Message, SessionConfig};
+
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+
+    let session_id = "test-sliding-window".to_string();
+    let mut session = store
+        .get_or_create(Some(session_id.clone()))
+        .expect("Failed to create session");
+
+    // Configure: threshold=5, keep_recent=3, strategy=Sliding
+    session.set_config(SessionConfig {
+        compaction_threshold: 5,
+        compaction_strategy: crate::session::CompactionStrategy::Sliding,
+        keep_recent: 3,
+    });
+
+    // Add 10 messages (well over threshold)
+    for i in 0..10 {
+        session
+            .add_message(
+                &store,
+                Message::new("user".to_string(), format!("msg{}", i)),
+            )
+            .expect("Failed to add message");
+    }
+
+    // Verify we have 10 messages before compaction
+    assert_eq!(session.messages().len(), 10);
+
+    // Trigger compaction
+    let compacted = session
+        .maybe_compact(&store)
+        .expect("Compaction should succeed");
+
+    assert!(compacted, "Should have triggered compaction");
+
+    // After compaction, should keep only last 3 messages (msg7, msg8, msg9)
+    assert_eq!(
+        session.messages().len(),
+        3,
+        "Should keep only last 3 messages after sliding window compaction"
+    );
+
+    // Verify the correct messages remain (last 3)
+    assert_eq!(session.messages()[0].content(), "msg7");
+    assert_eq!(session.messages()[1].content(), "msg8");
+    assert_eq!(session.messages()[2].content(), "msg9");
+
+    // Reload session from disk to verify persistence
+    let loaded_session = store
+        .load_session(&session_id)
+        .expect("Failed to reload session");
+
+    assert_eq!(
+        loaded_session.messages().len(),
+        3,
+        "Reloaded session should have 3 messages"
+    );
+    assert_eq!(loaded_session.messages()[0].content(), "msg7");
+    assert_eq!(loaded_session.messages()[1].content(), "msg8");
+    assert_eq!(loaded_session.messages()[2].content(), "msg9");
+}
+
+/// Test that sliding window compaction correctly updates when adding more messages.
+/// Verify window slides correctly as new messages are added.
+#[test]
+fn test_compact_sliding_window_slides_correctly() {
+    use crate::session::{Message, SessionConfig};
+
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+
+    let session_id = "test-sliding-window-slides".to_string();
+    let mut session = store
+        .get_or_create(Some(session_id.clone()))
+        .expect("Failed to create session");
+
+    // Configure: threshold=3, keep_recent=3, strategy=Sliding
+    session.set_config(SessionConfig {
+        compaction_threshold: 3,
+        compaction_strategy: crate::session::CompactionStrategy::Sliding,
+        keep_recent: 3,
+    });
+
+    // Add 5 messages (over threshold)
+    for i in 0..5 {
+        session
+            .add_message(
+                &store,
+                Message::new("user".to_string(), format!("msg{}", i)),
+            )
+            .expect("Failed to add message");
+    }
+
+    // Trigger first compaction
+    let compacted = session
+        .maybe_compact(&store)
+        .expect("First compaction should succeed");
+
+    assert!(compacted, "Should have triggered compaction");
+
+    // Should keep last 3: msg2, msg3, msg4
+    assert_eq!(session.messages().len(), 3);
+    assert_eq!(session.messages()[0].content(), "msg2");
+    assert_eq!(session.messages()[1].content(), "msg3");
+    assert_eq!(session.messages()[2].content(), "msg4");
+
+    // Add 3 more messages (bringing total to 6, over threshold again)
+    for i in 5..8 {
+        session
+            .add_message(
+                &store,
+                Message::new("user".to_string(), format!("msg{}", i)),
+            )
+            .expect("Failed to add message");
+    }
+
+    // Should have 6 messages now
+    assert_eq!(session.messages().len(), 6);
+
+    // Trigger second compaction
+    let compacted2 = session
+        .maybe_compact(&store)
+        .expect("Second compaction should succeed");
+
+    assert!(compacted2, "Should have triggered compaction again");
+
+    // Window should have slid: should keep last 3: msg5, msg6, msg7
+    assert_eq!(
+        session.messages().len(),
+        3,
+        "Window should slide to keep last 3 messages"
+    );
+    assert_eq!(session.messages()[0].content(), "msg5");
+    assert_eq!(session.messages()[1].content(), "msg6");
+    assert_eq!(session.messages()[2].content(), "msg7");
+}

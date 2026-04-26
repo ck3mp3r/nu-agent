@@ -275,16 +275,39 @@ impl Session {
 
     /// Compacts messages using sliding window strategy.
     ///
-    /// This is a placeholder stub for task 1.13.
-    /// Future implementation will keep a sliding window of recent messages.
+    /// Keeps only the last N messages (configured via `keep_recent`),
+    /// dropping all older messages. This is similar to truncation, but the name
+    /// emphasizes the "sliding window" behavior where new messages push out old ones.
+    ///
+    /// After compaction, rewrites the JSONL file with the new message list
+    /// and increments the compaction count.
     ///
     /// # Arguments
     /// * `store` - The SessionStore used for file operations
     ///
     /// # Returns
     /// Ok(()) when sliding window compaction succeeds.
-    fn compact_sliding(&mut self, _store: &SessionStore) -> io::Result<()> {
-        // Stub: Implementation in task 1.13
+    ///
+    /// # Errors
+    /// Returns an error if file operations fail.
+    fn compact_sliding(&mut self, store: &SessionStore) -> io::Result<()> {
+        let keep_count = self.config.keep_recent;
+
+        // If we have fewer messages than keep_recent, nothing to do
+        if self.messages.len() <= keep_count {
+            return Ok(());
+        }
+
+        // Keep only the last N messages
+        let start_index = self.messages.len() - keep_count;
+        self.messages = self.messages[start_index..].to_vec();
+
+        // Increment compaction count
+        self.compaction_count += 1;
+
+        // Rewrite the JSONL file with updated metadata and compacted messages
+        self.rewrite_jsonl(store)?;
+
         Ok(())
     }
 
