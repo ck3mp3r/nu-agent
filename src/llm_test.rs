@@ -374,9 +374,8 @@ fn test_format_response_includes_meta_field() {
         "temp",
         "session_id should default to 'temp'"
     );
-    assert_eq!(
-        meta_record.get("compacted").unwrap().as_bool().unwrap(),
-        false,
+    assert!(
+        !meta_record.get("compacted").unwrap().as_bool().unwrap(),
         "compacted should default to false"
     );
     assert_eq!(

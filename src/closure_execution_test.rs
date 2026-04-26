@@ -78,10 +78,10 @@ mod tests {
             _input: Option<Value>,
         ) -> Result<Value, String> {
             // For testing: simulate {|x| $x + 1} behavior
-            if let Some(first_arg) = positional.first() {
-                if let Ok(n) = first_arg.as_int() {
-                    return Ok(Value::int(n + 1, Span::unknown()));
-                }
+            if let Some(first_arg) = positional.first()
+                && let Ok(n) = first_arg.as_int()
+            {
+                return Ok(Value::int(n + 1, Span::unknown()));
             }
             Err("Mock: expected integer argument".to_string())
         }

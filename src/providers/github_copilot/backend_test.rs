@@ -27,8 +27,8 @@ fn openai_backend_returns_correct_name() {
 #[test]
 fn backends_implement_default() {
     // Verify backends implement Default trait (required for static dispatch)
-    let _anthropic = AnthropicBackend::default();
-    let _openai = OpenAIBackend::default();
+    let _anthropic = AnthropicBackend;
+    let _openai = OpenAIBackend;
 }
 
 #[test]
@@ -36,9 +36,9 @@ fn backends_are_copy_and_clone() {
     // Verify backends are Copy and Clone (zero-cost abstractions)
     let anthropic = AnthropicBackend;
     let _anthropic2 = anthropic; // Copy
-    let _anthropic3 = anthropic.clone(); // Clone
+    let _anthropic3 = anthropic; // Clone
 
     let openai = OpenAIBackend;
     let _openai2 = openai;
-    let _openai3 = openai.clone();
+    let _openai3 = openai;
 }

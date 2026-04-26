@@ -464,6 +464,7 @@ fn test_add_message_triggers_compaction_on_threshold() {
     session.set_config(SessionConfig {
         compaction_threshold: 3,
         compaction_strategy: crate::session::CompactionStrategy::Truncate,
+        keep_recent: 10,
     });
 
     // Add messages up to threshold
@@ -514,6 +515,7 @@ fn test_maybe_compact_triggers_on_threshold() {
     session.set_config(SessionConfig {
         compaction_threshold: 5,
         compaction_strategy: crate::session::CompactionStrategy::Truncate,
+        keep_recent: 10,
     });
 
     // Add 6 messages (1 over threshold)
@@ -552,6 +554,7 @@ fn test_maybe_compact_does_not_trigger_under_threshold() {
     session.set_config(SessionConfig {
         compaction_threshold: 10,
         compaction_strategy: crate::session::CompactionStrategy::Truncate,
+        keep_recent: 10,
     });
 
     // Add only 5 messages (well under threshold)
@@ -589,6 +592,7 @@ fn test_maybe_compact_summarize_strategy() {
     session.set_config(SessionConfig {
         compaction_threshold: 3,
         compaction_strategy: crate::session::CompactionStrategy::Summarize,
+        keep_recent: 10,
     });
 
     // Add 4 messages (over threshold)
@@ -628,6 +632,7 @@ fn test_maybe_compact_sliding_strategy() {
     session.set_config(SessionConfig {
         compaction_threshold: 3,
         compaction_strategy: crate::session::CompactionStrategy::Sliding,
+        keep_recent: 10,
     });
 
     // Add 4 messages (over threshold)
@@ -646,4 +651,70 @@ fn test_maybe_compact_sliding_strategy() {
         .expect("maybe_compact should succeed");
 
     assert!(compacted, "Should trigger compaction with Sliding strategy");
+}
+
+/// Test that truncate_old() drops oldest messages beyond threshold, keeping last N.
+/// Threshold=5, keep_recent=2, add 10 messages, verify only last 2 remain after compaction.
+#[test]
+fn test_compact_truncate_keeps_recent_messages() {
+    use crate::session::{Message, SessionConfig};
+
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+
+    let session_id = "test-truncate".to_string();
+    let mut session = store
+        .get_or_create(Some(session_id.clone()))
+        .expect("Failed to create session");
+
+    // Configure: threshold=5, keep_recent=2
+    session.set_config(SessionConfig {
+        compaction_threshold: 5,
+        compaction_strategy: crate::session::CompactionStrategy::Truncate,
+        keep_recent: 2,
+    });
+
+    // Add 10 messages (well over threshold)
+    for i in 0..10 {
+        session
+            .add_message(
+                &store,
+                Message::new("user".to_string(), format!("msg{}", i)),
+            )
+            .expect("Failed to add message");
+    }
+
+    // Verify we have 10 messages before compaction
+    assert_eq!(session.messages().len(), 10);
+
+    // Trigger compaction
+    let compacted = session
+        .maybe_compact(&store)
+        .expect("Compaction should succeed");
+
+    assert!(compacted, "Should have triggered compaction");
+
+    // After compaction, should keep only last 2 messages (msg8, msg9)
+    assert_eq!(
+        session.messages().len(),
+        2,
+        "Should keep only last 2 messages after truncation"
+    );
+
+    // Verify the correct messages remain (last 2)
+    assert_eq!(session.messages()[0].content(), "msg8");
+    assert_eq!(session.messages()[1].content(), "msg9");
+
+    // Reload session from disk to verify persistence
+    let loaded_session = store
+        .load_session(&session_id)
+        .expect("Failed to reload session");
+
+    assert_eq!(
+        loaded_session.messages().len(),
+        2,
+        "Reloaded session should have 2 messages"
+    );
+    assert_eq!(loaded_session.messages()[0].content(), "msg8");
+    assert_eq!(loaded_session.messages()[1].content(), "msg9");
 }

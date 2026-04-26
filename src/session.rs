@@ -35,6 +35,8 @@ pub struct SessionConfig {
     pub compaction_threshold: usize,
     /// Strategy to use for compaction.
     pub compaction_strategy: CompactionStrategy,
+    /// Number of recent messages to keep during truncation compaction.
+    pub keep_recent: usize,
 }
 
 impl Default for SessionConfig {
@@ -42,6 +44,7 @@ impl Default for SessionConfig {
         Self {
             compaction_threshold: 100,                         // Default threshold
             compaction_strategy: CompactionStrategy::Truncate, // Default strategy
+            keep_recent: 10,                                   // Default keep last 10 messages
         }
     }
 }
@@ -55,6 +58,8 @@ pub struct Session {
     messages: Vec<Message>,
     #[serde(default)]
     config: SessionConfig,
+    #[serde(default)]
+    compaction_count: usize,
 }
 
 /// Information about a session, extracted from metadata without loading all messages.
@@ -89,6 +94,7 @@ impl Session {
             created_at: Utc::now(),
             messages: Vec::new(),
             config: SessionConfig::default(),
+            compaction_count: 0,
         }
     }
 
@@ -184,16 +190,86 @@ impl Session {
 
     /// Compacts messages using truncation strategy.
     ///
-    /// This is a placeholder stub for task 1.12.
-    /// Future implementation will remove oldest messages to stay under threshold.
+    /// Keeps only the last N messages (configured via `keep_recent`),
+    /// dropping all older messages. After truncation, rewrites the JSONL
+    /// file with the new message list and increments the compaction count.
     ///
     /// # Arguments
     /// * `store` - The SessionStore used for file operations
     ///
     /// # Returns
     /// Ok(()) when truncation succeeds.
-    fn compact_truncate(&mut self, _store: &SessionStore) -> io::Result<()> {
-        // Stub: Implementation in task 1.12
+    ///
+    /// # Errors
+    /// Returns an error if file operations fail.
+    fn compact_truncate(&mut self, store: &SessionStore) -> io::Result<()> {
+        let keep_count = self.config.keep_recent;
+
+        // If we have fewer messages than keep_recent, nothing to do
+        if self.messages.len() <= keep_count {
+            return Ok(());
+        }
+
+        // Keep only the last N messages
+        let start_index = self.messages.len() - keep_count;
+        self.messages = self.messages[start_index..].to_vec();
+
+        // Increment compaction count
+        self.compaction_count += 1;
+
+        // Rewrite the JSONL file with updated metadata and truncated messages
+        self.rewrite_jsonl(store)?;
+
+        Ok(())
+    }
+
+    /// Rewrites the entire JSONL file with current metadata and messages.
+    ///
+    /// This is used after compaction to persist the new message list.
+    ///
+    /// # Arguments
+    /// * `store` - The SessionStore used to resolve the file path
+    ///
+    /// # Returns
+    /// Ok(()) if the file was successfully rewritten.
+    ///
+    /// # Errors
+    /// Returns an error if file operations or JSON serialization fail.
+    fn rewrite_jsonl(&self, store: &SessionStore) -> io::Result<()> {
+        let path = store.session_path(&self.id);
+
+        let metadata = SessionMetadata {
+            metadata_type: "meta".to_string(),
+            session_id: self.id.clone(),
+            created_at: self.created_at,
+            compaction_count: self.compaction_count,
+        };
+
+        let metadata_json = serde_json::to_string(&metadata).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Failed to serialize metadata: {}", e),
+            )
+        })?;
+
+        let mut content = metadata_json;
+        content.push('\n');
+
+        // Append all messages
+        for message in &self.messages {
+            let message_json = serde_json::to_string(message).map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Failed to serialize message: {}", e),
+                )
+            })?;
+            content.push_str(&message_json);
+            content.push('\n');
+        }
+
+        // Write the complete file
+        fs::write(&path, content)?;
+
         Ok(())
     }
 
@@ -262,6 +338,8 @@ struct SessionMetadata {
     metadata_type: String,
     session_id: String,
     created_at: DateTime<Utc>,
+    #[serde(default)]
+    compaction_count: usize,
 }
 
 /// Represents a message in a session.
@@ -439,6 +517,7 @@ impl SessionStore {
             created_at: metadata.created_at,
             messages,
             config: SessionConfig::default(), // Use default config for loaded sessions
+            compaction_count: metadata.compaction_count,
         })
     }
 
@@ -532,7 +611,7 @@ impl SessionStore {
         Ok(SessionInfo {
             id: metadata.session_id,
             message_count,
-            compaction_count: 0, // Not implemented yet, will be added in future tasks
+            compaction_count: metadata.compaction_count,
             last_active: metadata.created_at, // For now, use created_at as last_active
         })
     }
@@ -547,6 +626,7 @@ impl SessionStore {
             metadata_type: "meta".to_string(),
             session_id: session.id.clone(),
             created_at: session.created_at,
+            compaction_count: session.compaction_count,
         };
 
         let metadata_json = serde_json::to_string(&metadata).map_err(|e| {

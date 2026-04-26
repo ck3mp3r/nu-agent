@@ -173,7 +173,7 @@ fn test_merge_prompt_with_context() {
     let prompt = "Explain the code";
     let context = Some("File: main.rs\nCode: fn main() { println!(\"Hello\"); }");
 
-    let result = merge_prompt_with_context(prompt, context.as_deref());
+    let result = merge_prompt_with_context(prompt, context);
 
     // Context should be prepended to prompt with clear separation
     assert!(result.contains("File: main.rs"));
