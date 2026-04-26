@@ -17,6 +17,21 @@ pub struct SessionStore {
     cache_dir: PathBuf,
 }
 
+/// Configuration for session behavior.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionConfig {
+    /// Maximum number of messages before compaction is triggered.
+    pub compaction_threshold: usize,
+}
+
+impl Default for SessionConfig {
+    fn default() -> Self {
+        Self {
+            compaction_threshold: 100, // Default threshold
+        }
+    }
+}
+
 /// Represents a session with its ID and metadata.
 /// For now, this is a minimal struct that will be expanded in later tasks.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -24,6 +39,8 @@ pub struct Session {
     id: String,
     created_at: DateTime<Utc>,
     messages: Vec<Message>,
+    #[serde(default)]
+    config: SessionConfig,
 }
 
 /// Information about a session, extracted from metadata without loading all messages.
@@ -57,7 +74,59 @@ impl Session {
             id,
             created_at: Utc::now(),
             messages: Vec::new(),
+            config: SessionConfig::default(),
         }
+    }
+
+    /// Sets the session configuration.
+    pub fn set_config(&mut self, config: SessionConfig) {
+        self.config = config;
+    }
+
+    /// Returns the session configuration.
+    pub fn config(&self) -> &SessionConfig {
+        &self.config
+    }
+
+    /// Adds a message to the session.
+    ///
+    /// This method appends the message to the session's messages vector and
+    /// persists it to the JSONL file. If the number of messages exceeds the
+    /// compaction threshold, compaction will be triggered (placeholder for now).
+    ///
+    /// # Arguments
+    /// * `store` - The SessionStore used to resolve the file path
+    /// * `message` - The message to add
+    ///
+    /// # Returns
+    /// Ok(()) if the message was successfully added, Err otherwise.
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - The message cannot be serialized to JSON
+    /// - The file cannot be opened or written to
+    pub fn add_message(&mut self, store: &SessionStore, message: Message) -> io::Result<()> {
+        // Append message to the JSONL file
+        self.append_message(store, message.clone())?;
+
+        // Add to in-memory vector
+        self.messages.push(message);
+
+        // Check if compaction threshold is exceeded
+        if self.messages.len() > self.config.compaction_threshold {
+            // Placeholder: trigger compaction
+            // TODO: Implement actual compaction in future tasks
+            self.trigger_compaction_placeholder();
+        }
+
+        Ok(())
+    }
+
+    /// Placeholder for compaction trigger.
+    /// This will be implemented in future tasks.
+    fn trigger_compaction_placeholder(&self) {
+        // Placeholder: no-op for now
+        // Future implementation will handle message compaction
     }
 
     /// Appends a message to the session's JSONL file.
@@ -279,6 +348,7 @@ impl SessionStore {
             id: metadata.session_id,
             created_at: metadata.created_at,
             messages,
+            config: SessionConfig::default(), // Use default config for loaded sessions
         })
     }
 

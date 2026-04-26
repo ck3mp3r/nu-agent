@@ -407,3 +407,90 @@ this is not valid json
         error
     );
 }
+
+/// Test that add_message appends a message and updates the messages vector.
+#[test]
+fn test_add_message_appends_and_updates_vector() {
+    use crate::session::Message;
+
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+
+    let session_id = "test-add-message".to_string();
+    let mut session = store
+        .get_or_create(Some(session_id.clone()))
+        .expect("Failed to create session");
+
+    // Verify session starts with 0 messages
+    assert_eq!(session.messages().len(), 0);
+
+    // Add first message
+    let msg1 = Message::new("user".to_string(), "First message".to_string());
+    session
+        .add_message(&store, msg1)
+        .expect("Failed to add message 1");
+
+    // Verify messages vector is updated
+    assert_eq!(session.messages().len(), 1);
+    assert_eq!(session.messages()[0].role(), "user");
+    assert_eq!(session.messages()[0].content(), "First message");
+
+    // Add second message
+    let msg2 = Message::new("assistant".to_string(), "Second message".to_string());
+    session
+        .add_message(&store, msg2)
+        .expect("Failed to add message 2");
+
+    // Verify messages vector is updated
+    assert_eq!(session.messages().len(), 2);
+    assert_eq!(session.messages()[1].role(), "assistant");
+    assert_eq!(session.messages()[1].content(), "Second message");
+}
+
+/// Test that add_message triggers compaction when threshold is exceeded.
+#[test]
+fn test_add_message_triggers_compaction_on_threshold() {
+    use crate::session::{Message, SessionConfig};
+
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+
+    let session_id = "test-compaction-trigger".to_string();
+    let mut session = store
+        .get_or_create(Some(session_id.clone()))
+        .expect("Failed to create session");
+
+    // Set compaction threshold to 3
+    session.set_config(SessionConfig {
+        compaction_threshold: 3,
+    });
+
+    // Add messages up to threshold
+    session
+        .add_message(&store, Message::new("user".to_string(), "msg1".to_string()))
+        .expect("Failed to add message 1");
+    session
+        .add_message(
+            &store,
+            Message::new("assistant".to_string(), "msg2".to_string()),
+        )
+        .expect("Failed to add message 2");
+    session
+        .add_message(&store, Message::new("user".to_string(), "msg3".to_string()))
+        .expect("Failed to add message 3");
+
+    // At threshold, should have 3 messages
+    assert_eq!(session.messages().len(), 3);
+
+    // Add one more message to exceed threshold
+    session
+        .add_message(
+            &store,
+            Message::new("assistant".to_string(), "msg4".to_string()),
+        )
+        .expect("Failed to add message 4");
+
+    // Should have triggered compaction (placeholder behavior for now)
+    // For now, we just verify the method doesn't panic and still adds the message
+    assert_eq!(session.messages().len(), 4);
+}
