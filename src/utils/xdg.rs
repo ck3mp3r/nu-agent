@@ -43,9 +43,10 @@ impl std::error::Error for XdgError {}
 /// ```
 pub fn data_dir() -> Result<PathBuf, XdgError> {
     if let Ok(val) = env::var("XDG_DATA_HOME")
-        && !val.is_empty() {
-            return Ok(PathBuf::from(val));
-        }
+        && !val.is_empty()
+    {
+        return Ok(PathBuf::from(val));
+    }
     let home = env::var("HOME").map_err(|_| XdgError::HomeNotFound)?;
     Ok(PathBuf::from(home).join(".local").join("share"))
 }
@@ -64,9 +65,10 @@ pub fn data_dir() -> Result<PathBuf, XdgError> {
 /// ```
 pub fn cache_dir() -> Result<PathBuf, XdgError> {
     if let Ok(val) = env::var("XDG_CACHE_HOME")
-        && !val.is_empty() {
-            return Ok(PathBuf::from(val));
-        }
+        && !val.is_empty()
+    {
+        return Ok(PathBuf::from(val));
+    }
     let home = env::var("HOME").map_err(|_| XdgError::HomeNotFound)?;
     Ok(PathBuf::from(home).join(".cache"))
 }
@@ -85,9 +87,10 @@ pub fn cache_dir() -> Result<PathBuf, XdgError> {
 /// ```
 pub fn config_dir() -> Result<PathBuf, XdgError> {
     if let Ok(val) = env::var("XDG_CONFIG_HOME")
-        && !val.is_empty() {
-            return Ok(PathBuf::from(val));
-        }
+        && !val.is_empty()
+    {
+        return Ok(PathBuf::from(val));
+    }
     let home = env::var("HOME").map_err(|_| XdgError::HomeNotFound)?;
     Ok(PathBuf::from(home).join(".config"))
 }
@@ -106,9 +109,10 @@ pub fn config_dir() -> Result<PathBuf, XdgError> {
 /// ```
 pub fn state_dir() -> Result<PathBuf, XdgError> {
     if let Ok(val) = env::var("XDG_STATE_HOME")
-        && !val.is_empty() {
-            return Ok(PathBuf::from(val));
-        }
+        && !val.is_empty()
+    {
+        return Ok(PathBuf::from(val));
+    }
     let home = env::var("HOME").map_err(|_| XdgError::HomeNotFound)?;
     Ok(PathBuf::from(home).join(".local").join("state"))
 }

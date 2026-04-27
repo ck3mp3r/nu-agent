@@ -76,11 +76,11 @@ fn data_dir_fails_when_home_missing() {
     let home = env::var("HOME").ok();
     remove_env("HOME");
     remove_env("XDG_DATA_HOME");
-    
+
     let result = data_dir();
     assert!(result.is_err());
     assert!(matches!(result.unwrap_err(), XdgError::HomeNotFound));
-    
+
     // Restore HOME
     if let Some(h) = home {
         set_env("HOME", &h);
@@ -126,11 +126,11 @@ fn cache_dir_fails_when_home_missing() {
     let home = env::var("HOME").ok();
     remove_env("HOME");
     remove_env("XDG_CACHE_HOME");
-    
+
     let result = cache_dir();
     assert!(result.is_err());
     assert!(matches!(result.unwrap_err(), XdgError::HomeNotFound));
-    
+
     // Restore HOME
     if let Some(h) = home {
         set_env("HOME", &h);
@@ -176,11 +176,11 @@ fn config_dir_fails_when_home_missing() {
     let home = env::var("HOME").ok();
     remove_env("HOME");
     remove_env("XDG_CONFIG_HOME");
-    
+
     let result = config_dir();
     assert!(result.is_err());
     assert!(matches!(result.unwrap_err(), XdgError::HomeNotFound));
-    
+
     // Restore HOME
     if let Some(h) = home {
         set_env("HOME", &h);
@@ -226,11 +226,11 @@ fn state_dir_fails_when_home_missing() {
     let home = env::var("HOME").ok();
     remove_env("HOME");
     remove_env("XDG_STATE_HOME");
-    
+
     let result = state_dir();
     assert!(result.is_err());
     assert!(matches!(result.unwrap_err(), XdgError::HomeNotFound));
-    
+
     // Restore HOME
     if let Some(h) = home {
         set_env("HOME", &h);
@@ -252,11 +252,11 @@ fn runtime_dir_uses_xdg_runtime_dir_when_set() {
 fn runtime_dir_fails_when_not_set() {
     cleanup_env();
     remove_env("XDG_RUNTIME_DIR");
-    
+
     let result = runtime_dir();
     assert!(result.is_err());
     assert!(matches!(result.unwrap_err(), XdgError::RuntimeDirNotSet));
-    
+
     cleanup_env();
 }
 
@@ -265,11 +265,11 @@ fn runtime_dir_fails_when_not_set() {
 fn runtime_dir_fails_when_empty() {
     cleanup_env();
     set_env("XDG_RUNTIME_DIR", "");
-    
+
     let result = runtime_dir();
     assert!(result.is_err());
     assert!(matches!(result.unwrap_err(), XdgError::RuntimeDirNotSet));
-    
+
     cleanup_env();
 }
 
