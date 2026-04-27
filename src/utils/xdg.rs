@@ -1,7 +1,7 @@
 //! XDG Base Directory Specification implementation
 //!
 //! This module provides proper XDG Base Directory support according to the spec:
-//! https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html
+//! <https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html>
 //!
 //! Each function checks the appropriate XDG_* environment variable first,
 //! then falls back to the specified default path (except runtime_dir which has no fallback).

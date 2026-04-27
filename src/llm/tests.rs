@@ -1,8 +1,5 @@
 use crate::config::Config;
-use crate::llm::{
-    LlmResponse, LlmUsage, ProviderRoute, call_llm, format_response, parse_github_copilot_backend,
-    resolve_api_key, route_provider,
-};
+use crate::llm::{LlmResponse, LlmUsage, call_llm, extract_response, format_response};
 use nu_protocol::Span;
 
 // ============================================================================
@@ -46,189 +43,6 @@ fn test_llm_response(text: &str) -> LlmResponse {
 }
 
 // ============================================================================
-// route_provider() tests — sync, no HTTP
-// ============================================================================
-
-#[test]
-fn routes_openai_provider() {
-    assert_eq!(route_provider(&cfg("openai")), ProviderRoute::OpenAI);
-}
-
-#[test]
-fn routes_anthropic_provider() {
-    assert_eq!(route_provider(&cfg("anthropic")), ProviderRoute::Anthropic);
-}
-
-#[test]
-fn routes_ollama_provider() {
-    assert_eq!(route_provider(&cfg("ollama")), ProviderRoute::Ollama);
-}
-
-#[test]
-fn routes_github_copilot_anthropic() {
-    let route = route_provider(&cfg("github-copilot/anthropic"));
-    assert_eq!(
-        route,
-        ProviderRoute::GitHubCopilot {
-            backend: "anthropic".to_string()
-        }
-    );
-}
-
-#[test]
-fn routes_github_copilot_openai() {
-    let route = route_provider(&cfg("github-copilot/openai"));
-    assert_eq!(
-        route,
-        ProviderRoute::GitHubCopilot {
-            backend: "openai".to_string()
-        }
-    );
-}
-
-#[test]
-fn routes_unsupported_provider() {
-    let route = route_provider(&cfg("groq"));
-    assert_eq!(route, ProviderRoute::Unsupported("groq".to_string()));
-}
-
-#[test]
-fn routes_github_copilot_via_legacy_base_url() {
-    let config = Config {
-        base_url: Some("https://api.githubcopilot.com/v1".to_string()),
-        ..cfg("openai")
-    };
-    assert!(matches!(
-        route_provider(&config),
-        ProviderRoute::GitHubCopilot { .. }
-    ));
-}
-
-#[test]
-fn routes_using_provider_impl_over_provider() {
-    let config = Config {
-        provider_impl: Some("openai".to_string()),
-        ..cfg("my-custom")
-    };
-    assert_eq!(route_provider(&config), ProviderRoute::OpenAI);
-}
-
-// ============================================================================
-// resolve_api_key() tests — sync, no HTTP
-// ============================================================================
-
-#[test]
-fn returns_config_api_key_when_set() {
-    let config = cfg_with_key("openai", "sk-explicit");
-    let result = resolve_api_key(&config, "openai");
-    assert_eq!(result.unwrap(), "sk-explicit");
-}
-
-#[test]
-#[serial_test::serial]
-fn returns_openai_env_var_when_config_key_is_none() {
-    unsafe { std::env::set_var("OPENAI_API_KEY", "sk-from-env") };
-    let result = resolve_api_key(&cfg("openai"), "openai");
-    unsafe { std::env::remove_var("OPENAI_API_KEY") };
-    assert_eq!(result.unwrap(), "sk-from-env");
-}
-
-#[test]
-#[serial_test::serial]
-fn returns_anthropic_env_var_when_config_key_is_none() {
-    unsafe { std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-env") };
-    let result = resolve_api_key(&cfg("anthropic"), "anthropic");
-    unsafe { std::env::remove_var("ANTHROPIC_API_KEY") };
-    assert_eq!(result.unwrap(), "sk-ant-env");
-}
-
-#[test]
-#[serial_test::serial]
-fn uses_github_token_for_github_copilot_provider() {
-    unsafe { std::env::set_var("GITHUB_TOKEN", "ghp-xyz") };
-    let result = resolve_api_key(&cfg("github-copilot"), "github-copilot");
-    unsafe { std::env::remove_var("GITHUB_TOKEN") };
-    assert_eq!(result.unwrap(), "ghp-xyz");
-}
-
-#[test]
-#[serial_test::serial]
-fn does_not_read_generated_github_copilot_api_key_env_var() {
-    // Ensure GITHUB_TOKEN is not set; set the wrong var name
-    unsafe { std::env::remove_var("GITHUB_TOKEN") };
-    unsafe { std::env::set_var("GITHUB-COPILOT_API_KEY", "should-not-read") };
-    let result = resolve_api_key(&cfg("github-copilot"), "github-copilot");
-    unsafe { std::env::remove_var("GITHUB-COPILOT_API_KEY") };
-    assert!(
-        result.is_err(),
-        "Should error when only wrong env var is set"
-    );
-}
-
-#[test]
-#[serial_test::serial]
-fn returns_err_when_no_config_key_and_no_env_var() {
-    unsafe { std::env::remove_var("OPENAI_API_KEY") };
-    let result = resolve_api_key(&cfg("openai"), "openai");
-    assert!(result.is_err());
-    assert!(result.unwrap_err().msg.contains("Missing API key"));
-}
-
-#[test]
-#[serial_test::serial]
-fn config_api_key_takes_precedence_over_env() {
-    unsafe { std::env::set_var("OPENAI_API_KEY", "env-key") };
-    let config = cfg_with_key("openai", "config-key");
-    let result = resolve_api_key(&config, "openai");
-    unsafe { std::env::remove_var("OPENAI_API_KEY") };
-    assert_eq!(result.unwrap(), "config-key");
-}
-
-// ============================================================================
-// parse_github_copilot_backend() tests — sync, no HTTP
-// ============================================================================
-
-#[test]
-fn parses_anthropic_backend() {
-    assert_eq!(
-        parse_github_copilot_backend("github-copilot/anthropic").unwrap(),
-        "anthropic"
-    );
-}
-
-#[test]
-fn parses_openai_backend() {
-    assert_eq!(
-        parse_github_copilot_backend("github-copilot/openai").unwrap(),
-        "openai"
-    );
-}
-
-#[test]
-fn rejects_provider_string_without_github_copilot_prefix() {
-    let result = parse_github_copilot_backend("anthropic");
-    assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .msg
-            .contains("Invalid GitHub Copilot provider format")
-    );
-}
-
-#[test]
-fn rejects_empty_backend_after_prefix() {
-    let result = parse_github_copilot_backend("github-copilot/");
-    assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .msg
-            .contains("Invalid GitHub Copilot provider format")
-    );
-}
-
-// ============================================================================
 // call_llm() error-path tests — async but NO HTTP (fail before rig client)
 // ============================================================================
 
@@ -242,8 +56,8 @@ async fn test_call_llm_missing_api_key() {
 
     let err = result.unwrap_err();
     assert!(
-        err.msg.contains("Missing API key") || err.msg.contains("OPENAI_API_KEY"),
-        "Unexpected error: {}",
+        err.msg.contains("Missing") || err.msg.contains("OPENAI_API_KEY"),
+        "Expected missing API key error, got: {}",
         err.msg
     );
 }
@@ -265,7 +79,12 @@ async fn call_llm_returns_err_for_missing_anthropic_key() {
 
     let result = call_llm(&cfg("anthropic"), "test prompt", vec![]).await;
     assert!(result.is_err());
-    assert!(result.unwrap_err().msg.contains("Missing API key"));
+    let err = result.unwrap_err();
+    assert!(
+        err.msg.contains("Missing") || err.msg.contains("ANTHROPIC_API_KEY"),
+        "Expected missing API key error, got: {}",
+        err.msg
+    );
 }
 
 #[tokio::test]
@@ -273,15 +92,34 @@ async fn call_llm_returns_err_for_missing_anthropic_key() {
 async fn call_llm_returns_err_for_missing_github_token() {
     unsafe { std::env::remove_var("GITHUB_TOKEN") };
 
-    let result = call_llm(&cfg("github-copilot/anthropic"), "test prompt", vec![]).await;
+    // Create config with new format: provider = "github-copilot", model = "anthropic/model"
+    let config = Config {
+        provider: "github-copilot".to_string(),
+        model: "anthropic/claude-sonnet-4.5".to_string(),
+        ..cfg("github-copilot")
+    };
+
+    let result = call_llm(&config, "test prompt", vec![]).await;
     assert!(result.is_err());
-    assert!(result.unwrap_err().msg.contains("Missing API key"));
+    let err = result.unwrap_err();
+    assert!(
+        err.msg.contains("Missing")
+            || err.msg.contains("API key")
+            || err.msg.contains("GITHUB_TOKEN"),
+        "Expected missing API key error, got: {}",
+        err.msg
+    );
 }
 
 #[tokio::test]
 #[ignore]
 async fn call_llm_returns_err_for_unknown_github_copilot_backend() {
-    let config = cfg_with_key("github-copilot/foobar", "ghp-key");
+    let config = Config {
+        provider: "github-copilot".to_string(),
+        model: "foobar/some-model".to_string(),
+        api_key: Some("ghp-key".to_string()),
+        ..cfg("github-copilot")
+    };
     let result = call_llm(&config, "test prompt", vec![]).await;
     assert!(result.is_err());
     let msg = result.unwrap_err().msg;
@@ -649,4 +487,178 @@ async fn call_llm_accepts_tool_definitions() {
 
     // Expected to fail due to no API key, but function should accept tools
     assert!(result.is_err());
+}
+
+// ============================================================================
+// extract_response() tests — behavioral tests
+// ============================================================================
+
+#[test]
+fn extract_response_handles_text_and_tool_calls() {
+    use rig::OneOrMany;
+    use rig::completion::CompletionResponse;
+    use rig::completion::message::{AssistantContent, Text, ToolCall, ToolFunction};
+    use rig::completion::request::Usage;
+    use serde_json::json;
+
+    // Create mock completion response with text and tool calls
+    let text1 = AssistantContent::Text(Text {
+        text: "First line".to_string(),
+    });
+    let text2 = AssistantContent::Text(Text {
+        text: "Second line".to_string(),
+    });
+    let tool_call = AssistantContent::ToolCall(ToolCall::new(
+        "call_123".to_string(),
+        ToolFunction::new("test_tool".to_string(), json!({"arg": "value"})),
+    ));
+
+    // Create CompletionResponse with the content
+    let completion_response = CompletionResponse::<()> {
+        choice: OneOrMany::many(vec![text1, tool_call.clone(), text2])
+            .expect("Should create OneOrMany"),
+        usage: Usage {
+            input_tokens: 100,
+            output_tokens: 50,
+            total_tokens: 150,
+            cached_input_tokens: 10,
+            cache_creation_input_tokens: 5,
+        },
+        raw_response: (),
+        message_id: None,
+    };
+
+    let result = extract_response(completion_response).expect("Should extract successfully");
+
+    // Verify text parts are joined with \n
+    assert_eq!(result.text, "First line\nSecond line");
+
+    // Verify usage is converted correctly
+    assert_eq!(result.usage.input_tokens, 100);
+    assert_eq!(result.usage.output_tokens, 50);
+    assert_eq!(result.usage.total_tokens, 150);
+    assert_eq!(result.usage.cached_input_tokens, 10);
+    assert_eq!(result.usage.cache_creation_input_tokens, 5);
+
+    // Verify tool calls are extracted
+    assert_eq!(result.tool_calls.len(), 1);
+    if let AssistantContent::ToolCall(tc) = &result.tool_calls[0] {
+        assert_eq!(tc.id, "call_123");
+        assert_eq!(tc.function.name, "test_tool");
+    } else {
+        panic!("Expected ToolCall variant");
+    }
+}
+
+#[test]
+fn extract_response_ignores_other_content_types() {
+    use rig::OneOrMany;
+    use rig::completion::CompletionResponse;
+    use rig::completion::message::{AssistantContent, Reasoning, Text};
+    use rig::completion::request::Usage;
+
+    // Create mock completion response with text and reasoning (other types to ignore)
+    let text = AssistantContent::Text(Text {
+        text: "Only this should be extracted".to_string(),
+    });
+    let reasoning = AssistantContent::Reasoning(Reasoning::new("This should be ignored"));
+
+    let completion_response = CompletionResponse::<()> {
+        choice: OneOrMany::many(vec![reasoning, text]).expect("Should create OneOrMany"),
+        usage: Usage {
+            input_tokens: 50,
+            output_tokens: 25,
+            total_tokens: 75,
+            cached_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+        },
+        raw_response: (),
+        message_id: None,
+    };
+
+    let result = extract_response(completion_response).expect("Should extract successfully");
+
+    // Verify only text is extracted, reasoning is ignored
+    assert_eq!(result.text, "Only this should be extracted");
+
+    // Verify no tool calls
+    assert_eq!(result.tool_calls.len(), 0);
+}
+
+#[test]
+fn extract_response_handles_empty_choice() {
+    use rig::OneOrMany;
+    use rig::completion::CompletionResponse;
+    use rig::completion::message::{AssistantContent, Text};
+    use rig::completion::request::Usage;
+
+    // Create mock completion response with single empty text (OneOrMany requires at least one item)
+    let empty_text = AssistantContent::Text(Text {
+        text: "".to_string(),
+    });
+
+    let completion_response = CompletionResponse::<()> {
+        choice: OneOrMany::one(empty_text),
+        usage: Usage {
+            input_tokens: 10,
+            output_tokens: 0,
+            total_tokens: 10,
+            cached_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+        },
+        raw_response: (),
+        message_id: None,
+    };
+
+    let result = extract_response(completion_response).expect("Should extract successfully");
+
+    // Verify empty text
+    assert_eq!(result.text, "");
+
+    // Verify no tool calls
+    assert_eq!(result.tool_calls.len(), 0);
+
+    // Verify usage is still converted
+    assert_eq!(result.usage.input_tokens, 10);
+    assert_eq!(result.usage.output_tokens, 0);
+}
+
+#[test]
+fn extract_response_handles_multiple_text_parts() {
+    use rig::OneOrMany;
+    use rig::completion::CompletionResponse;
+    use rig::completion::message::{AssistantContent, Text};
+    use rig::completion::request::Usage;
+
+    // Create mock completion response with multiple text parts
+    let text1 = AssistantContent::Text(Text {
+        text: "Line 1".to_string(),
+    });
+    let text2 = AssistantContent::Text(Text {
+        text: "Line 2".to_string(),
+    });
+    let text3 = AssistantContent::Text(Text {
+        text: "Line 3".to_string(),
+    });
+
+    let completion_response = CompletionResponse::<()> {
+        choice: OneOrMany::many(vec![text1, text2, text3]).expect("Should create OneOrMany"),
+        usage: Usage {
+            input_tokens: 30,
+            output_tokens: 15,
+            total_tokens: 45,
+            cached_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+        },
+        raw_response: (),
+        message_id: None,
+    };
+
+    let result = extract_response(completion_response).expect("Should extract successfully");
+
+    // Verify text parts are joined with newlines
+    assert_eq!(result.text, "Line 1\nLine 2\nLine 3");
+
+    // Verify no tool calls
+    assert_eq!(result.tool_calls.len(), 0);
 }

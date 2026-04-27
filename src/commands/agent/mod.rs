@@ -151,7 +151,7 @@ pub fn merge_prompt_with_context(prompt: &str, context: Option<&str>) -> String 
 /// * `call` - The EvaluatedCall containing session flags
 ///
 /// # Returns
-/// A tuple of (Option<String>, bool, bool) representing the session flags.
+/// A tuple of (`Option<String>`, bool, bool) representing the session flags.
 ///
 /// # Errors
 /// Returns an error if:
@@ -176,7 +176,7 @@ pub fn extract_and_validate_session_flags(
 
 /// Extract and parse closures from --tools flag.
 ///
-/// Returns a HashMap of tool name to Spanned<Closure>, filtering out any non-closure values.
+/// Returns a HashMap of tool name to `Spanned<Closure>`, filtering out any non-closure values.
 /// If the flag is not provided or is not a record, returns an empty HashMap.
 ///
 /// # Arguments

@@ -12,7 +12,7 @@ use tempfile::NamedTempFile;
 /// 1. If XDG_CACHE_HOME is set, use $XDG_CACHE_HOME/nu-agent/sessions
 /// 2. Otherwise, use ~/.cache/nu-agent/sessions (or platform equivalent)
 ///
-/// Reference: https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html
+/// Reference: <https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html>
 #[derive(Debug, Clone)]
 pub struct SessionStore {
     cache_dir: PathBuf,

@@ -39,16 +39,20 @@
 //! - Environment variable: `GITHUB_TOKEN`
 //! - Custom base URL: `Client::builder().base_url(url)` (for testing)
 
+pub mod agent;
 pub mod backend;
 mod client;
 pub mod completion;
+mod error;
 
+pub use agent::Agent;
 pub use backend::{AnthropicBackend, GitHubCopilotBackend, OpenAIBackend};
 pub use client::{
-    AnthropicClient, Client, ClientBuilder, GitHubCopilotAnthropicExt,
+    AnthropicClient, Client, ClientBuilder, ClientExt, GitHubCopilotAnthropicExt,
     GitHubCopilotAnthropicExtBuilder, GitHubCopilotExt, GitHubCopilotExtBuilder,
     GitHubCopilotOpenAIExt, GitHubCopilotOpenAIExtBuilder, OpenAIClient,
 };
+pub use error::Error;
 
 /// Claude Sonnet 4.5 model identifier
 pub const CLAUDE_SONNET_4_5: &str = "claude-sonnet-4.5";

@@ -1029,13 +1029,10 @@ fn test_resolve_model_invalid_format() {
         providers: HashMap::new(),
     };
 
-    // Missing slash
+    // No slash separator
     let result = plugin_config.resolve_model("openaigpt4");
     assert!(result.is_err());
-
-    // Too many slashes
-    let result = plugin_config.resolve_model("openai/gpt/4");
-    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("Expected 'provider/model'"));
 
     // Empty provider
     let result = plugin_config.resolve_model("/gpt-4");
@@ -1210,99 +1207,143 @@ fn resolve_model_handles_two_part_format() {
 }
 
 #[test]
-fn resolve_model_handles_github_copilot_three_part() {
-    // Test new 3-part format: github-copilot/anthropic/claude-sonnet-4.5
-    // Provider becomes "github-copilot/anthropic", model becomes "claude-sonnet-4.5"
+fn resolve_model_validates_empty_parts() {
+    // Test that empty parts in model specification are rejected
+    let plugin_config = PluginConfig {
+        model: "provider/model".to_string(),
+        small_model: None,
+        providers: HashMap::new(),
+    };
+
+    // Empty provider
+    let result = plugin_config.resolve_model("/model");
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("cannot be empty"));
+
+    // Empty model
+    let result = plugin_config.resolve_model("provider/");
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("cannot be empty"));
+
+    // Both empty
+    let result = plugin_config.resolve_model("/");
+    assert!(result.is_err());
+}
+
+// ============================================================================
+// split_once() Tests - Provider-Agnostic Parsing
+// ============================================================================
+
+#[test]
+fn resolve_model_uses_split_once_for_multi_part_models() {
     let plugin_config = PluginConfig {
         model: "github-copilot/anthropic/claude-sonnet-4.5".to_string(),
         small_model: None,
         providers: {
-            let mut providers = HashMap::new();
-            // Provider key must be "github-copilot/anthropic" for 3-part format
-            providers.insert(
-                "github-copilot/anthropic".to_string(),
+            let mut map = HashMap::new();
+            map.insert(
+                "github-copilot".to_string(),
                 ProviderConfig {
-                    name: Some("GitHub Copilot (Anthropic)".to_string()),
-                    api_key: Some("ghcp-token".to_string()),
+                    name: None,
+                    provider_impl: None,
+                    api_key: Some("test-key".to_string()),
                     base_url: Some("https://api.githubcopilot.com".to_string()),
-                    provider_impl: Some("openai".to_string()),
                     models: HashMap::new(),
                 },
             );
-            providers
+            map
         },
     };
 
     let config = plugin_config
         .resolve_model("github-copilot/anthropic/claude-sonnet-4.5")
-        .expect("should resolve 3-part format");
+        .expect("Should resolve github-copilot model");
 
-    assert_eq!(config.provider, "github-copilot/anthropic");
-    assert_eq!(config.model, "claude-sonnet-4.5");
-    assert_eq!(config.api_key, Some("ghcp-token".to_string()));
+    // Provider should be "github-copilot"
+    assert_eq!(config.provider, "github-copilot");
+
+    // Model should be "anthropic/claude-sonnet-4.5" (everything after first /)
+    assert_eq!(config.model, "anthropic/claude-sonnet-4.5");
+
+    // API key should come from provider config
+    assert_eq!(config.api_key, Some("test-key".to_string()));
+}
+
+#[test]
+fn resolve_model_works_with_simple_two_part() {
+    let plugin_config = PluginConfig {
+        model: "openai/gpt-4".to_string(),
+        small_model: None,
+        providers: {
+            let mut map = HashMap::new();
+            map.insert(
+                "openai".to_string(),
+                ProviderConfig {
+                    name: None,
+                    provider_impl: None,
+                    api_key: Some("test-key".to_string()),
+                    base_url: None,
+                    models: HashMap::new(),
+                },
+            );
+            map
+        },
+    };
+
+    let config = plugin_config
+        .resolve_model("openai/gpt-4")
+        .expect("Should resolve openai model");
+
+    assert_eq!(config.provider, "openai");
+    assert_eq!(config.model, "gpt-4");
+}
+
+#[test]
+fn integration_github_copilot_with_backend_in_model() {
+    // This simulates the full flow:
+    // 1. Config has github-copilot provider
+    // 2. User specifies model as "github-copilot/anthropic/claude-sonnet-4.5"
+    // 3. resolve_model extracts provider="github-copilot", model="anthropic/claude-sonnet-4.5"
+    // 4. github-copilot provider receives model string and parses backend internally
+
+    let plugin_config = PluginConfig {
+        model: "github-copilot/anthropic/claude-sonnet-4.5".to_string(),
+        small_model: Some("github-copilot/openai/gpt-4o-mini".to_string()),
+        providers: {
+            let mut map = HashMap::new();
+            map.insert(
+                "github-copilot".to_string(),
+                ProviderConfig {
+                    name: None,
+                    provider_impl: None,
+                    api_key: Some("test-key".to_string()),
+                    base_url: Some("https://api.githubcopilot.com".to_string()),
+                    models: HashMap::new(),
+                },
+            );
+            map
+        },
+    };
+
+    // Test default model
+    let config = plugin_config
+        .resolve_model("github-copilot/anthropic/claude-sonnet-4.5")
+        .expect("Should resolve github-copilot anthropic model");
+
+    assert_eq!(config.provider, "github-copilot");
+    assert_eq!(config.model, "anthropic/claude-sonnet-4.5");
+    assert_eq!(config.api_key, Some("test-key".to_string()));
     assert_eq!(
         config.base_url,
         Some("https://api.githubcopilot.com".to_string())
     );
-    assert_eq!(config.provider_impl, Some("openai".to_string()));
-}
 
-#[test]
-fn resolve_model_rejects_three_part_non_github() {
-    // Test that 3-part format is ONLY allowed for github-copilot
-    let plugin_config = PluginConfig {
-        model: "openai/foo/bar".to_string(),
-        small_model: None,
-        providers: {
-            let mut providers = HashMap::new();
-            providers.insert(
-                "openai".to_string(),
-                ProviderConfig {
-                    name: None,
-                    api_key: None,
-                    base_url: None,
-                    provider_impl: None,
-                    models: HashMap::new(),
-                },
-            );
-            providers
-        },
-    };
+    // Test small model (OpenAI backend)
+    let config = plugin_config
+        .resolve_model("github-copilot/openai/gpt-4o-mini")
+        .expect("Should resolve github-copilot openai model");
 
-    let result = plugin_config.resolve_model("openai/foo/bar");
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(
-        err.contains("3-part format only allowed for github-copilot"),
-        "Expected error about 3-part format restriction, got: {}",
-        err
-    );
-}
-
-#[test]
-fn resolve_model_validates_empty_parts() {
-    // Test that empty parts in model specification are rejected
-    let plugin_config = PluginConfig {
-        model: "github-copilot//model".to_string(),
-        small_model: None,
-        providers: HashMap::new(),
-    };
-
-    // Empty backend (middle part)
-    let result = plugin_config.resolve_model("github-copilot//model");
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(
-        err.contains("empty") || err.contains("cannot be empty"),
-        "Expected error about empty parts, got: {}",
-        err
-    );
-
-    // Empty provider
-    let result = plugin_config.resolve_model("//model");
-    assert!(result.is_err());
-
-    // Empty model at end
-    let result = plugin_config.resolve_model("github-copilot/anthropic/");
-    assert!(result.is_err());
+    assert_eq!(config.provider, "github-copilot");
+    assert_eq!(config.model, "openai/gpt-4o-mini");
+    assert_eq!(config.api_key, Some("test-key".to_string()));
 }

@@ -262,52 +262,45 @@ impl PluginConfig {
         Ok(ModelLimits { context, output })
     }
 
-    /// Resolve a model specification (provider/model format) to a Config
+    /// Resolve model specification to runtime Config.
     ///
-    /// Takes a model specification like "openai/gpt-4" and:
-    /// 1. Parses provider and model name
-    /// 2. Looks up provider configuration
-    /// 3. Looks up model-specific configuration (if exists)
-    /// 4. Merges provider and model config with env vars
-    /// 5. Returns runtime Config
+    /// Model specification format: `"provider/model"`
+    /// - Provider: extracted from first part before `/`
+    /// - Model: everything after first `/` (may contain additional `/` characters)
+    ///
+    /// # Examples
+    /// - `"openai/gpt-4"` → provider: `"openai"`, model: `"gpt-4"`
+    /// - `"github-copilot/anthropic/claude-sonnet-4.5"` → provider: `"github-copilot"`, model: `"anthropic/claude-sonnet-4.5"`
+    /// - `"anthropic/claude-3"` → provider: `"anthropic"`, model: `"claude-3"`
+    ///
+    /// The model string is passed directly to the provider implementation,
+    /// which may parse it further based on provider-specific conventions.
+    ///
+    /// # Process
+    /// 1. Parse provider and model name from specification
+    /// 2. Look up provider configuration
+    /// 3. Look up model-specific configuration (if exists)
+    /// 4. Merge provider and model config with environment variables
+    /// 5. Return runtime Config
     ///
     /// # Arguments
-    /// * `model_spec` - Model specification in "provider/model" format
+    /// * `model_spec` - Model specification in `"provider/model"` format
     ///
     /// # Returns
-    /// * `Ok(Config)` - Runtime configuration
-    /// * `Err(String)` - Error message if parsing or lookup fails
+    /// Resolved Config with provider, model, and merged settings from provider/model config
+    ///
+    /// # Errors
+    /// - Missing `/` separator
+    /// - Empty provider or model name
+    /// - Provider not found in configuration
     pub fn resolve_model(&self, model_spec: &str) -> Result<Config, String> {
-        // Parse provider/model format - support both 2-part and 3-part formats
-        let parts: Vec<&str> = model_spec.split('/').collect();
-
-        let (provider_name, model_name) = match parts.len() {
-            2 => {
-                // Traditional format: "openai/gpt-4"
-                (parts[0].to_string(), parts[1])
-            }
-            3 if parts[0] == "github-copilot" => {
-                // New format: "github-copilot/anthropic/claude-sonnet-4.5"
-                // Validate backend (parts[1]) is non-empty before constructing provider
-                if parts[1].is_empty() {
-                    return Err("Backend name cannot be empty".to_string());
-                }
-                // Provider becomes "github-copilot/anthropic"
-                (format!("{}/{}", parts[0], parts[1]), parts[2])
-            }
-            3 => {
-                return Err(format!(
-                    "3-part format only allowed for github-copilot, got: {}",
-                    model_spec
-                ));
-            }
-            _ => {
-                return Err(format!(
-                    "Invalid model specification '{}'. Expected 'provider/model' or 'github-copilot/backend/model'",
-                    model_spec
-                ));
-            }
-        };
+        // Split on first '/' only - provider is first part, model is everything after
+        let (provider_name, model_name) = model_spec.split_once('/').ok_or_else(|| {
+            format!(
+                "Invalid model specification '{}'. Expected 'provider/model' format",
+                model_spec
+            )
+        })?;
 
         // Validate non-empty parts
         if provider_name.is_empty() {
@@ -320,7 +313,7 @@ impl PluginConfig {
         // Look up provider configuration
         let provider_config = self
             .providers
-            .get(&provider_name)
+            .get(provider_name)
             .ok_or_else(|| format!("Provider '{}' not found in configuration", provider_name))?;
 
         // Look up model-specific configuration (optional)
@@ -328,7 +321,7 @@ impl PluginConfig {
 
         // Start with env-based config for this provider/model
         // Use the actual provider name, not provider_impl
-        let mut config = Config::from_env(&provider_name, model_name);
+        let mut config = Config::from_env(provider_name, model_name);
 
         // Set provider_impl if specified in provider config
         if let Some(impl_name) = &provider_config.provider_impl {
