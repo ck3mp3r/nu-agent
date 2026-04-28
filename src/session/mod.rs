@@ -88,6 +88,20 @@ impl Session {
         &self.messages
     }
 
+    /// Formats the session history as a string.
+    ///
+    /// Each message is formatted as "role: content" with double newlines between messages.
+    ///
+    /// # Returns
+    /// A formatted string containing all messages in the session, or empty string if no messages.
+    pub fn format_history(&self) -> String {
+        self.messages
+            .iter()
+            .map(|msg| format!("{}: {}", msg.role(), msg.content()))
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+
     /// Creates a new session with the given ID.
     fn new(id: String) -> Self {
         Self {

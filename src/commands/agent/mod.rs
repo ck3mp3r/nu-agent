@@ -363,6 +363,11 @@ impl SimplePluginCommand for Agent {
                 "Create new session with auto-generated ID",
                 None,
             )
+            .switch(
+                "verbose",
+                "Show detailed execution progress (agent steps, LLM calls, tool execution)",
+                Some('v'),
+            )
     }
 
     fn run(
@@ -372,6 +377,19 @@ impl SimplePluginCommand for Agent {
         call: &EvaluatedCall,
         input: &Value,
     ) -> Result<Value, LabeledError> {
+        // Configure logging based on --verbose flag
+        if call.has_flag("verbose")? {
+            use env_logger::Builder;
+            use log::LevelFilter;
+
+            let _ = Builder::new()
+                .filter_level(LevelFilter::Info)
+                .format_timestamp(None)
+                .format_module_path(false)
+                .format_target(false)
+                .try_init();
+        }
+
         // Validate session flags
         let (session_id, new_session) = extract_and_validate_session_flags(call)?;
 
@@ -398,6 +416,9 @@ impl SimplePluginCommand for Agent {
 
         // Extract prompt from input
         let prompt = extract_prompt_from_input(input)?;
+
+        // Log initial user prompt (not accumulated history)
+        log::info!("→ User prompt:\n{}", &prompt);
 
         // Extract optional context from input
         let context = extract_context_from_input(input)?;
@@ -430,21 +451,16 @@ impl SimplePluginCommand for Agent {
                 .get_or_create(Some(id.clone()))
                 .map_err(|e| LabeledError::new(format!("Failed to load/create session: {}", e)))?;
 
-            final_session_id = Some(id);
+            final_session_id = Some(id.clone());
             session_opt = Some(session);
+            log::info!("Using session: {}", id);
         }
 
         // Build prompt with session history if available
         let mut merged_prompt = merge_prompt_with_context(&prompt, context.as_deref());
 
         if let Some(ref session) = session_opt {
-            // Prepend session history to the prompt
-            let history = session
-                .messages()
-                .iter()
-                .map(|msg| format!("{}: {}", msg.role(), msg.content()))
-                .collect::<Vec<_>>()
-                .join("\n\n");
+            let history = session.format_history();
 
             if !history.is_empty() {
                 merged_prompt = format!(
@@ -459,6 +475,10 @@ impl SimplePluginCommand for Agent {
             .map_err(|e| LabeledError::new(format!("Failed to create async runtime: {}", e)))?;
 
         // Call LLM and handle tool execution loop
+        log::debug!(
+            "Calling LLM with accumulated context and {} tool definitions",
+            tool_definitions.len()
+        );
         let mut llm_response = runtime
             .block_on(crate::llm::call_llm(
                 &config,
@@ -469,6 +489,15 @@ impl SimplePluginCommand for Agent {
                 LabeledError::new(format!("LLM call failed: {}", e.msg))
                     .with_label(e.msg, call.head)
             })?;
+
+        log::info!("← LLM response:\n{}", &llm_response.text);
+        log::debug!(
+            "Response metadata: {} chars, {} tool calls, tokens: input={} output={}",
+            llm_response.text.len(),
+            llm_response.tool_calls.len(),
+            llm_response.usage.input_tokens,
+            llm_response.usage.output_tokens
+        );
 
         // Track all tool calls executed during the agent loop
         let mut executed_tool_calls: Vec<rig::completion::AssistantContent> = Vec::new();
@@ -494,12 +523,34 @@ impl SimplePluginCommand for Agent {
             tool_timeout,
         );
 
+        // In-memory conversation tracking (works with or without session)
+        // This ensures tool results are ALWAYS passed to subsequent LLM calls
+        // Session tracking is SEPARATE (optional persistence to disk)
+        let mut conversation_messages: Vec<(String, String)> = vec![];
+
+        // Track initial user prompt and first assistant response
+        conversation_messages.push(("user".to_string(), merged_prompt.clone()));
+        conversation_messages.push(("assistant".to_string(), llm_response.text.clone()));
+
         // Agent loop: process tool calls if present
         let max_tool_turns = config.max_tool_turns.unwrap_or(5);
         let mut tool_turn = 0;
 
         while !llm_response.tool_calls.is_empty() && tool_turn < max_tool_turns {
             tool_turn += 1;
+            log::debug!("Tool turn {}/{}", tool_turn, max_tool_turns);
+
+            // Log tool calls before execution
+            for content in &llm_response.tool_calls {
+                if let rig::completion::message::AssistantContent::ToolCall(tc) = content {
+                    log::info!(
+                        "→ Calling tool: {} with arguments:\n{}",
+                        tc.function.name,
+                        serde_json::to_string_pretty(&tc.function.arguments)
+                            .unwrap_or_else(|_| "{}".to_string())
+                    );
+                }
+            }
 
             // Capture tool calls that were executed this turn
             executed_tool_calls.extend(llm_response.tool_calls.clone());
@@ -518,34 +569,93 @@ impl SimplePluginCommand for Agent {
                         .with_label(e.to_string(), call.head)
                 })?;
 
-            // Build conversation history with tool results
-            // Format: previous prompt + assistant response with tool calls + tool results
-            let mut conversation = vec![
-                format!("User: {}", merged_prompt),
-                format!("Assistant: {}", llm_response.text),
-            ];
-
-            // Add tool results to conversation
+            // Log tool results
             for result in &tool_results {
-                conversation.push(format!(
-                    "Tool '{}' result: {}",
-                    result.tool_call_id, result.content
+                log::info!(
+                    "← Tool '{}' result:\n{}",
+                    result.tool_call_id,
+                    result.content
+                );
+                log::debug!("Tool result size: {} bytes", result.content.len());
+            }
+
+            // Track tool results in-memory conversation (ALWAYS, regardless of session)
+            for result in &tool_results {
+                conversation_messages.push((
+                    "tool".to_string(),
+                    format!(
+                        "Tool '{}' returned: {}",
+                        result.tool_call_id, result.content
+                    ),
                 ));
             }
 
-            // Join conversation and make another LLM call
-            let conversation_text = conversation.join("\n\n");
+            // Save tool results to session if active (SEPARATE from in-memory tracking)
+            if let Some(ref mut session) = session_opt {
+                for result in &tool_results {
+                    let tool_msg = crate::session::Message::new(
+                        "tool".to_string(),
+                        format!(
+                            "Tool '{}' returned: {}",
+                            result.tool_call_id, result.content
+                        ),
+                    );
+                    session.add_message(&self.store, tool_msg).map_err(|e| {
+                        LabeledError::new(format!("Failed to save tool message: {}", e))
+                    })?;
+                }
+            }
+
+            // Build conversation history from in-memory messages (NOT from session)
+            // This ensures tool results are passed to LLM even without --session flag
+            let history_prompt = {
+                let history = conversation_messages
+                    .iter()
+                    .map(|(role, content)| format!("{}: {}", role, content))
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+
+                if !history.is_empty() {
+                    format!(
+                        "Previous conversation:\n{}\n\n---\n\nContinue responding.",
+                        history
+                    )
+                } else {
+                    merged_prompt.clone()
+                }
+            };
+
+            // Make another LLM call with conversation history
+            log::debug!(
+                "Calling LLM again after tool execution with {} tool definitions",
+                tool_definitions.len()
+            );
             llm_response = runtime
                 .block_on(crate::llm::call_llm(
                     &config,
-                    &conversation_text,
+                    &history_prompt,
                     tool_definitions.clone(),
                 ))
                 .map_err(|e| {
                     LabeledError::new(format!("LLM call failed: {}", e.msg))
                         .with_label(e.msg, call.head)
                 })?;
+
+            log::info!("← LLM response:\n{}", &llm_response.text);
+            log::debug!(
+                "Response metadata: {} chars, {} tool calls, tokens: input={} output={}",
+                llm_response.text.len(),
+                llm_response.tool_calls.len(),
+                llm_response.usage.input_tokens,
+                llm_response.usage.output_tokens
+            );
+
+            // Track assistant response in conversation
+            conversation_messages.push(("assistant".to_string(), llm_response.text.clone()));
         }
+
+        // Capture tool call count before moving executed_tool_calls
+        let tool_call_count = executed_tool_calls.len();
 
         // Build final response with all executed tool calls
         let final_response = crate::llm::LlmResponse {
@@ -562,6 +672,7 @@ impl SimplePluginCommand for Agent {
         let mut compaction_count = 0;
 
         if let Some(mut session) = session_opt {
+            log::debug!("Saving 2 messages to session");
             // Create and save user message
             let user_msg = crate::session::Message::new("user".to_string(), prompt.clone());
             session
@@ -587,6 +698,8 @@ impl SimplePluginCommand for Agent {
             message_count = session.messages().len();
             compaction_count = session.compaction_count();
         }
+
+        log::info!("Agent completed with {} total tool calls", tool_call_count);
 
         // Format response with session metadata
         let response_value = crate::llm::format_response(
@@ -892,3 +1005,9 @@ mod tests;
 
 #[cfg(test)]
 mod prompt_tests;
+
+#[cfg(test)]
+mod tool_session_test;
+
+#[cfg(test)]
+mod logging_test;

@@ -156,6 +156,38 @@ $env.config.plugins.agent = {
 ls | to json | $"Summarize this file list: ($in)" | agent
 ```
 
+## Logging
+
+Use the `--verbose` (or `-v`) flag to see detailed execution progress:
+
+```nushell
+# Silent (default) - no diagnostic output
+"prompt" | agent --tools $tools
+
+# Verbose - show agent steps, LLM calls, and tool execution
+"prompt" | agent --tools $tools --verbose
+"prompt" | agent --tools $tools -v
+```
+
+### What Verbose Shows
+
+The `--verbose` flag displays the **current turn** of the conversation:
+
+- **→ User prompt**: Your original input (shown once at start)
+- **← LLM responses**: Each new response from the LLM
+- **→ Tool calls**: Tool names with full JSON arguments for each call
+- **← Tool results**: The actual data returned by each tool
+- **Session info**: Which session ID is being used (when applicable)
+
+**Note:** Verbose shows only NEW interactions per turn, not accumulated conversation history.
+
+All verbose output goes to **stderr**, so it doesn't pollute pipeline data:
+
+```nushell
+# Logs visible in terminal, pipeline data stays clean
+"prompt" | agent --tools $tools --verbose | to json | save output.json
+```
+
 ## Troubleshooting
 
 ### GitHub Copilot: "Access to this endpoint is forbidden"
