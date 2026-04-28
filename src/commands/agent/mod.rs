@@ -438,13 +438,7 @@ impl SimplePluginCommand for Agent {
         let mut merged_prompt = merge_prompt_with_context(&prompt, context.as_deref());
 
         if let Some(ref session) = session_opt {
-            // Prepend session history to the prompt
-            let history = session
-                .messages()
-                .iter()
-                .map(|msg| format!("{}: {}", msg.role(), msg.content()))
-                .collect::<Vec<_>>()
-                .join("\n\n");
+            let history = session.format_history();
 
             if !history.is_empty() {
                 merged_prompt = format!(
@@ -518,27 +512,42 @@ impl SimplePluginCommand for Agent {
                         .with_label(e.to_string(), call.head)
                 })?;
 
-            // Build conversation history with tool results
-            // Format: previous prompt + assistant response with tool calls + tool results
-            let mut conversation = vec![
-                format!("User: {}", merged_prompt),
-                format!("Assistant: {}", llm_response.text),
-            ];
-
-            // Add tool results to conversation
-            for result in &tool_results {
-                conversation.push(format!(
-                    "Tool '{}' result: {}",
-                    result.tool_call_id, result.content
-                ));
+            // Save tool results to session if active
+            if let Some(ref mut session) = session_opt {
+                for result in &tool_results {
+                    let tool_msg = crate::session::Message::new(
+                        "tool".to_string(),
+                        format!(
+                            "Tool '{}' returned: {}",
+                            result.tool_call_id, result.content
+                        ),
+                    );
+                    session.add_message(&self.store, tool_msg).map_err(|e| {
+                        LabeledError::new(format!("Failed to save tool message: {}", e))
+                    })?;
+                }
             }
 
-            // Join conversation and make another LLM call
-            let conversation_text = conversation.join("\n\n");
+            // Build conversation history with tool results
+            let history_prompt = if let Some(ref session) = session_opt {
+                let history = session.format_history();
+                if !history.is_empty() {
+                    format!(
+                        "Previous conversation:\n{}\n\n---\n\nContinue responding.",
+                        history
+                    )
+                } else {
+                    merged_prompt.clone()
+                }
+            } else {
+                merged_prompt.clone()
+            };
+
+            // Make another LLM call with conversation history
             llm_response = runtime
                 .block_on(crate::llm::call_llm(
                     &config,
-                    &conversation_text,
+                    &history_prompt,
                     tool_definitions.clone(),
                 ))
                 .map_err(|e| {
@@ -892,3 +901,6 @@ mod tests;
 
 #[cfg(test)]
 mod prompt_tests;
+
+#[cfg(test)]
+mod tool_session_test;
