@@ -488,6 +488,15 @@ impl SimplePluginCommand for Agent {
             tool_timeout,
         );
 
+        // In-memory conversation tracking (works with or without session)
+        // This ensures tool results are ALWAYS passed to subsequent LLM calls
+        // Session tracking is SEPARATE (optional persistence to disk)
+        let mut conversation_messages: Vec<(String, String)> = vec![];
+
+        // Track initial user prompt and first assistant response
+        conversation_messages.push(("user".to_string(), merged_prompt.clone()));
+        conversation_messages.push(("assistant".to_string(), llm_response.text.clone()));
+
         // Agent loop: process tool calls if present
         let max_tool_turns = config.max_tool_turns.unwrap_or(5);
         let mut tool_turn = 0;
@@ -512,7 +521,18 @@ impl SimplePluginCommand for Agent {
                         .with_label(e.to_string(), call.head)
                 })?;
 
-            // Save tool results to session if active
+            // Track tool results in-memory conversation (ALWAYS, regardless of session)
+            for result in &tool_results {
+                conversation_messages.push((
+                    "tool".to_string(),
+                    format!(
+                        "Tool '{}' returned: {}",
+                        result.tool_call_id, result.content
+                    ),
+                ));
+            }
+
+            // Save tool results to session if active (SEPARATE from in-memory tracking)
             if let Some(ref mut session) = session_opt {
                 for result in &tool_results {
                     let tool_msg = crate::session::Message::new(
@@ -528,9 +548,15 @@ impl SimplePluginCommand for Agent {
                 }
             }
 
-            // Build conversation history with tool results
-            let history_prompt = if let Some(ref session) = session_opt {
-                let history = session.format_history();
+            // Build conversation history from in-memory messages (NOT from session)
+            // This ensures tool results are passed to LLM even without --session flag
+            let history_prompt = {
+                let history = conversation_messages
+                    .iter()
+                    .map(|(role, content)| format!("{}: {}", role, content))
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+
                 if !history.is_empty() {
                     format!(
                         "Previous conversation:\n{}\n\n---\n\nContinue responding.",
@@ -539,8 +565,6 @@ impl SimplePluginCommand for Agent {
                 } else {
                     merged_prompt.clone()
                 }
-            } else {
-                merged_prompt.clone()
             };
 
             // Make another LLM call with conversation history
@@ -554,6 +578,9 @@ impl SimplePluginCommand for Agent {
                     LabeledError::new(format!("LLM call failed: {}", e.msg))
                         .with_label(e.msg, call.head)
                 })?;
+
+            // Track assistant response in conversation
+            conversation_messages.push(("assistant".to_string(), llm_response.text.clone()));
         }
 
         // Build final response with all executed tool calls
