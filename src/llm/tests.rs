@@ -1,6 +1,9 @@
 use crate::config::Config;
+use crate::llm::runtime::LlmRuntime;
 use crate::llm::{LlmResponse, LlmUsage, call_llm, extract_response, format_response};
+use crate::plugin::RuntimeCtx;
 use nu_protocol::Span;
+use std::sync::Arc;
 
 // ============================================================================
 // Helpers
@@ -42,6 +45,10 @@ fn test_llm_response(text: &str) -> LlmResponse {
     }
 }
 
+fn runtime_ctx() -> RuntimeCtx {
+    RuntimeCtx::new(Arc::new(LlmRuntime::new()))
+}
+
 // ============================================================================
 // call_llm() error-path tests — async but NO HTTP (fail before rig client)
 // ============================================================================
@@ -51,7 +58,8 @@ fn test_llm_response(text: &str) -> LlmResponse {
 async fn test_call_llm_missing_api_key() {
     unsafe { std::env::remove_var("OPENAI_API_KEY") };
 
-    let result = call_llm(&cfg("openai"), "test prompt", vec![]).await;
+    let rt = runtime_ctx();
+    let result = call_llm(&rt, &cfg("openai"), "test prompt", vec![]).await;
     assert!(result.is_err());
 
     let err = result.unwrap_err();
@@ -65,7 +73,8 @@ async fn test_call_llm_missing_api_key() {
 #[tokio::test]
 async fn test_call_llm_unsupported_provider() {
     let config = cfg_with_key("unsupported", "key");
-    let result = call_llm(&config, "test prompt", vec![]).await;
+    let rt = runtime_ctx();
+    let result = call_llm(&rt, &config, "test prompt", vec![]).await;
     assert!(result.is_err());
 
     let err = result.unwrap_err();
@@ -77,7 +86,8 @@ async fn test_call_llm_unsupported_provider() {
 async fn call_llm_returns_err_for_missing_anthropic_key() {
     unsafe { std::env::remove_var("ANTHROPIC_API_KEY") };
 
-    let result = call_llm(&cfg("anthropic"), "test prompt", vec![]).await;
+    let rt = runtime_ctx();
+    let result = call_llm(&rt, &cfg("anthropic"), "test prompt", vec![]).await;
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(
@@ -99,7 +109,8 @@ async fn call_llm_returns_err_for_missing_github_token() {
         ..cfg("github-copilot")
     };
 
-    let result = call_llm(&config, "test prompt", vec![]).await;
+    let rt = runtime_ctx();
+    let result = call_llm(&rt, &config, "test prompt", vec![]).await;
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(
@@ -120,7 +131,8 @@ async fn call_llm_returns_err_for_unknown_github_copilot_backend() {
         api_key: Some("ghp-key".to_string()),
         ..cfg("github-copilot")
     };
-    let result = call_llm(&config, "test prompt", vec![]).await;
+    let rt = runtime_ctx();
+    let result = call_llm(&rt, &config, "test prompt", vec![]).await;
     assert!(result.is_err());
     let msg = result.unwrap_err().msg;
     assert!(
@@ -436,7 +448,8 @@ async fn test_call_llm_would_return_llm_response_not_string() {
     // We can only test error cases without real API calls
     unsafe { std::env::remove_var("OPENAI_API_KEY") };
 
-    let result = call_llm(&cfg("openai"), "test prompt", vec![]).await;
+    let rt = runtime_ctx();
+    let result = call_llm(&rt, &cfg("openai"), "test prompt", vec![]).await;
 
     // This should be Err since no API key
     assert!(result.is_err());
@@ -457,7 +470,8 @@ async fn call_llm_accepts_empty_tool_definitions() {
     // RED: Test that call_llm accepts tools parameter (even if empty)
     // This should compile and not fail due to empty tools
     let tools = vec![];
-    let result = call_llm(&cfg("openai"), "test prompt", tools).await;
+    let rt = runtime_ctx();
+    let result = call_llm(&rt, &cfg("openai"), "test prompt", tools).await;
 
     // Expected to fail due to no API key, but function signature should accept tools
     assert!(result.is_err());
@@ -484,7 +498,8 @@ async fn call_llm_accepts_tool_definitions() {
         }),
     }];
 
-    let result = call_llm(&cfg("openai"), "test prompt", tools).await;
+    let rt = runtime_ctx();
+    let result = call_llm(&rt, &cfg("openai"), "test prompt", tools).await;
 
     // Expected to fail due to no API key, but function should accept tools
     assert!(result.is_err());
@@ -492,13 +507,61 @@ async fn call_llm_accepts_tool_definitions() {
 
 #[test]
 fn llm_call_llm_has_no_model_family_endpoint_branching() {
-    let source = std::fs::read_to_string("src/llm/mod.rs").expect("must read source");
+    use crate::llm::runtime::ProviderKey;
+
+    let config = Config {
+        provider: "github-copilot".to_string(),
+        provider_impl: None,
+        model: "openai/gpt-5.3-codex".to_string(),
+        api_key: Some("test-token".to_string()),
+        base_url: Some("http://localhost:1234".to_string()),
+        temperature: None,
+        max_tokens: None,
+        max_context_tokens: None,
+        max_output_tokens: None,
+        max_tool_turns: Some(20),
+    };
+
+    let key = ProviderKey::from_config(&config);
+    assert_eq!(key.model_family.as_deref(), Some("openai5x"));
+
+    let rt = runtime_ctx();
+    let result = tokio::runtime::Runtime::new()
+        .expect("runtime")
+        .block_on(call_llm(&rt, &config, "test prompt", vec![]));
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
     assert!(
-        !source.contains("gpt-5")
-            && !source.contains("/responses")
-            && !source.contains("/chat/completions"),
-        "llm::call_llm should not branch by endpoint/model family"
+        !err.msg.contains("Unsupported provider"),
+        "should route via provider runtime path, not llm-layer provider switch"
     );
+}
+
+#[test]
+fn llm_call_llm_has_no_provider_construction() {
+    let rt = runtime_ctx();
+    let result = tokio::runtime::Runtime::new()
+        .expect("runtime")
+        .block_on(call_llm(&rt, &cfg("unsupported"), "test prompt", vec![]));
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.msg.contains("Unsupported provider"));
+}
+
+#[test]
+fn runtime_is_single_entry_for_execution() {
+    let rt = runtime_ctx();
+    let config = cfg_with_key("unsupported", "key");
+
+    let result = tokio::runtime::Runtime::new()
+        .expect("runtime")
+        .block_on(call_llm(&rt, &config, "test prompt", vec![]));
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.msg.contains("Unsupported provider"));
 }
 
 #[test]

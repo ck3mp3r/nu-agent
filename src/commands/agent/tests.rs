@@ -3,6 +3,8 @@ use crate::commands::agent::{
     extract_tools_from_call,
 };
 use crate::config::Config;
+use crate::llm::runtime::LlmRuntime;
+use crate::plugin::RuntimeCtx;
 use crate::session::SessionStore;
 use nu_plugin::{EvaluatedCall, SimplePluginCommand};
 use nu_protocol::{LabeledError, Span, Spanned, SyntaxShape, Value};
@@ -14,7 +16,7 @@ use tempfile::TempDir;
 fn create_test_agent() -> (Agent, TempDir) {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
-    let agent = Agent::new(store);
+    let agent = Agent::new(store, RuntimeCtx::new(Arc::new(LlmRuntime::new())));
     (agent, temp_dir)
 }
 
@@ -1271,7 +1273,7 @@ mod session_integration_tests {
         // Verify Agent has access to SessionStore
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
-        let _agent = Agent::new(store.clone());
+        let _agent = Agent::new(store.clone(), RuntimeCtx::new(Arc::new(LlmRuntime::new())));
 
         // Create a test session directly via store
         let session = store

@@ -1,9 +1,9 @@
 use crate::config::Config;
-use crate::providers::github_copilot;
+use crate::plugin::RuntimeCtx;
 use nu_protocol::{LabeledError, Span, Value};
-use rig::client::CompletionClient;
 use rig::completion::message::AssistantContent;
-use rig::providers::{anthropic, ollama, openai};
+
+pub mod runtime;
 
 /// Token usage statistics from LLM response.
 ///
@@ -87,16 +87,12 @@ pub(crate) fn extract_response<T>(
 
 /// Call an LLM with the given prompt and configuration.
 ///
-/// Creates the appropriate provider client based on config.provider,
-/// sends the prompt, and returns the response with usage statistics.
+/// Orchestration only: delegates provider lifecycle and execution to [`LlmRuntime`].
 ///
-/// Unified implementation: creates provider-specific agent inline,
-/// calls completion, and extracts response using shared helper.
-///
-/// Supports: openai, anthropic, ollama, github-copilot (use model format: "backend/model")
-///
-/// For github-copilot, endpoint/model-family routing is delegated to the
-/// provider factory layer (`providers::github_copilot::factory`).
+/// This function intentionally does **not**:
+/// - construct provider clients
+/// - branch by endpoint/model-family
+/// - implement provider-specific payload parsing
 ///
 /// # Arguments
 /// * `config` - Configuration with provider, model, and auth details
@@ -107,131 +103,18 @@ pub(crate) fn extract_response<T>(
 /// The LLM response with text and usage statistics, or error if the call fails
 ///
 /// # Errors
-/// - Missing API key when required (checks env var if config.api_key is None)
+/// - Missing API key when required (resolved by runtime/provider factory)
 /// - Unsupported provider
 /// - Invalid configuration
 /// - API errors (network, rate limits, etc.)
 ///
-/// Helper to call completion on any agent implementing the Completion trait.
-///
-/// This eliminates duplication of the completion call logic across all providers.
-/// Each provider creates their specific agent, then this function handles the
-/// unified completion call and response extraction.
-async fn call_agent_completion<M, A>(
-    agent: A,
-    prompt: &str,
-    tools: Vec<rig::completion::ToolDefinition>,
-) -> Result<LlmResponse, LabeledError>
-where
-    M: rig::completion::CompletionModel,
-    A: rig::completion::Completion<M>,
-{
-    let response = agent
-        .completion(prompt, Vec::<rig::completion::Message>::new())
-        .await
-        .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))?
-        .tools(tools)
-        .send()
-        .await
-        .map_err(|e| LabeledError::new(format!("LLM call failed: {}", e)))?;
-
-    extract_response(response)
-}
-
 pub async fn call_llm(
+    runtime_ctx: &RuntimeCtx,
     config: &Config,
     prompt: &str,
     tools: Vec<rig::completion::ToolDefinition>,
 ) -> Result<LlmResponse, LabeledError> {
-    // Match creates agent and calls helper, which returns unified LlmResponse
-    match config.provider.as_str() {
-        "openai" => {
-            let key = config
-                .api_key
-                .clone()
-                .or_else(|| std::env::var("OPENAI_API_KEY").ok())
-                .ok_or_else(|| LabeledError::new("Missing OPENAI_API_KEY"))?;
-            let client = if let Some(url) = &config.base_url {
-                openai::Client::builder()
-                    .api_key(key)
-                    .base_url(url.clone())
-                    .build()
-                    .map_err(|e| {
-                        LabeledError::new(format!("Failed to create OpenAI client: {}", e))
-                    })?
-            } else {
-                openai::Client::builder()
-                    .api_key(key)
-                    .build()
-                    .map_err(|e| {
-                        LabeledError::new(format!("Failed to create OpenAI client: {}", e))
-                    })?
-            };
-            let agent = client.agent(&config.model).build();
-            call_agent_completion(agent, prompt, tools).await
-        }
-        "anthropic" => {
-            let key = config
-                .api_key
-                .clone()
-                .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
-                .ok_or_else(|| LabeledError::new("Missing ANTHROPIC_API_KEY"))?;
-            let client = if let Some(url) = &config.base_url {
-                anthropic::Client::builder()
-                    .api_key(key)
-                    .base_url(url.clone())
-                    .build()
-                    .map_err(|e| {
-                        LabeledError::new(format!("Failed to create Anthropic client: {}", e))
-                    })?
-            } else {
-                anthropic::Client::builder()
-                    .api_key(key)
-                    .build()
-                    .map_err(|e| {
-                        LabeledError::new(format!("Failed to create Anthropic client: {}", e))
-                    })?
-            };
-            let agent = client.agent(&config.model).build();
-            call_agent_completion(agent, prompt, tools).await
-        }
-        "ollama" => {
-            let url = config
-                .base_url
-                .as_deref()
-                .unwrap_or("http://localhost:11434");
-            let client = ollama::Client::builder()
-                .api_key(rig::client::Nothing)
-                .base_url(url)
-                .build()
-                .map_err(|e| LabeledError::new(format!("Failed to create Ollama client: {}", e)))?;
-            let agent = client.agent(&config.model).build();
-            call_agent_completion(agent, prompt, tools).await
-        }
-        "github-copilot" => {
-            use crate::providers::github_copilot::{Agent, ClientExt};
-            let agent = github_copilot::Client::agent_from_config(
-                "github-copilot",
-                &config.model,
-                config.api_key.clone(),
-                config.base_url.clone(),
-            )
-            .map_err(|e| {
-                LabeledError::new(format!("Failed to create GitHub Copilot agent: {}", e))
-            })?;
-
-            // Orchestration only: provider factory already selected backend+endpoint variant.
-            match agent {
-                Agent::Anthropic(agent) => call_agent_completion(agent, prompt, tools).await,
-                Agent::OpenAI4x(agent) => call_agent_completion(agent, prompt, tools).await,
-                Agent::OpenAI5x(agent) => call_agent_completion(agent, prompt, tools).await,
-            }
-        }
-        other => Err(LabeledError::new(format!(
-            "Unsupported provider: {}",
-            other
-        ))),
-    }
+    runtime_ctx.llm_runtime().call(config, prompt, tools).await
 }
 
 /// Format LLM response as a Nushell Value::Record.

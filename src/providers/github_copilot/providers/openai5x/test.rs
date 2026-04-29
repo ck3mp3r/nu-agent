@@ -128,3 +128,30 @@ fn openai5x_execute_error_includes_provider_and_endpoint() {
     assert!(msg.contains("OpenAI5xProvider"));
     assert!(msg.contains("/responses"));
 }
+
+#[test]
+fn map_response_supports_function_call_only_output() {
+    let payload = r#"{
+        "id": "resp_tool_1",
+        "model": "gpt-5.3-codex",
+        "output": [
+            {
+                "type": "function_call",
+                "call_id": "call_123",
+                "name": "cmd",
+                "arguments": "{\"command\":\"ls\"}"
+            }
+        ],
+        "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}
+    }"#;
+
+    let mapped = <super::OpenAI5xProvider as GitHubCopilotProvider>::map_response(payload)
+        .expect("map response");
+
+    let value = serde_json::to_value(mapped).expect("serialize mapped response");
+    let tool_calls = &value["choices"][0]["message"]["tool_calls"];
+    assert!(tool_calls.is_array());
+    assert_eq!(tool_calls.as_array().unwrap().len(), 1);
+    assert_eq!(tool_calls[0]["id"], "call_123");
+    assert_eq!(tool_calls[0]["function"]["name"], "cmd");
+}

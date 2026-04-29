@@ -46,6 +46,44 @@ impl GitHubCopilotProvider for OpenAI5xProvider {
             .collect::<Vec<_>>()
             .join("\n");
 
+        let tool_calls = response
+            .output
+            .iter()
+            .filter(|item| item.kind == "function_call")
+            .filter_map(|item| {
+                let id = item.call_id.clone()?;
+                let name = item.name.clone()?;
+                let args = item.arguments.clone().unwrap_or_else(|| "{}".to_string());
+                Some(serde_json::json!({
+                    "id": id,
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "arguments": args
+                    }
+                }))
+            })
+            .collect::<Vec<_>>();
+
+        let assistant_message = if message_text.trim().is_empty() {
+            serde_json::json!({
+                "role": "assistant",
+                "content": "",
+                "tool_calls": tool_calls
+            })
+        } else if tool_calls.is_empty() {
+            serde_json::json!({
+                "role": "assistant",
+                "content": message_text
+            })
+        } else {
+            serde_json::json!({
+                "role": "assistant",
+                "content": message_text,
+                "tool_calls": tool_calls
+            })
+        };
+
         let usage = response.usage.unwrap_or_default();
         let value = serde_json::json!({
             "id": response.id,
@@ -55,10 +93,7 @@ impl GitHubCopilotProvider for OpenAI5xProvider {
             "choices": [
                 {
                     "index": 0,
-                    "message": {
-                        "role": "assistant",
-                        "content": message_text
-                    },
+                    "message": assistant_message,
                     "finish_reason": "stop"
                 }
             ],
@@ -228,6 +263,12 @@ struct ResponsesApiResponse {
 struct ResponsesOutputItem {
     #[serde(rename = "type")]
     kind: String,
+    #[serde(default)]
+    call_id: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    arguments: Option<String>,
     #[serde(default)]
     content: Option<Vec<ResponsesOutputContent>>,
 }

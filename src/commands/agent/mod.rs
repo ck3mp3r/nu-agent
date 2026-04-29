@@ -4,6 +4,7 @@ use nu_protocol::{Category, LabeledError, Signature, Type, Value};
 use crate::{
     AgentPlugin,
     config::{Config, PluginConfig},
+    plugin::RuntimeCtx,
 };
 
 mod tool_handler;
@@ -254,12 +255,13 @@ pub fn extract_tool_timeout(call: &EvaluatedCall) -> std::time::Duration {
 
 pub struct Agent {
     store: crate::session::SessionStore,
+    runtime_ctx: RuntimeCtx,
 }
 
 impl Agent {
     /// Creates a new Agent command with the given SessionStore.
-    pub fn new(store: crate::session::SessionStore) -> Self {
-        Self { store }
+    pub fn new(store: crate::session::SessionStore, runtime_ctx: RuntimeCtx) -> Self {
+        Self { store, runtime_ctx }
     }
 }
 
@@ -481,6 +483,7 @@ impl SimplePluginCommand for Agent {
         );
         let mut llm_response = runtime
             .block_on(crate::llm::call_llm(
+                &self.runtime_ctx,
                 &config,
                 &merged_prompt,
                 tool_definitions.clone(),
@@ -632,6 +635,7 @@ impl SimplePluginCommand for Agent {
             );
             llm_response = runtime
                 .block_on(crate::llm::call_llm(
+                    &self.runtime_ctx,
                     &config,
                     &history_prompt,
                     tool_definitions.clone(),

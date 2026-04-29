@@ -79,6 +79,40 @@ Model mapping table:
 | `openai/gpt-4*` (and other non-5 OpenAI models) | `OpenAI4xChatProvider` | `/chat/completions` |
 | `openai/gpt-5*` | `OpenAI5xResponsesProvider` | `/responses` |
 
+## Runtime provider lifecycle cache
+
+`llm::call_llm` is orchestration-only and delegates lifecycle/execution to `LlmRuntime`.
+
+Runtime boundaries:
+
+- `plugin` owns a single `Arc<LlmRuntime>` for process lifetime
+- `LlmRuntime` is the only entrypoint for provider acquire/execute
+- `ProviderCache` owns only keying + concurrent get-or-create lifecycle
+- provider selection happens once from config -> concrete cached provider variant
+
+Flow:
+
+`plugin -> runtime -> provider cache -> concrete provider execute`
+
+### Cache keying and secret handling
+
+Cache identity includes:
+
+- provider
+- model
+- model-family discriminator (for `github-copilot`: `anthropic` / `openai4x` / `openai5x`)
+- base URL
+- auth fingerprint (hash only)
+
+Raw API tokens are never stored in key debug output. Keys contain only deterministic
+fingerprints for auth isolation.
+
+### Lifecycle semantics
+
+- Cache is process-local (Nushell plugin process lifetime)
+- Cache is ephemeral: plugin restart/manual stop/GC lifecycle naturally resets cache
+- Same effective config reuses cached provider; changed auth/base URL/model-family creates a new entry
+
 **For GitHub Actions workflows:**
 ```nu
 # Default endpoint works in Actions (no base_url override needed)

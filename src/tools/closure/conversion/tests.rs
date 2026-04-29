@@ -82,6 +82,7 @@ fn converts_closure_with_one_parameter() {
     let schema = tool_def.parameters;
     let properties = schema.get("properties").expect("Should have properties");
     assert!(properties.get("x").is_some(), "Should have parameter 'x'");
+    assert_eq!(properties["x"]["type"], "string");
 
     // Verify required array contains "x"
     let required = schema.get("required").expect("Should have required field");
@@ -117,6 +118,8 @@ fn converts_closure_with_two_parameters() {
     let properties = schema.get("properties").expect("Should have properties");
     assert!(properties.get("x").is_some(), "Should have parameter 'x'");
     assert!(properties.get("y").is_some(), "Should have parameter 'y'");
+    assert_eq!(properties["x"]["type"], "string");
+    assert_eq!(properties["y"]["type"], "string");
 
     // Verify both are required
     let required = schema.get("required").expect("Should have required field");
@@ -152,6 +155,8 @@ fn converts_closure_with_optional_parameter() {
     let properties = schema.get("properties").expect("Should have properties");
     assert!(properties.get("x").is_some());
     assert!(properties.get("y").is_some());
+    assert_eq!(properties["x"]["type"], "string");
+    assert_eq!(properties["y"]["type"], "string");
 
     // Verify only x is required (y is optional)
     let required = schema.get("required").expect("Should have required field");

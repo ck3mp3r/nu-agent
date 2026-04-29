@@ -76,9 +76,9 @@ pub fn closure_to_tool_definition<E: EngineInterfaceLike>(
         properties.insert(
             param.name.clone(),
             json!({
-                // Omit "type" field to allow LLM type inference.
-                // Nushell is dynamically typed, and forcing "string" breaks numeric operations.
-                // The LLM will infer the correct type from context (e.g., "5 plus 5" → numbers).
+                // Explicit JSON Schema types are required by strict validators
+                // (notably GPT-5 /responses tool schemas).
+                "type": "string",
                 "description": format!("Parameter: {}", param.name)
             }),
         );
