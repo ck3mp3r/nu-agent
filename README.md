@@ -48,11 +48,36 @@ $env.config.plugins.agent = {
       models: {
         "gpt-4o": {}
         "gpt-4o-mini": {}
+        "gpt-5.3-codex": {}
       }
     }
   }
 }
 ```
+
+### GitHub Copilot concrete-provider architecture
+
+`github-copilot` uses provider name `github-copilot` with model format `backend/model`.
+
+Factory selection happens **once**. After selection, the concrete provider owns:
+- endpoint
+- intent header
+- request mapping
+- response mapping
+- error mapping
+- transport execution
+
+Architecture flow:
+
+`factory -> concrete provider -> execute`
+
+Model mapping table:
+
+| Model pattern | Concrete provider | Endpoint |
+|---|---|---|
+| `anthropic/*` | `AnthropicChatProvider` | `/chat/completions` |
+| `openai/gpt-4*` (and other non-5 OpenAI models) | `OpenAI4xChatProvider` | `/chat/completions` |
+| `openai/gpt-5*` | `OpenAI5xResponsesProvider` | `/responses` |
 
 **For GitHub Actions workflows:**
 ```nu

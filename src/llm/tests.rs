@@ -338,18 +338,19 @@ fn test_format_response_with_session_metadata() {
 
 #[test]
 fn github_copilot_backend_types_exist() {
-    use crate::providers::github_copilot::{AnthropicBackend, GitHubCopilotBackend, OpenAIBackend};
+    use crate::providers::github_copilot::providers::contract::GitHubCopilotProvider;
+    use crate::providers::github_copilot::providers::{AnthropicProvider, OpenAI4xProvider};
 
-    fn assert_backend<B: GitHubCopilotBackend>(_backend: B) {}
+    fn assert_backend<P: GitHubCopilotProvider>(_provider: P) {}
 
-    assert_backend(AnthropicBackend);
-    assert_backend(OpenAIBackend);
+    assert_backend(AnthropicProvider);
+    assert_backend(OpenAI4xProvider);
 
-    assert_eq!(AnthropicBackend.intent_header(), "conversation-panel");
-    assert_eq!(OpenAIBackend.intent_header(), "conversation-agent");
+    assert_eq!(AnthropicProvider::INTENT_HEADER, "conversation-panel");
+    assert_eq!(OpenAI4xProvider::INTENT_HEADER, "conversation-agent");
 
-    assert_eq!(AnthropicBackend.backend_name(), "anthropic");
-    assert_eq!(OpenAIBackend.backend_name(), "openai");
+    assert_eq!(AnthropicProvider::NAME, "AnthropicProvider");
+    assert_eq!(OpenAI4xProvider::NAME, "OpenAI4xProvider");
 }
 
 // ============================================================================
@@ -487,6 +488,25 @@ async fn call_llm_accepts_tool_definitions() {
 
     // Expected to fail due to no API key, but function should accept tools
     assert!(result.is_err());
+}
+
+#[test]
+fn llm_call_llm_has_no_model_family_endpoint_branching() {
+    let source = std::fs::read_to_string("src/llm/mod.rs").expect("must read source");
+    assert!(
+        !source.contains("gpt-5")
+            && !source.contains("/responses")
+            && !source.contains("/chat/completions"),
+        "llm::call_llm should not branch by endpoint/model family"
+    );
+}
+
+#[test]
+fn gpt5_responses_regression_guard_contract() {
+    let source = std::fs::read_to_string("src/providers/github_copilot/providers/openai5x/mod.rs")
+        .expect("must read provider source");
+    assert!(source.contains("\"/responses\""));
+    assert!(source.contains("\"input\""));
 }
 
 // ============================================================================

@@ -3,10 +3,13 @@
 //! Provides Provider, ProviderBuilder, and Capabilities trait implementations
 //! for the GitHub Copilot API.
 //!
-//! # Backend-Specific Extensions
+//! # Provider-Specific Extensions
 //!
-//! GitHub Copilot proxies to multiple backends (Anthropic, OpenAI), each requiring
-//! different intent headers. This module provides separate extension types per backend:
+//! GitHub Copilot routes to concrete provider implementations selected once in factory.
+//! These extension types are construction helpers only and do not perform endpoint routing.
+//! Concrete providers own endpoint + mapping + transport semantics.
+//!
+//! This module provides separate extension types per backend family:
 //! - `GitHubCopilotAnthropicExt` - For Claude models (conversation-panel intent)
 //! - `GitHubCopilotOpenAIExt` - For GPT models (conversation-agent intent)
 
@@ -82,7 +85,8 @@ impl<H> Capabilities<H> for GitHubCopilotExt
 where
     H: rig::http_client::HttpClientExt,
 {
-    type Completion = Capable<super::completion::CompletionModel<super::OpenAIBackend, H>>;
+    type Completion =
+        Capable<super::completion::CompletionModel<super::providers::OpenAI4xProvider, H>>;
     type Embeddings = Nothing;
     type Transcription = Nothing;
     type ModelListing = Nothing;
@@ -120,7 +124,8 @@ impl<H> Capabilities<H> for GitHubCopilotAnthropicExt
 where
     H: rig::http_client::HttpClientExt,
 {
-    type Completion = Capable<super::completion::CompletionModel<super::AnthropicBackend, H>>;
+    type Completion =
+        Capable<super::completion::CompletionModel<super::providers::AnthropicProvider, H>>;
     type Embeddings = Nothing;
     type Transcription = Nothing;
     type ModelListing = Nothing;
@@ -158,7 +163,8 @@ impl<H> Capabilities<H> for GitHubCopilotOpenAIExt
 where
     H: rig::http_client::HttpClientExt,
 {
-    type Completion = Capable<super::completion::CompletionModel<super::OpenAIBackend, H>>;
+    type Completion =
+        Capable<super::completion::CompletionModel<super::providers::OpenAI4xProvider, H>>;
     type Embeddings = Nothing;
     type Transcription = Nothing;
     type ModelListing = Nothing;
@@ -179,6 +185,7 @@ pub trait ClientExt {
     /// including:
     /// - Backend parsing from model string (e.g., "anthropic/claude-sonnet-4.5")
     /// - Model extraction from format "backend/model"
+    /// - One-time concrete provider selection in factory
     /// - API key resolution (config → GITHUB_TOKEN env var → error)
     /// - Client construction with optional base_url
     /// - Agent creation with appropriate backend

@@ -38,21 +38,34 @@
 //! - Direct API key: `Client::builder().api_key(token)`
 //! - Environment variable: `GITHUB_TOKEN`
 //! - Custom base URL: `Client::builder().base_url(url)` (for testing)
+//!
+//! # Architecture contract
+//!
+//! One-time selection in `factory` chooses a concrete provider implementation.
+//! After selection, provider behavior is fully encapsulated in that concrete type:
+//! endpoint, intent header, request mapping, response mapping, error mapping,
+//! and execute transport logic.
+//!
+//! No shared endpoint helper APIs and no runtime endpoint switch executor.
 
 pub mod agent;
-pub mod backend;
 mod client;
 pub mod completion;
 mod error;
+pub mod factory;
+pub mod providers;
 
 pub use agent::Agent;
-pub use backend::{AnthropicBackend, GitHubCopilotBackend, OpenAIBackend};
 pub use client::{
     AnthropicClient, Client, ClientBuilder, ClientExt, GitHubCopilotAnthropicExt,
     GitHubCopilotAnthropicExtBuilder, GitHubCopilotExt, GitHubCopilotExtBuilder,
     GitHubCopilotOpenAIExt, GitHubCopilotOpenAIExtBuilder, OpenAIClient,
 };
 pub use error::Error;
+
+#[cfg(test)]
+#[path = "factory_test.rs"]
+mod factory_test;
 
 /// Claude Sonnet 4.5 model identifier
 pub const CLAUDE_SONNET_4_5: &str = "claude-sonnet-4.5";

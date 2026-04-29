@@ -3,20 +3,34 @@
 //! Provides a unified agent creation interface that handles backend selection
 //! and configuration.
 
-use super::{AnthropicBackend, Error, OpenAIBackend};
+use super::Error;
 
-/// GitHub Copilot Agent wrapper supporting multiple backends
+/// GitHub Copilot Agent wrapper for concrete provider variants
 ///
-/// This enum wraps agents for different backends (Anthropic, OpenAI) to provide
-/// a unified interface for agent creation from configuration.
+/// This enum wraps agents for concrete provider variants to provide a unified
+/// interface for agent creation from configuration.
 pub enum Agent<H = reqwest::Client>
 where
     H: rig::http_client::HttpClientExt + Default + std::fmt::Debug + Clone + 'static,
 {
     /// Anthropic backend (Claude models)
-    Anthropic(rig::agent::Agent<super::completion::CompletionModel<AnthropicBackend, H>>),
-    /// OpenAI backend (GPT models)
-    OpenAI(rig::agent::Agent<super::completion::CompletionModel<OpenAIBackend, H>>),
+    Anthropic(
+        rig::agent::Agent<
+            super::completion::CompletionModel<super::providers::AnthropicProvider, H>,
+        >,
+    ),
+    /// OpenAI 4x backend (GPT-4* and non-5 OpenAI models)
+    OpenAI4x(
+        rig::agent::Agent<
+            super::completion::CompletionModel<super::providers::OpenAI4xProvider, H>,
+        >,
+    ),
+    /// OpenAI 5x backend (GPT-5* models)
+    OpenAI5x(
+        rig::agent::Agent<
+            super::completion::CompletionModel<super::providers::OpenAI5xProvider, H>,
+        >,
+    ),
 }
 
 impl Agent {
@@ -25,6 +39,7 @@ impl Agent {
     /// This factory method encapsulates all GitHub Copilot agent creation logic,
     /// including:
     /// - Backend parsing from model string (e.g., "anthropic/claude-sonnet-4.5")
+    /// - Concrete provider variant selection
     /// - Model extraction from format "backend/model"
     /// - API key resolution (config → GITHUB_TOKEN env var → error)
     /// - Client construction with optional base_url
@@ -34,7 +49,7 @@ impl Agent {
     ///
     /// * `provider_string` - Must be exactly "github-copilot"
     /// * `model` - Model identifier in format "backend/model"
-    ///   (e.g., "anthropic/claude-sonnet-4.5", "openai/gpt-4o")
+    ///   (e.g., "anthropic/claude-sonnet-4.5", "openai/gpt-4o", "openai/gpt-5.3-codex")
     /// * `api_key` - Optional API key (if None, reads from GITHUB_TOKEN env var)
     /// * `base_url` - Optional base URL override (useful for testing)
     ///
@@ -47,7 +62,7 @@ impl Agent {
     /// Returns `Error` if:
     /// - Provider string is not exactly "github-copilot"
     /// - Model format is invalid (missing "/backend" separator)
-    /// - Backend is not "anthropic" or "openai"
+    /// - Backend is not one of: "anthropic", "openai"
     /// - API key not provided and GITHUB_TOKEN env var not set
     /// - Client creation fails (network/configuration issues)
     ///
@@ -82,48 +97,7 @@ impl Agent {
         api_key: Option<String>,
         base_url: Option<String>,
     ) -> Result<Self, Error> {
-        // Verify provider is exactly "github-copilot"
-        if provider_string != "github-copilot" {
-            return Err(Error::InvalidProviderFormat(provider_string.to_string()));
-        }
-
-        // Parse backend from model: "anthropic/claude-sonnet-4.5" -> ("anthropic", "claude-sonnet-4.5")
-        let (backend, model_name) = model
-            .split_once('/')
-            .ok_or_else(|| Error::InvalidModelFormat(model.to_string()))?;
-
-        // Resolve API key (from config or GITHUB_TOKEN env var)
-        let key = api_key
-            .or_else(|| std::env::var("GITHUB_TOKEN").ok())
-            .ok_or(Error::MissingApiKey)?;
-
-        // Build client
-        let client = if let Some(url) = base_url {
-            super::Client::builder()
-                .api_key(key)
-                .base_url(url)
-                .build()?
-        } else {
-            super::Client::builder().api_key(key).build()?
-        };
-
-        // Create agent using model_name (not full model string)
-        let agent = match backend {
-            "anthropic" => {
-                let model = super::completion::CompletionModel::<AnthropicBackend, _>::new(
-                    client, model_name,
-                );
-                Agent::Anthropic(rig::agent::AgentBuilder::new(model).build())
-            }
-            "openai" => {
-                let model =
-                    super::completion::CompletionModel::<OpenAIBackend, _>::new(client, model_name);
-                Agent::OpenAI(rig::agent::AgentBuilder::new(model).build())
-            }
-            _ => return Err(Error::UnknownBackend(backend.to_string())),
-        };
-
-        Ok(agent)
+        super::factory::agent_from_config(provider_string, model, api_key, base_url)
     }
 }
 

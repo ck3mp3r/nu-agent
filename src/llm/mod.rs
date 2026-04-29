@@ -95,6 +95,9 @@ pub(crate) fn extract_response<T>(
 ///
 /// Supports: openai, anthropic, ollama, github-copilot (use model format: "backend/model")
 ///
+/// For github-copilot, endpoint/model-family routing is delegated to the
+/// provider factory layer (`providers::github_copilot::factory`).
+///
 /// # Arguments
 /// * `config` - Configuration with provider, model, and auth details
 /// * `prompt` - The prompt to send to the LLM
@@ -217,10 +220,11 @@ pub async fn call_llm(
                 LabeledError::new(format!("Failed to create GitHub Copilot agent: {}", e))
             })?;
 
-            // GitHub Copilot Agent enum requires match to get inner agent
+            // Orchestration only: provider factory already selected backend+endpoint variant.
             match agent {
                 Agent::Anthropic(agent) => call_agent_completion(agent, prompt, tools).await,
-                Agent::OpenAI(agent) => call_agent_completion(agent, prompt, tools).await,
+                Agent::OpenAI4x(agent) => call_agent_completion(agent, prompt, tools).await,
+                Agent::OpenAI5x(agent) => call_agent_completion(agent, prompt, tools).await,
             }
         }
         other => Err(LabeledError::new(format!(

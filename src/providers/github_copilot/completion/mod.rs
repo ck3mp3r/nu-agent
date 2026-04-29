@@ -33,105 +33,29 @@
 //! ```
 
 use rig::completion::request::{CompletionError, CompletionRequest as CoreCompletionRequest};
-use rig::http_client::{self, HeaderValue, HttpClientExt};
+use rig::http_client::HttpClientExt;
 use rig::wasm_compat::{WasmCompatSend, WasmCompatSync};
-use serde::{Deserialize, Serialize};
-use serde_json;
-
-/// GitHub Copilot error response structure
-#[derive(Debug, Deserialize)]
-struct GitHubCopilotError {
-    #[serde(default)]
-    error: Option<ErrorDetail>,
-    #[serde(default)]
-    message: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ErrorDetail {
-    message: String,
-    #[serde(default)]
-    #[allow(dead_code)] // May be used for debugging in future
-    code: Option<String>,
-}
-
-/// GitHub Copilot Choice (more lenient than OpenAI's - index is optional)
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct GitHubCopilotChoice {
-    #[serde(default)]
-    pub index: Option<usize>, // Optional - Claude responses omit this
-    pub message: rig::providers::openai::completion::Message,
-    #[serde(default)]
-    pub finish_reason: Option<String>,
-    #[serde(default)]
-    pub logprobs: Option<serde_json::Value>,
-}
-
-impl From<GitHubCopilotChoice> for rig::providers::openai::completion::Choice {
-    fn from(choice: GitHubCopilotChoice) -> Self {
-        Self {
-            index: choice.index.unwrap_or(0), // Default to 0 if missing
-            message: choice.message,
-            finish_reason: choice.finish_reason.unwrap_or_else(|| "stop".to_string()),
-            logprobs: None, // Ignore logprobs for now
-        }
-    }
-}
-
-/// GitHub Copilot completion response (more lenient than OpenAI's)
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct GitHubCopilotCompletionResponse {
-    pub id: String,
-    #[serde(default)]
-    pub object: Option<String>, // Optional - GitHub Copilot sometimes omits this
-    #[serde(default)]
-    pub created: Option<u64>, // Optional - GitHub Copilot sometimes omits this
-    pub model: String,
-    pub choices: Vec<GitHubCopilotChoice>,
-    #[serde(default)]
-    pub usage: Option<rig::providers::openai::completion::Usage>,
-    #[serde(default)]
-    pub system_fingerprint: Option<String>,
-}
-
-impl From<GitHubCopilotCompletionResponse>
-    for rig::providers::openai::completion::CompletionResponse
-{
-    fn from(response: GitHubCopilotCompletionResponse) -> Self {
-        Self {
-            id: response.id,
-            object: response
-                .object
-                .unwrap_or_else(|| "chat.completion".to_string()),
-            created: response.created.unwrap_or(0), // Default to 0 if missing
-            model: response.model,
-            choices: response.choices.into_iter().map(|c| c.into()).collect(),
-            usage: response.usage,
-            system_fingerprint: response.system_fingerprint,
-        }
-    }
-}
 
 /// Completion model for GitHub Copilot
 ///
 /// GitHub Copilot uses an OpenAI-compatible API but requires specific headers.
 /// The model is generic over:
-/// - B: GitHubCopilotBackend - determines the correct intent header
+/// - P: concrete provider implementation selected once by factory
 /// - H: HttpClientExt - the HTTP client implementation
 #[derive(Clone)]
-pub struct CompletionModel<B = super::OpenAIBackend, H = reqwest::Client>
+pub struct CompletionModel<P = super::providers::OpenAI4xProvider, H = reqwest::Client>
 where
-    B: super::GitHubCopilotBackend,
+    P: super::providers::contract::GitHubCopilotProvider,
     H: HttpClientExt,
 {
-    pub(crate) backend: B,
+    pub(crate) _provider: std::marker::PhantomData<P>,
     pub(crate) client: rig::client::Client<super::GitHubCopilotExt, H>,
     pub model: String,
 }
 
-impl<B, H> CompletionModel<B, H>
+impl<P, H> CompletionModel<P, H>
 where
-    B: super::GitHubCopilotBackend,
+    P: super::providers::contract::GitHubCopilotProvider,
     H: HttpClientExt + Default + std::fmt::Debug + Clone + 'static,
 {
     /// Create a new completion model
@@ -145,7 +69,7 @@ where
         model: impl Into<String>,
     ) -> Self {
         Self {
-            backend: B::default(),
+            _provider: std::marker::PhantomData,
             client,
             model: model.into(),
         }
@@ -162,16 +86,16 @@ where
         model: &str,
     ) -> Self {
         Self {
-            backend: B::default(),
+            _provider: std::marker::PhantomData,
             client,
             model: model.into(),
         }
     }
 }
 
-impl<B, H> rig::completion::request::CompletionModel for CompletionModel<B, H>
+impl<P, H> rig::completion::request::CompletionModel for CompletionModel<P, H>
 where
-    B: super::GitHubCopilotBackend,
+    P: super::providers::contract::GitHubCopilotProvider,
     H: HttpClientExt
         + Default
         + std::fmt::Debug
@@ -193,121 +117,7 @@ where
         &self,
         completion_request: CoreCompletionRequest,
     ) -> Result<rig::completion::CompletionResponse<Self::Response>, CompletionError> {
-        // Reuse OpenAI's request conversion since GitHub Copilot is API-compatible
-        let request = rig::providers::openai::completion::CompletionRequest::try_from(
-            rig::providers::openai::completion::OpenAIRequestParams {
-                model: self.model.to_owned(),
-                request: completion_request,
-                strict_tools: false,
-                tool_result_array_content: false,
-            },
-        )?;
-
-        let body = serde_json::to_vec(&request)?;
-
-        // Build request with GitHub Copilot-specific headers
-        let mut req = self.client.post("/chat/completions")?;
-
-        // Get the correct intent header from the backend (determined at creation time)
-        let intent = self.backend.intent_header();
-
-        // Add GitHub-specific headers BEFORE setting body
-        if let Some(headers) = req.headers_mut() {
-            headers.insert(
-                "User-Agent",
-                HeaderValue::from_static("GitHubCopilotChat/0.1"),
-            );
-            headers.insert(
-                "Copilot-Integration-Id",
-                HeaderValue::from_static("vscode-chat"),
-            );
-            headers.insert("editor-version", HeaderValue::from_static("vscode/1.85.0"));
-            headers.insert(
-                "editor-plugin-version",
-                HeaderValue::from_static("copilot-chat/0.11.1"),
-            );
-            headers.insert(
-                "openai-organization",
-                HeaderValue::from_static("github-copilot"),
-            );
-            headers.insert("openai-intent", HeaderValue::from_static(intent));
-        }
-
-        let req = req
-            .body(body)
-            .map_err(|e| CompletionError::HttpError(e.into()))?;
-
-        let response = self.client.send(req).await?;
-
-        let status = response.status();
-        let text = http_client::text(response).await?;
-
-        // Check if response is HTML (common error case)
-        if text.trim_start().starts_with("<!DOCTYPE") || text.trim_start().starts_with("<html") {
-            return Err(CompletionError::ProviderError(format!(
-                "Received HTML response (likely authentication or endpoint error). HTTP status: {}. Check your GitHub token and base URL.",
-                status
-            )));
-        }
-
-        if status.is_success() {
-            // Try to parse as GitHub Copilot response (more lenient than OpenAI)
-            match serde_json::from_str::<GitHubCopilotCompletionResponse>(&text) {
-                Ok(response) => {
-                    // Convert to OpenAI format for rig compatibility
-                    let openai_response: rig::providers::openai::completion::CompletionResponse =
-                        response.into();
-                    openai_response.try_into()
-                }
-                Err(parse_err) => {
-                    // If parsing failed, try to parse as error response
-                    match serde_json::from_str::<GitHubCopilotError>(&text) {
-                        Ok(err_response) => {
-                            let error_msg = err_response
-                                .error
-                                .map(|e| e.message)
-                                .or(err_response.message)
-                                .unwrap_or_else(|| "Unknown error".to_string());
-                            Err(CompletionError::ProviderError(error_msg))
-                        }
-                        Err(_) => {
-                            // If both failed, provide helpful error with snippet
-                            let snippet = if text.len() > 200 {
-                                format!("{}...", &text[..200])
-                            } else {
-                                text.clone()
-                            };
-                            Err(CompletionError::ProviderError(format!(
-                                "Failed to parse GitHub Copilot response. Parse error: {}. Response snippet: {}",
-                                parse_err, snippet
-                            )))
-                        }
-                    }
-                }
-            }
-        } else {
-            // Non-success status - try to extract error message
-            match serde_json::from_str::<GitHubCopilotError>(&text) {
-                Ok(err_response) => {
-                    let error_msg = err_response
-                        .error
-                        .map(|e| e.message)
-                        .or(err_response.message)
-                        .unwrap_or_else(|| text.clone());
-                    Err(CompletionError::ProviderError(format!(
-                        "HTTP {}: {}",
-                        status, error_msg
-                    )))
-                }
-                Err(_) => {
-                    // Return raw text for non-JSON error responses
-                    Err(CompletionError::ProviderError(format!(
-                        "HTTP {}: {}",
-                        status, text
-                    )))
-                }
-            }
-        }
+        P::execute(&self.client, &self.model, completion_request).await
     }
 
     async fn stream(
@@ -324,5 +134,5 @@ where
 }
 
 #[cfg(test)]
-#[path = "completion_test.rs"]
-mod tests;
+#[path = "test.rs"]
+mod test;

@@ -28,8 +28,22 @@ fn agent_from_config_parses_backend_from_model() {
     .unwrap();
 
     match agent {
-        Agent::OpenAI(_) => {}
-        _ => panic!("Expected OpenAI agent"),
+        Agent::OpenAI4x(_) => {}
+        _ => panic!("Expected OpenAI 4x agent"),
+    }
+
+    // Test openai 5x backend
+    let agent = Agent::from_config(
+        "github-copilot",
+        "openai/gpt-5.3-codex",
+        Some("test-token".to_string()),
+        Some("http://test".to_string()),
+    )
+    .unwrap();
+
+    match agent {
+        Agent::OpenAI5x(_) => {}
+        _ => panic!("Expected OpenAI 5x responses agent"),
     }
 }
 
