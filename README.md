@@ -1,284 +1,42 @@
 # nu-agent
 
-A Nushell plugin providing AI agent capabilities via rig-rs, with support for multiple LLM providers including GitHub Copilot, OpenAI, Anthropic, and Ollama.
+Nushell plugin for running an LLM agent from pipelines.
 
-## Features
-
-- **Multiple LLM Providers**: GitHub Copilot, OpenAI, Anthropic, Ollama
-- **Full rig.rs Integration**: Agents, tools, and streaming support (where available)
-- **GitHub Copilot Support**: Complete rig.rs provider with proper API headers
-- **Flexible Configuration**: Per-provider settings with model-specific options
-- **Pipeline Integration**: Works seamlessly with Nushell pipelines
-
-## Installation
+## Quick Start
 
 ```bash
-# Build the plugin
 cargo build --release
-
-# Register with Nushell
 plugin add target/release/nu_plugin_agent
-
-# Restart Nushell or run:
-# plugin use nu_plugin_agent
+plugin use nu_plugin_agent
 ```
 
-## Configuration
-
-Configure the plugin in your Nushell config (`$nu.config-path`):
-
-### GitHub Copilot (requires Copilot subscription)
+Set plugin config in Nushell:
 
 ```nu
 $env.config.plugins.agent = {
-  model: "github-copilot/anthropic/claude-sonnet-4.5"
-  providers: {
-    "github-copilot/anthropic": {
-      provider_impl: "openai"  # GitHub Copilot uses OpenAI-compatible API
-      api_key: $env.GITHUB_TOKEN  # Uses gh CLI OAuth token
-      base_url: "https://api.individual.githubcopilot.com"  # Required for personal accounts
-      models: {
-        "claude-sonnet-4.5": {}
-      }
-    }
-    "github-copilot/openai": {
-      provider_impl: "openai"
-      api_key: $env.GITHUB_TOKEN
-      base_url: "https://api.individual.githubcopilot.com"
-      models: {
-        "gpt-4o": {}
-        "gpt-4o-mini": {}
-        "gpt-5.3-codex": {}
-      }
-    }
-  }
-}
-```
-
-### GitHub Copilot concrete-provider architecture
-
-`github-copilot` uses provider name `github-copilot` with model format `backend/model`.
-
-Factory selection happens **once**. After selection, the concrete provider owns:
-- endpoint
-- intent header
-- request mapping
-- response mapping
-- error mapping
-- transport execution
-
-Architecture flow:
-
-`factory -> concrete provider -> execute`
-
-Model mapping table:
-
-| Model pattern | Concrete provider | Endpoint |
-|---|---|---|
-| `anthropic/*` | `AnthropicChatProvider` | `/chat/completions` |
-| `openai/gpt-4*` (and other non-5 OpenAI models) | `OpenAI4xChatProvider` | `/chat/completions` |
-| `openai/gpt-5*` | `OpenAI5xResponsesProvider` | `/responses` |
-
-## Runtime provider lifecycle cache
-
-`llm::call_llm` is orchestration-only and delegates lifecycle/execution to `LlmRuntime`.
-
-Runtime boundaries:
-
-- `plugin` owns a single `Arc<LlmRuntime>` for process lifetime
-- `LlmRuntime` is the only entrypoint for provider acquire/execute
-- `ProviderCache` owns only keying + concurrent get-or-create lifecycle
-- provider selection happens once from config -> concrete cached provider variant
-
-Flow:
-
-`plugin -> runtime -> provider cache -> concrete provider execute`
-
-### Cache keying and secret handling
-
-Cache identity includes:
-
-- provider
-- model
-- model-family discriminator (for `github-copilot`: `anthropic` / `openai4x` / `openai5x`)
-- base URL
-- auth fingerprint (hash only)
-
-Raw API tokens are never stored in key debug output. Keys contain only deterministic
-fingerprints for auth isolation.
-
-### Lifecycle semantics
-
-- Cache is process-local (Nushell plugin process lifetime)
-- Cache is ephemeral: plugin restart/manual stop/GC lifecycle naturally resets cache
-- Same effective config reuses cached provider; changed auth/base URL/model-family creates a new entry
-
-**For GitHub Actions workflows:**
-```nu
-# Default endpoint works in Actions (no base_url override needed)
-$env.config.plugins.agent = {
-  model: "github-copilot/anthropic/claude-sonnet-4.5"
-  providers: {
-    "github-copilot/anthropic": {
-      provider_impl: "openai"
-      api_key: $env.GITHUB_TOKEN  # Actions GITHUB_TOKEN
-      models: {
-        "claude-sonnet-4.5": {}
-      }
-    }
-  }
-}
-```
-
-**Requirements:**
-1. Active GitHub Copilot subscription
-2. GitHub CLI (`gh`) authenticated with `copilot` scope:
-   ```bash
-   gh auth login --scopes "repo,read:org,gist,workflow,copilot"
-   ```
-3. `GITHUB_TOKEN` environment variable set to `gh auth token` output
-
-**Finding your endpoint:**
-```bash
-# Query your Copilot endpoint (for personal accounts)
-gh api graphql -f query='{ viewer { copilotEndpoints { api } } }'
-# Use the returned API URL as base_url in config
-```
-
-### OpenAI
-
-```nu
-$env.config.plugins.agent = {
-  model: "openai/gpt-4"
-  providers: {
-    openai: {
-      api_key: $env.OPENAI_API_KEY
-      models: {
-        "gpt-4": {}
-        "gpt-4-turbo": {}
-        "gpt-3.5-turbo": {}
-      }
-    }
-  }
-}
-```
-
-### Anthropic
-
-```nu
-$env.config.plugins.agent = {
-  model: "anthropic/claude-3-5-sonnet-20241022"
-  providers: {
-    anthropic: {
-      api_key: $env.ANTHROPIC_API_KEY
-      models: {
-        "claude-3-5-sonnet-20241022": {}
-        "claude-3-opus-20240229": {}
-      }
-    }
-  }
-}
-```
-
-### Ollama (local)
-
-```nu
-$env.config.plugins.agent = {
-  model: "ollama/llama3.2"
+  model: "ollama/gemma4:31b"
   providers: {
     ollama: {
-      base_url: "http://localhost:11434"
+      base_url: "http://127.0.0.1:11434/v1"
       models: {
-        "llama3.2": {}
-        "codellama": {}
+        "gemma4:31b": {}
       }
     }
   }
 }
 ```
 
-## Usage
+Use it:
 
 ```nu
-# Simple prompt
-"What is Rust?" | agent
-
-# Output structure:
-# {
-#   response: "...",
-#   model: "claude-sonnet-4.5",
-#   provider: "github-copilot/anthropic",
-#   timestamp: "2026-04-24T22:29:28Z"
-# }
-
-# Use with pipelines
-ls | to json | $"Summarize this file list: ($in)" | agent
+"explain this repo" | agent
 ```
 
-## Logging
+## Documentation
 
-Use the `--verbose` (or `-v`) flag to see detailed execution progress:
+- `docs/configuration.md` - config structure, env vars, precedence
+- `docs/mcp.md` - MCP servers, discovery, filtering
+- `docs/usage.md` - commands and examples
+- `docs/development.md` - build, test, lint
 
-```nushell
-# Silent (default) - no diagnostic output
-"prompt" | agent --tools $tools
-
-# Verbose - show agent steps, LLM calls, and tool execution
-"prompt" | agent --tools $tools --verbose
-"prompt" | agent --tools $tools -v
-```
-
-### What Verbose Shows
-
-The `--verbose` flag displays the **current turn** of the conversation:
-
-- **→ User prompt**: Your original input (shown once at start)
-- **← LLM responses**: Each new response from the LLM
-- **→ Tool calls**: Tool names with full JSON arguments for each call
-- **← Tool results**: The actual data returned by each tool
-- **Session info**: Which session ID is being used (when applicable)
-
-**Note:** Verbose shows only NEW interactions per turn, not accumulated conversation history.
-
-All verbose output goes to **stderr**, so it doesn't pollute pipeline data:
-
-```nushell
-# Logs visible in terminal, pipeline data stays clean
-"prompt" | agent --tools $tools --verbose | to json | save output.json
-```
-
-## Troubleshooting
-
-### GitHub Copilot: "Access to this endpoint is forbidden"
-
-**Solution:** Re-authenticate GitHub CLI with `copilot` scope:
-```bash
-gh auth login --scopes "repo,read:org,gist,workflow,copilot"
-```
-
-Verify the scope is present:
-```bash
-gh auth status
-# Should show: Token scopes: '...copilot...'
-```
-
-### GitHub Copilot: "Personal Access Tokens are not supported"
-
-GitHub Copilot requires OAuth tokens from `gh auth`, NOT Personal Access Tokens (PATs). Use `gh auth token` for authentication.
-
-## Development
-
-See [AGENTS.md](./AGENTS.md) for development rules and TDD workflow.
-
-### Running tests
-
-```bash
-cargo test
-```
-
-### Development build
-
-```bash
-cargo build
-plugin add target/debug/nu_plugin_agent
-```
+For development commands, see `docs/development.md`.
