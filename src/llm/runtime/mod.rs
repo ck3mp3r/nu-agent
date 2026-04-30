@@ -1,22 +1,18 @@
 //! Runtime boundary for LLM provider lifecycle.
 //!
 //! Responsibilities are strictly separated:
-//! - [`key`] owns stable cache identity + auth fingerprinting
-//! - [`cache`] owns concurrent get-or-create lifecycle
-//! - [`provider_factory`] owns one-time config -> concrete provider selection
-//! - [`provider_enum`] owns concrete provider execution dispatch
+//! - [`providers::key`] owns stable cache identity + auth fingerprinting
+//! - [`providers::cache`] owns concurrent get-or-create lifecycle
+//! - [`providers::factory`] owns one-time config -> concrete provider selection
+//! - [`providers::cached`] owns concrete provider execution dispatch
 //!
 //! Forbidden patterns:
 //! - provider construction in `llm::call_llm`
 //! - endpoint/model-family switching in `llm` orchestration layer
 
-mod cache;
-mod key;
-mod provider_enum;
-mod provider_factory;
+mod providers;
 
-pub use cache::ProviderCache;
-pub use key::{ProviderKey, auth_fingerprint};
+pub use providers::{ProviderCache, ProviderKey, auth_fingerprint};
 
 use crate::config::Config;
 use crate::llm::LlmResponse;
@@ -47,13 +43,7 @@ impl LlmRuntime {
         let key = ProviderKey::from_config(config);
         let cached = self
             .cache
-            .get_or_create(key, || provider_factory::build_cached_provider(config))?;
-        provider_enum::execute(cached.as_ref(), prompt, tools).await
+            .get_or_create(key, || providers::factory::build_cached_provider(config))?;
+        providers::cached::execute(cached.as_ref(), prompt, tools).await
     }
 }
-
-#[cfg(test)]
-mod cache_test;
-
-#[cfg(test)]
-mod key_test;

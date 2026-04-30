@@ -3,15 +3,11 @@
 //! Provides Provider, ProviderBuilder, and Capabilities trait implementations
 //! for the GitHub Copilot API.
 //!
-//! # Provider-Specific Extensions
+//! # Extension Model
 //!
-//! GitHub Copilot routes to concrete provider implementations selected once in factory.
-//! These extension types are construction helpers only and do not perform endpoint routing.
-//! Concrete providers own endpoint + mapping + transport semantics.
-//!
-//! This module provides separate extension types per backend family:
-//! - `GitHubCopilotAnthropicExt` - For Claude models (conversation-panel intent)
-//! - `GitHubCopilotOpenAIExt` - For GPT models (conversation-agent intent)
+//! GitHub Copilot routes to concrete provider implementations selected once in
+//! `model::factory`. This client module provides a single extension type used by
+//! all concrete providers. Endpoint and payload semantics are not owned here.
 
 use rig::client::{self, Capabilities, Capable, Nothing, Provider, ProviderBuilder};
 
@@ -19,34 +15,12 @@ use rig::client::{self, Capabilities, Capable, Nothing, Provider, ProviderBuilde
 #[derive(Debug, Default, Clone, Copy)]
 pub struct GitHubCopilotExt;
 
-/// Zero-sized marker type for GitHub Copilot Anthropic backend
-#[derive(Debug, Default, Clone, Copy)]
-pub struct GitHubCopilotAnthropicExt;
-
-/// Zero-sized marker type for GitHub Copilot OpenAI backend
-#[derive(Debug, Default, Clone, Copy)]
-pub struct GitHubCopilotOpenAIExt;
-
 /// Builder for GitHub Copilot extension (legacy)
 #[derive(Debug, Default, Clone, Copy)]
 pub struct GitHubCopilotExtBuilder;
 
-/// Builder for GitHub Copilot Anthropic extension
-#[derive(Debug, Default, Clone, Copy)]
-pub struct GitHubCopilotAnthropicExtBuilder;
-
-/// Builder for GitHub Copilot OpenAI extension
-#[derive(Debug, Default, Clone, Copy)]
-pub struct GitHubCopilotOpenAIExtBuilder;
-
 /// Type alias for GitHub Copilot client (legacy, defaults to OpenAI backend)
 pub type Client<H = reqwest::Client> = client::Client<GitHubCopilotExt, H>;
-
-/// Type alias for GitHub Copilot Anthropic client
-pub type AnthropicClient<H = reqwest::Client> = client::Client<GitHubCopilotAnthropicExt, H>;
-
-/// Type alias for GitHub Copilot OpenAI client
-pub type OpenAIClient<H = reqwest::Client> = client::Client<GitHubCopilotOpenAIExt, H>;
 
 /// Type alias for GitHub Copilot client builder (legacy)
 pub type ClientBuilder<H = reqwest::Client> =
@@ -85,86 +59,12 @@ impl<H> Capabilities<H> for GitHubCopilotExt
 where
     H: rig::http_client::HttpClientExt,
 {
-    type Completion =
-        Capable<super::completion::CompletionModel<super::providers::OpenAI4xProvider, H>>;
-    type Embeddings = Nothing;
-    type Transcription = Nothing;
-    type ModelListing = Nothing;
-}
-
-// ============================================================================
-// GitHubCopilotAnthropicExt
-// ============================================================================
-
-impl Provider for GitHubCopilotAnthropicExt {
-    type Builder = GitHubCopilotAnthropicExtBuilder;
-    const VERIFY_PATH: &'static str = "/models";
-}
-
-impl ProviderBuilder for GitHubCopilotAnthropicExtBuilder {
-    type Extension<H>
-        = GitHubCopilotAnthropicExt
-    where
-        H: rig::http_client::HttpClientExt;
-    type ApiKey = client::BearerAuth;
-
-    const BASE_URL: &'static str = "https://api.githubcopilot.com";
-
-    fn build<H>(
-        _builder: &client::ClientBuilder<Self, client::BearerAuth, H>,
-    ) -> rig::http_client::Result<Self::Extension<H>>
-    where
-        H: rig::http_client::HttpClientExt,
-    {
-        Ok(GitHubCopilotAnthropicExt)
-    }
-}
-
-impl<H> Capabilities<H> for GitHubCopilotAnthropicExt
-where
-    H: rig::http_client::HttpClientExt,
-{
-    type Completion =
-        Capable<super::completion::CompletionModel<super::providers::AnthropicProvider, H>>;
-    type Embeddings = Nothing;
-    type Transcription = Nothing;
-    type ModelListing = Nothing;
-}
-
-// ============================================================================
-// GitHubCopilotOpenAIExt
-// ============================================================================
-
-impl Provider for GitHubCopilotOpenAIExt {
-    type Builder = GitHubCopilotOpenAIExtBuilder;
-    const VERIFY_PATH: &'static str = "/models";
-}
-
-impl ProviderBuilder for GitHubCopilotOpenAIExtBuilder {
-    type Extension<H>
-        = GitHubCopilotOpenAIExt
-    where
-        H: rig::http_client::HttpClientExt;
-    type ApiKey = client::BearerAuth;
-
-    const BASE_URL: &'static str = "https://api.githubcopilot.com";
-
-    fn build<H>(
-        _builder: &client::ClientBuilder<Self, client::BearerAuth, H>,
-    ) -> rig::http_client::Result<Self::Extension<H>>
-    where
-        H: rig::http_client::HttpClientExt,
-    {
-        Ok(GitHubCopilotOpenAIExt)
-    }
-}
-
-impl<H> Capabilities<H> for GitHubCopilotOpenAIExt
-where
-    H: rig::http_client::HttpClientExt,
-{
-    type Completion =
-        Capable<super::completion::CompletionModel<super::providers::OpenAI4xProvider, H>>;
+    type Completion = Capable<
+        crate::providers::github_copilot::completion::CompletionModel<
+            crate::providers::github_copilot::providers::OpenAI4xProvider,
+            H,
+        >,
+    >;
     type Embeddings = Nothing;
     type Transcription = Nothing;
     type ModelListing = Nothing;
@@ -241,7 +141,10 @@ pub trait ClientExt {
         model: &str,
         api_key: Option<String>,
         base_url: Option<String>,
-    ) -> Result<super::agent::Agent, super::Error>;
+    ) -> Result<
+        crate::providers::github_copilot::model::factory::Agent,
+        crate::providers::github_copilot::Error,
+    >;
 }
 
 impl ClientExt for Client {
@@ -250,11 +153,19 @@ impl ClientExt for Client {
         model: &str,
         api_key: Option<String>,
         base_url: Option<String>,
-    ) -> Result<super::agent::Agent, super::Error> {
-        super::agent::Agent::from_config(provider_string, model, api_key, base_url)
+    ) -> Result<
+        crate::providers::github_copilot::model::factory::Agent,
+        crate::providers::github_copilot::Error,
+    > {
+        crate::providers::github_copilot::model::factory::agent_from_config(
+            provider_string,
+            model,
+            api_key,
+            base_url,
+        )
     }
 }
 
 #[cfg(test)]
-#[path = "client_test.rs"]
-mod tests;
+#[path = "test.rs"]
+mod test;

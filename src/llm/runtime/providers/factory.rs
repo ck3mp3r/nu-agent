@@ -1,4 +1,4 @@
-use super::provider_enum::CachedProvider;
+use super::cached::CachedProvider;
 use crate::config::Config;
 use crate::providers::github_copilot;
 use nu_protocol::LabeledError;
@@ -70,11 +70,13 @@ pub fn build_cached_provider(config: &Config) -> Result<CachedProvider, LabeledE
             })
         }
         "github-copilot" => {
-            let variant =
-                github_copilot::factory::select_provider_variant("github-copilot", &config.model)
-                    .map_err(|e| {
-                    LabeledError::new(format!("Failed to select GitHub Copilot provider: {}", e))
-                })?;
+            let variant = github_copilot::model::factory::select_provider_variant(
+                "github-copilot",
+                &config.model,
+            )
+            .map_err(|e| {
+                LabeledError::new(format!("Failed to select GitHub Copilot provider: {}", e))
+            })?;
             let key = config
                 .api_key
                 .clone()
@@ -106,19 +108,19 @@ pub fn build_cached_provider(config: &Config) -> Result<CachedProvider, LabeledE
             })?;
 
             match variant {
-                github_copilot::factory::ProviderVariant::Anthropic => {
+                github_copilot::model::factory::ProviderVariant::Anthropic => {
                     Ok(CachedProvider::GitHubCopilotAnthropic {
                         client,
                         model: model_name.to_string(),
                     })
                 }
-                github_copilot::factory::ProviderVariant::OpenAI4x => {
+                github_copilot::model::factory::ProviderVariant::OpenAI4x => {
                     Ok(CachedProvider::GitHubCopilotOpenAI4x {
                         client,
                         model: model_name.to_string(),
                     })
                 }
-                github_copilot::factory::ProviderVariant::OpenAI5x => {
+                github_copilot::model::factory::ProviderVariant::OpenAI5x => {
                     Ok(CachedProvider::GitHubCopilotOpenAI5x {
                         client,
                         model: model_name.to_string(),

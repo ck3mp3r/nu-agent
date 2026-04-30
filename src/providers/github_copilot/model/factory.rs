@@ -1,5 +1,18 @@
-use super::providers::{AnthropicProvider, OpenAI4xProvider, OpenAI5xProvider};
-use super::{Agent, Error};
+use crate::providers::github_copilot::completion::CompletionModel;
+use crate::providers::github_copilot::providers::{
+    AnthropicProvider, OpenAI4xProvider, OpenAI5xProvider,
+};
+use crate::providers::github_copilot::{Client, Error};
+
+/// GitHub Copilot agent variants selected once from model family.
+pub enum Agent<H = reqwest::Client>
+where
+    H: rig::http_client::HttpClientExt + Default + std::fmt::Debug + Clone + 'static,
+{
+    Anthropic(rig::agent::Agent<CompletionModel<AnthropicProvider, H>>),
+    OpenAI4x(rig::agent::Agent<CompletionModel<OpenAI4xProvider, H>>),
+    OpenAI5x(rig::agent::Agent<CompletionModel<OpenAI5xProvider, H>>),
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderVariant {
@@ -53,28 +66,22 @@ pub fn agent_from_config(
     let key = resolve_api_key(api_key)?;
 
     let client = if let Some(url) = base_url {
-        super::Client::builder()
-            .api_key(key)
-            .base_url(url)
-            .build()?
+        Client::builder().api_key(key).base_url(url).build()?
     } else {
-        super::Client::builder().api_key(key).build()?
+        Client::builder().api_key(key).build()?
     };
 
     let agent = match variant {
         ProviderVariant::Anthropic => {
-            let model =
-                super::completion::CompletionModel::<AnthropicProvider, _>::new(client, model_name);
+            let model = CompletionModel::<AnthropicProvider, _>::new(client, model_name);
             Agent::Anthropic(rig::agent::AgentBuilder::new(model).build())
         }
         ProviderVariant::OpenAI4x => {
-            let model =
-                super::completion::CompletionModel::<OpenAI4xProvider, _>::new(client, model_name);
+            let model = CompletionModel::<OpenAI4xProvider, _>::new(client, model_name);
             Agent::OpenAI4x(rig::agent::AgentBuilder::new(model).build())
         }
         ProviderVariant::OpenAI5x => {
-            let model =
-                super::completion::CompletionModel::<OpenAI5xProvider, _>::new(client, model_name);
+            let model = CompletionModel::<OpenAI5xProvider, _>::new(client, model_name);
             Agent::OpenAI5x(rig::agent::AgentBuilder::new(model).build())
         }
     };

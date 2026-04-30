@@ -41,31 +41,23 @@
 //!
 //! # Architecture contract
 //!
-//! One-time selection in `factory` chooses a concrete provider implementation.
+//! One-time selection in `model::factory` chooses a concrete provider implementation.
 //! After selection, provider behavior is fully encapsulated in that concrete type:
 //! endpoint, intent header, request mapping, response mapping, error mapping,
 //! and execute transport logic.
 //!
 //! No shared endpoint helper APIs and no runtime endpoint switch executor.
 
-pub mod agent;
-mod client;
 pub mod completion;
-mod error;
-pub mod factory;
+pub mod core;
+pub mod model;
 pub mod providers;
 
-pub use agent::Agent;
-pub use client::{
-    AnthropicClient, Client, ClientBuilder, ClientExt, GitHubCopilotAnthropicExt,
-    GitHubCopilotAnthropicExtBuilder, GitHubCopilotExt, GitHubCopilotExtBuilder,
-    GitHubCopilotOpenAIExt, GitHubCopilotOpenAIExtBuilder, OpenAIClient,
+pub use core::client::{
+    Client, ClientBuilder, ClientExt, GitHubCopilotExt, GitHubCopilotExtBuilder,
 };
-pub use error::Error;
-
-#[cfg(test)]
-#[path = "factory_test.rs"]
-mod factory_test;
+pub use core::error::Error;
+pub use model::factory::Agent;
 
 /// Claude Sonnet 4.5 model identifier
 pub const CLAUDE_SONNET_4_5: &str = "claude-sonnet-4.5";

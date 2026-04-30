@@ -26,5 +26,5 @@ pub enum Error {
 }
 
 #[cfg(test)]
-#[path = "error_test.rs"]
-mod error_test;
+#[path = "test.rs"]
+mod test;

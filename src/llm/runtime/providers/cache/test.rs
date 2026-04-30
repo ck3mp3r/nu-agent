@@ -1,6 +1,6 @@
 use super::{ProviderCache, ProviderKey};
 use crate::config::Config;
-use crate::llm::runtime::provider_enum::CachedProvider;
+use crate::llm::runtime::providers::cached::CachedProvider;
 use nu_protocol::LabeledError;
 use std::sync::Arc;
 use std::sync::Barrier;

@@ -73,3 +73,7 @@ fn resolve_model_family(config: &Config) -> Option<String> {
         _ => Some("unknown".to_string()),
     }
 }
+
+#[cfg(test)]
+#[path = "test.rs"]
+mod test;

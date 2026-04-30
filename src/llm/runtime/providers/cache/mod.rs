@@ -1,5 +1,5 @@
-use super::key::ProviderKey;
-use super::provider_enum::CachedProvider;
+use super::super::providers::cached::CachedProvider;
+use super::super::providers::key::ProviderKey;
 use nu_protocol::LabeledError;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -79,3 +79,7 @@ impl ProviderCache {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "test.rs"]
+mod test;
