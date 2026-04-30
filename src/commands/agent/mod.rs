@@ -253,6 +253,49 @@ pub fn extract_tool_timeout(call: &EvaluatedCall) -> std::time::Duration {
         .unwrap_or(std::time::Duration::from_secs(30))
 }
 
+/// Extract MCP tool name patterns from --mcp-tools flag.
+///
+/// Expected input is a list of strings, e.g. ["k8s/*", "gh/list_*"]
+///
+/// Returns an empty vector when the flag is not provided.
+/// Empty vector means "no filtering" (match all MCP tools).
+pub fn extract_mcp_patterns_from_call(call: &EvaluatedCall) -> Result<Vec<String>, LabeledError> {
+    let patterns_value: Option<Value> = call.get_flag("mcp-tools").ok().flatten();
+
+    let Some(value) = patterns_value else {
+        return Ok(Vec::new());
+    };
+
+    let list = value.as_list().map_err(|_| {
+        LabeledError::new("Invalid --mcp-tools value")
+            .with_label("--mcp-tools must be a list of strings", value.span())
+    })?;
+
+    let mut patterns = Vec::with_capacity(list.len());
+    for item in list {
+        let pattern = item.as_str().map_err(|_| {
+            LabeledError::new("Invalid --mcp-tools entry")
+                .with_label("Each --mcp-tools entry must be a string", item.span())
+        })?;
+        patterns.push(pattern.to_string());
+    }
+
+    Ok(patterns)
+}
+
+/// Select MCP tools from config, optionally intersected by CLI allowlist patterns.
+///
+/// Behavior:
+/// - No config => empty set
+/// - Empty patterns => all runtime-discovered MCP tools
+/// - Non-empty patterns => only runtime-discovered tools matching patterns
+pub fn select_mcp_tools(
+    discovered_tools: &[crate::tools::mcp::client::McpToolDefinition],
+    cli_allowlist_patterns: &[String],
+) -> Vec<crate::tools::mcp::client::McpToolDefinition> {
+    crate::tools::mcp::registration::registerable_tools(discovered_tools, cli_allowlist_patterns)
+}
+
 pub struct Agent {
     store: crate::session::SessionStore,
     runtime_ctx: RuntimeCtx,
@@ -349,6 +392,12 @@ impl SimplePluginCommand for Agent {
                 None,
             )
             .named(
+                "mcp-tools",
+                nu_protocol::SyntaxShape::List(Box::new(nu_protocol::SyntaxShape::String)),
+                "List of MCP tool name glob patterns, e.g. ['k8s/*', 'gh/list_*']",
+                None,
+            )
+            .named(
                 "tool-timeout",
                 nu_protocol::SyntaxShape::Duration,
                 "Timeout for tool execution (default: 30sec)",
@@ -409,12 +458,80 @@ impl SimplePluginCommand for Agent {
             closure_registry.register(name.clone(), closure.clone());
         }
 
+        // Extract optional MCP tool name patterns.
+        // Empty patterns means "no filtering" (match all MCP tools).
+        let mcp_patterns = extract_mcp_patterns_from_call(call)?;
+
+        let mcp_config = engine
+            .get_plugin_config()?
+            .map(|value| crate::tools::mcp::config::McpConfig::from_plugin_config(&value))
+            .transpose()
+            .map_err(|err| {
+                LabeledError::new("Failed to load MCP config")
+                    .with_label(err.to_string(), call.head)
+            })?;
+
+        // Create async runtime for LLM and MCP tool execution
+        let runtime = tokio::runtime::Runtime::new()
+            .map_err(|e| LabeledError::new(format!("Failed to create async runtime: {}", e)))?;
+
+        let mcp_runtime = if let Some(cfg) = mcp_config.as_ref() {
+            if cfg.mcp.is_empty() {
+                None
+            } else {
+                Some(
+                    runtime
+                        .block_on(crate::tools::mcp::runtime::connect_servers(&cfg.mcp))
+                        .map_err(|msg| {
+                            LabeledError::new("Failed to connect MCP runtime")
+                                .with_label(msg, call.head)
+                        })?,
+                )
+            }
+        } else {
+            None
+        };
+
+        let discovered_mcp_tools = if let Some(mcp_runtime) = mcp_runtime.as_ref() {
+            select_mcp_tools(mcp_runtime.discovered_tools(), &mcp_patterns)
+        } else {
+            Vec::new()
+        };
+
+        let mcp_tool_server_handle = mcp_runtime.as_ref().map(|r| r.tool_server_handle());
+
+        let mcp_registry = crate::commands::agent::tool_handler::McpToolRegistry::from_names(
+            discovered_mcp_tools.iter().map(|tool| tool.name.clone()),
+        );
+
         // Convert closures to tool definitions for LLM
         use crate::tools::closure::closure_to_tool_definition;
-        let tool_definitions: Vec<rig::completion::ToolDefinition> = tools_map
+        let mut tool_definitions: Vec<rig::completion::ToolDefinition> = tools_map
             .iter()
             .map(|(name, closure)| closure_to_tool_definition(name.clone(), closure, engine, None))
             .collect();
+
+        tool_definitions.extend(discovered_mcp_tools.iter().map(|tool| {
+            rig::completion::ToolDefinition {
+                name: tool.name.clone(),
+                description: tool
+                    .description
+                    .clone()
+                    .unwrap_or_else(|| format!("MCP tool from server '{}'", tool.server)),
+                parameters: tool.parameters.clone().unwrap_or_else(|| {
+                    serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "args": {
+                                "type": "array",
+                                "items": {}
+                            }
+                        },
+                        "required": ["args"]
+                    })
+                }),
+            }
+        }));
 
         // Extract prompt from input
         let prompt = extract_prompt_from_input(input)?;
@@ -472,10 +589,6 @@ impl SimplePluginCommand for Agent {
             }
         }
 
-        // Create async runtime for LLM and tool execution
-        let runtime = tokio::runtime::Runtime::new()
-            .map_err(|e| LabeledError::new(format!("Failed to create async runtime: {}", e)))?;
-
         // Call LLM and handle tool execution loop
         log::debug!(
             "Calling LLM with accumulated context and {} tool definitions",
@@ -504,6 +617,7 @@ impl SimplePluginCommand for Agent {
 
         // Track all tool calls executed during the agent loop
         let mut executed_tool_calls: Vec<rig::completion::AssistantContent> = Vec::new();
+        let mut tool_results_metadata: Vec<crate::llm::ToolCallMetadata> = Vec::new();
 
         // Create audit log directory ONCE before agent loop
         // This follows the Single Responsibility Principle: the logger only logs,
@@ -563,6 +677,8 @@ impl SimplePluginCommand for Agent {
                 .block_on(tool_handler::handle_tool_calls(
                     llm_response.tool_calls.clone(),
                     &closure_registry,
+                    &mcp_registry,
+                    mcp_tool_server_handle.as_ref(),
                     &tool_executor,
                     engine,
                     call.head,
@@ -580,6 +696,20 @@ impl SimplePluginCommand for Agent {
                     result.content
                 );
                 log::debug!("Tool result size: {} bytes", result.content.len());
+
+                let source = match result.source {
+                    crate::commands::agent::tool_handler::ToolSource::Closure => {
+                        "closure".to_string()
+                    }
+                    crate::commands::agent::tool_handler::ToolSource::Mcp => "mcp".to_string(),
+                };
+
+                tool_results_metadata.push(crate::llm::ToolCallMetadata {
+                    id: result.tool_call_id.clone(),
+                    name: result.tool_name.clone(),
+                    arguments: result.arguments.clone(),
+                    source: Some(source),
+                });
             }
 
             // Track tool results in-memory conversation (ALWAYS, regardless of session)
@@ -666,6 +796,7 @@ impl SimplePluginCommand for Agent {
             text: llm_response.text.clone(),
             usage: llm_response.usage.clone(),
             tool_calls: executed_tool_calls,
+            tool_call_metadata: tool_results_metadata,
         };
 
         // Extract text for session storage

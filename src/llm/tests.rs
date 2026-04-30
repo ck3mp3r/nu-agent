@@ -42,6 +42,7 @@ fn test_llm_response(text: &str) -> LlmResponse {
             cache_creation_input_tokens: 5,
         },
         tool_calls: vec![],
+        tool_call_metadata: vec![],
     }
 }
 
@@ -404,6 +405,7 @@ fn llm_response_struct_has_text_and_usage() {
         text: "Hello, world!".to_string(),
         usage,
         tool_calls: vec![],
+        tool_call_metadata: vec![],
     };
 
     assert_eq!(response.text, "Hello, world!");
@@ -744,4 +746,246 @@ fn extract_response_handles_multiple_text_parts() {
 
     // Verify no tool calls
     assert_eq!(result.tool_calls.len(), 0);
+}
+
+#[test]
+fn format_response_includes_tool_calls_metadata_list() {
+    let config = Config {
+        provider: "openai".to_string(),
+        model: "gpt-4".to_string(),
+        ..cfg("openai")
+    };
+
+    let mut response = test_llm_response("hi");
+    response.tool_call_metadata = vec![crate::llm::ToolCallMetadata {
+        id: "call_1".to_string(),
+        name: "tool_name".to_string(),
+        arguments: "{\"x\":1}".to_string(),
+        source: Some("closure".to_string()),
+    }];
+
+    let value = format_response(&response, &config, None, 0, Span::unknown());
+    let record = value.as_record().expect("record");
+    let meta = record
+        .get("_meta")
+        .expect("_meta")
+        .as_record()
+        .expect("meta record");
+    let tool_calls = meta
+        .get("tool_calls")
+        .expect("tool_calls")
+        .as_list()
+        .expect("tool_calls list");
+
+    assert_eq!(tool_calls.len(), 1);
+}
+
+#[test]
+fn tool_call_metadata_includes_source_for_closure() {
+    let config = Config {
+        provider: "openai".to_string(),
+        model: "gpt-4".to_string(),
+        ..cfg("openai")
+    };
+
+    let mut response = test_llm_response("hi");
+    response.tool_call_metadata = vec![crate::llm::ToolCallMetadata {
+        id: "c1".to_string(),
+        name: "math/add".to_string(),
+        arguments: "{}".to_string(),
+        source: Some("closure".to_string()),
+    }];
+
+    let value = format_response(&response, &config, None, 0, Span::unknown());
+    let tool_call = value
+        .as_record()
+        .expect("record")
+        .get("_meta")
+        .expect("_meta")
+        .as_record()
+        .expect("meta")
+        .get("tool_calls")
+        .expect("tool_calls")
+        .as_list()
+        .expect("list")[0]
+        .as_record()
+        .expect("tool call record")
+        .clone();
+
+    assert_eq!(
+        tool_call
+            .get("source")
+            .expect("source")
+            .as_str()
+            .expect("str"),
+        "closure"
+    );
+}
+
+#[test]
+fn tool_call_metadata_includes_source_for_mcp() {
+    let config = Config {
+        provider: "openai".to_string(),
+        model: "gpt-4".to_string(),
+        ..cfg("openai")
+    };
+
+    let mut response = test_llm_response("hi");
+    response.tool_call_metadata = vec![crate::llm::ToolCallMetadata {
+        id: "c2".to_string(),
+        name: "k8s/list_pods".to_string(),
+        arguments: "{}".to_string(),
+        source: Some("mcp".to_string()),
+    }];
+
+    let value = format_response(&response, &config, None, 0, Span::unknown());
+    let tool_call = value
+        .as_record()
+        .expect("record")
+        .get("_meta")
+        .expect("_meta")
+        .as_record()
+        .expect("meta")
+        .get("tool_calls")
+        .expect("tool_calls")
+        .as_list()
+        .expect("list")[0]
+        .as_record()
+        .expect("tool call record")
+        .clone();
+
+    assert_eq!(
+        tool_call
+            .get("source")
+            .expect("source")
+            .as_str()
+            .expect("str"),
+        "mcp"
+    );
+}
+
+#[test]
+fn metadata_keeps_existing_fields_unchanged() {
+    let config = Config {
+        provider: "openai".to_string(),
+        model: "gpt-4".to_string(),
+        ..cfg("openai")
+    };
+
+    let response = test_llm_response("content");
+    let value = format_response(&response, &config, Some("sess"), 2, Span::unknown());
+    let record = value.as_record().expect("record");
+    let meta = record
+        .get("_meta")
+        .expect("_meta")
+        .as_record()
+        .expect("meta");
+
+    assert_eq!(
+        record
+            .get("response")
+            .expect("response")
+            .as_str()
+            .expect("str"),
+        "content"
+    );
+    assert_eq!(
+        meta.get("session_id")
+            .expect("session_id")
+            .as_str()
+            .expect("str"),
+        "sess"
+    );
+    assert_eq!(
+        meta.get("compaction_count")
+            .expect("compaction_count")
+            .as_int()
+            .expect("int"),
+        2
+    );
+}
+
+#[test]
+fn tool_call_metadata_mixed_sources_preserves_order() {
+    let config = Config {
+        provider: "openai".to_string(),
+        model: "gpt-4".to_string(),
+        ..cfg("openai")
+    };
+
+    let mut response = test_llm_response("mixed");
+    response.tool_call_metadata = vec![
+        crate::llm::ToolCallMetadata {
+            id: "1".to_string(),
+            name: "math/add".to_string(),
+            arguments: "{}".to_string(),
+            source: Some("closure".to_string()),
+        },
+        crate::llm::ToolCallMetadata {
+            id: "2".to_string(),
+            name: "k8s/list_pods".to_string(),
+            arguments: "{}".to_string(),
+            source: Some("mcp".to_string()),
+        },
+    ];
+
+    let value = format_response(&response, &config, None, 0, Span::unknown());
+    let tool_calls = value
+        .as_record()
+        .expect("record")
+        .get("_meta")
+        .expect("_meta")
+        .as_record()
+        .expect("meta")
+        .get("tool_calls")
+        .expect("tool_calls")
+        .as_list()
+        .expect("list");
+
+    assert_eq!(tool_calls.len(), 2);
+    assert_eq!(
+        tool_calls[0]
+            .as_record()
+            .expect("rec")
+            .get("source")
+            .expect("source")
+            .as_str()
+            .expect("str"),
+        "closure"
+    );
+    assert_eq!(
+        tool_calls[1]
+            .as_record()
+            .expect("rec")
+            .get("source")
+            .expect("source")
+            .as_str()
+            .expect("str"),
+        "mcp"
+    );
+}
+
+#[test]
+fn empty_tool_calls_serializes_as_empty_list() {
+    let config = Config {
+        provider: "openai".to_string(),
+        model: "gpt-4".to_string(),
+        ..cfg("openai")
+    };
+
+    let response = test_llm_response("content");
+    let value = format_response(&response, &config, None, 0, Span::unknown());
+    let tool_calls = value
+        .as_record()
+        .expect("record")
+        .get("_meta")
+        .expect("_meta")
+        .as_record()
+        .expect("meta")
+        .get("tool_calls")
+        .expect("tool_calls")
+        .as_list()
+        .expect("list");
+
+    assert!(tool_calls.is_empty());
 }

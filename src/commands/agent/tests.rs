@@ -1,13 +1,14 @@
 use crate::commands::agent::{
-    Agent, EngineConfigInterface, extract_flag_config, extract_tool_timeout,
-    extract_tools_from_call,
+    Agent, EngineConfigInterface, extract_flag_config, extract_mcp_patterns_from_call,
+    extract_tool_timeout, extract_tools_from_call, select_mcp_tools,
 };
 use crate::config::Config;
 use crate::llm::runtime::LlmRuntime;
 use crate::plugin::RuntimeCtx;
 use crate::session::SessionStore;
+use crate::tools::mcp::client::McpToolDefinition;
 use nu_plugin::{EvaluatedCall, SimplePluginCommand};
-use nu_protocol::{LabeledError, Span, Spanned, SyntaxShape, Value};
+use nu_protocol::{LabeledError, Span, Spanned, SyntaxShape, Value, record};
 use serial_test::serial;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
@@ -184,6 +185,42 @@ fn agent_command_signature_has_tools_flag() {
     );
 }
 
+#[test]
+fn agent_command_signature_has_mcp_tools_flag() {
+    let (agent, _temp_dir) = create_test_agent();
+    let sig = SimplePluginCommand::signature(&agent);
+
+    let flag = sig.named.iter().find(|f| f.long == "mcp-tools");
+    assert!(flag.is_some(), "Missing --mcp-tools flag");
+    assert_eq!(
+        flag.unwrap().arg,
+        Some(SyntaxShape::List(Box::new(SyntaxShape::String))),
+        "Wrong type for --mcp-tools (should be list<string>)"
+    );
+}
+
+#[test]
+fn select_mcp_tools_intersects_cli_allowlist_with_config() {
+    let discovered = vec![
+        McpToolDefinition {
+            server: "local".to_string(),
+            name: "k8s/list_pods".to_string(),
+            description: None,
+            parameters: None,
+        },
+        McpToolDefinition {
+            server: "local".to_string(),
+            name: "gh/list_prs".to_string(),
+            description: None,
+            parameters: None,
+        },
+    ];
+
+    let selected = select_mcp_tools(&discovered, &["gh/*".to_string()]);
+    assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0].name, "gh/list_prs");
+}
+
 // Helper to create an EvaluatedCall with named arguments for testing
 fn create_test_call(flags: Vec<(&str, Value)>) -> EvaluatedCall {
     let span = Span::test_data();
@@ -223,6 +260,42 @@ fn extract_flag_config_with_no_flags() {
     assert_eq!(config.max_context_tokens, None);
     assert_eq!(config.max_output_tokens, None);
     assert_eq!(config.max_tool_turns, None);
+}
+
+#[test]
+fn extract_mcp_patterns_defaults_empty_when_flag_missing() {
+    let call = create_test_call(vec![]);
+    let patterns = extract_mcp_patterns_from_call(&call).expect("expected success");
+    assert!(patterns.is_empty());
+}
+
+#[test]
+fn extract_mcp_patterns_reads_list_of_strings() {
+    let call = create_test_call(vec![(
+        "mcp-tools",
+        Value::test_list(vec![
+            Value::test_string("k8s/*"),
+            Value::test_string("gh/list_*"),
+        ]),
+    )]);
+
+    let patterns = extract_mcp_patterns_from_call(&call).expect("expected success");
+    assert_eq!(patterns, vec!["k8s/*", "gh/list_*"]);
+}
+
+#[test]
+fn extract_mcp_patterns_rejects_non_string_entries() {
+    let call = create_test_call(vec![(
+        "mcp-tools",
+        Value::test_list(vec![Value::test_string("k8s/*"), Value::test_int(42)]),
+    )]);
+
+    let err = extract_mcp_patterns_from_call(&call).expect_err("expected error");
+    assert!(
+        err.msg.contains("mcp-tools") || err.msg.contains("string"),
+        "unexpected error: {}",
+        err.msg
+    );
 }
 
 #[test]
@@ -776,6 +849,63 @@ mod new_plugin_config_tests {
         assert_eq!(config.temperature, Some(0.7));
         assert_eq!(config.max_context_tokens, Some(128000));
         assert_eq!(config.max_output_tokens, Some(4096));
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_config_accepts_mcp_from_plugin_env_config() {
+        use std::collections::HashMap;
+
+        let mut providers_map = HashMap::new();
+        let mut models = HashMap::new();
+        models.insert(
+            "claude-sonnet-4.5".to_string(),
+            Value::test_record(record! {}),
+        );
+
+        providers_map.insert(
+            "github-copilot".to_string(),
+            Value::test_record(record! {
+                "api_key" => Value::test_string("token"),
+                "base_url" => Value::test_string("https://api.individual.githubcopilot.com"),
+                "models" => Value::test_record(models.into_iter().collect()),
+            }),
+        );
+
+        let plugin_config = Value::test_record(record! {
+            "mcp" => Value::test_record(record! {
+                "c5t" => Value::test_record(record! {
+                    "transport" => Value::test_string("sse"),
+                    "url" => Value::test_string("http://0.0.0.0:3737/mcp"),
+                }),
+                "nu" => Value::test_record(record! {
+                    "transport" => Value::test_string("stdio"),
+                    "command" => Value::test_string("nu-mcp"),
+                    "args" => Value::test_list(vec![
+                        Value::test_string("--add-path"),
+                        Value::test_string("/tmp"),
+                    ]),
+                    "env" => Value::test_record(record! {
+                        "GIT_PAGER" => Value::test_string(""),
+                    }),
+                }),
+            }),
+            "model" => Value::test_string("github-copilot/anthropic/claude-sonnet-4.5"),
+            "providers" => Value::test_record(providers_map.into_iter().collect()),
+        });
+
+        let parsed = crate::tools::mcp::config::McpConfig::from_plugin_config(&plugin_config)
+            .expect("mcp parse from plugin config");
+        assert_eq!(parsed.mcp.len(), 2);
+
+        let resolved = resolve_config(
+            &MockEngineInterface::with_config(plugin_config),
+            &create_test_call(vec![]),
+        );
+        assert!(
+            resolved.is_ok(),
+            "config resolve should still succeed with mcp present"
+        );
     }
 
     #[test]

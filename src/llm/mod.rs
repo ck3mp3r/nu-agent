@@ -41,6 +41,15 @@ pub struct LlmResponse {
     pub text: String,
     pub usage: LlmUsage,
     pub tool_calls: Vec<AssistantContent>,
+    pub tool_call_metadata: Vec<ToolCallMetadata>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolCallMetadata {
+    pub id: String,
+    pub name: String,
+    pub arguments: String,
+    pub source: Option<String>,
 }
 
 /// Extract response data from rig's CompletionResponse.
@@ -82,6 +91,7 @@ pub(crate) fn extract_response<T>(
         text: text_parts.join("\n"),
         usage: completion_response.usage.into(),
         tool_calls,
+        tool_call_metadata: vec![],
     })
 }
 
@@ -203,8 +213,60 @@ pub fn format_response(
         Value::int(compaction_count as i64, span),
     ));
 
-    // Convert tool_calls to Nushell values
-    let tool_calls_list: Vec<Value> = llm_response
+    let tool_calls_list = build_tool_call_values(llm_response, span);
+    meta_fields.push(("tool_calls".to_string(), Value::list(tool_calls_list, span)));
+
+    // Add usage record
+    meta_fields.push(("usage".to_string(), usage_record));
+
+    let meta_record = Value::record(meta_fields.into_iter().collect(), span);
+
+    Value::record(
+        vec![
+            (
+                "response".to_string(),
+                Value::string(&llm_response.text, span),
+            ),
+            ("model".to_string(), Value::string(&config.model, span)),
+            (
+                "provider".to_string(),
+                Value::string(&config.provider, span),
+            ),
+            ("timestamp".to_string(), Value::string(timestamp, span)),
+            ("_meta".to_string(), meta_record),
+        ]
+        .into_iter()
+        .collect(),
+        span,
+    )
+}
+
+fn build_tool_call_values(llm_response: &LlmResponse, span: Span) -> Vec<Value> {
+    // Prefer enriched metadata when available; otherwise preserve legacy mapping from raw tool_calls.
+    if !llm_response.tool_call_metadata.is_empty() {
+        return llm_response
+            .tool_call_metadata
+            .iter()
+            .map(|metadata| {
+                let mut fields = vec![
+                    ("id".to_string(), Value::string(&metadata.id, span)),
+                    ("name".to_string(), Value::string(&metadata.name, span)),
+                    (
+                        "arguments".to_string(),
+                        Value::string(&metadata.arguments, span),
+                    ),
+                ];
+
+                if let Some(source) = &metadata.source {
+                    fields.push(("source".to_string(), Value::string(source, span)));
+                }
+
+                Value::record(fields.into_iter().collect(), span)
+            })
+            .collect();
+    }
+
+    llm_response
         .tool_calls
         .iter()
         .filter_map(|content| {
@@ -233,32 +295,7 @@ pub fn format_response(
                 None
             }
         })
-        .collect();
-    meta_fields.push(("tool_calls".to_string(), Value::list(tool_calls_list, span)));
-
-    // Add usage record
-    meta_fields.push(("usage".to_string(), usage_record));
-
-    let meta_record = Value::record(meta_fields.into_iter().collect(), span);
-
-    Value::record(
-        vec![
-            (
-                "response".to_string(),
-                Value::string(&llm_response.text, span),
-            ),
-            ("model".to_string(), Value::string(&config.model, span)),
-            (
-                "provider".to_string(),
-                Value::string(&config.provider, span),
-            ),
-            ("timestamp".to_string(), Value::string(timestamp, span)),
-            ("_meta".to_string(), meta_record),
-        ]
-        .into_iter()
-        .collect(),
-        span,
-    )
+        .collect()
 }
 
 #[cfg(test)]

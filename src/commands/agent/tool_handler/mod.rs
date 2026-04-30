@@ -5,6 +5,47 @@ use serde_json::Value as JsonValue;
 
 use crate::tools::{closure::ClosureRegistry, executor::ToolExecutor};
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum ToolSource {
+    Closure,
+    Mcp,
+}
+
+#[derive(Debug, Clone)]
+pub struct McpToolRegistry {
+    names: std::collections::HashSet<String>,
+}
+
+impl McpToolRegistry {
+    pub fn from_names<I, S>(names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        Self {
+            names: names.into_iter().map(Into::into).collect(),
+        }
+    }
+
+    pub fn contains(&self, name: &str) -> bool {
+        self.names.contains(name)
+    }
+}
+
+fn classify_tool_source(
+    tool_name: &str,
+    closure_registry: &ClosureRegistry,
+    mcp_registry: &McpToolRegistry,
+) -> Option<ToolSource> {
+    if closure_registry.get(tool_name).is_some() {
+        Some(ToolSource::Closure)
+    } else if mcp_registry.contains(tool_name) {
+        Some(ToolSource::Mcp)
+    } else {
+        None
+    }
+}
+
 /// Convert a serde_json::Value to nu_protocol::Value.
 ///
 /// Recursively converts JSON values to their Nushell equivalents.
@@ -102,6 +143,9 @@ pub fn nu_value_to_json(value: &Value) -> Result<JsonValue, GenericError> {
 #[derive(Debug, Clone)]
 pub struct ToolCallResult {
     pub tool_call_id: String,
+    pub tool_name: String,
+    pub arguments: String,
+    pub source: ToolSource,
     pub content: String,
 }
 
@@ -121,6 +165,8 @@ pub struct ToolCallResult {
 pub async fn handle_tool_calls(
     tool_calls: Vec<AssistantContent>,
     closure_registry: &ClosureRegistry,
+    mcp_registry: &McpToolRegistry,
+    mcp_tool_server: Option<&rig::tool::server::ToolServerHandle>,
     tool_executor: &ToolExecutor,
     engine: &EngineInterface,
     span: Span,
@@ -130,9 +176,16 @@ pub async fn handle_tool_calls(
     for content in tool_calls {
         // Only process ToolCall variants
         if let AssistantContent::ToolCall(tool_call) = content {
-            let result =
-                handle_single_tool_call(tool_call, closure_registry, tool_executor, engine, span)
-                    .await?;
+            let result = handle_single_tool_call(
+                tool_call,
+                closure_registry,
+                mcp_registry,
+                mcp_tool_server,
+                tool_executor,
+                engine,
+                span,
+            )
+            .await?;
 
             results.push(result);
         }
@@ -158,11 +211,57 @@ pub async fn handle_tool_calls(
 async fn handle_single_tool_call(
     tool_call: ToolCall,
     closure_registry: &ClosureRegistry,
+    mcp_registry: &McpToolRegistry,
+    mcp_tool_server: Option<&rig::tool::server::ToolServerHandle>,
     tool_executor: &ToolExecutor,
     engine: &EngineInterface,
     span: Span,
 ) -> Result<ToolCallResult, GenericError> {
     // Look up closure by function name
+    let serialized_arguments =
+        serde_json::to_string(&tool_call.function.arguments).unwrap_or_else(|_| "{}".to_string());
+
+    let source = if let Some(source) =
+        classify_tool_source(&tool_call.function.name, closure_registry, mcp_registry)
+    {
+        source
+    } else {
+        return Err(GenericError::new(
+            format!("Tool '{}' not found", tool_call.function.name),
+            "Unknown tool",
+            span,
+        ));
+    };
+
+    if source == ToolSource::Mcp {
+        let server = mcp_tool_server.ok_or_else(|| {
+            GenericError::new(
+                "MCP runtime unavailable",
+                "MCP tool server handle is not initialized",
+                span,
+            )
+        })?;
+
+        let content = server
+            .call_tool(&tool_call.function.name, &serialized_arguments)
+            .await
+            .map_err(|e| {
+                GenericError::new(
+                    format!("MCP tool execution failed: {e}"),
+                    "MCP execution error",
+                    span,
+                )
+            })?;
+
+        return Ok(ToolCallResult {
+            tool_call_id: tool_call.id,
+            tool_name: tool_call.function.name,
+            arguments: serialized_arguments,
+            source,
+            content,
+        });
+    }
+
     let closure = closure_registry
         .get(&tool_call.function.name)
         .ok_or_else(|| {
@@ -220,6 +319,9 @@ async fn handle_single_tool_call(
 
     Ok(ToolCallResult {
         tool_call_id: tool_call.id,
+        tool_name: tool_call.function.name,
+        arguments: serialized_arguments,
+        source,
         content,
     })
 }

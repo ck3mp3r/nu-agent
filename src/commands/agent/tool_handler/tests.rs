@@ -1,6 +1,9 @@
 use super::*;
 use nu_protocol::{Span, Value};
 use serde_json::json;
+fn empty_closure_registry() -> crate::tools::closure::ClosureRegistry {
+    crate::tools::closure::ClosureRegistry::new()
+}
 
 #[test]
 fn json_to_nu_value_converts_string() {
@@ -160,4 +163,22 @@ fn nu_value_to_json_handles_nested_structures() {
     let result = nu_value_to_json(&value).unwrap();
 
     assert_eq!(result, json!([{"x": 1, "y": 2}]));
+}
+
+#[test]
+fn classify_source_identifies_mcp_membership() {
+    let closure_registry = empty_closure_registry();
+    let mcp_registry = McpToolRegistry::from_names(["k8s/list_pods"]);
+
+    let source = super::classify_tool_source("k8s/list_pods", &closure_registry, &mcp_registry);
+    assert_eq!(source, Some(ToolSource::Mcp));
+}
+
+#[test]
+fn classify_source_returns_none_for_unknown_tool() {
+    let closure_registry = empty_closure_registry();
+    let mcp_registry = McpToolRegistry::from_names(Vec::<String>::new());
+
+    let source = super::classify_tool_source("unknown/tool", &closure_registry, &mcp_registry);
+    assert!(source.is_none());
 }
