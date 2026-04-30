@@ -43,7 +43,10 @@ pub fn auth_fingerprint(secret: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(secret.as_bytes());
     let digest = hasher.finalize();
-    let hex = format!("{:x}", digest);
+    let hex = digest
+        .iter()
+        .map(|byte| format!("{:02x}", byte))
+        .collect::<String>();
     hex[..16].to_string()
 }
 
