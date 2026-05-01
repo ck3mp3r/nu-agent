@@ -15,6 +15,99 @@ pub struct McpRuntime {
     discovered_tools: Vec<McpToolDefinition>,
 }
 
+fn resolve_stdio_cwd(
+    caller_cwd: &std::path::Path,
+    cwd_override: Option<String>,
+    server_name: &str,
+) -> Result<std::path::PathBuf, String> {
+    let canonical_caller = std::fs::canonicalize(caller_cwd).map_err(|e| {
+        format!(
+            "invalid caller cwd for stdio MCP server '{}': {} ({e})",
+            server_name,
+            caller_cwd.display()
+        )
+    })?;
+
+    if !canonical_caller.is_dir() {
+        return Err(format!(
+            "invalid caller cwd for stdio MCP server '{}': '{}' is not a directory",
+            server_name,
+            canonical_caller.display()
+        ));
+    }
+
+    if let Some(override_cwd) = cwd_override {
+        let trimmed = override_cwd.trim();
+        if trimmed.is_empty() {
+            return Err(format!(
+                "invalid stdio cwd override for MCP server '{}': path is empty",
+                server_name
+            ));
+        }
+
+        let path = std::path::PathBuf::from(trimmed);
+        let effective_path = if path.is_absolute() {
+            path.clone()
+        } else {
+            canonical_caller.join(&path)
+        };
+
+        let canonical = std::fs::canonicalize(&effective_path).map_err(|e| {
+            format!(
+                "invalid stdio cwd override for MCP server '{}': {} ({e})",
+                server_name,
+                effective_path.display()
+            )
+        })?;
+
+        if !canonical.is_dir() {
+            return Err(format!(
+                "invalid stdio cwd override for MCP server '{}': '{}' is not a directory",
+                server_name,
+                canonical.display()
+            ));
+        }
+
+        return Ok(canonical);
+    }
+
+    Ok(canonical_caller)
+}
+
+fn resolve_caller_cwd(
+    caller_cwd: Option<&std::path::Path>,
+    server_name: &str,
+) -> Result<std::path::PathBuf, String> {
+    let caller = caller_cwd.ok_or_else(|| {
+        format!(
+            "missing caller cwd for stdio MCP server '{}': provide invocation cwd",
+            server_name
+        )
+    })?;
+
+    resolve_stdio_cwd(caller, None, server_name)
+}
+
+fn merged_stdio_env_with_pwd(
+    mut env: std::collections::HashMap<String, String>,
+    effective_cwd: &std::path::Path,
+    caller_cwd: &std::path::Path,
+) -> std::collections::HashMap<String, String> {
+    env.insert(
+        "PWD".to_string(),
+        effective_cwd.to_string_lossy().to_string(),
+    );
+    env.insert(
+        "NU_AGENT_CALLER_CWD".to_string(),
+        caller_cwd.to_string_lossy().to_string(),
+    );
+    env.insert(
+        "NU_AGENT_CALLER_PWD".to_string(),
+        caller_cwd.to_string_lossy().to_string(),
+    );
+    env
+}
+
 enum McpSessionHandle {
     #[allow(dead_code)]
     Rmcp(
@@ -95,7 +188,10 @@ impl McpRuntime {
     }
 }
 
-pub async fn connect_servers(servers: &[McpServerConfig]) -> Result<McpRuntime, String> {
+pub async fn connect_servers(
+    servers: &[McpServerConfig],
+    caller_cwd: Option<&std::path::Path>,
+) -> Result<McpRuntime, String> {
     let tool_server_handle = ToolServer::new().run();
 
     let mut sessions = Vec::new();
@@ -104,8 +200,14 @@ pub async fn connect_servers(servers: &[McpServerConfig]) -> Result<McpRuntime, 
         std::collections::HashMap::new();
     for server in servers {
         let spec = build_transport_spec(server)?;
-        let (service, server_tools) =
-            connect_server(&tool_server_handle, &server.name, spec).await?;
+        let (service, server_tools) = connect_server(
+            &tool_server_handle,
+            &server.name,
+            spec,
+            caller_cwd,
+            server.cwd.clone(),
+        )
+        .await?;
 
         for tool in &server_tools {
             register_exposed_name(&mut exposed_name_owner, &tool.name, &server.name)?;
@@ -126,6 +228,8 @@ async fn connect_server(
     tool_server_handle: &rig::tool::server::ToolServerHandle,
     server_name: &str,
     spec: McpTransportSpec,
+    caller_cwd: Option<&std::path::Path>,
+    cwd_override: Option<String>,
 ) -> Result<
     (
         rmcp::service::RunningService<rmcp::service::RoleClient, rig::tool::rmcp::McpClientHandler>,
@@ -140,11 +244,23 @@ async fn connect_server(
     let handler = rig::tool::rmcp::McpClientHandler::new(client_info, tool_server_handle.clone());
 
     match spec {
-        McpTransportSpec::Stdio { command, args, env } => {
+        McpTransportSpec::Stdio {
+            command,
+            args,
+            mut env,
+            ..
+        } => {
+            let caller = resolve_caller_cwd(caller_cwd, server_name)?;
+            let cwd = resolve_stdio_cwd(caller.as_path(), cwd_override, server_name)?;
+
             let mut cmd = tokio::process::Command::new(command);
             for arg in args {
                 cmd.arg(arg);
             }
+            cmd.current_dir(&cwd);
+
+            env = merged_stdio_env_with_pwd(env, &cwd, &caller);
+
             for (k, v) in env {
                 cmd.env(k, v);
             }

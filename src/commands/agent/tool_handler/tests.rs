@@ -188,8 +188,7 @@ fn classify_source_requires_namespaced_mcp_tool_name() {
     let closure_registry = empty_closure_registry();
     let mcp_registry = McpToolRegistry::from_names(["gh::list_prs"]);
 
-    let namespaced =
-        super::classify_tool_source("gh::list_prs", &closure_registry, &mcp_registry);
+    let namespaced = super::classify_tool_source("gh::list_prs", &closure_registry, &mcp_registry);
     let raw = super::classify_tool_source("list_prs", &closure_registry, &mcp_registry);
 
     assert_eq!(namespaced, Some(ToolSource::Mcp));
@@ -210,14 +209,15 @@ fn unknown_tool_error_mentions_exposed_namespaced_name() {
 
 #[test]
 fn mcp_registry_resolves_raw_name_from_exposed_name() {
-    let registry = McpToolRegistry::from_tools(vec![crate::tools::mcp::client::McpToolDefinition {
-        server: "gh".to_string(),
-        name: "gh::list_prs".to_string(),
-        raw_name: "list_prs".to_string(),
-        description: None,
-        parameters: None,
-    }])
-    .expect("registry should build");
+    let registry =
+        McpToolRegistry::from_tools(vec![crate::tools::mcp::client::McpToolDefinition {
+            server: "gh".to_string(),
+            name: "gh::list_prs".to_string(),
+            raw_name: "list_prs".to_string(),
+            description: None,
+            parameters: None,
+        }])
+        .expect("registry should build");
 
     assert_eq!(registry.raw_name_for("gh::list_prs"), Some("list_prs"));
     assert_eq!(registry.raw_name_for("list_prs"), None);
@@ -252,14 +252,15 @@ fn mcp_registry_rejects_duplicate_exposed_names() {
 
 #[test]
 fn resolve_mcp_invocation_name_uses_raw_name_mapping() {
-    let registry = McpToolRegistry::from_tools(vec![crate::tools::mcp::client::McpToolDefinition {
-        server: "gh".to_string(),
-        name: "gh::list_prs".to_string(),
-        raw_name: "list_prs".to_string(),
-        description: None,
-        parameters: None,
-    }])
-    .expect("registry should build");
+    let registry =
+        McpToolRegistry::from_tools(vec![crate::tools::mcp::client::McpToolDefinition {
+            server: "gh".to_string(),
+            name: "gh::list_prs".to_string(),
+            raw_name: "list_prs".to_string(),
+            description: None,
+            parameters: None,
+        }])
+        .expect("registry should build");
 
     assert_eq!(
         super::resolve_mcp_invocation_name(&registry, "gh::list_prs"),
@@ -269,4 +270,53 @@ fn resolve_mcp_invocation_name_uses_raw_name_mapping() {
         super::resolve_mcp_invocation_name(&registry, "gh::missing"),
         None
     );
+}
+
+#[test]
+fn unknown_tool_builds_non_fatal_failure_result() {
+    let tool_call = rig::completion::message::ToolCall::new(
+        "call_unknown".to_string(),
+        rig::completion::message::ToolFunction::new("missing::tool".to_string(), json!({})),
+    );
+
+    let result = super::build_failure_result(
+        &tool_call,
+        ToolSource::Unknown,
+        ToolErrorKind::Unknown,
+        "Tool 'missing::tool' not found".to_string(),
+        None,
+    );
+
+    let failure = result
+        .failure
+        .as_ref()
+        .expect("unknown tool should produce failure payload");
+    assert_eq!(failure.source, ToolSource::Unknown);
+    assert_eq!(failure.error_kind, ToolErrorKind::Unknown);
+
+    let content: serde_json::Value = serde_json::from_str(&result.content).expect("json payload");
+    assert_eq!(content["tool_name"], "missing::tool");
+    assert_eq!(content["tool_call_id"], "call_unknown");
+    assert_eq!(content["source"], "unknown");
+    assert_eq!(content["error_kind"], "unknown");
+}
+
+#[test]
+fn failure_payload_contract_contains_required_fields() {
+    let failure = ToolFailureOutcome {
+        tool_name: "gh::list_prs".to_string(),
+        tool_call_id: "call_1".to_string(),
+        source: ToolSource::Mcp,
+        error_kind: ToolErrorKind::Transport,
+        message: "connection reset".to_string(),
+        details: Some(json!({"retryable": true})),
+    };
+
+    let payload = failure.to_json_value();
+    assert_eq!(payload["tool_name"], "gh::list_prs");
+    assert_eq!(payload["tool_call_id"], "call_1");
+    assert_eq!(payload["source"], "mcp");
+    assert_eq!(payload["error_kind"], "transport");
+    assert_eq!(payload["message"], "connection reset");
+    assert_eq!(payload["details"]["retryable"], true);
 }

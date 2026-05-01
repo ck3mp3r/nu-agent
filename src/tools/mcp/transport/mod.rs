@@ -6,6 +6,7 @@ use crate::tools::mcp::config::{McpServerConfig, McpTransportType};
 pub enum McpTransportSpec {
     Stdio {
         command: String,
+        cwd: Option<String>,
         args: Vec<String>,
         env: HashMap<String, String>,
     },
@@ -28,6 +29,7 @@ pub fn build_transport_spec(server: &McpServerConfig) -> Result<McpTransportSpec
                     server.name
                 )
             })?,
+            cwd: server.cwd.clone(),
             args: server.args.clone(),
             env: server.env.clone(),
         }),

@@ -50,6 +50,9 @@ pub struct ToolCallMetadata {
     pub name: String,
     pub arguments: String,
     pub source: Option<String>,
+    pub error_kind: Option<String>,
+    pub message: Option<String>,
+    pub details: Option<String>,
 }
 
 /// Extract response data from rig's CompletionResponse.
@@ -259,6 +262,18 @@ fn build_tool_call_values(llm_response: &LlmResponse, span: Span) -> Vec<Value> 
 
                 if let Some(source) = &metadata.source {
                     fields.push(("source".to_string(), Value::string(source, span)));
+                }
+
+                if let Some(error_kind) = &metadata.error_kind {
+                    fields.push(("error_kind".to_string(), Value::string(error_kind, span)));
+                }
+
+                if let Some(message) = &metadata.message {
+                    fields.push(("message".to_string(), Value::string(message, span)));
+                }
+
+                if let Some(details) = &metadata.details {
+                    fields.push(("details".to_string(), Value::string(details, span)));
                 }
 
                 Value::record(fields.into_iter().collect(), span)

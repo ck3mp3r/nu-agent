@@ -12,6 +12,7 @@ fn mcp_config_from_plugin_config_reads_map_shape() {
             "nu" => Value::test_record(record! {
                 "transport" => Value::test_string("stdio"),
                 "command" => Value::test_string("nu-mcp"),
+                "cwd" => Value::test_string("/tmp"),
                 "args" => Value::test_list(vec![
                     Value::test_string("--add-path"),
                     Value::test_string("/tmp"),
@@ -41,8 +42,26 @@ fn mcp_config_from_plugin_config_reads_map_shape() {
         .find(|s| s.name == "nu")
         .expect("nu server exists");
     assert_eq!(nu.command.as_deref(), Some("nu-mcp"));
+    assert_eq!(nu.cwd.as_deref(), Some("/tmp"));
     assert_eq!(nu.args, vec!["--add-path".to_string(), "/tmp".to_string()]);
     assert_eq!(nu.env.get("GIT_PAGER").map(String::as_str), Some(""));
+}
+
+#[test]
+fn mcp_config_validation_rejects_empty_stdio_cwd_when_set() {
+    let plugin_config = Value::test_record(record! {
+        "mcp" => Value::test_record(record! {
+            "nu" => Value::test_record(record! {
+                "transport" => Value::test_string("stdio"),
+                "command" => Value::test_string("nu-mcp"),
+                "cwd" => Value::test_string("   "),
+            }),
+        }),
+    });
+
+    let err = McpConfig::from_plugin_config(&plugin_config).expect_err("should fail");
+    let msg = err.to_string();
+    assert!(msg.contains("requires non-empty 'cwd'") || msg.contains("Invalid MCP configuration"));
 }
 
 #[test]

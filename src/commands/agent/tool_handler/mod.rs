@@ -3,12 +3,99 @@ use nu_protocol::{Span, Value, shell_error::generic::GenericError};
 use rig::completion::message::{AssistantContent, ToolCall};
 use serde_json::Value as JsonValue;
 
-use crate::tools::{closure::ClosureRegistry, executor::ToolExecutor};
+use crate::tools::{closure::ClosureRegistry, error::ToolError, executor::ToolExecutor};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ToolSource {
     Closure,
     Mcp,
+    Unknown,
+}
+
+impl ToolSource {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Closure => "closure",
+            Self::Mcp => "mcp",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ToolErrorKind {
+    Timeout,
+    Validation,
+    Runtime,
+    Transport,
+    Unknown,
+}
+
+impl ToolErrorKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Timeout => "timeout",
+            Self::Validation => "validation",
+            Self::Runtime => "runtime",
+            Self::Transport => "transport",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ToolFailureOutcome {
+    pub tool_name: String,
+    pub tool_call_id: String,
+    pub source: ToolSource,
+    pub error_kind: ToolErrorKind,
+    pub message: String,
+    pub details: Option<JsonValue>,
+}
+
+impl ToolFailureOutcome {
+    pub fn to_json_value(&self) -> JsonValue {
+        let mut obj = serde_json::Map::new();
+        obj.insert(
+            "tool_name".to_string(),
+            JsonValue::String(self.tool_name.clone()),
+        );
+        obj.insert(
+            "tool_call_id".to_string(),
+            JsonValue::String(self.tool_call_id.clone()),
+        );
+        obj.insert(
+            "source".to_string(),
+            JsonValue::String(self.source.as_str().to_string()),
+        );
+        obj.insert(
+            "error_kind".to_string(),
+            JsonValue::String(self.error_kind.as_str().to_string()),
+        );
+        obj.insert(
+            "message".to_string(),
+            JsonValue::String(self.message.clone()),
+        );
+
+        if let Some(details) = &self.details {
+            obj.insert("details".to_string(), details.clone());
+        }
+
+        JsonValue::Object(obj)
+    }
+
+    fn to_json_string(&self) -> String {
+        serde_json::to_string(&self.to_json_value()).unwrap_or_else(|_| {
+            format!(
+                r#"{{"tool_name":"{}","tool_call_id":"{}","source":"{}","error_kind":"{}","message":"{}"}}"#,
+                self.tool_name,
+                self.tool_call_id,
+                self.source.as_str(),
+                self.error_kind.as_str(),
+                self.message
+            )
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -191,6 +278,7 @@ pub struct ToolCallResult {
     pub arguments: String,
     pub source: ToolSource,
     pub content: String,
+    pub failure: Option<ToolFailureOutcome>,
 }
 
 /// Handle multiple tool calls from LLM response.
@@ -214,7 +302,7 @@ pub async fn handle_tool_calls(
     tool_executor: &ToolExecutor,
     engine: &EngineInterface,
     span: Span,
-) -> Result<Vec<ToolCallResult>, GenericError> {
+) -> Vec<ToolCallResult> {
     let mut results = Vec::new();
 
     for content in tool_calls {
@@ -229,13 +317,51 @@ pub async fn handle_tool_calls(
                 engine,
                 span,
             )
-            .await?;
+            .await;
 
             results.push(result);
         }
     }
 
-    Ok(results)
+    results
+}
+
+fn classify_validation_error_message(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("invalid")
+        || lower.contains("must be")
+        || lower.contains("expected")
+        || lower.contains("missing")
+        || lower.contains("parse")
+}
+
+fn build_failure_result(
+    tool_call: &ToolCall,
+    source: ToolSource,
+    error_kind: ToolErrorKind,
+    message: String,
+    details: Option<JsonValue>,
+) -> ToolCallResult {
+    let serialized_arguments =
+        serde_json::to_string(&tool_call.function.arguments).unwrap_or_else(|_| "{}".to_string());
+
+    let failure = ToolFailureOutcome {
+        tool_name: tool_call.function.name.clone(),
+        tool_call_id: tool_call.id.clone(),
+        source: source.clone(),
+        error_kind,
+        message,
+        details,
+    };
+
+    ToolCallResult {
+        tool_call_id: tool_call.id.clone(),
+        tool_name: tool_call.function.name.clone(),
+        arguments: serialized_arguments,
+        source,
+        content: failure.to_json_string(),
+        failure: Some(failure),
+    }
 }
 
 /// Handle a single tool call.
@@ -260,7 +386,7 @@ async fn handle_single_tool_call(
     tool_executor: &ToolExecutor,
     engine: &EngineInterface,
     span: Span,
-) -> Result<ToolCallResult, GenericError> {
+) -> ToolCallResult {
     // Look up closure by function name
     let serialized_arguments =
         serde_json::to_string(&tool_call.function.arguments).unwrap_or_else(|_| "{}".to_string());
@@ -270,66 +396,89 @@ async fn handle_single_tool_call(
     {
         source
     } else {
-        return Err(GenericError::new(
+        return build_failure_result(
+            &tool_call,
+            ToolSource::Unknown,
+            ToolErrorKind::Unknown,
             format!("Tool '{}' not found", tool_call.function.name),
-            "Unknown tool",
-            span,
-        ));
+            None,
+        );
     };
 
     if source == ToolSource::Mcp {
-        let server = mcp_tool_server.ok_or_else(|| {
-            GenericError::new(
-                "MCP runtime unavailable",
-                "MCP tool server handle is not initialized",
-                span,
-            )
-        })?;
+        let Some(server) = mcp_tool_server else {
+            return build_failure_result(
+                &tool_call,
+                ToolSource::Mcp,
+                ToolErrorKind::Transport,
+                "MCP runtime unavailable: MCP tool server handle is not initialized".to_string(),
+                None,
+            );
+        };
 
-        let raw_tool_name =
-            resolve_mcp_invocation_name(mcp_registry, &tool_call.function.name).ok_or_else(|| {
-            GenericError::new(
+        let raw_tool_name = if let Some(name) =
+            resolve_mcp_invocation_name(mcp_registry, &tool_call.function.name)
+        {
+            name
+        } else {
+            return build_failure_result(
+                &tool_call,
+                ToolSource::Mcp,
+                ToolErrorKind::Runtime,
                 format!(
                     "MCP tool '{}' is registered but missing raw-name mapping",
                     tool_call.function.name
                 ),
-                "MCP execution error",
-                span,
-            )
-            })?;
+                None,
+            );
+        };
 
-        let content = server
-            .call_tool(raw_tool_name, &serialized_arguments)
-            .await
-            .map_err(|e| {
-                GenericError::new(
+        let content = match server.call_tool(raw_tool_name, &serialized_arguments).await {
+            Ok(content) => content,
+            Err(e) => {
+                return build_failure_result(
+                    &tool_call,
+                    ToolSource::Mcp,
+                    ToolErrorKind::Transport,
                     format!("MCP tool execution failed: {e}"),
-                    "MCP execution error",
-                    span,
-                )
-            })?;
+                    None,
+                );
+            }
+        };
 
-        return Ok(ToolCallResult {
+        return ToolCallResult {
             tool_call_id: tool_call.id,
             tool_name: tool_call.function.name,
             arguments: serialized_arguments,
             source,
             content,
-        });
+            failure: None,
+        };
     }
 
-    let closure = closure_registry
-        .get(&tool_call.function.name)
-        .ok_or_else(|| {
-            GenericError::new(
-                format!("Tool '{}' not found", tool_call.function.name),
-                "Unknown tool",
-                span,
-            )
-        })?;
+    let Some(closure) = closure_registry.get(&tool_call.function.name) else {
+        return build_failure_result(
+            &tool_call,
+            ToolSource::Closure,
+            ToolErrorKind::Unknown,
+            format!("Tool '{}' not found", tool_call.function.name),
+            None,
+        );
+    };
 
     // Parse arguments from JSON Value
-    let args_json = json_to_nu_value(&tool_call.function.arguments, span)?;
+    let args_json = match json_to_nu_value(&tool_call.function.arguments, span) {
+        Ok(v) => v,
+        Err(e) => {
+            return build_failure_result(
+                &tool_call,
+                ToolSource::Closure,
+                ToolErrorKind::Validation,
+                format!("Invalid tool arguments: {e}"),
+                None,
+            );
+        }
+    };
 
     // Extract positional arguments by matching parameter names
     let positional_args = if let Value::Record { val, .. } = &args_json {
@@ -354,32 +503,80 @@ async fn handle_single_tool_call(
     // Execute closure via ToolExecutor (closure is already Spanned)
     let result = tool_executor
         .invoke_closure(closure, positional_args, span)
-        .await
-        .map_err(|e| {
-            GenericError::new(
-                format!("Tool execution failed: {}", e),
-                "Execution error",
-                span,
-            )
-        })?;
+        .await;
+
+    let result = match result {
+        Ok(result) => result,
+        Err(ToolError::Timeout { tool_name, timeout }) => {
+            return build_failure_result(
+                &tool_call,
+                ToolSource::Closure,
+                ToolErrorKind::Timeout,
+                format!("Tool '{}' timed out after {:?}", tool_name, timeout),
+                Some(serde_json::json!({ "timeout_ms": timeout.as_millis() })),
+            );
+        }
+        Err(ToolError::Execution(err)) => {
+            let msg = err.to_string();
+            let kind = if classify_validation_error_message(&msg) {
+                ToolErrorKind::Validation
+            } else {
+                ToolErrorKind::Runtime
+            };
+
+            return build_failure_result(
+                &tool_call,
+                ToolSource::Closure,
+                kind,
+                format!("Tool execution failed: {msg}"),
+                None,
+            );
+        }
+        Err(ToolError::Audit(err)) => {
+            return build_failure_result(
+                &tool_call,
+                ToolSource::Closure,
+                ToolErrorKind::Runtime,
+                format!("Tool audit failed: {err}"),
+                None,
+            );
+        }
+    };
 
     // Convert result back to JSON string
-    let result_json = nu_value_to_json(&result)?;
-    let content = serde_json::to_string(&result_json).map_err(|e| {
-        GenericError::new(
-            format!("Result serialization failed: {}", e),
-            "JSON error",
-            span,
-        )
-    })?;
+    let result_json = match nu_value_to_json(&result) {
+        Ok(v) => v,
+        Err(e) => {
+            return build_failure_result(
+                &tool_call,
+                ToolSource::Closure,
+                ToolErrorKind::Runtime,
+                format!("Result conversion failed: {e}"),
+                None,
+            );
+        }
+    };
+    let content = match serde_json::to_string(&result_json) {
+        Ok(content) => content,
+        Err(e) => {
+            return build_failure_result(
+                &tool_call,
+                ToolSource::Closure,
+                ToolErrorKind::Runtime,
+                format!("Result serialization failed: {e}"),
+                None,
+            );
+        }
+    };
 
-    Ok(ToolCallResult {
+    ToolCallResult {
         tool_call_id: tool_call.id,
         tool_name: tool_call.function.name,
         arguments: serialized_arguments,
         source,
         content,
-    })
+        failure: None,
+    }
 }
 
 #[cfg(test)]

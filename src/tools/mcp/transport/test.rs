@@ -9,6 +9,7 @@ fn builds_stdio_transport_spec() {
         url: None,
         headers: Default::default(),
         command: Some("npx".to_string()),
+        cwd: Some("/tmp".to_string()),
         args: vec!["-y".to_string(), "server".to_string()],
         env: [("FOO".to_string(), "BAR".to_string())]
             .into_iter()
@@ -17,8 +18,14 @@ fn builds_stdio_transport_spec() {
 
     let spec = build_transport_spec(&server).expect("spec");
     match spec {
-        McpTransportSpec::Stdio { command, args, env } => {
+        McpTransportSpec::Stdio {
+            command,
+            cwd,
+            args,
+            env,
+        } => {
             assert_eq!(command, "npx");
+            assert_eq!(cwd.as_deref(), Some("/tmp"));
             assert_eq!(args, vec!["-y", "server"]);
             assert_eq!(env.get("FOO").map(String::as_str), Some("BAR"));
         }
@@ -36,6 +43,7 @@ fn builds_sse_transport_spec() {
             .into_iter()
             .collect(),
         command: None,
+        cwd: None,
         args: vec![],
         env: Default::default(),
     };
@@ -61,6 +69,7 @@ fn builds_http_transport_spec_for_streamable_http() {
         url: Some("https://example.com/mcp".to_string()),
         headers: Default::default(),
         command: None,
+        cwd: None,
         args: vec![],
         env: Default::default(),
     };

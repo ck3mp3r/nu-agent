@@ -762,6 +762,9 @@ fn format_response_includes_tool_calls_metadata_list() {
         name: "tool_name".to_string(),
         arguments: "{\"x\":1}".to_string(),
         source: Some("closure".to_string()),
+        error_kind: None,
+        message: None,
+        details: None,
     }];
 
     let value = format_response(&response, &config, None, 0, Span::unknown());
@@ -794,6 +797,9 @@ fn tool_call_metadata_includes_source_for_closure() {
         name: "math/add".to_string(),
         arguments: "{}".to_string(),
         source: Some("closure".to_string()),
+        error_kind: None,
+        message: None,
+        details: None,
     }];
 
     let value = format_response(&response, &config, None, 0, Span::unknown());
@@ -836,6 +842,9 @@ fn tool_call_metadata_includes_source_for_mcp() {
         name: "k8s/list_pods".to_string(),
         arguments: "{}".to_string(),
         source: Some("mcp".to_string()),
+        error_kind: None,
+        message: None,
+        details: None,
     }];
 
     let value = format_response(&response, &config, None, 0, Span::unknown());
@@ -920,12 +929,18 @@ fn tool_call_metadata_mixed_sources_preserves_order() {
             name: "math/add".to_string(),
             arguments: "{}".to_string(),
             source: Some("closure".to_string()),
+            error_kind: None,
+            message: None,
+            details: None,
         },
         crate::llm::ToolCallMetadata {
             id: "2".to_string(),
             name: "k8s/list_pods".to_string(),
             arguments: "{}".to_string(),
             source: Some("mcp".to_string()),
+            error_kind: None,
+            message: None,
+            details: None,
         },
     ];
 
@@ -988,4 +1003,65 @@ fn empty_tool_calls_serializes_as_empty_list() {
         .expect("list");
 
     assert!(tool_calls.is_empty());
+}
+
+#[test]
+fn tool_call_metadata_serializes_failure_contract_fields() {
+    let config = Config {
+        provider: "openai".to_string(),
+        model: "gpt-4".to_string(),
+        ..cfg("openai")
+    };
+
+    let mut response = test_llm_response("failed tool");
+    response.tool_call_metadata = vec![crate::llm::ToolCallMetadata {
+        id: "call_err_1".to_string(),
+        name: "gh::list_prs".to_string(),
+        arguments: "{}".to_string(),
+        source: Some("mcp".to_string()),
+        error_kind: Some("transport".to_string()),
+        message: Some("connection reset".to_string()),
+        details: Some("{\"retryable\":true}".to_string()),
+    }];
+
+    let value = format_response(&response, &config, None, 0, Span::unknown());
+    let tool_call = value
+        .as_record()
+        .expect("record")
+        .get("_meta")
+        .expect("_meta")
+        .as_record()
+        .expect("meta")
+        .get("tool_calls")
+        .expect("tool_calls")
+        .as_list()
+        .expect("list")[0]
+        .as_record()
+        .expect("tool call record")
+        .clone();
+
+    assert_eq!(
+        tool_call
+            .get("error_kind")
+            .expect("error_kind")
+            .as_str()
+            .expect("str"),
+        "transport"
+    );
+    assert_eq!(
+        tool_call
+            .get("message")
+            .expect("message")
+            .as_str()
+            .expect("str"),
+        "connection reset"
+    );
+    assert_eq!(
+        tool_call
+            .get("details")
+            .expect("details")
+            .as_str()
+            .expect("str"),
+        "{\"retryable\":true}"
+    );
 }

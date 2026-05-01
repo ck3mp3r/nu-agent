@@ -479,9 +479,18 @@ impl SimplePluginCommand for Agent {
             if cfg.mcp.is_empty() {
                 None
             } else {
+                let caller_cwd = engine.get_current_dir().map_err(|e| {
+                    LabeledError::new("Failed to resolve caller cwd")
+                        .with_label(format!("Unable to read current dir from Nushell engine: {e}"), call.head)
+                })?;
+                let caller_cwd_path = std::path::Path::new(&caller_cwd);
+
                 Some(
                     runtime
-                        .block_on(crate::tools::mcp::runtime::connect_servers(&cfg.mcp))
+                        .block_on(crate::tools::mcp::runtime::connect_servers(
+                            &cfg.mcp,
+                            Some(caller_cwd_path),
+                        ))
                         .map_err(|msg| {
                             LabeledError::new("Failed to connect MCP runtime")
                                 .with_label(msg, call.head)
@@ -500,13 +509,12 @@ impl SimplePluginCommand for Agent {
 
         let mcp_tool_server_handle = mcp_runtime.as_ref().map(|r| r.tool_server_handle());
 
-        let mcp_registry =
-            crate::commands::agent::tool_handler::McpToolRegistry::from_tools(
-                discovered_mcp_tools.clone(),
-            )
-            .map_err(|msg| {
-                LabeledError::new("Failed to build MCP tool registry").with_label(msg, call.head)
-            })?;
+        let mcp_registry = crate::commands::agent::tool_handler::McpToolRegistry::from_tools(
+            discovered_mcp_tools.clone(),
+        )
+        .map_err(|msg| {
+            LabeledError::new("Failed to build MCP tool registry").with_label(msg, call.head)
+        })?;
 
         // Convert closures to tool definitions for LLM
         use crate::tools::closure::closure_to_tool_definition;
@@ -677,20 +685,15 @@ impl SimplePluginCommand for Agent {
             executed_tool_calls.extend(llm_response.tool_calls.clone());
 
             // Execute tool calls
-            let tool_results = runtime
-                .block_on(tool_handler::handle_tool_calls(
-                    llm_response.tool_calls.clone(),
-                    &closure_registry,
-                    &mcp_registry,
-                    mcp_tool_server_handle.as_ref(),
-                    &tool_executor,
-                    engine,
-                    call.head,
-                ))
-                .map_err(|e| {
-                    LabeledError::new(format!("Tool execution failed: {}", e))
-                        .with_label(e.to_string(), call.head)
-                })?;
+            let tool_results = runtime.block_on(tool_handler::handle_tool_calls(
+                llm_response.tool_calls.clone(),
+                &closure_registry,
+                &mcp_registry,
+                mcp_tool_server_handle.as_ref(),
+                &tool_executor,
+                engine,
+                call.head,
+            ));
 
             // Log tool results
             for result in &tool_results {
@@ -706,6 +709,9 @@ impl SimplePluginCommand for Agent {
                         "closure".to_string()
                     }
                     crate::commands::agent::tool_handler::ToolSource::Mcp => "mcp".to_string(),
+                    crate::commands::agent::tool_handler::ToolSource::Unknown => {
+                        "unknown".to_string()
+                    }
                 };
 
                 tool_results_metadata.push(crate::llm::ToolCallMetadata {
@@ -713,6 +719,19 @@ impl SimplePluginCommand for Agent {
                     name: result.tool_name.clone(),
                     arguments: result.arguments.clone(),
                     source: Some(source),
+                    error_kind: result
+                        .failure
+                        .as_ref()
+                        .map(|failure| failure.error_kind.as_str().to_string()),
+                    message: result
+                        .failure
+                        .as_ref()
+                        .map(|failure| failure.message.clone()),
+                    details: result
+                        .failure
+                        .as_ref()
+                        .and_then(|failure| failure.details.as_ref())
+                        .and_then(|details| serde_json::to_string(details).ok()),
                 });
             }
 

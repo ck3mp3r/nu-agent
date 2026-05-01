@@ -14,6 +14,7 @@ $env.config.plugins.agent = {
     nu: {
       transport: "stdio"
       command: "nu-mcp"
+      cwd: "/path/to/workspace" # optional stdio cwd override
       args: ["--add-path" "/tmp"]
       env: { GIT_PAGER: "" }
     }
@@ -44,7 +45,46 @@ $env.config.plugins.agent = {
 
 - `transport: "stdio"` requires `command`
 - `transport: "sse" | "http" | "streamable-http"` requires `url`
-- optional fields: `args`, `env`, `headers`
+- optional fields: `args`, `env`, `headers`, `cwd` (`stdio` only)
+
+## Stdio working directory behavior
+
+For `transport: "stdio"` servers:
+
+- Child process `current_dir` is resolved deterministically from caller context:
+  - absolute `mcp.<server>.cwd`: used as-is, then canonicalized/validated
+  - relative `mcp.<server>.cwd`: resolved against the caller cwd, then canonicalized/validated
+  - no `mcp.<server>.cwd`: caller cwd is used
+- `PWD` is explicitly set to the effective child cwd for compatibility.
+- Caller context is preserved in env variables:
+  - `NU_AGENT_CALLER_CWD` = canonical caller cwd
+  - `NU_AGENT_CALLER_PWD` = canonical caller cwd (compat alias)
+- Invalid/missing cwd is an explicit configuration/runtime error (no silent fallback).
+
+For `sse`/`http` transports, cwd behavior is unchanged.
+
+## Tool failure recovery behavior
+
+Tool-call failures are non-fatal for the current agent turn. Instead of aborting, the agent appends
+a structured tool result payload that the LLM can consume for retry/replanning.
+
+Failure payload contract:
+
+- `tool_name`
+- `tool_call_id`
+- `source` (`closure` | `mcp` | `unknown`)
+- `error_kind` (`timeout` | `validation` | `runtime` | `transport` | `unknown`)
+- `message`
+- optional `details`
+
+Typical recovery flow:
+
+1. LLM calls tool with invalid args.
+2. Tool returns structured failure payload above.
+3. LLM sees payload in tool-result stream and issues corrected tool call.
+
+Fatal errors still remain for unrecoverable command-level failures (for example: invalid top-level
+agent config or LLM provider initialization failures).
 
 ## `--mcp-tools`
 

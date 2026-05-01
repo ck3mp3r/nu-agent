@@ -22,6 +22,7 @@ pub struct McpServerConfig {
     #[serde(default)]
     pub headers: std::collections::HashMap<String, String>,
     pub command: Option<String>,
+    pub cwd: Option<String>,
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
@@ -63,6 +64,7 @@ impl McpConfig {
 
             let url = get_optional_string(server_record, "url")?;
             let command = get_optional_string(server_record, "command")?;
+            let cwd = get_optional_string(server_record, "cwd")?;
             let args = get_optional_string_list(server_record, "args")?;
             let headers = get_optional_string_record(server_record, "headers")?;
             let env = get_optional_string_record(server_record, "env")?;
@@ -73,6 +75,7 @@ impl McpConfig {
                 url,
                 headers,
                 command,
+                cwd,
                 args,
                 env,
             });
@@ -111,6 +114,15 @@ impl McpConfig {
                     {
                         return Err(format!(
                             "MCP server '{}' with transport 'stdio' requires non-empty 'command'",
+                            server.name
+                        ));
+                    }
+
+                    if let Some(cwd) = server.cwd.as_deref()
+                        && cwd.trim().is_empty()
+                    {
+                        return Err(format!(
+                            "MCP server '{}' with transport 'stdio' requires non-empty 'cwd' when set",
                             server.name
                         ));
                     }
