@@ -204,21 +204,23 @@ fn select_mcp_tools_intersects_cli_allowlist_with_config() {
     let discovered = vec![
         McpToolDefinition {
             server: "local".to_string(),
-            name: "k8s/list_pods".to_string(),
+            name: "k8s::list_pods".to_string(),
+            raw_name: "list_pods".to_string(),
             description: None,
             parameters: None,
         },
         McpToolDefinition {
             server: "local".to_string(),
-            name: "gh/list_prs".to_string(),
+            name: "gh::list_prs".to_string(),
+            raw_name: "list_prs".to_string(),
             description: None,
             parameters: None,
         },
     ];
 
-    let selected = select_mcp_tools(&discovered, &["gh/*".to_string()]);
+    let selected = select_mcp_tools(&discovered, &["gh::*".to_string()]);
     assert_eq!(selected.len(), 1);
-    assert_eq!(selected[0].name, "gh/list_prs");
+    assert_eq!(selected[0].name, "gh::list_prs");
 }
 
 // Helper to create an EvaluatedCall with named arguments for testing
@@ -274,20 +276,20 @@ fn extract_mcp_patterns_reads_list_of_strings() {
     let call = create_test_call(vec![(
         "mcp-tools",
         Value::test_list(vec![
-            Value::test_string("k8s/*"),
-            Value::test_string("gh/list_*"),
+            Value::test_string("k8s::*"),
+            Value::test_string("gh::list_*"),
         ]),
     )]);
 
     let patterns = extract_mcp_patterns_from_call(&call).expect("expected success");
-    assert_eq!(patterns, vec!["k8s/*", "gh/list_*"]);
+    assert_eq!(patterns, vec!["k8s::*", "gh::list_*"]);
 }
 
 #[test]
 fn extract_mcp_patterns_rejects_non_string_entries() {
     let call = create_test_call(vec![(
         "mcp-tools",
-        Value::test_list(vec![Value::test_string("k8s/*"), Value::test_int(42)]),
+        Value::test_list(vec![Value::test_string("k8s::*"), Value::test_int(42)]),
     )]);
 
     let err = extract_mcp_patterns_from_call(&call).expect_err("expected error");

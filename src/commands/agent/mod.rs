@@ -255,7 +255,7 @@ pub fn extract_tool_timeout(call: &EvaluatedCall) -> std::time::Duration {
 
 /// Extract MCP tool name patterns from --mcp-tools flag.
 ///
-/// Expected input is a list of strings, e.g. ["k8s/*", "gh/list_*"]
+/// Expected input is a list of strings, e.g. ["k8s::*", "gh::list_*"]
 ///
 /// Returns an empty vector when the flag is not provided.
 /// Empty vector means "no filtering" (match all MCP tools).
@@ -394,7 +394,7 @@ impl SimplePluginCommand for Agent {
             .named(
                 "mcp-tools",
                 nu_protocol::SyntaxShape::List(Box::new(nu_protocol::SyntaxShape::String)),
-                "List of MCP tool name glob patterns, e.g. ['k8s/*', 'gh/list_*']",
+                "List of MCP tool name glob patterns, e.g. ['k8s::*', 'gh::list_*']",
                 None,
             )
             .named(
@@ -500,9 +500,13 @@ impl SimplePluginCommand for Agent {
 
         let mcp_tool_server_handle = mcp_runtime.as_ref().map(|r| r.tool_server_handle());
 
-        let mcp_registry = crate::commands::agent::tool_handler::McpToolRegistry::from_names(
-            discovered_mcp_tools.iter().map(|tool| tool.name.clone()),
-        );
+        let mcp_registry =
+            crate::commands::agent::tool_handler::McpToolRegistry::from_tools(
+                discovered_mcp_tools.clone(),
+            )
+            .map_err(|msg| {
+                LabeledError::new("Failed to build MCP tool registry").with_label(msg, call.head)
+            })?;
 
         // Convert closures to tool definitions for LLM
         use crate::tools::closure::closure_to_tool_definition;

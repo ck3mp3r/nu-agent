@@ -14,22 +14,66 @@ pub enum ToolSource {
 #[derive(Debug, Clone)]
 pub struct McpToolRegistry {
     names: std::collections::HashSet<String>,
+    raw_name_by_exposed_name: std::collections::HashMap<String, String>,
 }
 
 impl McpToolRegistry {
+    #[cfg(test)]
     pub fn from_names<I, S>(names: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
+        let names: std::collections::HashSet<String> = names.into_iter().map(Into::into).collect();
         Self {
-            names: names.into_iter().map(Into::into).collect(),
+            raw_name_by_exposed_name: names
+                .iter()
+                .map(|name| (name.clone(), name.clone()))
+                .collect(),
+            names,
         }
+    }
+
+    pub fn from_tools<I>(tools: I) -> Result<Self, String>
+    where
+        I: IntoIterator<Item = crate::tools::mcp::client::McpToolDefinition>,
+    {
+        let mut names = std::collections::HashSet::new();
+        let mut raw_name_by_exposed_name = std::collections::HashMap::new();
+
+        for tool in tools {
+            let exposed_name = tool.name;
+            if !names.insert(exposed_name.clone()) {
+                return Err(format!(
+                    "duplicate exposed MCP tool name '{}' while building MCP registry",
+                    exposed_name
+                ));
+            }
+            raw_name_by_exposed_name.insert(exposed_name, tool.raw_name);
+        }
+
+        Ok(Self {
+            names,
+            raw_name_by_exposed_name,
+        })
     }
 
     pub fn contains(&self, name: &str) -> bool {
         self.names.contains(name)
     }
+
+    pub fn raw_name_for(&self, exposed_name: &str) -> Option<&str> {
+        self.raw_name_by_exposed_name
+            .get(exposed_name)
+            .map(String::as_str)
+    }
+}
+
+fn resolve_mcp_invocation_name<'a>(
+    registry: &'a McpToolRegistry,
+    exposed_tool_name: &str,
+) -> Option<&'a str> {
+    registry.raw_name_for(exposed_tool_name)
 }
 
 fn classify_tool_source(
@@ -242,8 +286,20 @@ async fn handle_single_tool_call(
             )
         })?;
 
+        let raw_tool_name =
+            resolve_mcp_invocation_name(mcp_registry, &tool_call.function.name).ok_or_else(|| {
+            GenericError::new(
+                format!(
+                    "MCP tool '{}' is registered but missing raw-name mapping",
+                    tool_call.function.name
+                ),
+                "MCP execution error",
+                span,
+            )
+            })?;
+
         let content = server
-            .call_tool(&tool_call.function.name, &serialized_arguments)
+            .call_tool(raw_tool_name, &serialized_arguments)
             .await
             .map_err(|e| {
                 GenericError::new(

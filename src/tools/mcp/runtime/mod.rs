@@ -7,6 +7,8 @@ use crate::tools::mcp::{
     transport::{McpTransportSpec, build_transport_spec},
 };
 
+const MCP_TOOL_NAMESPACE_DELIMITER: &str = "::";
+
 pub struct McpRuntime {
     tool_server_handle: rig::tool::server::ToolServerHandle,
     sessions: Vec<McpSessionHandle>,
@@ -18,6 +20,38 @@ enum McpSessionHandle {
     Rmcp(
         rmcp::service::RunningService<rmcp::service::RoleClient, rig::tool::rmcp::McpClientHandler>,
     ),
+}
+
+fn compose_exposed_tool_name(server_key: &str, raw_tool_name: &str) -> String {
+    format!("{server_key}{MCP_TOOL_NAMESPACE_DELIMITER}{raw_tool_name}")
+}
+
+fn validate_raw_tool_name(server_name: &str, raw_tool_name: &str) -> Result<(), String> {
+    if raw_tool_name.contains(MCP_TOOL_NAMESPACE_DELIMITER) {
+        return Err(format!(
+            "MCP server '{}' advertised tool '{}' containing reserved delimiter '{}'",
+            server_name, raw_tool_name, MCP_TOOL_NAMESPACE_DELIMITER
+        ));
+    }
+
+    Ok(())
+}
+
+fn register_exposed_name(
+    exposed_name_owner: &mut std::collections::HashMap<String, String>,
+    tool_name: &str,
+    server_name: &str,
+) -> Result<(), String> {
+    if let Some(existing_owner) =
+        exposed_name_owner.insert(tool_name.to_string(), server_name.to_string())
+    {
+        return Err(format!(
+            "duplicate exposed MCP tool name '{}' discovered for servers '{}' and '{}'",
+            tool_name, existing_owner, server_name
+        ));
+    }
+
+    Ok(())
 }
 
 fn build_http_transport_config(
@@ -66,10 +100,17 @@ pub async fn connect_servers(servers: &[McpServerConfig]) -> Result<McpRuntime, 
 
     let mut sessions = Vec::new();
     let mut discovered_tools = Vec::new();
+    let mut exposed_name_owner: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
     for server in servers {
         let spec = build_transport_spec(server)?;
         let (service, server_tools) =
             connect_server(&tool_server_handle, &server.name, spec).await?;
+
+        for tool in &server_tools {
+            register_exposed_name(&mut exposed_name_owner, &tool.name, &server.name)?;
+        }
+
         discovered_tools.extend(server_tools);
         sessions.push(McpSessionHandle::Rmcp(service));
     }
@@ -145,15 +186,21 @@ async fn discover_tools_for_server(
         .await
         .map_err(|e| format!("failed to list MCP tools for server '{server_name}': {e}"))?;
 
-    Ok(tools
-        .into_iter()
-        .map(|tool| McpToolDefinition {
+    let mut discovered = Vec::with_capacity(tools.len());
+    for tool in tools {
+        let raw_name = tool.name.to_string();
+        validate_raw_tool_name(server_name, &raw_name)?;
+
+        discovered.push(McpToolDefinition {
+            raw_name: raw_name.clone(),
             server: server_name.to_string(),
-            name: tool.name.to_string(),
+            name: compose_exposed_tool_name(server_name, &raw_name),
             description: tool.description.map(|d| d.to_string()),
             parameters: Some(serde_json::Value::Object((*tool.input_schema).clone())),
-        })
-        .collect())
+        });
+    }
+
+    Ok(discovered)
 }
 
 #[cfg(test)]

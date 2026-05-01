@@ -28,6 +28,8 @@ pub struct McpServerConfig {
     pub env: std::collections::HashMap<String, String>,
 }
 
+const MCP_TOOL_NAMESPACE_DELIMITER: &str = "::";
+
 impl McpConfig {
     pub fn from_plugin_config(
         value: &nu_protocol::Value,
@@ -89,6 +91,13 @@ impl McpConfig {
         for server in &self.mcp {
             if server.name.trim().is_empty() {
                 return Err("MCP server name cannot be empty".to_string());
+            }
+
+            if server.name.contains(MCP_TOOL_NAMESPACE_DELIMITER) {
+                return Err(format!(
+                    "MCP server name '{}' contains reserved delimiter '{}'",
+                    server.name, MCP_TOOL_NAMESPACE_DELIMITER
+                ));
             }
 
             match server.transport {
