@@ -1,5 +1,7 @@
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, LabeledError, Signature, Type, Value};
+use std::io::IsTerminal;
+use std::time::Duration;
 
 use crate::{
     AgentPlugin,
@@ -8,6 +10,42 @@ use crate::{
 };
 
 mod tool_handler;
+mod ui;
+
+use self::ui::{
+    event::UiEvent,
+    factory::{StderrUiFactory, UiRendererFactory},
+    policy::resolve_ui_policy,
+    renderer::UiRenderer,
+};
+
+enum LlmCallProgress {
+    Tick,
+    Done(Result<crate::llm::LlmResponse, LabeledError>),
+}
+
+fn call_llm_with_ui_ticks<R: UiRenderer>(
+    runtime: &tokio::runtime::Runtime,
+    runtime_ctx: &RuntimeCtx,
+    config: &Config,
+    prompt: &str,
+    tools: Vec<rig::completion::ToolDefinition>,
+    ui_renderer: &mut R,
+) -> Result<crate::llm::LlmResponse, LabeledError> {
+    let mut call_fut = std::pin::pin!(crate::llm::call_llm(runtime_ctx, config, prompt, tools));
+
+    loop {
+        match runtime.block_on(async {
+            tokio::select! {
+                response = &mut call_fut => LlmCallProgress::Done(response),
+                _ = tokio::time::sleep(Duration::from_millis(80)) => LlmCallProgress::Tick,
+            }
+        }) {
+            LlmCallProgress::Tick => ui_renderer.emit(&UiEvent::Tick),
+            LlmCallProgress::Done(result) => return result,
+        }
+    }
+}
 
 /// Trait abstracting the engine interface functionality needed for config resolution.
 ///
@@ -416,8 +454,13 @@ impl SimplePluginCommand for Agent {
             )
             .switch(
                 "verbose",
-                "Show detailed execution progress (agent steps, LLM calls, tool execution)",
+                "Increase UX detail; repeat for more detail (-v, -vv, -vvv)",
                 Some('v'),
+            )
+            .switch(
+                "quiet",
+                "Suppress non-essential UX progress output",
+                Some('q'),
             )
     }
 
@@ -428,18 +471,10 @@ impl SimplePluginCommand for Agent {
         call: &EvaluatedCall,
         input: &Value,
     ) -> Result<Value, LabeledError> {
-        // Configure logging based on --verbose flag
-        if call.has_flag("verbose")? {
-            use env_logger::Builder;
-            use log::LevelFilter;
-
-            let _ = Builder::new()
-                .filter_level(LevelFilter::Info)
-                .format_timestamp(None)
-                .format_module_path(false)
-                .format_target(false)
-                .try_init();
-        }
+        let ui_policy = resolve_ui_policy(call)
+            .map_err(|e| LabeledError::new(format!("Failed to resolve UI policy: {e}")))?;
+        let stderr_is_tty = std::io::stderr().is_terminal();
+        let mut ui_renderer = StderrUiFactory::new(std::io::stderr(), stderr_is_tty).create(ui_policy);
 
         // Validate session flags
         let (session_id, new_session) = extract_and_validate_session_flags(call)?;
@@ -548,9 +583,6 @@ impl SimplePluginCommand for Agent {
         // Extract prompt from input
         let prompt = extract_prompt_from_input(input)?;
 
-        // Log initial user prompt (not accumulated history)
-        log::info!("→ User prompt:\n{}", &prompt);
-
         // Extract optional context from input
         let context = extract_context_from_input(input)?;
 
@@ -584,7 +616,6 @@ impl SimplePluginCommand for Agent {
 
             final_session_id = Some(id.clone());
             session_opt = Some(session);
-            log::info!("Using session: {}", id);
         }
 
         // Build prompt with session history if available
@@ -602,30 +633,23 @@ impl SimplePluginCommand for Agent {
         }
 
         // Call LLM and handle tool execution loop
-        log::debug!(
-            "Calling LLM with accumulated context and {} tool definitions",
-            tool_definitions.len()
-        );
-        let mut llm_response = runtime
-            .block_on(crate::llm::call_llm(
-                &self.runtime_ctx,
-                &config,
-                &merged_prompt,
-                tool_definitions.clone(),
-            ))
+        ui_renderer.emit(&UiEvent::LlmStart);
+        let mut llm_response = call_llm_with_ui_ticks(
+            &runtime,
+            &self.runtime_ctx,
+            &config,
+            &merged_prompt,
+            tool_definitions.clone(),
+            &mut ui_renderer,
+        )
             .map_err(|e| {
                 LabeledError::new(format!("LLM call failed: {}", e.msg))
                     .with_label(e.msg, call.head)
             })?;
-
-        log::info!("← LLM response:\n{}", &llm_response.text);
-        log::debug!(
-            "Response metadata: {} chars, {} tool calls, tokens: input={} output={}",
-            llm_response.text.len(),
-            llm_response.tool_calls.len(),
-            llm_response.usage.input_tokens,
-            llm_response.usage.output_tokens
-        );
+        ui_renderer.emit(&UiEvent::LlmEnd {
+            response_chars: llm_response.text.len(),
+            tool_calls: llm_response.tool_calls.len(),
+        });
 
         // Track all tool calls executed during the agent loop
         let mut executed_tool_calls: Vec<rig::completion::AssistantContent> = Vec::new();
@@ -667,17 +691,23 @@ impl SimplePluginCommand for Agent {
 
         while !llm_response.tool_calls.is_empty() && tool_turn < max_tool_turns {
             tool_turn += 1;
-            log::debug!("Tool turn {}/{}", tool_turn, max_tool_turns);
 
             // Log tool calls before execution
             for content in &llm_response.tool_calls {
                 if let rig::completion::message::AssistantContent::ToolCall(tc) = content {
-                    log::info!(
-                        "→ Calling tool: {} with arguments:\n{}",
-                        tc.function.name,
-                        serde_json::to_string_pretty(&tc.function.arguments)
-                            .unwrap_or_else(|_| "{}".to_string())
-                    );
+                    let source = if closure_registry.get(&tc.function.name).is_some() {
+                        "closure".to_string()
+                    } else if mcp_registry.contains(&tc.function.name) {
+                        "mcp".to_string()
+                    } else {
+                        "unknown".to_string()
+                    };
+                    ui_renderer.emit(&UiEvent::ToolStart {
+                        name: tc.function.name.clone(),
+                        source,
+                        arguments: serde_json::to_string(&tc.function.arguments)
+                            .unwrap_or_else(|_| "{}".to_string()),
+                    });
                 }
             }
 
@@ -697,13 +727,6 @@ impl SimplePluginCommand for Agent {
 
             // Log tool results
             for result in &tool_results {
-                log::info!(
-                    "← Tool '{}' result:\n{}",
-                    result.tool_call_id,
-                    result.content
-                );
-                log::debug!("Tool result size: {} bytes", result.content.len());
-
                 let source = match result.source {
                     crate::commands::agent::tool_handler::ToolSource::Closure => {
                         "closure".to_string()
@@ -713,6 +736,22 @@ impl SimplePluginCommand for Agent {
                         "unknown".to_string()
                     }
                 };
+
+                ui_renderer.emit(&UiEvent::ToolEnd {
+                    name: result.tool_name.clone(),
+                    source: source.clone(),
+                    arguments: result.arguments.clone(),
+                    success: result.failure.is_none(),
+                    result: result.content.clone(),
+                    error_kind: result
+                        .failure
+                        .as_ref()
+                        .map(|failure| failure.error_kind.as_str().to_string()),
+                    message: result
+                        .failure
+                        .as_ref()
+                        .map(|failure| failure.message.clone()),
+                });
 
                 tool_results_metadata.push(crate::llm::ToolCallMetadata {
                     id: result.tool_call_id.clone(),
@@ -782,30 +821,23 @@ impl SimplePluginCommand for Agent {
             };
 
             // Make another LLM call with conversation history
-            log::debug!(
-                "Calling LLM again after tool execution with {} tool definitions",
-                tool_definitions.len()
-            );
-            llm_response = runtime
-                .block_on(crate::llm::call_llm(
-                    &self.runtime_ctx,
-                    &config,
-                    &history_prompt,
-                    tool_definitions.clone(),
-                ))
+            ui_renderer.emit(&UiEvent::LlmStart);
+            llm_response = call_llm_with_ui_ticks(
+                &runtime,
+                &self.runtime_ctx,
+                &config,
+                &history_prompt,
+                tool_definitions.clone(),
+                &mut ui_renderer,
+            )
                 .map_err(|e| {
                     LabeledError::new(format!("LLM call failed: {}", e.msg))
                         .with_label(e.msg, call.head)
                 })?;
-
-            log::info!("← LLM response:\n{}", &llm_response.text);
-            log::debug!(
-                "Response metadata: {} chars, {} tool calls, tokens: input={} output={}",
-                llm_response.text.len(),
-                llm_response.tool_calls.len(),
-                llm_response.usage.input_tokens,
-                llm_response.usage.output_tokens
-            );
+            ui_renderer.emit(&UiEvent::LlmEnd {
+                response_chars: llm_response.text.len(),
+                tool_calls: llm_response.tool_calls.len(),
+            });
 
             // Track assistant response in conversation
             conversation_messages.push(("assistant".to_string(), llm_response.text.clone()));
@@ -830,7 +862,6 @@ impl SimplePluginCommand for Agent {
         let mut compaction_count = 0;
 
         if let Some(mut session) = session_opt {
-            log::debug!("Saving 2 messages to session");
             // Create and save user message
             let user_msg = crate::session::Message::new("user".to_string(), prompt.clone());
             session
@@ -848,8 +879,9 @@ impl SimplePluginCommand for Agent {
 
             // Check for compaction
             let _compacted = session.maybe_compact(&self.store).map_err(|e| {
-                // Log warning but don't fail the command
-                eprintln!("Warning: Session compaction failed: {}", e);
+                ui_renderer.emit(&UiEvent::Warning {
+                    message: format!("Session compaction failed: {e}"),
+                });
             });
 
             // Get session stats for metadata
@@ -857,7 +889,10 @@ impl SimplePluginCommand for Agent {
             compaction_count = session.compaction_count();
         }
 
-        log::info!("Agent completed with {} total tool calls", tool_call_count);
+        ui_renderer.emit(&UiEvent::Completed {
+            tool_calls: tool_call_count,
+        });
+        ui_renderer.flush();
 
         // Format response with session metadata
         let response_value = crate::llm::format_response(
@@ -1166,6 +1201,3 @@ mod prompt_tests;
 
 #[cfg(test)]
 mod tool_session_test;
-
-#[cfg(test)]
-mod logging_test;

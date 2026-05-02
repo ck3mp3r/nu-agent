@@ -200,6 +200,59 @@ fn agent_command_signature_has_mcp_tools_flag() {
 }
 
 #[test]
+fn agent_command_signature_has_quiet_flag() {
+    let (agent, _temp_dir) = create_test_agent();
+    let sig = SimplePluginCommand::signature(&agent);
+
+    let quiet_flag = sig.named.iter().find(|f| f.long == "quiet");
+    assert!(quiet_flag.is_some(), "Missing --quiet flag");
+
+    let flag = quiet_flag.expect("quiet flag");
+    assert_eq!(flag.short, Some('q'), "Missing -q short flag");
+    assert_eq!(flag.arg, None, "--quiet should be a switch");
+}
+
+#[test]
+fn agent_command_signature_updates_verbose_description_for_progressive_levels() {
+    let (agent, _temp_dir) = create_test_agent();
+    let sig = SimplePluginCommand::signature(&agent);
+
+    let verbose_flag = sig.named.iter().find(|f| f.long == "verbose");
+    assert!(verbose_flag.is_some(), "Missing --verbose flag");
+    let desc = &verbose_flag.expect("verbose flag").desc;
+    assert!(
+        desc.contains("-v") && desc.contains("-vv") && desc.contains("-vvv"),
+        "Verbose description should document progressive levels, got: {desc}"
+    );
+}
+
+#[test]
+fn agent_command_signature_quiet_and_verbose_help_text_describes_stderr_ux_behavior() {
+    let (agent, _temp_dir) = create_test_agent();
+    let sig = SimplePluginCommand::signature(&agent);
+
+    let quiet = sig
+        .named
+        .iter()
+        .find(|f| f.long == "quiet")
+        .expect("quiet flag");
+    assert!(
+        quiet.desc.contains("Suppress") || quiet.desc.contains("progress"),
+        "quiet help text should describe suppression semantics"
+    );
+
+    let verbose = sig
+        .named
+        .iter()
+        .find(|f| f.long == "verbose")
+        .expect("verbose flag");
+    assert!(
+        verbose.desc.contains("-v") && verbose.desc.contains("-vv") && verbose.desc.contains("-vvv"),
+        "verbose help text should describe progressive levels"
+    );
+}
+
+#[test]
 fn select_mcp_tools_intersects_cli_allowlist_with_config() {
     let discovered = vec![
         McpToolDefinition {

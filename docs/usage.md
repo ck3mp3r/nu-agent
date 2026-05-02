@@ -24,8 +24,13 @@ Input can be:
 # Use configured small model
 "quick answer" | agent --small
 
-# Verbose diagnostics to stderr
-"debug this" | agent --verbose
+# Quiet mode (suppress non-essential progress UX)
+"debug this" | agent --quiet
+
+# Progressive verbosity on stderr UX
+"debug this" | agent -v
+"debug this" | agent -vv
+"debug this" | agent -vvv
 ```
 
 ## Tools
@@ -70,4 +75,38 @@ let tools = {
 - `--tool-timeout <duration>`
 - `--session <id>`
 - `--new-session`
-- `--verbose` / `-v`
+- `--quiet` / `-q`
+- `--verbose` / `-v` (progressive: `-v`, `-vv`, `-vvv+`)
+
+## Output contract
+
+- `stdout`: final machine-readable Nushell record output only.
+- `stderr`: interactive UX/progress output (spinner while busy, tool progress, warnings, completion).
+
+This keeps pipelines stable while preserving interactive feedback.
+
+### Examples
+
+Pipeline-safe capture of final output:
+
+```nu
+let result = ("Summarize repo" | agent --quiet)
+$result._meta.usage.total_tokens
+```
+
+Interactive debugging with detailed stderr UX:
+
+```nu
+"Investigate failures" | agent -vv
+```
+
+### Busy indicator behavior
+
+- Busy state is shown via spinner on interactive TTY stderr.
+- Default UX does **not** print redundant persistent busy lines like "thinking" or "response ready".
+- Default tool lifecycle UX is concise and singular:
+  - busy: `[spinner] tool <tool_name> args=<truncated_args>` while running
+  - completion: `✓ tool <tool_name> args=<truncated_args>` or `✗ tool <tool_name> args=<truncated_args>` exactly once
+  - result payload follows on next line(s) as a separate block when meaningful
+- Concise levels print non-empty payloads verbatim (including `null`, `[]`, and `{}`).
+- In non-interactive stderr (non-TTY), spinner is disabled and only policy-driven persistent lines are shown.
