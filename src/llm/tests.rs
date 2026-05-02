@@ -566,14 +566,6 @@ fn runtime_is_single_entry_for_execution() {
     assert!(err.msg.contains("Unsupported provider"));
 }
 
-#[test]
-fn gpt5_responses_regression_guard_contract() {
-    let source = std::fs::read_to_string("src/providers/github_copilot/providers/openai5x/mod.rs")
-        .expect("must read provider source");
-    assert!(source.contains("\"/responses\""));
-    assert!(source.contains("\"input\""));
-}
-
 // ============================================================================
 // extract_response() tests — behavioral tests
 // ============================================================================

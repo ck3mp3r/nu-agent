@@ -41,7 +41,7 @@
 //!
 //! # Architecture contract
 //!
-//! One-time selection in `model::factory` chooses a concrete provider implementation.
+//! One-time selection in `model` chooses a concrete provider implementation.
 //! After selection, provider behavior is fully encapsulated in that concrete type:
 //! endpoint, intent header, request mapping, response mapping, error mapping,
 //! and execute transport logic.
@@ -57,7 +57,7 @@ pub use core::client::{
     Client, ClientBuilder, ClientExt, GitHubCopilotExt, GitHubCopilotExtBuilder,
 };
 pub use core::error::Error;
-pub use model::factory::Agent;
+pub use model::Agent;
 
 /// Claude Sonnet 4.5 model identifier
 pub const CLAUDE_SONNET_4_5: &str = "claude-sonnet-4.5";
