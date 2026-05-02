@@ -1,5 +1,7 @@
 use serde::Deserialize;
 
+use crate::tools::mcp::MCP_TOOL_NAMESPACE_DELIMITER;
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct McpConfig {
     pub mcp: Vec<McpServerConfig>,
@@ -11,7 +13,6 @@ pub enum McpTransportType {
     Stdio,
     Sse,
     Http,
-    StreamableHttp,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -28,8 +29,6 @@ pub struct McpServerConfig {
     #[serde(default)]
     pub env: std::collections::HashMap<String, String>,
 }
-
-const MCP_TOOL_NAMESPACE_DELIMITER: &str = "::";
 
 impl McpConfig {
     pub fn from_plugin_config(
@@ -127,9 +126,7 @@ impl McpConfig {
                         ));
                     }
                 }
-                McpTransportType::Sse
-                | McpTransportType::Http
-                | McpTransportType::StreamableHttp => {
+                McpTransportType::Sse | McpTransportType::Http => {
                     if server.url.as_deref().unwrap_or_default().trim().is_empty() {
                         return Err(format!(
                             "MCP server '{}' with transport '{:?}' requires non-empty 'url'",
@@ -232,7 +229,6 @@ fn parse_transport(
         "stdio" => Ok(McpTransportType::Stdio),
         "sse" => Ok(McpTransportType::Sse),
         "http" => Ok(McpTransportType::Http),
-        "streamable-http" => Ok(McpTransportType::StreamableHttp),
         _ => Err(nu_protocol::LabeledError::new("Invalid transport")
             .with_label(format!("unsupported transport '{transport}'"), span)),
     }

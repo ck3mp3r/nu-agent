@@ -3,11 +3,9 @@ use rig::tool::server::ToolServer;
 
 use crate::tools::mcp::{
     client::McpToolDefinition,
-    config::McpServerConfig,
-    transport::{McpTransportSpec, build_transport_spec},
+    config::{McpServerConfig, McpTransportType},
+    MCP_TOOL_NAMESPACE_DELIMITER,
 };
-
-const MCP_TOOL_NAMESPACE_DELIMITER: &str = "::";
 
 pub struct McpRuntime {
     tool_server_handle: rig::tool::server::ToolServerHandle,
@@ -148,13 +146,31 @@ fn register_exposed_name(
 }
 
 fn build_http_transport_config(
-    spec: &McpTransportSpec,
+    server: &McpServerConfig,
 ) -> Result<rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig, String> {
-    let (url, headers, allow_stateless) = match spec {
-        McpTransportSpec::Sse { url, headers } => (url.clone(), headers.clone(), true),
-        McpTransportSpec::Http { url, headers } => (url.clone(), headers.clone(), false),
-        McpTransportSpec::Stdio { .. } => {
-            return Err("invalid transport spec for HTTP config".to_string());
+    let (url, headers, allow_stateless) = match server.transport {
+        McpTransportType::Sse => (
+            server.url.clone().ok_or_else(|| {
+                format!(
+                    "MCP server '{}' with transport 'sse' requires url",
+                    server.name
+                )
+            })?,
+            server.headers.clone(),
+            true,
+        ),
+        McpTransportType::Http => (
+            server.url.clone().ok_or_else(|| {
+                format!(
+                    "MCP server '{}' with transport 'http' requires url",
+                    server.name
+                )
+            })?,
+            server.headers.clone(),
+            false,
+        ),
+        McpTransportType::Stdio => {
+            return Err("invalid transport type for HTTP config".to_string());
         }
     };
 
@@ -199,15 +215,8 @@ pub async fn connect_servers(
     let mut exposed_name_owner: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
     for server in servers {
-        let spec = build_transport_spec(server)?;
-        let (service, server_tools) = connect_server(
-            &tool_server_handle,
-            &server.name,
-            spec,
-            caller_cwd,
-            server.cwd.clone(),
-        )
-        .await?;
+        let (service, server_tools) =
+            connect_server(&tool_server_handle, server, caller_cwd).await?;
 
         for tool in &server_tools {
             register_exposed_name(&mut exposed_name_owner, &tool.name, &server.name)?;
@@ -226,10 +235,8 @@ pub async fn connect_servers(
 
 async fn connect_server(
     tool_server_handle: &rig::tool::server::ToolServerHandle,
-    server_name: &str,
-    spec: McpTransportSpec,
+    server: &McpServerConfig,
     caller_cwd: Option<&std::path::Path>,
-    cwd_override: Option<String>,
 ) -> Result<
     (
         rmcp::service::RunningService<rmcp::service::RoleClient, rig::tool::rmcp::McpClientHandler>,
@@ -237,21 +244,25 @@ async fn connect_server(
     ),
     String,
 > {
+    let server_name = server.name.as_str();
     let client_info = rmcp::model::ClientInfo::new(
         rmcp::model::ClientCapabilities::default(),
         rmcp::model::Implementation::new("nu-agent", env!("CARGO_PKG_VERSION")),
     );
     let handler = rig::tool::rmcp::McpClientHandler::new(client_info, tool_server_handle.clone());
 
-    match spec {
-        McpTransportSpec::Stdio {
-            command,
-            args,
-            mut env,
-            ..
-        } => {
+    match server.transport {
+        McpTransportType::Stdio => {
+            let command = server.command.clone().ok_or_else(|| {
+                format!(
+                    "MCP server '{}' with transport 'stdio' requires command",
+                    server_name
+                )
+            })?;
+            let args = server.args.clone();
+            let mut env = server.env.clone();
             let caller = resolve_caller_cwd(caller_cwd, server_name)?;
-            let cwd = resolve_stdio_cwd(caller.as_path(), cwd_override, server_name)?;
+            let cwd = resolve_stdio_cwd(caller.as_path(), server.cwd.clone(), server_name)?;
 
             let mut cmd = tokio::process::Command::new(command);
             for arg in args {
@@ -275,8 +286,8 @@ async fn connect_server(
             let discovered_tools = discover_tools_for_server(&service, server_name).await?;
             Ok((service, discovered_tools))
         }
-        McpTransportSpec::Sse { .. } | McpTransportSpec::Http { .. } => {
-            let config = build_http_transport_config(&spec)?;
+        McpTransportType::Sse | McpTransportType::Http => {
+            let config = build_http_transport_config(server)?;
             let transport = rmcp::transport::StreamableHttpClientTransport::from_config(config);
             let service = handler
                 .connect(transport)

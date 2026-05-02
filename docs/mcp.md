@@ -37,14 +37,14 @@ $env.config.plugins.agent = {
 
 - If `mcp` is missing or empty, agent runs without MCP.
 - Tools are discovered from connected MCP servers at runtime.
-- Exposed/callable MCP tool names are namespaced as `<server_key>::<raw_tool_name>`.
+- Exposed/callable MCP tool names are namespaced as `<server_key>__<raw_tool_name>`.
   - `server_key` is the key under `mcp.<server_key>` in plugin config.
 - `--mcp-tools` filters discovered tools for that single run.
 
 ## Transport Rules
 
 - `transport: "stdio"` requires `command`
-- `transport: "sse" | "http" | "streamable-http"` requires `url`
+- `transport: "sse" | "http"` requires `url`
 - optional fields: `args`, `env`, `headers`, `cwd` (`stdio` only)
 
 ## Stdio working directory behavior
@@ -91,8 +91,8 @@ agent config or LLM provider initialization failures).
 Use glob patterns to restrict exposed MCP tools:
 
 ```nu
-"check open prs" | agent --mcp-tools ["gh::*"]
-"cluster + prs" | agent --mcp-tools ["k8s::*" "gh::list_*"]
+"check open prs" | agent --mcp-tools ["gh__*"]
+"cluster + prs" | agent --mcp-tools ["k8s__*" "gh__list_*"]
 ```
 
 If omitted, all discovered MCP tools are exposed.
@@ -102,8 +102,8 @@ If omitted, all discovered MCP tools are exposed.
 If two MCP servers expose the same raw tool name (for example both expose `list_prs`),
 the exposed names remain unique via server namespacing:
 
-- `gh::list_prs`
-- `altgh::list_prs`
+- `gh__list_prs`
+- `altgh__list_prs`
 
 This avoids cross-server collisions in discovery, filtering, and tool execution.
 
@@ -118,7 +118,7 @@ If a closure tool and an MCP tool share the same exposed name, closure tools tak
 
 Previous behavior exposed raw MCP tool names directly (e.g. `list_prs`).
 
-Current behavior requires namespaced names (e.g. `gh::list_prs`) for:
+Current behavior requires namespaced names (e.g. `gh__list_prs`) for:
 
 - `--mcp-tools` filters
 - LLM tool-call names routed through the tool handler
@@ -127,7 +127,7 @@ Update any existing filters/prompts that referenced raw MCP tool names.
 
 ## Reserved delimiter
 
-`::` is reserved as MCP tool namespace delimiter.
+`__` is reserved as MCP tool namespace delimiter.
 
-- `mcp.<server_key>` must not include `::`
-- MCP raw tool names containing `::` are rejected at discovery time
+- `mcp.<server_key>` must not include `__`
+- MCP raw tool names containing `__` are rejected at discovery time

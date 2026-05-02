@@ -1,4 +1,7 @@
-use crate::tools::mcp::{client::McpToolDefinition, transport::McpTransportSpec};
+use crate::tools::mcp::{
+    client::McpToolDefinition,
+    config::{McpServerConfig, McpTransportType},
+};
 
 use super::{McpRuntime, build_http_transport_config};
 
@@ -9,7 +12,7 @@ fn discovered_tools_accessor_returns_runtime_tools() {
         sessions: vec![],
         discovered_tools: vec![McpToolDefinition {
             server: "s1".to_string(),
-            name: "gh::list_prs".to_string(),
+            name: "gh__list_prs".to_string(),
             raw_name: "list_prs".to_string(),
             description: None,
             parameters: None,
@@ -17,35 +20,47 @@ fn discovered_tools_accessor_returns_runtime_tools() {
     };
 
     assert_eq!(runtime.discovered_tools().len(), 1);
-    assert_eq!(runtime.discovered_tools()[0].name, "gh::list_prs");
+    assert_eq!(runtime.discovered_tools()[0].name, "gh__list_prs");
 }
 
 #[test]
 fn sse_transport_config_is_stateless() {
-    let spec = McpTransportSpec::Sse {
-        url: "https://example.com/mcp/sse".to_string(),
+    let server = McpServerConfig {
+        name: "sse".to_string(),
+        transport: McpTransportType::Sse,
+        url: Some("https://example.com/mcp/sse".to_string()),
         headers: Default::default(),
+        command: None,
+        cwd: None,
+        args: vec![],
+        env: Default::default(),
     };
 
-    let config = build_http_transport_config(&spec).expect("config");
+    let config = build_http_transport_config(&server).expect("config");
     assert!(config.allow_stateless);
 }
 
 #[test]
 fn http_transport_config_requires_session() {
-    let spec = McpTransportSpec::Http {
-        url: "https://example.com/mcp".to_string(),
+    let server = McpServerConfig {
+        name: "http".to_string(),
+        transport: McpTransportType::Http,
+        url: Some("https://example.com/mcp".to_string()),
         headers: Default::default(),
+        command: None,
+        cwd: None,
+        args: vec![],
+        env: Default::default(),
     };
 
-    let config = build_http_transport_config(&spec).expect("config");
+    let config = build_http_transport_config(&server).expect("config");
     assert!(!config.allow_stateless);
 }
 
 #[test]
 fn compose_exposed_tool_name_prefixes_server_key() {
     let exposed = super::compose_exposed_tool_name("gh", "list_prs");
-    assert_eq!(exposed, "gh::list_prs");
+    assert_eq!(exposed, "gh__list_prs");
 }
 
 #[test]
@@ -54,37 +69,37 @@ fn compose_exposed_tool_name_prevents_cross_server_collisions() {
     let alt = super::compose_exposed_tool_name("altgh", "list_prs");
 
     assert_ne!(gh, alt);
-    assert_eq!(gh, "gh::list_prs");
-    assert_eq!(alt, "altgh::list_prs");
+    assert_eq!(gh, "gh__list_prs");
+    assert_eq!(alt, "altgh__list_prs");
 }
 
 #[test]
 fn compose_exposed_tool_name_uses_reserved_delimiter() {
     let exposed = super::compose_exposed_tool_name("gh", "list_prs");
-    assert!(exposed.contains("::"));
+    assert!(exposed.contains("__"));
 }
 
 #[test]
 fn register_exposed_name_fails_fast_on_duplicate_name() {
     let mut owners = std::collections::HashMap::new();
-    super::register_exposed_name(&mut owners, "gh::list_prs", "gh").expect("first insert");
+    super::register_exposed_name(&mut owners, "gh__list_prs", "gh").expect("first insert");
 
-    let err = super::register_exposed_name(&mut owners, "gh::list_prs", "other")
+    let err = super::register_exposed_name(&mut owners, "gh__list_prs", "other")
         .expect_err("duplicate should fail");
 
     assert!(
-        err.contains("duplicate exposed MCP tool name 'gh::list_prs'"),
+        err.contains("duplicate exposed MCP tool name 'gh__list_prs'"),
         "unexpected error: {err}"
     );
 }
 
 #[test]
 fn validate_raw_tool_name_rejects_reserved_delimiter() {
-    let err = super::validate_raw_tool_name("k8s", "list::pods")
+    let err = super::validate_raw_tool_name("k8s", "list__pods")
         .expect_err("reserved delimiter should fail");
 
     assert!(
-        err.contains("advertised tool 'list::pods' containing reserved delimiter '::'"),
+        err.contains("advertised tool 'list__pods' containing reserved delimiter '__'"),
         "unexpected error: {err}"
     );
 }

@@ -137,7 +137,7 @@ fn mcp_config_rejects_unsupported_transport() {
 fn mcp_config_rejects_server_name_with_reserved_delimiter() {
     let plugin_config = Value::test_record(record! {
         "mcp" => Value::test_record(record! {
-            "gh::prod" => Value::test_record(record! {
+            "gh__prod" => Value::test_record(record! {
                 "transport" => Value::test_string("sse"),
                 "url" => Value::test_string("http://0.0.0.0:3737/mcp"),
             }),

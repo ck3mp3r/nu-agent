@@ -1016,7 +1016,7 @@ fn tool_call_metadata_serializes_failure_contract_fields() {
     let mut response = test_llm_response("failed tool");
     response.tool_call_metadata = vec![crate::llm::ToolCallMetadata {
         id: "call_err_1".to_string(),
-        name: "gh::list_prs".to_string(),
+        name: "gh__list_prs".to_string(),
         arguments: "{}".to_string(),
         source: Some("mcp".to_string()),
         error_kind: Some("transport".to_string()),

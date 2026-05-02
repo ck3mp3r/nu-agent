@@ -168,9 +168,9 @@ fn nu_value_to_json_handles_nested_structures() {
 #[test]
 fn classify_source_identifies_mcp_membership() {
     let closure_registry = empty_closure_registry();
-    let mcp_registry = McpToolRegistry::from_names(["k8s::list_pods"]);
+    let mcp_registry = McpToolRegistry::from_names(["k8s__list_pods"]);
 
-    let source = super::classify_tool_source("k8s::list_pods", &closure_registry, &mcp_registry);
+    let source = super::classify_tool_source("k8s__list_pods", &closure_registry, &mcp_registry);
     assert_eq!(source, Some(ToolSource::Mcp));
 }
 
@@ -186,9 +186,9 @@ fn classify_source_returns_none_for_unknown_tool() {
 #[test]
 fn classify_source_requires_namespaced_mcp_tool_name() {
     let closure_registry = empty_closure_registry();
-    let mcp_registry = McpToolRegistry::from_names(["gh::list_prs"]);
+    let mcp_registry = McpToolRegistry::from_names(["gh__list_prs"]);
 
-    let namespaced = super::classify_tool_source("gh::list_prs", &closure_registry, &mcp_registry);
+    let namespaced = super::classify_tool_source("gh__list_prs", &closure_registry, &mcp_registry);
     let raw = super::classify_tool_source("list_prs", &closure_registry, &mcp_registry);
 
     assert_eq!(namespaced, Some(ToolSource::Mcp));
@@ -197,7 +197,7 @@ fn classify_source_requires_namespaced_mcp_tool_name() {
 
 #[test]
 fn unknown_tool_error_mentions_exposed_namespaced_name() {
-    let name = "gh::list_prs";
+    let name = "gh__list_prs";
     let err = nu_protocol::shell_error::generic::GenericError::new(
         format!("Tool '{}' not found", name),
         "Unknown tool",
@@ -212,14 +212,14 @@ fn mcp_registry_resolves_raw_name_from_exposed_name() {
     let registry =
         McpToolRegistry::from_tools(vec![crate::tools::mcp::client::McpToolDefinition {
             server: "gh".to_string(),
-            name: "gh::list_prs".to_string(),
+        name: "gh__list_prs".to_string(),
             raw_name: "list_prs".to_string(),
             description: None,
             parameters: None,
         }])
         .expect("registry should build");
 
-    assert_eq!(registry.raw_name_for("gh::list_prs"), Some("list_prs"));
+    assert_eq!(registry.raw_name_for("gh__list_prs"), Some("list_prs"));
     assert_eq!(registry.raw_name_for("list_prs"), None);
 }
 
@@ -228,14 +228,14 @@ fn mcp_registry_rejects_duplicate_exposed_names() {
     let result = McpToolRegistry::from_tools(vec![
         crate::tools::mcp::client::McpToolDefinition {
             server: "gh".to_string(),
-            name: "gh::list_prs".to_string(),
+            name: "gh__list_prs".to_string(),
             raw_name: "list_prs".to_string(),
             description: None,
             parameters: None,
         },
         crate::tools::mcp::client::McpToolDefinition {
             server: "gh".to_string(),
-            name: "gh::list_prs".to_string(),
+            name: "gh__list_prs".to_string(),
             raw_name: "list_pull_requests".to_string(),
             description: None,
             parameters: None,
@@ -255,7 +255,7 @@ fn resolve_mcp_invocation_name_uses_raw_name_mapping() {
     let registry =
         McpToolRegistry::from_tools(vec![crate::tools::mcp::client::McpToolDefinition {
             server: "gh".to_string(),
-            name: "gh::list_prs".to_string(),
+        name: "gh__list_prs".to_string(),
             raw_name: "list_prs".to_string(),
             description: None,
             parameters: None,
@@ -263,11 +263,11 @@ fn resolve_mcp_invocation_name_uses_raw_name_mapping() {
         .expect("registry should build");
 
     assert_eq!(
-        super::resolve_mcp_invocation_name(&registry, "gh::list_prs"),
+        super::resolve_mcp_invocation_name(&registry, "gh__list_prs"),
         Some("list_prs")
     );
     assert_eq!(
-        super::resolve_mcp_invocation_name(&registry, "gh::missing"),
+        super::resolve_mcp_invocation_name(&registry, "gh__missing"),
         None
     );
 }
@@ -304,7 +304,7 @@ fn unknown_tool_builds_non_fatal_failure_result() {
 #[test]
 fn failure_payload_contract_contains_required_fields() {
     let failure = ToolFailureOutcome {
-        tool_name: "gh::list_prs".to_string(),
+        tool_name: "gh__list_prs".to_string(),
         tool_call_id: "call_1".to_string(),
         source: ToolSource::Mcp,
         error_kind: ToolErrorKind::Transport,
@@ -313,7 +313,7 @@ fn failure_payload_contract_contains_required_fields() {
     };
 
     let payload = failure.to_json_value();
-    assert_eq!(payload["tool_name"], "gh::list_prs");
+    assert_eq!(payload["tool_name"], "gh__list_prs");
     assert_eq!(payload["tool_call_id"], "call_1");
     assert_eq!(payload["source"], "mcp");
     assert_eq!(payload["error_kind"], "transport");
