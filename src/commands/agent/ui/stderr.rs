@@ -111,6 +111,7 @@ impl<W: Write> StderrUiRenderer<W> {
             UiEvent::LlmEnd {
                 response_chars,
                 tool_calls,
+                ..
             } => {
                 let _ = (response_chars, tool_calls);
                 None
@@ -153,6 +154,7 @@ impl<W: Write> StderrUiRenderer<W> {
                 }
             }
             UiEvent::Warning { message } => Some(format!("warning: {message}")),
+            UiEvent::AssistantMessage { .. } => None,
             UiEvent::Completed { tool_calls } => {
                 if self.policy.quiet {
                     None

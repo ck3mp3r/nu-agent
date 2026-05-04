@@ -22,6 +22,9 @@ fn stderr_renderer_writes_only_to_stderr_sink() {
     renderer.emit(&UiEvent::LlmEnd {
         response_chars: 5,
         tool_calls: 0,
+        input_tokens: 3,
+        output_tokens: 2,
+        total_tokens: 5,
     });
     renderer.flush();
 
@@ -72,6 +75,9 @@ fn default_busy_flow_uses_spinner_without_redundant_persistent_busy_lines() {
     renderer.emit(&UiEvent::LlmEnd {
         response_chars: 42,
         tool_calls: 0,
+        input_tokens: 30,
+        output_tokens: 12,
+        total_tokens: 42,
     });
     renderer.flush();
 

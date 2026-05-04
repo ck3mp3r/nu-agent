@@ -213,6 +213,22 @@ fn agent_command_signature_has_quiet_flag() {
 }
 
 #[test]
+fn agent_command_signature_has_tui_switch() {
+    let (agent, _temp_dir) = create_test_agent();
+    let sig = SimplePluginCommand::signature(&agent);
+
+    let tui_flag = sig.named.iter().find(|f| f.long == "tui");
+    assert!(tui_flag.is_some(), "Missing --tui flag");
+
+    let flag = tui_flag.expect("tui flag");
+    assert_eq!(flag.arg, None, "--tui should be a switch");
+    assert!(
+        !flag.desc.is_empty() && flag.desc.to_ascii_lowercase().contains("tui"),
+        "--tui help text should describe TUI mode"
+    );
+}
+
+#[test]
 fn agent_command_signature_updates_verbose_description_for_progressive_levels() {
     let (agent, _temp_dir) = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
@@ -791,7 +807,7 @@ mod config_resolution_integration {
 
 mod new_plugin_config_tests {
     use super::*;
-    use crate::commands::agent::resolve_config;
+    use crate::commands::agent::{format_active_model_identity, resolve_config};
 
     #[test]
     fn signature_has_model_flag_for_provider_model_format() {
@@ -1029,6 +1045,77 @@ mod new_plugin_config_tests {
         assert_eq!(config.provider, "openai");
         assert_eq!(config.model, "gpt-3.5-turbo"); // Flag overrides default
         assert_eq!(config.temperature, Some(0.9)); // Model-specific temperature
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_config_with_model_flag_override_for_tui_path_uses_flag_precedence() {
+        use std::collections::HashMap;
+
+        let mut providers_map = HashMap::new();
+
+        let mut openai_models = HashMap::new();
+        openai_models.insert(
+            "gpt-4".to_string(),
+            Value::test_record(vec![].into_iter().collect()),
+        );
+        openai_models.insert(
+            "gpt-4o-mini".to_string(),
+            Value::test_record(vec![].into_iter().collect()),
+        );
+
+        providers_map.insert(
+            "openai".to_string(),
+            Value::test_record(
+                vec![
+                    ("api_key".to_string(), Value::test_string("openai_key")),
+                    (
+                        "models".to_string(),
+                        Value::test_record(openai_models.into_iter().collect()),
+                    ),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+        );
+
+        let plugin_config = Value::test_record(
+            vec![
+                ("model".to_string(), Value::test_string("openai/gpt-4")),
+                (
+                    "providers".to_string(),
+                    Value::test_record(providers_map.into_iter().collect()),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        );
+
+        let mock = MockEngineInterface::with_config(plugin_config);
+        let call = create_test_call(vec![
+            ("tui", Value::test_bool(true)),
+            ("model", Value::test_string("openai/gpt-4o-mini")),
+        ]);
+
+        let config = resolve_config(&mock, &call).expect("resolve config for tui");
+        assert_eq!(config.provider, "openai");
+        assert_eq!(config.model, "gpt-4o-mini");
+        assert_eq!(
+            format_active_model_identity(&config.provider, &config.model),
+            "openai/gpt-4o-mini"
+        );
+    }
+
+    #[test]
+    fn format_active_model_identity_avoids_duplicate_provider_prefix() {
+        assert_eq!(
+            format_active_model_identity("openai", "openai/gpt-4o-mini"),
+            "openai/gpt-4o-mini"
+        );
+        assert_eq!(
+            format_active_model_identity("openai", "gpt-4o-mini"),
+            "openai/gpt-4o-mini"
+        );
     }
 
     #[test]
@@ -1442,6 +1529,111 @@ mod session_validation_tests {
         );
         let err = result.unwrap_err();
         assert!(err.msg.contains("Conflicting") || err.msg.contains("exclusive"));
+    }
+}
+
+#[cfg(test)]
+mod tui_session_resolution_tests {
+    use super::super::materialize_pending_tui_session_if_needed;
+    use crate::commands::agent::{
+        SessionRequest,
+        generate_session_id,
+        resolve_session_request,
+    };
+    use nu_protocol::{Span, Value};
+
+    #[test]
+    fn interactive_tui_without_session_auto_creates() {
+        let request = resolve_session_request(true, None, false);
+        match request {
+            SessionRequest::Create(id) => assert!(id.starts_with("session-")),
+            other => panic!("expected Create request, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn interactive_tui_with_session_attaches_existing() {
+        let request = resolve_session_request(true, Some("chat-123".to_string()), false);
+        assert_eq!(request, SessionRequest::Attach("chat-123".to_string()));
+    }
+
+    #[test]
+    fn interactive_tui_with_session_and_new_session_still_attaches_existing() {
+        let request = resolve_session_request(true, Some("chat-123".to_string()), true);
+        assert_eq!(request, SessionRequest::Attach("chat-123".to_string()));
+    }
+
+    #[test]
+    fn non_tui_with_session_keeps_legacy_get_or_create_behavior() {
+        let request = resolve_session_request(false, Some("chat-legacy".to_string()), false);
+        assert_eq!(request, SessionRequest::Create("chat-legacy".to_string()));
+    }
+
+    #[test]
+    fn explicit_new_session_creates_for_non_tui() {
+        let request = resolve_session_request(false, None, true);
+        match request {
+            SessionRequest::Create(id) => assert!(id.starts_with("session-")),
+            other => panic!("expected Create request, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn generated_session_id_matches_expected_prefix() {
+        let id = generate_session_id();
+        assert!(id.starts_with("session-"));
+        assert!(id.len() >= 25, "session id too short: {id}");
+    }
+
+    #[test]
+    fn interactive_tui_normal_quit_returns_nothing() {
+        let value = Value::nothing(Span::test_data());
+        assert!(value.is_nothing(), "interactive TUI quit must return nothing");
+    }
+
+    #[test]
+    fn interactive_tui_turn_materializes_deferred_session_and_persists_non_empty_history() {
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let store = crate::session::SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+
+        let session_id = "tui-regression-session".to_string();
+        let mut session_opt: Option<crate::session::Session> = None;
+        let mut pending_tui_session_id = Some(session_id.clone());
+
+        // Simulate first successful interactive turn entering persistence path.
+        materialize_pending_tui_session_if_needed(
+            &store,
+            &mut session_opt,
+            &mut pending_tui_session_id,
+        )
+        .expect("materialize session");
+
+        assert!(pending_tui_session_id.is_none());
+        let session = session_opt.as_mut().expect("session should be materialized");
+        session
+            .add_message(
+                &store,
+                crate::session::Message::new("user".to_string(), "hello".to_string()),
+            )
+            .expect("save user message");
+        session
+            .add_message(
+                &store,
+                crate::session::Message::new("assistant".to_string(), "hi".to_string()),
+            )
+            .expect("save assistant message");
+
+        let reloaded = store.load_session(&session_id).expect("reload session");
+        assert_eq!(reloaded.messages().len(), 2);
+        assert_eq!(reloaded.messages()[0].role(), "user");
+        assert_eq!(reloaded.messages()[1].role(), "assistant");
+
+        let listed = store.list_sessions().expect("list sessions");
+        let info = listed
+            .iter()
+            .find(|entry| entry.id == session_id)
+            .expect("session present in list");
+        assert_eq!(info.message_count, 2);
     }
 }
 

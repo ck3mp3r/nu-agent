@@ -5,6 +5,7 @@ pub mod policy;
 pub mod renderer;
 pub mod spinner;
 pub mod stderr;
+pub mod tui;
 
 #[cfg(test)]
 mod event_contract_test;

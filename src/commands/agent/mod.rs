@@ -9,42 +9,62 @@ use crate::{
     plugin::RuntimeCtx,
 };
 
+mod contracts;
+mod conversation_runtime;
+mod orchestrator;
+mod session_resolver;
 mod tool_handler;
 mod ui;
+mod ui_runtime;
 
-use self::ui::{
-    event::UiEvent,
-    factory::{StderrUiFactory, UiRendererFactory},
-    policy::resolve_ui_policy,
-    renderer::UiRenderer,
+use self::{
+    conversation_runtime::AgentConversationRuntime,
+    orchestrator::{run_hydrated_interactive_loop, run_interactive_loop, run_single_turn},
+    session_resolver::{DefaultSessionResolver, SessionResolutionInput, SessionResolver},
+    ui::policy::resolve_ui_policy,
+    ui_runtime::{StderrProgressUi, TuiInteractiveUi},
 };
+use crate::commands::agent::ui::factory::UiRendererFactory;
+use crate::commands::agent::ui::tui::safety::RestoreRunError;
 
-enum LlmCallProgress {
-    Tick,
-    Done(Result<crate::llm::LlmResponse, LabeledError>),
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AgentMode {
+    Tui,
+    Stderr,
 }
 
-fn call_llm_with_ui_ticks<R: UiRenderer>(
-    runtime: &tokio::runtime::Runtime,
-    runtime_ctx: &RuntimeCtx,
-    config: &Config,
-    prompt: &str,
-    tools: Vec<rig::completion::ToolDefinition>,
-    ui_renderer: &mut R,
-) -> Result<crate::llm::LlmResponse, LabeledError> {
-    let mut call_fut = std::pin::pin!(crate::llm::call_llm(runtime_ctx, config, prompt, tools));
-
-    loop {
-        match runtime.block_on(async {
-            tokio::select! {
-                response = &mut call_fut => LlmCallProgress::Done(response),
-                _ = tokio::time::sleep(Duration::from_millis(80)) => LlmCallProgress::Tick,
-            }
-        }) {
-            LlmCallProgress::Tick => ui_renderer.emit(&UiEvent::Tick),
-            LlmCallProgress::Done(result) => return result,
-        }
+impl AgentMode {
+    fn from_tui_flag(use_tui: bool) -> Self {
+        if use_tui { Self::Tui } else { Self::Stderr }
     }
+
+    fn is_tui(self) -> bool {
+        matches!(self, Self::Tui)
+    }
+}
+
+#[cfg(test)]
+pub(crate) use session_resolver::{SessionRequest, generate_session_id, resolve_session_request};
+
+#[cfg(test)]
+pub(crate) fn materialize_pending_tui_session_if_needed(
+    store: &crate::session::SessionStore,
+    session_opt: &mut Option<crate::session::Session>,
+    pending_tui_session_id: &mut Option<String>,
+) -> Result<(), LabeledError> {
+    if session_opt.is_some() {
+        return Ok(());
+    }
+
+    let Some(session_id) = pending_tui_session_id.take() else {
+        return Ok(());
+    };
+
+    let session = store
+        .get_or_create(Some(session_id))
+        .map_err(|e| LabeledError::new(format!("Failed to load/create session: {e}")))?;
+    *session_opt = Some(session);
+    Ok(())
 }
 
 /// Trait abstracting the engine interface functionality needed for config resolution.
@@ -360,6 +380,8 @@ impl SimplePluginCommand for Agent {
     fn signature(&self) -> Signature {
         Signature::build(PluginCommand::name(self))
             .input_output_types(vec![
+                (Type::Nothing, Type::Nothing),
+                (Type::Nothing, Type::Record(vec![].into())),
                 (Type::String, Type::Record(vec![].into())),
                 (Type::Record(vec![].into()), Type::Record(vec![].into())),
             ])
@@ -462,6 +484,11 @@ impl SimplePluginCommand for Agent {
                 "Suppress non-essential UX progress output",
                 Some('q'),
             )
+            .switch(
+                "tui",
+                "Enable experimental TUI runtime integration path",
+                None,
+            )
     }
 
     fn run(
@@ -474,7 +501,18 @@ impl SimplePluginCommand for Agent {
         let ui_policy = resolve_ui_policy(call)
             .map_err(|e| LabeledError::new(format!("Failed to resolve UI policy: {e}")))?;
         let stderr_is_tty = std::io::stderr().is_terminal();
-        let mut ui_renderer = StderrUiFactory::new(std::io::stderr(), stderr_is_tty).create(ui_policy);
+        let mode = AgentMode::from_tui_flag(call.has_flag("tui")?);
+        let input_is_nothing = matches!(input, Value::Nothing { .. });
+
+        let _foreground_guard = if mode.is_tui() {
+            Some(engine.enter_foreground().map_err(|err| {
+                LabeledError::new(format!(
+                    "Failed to enter foreground for interactive TUI input: {err}"
+                ))
+            })?)
+        } else {
+            None
+        };
 
         // Validate session flags
         let (session_id, new_session) = extract_and_validate_session_flags(call)?;
@@ -515,8 +553,10 @@ impl SimplePluginCommand for Agent {
                 None
             } else {
                 let caller_cwd = engine.get_current_dir().map_err(|e| {
-                    LabeledError::new("Failed to resolve caller cwd")
-                        .with_label(format!("Unable to read current dir from Nushell engine: {e}"), call.head)
+                    LabeledError::new("Failed to resolve caller cwd").with_label(
+                        format!("Unable to read current dir from Nushell engine: {e}"),
+                        call.head,
+                    )
                 })?;
                 let caller_cwd_path = std::path::Path::new(&caller_cwd);
 
@@ -580,84 +620,15 @@ impl SimplePluginCommand for Agent {
             }
         }));
 
-        // Extract prompt from input
-        let prompt = extract_prompt_from_input(input)?;
+        let resolver = DefaultSessionResolver::new(&self.store);
+        let session_resolution = resolver.resolve(SessionResolutionInput {
+            use_tui: mode.is_tui(),
+            input_is_nothing,
+            session_id,
+            new_session,
+        })?;
 
-        // Extract optional context from input
-        let context = extract_context_from_input(input)?;
-
-        // Determine if we should use a session
-        let use_session = session_id.is_some() || new_session;
-        let mut session_opt = None;
-        let mut final_session_id = None;
-
-        // Load or create session if requested
-        if use_session {
-            let id = if let Some(id) = session_id {
-                id
-            } else if new_session {
-                // Generate auto session ID: session-YYYYMMDD-HHMMSS-micros
-                use chrono::Utc;
-                let now = Utc::now();
-                format!(
-                    "session-{}-{}",
-                    now.format("%Y%m%d-%H%M%S"),
-                    now.timestamp_subsec_micros()
-                )
-            } else {
-                unreachable!()
-            };
-
-            // Load or create the session
-            let session = self
-                .store
-                .get_or_create(Some(id.clone()))
-                .map_err(|e| LabeledError::new(format!("Failed to load/create session: {}", e)))?;
-
-            final_session_id = Some(id.clone());
-            session_opt = Some(session);
-        }
-
-        // Build prompt with session history if available
-        let mut merged_prompt = merge_prompt_with_context(&prompt, context.as_deref());
-
-        if let Some(ref session) = session_opt {
-            let history = session.format_history();
-
-            if !history.is_empty() {
-                merged_prompt = format!(
-                    "Previous conversation:\n{}\n\n---\n\n{}",
-                    history, merged_prompt
-                );
-            }
-        }
-
-        // Call LLM and handle tool execution loop
-        ui_renderer.emit(&UiEvent::LlmStart);
-        let mut llm_response = call_llm_with_ui_ticks(
-            &runtime,
-            &self.runtime_ctx,
-            &config,
-            &merged_prompt,
-            tool_definitions.clone(),
-            &mut ui_renderer,
-        )
-            .map_err(|e| {
-                LabeledError::new(format!("LLM call failed: {}", e.msg))
-                    .with_label(e.msg, call.head)
-            })?;
-        ui_renderer.emit(&UiEvent::LlmEnd {
-            response_chars: llm_response.text.len(),
-            tool_calls: llm_response.tool_calls.len(),
-        });
-
-        // Track all tool calls executed during the agent loop
-        let mut executed_tool_calls: Vec<rig::completion::AssistantContent> = Vec::new();
-        let mut tool_results_metadata: Vec<crate::llm::ToolCallMetadata> = Vec::new();
-
-        // Create audit log directory ONCE before agent loop
-        // This follows the Single Responsibility Principle: the logger only logs,
-        // the caller is responsible for ensuring the directory exists
+        // Create audit log directory ONCE before prompt loop
         let log_dir = crate::utils::xdg::data_dir()
             .map_err(|e| LabeledError::new(format!("XDG data directory error: {}", e)))?
             .join("nu-agent");
@@ -666,267 +637,145 @@ impl SimplePluginCommand for Agent {
         })?;
         let log_path = log_dir.join("tool_audit.log");
 
-        // Create AuditLogger ONCE with pre-existing directory
         let audit_logger = std::sync::Arc::new(crate::tools::audit::AuditLogger::new(log_path));
-
-        // Create ToolExecutor ONCE with engine, audit logger, and timeout
         let tool_executor = crate::tools::executor::ToolExecutor::new(
             std::sync::Arc::new(engine.clone()),
             audit_logger,
             tool_timeout,
         );
 
-        // In-memory conversation tracking (works with or without session)
-        // This ensures tool results are ALWAYS passed to subsequent LLM calls
-        // Session tracking is SEPARATE (optional persistence to disk)
-        let mut conversation_messages: Vec<(String, String)> = vec![];
-
-        // Track initial user prompt and first assistant response
-        conversation_messages.push(("user".to_string(), merged_prompt.clone()));
-        conversation_messages.push(("assistant".to_string(), llm_response.text.clone()));
-
-        // Agent loop: process tool calls if present
-        let max_tool_turns = config.max_tool_turns.unwrap_or(5);
-        let mut tool_turn = 0;
-
-        while !llm_response.tool_calls.is_empty() && tool_turn < max_tool_turns {
-            tool_turn += 1;
-
-            // Log tool calls before execution
-            for content in &llm_response.tool_calls {
-                if let rig::completion::message::AssistantContent::ToolCall(tc) = content {
-                    let source = if closure_registry.get(&tc.function.name).is_some() {
-                        "closure".to_string()
-                    } else if mcp_registry.contains(&tc.function.name) {
-                        "mcp".to_string()
-                    } else {
-                        "unknown".to_string()
-                    };
-                    ui_renderer.emit(&UiEvent::ToolStart {
-                        name: tc.function.name.clone(),
-                        source,
-                        arguments: serde_json::to_string(&tc.function.arguments)
-                            .unwrap_or_else(|_| "{}".to_string()),
-                    });
-                }
-            }
-
-            // Capture tool calls that were executed this turn
-            executed_tool_calls.extend(llm_response.tool_calls.clone());
-
-            // Execute tool calls
-            let tool_results = runtime.block_on(tool_handler::handle_tool_calls(
-                llm_response.tool_calls.clone(),
-                &closure_registry,
-                &mcp_registry,
-                mcp_tool_server_handle.as_ref(),
-                &tool_executor,
-                engine,
-                call.head,
-            ));
-
-            // Log tool results
-            for result in &tool_results {
-                let source = match result.source {
-                    crate::commands::agent::tool_handler::ToolSource::Closure => {
-                        "closure".to_string()
-                    }
-                    crate::commands::agent::tool_handler::ToolSource::Mcp => "mcp".to_string(),
-                    crate::commands::agent::tool_handler::ToolSource::Unknown => {
-                        "unknown".to_string()
-                    }
-                };
-
-                ui_renderer.emit(&UiEvent::ToolEnd {
-                    name: result.tool_name.clone(),
-                    source: source.clone(),
-                    arguments: result.arguments.clone(),
-                    success: result.failure.is_none(),
-                    result: result.content.clone(),
-                    error_kind: result
-                        .failure
-                        .as_ref()
-                        .map(|failure| failure.error_kind.as_str().to_string()),
-                    message: result
-                        .failure
-                        .as_ref()
-                        .map(|failure| failure.message.clone()),
-                });
-
-                tool_results_metadata.push(crate::llm::ToolCallMetadata {
-                    id: result.tool_call_id.clone(),
-                    name: result.tool_name.clone(),
-                    arguments: result.arguments.clone(),
-                    source: Some(source),
-                    error_kind: result
-                        .failure
-                        .as_ref()
-                        .map(|failure| failure.error_kind.as_str().to_string()),
-                    message: result
-                        .failure
-                        .as_ref()
-                        .map(|failure| failure.message.clone()),
-                    details: result
-                        .failure
-                        .as_ref()
-                        .and_then(|failure| failure.details.as_ref())
-                        .and_then(|details| serde_json::to_string(details).ok()),
-                });
-            }
-
-            // Track tool results in-memory conversation (ALWAYS, regardless of session)
-            for result in &tool_results {
-                conversation_messages.push((
-                    "tool".to_string(),
-                    format!(
-                        "Tool '{}' returned: {}",
-                        result.tool_call_id, result.content
-                    ),
-                ));
-            }
-
-            // Save tool results to session if active (SEPARATE from in-memory tracking)
-            if let Some(ref mut session) = session_opt {
-                for result in &tool_results {
-                    let tool_msg = crate::session::Message::new(
-                        "tool".to_string(),
-                        format!(
-                            "Tool '{}' returned: {}",
-                            result.tool_call_id, result.content
-                        ),
-                    );
-                    session.add_message(&self.store, tool_msg).map_err(|e| {
-                        LabeledError::new(format!("Failed to save tool message: {}", e))
-                    })?;
-                }
-            }
-
-            // Build conversation history from in-memory messages (NOT from session)
-            // This ensures tool results are passed to LLM even without --session flag
-            let history_prompt = {
-                let history = conversation_messages
-                    .iter()
-                    .map(|(role, content)| format!("{}: {}", role, content))
-                    .collect::<Vec<_>>()
-                    .join("\n\n");
-
-                if !history.is_empty() {
-                    format!(
-                        "Previous conversation:\n{}\n\n---\n\nContinue responding.",
-                        history
-                    )
-                } else {
-                    merged_prompt.clone()
-                }
-            };
-
-            // Make another LLM call with conversation history
-            ui_renderer.emit(&UiEvent::LlmStart);
-            llm_response = call_llm_with_ui_ticks(
-                &runtime,
-                &self.runtime_ctx,
-                &config,
-                &history_prompt,
-                tool_definitions.clone(),
-                &mut ui_renderer,
-            )
-                .map_err(|e| {
-                    LabeledError::new(format!("LLM call failed: {}", e.msg))
-                        .with_label(e.msg, call.head)
-                })?;
-            ui_renderer.emit(&UiEvent::LlmEnd {
-                response_chars: llm_response.text.len(),
-                tool_calls: llm_response.tool_calls.len(),
-            });
-
-            // Track assistant response in conversation
-            conversation_messages.push(("assistant".to_string(), llm_response.text.clone()));
-        }
-
-        // Capture tool call count before moving executed_tool_calls
-        let tool_call_count = executed_tool_calls.len();
-
-        // Build final response with all executed tool calls
-        let final_response = crate::llm::LlmResponse {
-            text: llm_response.text.clone(),
-            usage: llm_response.usage.clone(),
-            tool_calls: executed_tool_calls,
-            tool_call_metadata: tool_results_metadata,
+        let mut runtime_impl = AgentConversationRuntime {
+            runtime,
+            runtime_ctx: self.runtime_ctx.clone(),
+            config,
+            tool_definitions,
+            closure_registry,
+            mcp_registry,
+            mcp_tool_server_handle,
+            tool_executor,
+            engine: engine.clone(),
+            store: self.store.clone(),
+            session: session_resolution.session,
+            final_session_id: session_resolution.final_session_id,
         };
 
-        // Extract text for session storage
-        let response_text = final_response.text.clone();
-
-        // Save messages to session if active
-        let mut message_count = 0;
-        let mut compaction_count = 0;
-
-        if let Some(mut session) = session_opt {
-            // Create and save user message
-            let user_msg = crate::session::Message::new("user".to_string(), prompt.clone());
-            session
-                .add_message(&self.store, user_msg)
-                .map_err(|e| LabeledError::new(format!("Failed to save user message: {}", e)))?;
-
-            // Create and save assistant message
-            let assistant_msg =
-                crate::session::Message::new("assistant".to_string(), response_text.clone());
-            session
-                .add_message(&self.store, assistant_msg)
-                .map_err(|e| {
-                    LabeledError::new(format!("Failed to save assistant message: {}", e))
-                })?;
-
-            // Check for compaction
-            let _compacted = session.maybe_compact(&self.store).map_err(|e| {
-                ui_renderer.emit(&UiEvent::Warning {
-                    message: format!("Session compaction failed: {e}"),
-                });
-            });
-
-            // Get session stats for metadata
-            message_count = session.messages().len();
-            compaction_count = session.compaction_count();
+        match mode {
+            AgentMode::Tui => run_tui_mode(
+                &mut runtime_impl,
+                input,
+                input_is_nothing,
+                call.head,
+                ui_policy,
+                session_resolution.tui_should_hydrate_transcript,
+                session_resolution.tui_initial_messages,
+            ),
+            AgentMode::Stderr => run_stderr_mode(
+                &mut runtime_impl,
+                input,
+                call.head,
+                ui_policy,
+                stderr_is_tty,
+            ),
         }
+    }
+}
 
-        ui_renderer.emit(&UiEvent::Completed {
-            tool_calls: tool_call_count,
+fn run_tui_mode(
+    runtime_impl: &mut AgentConversationRuntime,
+    input: &Value,
+    input_is_nothing: bool,
+    span: nu_protocol::Span,
+    ui_policy: crate::commands::agent::ui::policy::UiPolicy,
+    tui_should_hydrate_transcript: bool,
+    tui_initial_messages: Vec<crate::commands::agent::contracts::UiMessageSnapshot>,
+) -> Result<Value, LabeledError> {
+    let mut terminal_lifecycle = ui::tui::terminal::TerminalLifecycle::new(
+        ui::tui::runtime::AnsiTerminalBackend::new(std::io::stderr()),
+    );
+
+    let (columns, rows) = crossterm::terminal::size().unwrap_or((120, 30));
+    let fallback_events = ui::tui::runtime::open_tty_reader()
+        .ok()
+        .and_then(|tty_reader| {
+            ui::tui::runtime::TtyTerminalEvents::new(tty_reader, Duration::from_millis(30)).ok()
         });
-        ui_renderer.flush();
 
-        // Format response with session metadata
-        let response_value = crate::llm::format_response(
-            &final_response,
-            &config,
-            final_session_id.as_deref(),
-            compaction_count,
-            call.head,
-        );
+    let runtime_renderer = ui::tui::runtime::TuiRuntimeRenderer::new_live(
+        ui::factory::StderrUiFactory::new(std::io::stderr(), false).create(ui_policy),
+        ui::tui::runtime::HybridTerminalEvents::new(Duration::from_millis(60), fallback_events),
+        columns,
+        rows,
+    )
+    .map_err(|err| LabeledError::new(format!("Failed to initialize TUI renderer: {err}")))?;
 
-        // Add message_count to _meta if session was used
-        if final_session_id.is_some() {
-            // Extract existing record
-            if let Ok(record) = response_value.as_record() {
-                let mut new_record = record.clone();
+    let mut tui_ui = TuiInteractiveUi::new(runtime_renderer);
+    tui_ui.set_active_model_identity(format_active_model_identity(
+        &runtime_impl.config.provider,
+        &runtime_impl.config.model,
+    ));
 
-                // Update _meta field with message_count
-                if let Some(meta_value) = new_record.get("_meta")
-                    && let Ok(meta_record) = meta_value.as_record()
-                {
-                    let mut new_meta = meta_record.clone();
-                    new_meta.insert(
-                        "message_count".to_string(),
-                        Value::int(message_count as i64, call.head),
-                    );
-
-                    new_record.insert("_meta".to_string(), Value::record(new_meta, call.head));
-
-                    return Ok(Value::record(new_record, call.head));
-                }
+    let result = ui::tui::runtime::run_with_terminal_restore(&mut terminal_lifecycle, || {
+        if input_is_nothing {
+            if tui_should_hydrate_transcript {
+                run_hydrated_interactive_loop(runtime_impl, &mut tui_ui, tui_initial_messages, span)
+            } else {
+                run_interactive_loop(runtime_impl, &mut tui_ui, span)
             }
+        } else {
+            let (prompt, context) = extract_prompt_and_context(input)?;
+            run_single_turn(runtime_impl, &mut tui_ui, prompt, context, span)
         }
+    });
 
-        Ok(response_value)
+    map_tui_run_result(result)
+}
+
+pub(crate) fn format_active_model_identity(provider: &str, model: &str) -> String {
+    if model.starts_with(&format!("{provider}/")) {
+        model.to_string()
+    } else {
+        format!("{provider}/{model}")
+    }
+}
+
+fn run_stderr_mode(
+    runtime_impl: &mut AgentConversationRuntime,
+    input: &Value,
+    span: nu_protocol::Span,
+    ui_policy: crate::commands::agent::ui::policy::UiPolicy,
+    stderr_is_tty: bool,
+) -> Result<Value, LabeledError> {
+    let mut stderr_ui = StderrProgressUi::new(
+        ui::factory::StderrUiFactory::new(std::io::stderr(), stderr_is_tty).create(ui_policy),
+    );
+    let (prompt, context) = extract_prompt_and_context(input)?;
+    run_single_turn(runtime_impl, &mut stderr_ui, prompt, context, span)
+}
+
+fn extract_prompt_and_context(input: &Value) -> Result<(String, Option<String>), LabeledError> {
+    let prompt = extract_prompt_from_input(input)?;
+    let context = extract_context_from_input(input)?;
+    Ok((prompt, context))
+}
+
+fn map_tui_run_result(
+    result: Result<Value, ui::tui::runtime::RuntimeRunError<LabeledError>>,
+) -> Result<Value, LabeledError> {
+    match result {
+        Ok(value) => Ok(value),
+        Err(ui::tui::runtime::RuntimeRunError::Enter(err)) => Err(LabeledError::new(format!(
+            "Failed to enter TUI terminal lifecycle: {err}"
+        ))),
+        Err(ui::tui::runtime::RuntimeRunError::Run(RestoreRunError::Run(err))) => Err(err),
+        Err(ui::tui::runtime::RuntimeRunError::Run(RestoreRunError::RunWithRestore {
+            run_error,
+            restore_error,
+        })) => Err(LabeledError::new(format!(
+            "TUI run failed and terminal restore failed: run={run_error}, restore={restore_error}"
+        ))),
+        Err(ui::tui::runtime::RuntimeRunError::Run(RestoreRunError::Restore(err))) => Err(
+            LabeledError::new(format!("Failed to restore terminal after TUI run: {err}")),
+        ),
     }
 }
 
@@ -1198,6 +1047,12 @@ mod tests;
 
 #[cfg(test)]
 mod prompt_tests;
+
+#[cfg(test)]
+mod orchestrator_test;
+
+#[cfg(test)]
+mod session_resolver_test;
 
 #[cfg(test)]
 mod tool_session_test;

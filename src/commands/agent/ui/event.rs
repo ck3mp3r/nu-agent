@@ -1,10 +1,13 @@
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UiEvent {
     LlmStart,
     Tick,
     LlmEnd {
         response_chars: usize,
         tool_calls: usize,
+        input_tokens: u64,
+        output_tokens: u64,
+        total_tokens: u64,
     },
     ToolStart {
         name: String,
@@ -22,6 +25,9 @@ pub enum UiEvent {
     },
     Warning {
         message: String,
+    },
+    AssistantMessage {
+        text: String,
     },
     Completed {
         tool_calls: usize,

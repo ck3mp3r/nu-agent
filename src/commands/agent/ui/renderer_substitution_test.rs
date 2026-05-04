@@ -33,6 +33,7 @@ impl UiRenderer for FakeRenderer {
             UiEvent::ToolStart { .. } => "tool_start",
             UiEvent::ToolEnd { .. } => "tool_end",
             UiEvent::Warning { .. } => "warning",
+            UiEvent::AssistantMessage { .. } => "assistant_message",
             UiEvent::Completed { .. } => "completed",
         };
         self.events.lock().expect("events").push(label.to_string());
@@ -47,6 +48,9 @@ fn run_mock_flow<R: UiRenderer>(renderer: &mut R) {
     renderer.emit(&UiEvent::LlmEnd {
         response_chars: 3,
         tool_calls: 1,
+        input_tokens: 2,
+        output_tokens: 1,
+        total_tokens: 3,
     });
     renderer.emit(&UiEvent::ToolStart {
         name: "t".to_string(),

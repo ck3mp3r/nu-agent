@@ -8,6 +8,9 @@ fn ui_event_contract_exposes_required_variants() {
         UiEvent::LlmEnd {
             response_chars: 12,
             tool_calls: 1,
+            input_tokens: 7,
+            output_tokens: 5,
+            total_tokens: 12,
         },
         UiEvent::ToolStart {
             name: "k8s__list_pods".to_string(),
@@ -26,8 +29,11 @@ fn ui_event_contract_exposes_required_variants() {
         UiEvent::Warning {
             message: "compaction failed".to_string(),
         },
+        UiEvent::AssistantMessage {
+            text: "done".to_string(),
+        },
         UiEvent::Completed { tool_calls: 1 },
     ];
 
-    assert_eq!(events.len(), 7);
+    assert_eq!(events.len(), 8);
 }
