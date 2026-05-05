@@ -8,7 +8,7 @@ use std::{
 use ratatui::{
     Terminal,
     backend::CrosstermBackend,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     layout::Position,
     layout::{Constraint, Direction, Layout},
     text::{Line, Span, Text},
@@ -29,6 +29,7 @@ use crate::commands::agent::ui::{
         selection::TranscriptSelection,
         state::{AppState, PromptStatus, ToolCallStatus, TranscriptLineStatus, TranscriptRole},
         terminal::{TerminalBackend, TerminalLifecycle, TerminalLifecycleError},
+        theme::TuiTheme,
         transport::TuiTransport,
     },
 };
@@ -80,13 +81,14 @@ pub struct RuntimeCoordinator {
     last_input_error: Option<String>,
     input_watchdog_started_at: Instant,
     input_watchdog_timeout: Duration,
+    theme: TuiTheme,
 }
 
 impl RuntimeCoordinator {
     const DEFAULT_INPUT_WATCHDOG_TIMEOUT: Duration = Duration::from_secs(5);
     const HEADER_HEIGHT: u16 = 1;
-    const STATUS_TARGET_HEIGHT: u16 = 6;
-    const INPUT_HEIGHT: u16 = 3;
+    const STATUS_TARGET_HEIGHT: u16 = 1;
+    const INPUT_HEIGHT: u16 = 2;
 
     pub fn new(columns: u16, rows: u16, side_pane_visible: Option<bool>) -> Self {
         Self::new_with_watchdog(
@@ -156,6 +158,7 @@ impl RuntimeCoordinator {
             last_input_error: None,
             input_watchdog_started_at: Instant::now(),
             input_watchdog_timeout,
+            theme: TuiTheme::default(),
         };
         coordinator.sync_transcript_viewport_lines_with_layout();
         coordinator
@@ -369,17 +372,6 @@ impl RuntimeCoordinator {
             return Ok(());
         };
 
-        let status_lines = build_status_lines(
-            &self.state,
-            &self.active_model_identity,
-            &self.input_backend_status,
-            &self.last_input_poll_status,
-            self.last_input_error.as_deref(),
-        )
-        .into_iter()
-        .map(Line::from)
-        .collect::<Vec<_>>();
-
         live.terminal
             .draw(|frame| {
                 let area = frame.area();
@@ -402,8 +394,8 @@ impl RuntimeCoordinator {
                     .constraints([
                         Constraint::Length(Self::header_height_for_main(main.height)),
                         Constraint::Length(Self::transcript_height_for_main(main.height)),
-                        Constraint::Length(Self::status_height_for_main(main.height)),
                         Constraint::Length(Self::input_height_for_main(main.height)),
+                        Constraint::Length(Self::status_height_for_main(main.height)),
                     ])
                     .split(main);
 
@@ -414,10 +406,10 @@ impl RuntimeCoordinator {
 
                 let (window_start, window_lines) = visible_transcript_window_for_render(
                     &self.state.transcript_preview,
-                    vertical[1].height.saturating_sub(2) as usize,
+                    vertical[1].height.saturating_sub(1) as usize,
                     self.state.transcript_scroll_lines_from_bottom,
                     self.state.transcript_follow_tail,
-                    vertical[1].width.saturating_sub(2) as usize,
+                    vertical[1].width as usize,
                 );
                 let selected = transcript_selection_range_for_render(
                     &self.state,
@@ -437,43 +429,34 @@ impl RuntimeCoordinator {
                         .unwrap_or(false);
                     render_transcript_lines(
                         line,
-                        vertical[1].width.saturating_sub(2) as usize,
+                        vertical[1].width as usize,
                         is_selected,
                         is_cursor_line,
                         line_status,
                         current_time_millis(),
+                        &self.theme,
                     )
                 })
                 .collect::<Vec<_>>();
-                let transcript_view_height = vertical[1].height.saturating_sub(2) as usize;
-                let transcript_title = transcript_title_for_render(
+                let transcript_view_height = vertical[1].height.saturating_sub(1) as usize;
+                let _transcript_title = transcript_title_for_render(
                     &self.state,
                     self.state.transcript_preview.len(),
                 );
                 let transcript_border_style = if self.state.pane_focus
                     == crate::commands::agent::ui::tui::state::PaneFocus::Transcript
                 {
-                    Style::default().fg(Color::Cyan)
+                    self.theme.focus
                 } else {
                     Style::default()
                 };
                 let transcript_widget = if transcript_view_height == 0 {
                     Paragraph::new(Text::from(Vec::<Line>::new()))
-                        .block(
-                            Block::default()
-                                .borders(Borders::ALL)
-                                .title(transcript_title.clone())
-                                .border_style(transcript_border_style),
-                        )
+                        .block(Block::default().borders(Borders::TOP).border_style(transcript_border_style))
                         .wrap(Wrap { trim: false })
                 } else {
                     Paragraph::new(Text::from(transcript))
-                        .block(
-                            Block::default()
-                                .borders(Borders::ALL)
-                                .title(transcript_title)
-                                .border_style(transcript_border_style),
-                        )
+                        .block(Block::default().borders(Borders::TOP).border_style(transcript_border_style))
                         .wrap(Wrap { trim: false })
                 };
                 if vertical[1].height > 0 {
@@ -481,49 +464,58 @@ impl RuntimeCoordinator {
                     frame.render_widget(transcript_widget, vertical[1]);
                 }
 
-                let status_widget = Paragraph::new(status_lines)
-                    .block(Block::default().borders(Borders::ALL).title("Status"))
+                let compact_status = compact_status_line(
+                    &self.state,
+                    &self.active_model_identity,
+                    &self.input_backend_status,
+                    &self.last_input_poll_status,
+                    self.last_input_error.as_deref(),
+                );
+                let status_widget = Paragraph::new(Line::from(vec![
+                    Span::styled("ℹ ", self.theme.subtle_meta),
+                    Span::raw(compact_status),
+                ]))
+                    .block(Block::default())
                     .wrap(Wrap { trim: false });
                 if vertical[2].height > 0 {
-                    frame.render_widget(Clear, vertical[2]);
-                    frame.render_widget(status_widget, vertical[2]);
+                    frame.render_widget(Clear, vertical[3]);
+                    frame.render_widget(status_widget, vertical[3]);
                 }
 
                 let input_line = self.state.input.buffer.clone();
                 let input_border_style = if self.state.pane_focus
                     == crate::commands::agent::ui::tui::state::PaneFocus::Input
                 {
-                    Style::default().fg(Color::Cyan)
+                    self.theme.focus
                 } else {
                     Style::default()
                 };
-                let input_widget = Paragraph::new(Line::from(input_line))
+                let input_widget = Paragraph::new(Line::from(vec![
+                    Span::styled("❯ ", self.theme.input_prompt),
+                    Span::raw(input_line),
+                ]))
                 .block(
                     Block::default()
-                        .borders(Borders::ALL)
-                        .title("Input")
+                        .borders(Borders::TOP)
                         .border_style(input_border_style),
                 )
                 .wrap(Wrap { trim: false });
                 if vertical[3].height > 0 {
-                    frame.render_widget(Clear, vertical[3]);
-                    frame.render_widget(input_widget, vertical[3]);
+                    frame.render_widget(Clear, vertical[2]);
+                    frame.render_widget(input_widget, vertical[2]);
                 }
 
-                if !self.state.input.locked && vertical[3].height >= 2 && vertical[3].width >= 2 {
+                if !self.state.input.locked && vertical[2].height >= 2 && vertical[2].width >= 1 {
                     let cursor_col = self.state.input.buffer[..self.state.input.cursor]
                         .chars()
                         .count() as u16;
-                    let x = vertical[3]
+                    let x = vertical[2].x.saturating_add(2).saturating_add(cursor_col);
+                    let max_x = vertical[2]
                         .x
-                        .saturating_add(1)
-                        .saturating_add(cursor_col);
-                    let max_x = vertical[3]
-                        .x
-                        .saturating_add(vertical[3].width.saturating_sub(2));
+                        .saturating_add(vertical[2].width.saturating_sub(1));
                     frame.set_cursor_position(Position {
                         x: x.min(max_x),
-                        y: vertical[3].y.saturating_add(1),
+                        y: vertical[2].y.saturating_add(1),
                     });
                 }
 
@@ -601,8 +593,8 @@ impl RuntimeCoordinator {
             .constraints([
                 Constraint::Length(header),
                 Constraint::Length(transcript),
-                Constraint::Length(status),
                 Constraint::Length(input),
+                Constraint::Length(status),
             ])
             .split(main);
         (vertical[0], vertical[1], vertical[2], vertical[3])
@@ -676,6 +668,86 @@ fn build_status_lines(
     ]);
 
     lines
+}
+
+#[allow(dead_code)]
+fn _legacy_status_lines_for_reference(
+    state: &AppState,
+    active_model_identity: &str,
+    input_backend_status: &str,
+    last_input_poll_status: &str,
+    last_input_error: Option<&str>,
+) -> Vec<String> {
+    build_status_lines(
+        state,
+        active_model_identity,
+        input_backend_status,
+        last_input_poll_status,
+        last_input_error,
+    )
+}
+
+fn compact_status_line(
+    state: &AppState,
+    active_model_identity: &str,
+    _input_backend_status: &str,
+    _last_input_poll_status: &str,
+    _last_input_error: Option<&str>,
+) -> String {
+    let status = if state.status_line.is_empty() {
+        match state.phase {
+            crate::commands::agent::ui::tui::state::UiPhase::Idle => "",
+            crate::commands::agent::ui::tui::state::UiPhase::Busy => "busy",
+            crate::commands::agent::ui::tui::state::UiPhase::AbortPending => "abort-pending",
+        }
+    } else {
+        &state.status_line
+    };
+
+    let mode = match state.input_mode {
+        crate::commands::agent::ui::tui::state::InputMode::Insert => "INS",
+        crate::commands::agent::ui::tui::state::InputMode::Normal => "NOR",
+        crate::commands::agent::ui::tui::state::InputMode::Visual => "VIS",
+    };
+
+    let tokens = match (
+        state.latest_input_tokens,
+        state.latest_output_tokens,
+        state.latest_total_tokens,
+    ) {
+        (_, _, Some(_)) => format!("tokens: {}", state.session_total_tokens),
+        _ => "tokens: n/a".to_string(),
+    };
+
+    let queue = state.pending_prompt_count();
+
+    let mut parts = Vec::new();
+    if !status.is_empty() {
+        parts.push(status.to_string());
+    }
+    parts.push(mode.to_string());
+    parts.push(format!("queue: {queue}"));
+    parts.push(tokens);
+    parts.push(active_model_identity.to_string());
+
+    parts.join(" | ")
+}
+
+#[cfg(test)]
+pub(super) fn compact_status_line_for_test(
+    state: &AppState,
+    active_model_identity: &str,
+    input_backend_status: &str,
+    last_input_poll_status: &str,
+    last_input_error: Option<&str>,
+) -> String {
+    compact_status_line(
+        state,
+        active_model_identity,
+        input_backend_status,
+        last_input_poll_status,
+        last_input_error,
+    )
 }
 
 fn transcript_selection_for_render(state: &AppState) -> Option<TranscriptSelection> {
@@ -929,12 +1001,13 @@ fn wrapped_row_count_for_line(
 }
 
 fn transcript_role_style(role: TranscriptRole) -> Style {
+    let theme = TuiTheme::default();
     match role {
-        TranscriptRole::User => Style::default().fg(Color::Cyan),
-        TranscriptRole::Assistant => Style::default().fg(Color::Green),
-        TranscriptRole::System => Style::default().fg(Color::Yellow),
-        TranscriptRole::Tool => Style::default().fg(Color::Magenta),
-        TranscriptRole::Separator => Style::default().fg(Color::DarkGray),
+        TranscriptRole::User => theme.role_user,
+        TranscriptRole::Assistant => theme.role_assistant,
+        TranscriptRole::System => theme.role_system,
+        TranscriptRole::Tool => theme.role_tool,
+        TranscriptRole::Separator => theme.role_separator,
     }
 }
 
@@ -945,9 +1018,10 @@ fn render_transcript_lines(
     cursor_line: bool,
     line_status: Option<TranscriptLineStatus>,
     now_millis: u128,
+    theme: &TuiTheme,
 ) -> Vec<Line<'static>> {
     let selection_overlay = if selected {
-        Style::default().bg(Color::DarkGray)
+        theme.selection_bg
     } else {
         Style::default()
     };
@@ -974,7 +1048,7 @@ fn render_transcript_lines(
     let prompt_modifier = if line_status
         == Some(TranscriptLineStatus::Prompt(PromptStatus::Cancelled))
     {
-        Modifier::CROSSED_OUT
+        theme.cancelled_modifier
     } else {
         Modifier::empty()
     };
@@ -1060,7 +1134,15 @@ pub(super) fn render_transcript_lines_for_test(
     line_status: Option<TranscriptLineStatus>,
     now_millis: u128,
 ) -> Vec<Line<'static>> {
-    render_transcript_lines(line, 80, false, false, line_status, now_millis)
+    render_transcript_lines(
+        line,
+        80,
+        false,
+        false,
+        line_status,
+        now_millis,
+        &TuiTheme::default(),
+    )
 }
 
 fn current_time_millis() -> u128 {

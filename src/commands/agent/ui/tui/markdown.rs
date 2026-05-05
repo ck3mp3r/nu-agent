@@ -1,8 +1,9 @@
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use ratatui::{
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
 };
+use crate::commands::agent::ui::tui::theme::TuiTheme;
 
 #[derive(Debug, Clone, Default)]
 struct StyleState {
@@ -43,6 +44,7 @@ struct Projector {
     image_destinations: Vec<String>,
     code_block: Option<CodeBlockState>,
     pending_prefix: bool,
+    theme: TuiTheme,
 }
 
 impl Projector {
@@ -246,12 +248,7 @@ impl Projector {
                 self.push_wrapped_text(&text, style);
             }
             Event::Code(text) => {
-                self.push_text(
-                    &text,
-                    Style::default()
-                        .bg(Color::DarkGray)
-                        .add_modifier(Modifier::REVERSED),
-                );
+                self.push_text(&text, self.theme.inline_code);
             }
             Event::Html(html) => {
                 self.push_unsupported_fallback_text(&html);
@@ -263,11 +260,11 @@ impl Projector {
                 self.push_text(&format!("[^{}]", label), Style::default());
             }
             Event::InlineMath(math) => {
-                self.push_text(&math, Style::default().add_modifier(Modifier::REVERSED));
+                self.push_text(&math, self.theme.inline_code);
             }
             Event::DisplayMath(math) => {
                 self.flush_line();
-                self.push_text(&math, Style::default().add_modifier(Modifier::REVERSED));
+                self.push_text(&math, self.theme.inline_code);
                 self.flush_line();
             }
             Event::SoftBreak | Event::HardBreak => {
@@ -303,6 +300,7 @@ fn project_markdown_to_lines_inner(markdown: &str) -> Vec<Line<'static>> {
     let parser = Parser::new_ext(markdown, options);
     let mut projector = Projector {
         pending_prefix: true,
+        theme: TuiTheme::default(),
         ..Projector::default()
     };
     for event in parser {

@@ -183,6 +183,10 @@ impl AppState {
         &self.pending_prompt_ids
     }
 
+    pub fn pending_prompt_count(&self) -> usize {
+        self.pending_prompt_ids.len()
+    }
+
     pub fn prompt_status_for_transcript_line(&self, transcript_line_index: usize) -> Option<PromptStatus> {
         self.prompt_items
             .iter()

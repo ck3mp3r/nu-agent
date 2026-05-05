@@ -385,7 +385,8 @@ fn assistant_markdown_message_preserves_inline_span_styles_in_transcript_state()
         .spans
         .iter()
         .any(|span| span.content.as_ref() == "code"
-            && span.style.add_modifier.contains(Modifier::REVERSED)));
+            && span.style.fg == Some(ratatui::style::Color::Yellow)
+            && span.style.add_modifier.contains(Modifier::DIM)));
 }
 
 #[test]
@@ -556,6 +557,27 @@ fn status_lines_report_insert_and_normal_modes() {
         None,
     );
     assert!(normal_lines[1].contains("NORMAL"));
+}
+
+#[test]
+fn compact_status_line_is_concise_and_includes_mode_queue_tokens_model() {
+    let mut state = AppState::new();
+    state.enter_normal_mode();
+    state.latest_total_tokens = Some(7);
+    state.session_total_tokens = 27;
+
+    let status_line = crate::commands::agent::ui::tui::runtime::compact_status_line_for_test(
+        &state,
+        "openai/gpt-4o-mini",
+        "active=crossterm",
+        "event",
+        None,
+    );
+
+    assert!(status_line.contains("NOR"));
+    assert!(status_line.contains("queue: 0"));
+    assert!(status_line.contains("tokens: 27"));
+    assert!(status_line.contains("openai/gpt-4o-mini"));
 }
 
 #[test]
@@ -940,7 +962,8 @@ fn coordinator_hydration_preserves_assistant_markdown_styles() {
         .spans
         .iter()
         .any(|span| span.content.as_ref() == "code"
-            && span.style.add_modifier.contains(Modifier::REVERSED)));
+            && span.style.fg == Some(ratatui::style::Color::Yellow)
+            && span.style.add_modifier.contains(Modifier::DIM)));
 }
 
 #[test]
@@ -1472,6 +1495,26 @@ fn status_lines_include_latest_and_rolling_tokens_after_llm_end_events() {
             .iter()
             .any(|line| line == "Tokens: in=3 out=4 total=7 session=27")
     );
+}
+
+#[test]
+fn compact_status_line_reports_session_total_tokens_only() {
+    let mut state = AppState::new();
+    state.latest_total_tokens = Some(7);
+    state.session_total_tokens = 27;
+
+    let status_line = crate::commands::agent::ui::tui::runtime::compact_status_line_for_test(
+        &state,
+        "openai/gpt-4o-mini",
+        "active=crossterm",
+        "event",
+        None,
+    );
+
+    assert!(status_line.contains("tokens: 27"));
+    assert!(!status_line.contains("3/4/7"));
+    assert!(!status_line.contains("in="));
+    assert!(!status_line.contains("out="));
 }
 
 #[derive(Clone)]

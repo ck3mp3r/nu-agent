@@ -10,6 +10,7 @@ pub mod safety;
 pub mod selection;
 pub mod state;
 pub mod terminal;
+pub mod theme;
 pub mod transport;
 pub mod viewport;
 
