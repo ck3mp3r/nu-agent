@@ -2,12 +2,12 @@ use crate::commands::agent::ui::{
     event::UiEvent,
     tui::{
         reducer::{ESC_ABORT_CONFIRM_STATUS, ReducerInput, UserAction, reduce_with_cancel_controller},
-        state::{AppState, InputMode, TranscriptRole, UiPhase},
+        state::{AppState, InputMode, ToolCallStatus, TranscriptLineStatus, TranscriptRole, UiPhase},
     },
 };
 
 fn assert_reducer_invariants(state: &AppState) {
-    assert_eq!(state.input.locked, state.phase != UiPhase::Idle);
+    assert!(!state.input.locked);
     assert_eq!(state.abort.pending, state.phase == UiPhase::AbortPending);
     assert!(state.input.cursor <= state.input.buffer.len());
     assert!(state.input.buffer.is_char_boundary(state.input.cursor));
@@ -22,12 +22,13 @@ fn busy_state_with_clean_transcript() -> AppState {
         reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::InsertChar(ch)), None);
     }
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
+    let _ = state.activate_next_prompt();
     state.transcript_preview.clear();
     state
 }
 
 #[test]
-fn submit_transition_is_deterministic_and_locks_input() {
+fn submit_transition_is_deterministic_and_keeps_input_editable() {
     let mut state = AppState::new();
     reduce_with_cancel_controller(
         &mut state,
@@ -41,7 +42,7 @@ fn submit_transition_is_deterministic_and_locks_input() {
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
 
     assert_eq!(state.phase, UiPhase::Busy);
-    assert!(state.input.locked);
+    assert!(!state.input.locked);
     assert!(state.input.buffer.is_empty());
     assert_eq!(state.transcript_preview.len(), 1);
     assert_eq!(state.transcript_preview[0].role, TranscriptRole::User);
@@ -60,6 +61,7 @@ fn table_driven_ui_event_mapping_keeps_completed_as_finalize_boundary() {
         reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::InsertChar(ch)), None);
     }
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
+    let _ = state.activate_next_prompt();
 
     let cases = vec![
         UiEvent::LlmStart,
@@ -93,7 +95,7 @@ fn table_driven_ui_event_mapping_keeps_completed_as_finalize_boundary() {
     for event in cases {
         reduce_with_cancel_controller(&mut state, ReducerInput::Event(event), None);
         assert_eq!(state.phase, UiPhase::Busy);
-        assert!(state.input.locked);
+        assert!(!state.input.locked);
     }
 
     reduce_with_cancel_controller(
@@ -119,6 +121,7 @@ fn esc_then_esc_confirm_moves_into_abort_requested_without_unlocking() {
         reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::InsertChar(ch)), None);
     }
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
+    let _ = state.activate_next_prompt();
 
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Esc), None);
     assert_eq!(state.phase, UiPhase::AbortPending);
@@ -127,8 +130,8 @@ fn esc_then_esc_confirm_moves_into_abort_requested_without_unlocking() {
 
     let before_markers = state.transcript_preview.len();
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::EscConfirm), None);
-    assert_eq!(state.phase, UiPhase::AbortPending);
-    assert!(state.abort.pending);
+    assert_eq!(state.phase, UiPhase::Idle);
+    assert!(!state.abort.pending);
     assert_eq!(state.status_line, "Abort requested.");
     assert_eq!(state.transcript_preview.len(), before_markers + 1);
     assert_eq!(
@@ -153,6 +156,7 @@ fn completed_event_clears_pending_and_unlocks_input() {
         reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::InsertChar(ch)), None);
     }
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
+    let _ = state.activate_next_prompt();
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Esc), None);
 
     reduce_with_cancel_controller(
@@ -186,9 +190,11 @@ fn locked_input_prevents_typing_and_submission() {
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
 
     assert!(state.input.buffer.is_empty());
-    assert_eq!(state.transcript_preview.len(), 1);
+    assert_eq!(state.transcript_preview.len(), 2);
     assert_eq!(state.transcript_preview[0].role, TranscriptRole::User);
     assert_eq!(state.transcript_preview[0].text, "first");
+    assert_eq!(state.transcript_preview[1].role, TranscriptRole::User);
+    assert_eq!(state.transcript_preview[1].text, "second");
 }
 
 #[test]
@@ -219,6 +225,7 @@ fn race_completion_before_second_escape_prevents_reentry_into_abort_pending() {
         reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::InsertChar(ch)), None);
     }
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
+    let _ = state.activate_next_prompt();
 
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Esc), None);
     assert_eq!(state.phase, UiPhase::AbortPending);
@@ -250,6 +257,7 @@ fn completed_event_unlocks_and_clears_abort_pending() {
         reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::InsertChar(ch)), None);
     }
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
+    let _ = state.activate_next_prompt();
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Esc), None);
 
     reduce_with_cancel_controller(
@@ -403,7 +411,8 @@ fn assistant_message_is_appended_to_transcript_before_completed_unlock() {
         reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::InsertChar(ch)), None);
     }
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
-    assert!(state.input.locked);
+    let _ = state.activate_next_prompt();
+    assert!(!state.input.locked);
 
     reduce_with_cancel_controller(
         &mut state,
@@ -413,7 +422,7 @@ fn assistant_message_is_appended_to_transcript_before_completed_unlock() {
         None,
     );
 
-    assert!(state.input.locked);
+    assert!(!state.input.locked);
     assert_eq!(
         state
             .transcript_preview
@@ -470,6 +479,15 @@ fn tool_end_transcript_line_shows_args_summary_without_result_payload_dump() {
     let mut state = AppState::new();
     reduce_with_cancel_controller(
         &mut state,
+        ReducerInput::Event(UiEvent::ToolStart {
+            name: "k8s__list_pods".to_string(),
+            source: "mcp".to_string(),
+            arguments: r#"{"namespace":"prod"}"#.to_string(),
+        }),
+        None,
+    );
+    reduce_with_cancel_controller(
+        &mut state,
         ReducerInput::Event(UiEvent::ToolEnd {
             name: "k8s__list_pods".to_string(),
             source: "mcp".to_string(),
@@ -486,9 +504,100 @@ fn tool_end_transcript_line_shows_args_summary_without_result_payload_dump() {
     let line = &state.transcript_preview[0];
     assert_eq!(line.role, TranscriptRole::Tool);
     assert!(line.text.starts_with("tool[k8s__list_pods] args="));
+    assert!(line.text.contains("· done"));
     assert!(line.text.contains("namespace"));
     assert!(!line.text.contains("api-0"));
     assert!(!line.text.contains("[{"));
+}
+
+#[test]
+fn tool_row_materializes_immediately_on_tool_start_with_args_and_running_status() {
+    let mut state = AppState::new();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::ToolStart {
+            name: "k8s__list_pods".to_string(),
+            source: "mcp".to_string(),
+            arguments: r#"{"namespace":"prod"}"#.to_string(),
+        }),
+        None,
+    );
+
+    assert_eq!(state.transcript_preview.len(), 1);
+    let line = &state.transcript_preview[0];
+    assert_eq!(line.role, TranscriptRole::Tool);
+    assert!(line.text.starts_with("tool[k8s__list_pods] args="));
+    assert!(line.text.contains("namespace"));
+    assert_eq!(
+        state.transcript_line_status_for_index(0),
+        Some(TranscriptLineStatus::Tool(ToolCallStatus::InProgress))
+    );
+}
+
+#[test]
+fn tool_end_transitions_same_row_to_done_or_failed_status() {
+    let mut state = AppState::new();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::ToolStart {
+            name: "gh__get_pr".to_string(),
+            source: "mcp".to_string(),
+            arguments: r#"{"number":1}"#.to_string(),
+        }),
+        None,
+    );
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::ToolEnd {
+            name: "gh__get_pr".to_string(),
+            source: "mcp".to_string(),
+            arguments: r#"{"number":1}"#.to_string(),
+            success: true,
+            result: "ok".to_string(),
+            error_kind: None,
+            message: None,
+        }),
+        None,
+    );
+
+    assert_eq!(state.transcript_preview.len(), 1);
+    assert!(state.transcript_preview[0].text.contains("· done"));
+    assert_eq!(
+        state.transcript_line_status_for_index(0),
+        Some(TranscriptLineStatus::Tool(ToolCallStatus::Done))
+    );
+
+    let mut failed = AppState::new();
+    reduce_with_cancel_controller(
+        &mut failed,
+        ReducerInput::Event(UiEvent::ToolStart {
+            name: "gh__get_pr".to_string(),
+            source: "mcp".to_string(),
+            arguments: r#"{"number":2}"#.to_string(),
+        }),
+        None,
+    );
+    reduce_with_cancel_controller(
+        &mut failed,
+        ReducerInput::Event(UiEvent::ToolEnd {
+            name: "gh__get_pr".to_string(),
+            source: "mcp".to_string(),
+            arguments: r#"{"number":2}"#.to_string(),
+            success: false,
+            result: "err".to_string(),
+            error_kind: Some("tool_error".to_string()),
+            message: Some("boom".to_string()),
+        }),
+        None,
+    );
+    assert_eq!(failed.transcript_preview.len(), 1);
+    assert!(failed.transcript_preview[0].text.contains("· failed"));
+    assert_eq!(
+        failed.transcript_line_status_for_index(0),
+        Some(TranscriptLineStatus::Tool(ToolCallStatus::Failed))
+    );
 }
 
 #[test]
@@ -554,6 +663,20 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
         state
     }
 
+    fn busy_with_running_tool_line() -> AppState {
+        let mut state = busy_state_with_clean_transcript();
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::Event(UiEvent::ToolStart {
+                name: "k8s__list_pods".to_string(),
+                source: "mcp".to_string(),
+                arguments: r#"{"namespace":"prod"}"#.to_string(),
+            }),
+            None,
+        );
+        state
+    }
+
     let cases = vec![
         Case {
             name: "llm_start_from_idle_moves_busy",
@@ -585,7 +708,7 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
             pre: busy_empty_status,
         },
         Case {
-            name: "tool_end_appends_tool_line_and_thinking",
+            name: "tool_end_updates_existing_tool_line_and_thinking",
             event: UiEvent::ToolEnd {
                 name: "k8s__list_pods".to_string(),
                 source: "mcp".to_string(),
@@ -595,7 +718,7 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
                 error_kind: None,
                 message: None,
             },
-            pre: busy_empty_status,
+            pre: busy_with_running_tool_line,
         },
         Case {
             name: "llm_end_records_tokens_and_sets_ready_status",
@@ -637,7 +760,7 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
         match case.name {
             "llm_start_from_idle_moves_busy" => {
                 assert_eq!(state.phase, UiPhase::Busy);
-                assert!(state.input.locked);
+                assert!(!state.input.locked);
             }
             "llm_start_when_busy_is_noop" => {
                 assert_eq!(state, before);
@@ -651,10 +774,11 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
             "tool_start_sets_status" => {
                 assert_eq!(state.status_line, "Tool: k8s__list_pods");
             }
-            "tool_end_appends_tool_line_and_thinking" => {
+            "tool_end_updates_existing_tool_line_and_thinking" => {
                 assert_eq!(state.transcript_preview.len(), 1);
                 assert_eq!(state.transcript_preview[0].role, TranscriptRole::Tool);
                 assert!(state.transcript_preview[0].text.starts_with("tool[k8s__list_pods] args="));
+                assert!(state.transcript_preview[0].text.contains("· done"));
                 assert_eq!(state.status_line, "Thinking...");
             }
             "llm_end_records_tokens_and_sets_ready_status" => {

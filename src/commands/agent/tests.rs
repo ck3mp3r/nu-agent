@@ -22,6 +22,30 @@ fn create_test_agent() -> (Agent, TempDir) {
 }
 
 #[test]
+fn resolve_agent_mode_defaults_to_tui_for_interactive_no_input() {
+    let mode = super::resolve_agent_mode(true, true, true);
+    assert_eq!(mode, super::AgentMode::Tui);
+}
+
+#[test]
+fn resolve_agent_mode_uses_stderr_when_input_is_provided() {
+    let mode = super::resolve_agent_mode(false, true, true);
+    assert_eq!(mode, super::AgentMode::Stderr);
+}
+
+#[test]
+fn resolve_agent_mode_uses_stderr_when_stdin_is_not_tty() {
+    let mode = super::resolve_agent_mode(true, false, true);
+    assert_eq!(mode, super::AgentMode::Stderr);
+}
+
+#[test]
+fn resolve_agent_mode_uses_stderr_when_stderr_is_not_tty() {
+    let mode = super::resolve_agent_mode(true, true, false);
+    assert_eq!(mode, super::AgentMode::Stderr);
+}
+
+#[test]
 fn agent_command_has_correct_name() {
     let (agent, _temp_dir) = create_test_agent();
     assert_eq!(SimplePluginCommand::name(&agent), "agent");
@@ -213,19 +237,12 @@ fn agent_command_signature_has_quiet_flag() {
 }
 
 #[test]
-fn agent_command_signature_has_tui_switch() {
+fn agent_command_signature_does_not_expose_tui_switch() {
     let (agent, _temp_dir) = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
 
     let tui_flag = sig.named.iter().find(|f| f.long == "tui");
-    assert!(tui_flag.is_some(), "Missing --tui flag");
-
-    let flag = tui_flag.expect("tui flag");
-    assert_eq!(flag.arg, None, "--tui should be a switch");
-    assert!(
-        !flag.desc.is_empty() && flag.desc.to_ascii_lowercase().contains("tui"),
-        "--tui help text should describe TUI mode"
-    );
+    assert!(tui_flag.is_none(), "--tui flag should be removed");
 }
 
 #[test]

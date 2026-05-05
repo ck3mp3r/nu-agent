@@ -2,6 +2,9 @@ use crate::commands::agent::ui::tui::state::{
     AppState,
     InputMode,
     PaneFocus,
+    PromptStatus,
+    ToolCallStatus,
+    TranscriptLineStatus,
     TranscriptRole,
     UiPhase,
 };
@@ -26,29 +29,35 @@ fn defaults_start_idle_with_unlocked_input_and_no_abort_pending() {
 }
 
 #[test]
-fn submit_acceptance_clears_input_and_locks() {
+fn submit_acceptance_clears_input_and_keeps_input_editable() {
     let mut state = AppState::new();
     for ch in "check cluster status".chars() {
         state.append_input_char(ch);
     }
 
-    state.accept_submit();
+    state.enqueue_prompt("check cluster status".to_string());
 
     assert_eq!(state.phase, UiPhase::Busy);
-    assert!(state.input.locked);
+    assert!(!state.input.locked);
     assert!(state.input.buffer.is_empty());
 }
 
 #[test]
-fn non_idle_phase_always_keeps_input_locked() {
+fn non_idle_phase_keeps_input_editable_for_queueing() {
     let mut state = AppState::new();
 
-    state.accept_submit();
-    assert!(state.input.locked);
+    state.enqueue_prompt("one".to_string());
+    assert!(!state.input.locked);
+    assert_eq!(state.prompt_items().len(), 1);
+    assert_eq!(state.prompt_items()[0].status, PromptStatus::Queued);
+
+    let _ = state.activate_next_prompt();
+    assert_eq!(state.active_prompt_id(), Some(1));
+    assert_eq!(state.prompt_items()[0].status, PromptStatus::InProgress);
 
     state.request_abort_confirmation();
     assert_eq!(state.phase, UiPhase::AbortPending);
-    assert!(state.input.locked);
+    assert!(!state.input.locked);
 }
 
 #[test]
@@ -57,7 +66,8 @@ fn abort_pending_requires_busy_context() {
     assert!(!state.request_abort_confirmation());
     assert_eq!(state.phase, UiPhase::Idle);
 
-    state.accept_submit();
+    state.enqueue_prompt("run".to_string());
+    let _ = state.activate_next_prompt();
     assert!(state.request_abort_confirmation());
     assert_eq!(state.phase, UiPhase::AbortPending);
     assert!(state.abort.pending);
@@ -66,7 +76,8 @@ fn abort_pending_requires_busy_context() {
 #[test]
 fn finalize_resets_abort_pending_and_unlocks_input() {
     let mut state = AppState::new();
-    state.accept_submit();
+    state.enqueue_prompt("run".to_string());
+    let _ = state.activate_next_prompt();
     let marker = state.abort.confirmation_marker;
     assert!(state.request_abort_confirmation());
     assert!(state.abort.confirmation_marker > marker);
@@ -76,6 +87,71 @@ fn finalize_resets_abort_pending_and_unlocks_input() {
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.input.locked);
     assert!(!state.abort.pending);
+    assert_eq!(state.prompt_items()[0].status, PromptStatus::Done);
+}
+
+#[test]
+fn prompt_queue_lifecycle_is_fifo_and_single_in_progress() {
+    let mut state = AppState::new();
+    state.enqueue_prompt("p1".to_string());
+    state.enqueue_prompt("p2".to_string());
+    state.enqueue_prompt("p3".to_string());
+
+    assert_eq!(state.pending_prompt_ids().iter().copied().collect::<Vec<_>>(), vec![1, 2, 3]);
+
+    let first = state.activate_next_prompt();
+    assert_eq!(first, Some(1));
+    assert_eq!(state.active_prompt_id(), Some(1));
+    assert_eq!(state.prompt_items()[0].status, PromptStatus::InProgress);
+    assert_eq!(state.prompt_items()[1].status, PromptStatus::Queued);
+    assert_eq!(state.prompt_items()[2].status, PromptStatus::Queued);
+
+    state.complete_active_prompt();
+    assert_eq!(state.prompt_items()[0].status, PromptStatus::Done);
+
+    let second = state.activate_next_prompt();
+    assert_eq!(second, Some(2));
+    assert_eq!(state.active_prompt_id(), Some(2));
+
+    state.complete_active_prompt();
+    let third = state.activate_next_prompt();
+    assert_eq!(third, Some(3));
+    state.complete_active_prompt();
+
+    assert_eq!(
+        state
+            .prompt_items()
+            .iter()
+            .map(|item| item.status)
+            .collect::<Vec<_>>(),
+        vec![PromptStatus::Done, PromptStatus::Done, PromptStatus::Done]
+    );
+}
+
+#[test]
+fn global_abort_cancels_active_and_all_pending_prompts() {
+    let mut state = AppState::new();
+    state.enqueue_prompt("p1".to_string());
+    state.enqueue_prompt("p2".to_string());
+    state.enqueue_prompt("p3".to_string());
+    let _ = state.activate_next_prompt();
+
+    state.cancel_active_and_pending_prompts();
+
+    assert_eq!(state.active_prompt_id(), None);
+    assert!(state.pending_prompt_ids().is_empty());
+    assert_eq!(
+        state
+            .prompt_items()
+            .iter()
+            .map(|item| item.status)
+            .collect::<Vec<_>>(),
+        vec![
+            PromptStatus::Cancelled,
+            PromptStatus::Cancelled,
+            PromptStatus::Cancelled
+        ]
+    );
 }
 
 #[test]
@@ -170,6 +246,28 @@ fn record_token_usage_tracks_latest_and_accumulates_session_total() {
     assert_eq!(state.latest_output_tokens, Some(3));
     assert_eq!(state.latest_total_tokens, Some(5));
     assert_eq!(state.session_total_tokens, 17);
+}
+
+#[test]
+fn tool_call_lifecycle_tracks_transcript_line_status_by_same_row() {
+    let mut state = AppState::new();
+
+    state.start_tool_call("k8s__list_pods", r#"{"namespace":"prod"}"#);
+
+    assert_eq!(state.transcript_preview.len(), 1);
+    assert_eq!(state.transcript_preview[0].role, TranscriptRole::Tool);
+    assert!(state.transcript_preview[0].text.contains("tool[k8s__list_pods] args="));
+    assert_eq!(
+        state.transcript_line_status_for_index(0),
+        Some(TranscriptLineStatus::Tool(ToolCallStatus::InProgress))
+    );
+
+    state.finish_tool_call("k8s__list_pods", r#"{"namespace":"prod"}"#, true);
+    assert!(state.transcript_preview[0].text.contains("· done"));
+    assert_eq!(
+        state.transcript_line_status_for_index(0),
+        Some(TranscriptLineStatus::Tool(ToolCallStatus::Done))
+    );
 }
 
 #[test]

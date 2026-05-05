@@ -1,5 +1,4 @@
 use std::{
-    collections::VecDeque,
     fs::{File, OpenOptions},
     io::{Read, Write},
     os::fd::AsRawFd,
@@ -9,7 +8,7 @@ use std::{
 use ratatui::{
     Terminal,
     backend::CrosstermBackend,
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     layout::Position,
     layout::{Constraint, Direction, Layout},
     text::{Line, Span, Text},
@@ -26,9 +25,9 @@ use crate::commands::agent::ui::{
         input::{TerminalEvent, TerminalKey},
         layout::{LayoutInput, LayoutOutput, recompute_layout},
         markdown::project_markdown_to_lines,
-        reducer::{ReducerInput, UserAction, reduce_with_cancel_controller},
+        reducer::{ReducerInput, reduce_with_cancel_controller},
         selection::TranscriptSelection,
-        state::{AppState, TranscriptRole},
+        state::{AppState, PromptStatus, ToolCallStatus, TranscriptLineStatus, TranscriptRole},
         terminal::{TerminalBackend, TerminalLifecycle, TerminalLifecycleError},
         transport::TuiTransport,
     },
@@ -75,7 +74,6 @@ pub struct RuntimeCoordinator {
     side_pane_visible: Option<bool>,
     quit_requested: bool,
     fatal_error: Option<String>,
-    submitted_prompts: VecDeque<String>,
     active_model_identity: String,
     input_backend_status: String,
     last_input_poll_status: String,
@@ -152,7 +150,6 @@ impl RuntimeCoordinator {
             side_pane_visible,
             quit_requested: false,
             fatal_error: None,
-            submitted_prompts: VecDeque::new(),
             active_model_identity: "unknown".to_string(),
             input_backend_status: "unknown".to_string(),
             last_input_poll_status: "waiting for input poll".to_string(),
@@ -199,7 +196,7 @@ impl RuntimeCoordinator {
     }
 
     pub fn take_submitted_prompt(&mut self) -> Option<String> {
-        self.submitted_prompts.pop_front()
+        self.state.take_next_prompt_for_execution()
     }
 
     pub fn set_active_model_identity(&mut self, active_model_identity: String) {
@@ -257,14 +254,6 @@ impl RuntimeCoordinator {
             self.state.status_line = "Esc pressed. Press Ctrl+C to quit.".to_string();
         }
 
-        let prompt_before_submit = match crate::commands::agent::ui::tui::input::map_terminal_event(
-            &event,
-            self.state.input.locked,
-        ) {
-            Some(UserAction::Submit) if !self.state.input.locked => Some(self.state.input.buffer.clone()),
-            _ => None,
-        };
-
         if let TerminalEvent::Key(TerminalKey::CtrlC) = event {
             self.quit_requested = true;
             self.cancel_controller.request_cancel();
@@ -281,12 +270,6 @@ impl RuntimeCoordinator {
         let _ = dispatch_terminal_event(&mut self.state, &event, Some(&self.cancel_controller));
         self.flush_clipboard_request();
         self.quit_requested |= self.state.quit_requested;
-
-        if let Some(prompt) = prompt_before_submit
-            && !prompt.trim().is_empty()
-        {
-            self.submitted_prompts.push_back(prompt);
-        }
 
         self.sync_transcript_viewport_lines_with_layout();
     }
@@ -363,7 +346,7 @@ impl RuntimeCoordinator {
         if let Some(error) = self.last_input_error.as_deref() {
             message.push_str(&format!(" Last error: {error}."));
         }
-        message.push_str(" Run `agent --tui` in an interactive terminal and verify TTY access.");
+        message.push_str(" Run `agent` in an interactive terminal and verify TTY access.");
 
         self.state.status_line = message.clone();
         self.fatal_error = Some(message);
@@ -445,6 +428,7 @@ impl RuntimeCoordinator {
                 .enumerate()
                 .flat_map(|(offset, line)| {
                     let global_idx = window_start.saturating_add(offset);
+                    let line_status = self.state.transcript_line_status_for_index(global_idx);
                     let is_cursor_line = self.state.transcript_cursor_index() == Some(global_idx)
                         && self.state.input_mode
                             != crate::commands::agent::ui::tui::state::InputMode::Insert;
@@ -456,6 +440,8 @@ impl RuntimeCoordinator {
                         vertical[1].width.saturating_sub(2) as usize,
                         is_selected,
                         is_cursor_line,
+                        line_status,
+                        current_time_millis(),
                     )
                 })
                 .collect::<Vec<_>>();
@@ -503,8 +489,7 @@ impl RuntimeCoordinator {
                     frame.render_widget(status_widget, vertical[2]);
                 }
 
-                let input_prefix = busy_indicator_for_phase(self.state.phase, current_time_millis());
-                let input_line = format!("{input_prefix}{}", self.state.input.buffer);
+                let input_line = self.state.input.buffer.clone();
                 let input_border_style = if self.state.pane_focus
                     == crate::commands::agent::ui::tui::state::PaneFocus::Input
                 {
@@ -526,14 +511,12 @@ impl RuntimeCoordinator {
                 }
 
                 if !self.state.input.locked && vertical[3].height >= 2 && vertical[3].width >= 2 {
-                    let prefix_width = input_prefix.chars().count() as u16;
                     let cursor_col = self.state.input.buffer[..self.state.input.cursor]
                         .chars()
                         .count() as u16;
                     let x = vertical[3]
                         .x
                         .saturating_add(1)
-                        .saturating_add(prefix_width)
                         .saturating_add(cursor_col);
                     let max_x = vertical[3]
                         .x
@@ -960,6 +943,8 @@ fn render_transcript_lines(
     content_width: usize,
     selected: bool,
     cursor_line: bool,
+    line_status: Option<TranscriptLineStatus>,
+    now_millis: u128,
 ) -> Vec<Line<'static>> {
     let selection_overlay = if selected {
         Style::default().bg(Color::DarkGray)
@@ -983,17 +968,34 @@ fn render_transcript_lines(
     }
 
     let role_style = transcript_role_style(line.role);
+    let indicator = line_status
+        .map(|status| indicator_for_line_status(status, now_millis))
+        .unwrap_or("");
+    let prompt_modifier = if line_status
+        == Some(TranscriptLineStatus::Prompt(PromptStatus::Cancelled))
+    {
+        Modifier::CROSSED_OUT
+    } else {
+        Modifier::empty()
+    };
+
+    let prefix = if indicator.is_empty() {
+        cursor_prefix.to_string()
+    } else {
+        format!("{cursor_prefix}{indicator} ")
+    };
+
     if let Some(rendered) = line.rendered {
         let mut spans = vec![Span::styled(
-            cursor_prefix.to_string(),
-            role_style.patch(selection_overlay),
+            prefix,
+            role_style.patch(selection_overlay).add_modifier(prompt_modifier),
         )];
         spans.extend(
             rendered
             .spans
             .into_iter()
             .map(|span| {
-                let style = span.style.patch(role_style);
+                let style = span.style.patch(role_style).add_modifier(prompt_modifier);
                 Span::styled(span.content.into_owned(), style.patch(selection_overlay))
             })
             .collect::<Vec<_>>(),
@@ -1002,24 +1004,63 @@ fn render_transcript_lines(
     }
 
     vec![Line::from(vec![
-        Span::styled(cursor_prefix.to_string(), role_style.patch(selection_overlay)),
-        Span::styled(line.text, role_style.patch(selection_overlay)),
+        Span::styled(prefix, role_style.patch(selection_overlay).add_modifier(prompt_modifier)),
+        Span::styled(
+            line.text,
+            role_style.patch(selection_overlay).add_modifier(prompt_modifier),
+        ),
     ])]
 }
 
-fn busy_indicator_for_phase(
-    phase: crate::commands::agent::ui::tui::state::UiPhase,
+const IN_PROGRESS_SPINNER_FRAMES: [&str; 10] = [
+    "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏",
+];
+
+fn prompt_indicator_for_status(status: PromptStatus, now_millis: u128) -> &'static str {
+    match status {
+        PromptStatus::Queued => "•",
+        PromptStatus::InProgress => {
+            let idx = ((now_millis / 100) % IN_PROGRESS_SPINNER_FRAMES.len() as u128) as usize;
+            IN_PROGRESS_SPINNER_FRAMES[idx]
+        }
+        PromptStatus::Done => "✓",
+        PromptStatus::Cancelled => "✕",
+    }
+}
+
+fn tool_indicator_for_status(status: ToolCallStatus, now_millis: u128) -> &'static str {
+    match status {
+        ToolCallStatus::InProgress => {
+            let idx = ((now_millis / 100) % IN_PROGRESS_SPINNER_FRAMES.len() as u128) as usize;
+            IN_PROGRESS_SPINNER_FRAMES[idx]
+        }
+        ToolCallStatus::Done => "✓",
+        ToolCallStatus::Failed => "✕",
+    }
+}
+
+fn indicator_for_line_status(status: TranscriptLineStatus, now_millis: u128) -> &'static str {
+    match status {
+        TranscriptLineStatus::Prompt(prompt) => prompt_indicator_for_status(prompt, now_millis),
+        TranscriptLineStatus::Tool(tool) => tool_indicator_for_status(tool, now_millis),
+    }
+}
+
+#[cfg(test)]
+pub(super) fn prompt_indicator_for_status_for_test(
+    status: PromptStatus,
     now_millis: u128,
 ) -> &'static str {
-    const FRAMES: [&str; 10] = ["⠋ ", "⠙ ", "⠹ ", "⠸ ", "⠼ ", "⠴ ", "⠦ ", "⠧ ", "⠇ ", "⠏ "];
-    match phase {
-        crate::commands::agent::ui::tui::state::UiPhase::Idle => "",
-        crate::commands::agent::ui::tui::state::UiPhase::Busy
-        | crate::commands::agent::ui::tui::state::UiPhase::AbortPending => {
-            let frame = ((now_millis / 80) % FRAMES.len() as u128) as usize;
-            FRAMES[frame]
-        }
-    }
+    prompt_indicator_for_status(status, now_millis)
+}
+
+#[cfg(test)]
+pub(super) fn render_transcript_lines_for_test(
+    line: crate::commands::agent::ui::tui::state::TranscriptLine,
+    line_status: Option<TranscriptLineStatus>,
+    now_millis: u128,
+) -> Vec<Line<'static>> {
+    render_transcript_lines(line, 80, false, false, line_status, now_millis)
 }
 
 fn current_time_millis() -> u128 {
@@ -1031,14 +1072,14 @@ fn current_time_millis() -> u128 {
 
 #[cfg(test)]
 pub(super) fn input_line_for_test(state: &AppState) -> String {
-    let prefix = busy_indicator_for_phase(state.phase, current_time_millis());
-    format!("{prefix}{}", state.input.buffer)
+    let _ = current_time_millis();
+    state.input.buffer.clone()
 }
 
 #[cfg(test)]
 pub(super) fn input_line_for_test_at_millis(state: &AppState, now_millis: u128) -> String {
-    let prefix = busy_indicator_for_phase(state.phase, now_millis);
-    format!("{prefix}{}", state.input.buffer)
+    let _ = now_millis;
+    state.input.buffer.clone()
 }
 
 pub struct TuiRuntimeRenderer<R, E>
@@ -1268,13 +1309,13 @@ where
 #[cfg(test)]
 #[derive(Debug, Clone)]
 pub struct ScriptedTerminalEvents {
-    queue: VecDeque<TerminalEvent>,
+    queue: std::collections::VecDeque<TerminalEvent>,
 }
 
 #[cfg(test)]
 impl ScriptedTerminalEvents {
     pub fn from_script(script: &str) -> Self {
-        let mut queue = VecDeque::new();
+        let mut queue = std::collections::VecDeque::new();
 
         for raw in script.split(',') {
             let token = raw.trim();

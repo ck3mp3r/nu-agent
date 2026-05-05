@@ -86,7 +86,7 @@ fn escape_in_idle_does_not_request_cancellation() {
 }
 
 #[test]
-fn locked_typing_is_blocked_through_dispatch_path() {
+fn typing_remains_available_while_prompt_is_active() {
     let mut state = AppState::new();
     let cancel_controller = CancelController::new();
 
@@ -107,15 +107,15 @@ fn locked_typing_is_blocked_through_dispatch_path() {
         Some(&cancel_controller),
     );
 
-    assert!(!changed);
-    assert!(state.input.buffer.is_empty());
+    assert!(changed);
+    assert_eq!(state.input.buffer, "s");
     assert_eq!(state.transcript_preview.len(), 1);
     assert_eq!(state.transcript_preview[0].role, TranscriptRole::User);
     assert_eq!(state.transcript_preview[0].text, "f");
 }
 
 #[test]
-fn submit_path_appends_prompt_and_locks() {
+fn submit_path_appends_prompt_and_keeps_input_editable() {
     let mut state = AppState::new();
 
     dispatch_terminal_event(
@@ -127,7 +127,7 @@ fn submit_path_appends_prompt_and_locks() {
 
     assert!(changed);
     assert_eq!(state.phase, UiPhase::Busy);
-    assert!(state.input.locked);
+    assert!(!state.input.locked);
     assert!(state.input.buffer.is_empty());
     assert_eq!(state.transcript_preview.len(), 1);
     assert_eq!(state.transcript_preview[0].role, TranscriptRole::User);

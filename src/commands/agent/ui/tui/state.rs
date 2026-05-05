@@ -1,6 +1,8 @@
 use crate::commands::agent::ui::tui::markdown::rendered_line_to_plain_text;
 use crate::commands::agent::ui::tui::{selection::TranscriptSelection, viewport::TranscriptViewport};
 use ratatui::text::Line;
+use std::collections::VecDeque;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiPhase {
@@ -29,6 +31,43 @@ pub enum TranscriptRole {
     System,
     Tool,
     Separator,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromptStatus {
+    Queued,
+    InProgress,
+    Done,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolCallStatus {
+    InProgress,
+    Done,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TranscriptLineStatus {
+    Prompt(PromptStatus),
+    Tool(ToolCallStatus),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueuedPrompt {
+    pub id: u64,
+    pub prompt_text: String,
+    pub transcript_line_index: usize,
+    pub status: PromptStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolCallLine {
+    pub id: u64,
+    pub transcript_line_index: usize,
+    pub status: ToolCallStatus,
+    pub key: String,
 }
 
 const TURN_SEPARATOR_LINE: &str = "────────────────";
@@ -70,6 +109,13 @@ pub struct AppState {
     pub latest_total_tokens: Option<u64>,
     pub session_total_tokens: u64,
     pub quit_requested: bool,
+    prompt_items: Vec<QueuedPrompt>,
+    tool_call_items: Vec<ToolCallLine>,
+    active_tool_ids_by_key: HashMap<String, VecDeque<u64>>,
+    pending_prompt_ids: VecDeque<u64>,
+    active_prompt_id: Option<u64>,
+    next_prompt_id: u64,
+    next_tool_call_id: u64,
     active_cycle: bool,
     insert_exit_pending_j: bool,
     normal_pending_key: Option<char>,
@@ -96,6 +142,13 @@ impl Default for AppState {
             latest_total_tokens: None,
             session_total_tokens: 0,
             quit_requested: false,
+            prompt_items: Vec::new(),
+            tool_call_items: Vec::new(),
+            active_tool_ids_by_key: HashMap::new(),
+            pending_prompt_ids: VecDeque::new(),
+            active_prompt_id: None,
+            next_prompt_id: 1,
+            next_tool_call_id: 1,
             active_cycle: false,
             insert_exit_pending_j: false,
             normal_pending_key: None,
@@ -113,6 +166,103 @@ impl AppState {
 
     pub fn is_active_cycle(&self) -> bool {
         self.active_cycle
+    }
+
+    #[cfg(test)]
+    pub fn prompt_items(&self) -> &[QueuedPrompt] {
+        &self.prompt_items
+    }
+
+    #[cfg(test)]
+    pub fn active_prompt_id(&self) -> Option<u64> {
+        self.active_prompt_id
+    }
+
+    #[cfg(test)]
+    pub fn pending_prompt_ids(&self) -> &VecDeque<u64> {
+        &self.pending_prompt_ids
+    }
+
+    pub fn prompt_status_for_transcript_line(&self, transcript_line_index: usize) -> Option<PromptStatus> {
+        self.prompt_items
+            .iter()
+            .rev()
+            .find(|prompt| prompt.transcript_line_index == transcript_line_index)
+            .map(|prompt| prompt.status)
+    }
+
+    pub fn transcript_line_status_for_index(
+        &self,
+        transcript_line_index: usize,
+    ) -> Option<TranscriptLineStatus> {
+        if let Some(status) = self.prompt_status_for_transcript_line(transcript_line_index) {
+            return Some(TranscriptLineStatus::Prompt(status));
+        }
+
+        self.tool_call_items
+            .iter()
+            .rev()
+            .find(|tool| tool.transcript_line_index == transcript_line_index)
+            .map(|tool| TranscriptLineStatus::Tool(tool.status))
+    }
+
+    pub fn start_tool_call(&mut self, name: &str, arguments: &str) {
+        let args_summary = crate::commands::agent::ui::tui::reducer::summarize_tool_arguments(arguments);
+        let line_text = format!("tool[{name}] args={args_summary}");
+        self.push_transcript_line(TranscriptRole::Tool, line_text);
+
+        let transcript_line_index = self.transcript_preview.len().saturating_sub(1);
+        let id = self.next_tool_call_id;
+        self.next_tool_call_id = self.next_tool_call_id.saturating_add(1);
+        let key = Self::tool_call_key(name, arguments);
+
+        self.tool_call_items.push(ToolCallLine {
+            id,
+            transcript_line_index,
+            status: ToolCallStatus::InProgress,
+            key: key.clone(),
+        });
+        self.active_tool_ids_by_key
+            .entry(key)
+            .or_default()
+            .push_back(id);
+    }
+
+    pub fn finish_tool_call(&mut self, name: &str, arguments: &str, success: bool) {
+        let key = Self::tool_call_key(name, arguments);
+        let maybe_id = self
+            .active_tool_ids_by_key
+            .get_mut(&key)
+            .and_then(|ids| ids.pop_front());
+        if self
+            .active_tool_ids_by_key
+            .get(&key)
+            .is_some_and(|ids| ids.is_empty())
+        {
+            self.active_tool_ids_by_key.remove(&key);
+        }
+
+        if let Some(id) = maybe_id
+            && let Some(tool) = self.tool_call_items.iter_mut().find(|tool| tool.id == id)
+        {
+            tool.status = if success {
+                ToolCallStatus::Done
+            } else {
+                ToolCallStatus::Failed
+            };
+
+            if let Some(line) = self.transcript_preview.get_mut(tool.transcript_line_index) {
+                line.text = if success {
+                    format!("{} · done", line.text)
+                } else {
+                    format!("{} · failed", line.text)
+                };
+            }
+        }
+    }
+
+    fn tool_call_key(name: &str, arguments: &str) -> String {
+        format!("{name}\n{arguments}")
     }
 
     pub fn append_input_char(&mut self, ch: char) {
@@ -398,13 +548,90 @@ impl AppState {
         self.input.buffer.clear();
         self.input.cursor = 0;
         self.phase = UiPhase::Busy;
+        self.active_cycle = self.active_prompt_id.is_some() || !self.pending_prompt_ids.is_empty();
+        self.abort.pending = false;
+        self.ensure_invariants();
+    }
+
+    pub fn enqueue_prompt(&mut self, submitted_text: String) -> u64 {
+        let id = self.next_prompt_id;
+        self.next_prompt_id = self.next_prompt_id.saturating_add(1);
+
+        self.push_transcript_line(TranscriptRole::User, submitted_text.clone());
+        let transcript_line_index = self.transcript_preview.len().saturating_sub(1);
+        self.prompt_items.push(QueuedPrompt {
+            id,
+            prompt_text: submitted_text,
+            transcript_line_index,
+            status: PromptStatus::Queued,
+        });
+        self.pending_prompt_ids.push_back(id);
+        self.accept_submit();
+        id
+    }
+
+    pub fn activate_next_prompt(&mut self) -> Option<u64> {
+        if self.active_prompt_id.is_some() {
+            self.ensure_invariants();
+            return None;
+        }
+
+        let next_id = self.pending_prompt_ids.pop_front()?;
+        if let Some(prompt) = self.prompt_items.iter_mut().find(|prompt| prompt.id == next_id) {
+            prompt.status = PromptStatus::InProgress;
+        }
+        self.active_prompt_id = Some(next_id);
+        self.phase = UiPhase::Busy;
         self.active_cycle = true;
+        self.abort.pending = false;
+        self.ensure_invariants();
+        Some(next_id)
+    }
+
+    pub fn take_next_prompt_for_execution(&mut self) -> Option<String> {
+        let active_id = self.activate_next_prompt()?;
+        self.prompt_items
+            .iter()
+            .find(|prompt| prompt.id == active_id)
+            .map(|prompt| prompt.prompt_text.clone())
+    }
+
+    pub fn complete_active_prompt(&mut self) {
+        if let Some(active_id) = self.active_prompt_id.take()
+            && let Some(prompt) = self.prompt_items.iter_mut().find(|prompt| prompt.id == active_id)
+        {
+            prompt.status = PromptStatus::Done;
+        }
+
+        self.phase = UiPhase::Idle;
+        self.active_cycle = false;
+        self.abort.pending = false;
+        self.ensure_invariants();
+    }
+
+    pub fn cancel_active_and_pending_prompts(&mut self) {
+        if let Some(active_id) = self.active_prompt_id.take()
+            && let Some(prompt) = self.prompt_items.iter_mut().find(|prompt| prompt.id == active_id)
+        {
+            prompt.status = PromptStatus::Cancelled;
+        }
+
+        let pending_ids = self.pending_prompt_ids.drain(..).collect::<Vec<_>>();
+        for pending_id in pending_ids {
+            if let Some(prompt) = self.prompt_items.iter_mut().find(|prompt| prompt.id == pending_id) {
+                prompt.status = PromptStatus::Cancelled;
+            }
+        }
+
+        self.phase = UiPhase::Idle;
+        self.active_cycle = false;
         self.abort.pending = false;
         self.ensure_invariants();
     }
 
     pub fn request_abort_confirmation(&mut self) -> bool {
-        if self.phase != UiPhase::Busy || !self.active_cycle {
+        if !(self.active_prompt_id.is_some() || !self.pending_prompt_ids.is_empty() || self.active_cycle)
+        {
             self.ensure_invariants();
             return false;
         }
@@ -417,10 +644,7 @@ impl AppState {
     }
 
     pub fn finalize_cycle(&mut self) {
-        self.active_cycle = false;
-        self.phase = UiPhase::Idle;
-        self.abort.pending = false;
-        self.ensure_invariants();
+        self.complete_active_prompt();
     }
 
     pub fn push_transcript_line(&mut self, role: TranscriptRole, line: impl Into<String>) {
@@ -539,8 +763,15 @@ impl AppState {
             self.abort.pending = false;
         }
 
-        if self.phase == UiPhase::Idle {
-            self.active_cycle = false;
+        self.active_cycle = self.active_prompt_id.is_some() || !self.pending_prompt_ids.is_empty();
+
+        if self.phase == UiPhase::Idle && self.active_cycle {
+            self.phase = UiPhase::Busy;
+        }
+
+        if self.phase == UiPhase::AbortPending && !self.active_cycle {
+            self.phase = UiPhase::Idle;
+            self.abort.pending = false;
         }
 
         if self.input.cursor > self.input.buffer.len() {
@@ -562,7 +793,36 @@ impl AppState {
             self.visual_selection = None;
         }
 
-        self.input.locked = self.phase != UiPhase::Idle;
+        self.input.locked = false;
+
+        let in_progress_count = self
+            .prompt_items
+            .iter()
+            .filter(|prompt| prompt.status == PromptStatus::InProgress)
+            .count();
+        if in_progress_count > 1 {
+            if let Some(first_in_progress) = self
+                .prompt_items
+                .iter_mut()
+                .find(|prompt| prompt.status == PromptStatus::InProgress)
+            {
+                self.active_prompt_id = Some(first_in_progress.id);
+            }
+            let keep = self.active_prompt_id;
+            for prompt in self.prompt_items.iter_mut() {
+                if prompt.status == PromptStatus::InProgress && Some(prompt.id) != keep {
+                    prompt.status = PromptStatus::Queued;
+                    self.pending_prompt_ids.push_front(prompt.id);
+                }
+            }
+        }
+
+        if let Some(active_id) = self.active_prompt_id
+            && let Some(prompt) = self.prompt_items.iter_mut().find(|prompt| prompt.id == active_id)
+            && prompt.status != PromptStatus::InProgress
+        {
+            prompt.status = PromptStatus::InProgress;
+        }
     }
 
     fn max_scroll_from_bottom(&self) -> usize {

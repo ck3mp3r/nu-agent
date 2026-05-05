@@ -34,12 +34,16 @@ pub(crate) enum AgentMode {
 }
 
 impl AgentMode {
-    fn from_tui_flag(use_tui: bool) -> Self {
-        if use_tui { Self::Tui } else { Self::Stderr }
-    }
-
     fn is_tui(self) -> bool {
         matches!(self, Self::Tui)
+    }
+}
+
+fn resolve_agent_mode(input_is_nothing: bool, stdin_is_tty: bool, stderr_is_tty: bool) -> AgentMode {
+    if input_is_nothing && stdin_is_tty && stderr_is_tty {
+        AgentMode::Tui
+    } else {
+        AgentMode::Stderr
     }
 }
 
@@ -484,11 +488,6 @@ impl SimplePluginCommand for Agent {
                 "Suppress non-essential UX progress output",
                 Some('q'),
             )
-            .switch(
-                "tui",
-                "Enable experimental TUI runtime integration path",
-                None,
-            )
     }
 
     fn run(
@@ -500,9 +499,10 @@ impl SimplePluginCommand for Agent {
     ) -> Result<Value, LabeledError> {
         let ui_policy = resolve_ui_policy(call)
             .map_err(|e| LabeledError::new(format!("Failed to resolve UI policy: {e}")))?;
+        let stdin_is_tty = std::io::stdin().is_terminal();
         let stderr_is_tty = std::io::stderr().is_terminal();
-        let mode = AgentMode::from_tui_flag(call.has_flag("tui")?);
         let input_is_nothing = matches!(input, Value::Nothing { .. });
+        let mode = resolve_agent_mode(input_is_nothing, stdin_is_tty, stderr_is_tty);
 
         let _foreground_guard = if mode.is_tui() {
             Some(engine.enter_foreground().map_err(|err| {

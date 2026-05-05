@@ -78,16 +78,13 @@ fn reduce_user_action(
             state.delete_input_char();
         }
         UserAction::Submit => {
-            if state.input.locked {
-                return;
-            }
-
             let submitted_text = state.input.buffer.clone();
             if submitted_text.trim().is_empty() {
                 return;
             }
-            state.push_transcript_line(TranscriptRole::User, submitted_text);
-            state.accept_submit();
+            state.enqueue_prompt(submitted_text);
+            state.input.buffer.clear();
+            state.input.cursor = 0;
         }
         UserAction::MoveCursorLeft => state.move_cursor_left(),
         UserAction::MoveCursorRight => state.move_cursor_right(),
@@ -206,6 +203,7 @@ fn reduce_user_action(
                 if let Some(controller) = cancel_controller {
                     controller.request_cancel();
                 }
+                state.cancel_active_and_pending_prompts();
                 state.status_line = ABORT_REQUESTED_STATUS.to_string();
                 state.push_transcript_line(
                     TranscriptRole::System,
@@ -229,19 +227,19 @@ fn reduce_ui_event(state: &mut AppState, event: UiEvent) {
                 state.status_line = "Thinking...".to_string();
             }
         }
-        UiEvent::ToolStart { name, .. } => {
+        UiEvent::ToolStart {
+            name, arguments, ..
+        } => {
+            state.start_tool_call(&name, &arguments);
             state.status_line = format!("Tool: {name}");
         }
         UiEvent::ToolEnd {
             name,
             arguments,
+            success,
             ..
         } => {
-            let args_summary = summarize_tool_arguments(&arguments);
-            state.push_transcript_line(
-                TranscriptRole::Tool,
-                format!("tool[{name}] args={args_summary}"),
-            );
+            state.finish_tool_call(&name, &arguments, success);
             state.status_line = "Thinking...".to_string();
         }
         UiEvent::LlmEnd {
@@ -281,7 +279,7 @@ fn finalize(state: &mut AppState) {
     state.status_line.clear();
 }
 
-fn summarize_tool_arguments(arguments: &str) -> String {
+pub(super) fn summarize_tool_arguments(arguments: &str) -> String {
     const MAX_LEN: usize = 120;
     let compact = arguments
         .split_whitespace()

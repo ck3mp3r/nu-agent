@@ -16,12 +16,17 @@ use crate::commands::agent::ui::{
         runtime::{
             InputSourceDiagnostics, RuntimeCoordinator, RuntimeRunError, ScriptedTerminalEvents,
             TerminalEventSource, TuiRuntimeRenderer, cursor_style_for_test, input_line_for_test,
-            input_line_for_test_at_millis, run_with_terminal_restore, transcript_title_for_test,
-            visible_transcript_window, visible_transcript_window_for_render_for_test,
+            input_line_for_test_at_millis, prompt_indicator_for_status_for_test,
+            render_transcript_lines_for_test, run_with_terminal_restore,
+            transcript_title_for_test, visible_transcript_window,
+            visible_transcript_window_for_render_for_test,
             visual_indicator_line_for_test,
         },
         safety::RestoreRunError,
-        state::{AppState, InputMode, PaneFocus, TranscriptRole, UiPhase},
+        state::{
+            AppState, InputMode, PaneFocus, PromptStatus, ToolCallStatus, TranscriptLineStatus,
+            TranscriptRole, UiPhase,
+        },
         terminal::{TerminalAction, TerminalBackend, TerminalLifecycle, TerminalLifecycleError},
     },
 };
@@ -88,7 +93,7 @@ fn markdown_fixture(name: &str) -> String {
 }
 
 #[test]
-fn coordinator_submit_handoff_locks_and_preserves_transcript_preview() {
+fn coordinator_submit_handoff_keeps_input_editable_and_preserves_transcript_preview() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
     let mut source = StubEventSource {
         next: Some(TerminalEvent::Key(TerminalKey::Char('x'))),
@@ -102,7 +107,7 @@ fn coordinator_submit_handoff_locks_and_preserves_transcript_preview() {
     coordinator.pump_once(&mut source);
 
     assert_eq!(coordinator.state().phase, UiPhase::Busy);
-    assert!(coordinator.state().input.locked);
+    assert!(!coordinator.state().input.locked);
     assert!(coordinator.state().input.buffer.is_empty());
     assert_eq!(coordinator.take_submitted_prompt(), Some("x".to_string()));
     assert_eq!(coordinator.take_submitted_prompt(), None);
@@ -417,7 +422,7 @@ fn user_then_assistant_inserts_turn_separator_in_runtime_transcript() {
 }
 
 #[test]
-fn busy_input_line_shows_spinner_and_never_shows_locked_label() {
+fn busy_input_line_has_no_spinner_prefix_and_never_shows_locked_label() {
     let mut state = AppState::new();
     state.input.buffer = "kubectl get pods".to_string();
 
@@ -427,19 +432,7 @@ fn busy_input_line_shows_spinner_and_never_shows_locked_label() {
     state.phase = UiPhase::Busy;
     state.ensure_invariants();
     let busy_line = input_line_for_test_at_millis(&state, 160);
-    assert!(busy_line.contains("kubectl get pods"));
-    assert!(
-        busy_line.starts_with('⠹')
-            || busy_line.starts_with('⠋')
-            || busy_line.starts_with('⠙')
-            || busy_line.starts_with('⠸')
-            || busy_line.starts_with('⠼')
-            || busy_line.starts_with('⠴')
-            || busy_line.starts_with('⠦')
-            || busy_line.starts_with('⠧')
-            || busy_line.starts_with('⠇')
-            || busy_line.starts_with('⠏')
-    );
+    assert_eq!(busy_line, "kubectl get pods");
     assert!(!busy_line.contains("[locked]"));
 }
 
@@ -817,7 +810,7 @@ fn immediate_poll_error_fails_fast_with_actionable_message_when_no_backends_avai
     assert!(fatal.contains("No interactive input backend available"));
     assert!(fatal.contains("Last poll: crossterm error; /dev/tty unavailable"));
     assert!(fatal.contains("Last error: crossterm poll failed: not a terminal"));
-    assert!(fatal.contains("Run `agent --tui` in an interactive terminal"));
+    assert!(fatal.contains("Run `agent` in an interactive terminal"));
     assert!(!fatal.contains("Terminal input error:"));
 }
 
@@ -1158,6 +1151,185 @@ fn follow_tail_defaults_to_latest_lines_after_each_turn() {
     assert_eq!(window[1].text, "u2");
     assert_eq!(window[2].text, "────────────────");
     assert_eq!(window[3].text, "a2");
+}
+
+#[test]
+fn prompt_indicator_tokens_are_unicode_and_stable() {
+    assert_eq!(prompt_indicator_for_status_for_test(PromptStatus::Queued, 0), "•");
+    assert_eq!(prompt_indicator_for_status_for_test(PromptStatus::Done, 0), "✓");
+    assert_eq!(
+        prompt_indicator_for_status_for_test(PromptStatus::Cancelled, 0),
+        "✕"
+    );
+    assert_eq!(
+        prompt_indicator_for_status_for_test(PromptStatus::InProgress, 0),
+        "⠋"
+    );
+    assert_eq!(
+        prompt_indicator_for_status_for_test(PromptStatus::InProgress, 100),
+        "⠙"
+    );
+    assert_eq!(
+        prompt_indicator_for_status_for_test(PromptStatus::InProgress, 200),
+        "⠹"
+    );
+    assert_eq!(
+        prompt_indicator_for_status_for_test(PromptStatus::InProgress, 300),
+        "⠸"
+    );
+    assert_eq!(
+        prompt_indicator_for_status_for_test(PromptStatus::InProgress, 400),
+        "⠼"
+    );
+    assert_eq!(
+        prompt_indicator_for_status_for_test(PromptStatus::InProgress, 500),
+        "⠴"
+    );
+    assert_eq!(
+        prompt_indicator_for_status_for_test(PromptStatus::InProgress, 600),
+        "⠦"
+    );
+    assert_eq!(
+        prompt_indicator_for_status_for_test(PromptStatus::InProgress, 700),
+        "⠧"
+    );
+    assert_eq!(
+        prompt_indicator_for_status_for_test(PromptStatus::InProgress, 800),
+        "⠇"
+    );
+    assert_eq!(
+        prompt_indicator_for_status_for_test(PromptStatus::InProgress, 900),
+        "⠏"
+    );
+}
+
+#[test]
+fn cancelled_prompt_renders_indicator_and_strikethrough() {
+    let line = crate::commands::agent::ui::tui::state::TranscriptLine {
+        role: TranscriptRole::User,
+        text: "cancel me".to_string(),
+        rendered: None,
+    };
+    let rendered = render_transcript_lines_for_test(
+        line,
+        Some(TranscriptLineStatus::Prompt(PromptStatus::Cancelled)),
+        0,
+    );
+    assert_eq!(rendered.len(), 1);
+    let spans = &rendered[0].spans;
+    let combined = spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+    assert!(combined.contains("✕"));
+    assert!(combined.contains("cancel me"));
+    assert!(
+        spans
+            .iter()
+            .all(|span| span.style.add_modifier.contains(Modifier::CROSSED_OUT))
+    );
+}
+
+#[test]
+fn prompt_lifecycle_transitions_render_expected_indicators() {
+    let line = crate::commands::agent::ui::tui::state::TranscriptLine {
+        role: TranscriptRole::User,
+        text: "hello".to_string(),
+        rendered: None,
+    };
+
+    let queued = render_transcript_lines_for_test(
+        line.clone(),
+        Some(TranscriptLineStatus::Prompt(PromptStatus::Queued)),
+        0,
+    );
+    assert!(queued[0].spans[0].content.contains("•"));
+
+    let in_progress = render_transcript_lines_for_test(
+        line.clone(),
+        Some(TranscriptLineStatus::Prompt(PromptStatus::InProgress)),
+        200,
+    );
+    assert!(in_progress[0].spans[0].content.contains("⠹"));
+
+    let done = render_transcript_lines_for_test(
+        line,
+        Some(TranscriptLineStatus::Prompt(PromptStatus::Done)),
+        0,
+    );
+    assert!(done[0].spans[0].content.contains("✓"));
+}
+
+#[test]
+fn tool_row_renders_spinner_while_running_and_done_on_end() {
+    let line = crate::commands::agent::ui::tui::state::TranscriptLine {
+        role: TranscriptRole::Tool,
+        text: "tool[k8s__list_pods] args={\"namespace\":\"prod\"}".to_string(),
+        rendered: None,
+    };
+
+    let running_0 = render_transcript_lines_for_test(
+        line.clone(),
+        Some(TranscriptLineStatus::Tool(ToolCallStatus::InProgress)),
+        0,
+    );
+    let running_1 = render_transcript_lines_for_test(
+        line.clone(),
+        Some(TranscriptLineStatus::Tool(ToolCallStatus::InProgress)),
+        100,
+    );
+    let running_2 = render_transcript_lines_for_test(
+        line.clone(),
+        Some(TranscriptLineStatus::Tool(ToolCallStatus::InProgress)),
+        200,
+    );
+    assert!(running_0[0].spans[0].content.contains("⠋"));
+    assert!(running_1[0].spans[0].content.contains("⠙"));
+    assert!(running_2[0].spans[0].content.contains("⠹"));
+
+    let done = render_transcript_lines_for_test(
+        line,
+        Some(TranscriptLineStatus::Tool(ToolCallStatus::Done)),
+        0,
+    );
+    assert!(done[0].spans[0].content.contains("✓"));
+}
+
+#[test]
+fn global_abort_cancels_active_and_pending_and_new_submit_starts_fresh() {
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+
+    for event in [
+        TerminalEvent::Key(TerminalKey::Char('a')),
+        TerminalEvent::Key(TerminalKey::Enter),
+        TerminalEvent::Key(TerminalKey::Char('b')),
+        TerminalEvent::Key(TerminalKey::Enter),
+        TerminalEvent::Key(TerminalKey::Esc),
+        TerminalEvent::Key(TerminalKey::Esc),
+    ] {
+        let mut source = StubEventSource { next: Some(event) };
+        coordinator.pump_once(&mut source);
+    }
+
+    assert_eq!(coordinator.take_submitted_prompt(), None);
+
+    let statuses = coordinator
+        .state()
+        .prompt_items()
+        .iter()
+        .map(|item| item.status)
+        .collect::<Vec<_>>();
+    assert_eq!(statuses, vec![PromptStatus::Cancelled, PromptStatus::Cancelled]);
+
+    for event in [
+        TerminalEvent::Key(TerminalKey::Char('c')),
+        TerminalEvent::Key(TerminalKey::Enter),
+    ] {
+        let mut source = StubEventSource { next: Some(event) };
+        coordinator.pump_once(&mut source);
+    }
+
+    assert_eq!(coordinator.take_submitted_prompt(), Some("c".to_string()));
 }
 
 #[test]
