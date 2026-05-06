@@ -286,6 +286,10 @@ impl AppState {
         self.ensure_invariants();
     }
 
+    pub fn insert_input_newline(&mut self) {
+        self.append_input_char('\n');
+    }
+
     pub fn enter_insert_mode(&mut self) {
         self.input_mode = InputMode::Insert;
         self.insert_exit_pending_j = false;

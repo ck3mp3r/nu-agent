@@ -451,3 +451,34 @@ fn g_then_ctrl_u_detaches_follow_tail_immediately_in_visual_mode() {
     assert!(!state.transcript_follow_tail);
     assert_eq!(state.visual_cursor_index(), Some(11));
 }
+
+#[test]
+fn insert_mode_alt_and_shift_enter_insert_newline_while_enter_submits() {
+    let mut state = AppState::new();
+
+    dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('h')),
+        None,
+    );
+    dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::AltEnter),
+        None,
+    );
+    dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::ShiftEnter),
+        None,
+    );
+
+    assert_eq!(state.input.buffer, "h\n\n");
+    assert_eq!(state.phase, UiPhase::Idle);
+    assert!(state.transcript_preview.is_empty());
+
+    let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+    assert!(changed);
+    assert_eq!(state.phase, UiPhase::Busy);
+    assert_eq!(state.transcript_preview.len(), 1);
+    assert_eq!(state.transcript_preview[0].text, "h\n\n");
+}

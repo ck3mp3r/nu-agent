@@ -306,6 +306,25 @@ fn reducer_supports_baseline_input_editing_with_cursor_controls() {
 }
 
 #[test]
+fn insert_newline_action_inserts_line_break_without_submit() {
+    let mut state = AppState::new();
+    for ch in "abc".chars() {
+        reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::InsertChar(ch)), None);
+    }
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::User(UserAction::InsertNewline),
+        None,
+    );
+
+    assert_eq!(state.input.buffer, "abc\n");
+    assert_eq!(state.input.cursor, 4);
+    assert_eq!(state.phase, UiPhase::Idle);
+    assert!(state.transcript_preview.is_empty());
+}
+
+#[test]
 fn enter_insert_and_normal_mode_actions_toggle_mode_only_in_idle() {
     let mut state = AppState::new();
     assert_eq!(state.input_mode, InputMode::Insert);

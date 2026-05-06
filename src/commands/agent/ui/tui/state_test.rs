@@ -426,3 +426,28 @@ fn scroll_to_top_clamps_to_max_scroll_and_allows_line_scroll_down() {
     assert_eq!(state.transcript_scroll_lines_from_bottom, 7);
     assert!(!state.transcript_follow_tail);
 }
+
+#[test]
+fn append_newline_insert_and_boundary_deletes_work_across_lines() {
+    let mut state = AppState::new();
+    for ch in "ab".chars() {
+        state.append_input_char(ch);
+    }
+    state.append_input_char('\n');
+    for ch in "cd".chars() {
+        state.append_input_char(ch);
+    }
+
+    assert_eq!(state.input.buffer, "ab\ncd");
+    assert_eq!(state.input.cursor, state.input.buffer.len());
+
+    state.move_cursor_left();
+    state.move_cursor_left();
+    state.backspace_input_char();
+    assert_eq!(state.input.buffer, "abcd");
+
+    state.move_cursor_left();
+    state.move_cursor_left();
+    state.delete_input_char();
+    assert_eq!(state.input.buffer, "bcd");
+}

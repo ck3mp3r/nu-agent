@@ -16,6 +16,7 @@ use crate::commands::agent::ui::{
         runtime::{
             InputSourceDiagnostics, RuntimeCoordinator, RuntimeRunError, ScriptedTerminalEvents,
             TerminalEventSource, TuiRuntimeRenderer, cursor_style_for_test, input_line_for_test,
+            input_rows_with_prompt_for_test,
             input_line_for_test_at_millis, prompt_indicator_for_status_for_test,
             render_transcript_lines_for_test, run_with_terminal_restore,
             transcript_title_for_test, visible_transcript_window,
@@ -30,6 +31,7 @@ use crate::commands::agent::ui::{
         terminal::{TerminalAction, TerminalBackend, TerminalLifecycle, TerminalLifecycleError},
     },
 };
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crate::session::{Message, SessionStore};
 
 #[derive(Default)]
@@ -847,6 +849,34 @@ fn crossterm_event_source_with_zero_timeout_returns_none_when_idle() {
 }
 
 #[test]
+fn crossterm_enter_modifier_mapping_distinguishes_submit_vs_newline_intents() {
+    let plain = crate::commands::agent::ui::tui::runtime::map_crossterm_event_for_test(Event::Key(
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+    ));
+    assert_eq!(plain, Some(TerminalEvent::Key(TerminalKey::Enter)));
+
+    let alt = crate::commands::agent::ui::tui::runtime::map_crossterm_event_for_test(Event::Key(
+        KeyEvent {
+            code: KeyCode::Enter,
+            modifiers: KeyModifiers::ALT,
+            kind: KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::NONE,
+        },
+    ));
+    assert_eq!(alt, Some(TerminalEvent::Key(TerminalKey::AltEnter)));
+
+    let shift = crate::commands::agent::ui::tui::runtime::map_crossterm_event_for_test(Event::Key(
+        KeyEvent {
+            code: KeyCode::Enter,
+            modifiers: KeyModifiers::SHIFT,
+            kind: KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::NONE,
+        },
+    ));
+    assert_eq!(shift, Some(TerminalEvent::Key(TerminalKey::ShiftEnter)));
+}
+
+#[test]
 fn coordinator_hydrates_transcript_from_existing_session_messages() {
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
     let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
@@ -1411,6 +1441,15 @@ fn main_pane_vertical_split_has_no_overlap_or_bottom_cutoff() {
     assert_eq!(transcript.y + transcript.height, status.y);
     assert_eq!(status.y + status.height, input.y);
     assert_eq!(input.y + input.height, 9);
+}
+
+#[test]
+fn multiline_input_prompt_icon_appears_only_on_first_visual_row() {
+    let mut state = AppState::new();
+    state.input.buffer = "ab\n12345".to_string();
+
+    let rows = input_rows_with_prompt_for_test(&state, 5);
+    assert_eq!(rows, vec!["❯ ab", "  123", "  45"]);
 }
 
 #[test]

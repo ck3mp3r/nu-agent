@@ -1,4 +1,8 @@
 pub const SIDE_PANE_COLLAPSE_COLUMNS: u16 = 120;
+pub const INPUT_PROMPT_WIDTH: u16 = 2;
+pub const INPUT_MIN_HEIGHT: u16 = 2;
+pub const INPUT_MAX_HEIGHT: u16 = 8;
+pub const TRANSCRIPT_MIN_HEIGHT: u16 = 1;
 
 const MIN_MAIN_COLUMNS: u16 = 72;
 const MIN_SIDE_COLUMNS: u16 = 24;
@@ -18,6 +22,7 @@ pub struct LayoutInput {
     pub columns: u16,
     pub rows: u16,
     pub side_pane_visible: Option<bool>,
+    pub input_height: Option<u16>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,7 +35,7 @@ pub struct LayoutOutput {
 
 pub fn recompute_layout(input: LayoutInput) -> LayoutOutput {
     let (main_width, side_pane) = compute_columns(input.columns, input.rows, input.side_pane_visible);
-    let (transcript_height, status_height, input_height) = compute_rows(input.rows);
+    let (transcript_height, status_height, input_height) = compute_rows(input.rows, input.input_height);
 
     let transcript = clip(
         PaneGeometry {
@@ -106,11 +111,12 @@ fn compute_columns(columns: u16, rows: u16, side_pane_visible: Option<bool>) -> 
     (main_width, Some(side_width))
 }
 
-fn compute_rows(rows: u16) -> (u16, u16, u16) {
+fn compute_rows(rows: u16, preferred_input_height: Option<u16>) -> (u16, u16, u16) {
     let status_height = if rows >= 2 { STATUS_HEIGHT } else { 0 };
 
     let rows_after_status = rows.saturating_sub(status_height);
-    let input_height = rows_after_status.min(INPUT_HEIGHT);
+    let requested_input_height = preferred_input_height.unwrap_or(INPUT_HEIGHT).max(1);
+    let input_height = rows_after_status.min(requested_input_height);
     let transcript_height = rows_after_status.saturating_sub(input_height);
 
     (transcript_height, status_height, input_height)
@@ -128,4 +134,77 @@ fn clip(geometry: PaneGeometry, columns: u16, rows: u16) -> PaneGeometry {
         width,
         height,
     }
+}
+
+pub fn wrapped_input_rows(input: &str, content_width: usize) -> Vec<String> {
+    let width = content_width.max(1);
+    let mut rows = Vec::new();
+
+    for logical_line in input.split('\n') {
+        if logical_line.is_empty() {
+            rows.push(String::new());
+            continue;
+        }
+
+        let mut current = String::new();
+        let mut col = 0usize;
+        for ch in logical_line.chars() {
+            current.push(ch);
+            col += 1;
+            if col >= width {
+                rows.push(current);
+                current = String::new();
+                col = 0;
+            }
+        }
+
+        if !current.is_empty() {
+            rows.push(current);
+        }
+    }
+
+    if rows.is_empty() {
+        rows.push(String::new());
+    }
+
+    rows
+}
+
+pub fn input_content_row_count(input: &str, content_width: usize) -> u16 {
+    wrapped_input_rows(input, content_width)
+        .len()
+        .min(u16::MAX as usize) as u16
+}
+
+pub fn input_pane_height_for_content(input: &str, pane_width: u16) -> u16 {
+    let content_width = pane_width.saturating_sub(INPUT_PROMPT_WIDTH).max(1) as usize;
+    let content_rows = input_content_row_count(input, content_width);
+    let desired = content_rows.saturating_add(1);
+    desired.clamp(INPUT_MIN_HEIGHT, INPUT_MAX_HEIGHT)
+}
+
+pub fn input_cursor_row_col(input: &str, cursor: usize, content_width: usize) -> (u16, u16) {
+    let width = content_width.max(1);
+    let cursor = cursor.min(input.len());
+    let mut row = 0usize;
+    let mut col = 0usize;
+
+    for ch in input[..cursor].chars() {
+        if ch == '\n' {
+            row += 1;
+            col = 0;
+            continue;
+        }
+
+        col += 1;
+        if col >= width {
+            row += 1;
+            col = 0;
+        }
+    }
+
+    (
+        row.min(u16::MAX as usize) as u16,
+        col.min(u16::MAX as usize) as u16,
+    )
 }

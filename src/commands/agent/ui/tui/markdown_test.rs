@@ -48,7 +48,11 @@ fn markdown_projection_fixture_supported_basics_renders_lines_and_inline_styles(
         .any(|span| span.content.as_ref() == "strong" && span.style.add_modifier.contains(Modifier::BOLD)));
     assert!(body
         .iter()
-        .any(|span| span.content.as_ref() == "code" && span.style.bg == Some(Color::DarkGray)));
+        .any(|span| {
+            span.content.as_ref() == "code"
+                && span.style.fg == Some(Color::Yellow)
+                && span.style.add_modifier.contains(Modifier::DIM)
+        }));
 }
 
 #[test]

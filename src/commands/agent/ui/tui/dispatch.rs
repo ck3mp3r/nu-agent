@@ -82,6 +82,10 @@ fn rewrite_action(state: &mut AppState, action: UserAction) -> UserAction {
                         state.clear_normal_pending_key();
                         UserAction::Noop
                     }
+                    UserAction::InsertNewline => {
+                        state.clear_normal_pending_key();
+                        UserAction::Noop
+                    }
                     other => {
                         state.clear_normal_pending_key();
                         other
@@ -121,6 +125,10 @@ fn rewrite_action(state: &mut AppState, action: UserAction) -> UserAction {
                     UserAction::ScrollPageUp | UserAction::ScrollPageDown => {
                         state.clear_normal_pending_key();
                         action
+                    }
+                    UserAction::InsertNewline => {
+                        state.clear_normal_pending_key();
+                        UserAction::Noop
                     }
                     _ => {
                         state.clear_normal_pending_key();

@@ -24,6 +24,16 @@ fn table_driven_key_mapping_unlocked_state() {
             expected: Some(UserAction::Submit),
         },
         MappingCase {
+            event: TerminalEvent::Key(TerminalKey::AltEnter),
+            locked: false,
+            expected: Some(UserAction::InsertNewline),
+        },
+        MappingCase {
+            event: TerminalEvent::Key(TerminalKey::ShiftEnter),
+            locked: false,
+            expected: Some(UserAction::InsertNewline),
+        },
+        MappingCase {
             event: TerminalEvent::Key(TerminalKey::Backspace),
             locked: false,
             expected: Some(UserAction::Backspace),
@@ -121,6 +131,16 @@ fn table_driven_key_mapping_locked_state_blocks_mutation_and_submit_only() {
         },
         MappingCase {
             event: TerminalEvent::Key(TerminalKey::Enter),
+            locked: true,
+            expected: None,
+        },
+        MappingCase {
+            event: TerminalEvent::Key(TerminalKey::AltEnter),
+            locked: true,
+            expected: None,
+        },
+        MappingCase {
+            event: TerminalEvent::Key(TerminalKey::ShiftEnter),
             locked: true,
             expected: None,
         },

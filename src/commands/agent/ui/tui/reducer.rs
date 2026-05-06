@@ -15,6 +15,7 @@ const TRANSCRIPT_PAGE_LINES: usize = 8;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UserAction {
     InsertChar(char),
+    InsertNewline,
     Submit,
     Backspace,
     Delete,
@@ -70,6 +71,9 @@ fn reduce_user_action(
     match action {
         UserAction::InsertChar(ch) => {
             state.append_input_char(ch);
+        }
+        UserAction::InsertNewline => {
+            state.insert_input_newline();
         }
         UserAction::Backspace => {
             state.backspace_input_char();

@@ -23,7 +23,11 @@ use crate::commands::agent::ui::{
         cancel::CancelController,
         dispatch::dispatch_terminal_event,
         input::{TerminalEvent, TerminalKey},
-        layout::{LayoutInput, LayoutOutput, recompute_layout},
+        layout::{
+            INPUT_MIN_HEIGHT, TRANSCRIPT_MIN_HEIGHT, LayoutInput, LayoutOutput,
+            input_cursor_row_col, input_pane_height_for_content, recompute_layout,
+            wrapped_input_rows,
+        },
         markdown::project_markdown_to_lines,
         reducer::{ReducerInput, reduce_with_cancel_controller},
         selection::TranscriptSelection,
@@ -88,7 +92,6 @@ impl RuntimeCoordinator {
     const DEFAULT_INPUT_WATCHDOG_TIMEOUT: Duration = Duration::from_secs(5);
     const HEADER_HEIGHT: u16 = 1;
     const STATUS_TARGET_HEIGHT: u16 = 1;
-    const INPUT_HEIGHT: u16 = 2;
 
     pub fn new(columns: u16, rows: u16, side_pane_visible: Option<bool>) -> Self {
         Self::new_with_watchdog(
@@ -143,6 +146,7 @@ impl RuntimeCoordinator {
             columns,
             rows,
             side_pane_visible,
+            input_height: None,
         });
         let mut coordinator = Self {
             state: AppState::new(),
@@ -263,14 +267,20 @@ impl RuntimeCoordinator {
         }
 
         if let TerminalEvent::Resize(resize) = event {
+            let input_height = input_pane_height_for_content(
+                &self.state.input.buffer,
+                resize.columns,
+            );
             self.layout = recompute_layout(LayoutInput {
                 columns: resize.columns,
                 rows: resize.rows,
                 side_pane_visible: self.side_pane_visible,
+                input_height: Some(input_height),
             });
         }
 
         let _ = dispatch_terminal_event(&mut self.state, &event, Some(&self.cancel_controller));
+        self.recompute_layout_for_current_input();
         self.flush_clipboard_request();
         self.quit_requested |= self.state.quit_requested;
 
@@ -287,6 +297,30 @@ impl RuntimeCoordinator {
         let transcript_height = Self::transcript_height_for_main(main_height);
         let visible_lines = transcript_height.saturating_sub(2) as usize;
         self.state.set_transcript_viewport_lines(visible_lines.max(1));
+    }
+
+    fn recompute_layout_for_current_input(&mut self) {
+        let input_height = input_pane_height_for_content(
+            &self.state.input.buffer,
+            self.layout.transcript.width,
+        );
+        let total_rows = self
+            .layout
+            .transcript
+            .height
+            .saturating_add(self.layout.status_event.height)
+            .saturating_add(self.layout.input.height);
+        let total_columns = self
+            .layout
+            .transcript
+            .width
+            .saturating_add(self.layout.side_pane.map(|s| s.width).unwrap_or(0));
+        self.layout = recompute_layout(LayoutInput {
+            columns: total_columns,
+            rows: total_rows,
+            side_pane_visible: self.side_pane_visible,
+            input_height: Some(input_height),
+        });
     }
 
     fn flush_clipboard_request(&mut self) {
@@ -389,13 +423,15 @@ impl RuntimeCoordinator {
                 };
 
                 let main = horizontal[0];
+                let (header_h, transcript_h, status_h, input_h) =
+                    Self::vertical_heights_for_main_with_input(main.height, self.layout.input.height);
                 let vertical = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
-                        Constraint::Length(Self::header_height_for_main(main.height)),
-                        Constraint::Length(Self::transcript_height_for_main(main.height)),
-                        Constraint::Length(Self::input_height_for_main(main.height)),
-                        Constraint::Length(Self::status_height_for_main(main.height)),
+                        Constraint::Length(header_h),
+                        Constraint::Length(transcript_h),
+                        Constraint::Length(input_h),
+                        Constraint::Length(status_h),
                     ])
                     .split(main);
 
@@ -477,12 +513,15 @@ impl RuntimeCoordinator {
                 ]))
                     .block(Block::default())
                     .wrap(Wrap { trim: false });
-                if vertical[2].height > 0 {
+                if vertical[3].height > 0 {
                     frame.render_widget(Clear, vertical[3]);
                     frame.render_widget(status_widget, vertical[3]);
                 }
 
-                let input_line = self.state.input.buffer.clone();
+                let input_rows = wrapped_input_rows(
+                    &self.state.input.buffer,
+                    vertical[2].width.saturating_sub(2) as usize,
+                );
                 let input_border_style = if self.state.pane_focus
                     == crate::commands::agent::ui::tui::state::PaneFocus::Input
                 {
@@ -490,32 +529,49 @@ impl RuntimeCoordinator {
                 } else {
                     Style::default()
                 };
-                let input_widget = Paragraph::new(Line::from(vec![
-                    Span::styled("❯ ", self.theme.input_prompt),
-                    Span::raw(input_line),
-                ]))
+                let mut input_lines = Vec::new();
+                if let Some((first, rest)) = input_rows.split_first() {
+                    input_lines.push(Line::from(vec![
+                        Span::styled("❯ ", self.theme.input_prompt),
+                        Span::raw(first.clone()),
+                    ]));
+                    for row in rest {
+                        input_lines.push(Line::from(vec![Span::raw("  "), Span::raw(row.clone())]));
+                    }
+                }
+                let input_widget = Paragraph::new(Text::from(input_lines))
                 .block(
                     Block::default()
                         .borders(Borders::TOP)
                         .border_style(input_border_style),
                 )
                 .wrap(Wrap { trim: false });
-                if vertical[3].height > 0 {
+                if vertical[2].height > 0 {
                     frame.render_widget(Clear, vertical[2]);
                     frame.render_widget(input_widget, vertical[2]);
                 }
 
                 if !self.state.input.locked && vertical[2].height >= 2 && vertical[2].width >= 1 {
-                    let cursor_col = self.state.input.buffer[..self.state.input.cursor]
-                        .chars()
-                        .count() as u16;
-                    let x = vertical[2].x.saturating_add(2).saturating_add(cursor_col);
+                    let (cursor_row, cursor_col) = input_cursor_row_col(
+                        &self.state.input.buffer,
+                        self.state.input.cursor,
+                        vertical[2].width.saturating_sub(2) as usize,
+                    );
+                    let x = vertical[2]
+                        .x
+                        .saturating_add(2)
+                        .saturating_add(cursor_col);
                     let max_x = vertical[2]
                         .x
                         .saturating_add(vertical[2].width.saturating_sub(1));
+                    let y = vertical[2]
+                        .y
+                        .saturating_add(1)
+                        .saturating_add(cursor_row)
+                        .min(vertical[2].y.saturating_add(vertical[2].height.saturating_sub(1)));
                     frame.set_cursor_position(Position {
                         x: x.min(max_x),
-                        y: vertical[2].y.saturating_add(1),
+                        y,
                     });
                 }
 
@@ -535,6 +591,10 @@ impl RuntimeCoordinator {
     }
 
     fn vertical_heights_for_main(main_height: u16) -> (u16, u16, u16, u16) {
+        Self::vertical_heights_for_main_with_input(main_height, INPUT_MIN_HEIGHT)
+    }
+
+    fn vertical_heights_for_main_with_input(main_height: u16, input_target_height: u16) -> (u16, u16, u16, u16) {
         if main_height == 0 {
             return (0, 0, 0, 0);
         }
@@ -542,34 +602,19 @@ impl RuntimeCoordinator {
         let header = Self::HEADER_HEIGHT.min(main_height);
         let mut remaining = main_height.saturating_sub(header);
 
-        let input = Self::INPUT_HEIGHT.min(remaining);
+        let input = input_target_height.max(INPUT_MIN_HEIGHT).min(remaining);
         remaining = remaining.saturating_sub(input);
 
-        let min_transcript = u16::from(remaining > 0);
+        let min_transcript = u16::from(remaining > 0).min(TRANSCRIPT_MIN_HEIGHT);
         let status = Self::STATUS_TARGET_HEIGHT.min(remaining.saturating_sub(min_transcript));
         let transcript = remaining.saturating_sub(status);
 
         (header, transcript, status, input)
     }
 
-    fn header_height_for_main(main_height: u16) -> u16 {
-        let (header, _, _, _) = Self::vertical_heights_for_main(main_height);
-        header
-    }
-
     fn transcript_height_for_main(main_height: u16) -> u16 {
         let (_, transcript, _, _) = Self::vertical_heights_for_main(main_height);
         transcript
-    }
-
-    fn status_height_for_main(main_height: u16) -> u16 {
-        let (_, _, status, _) = Self::vertical_heights_for_main(main_height);
-        status
-    }
-
-    fn input_height_for_main(main_height: u16) -> u16 {
-        let (_, _, _, input) = Self::vertical_heights_for_main(main_height);
-        input
     }
 
     #[cfg(test)]
@@ -1164,6 +1209,24 @@ pub(super) fn input_line_for_test_at_millis(state: &AppState, now_millis: u128) 
     state.input.buffer.clone()
 }
 
+#[cfg(test)]
+pub(super) fn input_rows_with_prompt_for_test(state: &AppState, pane_width: u16) -> Vec<String> {
+    let rows = wrapped_input_rows(
+        &state.input.buffer,
+        pane_width.saturating_sub(2) as usize,
+    );
+
+    let mut lines = Vec::new();
+    if let Some((first, rest)) = rows.split_first() {
+        lines.push(format!("❯ {first}"));
+        for row in rest {
+            lines.push(format!("  {row}"));
+        }
+    }
+
+    lines
+}
+
 pub struct TuiRuntimeRenderer<R, E>
 where
     R: UiRenderer,
@@ -1752,6 +1815,12 @@ fn map_crossterm_event(event: crossterm::event::Event) -> Option<TerminalEvent> 
                     TerminalKey::CtrlD
                 }
                 KeyCode::Char(ch) => TerminalKey::Char(ch),
+                KeyCode::Enter if key_event.modifiers.contains(KeyModifiers::ALT) => {
+                    TerminalKey::AltEnter
+                }
+                KeyCode::Enter if key_event.modifiers.contains(KeyModifiers::SHIFT) => {
+                    TerminalKey::ShiftEnter
+                }
                 KeyCode::Enter => TerminalKey::Enter,
                 KeyCode::Backspace => TerminalKey::Backspace,
                 KeyCode::Delete => TerminalKey::Delete,
@@ -1773,6 +1842,11 @@ fn map_crossterm_event(event: crossterm::event::Event) -> Option<TerminalEvent> 
         }
         _ => None,
     }
+}
+
+#[cfg(test)]
+pub(super) fn map_crossterm_event_for_test(event: crossterm::event::Event) -> Option<TerminalEvent> {
+    map_crossterm_event(event)
 }
 
 #[cfg(test)]
