@@ -199,6 +199,41 @@ fn test_append_message_writes_jsonl() {
     );
 }
 
+#[test]
+fn test_append_tool_message_writes_structured_tool_fields() {
+    use crate::session::Message;
+
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+
+    let session_id = "test-append-tool-structured".to_string();
+    let mut session = store
+        .get_or_create(Some(session_id.clone()))
+        .expect("Failed to create session");
+
+    let msg = Message::new("tool".to_string(), "tool[nu__run] args={\"command\":\"ls\"} · done".to_string())
+        .with_tool_details("{\"command\":\"ls\"}", "src\nCargo.toml", true);
+    session
+        .append_message(&store, msg)
+        .expect("Failed to append tool message");
+
+    let jsonl_path = temp_dir.path().join(format!("{}.jsonl", session_id));
+    let content = fs::read_to_string(&jsonl_path).expect("Failed to read JSONL file");
+    let lines: Vec<&str> = content.lines().collect();
+    let tool_json: serde_json::Value =
+        serde_json::from_str(lines[1]).expect("Tool message should be valid JSON");
+
+    assert_eq!(
+        tool_json.get("tool_arguments").and_then(|v| v.as_str()),
+        Some("{\"command\":\"ls\"}")
+    );
+    assert_eq!(
+        tool_json.get("tool_result").and_then(|v| v.as_str()),
+        Some("src\nCargo.toml")
+    );
+    assert_eq!(tool_json.get("tool_success").and_then(|v| v.as_bool()), Some(true));
+}
+
 /// Test that list_sessions returns correct metadata for multiple sessions.
 #[test]
 fn test_list_sessions_returns_correct_metadata() {

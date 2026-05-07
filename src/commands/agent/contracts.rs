@@ -6,6 +6,9 @@ use super::ui::event::UiEvent;
 pub(crate) struct UiMessageSnapshot {
     role: String,
     content: String,
+    tool_arguments: Option<String>,
+    tool_result: Option<String>,
+    tool_success: Option<bool>,
 }
 
 impl UiMessageSnapshot {
@@ -13,7 +16,22 @@ impl UiMessageSnapshot {
         Self {
             role: role.into(),
             content: content.into(),
+            tool_arguments: None,
+            tool_result: None,
+            tool_success: None,
         }
+    }
+
+    pub fn with_tool_details(
+        mut self,
+        arguments: Option<String>,
+        result: Option<String>,
+        success: Option<bool>,
+    ) -> Self {
+        self.tool_arguments = arguments;
+        self.tool_result = result;
+        self.tool_success = success;
+        self
     }
 
     pub fn role(&self) -> &str {
@@ -22,6 +40,14 @@ impl UiMessageSnapshot {
 
     pub fn content(&self) -> &str {
         &self.content
+    }
+
+    pub fn tool_arguments(&self) -> Option<&str> {
+        self.tool_arguments.as_deref()
+    }
+
+    pub fn tool_success(&self) -> Option<bool> {
+        self.tool_success
     }
 }
 

@@ -283,7 +283,7 @@ fn finalize(state: &mut AppState) {
     state.status_line.clear();
 }
 
-pub(super) fn summarize_tool_arguments(arguments: &str) -> String {
+pub(crate) fn summarize_tool_arguments(arguments: &str) -> String {
     const MAX_LEN: usize = 120;
     let compact = arguments
         .split_whitespace()

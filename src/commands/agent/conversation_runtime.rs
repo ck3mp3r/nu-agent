@@ -22,6 +22,40 @@ enum LlmCallProgress {
     Done(Result<LlmResponse, LabeledError>),
 }
 
+#[derive(Debug, Clone)]
+struct HistoryEntry {
+    role: String,
+    content: String,
+    tool_result: Option<String>,
+}
+
+impl HistoryEntry {
+    fn new(role: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            role: role.into(),
+            content: content.into(),
+            tool_result: None,
+        }
+    }
+
+    fn tool(content: impl Into<String>, result: impl Into<String>) -> Self {
+        Self {
+            role: "tool".to_string(),
+            content: content.into(),
+            tool_result: Some(result.into()),
+        }
+    }
+
+    fn render_for_history_prompt(&self) -> String {
+        let mut line = format!("{}: {}", self.role, self.content);
+        if let Some(result) = &self.tool_result {
+            line.push_str(" result=");
+            line.push_str(result);
+        }
+        line
+    }
+}
+
 fn call_llm_with_ui_ticks<U: ProgressUi>(
     runtime: &tokio::runtime::Runtime,
     runtime_ctx: &RuntimeCtx,
@@ -115,9 +149,9 @@ impl ConversationRuntime for AgentConversationRuntime {
 
         let mut executed_tool_calls: Vec<rig::completion::AssistantContent> = Vec::new();
         let mut tool_results_metadata: Vec<crate::llm::ToolCallMetadata> = Vec::new();
-        let mut conversation_messages: Vec<(String, String)> = vec![];
-        conversation_messages.push(("user".to_string(), merged_prompt.clone()));
-        conversation_messages.push(("assistant".to_string(), llm_response.text.clone()));
+        let mut conversation_messages: Vec<HistoryEntry> = vec![];
+        conversation_messages.push(HistoryEntry::new("user", merged_prompt.clone()));
+        conversation_messages.push(HistoryEntry::new("assistant", llm_response.text.clone()));
 
         let max_tool_turns = self.config.max_tool_turns.unwrap_or(5);
         let mut tool_turn = 0;
@@ -194,9 +228,9 @@ impl ConversationRuntime for AgentConversationRuntime {
             }
 
             for result in &tool_results {
-                conversation_messages.push((
-                    "tool".to_string(),
-                    format!("Tool '{}' returned: {}", result.tool_call_id, result.content),
+                conversation_messages.push(HistoryEntry::tool(
+                    persisted_tool_text_for(result),
+                    result.content.clone(),
                 ));
             }
 
@@ -204,7 +238,12 @@ impl ConversationRuntime for AgentConversationRuntime {
                 for result in &tool_results {
                     let tool_msg = Message::new(
                         "tool".to_string(),
-                        format!("Tool '{}' returned: {}", result.tool_call_id, result.content),
+                        persisted_tool_text_for(result),
+                    )
+                    .with_tool_details(
+                        result.arguments.clone(),
+                        result.content.clone(),
+                        result.failure.is_none(),
                     );
                     session.add_message(&self.store, tool_msg).map_err(|e| {
                         LabeledError::new(format!("Failed to save tool message: {}", e))
@@ -215,7 +254,7 @@ impl ConversationRuntime for AgentConversationRuntime {
             let history_prompt = {
                 let history = conversation_messages
                     .iter()
-                    .map(|(role, content)| format!("{}: {}", role, content))
+                    .map(HistoryEntry::render_for_history_prompt)
                     .collect::<Vec<_>>()
                     .join("\n\n");
 
@@ -260,7 +299,7 @@ impl ConversationRuntime for AgentConversationRuntime {
                 output_tokens: llm_response.usage.output_tokens,
                 total_tokens: llm_response.usage.total_tokens,
             });
-            conversation_messages.push(("assistant".to_string(), llm_response.text.clone()));
+            conversation_messages.push(HistoryEntry::new("assistant", llm_response.text.clone()));
         }
 
         let tool_call_count = executed_tool_calls.len();
@@ -333,4 +372,16 @@ impl ConversationRuntime for AgentConversationRuntime {
 
         Ok(response_value)
     }
+}
+
+fn persisted_tool_text_for(result: &tool_handler::ToolCallResult) -> String {
+    let summarized_args = crate::commands::agent::ui::tui::reducer::summarize_tool_arguments(
+        &result.arguments,
+    );
+    format!(
+        "tool[{}] args={} · {}",
+        result.tool_name,
+        summarized_args,
+        if result.failure.is_none() { "done" } else { "failed" }
+    )
 }

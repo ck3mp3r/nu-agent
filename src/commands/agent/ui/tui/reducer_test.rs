@@ -973,3 +973,28 @@ fn assistant_message_whitespace_only_is_noop() {
     assert!(state.transcript_preview.is_empty());
     assert_reducer_invariants(&state);
 }
+
+#[test]
+fn tool_start_truncates_long_args_summary_with_ellipsis() {
+    let mut state = AppState::new();
+    let long_args = format!(
+        "{{\"payload\":\"{}\"}}",
+        "x".repeat(300)
+    );
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::ToolStart {
+            name: "k8s__describe".to_string(),
+            source: "mcp".to_string(),
+            arguments: long_args,
+        }),
+        None,
+    );
+
+    assert_eq!(state.transcript_preview.len(), 1);
+    let text = &state.transcript_preview[0].text;
+    assert!(text.starts_with("tool[k8s__describe] args="));
+    assert!(text.ends_with('…'));
+    assert!(text.chars().count() < 180);
+}

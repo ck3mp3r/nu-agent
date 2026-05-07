@@ -19,15 +19,17 @@ fn test_tool_results_saved_to_session() {
     // Add a tool result message (this is what we're testing)
     let tool_msg = Message::new(
         "tool".to_string(),
-        "Tool 'calculator' returned: 42".to_string(),
-    );
+        "tool[calculator] args={} · done".to_string(),
+    )
+    .with_tool_details("{}", "42", true);
     session.add_message(&store, tool_msg).unwrap();
 
     // Verify: Check that tool message is in session
     let messages = session.messages();
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[1].role(), "tool");
-    assert_eq!(messages[1].content(), "Tool 'calculator' returned: 42");
+    assert_eq!(messages[1].content(), "tool[calculator] args={} · done");
+    assert_eq!(messages[1].tool_result(), Some("42"));
 
     // Verify: Reload session and check persistence
     let reloaded = store.load_session("test-tool-save").unwrap();
@@ -109,7 +111,11 @@ fn test_multi_turn_tool_context_preserved() {
     session
         .add_message(
             &store,
-            Message::new("tool".to_string(), "Tool 'calc' returned: 4".to_string()),
+            Message::new(
+                "tool".to_string(),
+                "tool[calc] args={} · done".to_string(),
+            )
+            .with_tool_details("{}", "4", true),
         )
         .unwrap();
     session
@@ -132,13 +138,14 @@ fn test_multi_turn_tool_context_preserved() {
 
     // Verify: History includes tool results
     let history = session.format_history();
-    assert!(history.contains("Tool 'calc' returned: 4"));
+    assert!(history.contains("tool[calc] args={} · done result=4"));
 
     // Verify: All messages are present in order
     let messages = session.messages();
     assert_eq!(messages.len(), 5);
     assert_eq!(messages[2].role(), "tool");
-    assert!(messages[2].content().contains("4"));
+    assert_eq!(messages[2].content(), "tool[calc] args={} · done");
+    assert_eq!(messages[2].tool_result(), Some("4"));
 }
 
 #[test]
@@ -192,8 +199,8 @@ fn test_tool_results_without_session() {
     let assistant_response = "I'll use the ls tool";
     conversation_messages.push(("assistant".to_string(), assistant_response.to_string()));
 
-    // Step 3: Tool execution result
-    let tool_result = "Tool 'ls' returned: [file1.txt, file2.rs]";
+    // Step 3: Tool execution result (history path includes result payload)
+    let tool_result = "tool[ls] args={} · done result=[file1.txt, file2.rs]";
     conversation_messages.push(("tool".to_string(), tool_result.to_string()));
 
     // Step 4: Build history prompt from conversation_messages (NOT from session)
@@ -212,14 +219,14 @@ fn test_tool_results_without_session() {
         user_prompt.to_string()
     };
 
-    // Verify: history_prompt contains tool results
-    assert!(history_prompt.contains("Tool 'ls' returned"));
-    assert!(history_prompt.contains("[file1.txt, file2.rs]"));
+    // Verify: history_prompt contains normalized persisted tool rows
+    assert!(history_prompt.contains("tool[ls] args={} · done"));
+    assert!(history_prompt.contains("result=[file1.txt, file2.rs]"));
 
     // Verify: All conversation turns are present
     assert!(history_prompt.contains("user: List files"));
     assert!(history_prompt.contains("assistant: I'll use the ls tool"));
-    assert!(history_prompt.contains("tool: Tool 'ls' returned"));
+    assert!(history_prompt.contains("tool: tool[ls] args={} · done"));
 
     // Verify: Proper formatting
     assert!(history_prompt.contains("Previous conversation:"));

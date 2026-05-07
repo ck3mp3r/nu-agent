@@ -5,7 +5,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use ratatui::style::Modifier;
+use ratatui::style::{Color, Modifier};
 
 use crate::commands::agent::contracts::UiMessageSnapshot;
 use crate::commands::agent::ui::{
@@ -19,6 +19,10 @@ use crate::commands::agent::ui::{
             input_rows_with_prompt_for_test,
             input_line_for_test_at_millis, prompt_indicator_for_status_for_test,
             render_transcript_lines_for_test, run_with_terminal_restore,
+            render_transcript_lines_with_flags_for_test,
+            lane_prefix_spans_for_test, row_spans_for_test,
+            indicator_style_for_status_for_test, transition_spacer_for_roles_for_test,
+            parse_persisted_tool_status_line_for_test,
             transcript_title_for_test, visible_transcript_window,
             visible_transcript_window_for_render_for_test,
             visual_indicator_line_for_test,
@@ -33,6 +37,16 @@ use crate::commands::agent::ui::{
 };
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crate::session::{Message, SessionStore};
+
+const CTP_MOCHA_RED: Color = Color::Rgb(243, 139, 168);
+const CTP_MOCHA_YELLOW: Color = Color::Rgb(249, 226, 175);
+const CTP_MOCHA_GREEN: Color = Color::Rgb(166, 227, 161);
+const CTP_MOCHA_BLUE: Color = Color::Rgb(137, 180, 250);
+const CTP_MOCHA_SAPPHIRE: Color = Color::Rgb(116, 199, 236);
+const CTP_MOCHA_OVERLAY0: Color = Color::Rgb(108, 112, 134);
+const CTP_MOCHA_OVERLAY1: Color = Color::Rgb(127, 132, 156);
+const CTP_MOCHA_SURFACE0: Color = Color::Rgb(49, 50, 68);
+const CTP_MOCHA_SURFACE1: Color = Color::Rgb(69, 71, 90);
 
 #[derive(Default)]
 struct StubEventSource {
@@ -387,7 +401,7 @@ fn assistant_markdown_message_preserves_inline_span_styles_in_transcript_state()
         .spans
         .iter()
         .any(|span| span.content.as_ref() == "code"
-            && span.style.fg == Some(ratatui::style::Color::Yellow)
+            && span.style.fg == Some(CTP_MOCHA_YELLOW)
             && span.style.add_modifier.contains(Modifier::DIM)));
 }
 
@@ -950,6 +964,48 @@ fn coordinator_hydration_skips_blank_lines_and_maps_unknown_role_to_system() {
 }
 
 #[test]
+fn hydrated_tool_history_matches_live_tool_row_shape() {
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    coordinator.hydrate_transcript_from_messages(vec![
+        UiMessageSnapshot::new("tool", "tool[k8s__list_pods] args={} · done").with_tool_details(
+            Some("{\"namespace\":\"prod\"}".to_string()),
+            Some("[{\"name\":\"api-0\"}]".to_string()),
+            Some(true),
+        ),
+    ]);
+
+    assert_eq!(coordinator.state().transcript_preview.len(), 1);
+    assert_eq!(coordinator.state().transcript_preview[0].role, TranscriptRole::Tool);
+    assert_eq!(
+        coordinator.state().transcript_preview[0].text,
+        "tool[k8s__list_pods] args={\"namespace\":\"prod\"} · done"
+    );
+    assert_eq!(
+        coordinator.state().transcript_line_status_for_index(0),
+        Some(TranscriptLineStatus::Tool(ToolCallStatus::Done))
+    );
+}
+
+#[test]
+fn parse_persisted_tool_status_line_supports_done_and_failed_shapes() {
+    let done = parse_persisted_tool_status_line_for_test(
+        "tool[k8s__list_pods] args={\"namespace\":\"prod\"} · done",
+    );
+    assert_eq!(
+        done,
+        Some(("k8s__list_pods", "{\"namespace\":\"prod\"}", true))
+    );
+
+    let failed = parse_persisted_tool_status_line_for_test("tool[gh__run] args={} · failed");
+    assert_eq!(failed, Some(("gh__run", "{}", false)));
+
+    assert_eq!(
+        parse_persisted_tool_status_line_for_test("tool[gh__run] args={}"),
+        None
+    );
+}
+
+#[test]
 fn coordinator_hydration_projects_assistant_markdown_but_preserves_user_plain_text() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
     coordinator.hydrate_transcript_from_messages(vec![
@@ -992,7 +1048,7 @@ fn coordinator_hydration_preserves_assistant_markdown_styles() {
         .spans
         .iter()
         .any(|span| span.content.as_ref() == "code"
-            && span.style.fg == Some(ratatui::style::Color::Yellow)
+            && span.style.fg == Some(CTP_MOCHA_YELLOW)
             && span.style.add_modifier.contains(Modifier::DIM)));
 }
 
@@ -1296,21 +1352,299 @@ fn prompt_lifecycle_transitions_render_expected_indicators() {
         Some(TranscriptLineStatus::Prompt(PromptStatus::Queued)),
         0,
     );
-    assert!(queued[0].spans[0].content.contains("•"));
+    assert!(queued[0].spans.iter().any(|span| span.content.contains("•")));
 
     let in_progress = render_transcript_lines_for_test(
         line.clone(),
         Some(TranscriptLineStatus::Prompt(PromptStatus::InProgress)),
         200,
     );
-    assert!(in_progress[0].spans[0].content.contains("⠹"));
+    assert!(in_progress[0]
+        .spans
+        .iter()
+        .any(|span| span.content.contains("⠹")));
 
     let done = render_transcript_lines_for_test(
         line,
         Some(TranscriptLineStatus::Prompt(PromptStatus::Done)),
         0,
     );
-    assert!(done[0].spans[0].content.contains("✓"));
+    assert!(done[0].spans.iter().any(|span| span.content.contains("✓")));
+}
+
+#[test]
+fn user_rows_have_subtle_accent_while_assistant_rows_remain_plain() {
+    let user_line = crate::commands::agent::ui::tui::state::TranscriptLine {
+        role: TranscriptRole::User,
+        text: "hello".to_string(),
+        rendered: None,
+    };
+    let assistant_line = crate::commands::agent::ui::tui::state::TranscriptLine {
+        role: TranscriptRole::Assistant,
+        text: "hi".to_string(),
+        rendered: None,
+    };
+
+    let user = render_transcript_lines_for_test(user_line, None, 0);
+    let assistant = render_transcript_lines_for_test(assistant_line, None, 0);
+
+    assert!(user[0].spans.iter().any(|span| span.content.as_ref() == "  "));
+    assert!(assistant[0].spans.iter().any(|span| span.content.as_ref() == "  "));
+}
+
+#[test]
+fn lane_prefix_builder_composes_distinct_prefix_spans_by_role() {
+    let user = lane_prefix_spans_for_test(TranscriptRole::User, false);
+    let assistant = lane_prefix_spans_for_test(TranscriptRole::Assistant, false);
+    let tool = lane_prefix_spans_for_test(TranscriptRole::Tool, false);
+
+    let user_text = user
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+    let assistant_text = assistant
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+    let tool_text = tool
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+
+    assert_eq!(user_text, "  ▏ ");
+    assert_eq!(assistant_text, "    ");
+    assert_eq!(tool_text, "  ⚒ ");
+}
+
+#[test]
+fn row_span_builder_enforces_role_status_and_tool_metadata_style_channels() {
+    let tool = crate::commands::agent::ui::tui::state::TranscriptLine {
+        role: TranscriptRole::Tool,
+        text: "tool[k8s__list_pods] args={\"namespace\":\"prod\"} · done".to_string(),
+        rendered: None,
+    };
+    let tool_spans = row_spans_for_test(
+        tool,
+        Some(TranscriptLineStatus::Tool(ToolCallStatus::Done)),
+        false,
+        false,
+        0,
+    );
+
+    let indicator = tool_spans
+        .iter()
+        .find(|span| span.content.as_ref().contains('✓'))
+        .expect("status indicator span");
+    assert_eq!(indicator.style.fg, Some(CTP_MOCHA_GREEN));
+    assert!(!indicator.style.add_modifier.contains(Modifier::DIM));
+
+    let metadata = tool_spans
+        .iter()
+        .find(|span| span.content.as_ref().contains("args={\"namespace\":\"prod\"}"))
+        .expect("tool metadata span");
+    assert_eq!(metadata.style.fg, Some(CTP_MOCHA_OVERLAY1));
+    assert!(metadata.style.add_modifier.contains(Modifier::DIM));
+
+    let user = crate::commands::agent::ui::tui::state::TranscriptLine {
+        role: TranscriptRole::User,
+        text: "hello".to_string(),
+        rendered: None,
+    };
+    let user_spans = row_spans_for_test(
+        user,
+        Some(TranscriptLineStatus::Prompt(PromptStatus::Done)),
+        false,
+        false,
+        0,
+    );
+    let user_content = user_spans
+        .iter()
+        .find(|span| span.content.as_ref() == "hello")
+        .expect("user content span");
+    assert_eq!(user_content.style.fg, Some(CTP_MOCHA_BLUE));
+}
+
+#[test]
+fn row_span_builder_applies_distinct_role_background_channels() {
+    let user = crate::commands::agent::ui::tui::state::TranscriptLine {
+        role: TranscriptRole::User,
+        text: "user line".to_string(),
+        rendered: None,
+    };
+    let assistant = crate::commands::agent::ui::tui::state::TranscriptLine {
+        role: TranscriptRole::Assistant,
+        text: "assistant line".to_string(),
+        rendered: None,
+    };
+    let tool = crate::commands::agent::ui::tui::state::TranscriptLine {
+        role: TranscriptRole::Tool,
+        text: "tool[k8s__list_pods] args={\"namespace\":\"prod\"}".to_string(),
+        rendered: None,
+    };
+
+    let user_spans = row_spans_for_test(user, None, false, false, 0);
+    let assistant_spans = row_spans_for_test(assistant, None, false, false, 0);
+    let tool_spans = row_spans_for_test(tool, None, false, false, 0);
+
+    assert!(user_spans.iter().all(|span| span.style.bg == Some(CTP_MOCHA_SURFACE0)));
+    assert!(assistant_spans.iter().all(|span| span.style.bg.is_none()));
+    assert!(tool_spans.iter().all(|span| span.style.bg.is_none()));
+}
+
+#[test]
+fn role_background_extends_to_fill_row_width_for_paragraph_block_effect() {
+    let user_line = crate::commands::agent::ui::tui::state::TranscriptLine {
+        role: TranscriptRole::User,
+        text: "u".to_string(),
+        rendered: None,
+    };
+    let assistant_line = crate::commands::agent::ui::tui::state::TranscriptLine {
+        role: TranscriptRole::Assistant,
+        text: "a".to_string(),
+        rendered: None,
+    };
+
+    let user_rendered = render_transcript_lines_with_flags_for_test(
+        user_line,
+        None,
+        false,
+        false,
+        20,
+        0,
+    );
+    let assistant_rendered = render_transcript_lines_with_flags_for_test(
+        assistant_line,
+        None,
+        false,
+        false,
+        20,
+        0,
+    );
+
+    let user_pad = user_rendered[0]
+        .spans
+        .last()
+        .expect("user line should include trailing pad span");
+    assert!(user_pad.content.chars().count() > 0);
+    assert_eq!(user_pad.style.bg, Some(CTP_MOCHA_SURFACE0));
+
+    let assistant_pad = assistant_rendered[0]
+        .spans
+        .last()
+        .expect("assistant line should include trailing pad span");
+    assert!(assistant_pad.content.chars().count() > 0);
+    assert!(assistant_pad.style.bg.is_none());
+}
+
+#[test]
+fn submitted_multiline_prompt_preserves_line_breaks_in_transcript_render() {
+    let line = crate::commands::agent::ui::tui::state::TranscriptLine {
+        role: TranscriptRole::User,
+        text: "line one\nline two\nline three".to_string(),
+        rendered: None,
+    };
+
+    let rendered = render_transcript_lines_with_flags_for_test(
+        line,
+        Some(TranscriptLineStatus::Prompt(PromptStatus::Done)),
+        false,
+        false,
+        60,
+        0,
+    );
+
+    assert_eq!(rendered.len(), 3);
+
+    let first = rendered[0]
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+    let second = rendered[1]
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+    let third = rendered[2]
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+
+    assert!(first.contains("line one"));
+    assert!(second.contains("line two"));
+    assert!(third.contains("line three"));
+    assert!(first.contains('✓'));
+    assert!(!second.contains('✓'));
+    assert!(!third.contains('✓'));
+}
+
+#[test]
+fn selection_overlay_is_applied_last_to_all_style_channels() {
+    let line = crate::commands::agent::ui::tui::state::TranscriptLine {
+        role: TranscriptRole::Tool,
+        text: "tool[k8s__list_pods] args={\"namespace\":\"prod\"}".to_string(),
+        rendered: None,
+    };
+    let spans = row_spans_for_test(
+        line,
+        Some(TranscriptLineStatus::Tool(ToolCallStatus::InProgress)),
+        false,
+        true,
+        0,
+    );
+
+    assert!(spans
+        .iter()
+        .all(|span| span.style.bg == Some(CTP_MOCHA_SURFACE1)));
+}
+
+#[test]
+fn selection_overlay_remains_legible_on_user_lane_prefix_rows() {
+    let user_line = crate::commands::agent::ui::tui::state::TranscriptLine {
+        role: TranscriptRole::User,
+        text: "selected".to_string(),
+        rendered: None,
+    };
+
+    let rendered = render_transcript_lines_with_flags_for_test(
+        user_line,
+        Some(TranscriptLineStatus::Prompt(PromptStatus::Done)),
+        true,
+        false,
+        80,
+        0,
+    );
+    let lane = rendered[0]
+        .spans
+        .iter()
+        .find(|span| span.content.as_ref() == "▏ ")
+        .expect("lane span");
+
+    assert_eq!(lane.style.bg, Some(CTP_MOCHA_SURFACE1));
+    assert_eq!(lane.style.fg, Some(CTP_MOCHA_BLUE));
+}
+
+#[test]
+fn cursor_marker_coexists_with_user_lane_prefix_and_status_indicator() {
+    let user_line = crate::commands::agent::ui::tui::state::TranscriptLine {
+        role: TranscriptRole::User,
+        text: "cursor line".to_string(),
+        rendered: None,
+    };
+
+    let rendered = render_transcript_lines_with_flags_for_test(
+        user_line,
+        Some(TranscriptLineStatus::Prompt(PromptStatus::InProgress)),
+        false,
+        true,
+        80,
+        200,
+    );
+
+    assert!(rendered[0].spans.iter().any(|span| span.content.as_ref() == "> "));
+    assert!(rendered[0].spans.iter().any(|span| span.content.as_ref() == "▏ "));
+    assert!(rendered[0].spans.iter().any(|span| span.content.contains("⠹")));
 }
 
 #[test]
@@ -1336,16 +1670,110 @@ fn tool_row_renders_spinner_while_running_and_done_on_end() {
         Some(TranscriptLineStatus::Tool(ToolCallStatus::InProgress)),
         200,
     );
-    assert!(running_0[0].spans[0].content.contains("⠋"));
-    assert!(running_1[0].spans[0].content.contains("⠙"));
-    assert!(running_2[0].spans[0].content.contains("⠹"));
+    assert!(running_0[0].spans.iter().any(|span| span.content.contains("⠋")));
+    assert!(running_1[0].spans.iter().any(|span| span.content.contains("⠙")));
+    assert!(running_2[0].spans.iter().any(|span| span.content.contains("⠹")));
 
     let done = render_transcript_lines_for_test(
         line,
         Some(TranscriptLineStatus::Tool(ToolCallStatus::Done)),
         0,
     );
-    assert!(done[0].spans[0].content.contains("✓"));
+    assert!(done[0].spans.iter().any(|span| span.content.contains("✓")));
+}
+
+#[test]
+fn tool_rows_render_structured_label_and_dimmed_metadata() {
+    let line = crate::commands::agent::ui::tui::state::TranscriptLine {
+        role: TranscriptRole::Tool,
+        text: "tool[k8s__list_pods] args={\"namespace\":\"prod\"} · done".to_string(),
+        rendered: None,
+    };
+
+    let rendered = render_transcript_lines_for_test(
+        line,
+        Some(TranscriptLineStatus::Tool(ToolCallStatus::Done)),
+        0,
+    );
+
+    assert!(rendered[0]
+        .spans
+        .iter()
+        .any(|span| span.content.as_ref() == "tool[k8s__list_pods]"));
+    let meta = rendered[0]
+        .spans
+        .iter()
+        .find(|span| span.content.as_ref().contains("args={\"namespace\":\"prod\"} · done"))
+        .expect("tool metadata span");
+    assert_eq!(meta.style.fg, Some(CTP_MOCHA_OVERLAY1));
+    assert!(meta.style.add_modifier.contains(Modifier::DIM));
+}
+
+#[test]
+fn indicator_style_tokens_map_prompt_and_tool_statuses_semantically() {
+    let prompt_queued = indicator_style_for_status_for_test(TranscriptLineStatus::Prompt(PromptStatus::Queued));
+    let prompt_running = indicator_style_for_status_for_test(TranscriptLineStatus::Prompt(PromptStatus::InProgress));
+    let prompt_done = indicator_style_for_status_for_test(TranscriptLineStatus::Prompt(PromptStatus::Done));
+    let prompt_cancelled = indicator_style_for_status_for_test(TranscriptLineStatus::Prompt(PromptStatus::Cancelled));
+
+    let tool_running = indicator_style_for_status_for_test(TranscriptLineStatus::Tool(ToolCallStatus::InProgress));
+    let tool_done = indicator_style_for_status_for_test(TranscriptLineStatus::Tool(ToolCallStatus::Done));
+    let tool_failed = indicator_style_for_status_for_test(TranscriptLineStatus::Tool(ToolCallStatus::Failed));
+
+    assert_eq!(prompt_queued.fg, Some(CTP_MOCHA_OVERLAY0));
+    assert_eq!(prompt_running.fg, Some(CTP_MOCHA_SAPPHIRE));
+    assert_eq!(prompt_done.fg, Some(CTP_MOCHA_GREEN));
+    assert_eq!(prompt_cancelled.fg, Some(CTP_MOCHA_OVERLAY0));
+
+    assert_eq!(tool_running.fg, Some(CTP_MOCHA_SAPPHIRE));
+    assert_eq!(tool_done.fg, Some(CTP_MOCHA_GREEN));
+    assert_eq!(tool_failed.fg, Some(CTP_MOCHA_RED));
+}
+
+#[test]
+fn transition_spacing_matrix_is_deterministic_for_role_changes() {
+    assert!(!transition_spacer_for_roles_for_test(None, TranscriptRole::User));
+    assert!(!transition_spacer_for_roles_for_test(Some(TranscriptRole::User), TranscriptRole::User));
+    assert!(!transition_spacer_for_roles_for_test(Some(TranscriptRole::Assistant), TranscriptRole::Assistant));
+    assert!(!transition_spacer_for_roles_for_test(Some(TranscriptRole::Tool), TranscriptRole::Tool));
+
+    assert!(!transition_spacer_for_roles_for_test(Some(TranscriptRole::User), TranscriptRole::Assistant));
+    assert!(!transition_spacer_for_roles_for_test(Some(TranscriptRole::Assistant), TranscriptRole::User));
+
+    assert!(transition_spacer_for_roles_for_test(Some(TranscriptRole::Assistant), TranscriptRole::Tool));
+    assert!(transition_spacer_for_roles_for_test(Some(TranscriptRole::Tool), TranscriptRole::Assistant));
+    assert!(transition_spacer_for_roles_for_test(Some(TranscriptRole::User), TranscriptRole::Tool));
+    assert!(transition_spacer_for_roles_for_test(Some(TranscriptRole::Tool), TranscriptRole::User));
+
+    assert!(!transition_spacer_for_roles_for_test(Some(TranscriptRole::Separator), TranscriptRole::Assistant));
+    assert!(!transition_spacer_for_roles_for_test(Some(TranscriptRole::Assistant), TranscriptRole::Separator));
+}
+
+#[test]
+fn transition_spacing_remains_legible_for_mixed_sequences() {
+    let user_assistant_tool_assistant = [
+        TranscriptRole::User,
+        TranscriptRole::Assistant,
+        TranscriptRole::Tool,
+        TranscriptRole::Assistant,
+    ];
+    let uas_transitions = user_assistant_tool_assistant
+        .windows(2)
+        .map(|roles| transition_spacer_for_roles_for_test(Some(roles[0]), roles[1]))
+        .collect::<Vec<_>>();
+    assert_eq!(uas_transitions, vec![false, true, true]);
+
+    let user_tool_assistant_tool = [
+        TranscriptRole::User,
+        TranscriptRole::Tool,
+        TranscriptRole::Assistant,
+        TranscriptRole::Tool,
+    ];
+    let uta_transitions = user_tool_assistant_tool
+        .windows(2)
+        .map(|roles| transition_spacer_for_roles_for_test(Some(roles[0]), roles[1]))
+        .collect::<Vec<_>>();
+    assert_eq!(uta_transitions, vec![true, true, true]);
 }
 
 #[test]

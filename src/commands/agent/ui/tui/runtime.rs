@@ -127,6 +127,22 @@ impl RuntimeCoordinator {
                 continue;
             }
 
+            if role == TranscriptRole::Tool {
+                let persisted = message_content.trim();
+                if let Some(arguments) = message.tool_arguments() {
+                    let success = message.tool_success().unwrap_or(true);
+                    self.state.start_tool_call(extract_tool_name(persisted), arguments);
+                    self.state
+                        .finish_tool_call(extract_tool_name(persisted), arguments, success);
+                    continue;
+                }
+                if let Some((name, arguments, success)) = parse_persisted_tool_status_line(persisted) {
+                    self.state.start_tool_call(name, arguments);
+                    self.state.finish_tool_call(name, arguments, success);
+                    continue;
+                }
+            }
+
             for line in message_content.lines() {
                 if !line.trim().is_empty() {
                     self.state.push_transcript_line(role, line.to_string());
@@ -451,11 +467,13 @@ impl RuntimeCoordinator {
                     &self.state,
                     self.state.transcript_preview.len(),
                 );
-                let transcript = window_lines
-                .into_iter()
-                .enumerate()
-                .flat_map(|(offset, line)| {
+                let mut transcript = Vec::new();
+                let mut prev_role: Option<TranscriptRole> = None;
+                for (offset, line) in window_lines.into_iter().enumerate() {
                     let global_idx = window_start.saturating_add(offset);
+                    if should_insert_transition_spacer(prev_role, line.role) {
+                        transcript.push(Line::from(vec![Span::raw(" ")]));
+                    }
                     let line_status = self.state.transcript_line_status_for_index(global_idx);
                     let is_cursor_line = self.state.transcript_cursor_index() == Some(global_idx)
                         && self.state.input_mode
@@ -463,7 +481,7 @@ impl RuntimeCoordinator {
                     let is_selected = selected
                         .map(|(start, end)| global_idx >= start && global_idx <= end)
                         .unwrap_or(false);
-                    render_transcript_lines(
+                    transcript.extend(render_transcript_lines(
                         line,
                         vertical[1].width as usize,
                         is_selected,
@@ -471,9 +489,13 @@ impl RuntimeCoordinator {
                         line_status,
                         current_time_millis(),
                         &self.theme,
-                    )
-                })
-                .collect::<Vec<_>>();
+                    ));
+                    prev_role = self
+                        .state
+                        .transcript_preview
+                        .get(global_idx)
+                        .map(|entry| entry.role);
+                }
                 let transcript_view_height = vertical[1].height.saturating_sub(1) as usize;
                 let _transcript_title = transcript_title_for_render(
                     &self.state,
@@ -650,6 +672,17 @@ impl RuntimeCoordinator {
         self.poll_terminal_event(event_source);
         self.drain_transport();
     }
+}
+
+fn extract_tool_name(line: &str) -> &str {
+    const PREFIX: &str = "tool[";
+    const SUFFIX_MARKER: &str = "]";
+    if let Some(rest) = line.strip_prefix(PREFIX)
+        && let Some((name, _)) = rest.split_once(SUFFIX_MARKER)
+    {
+        return name;
+    }
+    "unknown"
 }
 
 fn build_status_lines(
@@ -914,6 +947,28 @@ fn availability_label(availability: Option<bool>) -> &'static str {
     }
 }
 
+fn parse_persisted_tool_status_line(line: &str) -> Option<(&str, &str, bool)> {
+    const PREFIX: &str = "tool[";
+    const ARGS_MARKER: &str = "] args=";
+    const DONE_SUFFIX: &str = " · done";
+    const FAILED_SUFFIX: &str = " · failed";
+
+    let remainder = line.strip_prefix(PREFIX)?;
+    let (name, after_name) = remainder.split_once(ARGS_MARKER)?;
+    if let Some(arguments) = after_name.strip_suffix(DONE_SUFFIX) {
+        return Some((name, arguments, true));
+    }
+    if let Some(arguments) = after_name.strip_suffix(FAILED_SUFFIX) {
+        return Some((name, arguments, false));
+    }
+    None
+}
+
+#[cfg(test)]
+pub(super) fn parse_persisted_tool_status_line_for_test(line: &str) -> Option<(&str, &str, bool)> {
+    parse_persisted_tool_status_line(line)
+}
+
 #[cfg(test)]
 pub(super) fn visible_transcript_window(
     transcript: &[crate::commands::agent::ui::tui::state::TranscriptLine],
@@ -1045,6 +1100,30 @@ fn wrapped_row_count_for_line(
     chars.max(1).div_ceil(available)
 }
 
+fn should_insert_transition_spacer(previous: Option<TranscriptRole>, next: TranscriptRole) -> bool {
+    let Some(previous) = previous else {
+        return false;
+    };
+
+    if previous == next {
+        return false;
+    }
+
+    if previous == TranscriptRole::Separator || next == TranscriptRole::Separator {
+        return false;
+    }
+
+    !is_user_assistant_transition(previous, next)
+}
+
+fn is_user_assistant_transition(previous: TranscriptRole, next: TranscriptRole) -> bool {
+    matches!(
+        (previous, next),
+        (TranscriptRole::User, TranscriptRole::Assistant)
+            | (TranscriptRole::Assistant, TranscriptRole::User)
+    )
+}
+
 fn transcript_role_style(role: TranscriptRole) -> Style {
     let theme = TuiTheme::default();
     match role {
@@ -1056,6 +1135,144 @@ fn transcript_role_style(role: TranscriptRole) -> Style {
     }
 }
 
+fn transcript_row_style(role: TranscriptRole, theme: &TuiTheme) -> Style {
+    match role {
+        TranscriptRole::User => theme.row_user,
+        TranscriptRole::Assistant => theme.row_assistant,
+        TranscriptRole::Tool => theme.row_tool,
+        TranscriptRole::System => theme.row_system,
+        TranscriptRole::Separator => Style::default(),
+    }
+}
+
+fn lane_prefix_spans(
+    role: TranscriptRole,
+    cursor_line: bool,
+    theme: &TuiTheme,
+) -> Vec<Span<'static>> {
+    let cursor = if cursor_line { "> " } else { "  " };
+    let (lane_label, lane_style) = match role {
+        TranscriptRole::User => ("▏ ", theme.lane_prefix_user),
+        TranscriptRole::Assistant => ("  ", theme.lane_prefix_assistant),
+        TranscriptRole::Tool => ("⚒ ", theme.lane_prefix_tool),
+        TranscriptRole::System => ("· ", theme.lane_prefix_system),
+        TranscriptRole::Separator => ("  ", theme.role_separator),
+    };
+
+    vec![
+        Span::styled(cursor.to_string(), Style::default()),
+        Span::styled(lane_label.to_string(), lane_style),
+    ]
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ToolRowParts {
+    label: String,
+    metadata: Option<String>,
+}
+
+fn parse_tool_row_parts(text: &str) -> ToolRowParts {
+    if !(text.starts_with("tool[") && text.contains(']')) {
+        return ToolRowParts {
+            label: text.to_string(),
+            metadata: None,
+        };
+    }
+
+    let closing = text.find(']').unwrap_or(text.len().saturating_sub(1));
+    let label = text[..=closing].to_string();
+    let tail = text[closing + 1..].trim();
+    let metadata = if tail.is_empty() {
+        None
+    } else {
+        Some(tail.to_string())
+    };
+
+    ToolRowParts { label, metadata }
+}
+
+fn build_row_spans(
+    line: &crate::commands::agent::ui::tui::state::TranscriptLine,
+    line_status: Option<TranscriptLineStatus>,
+    cursor_line: bool,
+    selected: bool,
+    now_millis: u128,
+    theme: &TuiTheme,
+    show_status_indicator: bool,
+) -> Vec<Span<'static>> {
+    let role_style = transcript_role_style(line.role);
+    let prompt_modifier = if line_status == Some(TranscriptLineStatus::Prompt(PromptStatus::Cancelled))
+    {
+        theme.cancelled_modifier
+    } else {
+        Modifier::empty()
+    };
+
+    let mut spans = lane_prefix_spans(line.role, cursor_line, theme)
+        .into_iter()
+        .map(|span| {
+            let style = span.style.add_modifier(prompt_modifier);
+            Span::styled(span.content.into_owned(), style)
+        })
+        .collect::<Vec<_>>();
+
+    if let Some(status) = line_status.filter(|_| show_status_indicator) {
+        spans.push(Span::styled(
+            format!("{} ", indicator_for_line_status(status, now_millis)),
+            indicator_style_for_status(status, theme).add_modifier(prompt_modifier),
+        ));
+    }
+
+    if let Some(rendered) = line.rendered.as_ref() {
+        spans.extend(rendered.spans.iter().map(|span| {
+            Span::styled(
+                span.content.as_ref().to_string(),
+                span.style
+                    .patch(role_style)
+                    .add_modifier(prompt_modifier),
+            )
+        }));
+    } else if line.role == TranscriptRole::Tool {
+        let parts = parse_tool_row_parts(&line.text);
+        spans.push(Span::styled(
+            parts.label,
+            role_style.add_modifier(prompt_modifier),
+        ));
+        if let Some(metadata) = parts.metadata {
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(
+                metadata,
+                theme.tool_meta.add_modifier(prompt_modifier),
+            ));
+        }
+    } else {
+        spans.push(Span::styled(
+            line.text.clone(),
+            role_style.add_modifier(prompt_modifier),
+        ));
+    }
+
+    let row_style = transcript_row_style(line.role, theme).add_modifier(prompt_modifier);
+    spans = spans
+        .into_iter()
+        .map(|span| Span::styled(span.content.into_owned(), span.style.patch(row_style)))
+        .collect();
+
+    if selected {
+        return spans
+            .into_iter()
+            .map(|span| {
+                Span::styled(
+                    span.content.into_owned(),
+                    span.style.patch(theme.selection_bg),
+                )
+            })
+            .collect();
+    }
+
+    spans
+}
+
 fn render_transcript_lines(
     line: crate::commands::agent::ui::tui::state::TranscriptLine,
     content_width: usize,
@@ -1065,70 +1282,111 @@ fn render_transcript_lines(
     now_millis: u128,
     theme: &TuiTheme,
 ) -> Vec<Line<'static>> {
-    let selection_overlay = if selected {
-        theme.selection_bg
-    } else {
-        Style::default()
-    };
-    let cursor_prefix = if cursor_line { "> " } else { "  " };
     if line.role == TranscriptRole::Separator {
-        let width = content_width.saturating_sub(2).max(1);
+        let width = content_width.saturating_sub(4).max(1);
         let desired = line
             .text
             .chars()
             .next()
             .map(|ch| ch.to_string().repeat(width))
             .unwrap_or_else(|| "-".repeat(width));
-        let style = transcript_role_style(TranscriptRole::Separator);
-        return vec![Line::from(vec![
-            Span::styled(cursor_prefix.to_string(), style.patch(selection_overlay)),
-            Span::styled(desired, style.patch(selection_overlay)),
-        ])];
-    }
-
-    let role_style = transcript_role_style(line.role);
-    let indicator = line_status
-        .map(|status| indicator_for_line_status(status, now_millis))
-        .unwrap_or("");
-    let prompt_modifier = if line_status
-        == Some(TranscriptLineStatus::Prompt(PromptStatus::Cancelled))
-    {
-        theme.cancelled_modifier
-    } else {
-        Modifier::empty()
-    };
-
-    let prefix = if indicator.is_empty() {
-        cursor_prefix.to_string()
-    } else {
-        format!("{cursor_prefix}{indicator} ")
-    };
-
-    if let Some(rendered) = line.rendered {
-        let mut spans = vec![Span::styled(
-            prefix,
-            role_style.patch(selection_overlay).add_modifier(prompt_modifier),
-        )];
-        spans.extend(
-            rendered
-            .spans
-            .into_iter()
-            .map(|span| {
-                let style = span.style.patch(role_style).add_modifier(prompt_modifier);
-                Span::styled(span.content.into_owned(), style.patch(selection_overlay))
-            })
-            .collect::<Vec<_>>(),
-        );
+        let mut spans = lane_prefix_spans(TranscriptRole::Separator, cursor_line, theme);
+        spans.push(Span::styled(desired, theme.role_separator));
+        if selected {
+            spans = spans
+                .into_iter()
+                .map(|span| {
+                    Span::styled(
+                        span.content.into_owned(),
+                        span.style.patch(theme.selection_bg),
+                    )
+                })
+                .collect();
+        }
         return vec![Line::from(spans)];
     }
 
-    vec![Line::from(vec![
-        Span::styled(prefix, role_style.patch(selection_overlay).add_modifier(prompt_modifier)),
-        Span::styled(
-            line.text,
-            role_style.patch(selection_overlay).add_modifier(prompt_modifier),
-        ),
-    ])]
+    if line.rendered.is_none() && line.text.contains('\n') {
+        let prompt_modifier = if line_status
+            == Some(TranscriptLineStatus::Prompt(PromptStatus::Cancelled))
+        {
+            theme.cancelled_modifier
+        } else {
+            Modifier::empty()
+        };
+
+        let mut rendered = Vec::new();
+        for (idx, chunk) in line.text.split('\n').enumerate() {
+            let chunk_line = crate::commands::agent::ui::tui::state::TranscriptLine {
+                role: line.role,
+                text: chunk.to_string(),
+                rendered: None,
+            };
+            let mut spans = build_row_spans(
+                &chunk_line,
+                line_status,
+                cursor_line && idx == 0,
+                selected,
+                now_millis,
+                theme,
+                idx == 0,
+            );
+
+            let used_width = spans
+                .iter()
+                .map(|span| span.content.chars().count())
+                .sum::<usize>();
+            if used_width < content_width {
+                let mut pad_style = transcript_row_style(line.role, theme).add_modifier(prompt_modifier);
+                if selected {
+                    pad_style = pad_style.patch(theme.selection_bg);
+                }
+
+                spans.push(Span::styled(
+                    " ".repeat(content_width.saturating_sub(used_width)),
+                    pad_style,
+                ));
+            }
+            rendered.push(Line::from(spans));
+        }
+        return rendered;
+    }
+
+    let mut spans = build_row_spans(
+        &line,
+        line_status,
+        cursor_line,
+        selected,
+        now_millis,
+        theme,
+        true,
+    );
+
+    let used_width = spans
+        .iter()
+        .map(|span| span.content.chars().count())
+        .sum::<usize>();
+    if used_width < content_width {
+        let prompt_modifier = if line_status
+            == Some(TranscriptLineStatus::Prompt(PromptStatus::Cancelled))
+        {
+            theme.cancelled_modifier
+        } else {
+            Modifier::empty()
+        };
+
+        let mut pad_style = transcript_row_style(line.role, theme).add_modifier(prompt_modifier);
+        if selected {
+            pad_style = pad_style.patch(theme.selection_bg);
+        }
+
+        spans.push(Span::styled(
+            " ".repeat(content_width.saturating_sub(used_width)),
+            pad_style,
+        ));
+    }
+
+    vec![Line::from(spans)]
 }
 
 const IN_PROGRESS_SPINNER_FRAMES: [&str; 10] = [
@@ -1165,6 +1423,35 @@ fn indicator_for_line_status(status: TranscriptLineStatus, now_millis: u128) -> 
     }
 }
 
+fn indicator_style_for_status(status: TranscriptLineStatus, theme: &TuiTheme) -> Style {
+    match status {
+        TranscriptLineStatus::Prompt(prompt_status) => match prompt_status {
+            PromptStatus::Queued => theme.status_queued,
+            PromptStatus::InProgress => theme.status_running,
+            PromptStatus::Done => theme.status_done,
+            PromptStatus::Cancelled => theme.status_cancelled,
+        },
+        TranscriptLineStatus::Tool(tool_status) => match tool_status {
+            ToolCallStatus::InProgress => theme.status_running,
+            ToolCallStatus::Done => theme.status_done,
+            ToolCallStatus::Failed => theme.status_failed,
+        },
+    }
+}
+
+#[cfg(test)]
+pub(super) fn indicator_style_for_status_for_test(status: TranscriptLineStatus) -> Style {
+    indicator_style_for_status(status, &TuiTheme::default())
+}
+
+#[cfg(test)]
+pub(super) fn transition_spacer_for_roles_for_test(
+    previous: Option<TranscriptRole>,
+    next: TranscriptRole,
+) -> bool {
+    should_insert_transition_spacer(previous, next)
+}
+
 #[cfg(test)]
 pub(super) fn prompt_indicator_for_status_for_test(
     status: PromptStatus,
@@ -1187,6 +1474,53 @@ pub(super) fn render_transcript_lines_for_test(
         line_status,
         now_millis,
         &TuiTheme::default(),
+    )
+}
+
+#[cfg(test)]
+pub(super) fn render_transcript_lines_with_flags_for_test(
+    line: crate::commands::agent::ui::tui::state::TranscriptLine,
+    line_status: Option<TranscriptLineStatus>,
+    selected: bool,
+    cursor_line: bool,
+    width: usize,
+    now_millis: u128,
+) -> Vec<Line<'static>> {
+    render_transcript_lines(
+        line,
+        width,
+        selected,
+        cursor_line,
+        line_status,
+        now_millis,
+        &TuiTheme::default(),
+    )
+}
+
+#[cfg(test)]
+pub(super) fn lane_prefix_spans_for_test(
+    role: TranscriptRole,
+    cursor_line: bool,
+) -> Vec<Span<'static>> {
+    lane_prefix_spans(role, cursor_line, &TuiTheme::default())
+}
+
+#[cfg(test)]
+pub(super) fn row_spans_for_test(
+    line: crate::commands::agent::ui::tui::state::TranscriptLine,
+    line_status: Option<TranscriptLineStatus>,
+    cursor_line: bool,
+    selected: bool,
+    now_millis: u128,
+) -> Vec<Span<'static>> {
+    build_row_spans(
+        &line,
+        line_status,
+        cursor_line,
+        selected,
+        now_millis,
+        &TuiTheme::default(),
+        true,
     )
 }
 

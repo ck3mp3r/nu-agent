@@ -97,7 +97,7 @@ impl Session {
     pub fn format_history(&self) -> String {
         self.messages
             .iter()
-            .map(|msg| format!("{}: {}", msg.role(), msg.content()))
+            .map(format_message_for_history)
             .collect::<Vec<_>>()
             .join("\n\n")
     }
@@ -453,6 +453,17 @@ impl Session {
     }
 }
 
+fn format_message_for_history(msg: &Message) -> String {
+    let mut rendered = format!("{}: {}", msg.role(), msg.content());
+    if msg.role() == "tool"
+        && let Some(result) = msg.tool_result()
+    {
+        rendered.push_str(" result=");
+        rendered.push_str(result);
+    }
+    rendered
+}
+
 /// Metadata stored as the first line of a JSONL file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SessionMetadata {
@@ -471,6 +482,12 @@ pub struct Message {
     role: String,
     content: String,
     timestamp: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tool_arguments: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tool_result: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tool_success: Option<bool>,
 }
 
 impl Message {
@@ -481,7 +498,22 @@ impl Message {
             role,
             content,
             timestamp: Utc::now(),
+            tool_arguments: None,
+            tool_result: None,
+            tool_success: None,
         }
+    }
+
+    pub fn with_tool_details(
+        mut self,
+        arguments: impl Into<String>,
+        result: impl Into<String>,
+        success: bool,
+    ) -> Self {
+        self.tool_arguments = Some(arguments.into());
+        self.tool_result = Some(result.into());
+        self.tool_success = Some(success);
+        self
     }
 
     /// Returns the message role.
@@ -497,6 +529,18 @@ impl Message {
     /// Returns the message timestamp.
     pub fn timestamp(&self) -> &DateTime<Utc> {
         &self.timestamp
+    }
+
+    pub fn tool_arguments(&self) -> Option<&str> {
+        self.tool_arguments.as_deref()
+    }
+
+    pub fn tool_result(&self) -> Option<&str> {
+        self.tool_result.as_deref()
+    }
+
+    pub fn tool_success(&self) -> Option<bool> {
+        self.tool_success
     }
 }
 

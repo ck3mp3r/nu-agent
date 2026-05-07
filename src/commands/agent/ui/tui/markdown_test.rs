@@ -7,6 +7,8 @@ use ratatui::{
 
 use crate::commands::agent::ui::tui::markdown::project_markdown_to_lines;
 
+const CTP_MOCHA_YELLOW: Color = Color::Rgb(249, 226, 175);
+
 fn markdown_fixture(name: &str) -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("src/commands/agent/ui/tui/fixtures/markdown")
@@ -50,7 +52,7 @@ fn markdown_projection_fixture_supported_basics_renders_lines_and_inline_styles(
         .iter()
         .any(|span| {
             span.content.as_ref() == "code"
-                && span.style.fg == Some(Color::Yellow)
+                && span.style.fg == Some(CTP_MOCHA_YELLOW)
                 && span.style.add_modifier.contains(Modifier::DIM)
         }));
 }

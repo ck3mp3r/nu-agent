@@ -60,6 +60,11 @@ impl SessionResolver for DefaultSessionResolver<'_> {
                             .iter()
                             .map(|message| {
                                 UiMessageSnapshot::new(message.role(), message.content())
+                                    .with_tool_details(
+                                        message.tool_arguments().map(ToOwned::to_owned),
+                                        message.tool_result().map(ToOwned::to_owned),
+                                        message.tool_success(),
+                                    )
                             })
                             .collect()
                     } else {
