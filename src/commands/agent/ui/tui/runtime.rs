@@ -28,7 +28,6 @@ use crate::commands::agent::ui::{
             input_cursor_row_col, input_pane_height_for_content, recompute_layout,
             wrapped_input_rows,
         },
-        markdown::project_markdown_to_lines,
         reducer::{ReducerInput, reduce_with_cancel_controller},
         selection::TranscriptSelection,
         state::{AppState, PromptStatus, ToolCallStatus, TranscriptLineStatus, TranscriptRole},
@@ -118,7 +117,7 @@ impl RuntimeCoordinator {
                 continue;
             }
             if role == TranscriptRole::Assistant {
-                for line in project_markdown_to_lines(message_content) {
+                for line in self.state.project_assistant_markdown_lines(message_content) {
                     let plain_text = crate::commands::agent::ui::tui::markdown::rendered_line_to_plain_text(&line);
                     if !plain_text.trim().is_empty() {
                         self.state.push_transcript_rendered_line(role, line);
@@ -1227,8 +1226,8 @@ fn build_row_spans(
         spans.extend(rendered.spans.iter().map(|span| {
             Span::styled(
                 span.content.as_ref().to_string(),
-                span.style
-                    .patch(role_style)
+                role_style
+                    .patch(span.style)
                     .add_modifier(prompt_modifier),
             )
         }));
@@ -1253,24 +1252,37 @@ fn build_row_spans(
     }
 
     let row_style = transcript_row_style(line.role, theme).add_modifier(prompt_modifier);
-    spans = spans
-        .into_iter()
-        .map(|span| Span::styled(span.content.into_owned(), span.style.patch(row_style)))
-        .collect();
+    apply_row_style_overlays(spans, row_style, selected, theme)
+}
 
-    if selected {
-        return spans
-            .into_iter()
-            .map(|span| {
-                Span::styled(
-                    span.content.into_owned(),
-                    span.style.patch(theme.selection_bg),
-                )
-            })
-            .collect();
-    }
-
+fn apply_row_style_overlays(
+    spans: Vec<Span<'static>>,
+    row_style: Style,
+    selected: bool,
+    theme: &TuiTheme,
+) -> Vec<Span<'static>> {
     spans
+        .into_iter()
+        .map(|span| {
+            Span::styled(
+                span.content.into_owned(),
+                style_with_row_overlays(span.style, row_style, selected, theme),
+            )
+        })
+        .collect()
+}
+
+fn style_with_row_overlays(
+    style: Style,
+    row_style: Style,
+    selected: bool,
+    theme: &TuiTheme,
+) -> Style {
+    let mut patched = style.patch(row_style);
+    if selected {
+        patched = patched.patch(theme.selection_bg);
+    }
+    patched
 }
 
 fn render_transcript_lines(
@@ -1292,17 +1304,7 @@ fn render_transcript_lines(
             .unwrap_or_else(|| "-".repeat(width));
         let mut spans = lane_prefix_spans(TranscriptRole::Separator, cursor_line, theme);
         spans.push(Span::styled(desired, theme.role_separator));
-        if selected {
-            spans = spans
-                .into_iter()
-                .map(|span| {
-                    Span::styled(
-                        span.content.into_owned(),
-                        span.style.patch(theme.selection_bg),
-                    )
-                })
-                .collect();
-        }
+        spans = apply_row_style_overlays(spans, Style::default(), selected, theme);
         return vec![Line::from(spans)];
     }
 

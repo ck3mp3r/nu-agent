@@ -3,6 +3,9 @@ use ratatui::{
     style::{Modifier, Style},
     text::{Line, Span},
 };
+use crate::commands::agent::ui::tui::highlight::{
+    HighlightRequest, SyntaxTokenChannel, highlight_source_tokens,
+};
 use crate::commands::agent::ui::tui::theme::TuiTheme;
 
 #[derive(Debug, Clone, Default)]
@@ -30,7 +33,10 @@ struct ListState {
 }
 
 #[derive(Debug, Clone)]
-struct CodeBlockState;
+struct CodeBlockState {
+    language_hint: Option<String>,
+    source: String,
+}
 
 #[derive(Debug, Default)]
 struct Projector {
@@ -112,17 +118,39 @@ impl Projector {
         }
     }
 
-    fn push_code_block_text(&mut self, text: &str) {
-        let mut remaining = text;
-        while !remaining.is_empty() {
-            if let Some((line, rest)) = remaining.split_once('\n') {
-                self.push_text(&format!("    {line}"), Style::default());
-                self.flush_line();
-                remaining = rest;
-            } else {
-                self.push_text(&format!("    {remaining}"), Style::default());
-                remaining = "";
+    fn style_for_channel(&self, channel: SyntaxTokenChannel) -> Style {
+        match channel {
+            SyntaxTokenChannel::Keyword => self.theme.syntax_keyword,
+            SyntaxTokenChannel::Type => self.theme.syntax_type,
+            SyntaxTokenChannel::Function => self.theme.syntax_function,
+            SyntaxTokenChannel::Variable => self.theme.syntax_variable,
+            SyntaxTokenChannel::Constant => self.theme.syntax_constant,
+            SyntaxTokenChannel::String => self.theme.syntax_string,
+            SyntaxTokenChannel::Number => self.theme.syntax_number,
+            SyntaxTokenChannel::Operator => self.theme.syntax_operator,
+            SyntaxTokenChannel::Punctuation => self.theme.syntax_punctuation,
+            SyntaxTokenChannel::Comment => self.theme.syntax_comment,
+            SyntaxTokenChannel::Plain => Style::default(),
+        }
+    }
+
+    fn render_code_block(&mut self, block: CodeBlockState) {
+        if block.source.is_empty() {
+            return;
+        }
+
+        let highlighted = highlight_source_tokens(HighlightRequest {
+            language_hint: block.language_hint.as_deref(),
+            source: &block.source,
+        });
+
+        for token_line in highlighted {
+            self.push_text("    ", Style::default());
+            for token in token_line {
+                let style = self.style_for_channel(token.channel);
+                self.push_text(&token.text, style);
             }
+            self.flush_line();
         }
     }
 
@@ -166,7 +194,11 @@ impl Projector {
                 self.flush_line();
                 let language = match kind {
                     CodeBlockKind::Fenced(label) => {
-                        let label = label.trim();
+                        let label = label
+                            .split_ascii_whitespace()
+                            .next()
+                            .unwrap_or_default()
+                            .trim();
                         if label.is_empty() {
                             None
                         } else {
@@ -175,11 +207,10 @@ impl Projector {
                     }
                     CodeBlockKind::Indented => None,
                 };
-                if let Some(lang) = language.as_deref() {
-                    self.push_text(&format!("[code:{lang}]"), Style::default());
-                    self.flush_line();
-                }
-                self.code_block = Some(CodeBlockState);
+                self.code_block = Some(CodeBlockState {
+                    language_hint: language,
+                    source: String::new(),
+                });
             }
             Tag::Link { dest_url, .. } => {
                 self.link_destinations.push(dest_url.to_string());
@@ -219,7 +250,9 @@ impl Projector {
             }
             TagEnd::CodeBlock => {
                 self.flush_line();
-                self.code_block = None;
+                if let Some(block) = self.code_block.take() {
+                    self.render_code_block(block);
+                }
             }
             TagEnd::Link => {
                 self.emit_link_suffix();
@@ -236,8 +269,8 @@ impl Projector {
             Event::Start(tag) => self.on_start(tag),
             Event::End(tag) => self.on_end(tag),
             Event::Text(text) => {
-                if self.code_block.is_some() {
-                    self.push_code_block_text(&text);
+                if let Some(block) = self.code_block.as_mut() {
+                    block.source.push_str(&text);
                     return;
                 }
 
@@ -295,6 +328,49 @@ fn fallback_plain_text_lines(markdown: &str) -> Vec<Line<'static>> {
         .collect::<Vec<_>>()
 }
 
+fn strip_pseudo_code_tags(markdown: &str) -> String {
+    let mut remaining = markdown;
+    let mut sanitized = String::with_capacity(markdown.len());
+
+    while let Some(start) = remaining.find("[code:") {
+        sanitized.push_str(&remaining[..start]);
+        let after_start = &remaining[start..];
+        if let Some(end) = after_start.find(']') {
+            remaining = &after_start[end + 1..];
+        } else {
+            remaining = "";
+            break;
+        }
+    }
+
+    sanitized.push_str(remaining);
+    sanitized.replace("[/code]", "")
+}
+
+fn strip_known_control_blocks(markdown: &str) -> String {
+    let start_tag = "<system-reminder>";
+    let end_tag = "</system-reminder>";
+
+    let mut sanitized = markdown.to_string();
+    while let Some(start) = sanitized.find(start_tag) {
+        let after_start = start + start_tag.len();
+        if let Some(end_rel) = sanitized[after_start..].find(end_tag) {
+            let end = after_start + end_rel + end_tag.len();
+            sanitized.replace_range(start..end, "");
+        } else {
+            sanitized.replace_range(start.., "");
+            break;
+        }
+    }
+
+    sanitized
+}
+
+fn sanitize_assistant_visible_markdown(markdown: &str) -> String {
+    let without_control_blocks = strip_known_control_blocks(markdown);
+    strip_pseudo_code_tags(&without_control_blocks)
+}
+
 fn project_markdown_to_lines_inner(markdown: &str) -> Vec<Line<'static>> {
     let options = Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
     let parser = Parser::new_ext(markdown, options);
@@ -310,11 +386,12 @@ fn project_markdown_to_lines_inner(markdown: &str) -> Vec<Line<'static>> {
 }
 
 pub fn project_markdown_to_lines(markdown: &str) -> Vec<Line<'static>> {
-    let projected = std::panic::catch_unwind(|| project_markdown_to_lines_inner(markdown));
+    let sanitized = sanitize_assistant_visible_markdown(markdown);
+    let projected = std::panic::catch_unwind(|| project_markdown_to_lines_inner(&sanitized));
     match projected {
         Ok(lines) if !lines.is_empty() => lines,
-        Ok(lines) if markdown.trim().is_empty() => lines,
-        Ok(_) | Err(_) => fallback_plain_text_lines(markdown),
+        Ok(lines) if sanitized.trim().is_empty() => lines,
+        Ok(_) | Err(_) => fallback_plain_text_lines(&sanitized),
     }
 }
 

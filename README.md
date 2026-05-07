@@ -36,7 +36,14 @@ Use it:
 
 - `docs/configuration.md` - config structure, env vars, precedence
 - `docs/mcp.md` - MCP servers, discovery, filtering
-- `docs/usage.md` - commands and examples
+- `docs/usage.md` - commands, examples, and TUI transcript rendering behavior
 - `docs/development.md` - build, test, lint
+
+## TUI transcript rendering
+
+In TUI mode, assistant markdown is projected into readable transcript lines.
+Fenced code blocks use syntax highlighting when the fence language is recognized.
+If the language is unknown (or unsupported by the highlighter adapter), rendering
+falls back to stable plain code text so transcript readability is preserved.
 
 For development commands, see `docs/development.md`.

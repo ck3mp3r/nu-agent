@@ -5,7 +5,10 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use ratatui::style::{Color, Modifier};
+use ratatui::{
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+};
 
 use crate::commands::agent::contracts::UiMessageSnapshot;
 use crate::commands::agent::ui::{
@@ -43,6 +46,7 @@ const CTP_MOCHA_YELLOW: Color = Color::Rgb(249, 226, 175);
 const CTP_MOCHA_GREEN: Color = Color::Rgb(166, 227, 161);
 const CTP_MOCHA_BLUE: Color = Color::Rgb(137, 180, 250);
 const CTP_MOCHA_SAPPHIRE: Color = Color::Rgb(116, 199, 236);
+const CTP_MOCHA_MAUVE: Color = Color::Rgb(203, 166, 247);
 const CTP_MOCHA_OVERLAY0: Color = Color::Rgb(108, 112, 134);
 const CTP_MOCHA_OVERLAY1: Color = Color::Rgb(127, 132, 156);
 const CTP_MOCHA_SURFACE0: Color = Color::Rgb(49, 50, 68);
@@ -1053,6 +1057,47 @@ fn coordinator_hydration_preserves_assistant_markdown_styles() {
 }
 
 #[test]
+fn assistant_markdown_projection_is_memoized_across_repeated_messages() {
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    let markdown = markdown_fixture("fenced_code_blocks.md");
+
+    coordinator.enqueue_ui_event(UiEvent::AssistantMessage {
+        text: markdown.clone(),
+    });
+    coordinator.drain_transport();
+
+    coordinator.enqueue_ui_event(UiEvent::AssistantMessage { text: markdown });
+    coordinator.drain_transport();
+
+    assert_eq!(coordinator.state().assistant_projection_cache_misses(), 1);
+}
+
+#[test]
+fn resize_and_redraw_paths_do_not_retokenize_assistant_projection_cache() {
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    let markdown = markdown_fixture("fenced_code_blocks.md");
+
+    coordinator.enqueue_ui_event(UiEvent::AssistantMessage { text: markdown });
+    coordinator.drain_transport();
+    let misses_after_projection = coordinator.state().assistant_projection_cache_misses();
+    assert_eq!(misses_after_projection, 1);
+
+    for (columns, rows) in [(100, 28), (140, 42), (80, 24)] {
+        let mut source = StubEventSource {
+            next: Some(TerminalEvent::Resize(
+                crate::commands::agent::ui::tui::input::TerminalResize { columns, rows },
+            )),
+        };
+        coordinator.pump_once(&mut source);
+    }
+
+    assert_eq!(
+        coordinator.state().assistant_projection_cache_misses(),
+        misses_after_projection
+    );
+}
+
+#[test]
 fn coordinator_hydration_keeps_unsupported_markdown_readable_in_assistant_transcript() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
     let markdown = markdown_fixture("unsupported_fallback.md");
@@ -1096,6 +1141,34 @@ fn coordinator_hydration_handles_malformed_assistant_markdown_without_dropping_m
 
     assert!(!assistant_lines.is_empty());
     assert!(assistant_lines.iter().any(|line| line.text.contains("fn main() {")));
+}
+
+#[test]
+fn assistant_message_event_sanitizes_pseudo_tags_and_control_tags_in_runtime_transcript() {
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    coordinator.enqueue_ui_event(UiEvent::AssistantMessage {
+        text: "prefix\n[code:json]\n{\"ok\":true}\n[/code]\n<system-reminder>hidden</system-reminder>\nsuffix"
+            .to_string(),
+    });
+    coordinator.drain_transport();
+
+    let assistant_lines = coordinator
+        .state()
+        .transcript_preview
+        .iter()
+        .filter(|line| line.role == TranscriptRole::Assistant)
+        .map(|line| line.text.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(assistant_lines.contains(&"prefix"));
+    assert!(assistant_lines.iter().any(|line| line.contains("{\"ok\":true}")));
+    assert!(assistant_lines.contains(&"suffix"));
+    assert!(!assistant_lines.iter().any(|line| line.contains("[code:")));
+    assert!(!assistant_lines.iter().any(|line| line.contains("[/code]")));
+    assert!(!assistant_lines
+        .iter()
+        .any(|line| line.contains("<system-reminder>")));
+    assert!(!assistant_lines.iter().any(|line| line.contains("hidden")));
 }
 
 #[test]
@@ -1600,6 +1673,34 @@ fn selection_overlay_is_applied_last_to_all_style_channels() {
 }
 
 #[test]
+fn selection_overlay_patches_highlighted_spans_last_without_losing_syntax_fg() {
+    let highlighted_line = crate::commands::agent::ui::tui::state::TranscriptLine {
+        role: TranscriptRole::Assistant,
+        text: "fn main".to_string(),
+        rendered: Some(Line::from(vec![
+            Span::styled("fn", Style::default().fg(CTP_MOCHA_MAUVE)),
+            Span::raw(" "),
+            Span::styled("main", Style::default().fg(CTP_MOCHA_BLUE)),
+        ])),
+    };
+
+    let spans = row_spans_for_test(highlighted_line, None, false, true, 0);
+    let keyword = spans
+        .iter()
+        .find(|span| span.content.as_ref() == "fn")
+        .expect("keyword span");
+    let function = spans
+        .iter()
+        .find(|span| span.content.as_ref() == "main")
+        .expect("function span");
+
+    assert_eq!(keyword.style.fg, Some(CTP_MOCHA_MAUVE));
+    assert_eq!(function.style.fg, Some(CTP_MOCHA_BLUE));
+    assert_eq!(keyword.style.bg, Some(CTP_MOCHA_SURFACE1));
+    assert_eq!(function.style.bg, Some(CTP_MOCHA_SURFACE1));
+}
+
+#[test]
 fn selection_overlay_remains_legible_on_user_lane_prefix_rows() {
     let user_line = crate::commands::agent::ui::tui::state::TranscriptLine {
         role: TranscriptRole::User,
@@ -1645,6 +1746,117 @@ fn cursor_marker_coexists_with_user_lane_prefix_and_status_indicator() {
     assert!(rendered[0].spans.iter().any(|span| span.content.as_ref() == "> "));
     assert!(rendered[0].spans.iter().any(|span| span.content.as_ref() == "▏ "));
     assert!(rendered[0].spans.iter().any(|span| span.content.contains("⠹")));
+}
+
+#[test]
+fn cursor_marker_coexists_with_highlighted_rows_without_overwriting_token_styles() {
+    let highlighted_line = crate::commands::agent::ui::tui::state::TranscriptLine {
+        role: TranscriptRole::Assistant,
+        text: "let value".to_string(),
+        rendered: Some(Line::from(vec![
+            Span::styled("let", Style::default().fg(CTP_MOCHA_MAUVE)),
+            Span::raw(" "),
+            Span::styled("value", Style::default().fg(CTP_MOCHA_GREEN)),
+        ])),
+    };
+
+    let rendered = render_transcript_lines_with_flags_for_test(
+        highlighted_line,
+        None,
+        false,
+        true,
+        80,
+        0,
+    );
+
+    assert!(rendered[0].spans.iter().any(|span| span.content.as_ref() == "> "));
+    let keyword = rendered[0]
+        .spans
+        .iter()
+        .find(|span| span.content.as_ref() == "let")
+        .expect("keyword span");
+    assert_eq!(keyword.style.fg, Some(CTP_MOCHA_MAUVE));
+}
+
+#[test]
+fn cancelled_prompt_strikethrough_semantics_are_preserved_for_highlighted_content() {
+    let cancelled_highlighted_prompt = crate::commands::agent::ui::tui::state::TranscriptLine {
+        role: TranscriptRole::User,
+        text: "echo hello".to_string(),
+        rendered: Some(Line::from(vec![
+            Span::styled("echo", Style::default().fg(CTP_MOCHA_GREEN)),
+            Span::raw(" "),
+            Span::styled("hello", Style::default().fg(CTP_MOCHA_YELLOW)),
+        ])),
+    };
+
+    let spans = row_spans_for_test(
+        cancelled_highlighted_prompt,
+        Some(TranscriptLineStatus::Prompt(PromptStatus::Cancelled)),
+        false,
+        false,
+        0,
+    );
+
+    assert!(spans
+        .iter()
+        .all(|span| span.style.add_modifier.contains(Modifier::CROSSED_OUT)));
+    let echo = spans
+        .iter()
+        .find(|span| span.content.as_ref() == "echo")
+        .expect("echo span");
+    assert_eq!(echo.style.fg, Some(CTP_MOCHA_GREEN));
+}
+
+#[test]
+fn mixed_transcript_rows_are_deterministic_and_legible_with_highlight_and_tool_rows() {
+    let prose = crate::commands::agent::ui::tui::state::TranscriptLine {
+        role: TranscriptRole::Assistant,
+        text: "Here is code:".to_string(),
+        rendered: None,
+    };
+    let highlighted = crate::commands::agent::ui::tui::state::TranscriptLine {
+        role: TranscriptRole::Assistant,
+        text: "fn main".to_string(),
+        rendered: Some(Line::from(vec![
+            Span::styled("fn", Style::default().fg(CTP_MOCHA_MAUVE)),
+            Span::raw(" "),
+            Span::styled("main", Style::default().fg(CTP_MOCHA_BLUE)),
+        ])),
+    };
+    let tool = crate::commands::agent::ui::tui::state::TranscriptLine {
+        role: TranscriptRole::Tool,
+        text: "tool[k8s__list_pods] args={\"namespace\":\"prod\"} · done".to_string(),
+        rendered: None,
+    };
+
+    let prose_rendered = render_transcript_lines_with_flags_for_test(prose, None, false, false, 80, 0);
+    let highlighted_rendered =
+        render_transcript_lines_with_flags_for_test(highlighted, None, true, false, 80, 0);
+    let tool_rendered = render_transcript_lines_with_flags_for_test(
+        tool,
+        Some(TranscriptLineStatus::Tool(ToolCallStatus::Done)),
+        false,
+        false,
+        80,
+        0,
+    );
+
+    assert!(prose_rendered[0]
+        .spans
+        .iter()
+        .any(|span| span.content.as_ref().contains("Here is code:")));
+    let highlighted_keyword = highlighted_rendered[0]
+        .spans
+        .iter()
+        .find(|span| span.content.as_ref() == "fn")
+        .expect("highlighted keyword span");
+    assert_eq!(highlighted_keyword.style.fg, Some(CTP_MOCHA_MAUVE));
+    assert_eq!(highlighted_keyword.style.bg, Some(CTP_MOCHA_SURFACE1));
+    assert!(tool_rendered[0]
+        .spans
+        .iter()
+        .any(|span| span.content.as_ref().contains('✓')));
 }
 
 #[test]

@@ -1,4 +1,4 @@
-use crate::commands::agent::ui::tui::markdown::rendered_line_to_plain_text;
+use crate::commands::agent::ui::tui::markdown::{project_markdown_to_lines, rendered_line_to_plain_text};
 use crate::commands::agent::ui::tui::{selection::TranscriptSelection, viewport::TranscriptViewport};
 use ratatui::text::Line;
 use std::collections::VecDeque;
@@ -109,6 +109,7 @@ pub struct AppState {
     pub latest_total_tokens: Option<u64>,
     pub session_total_tokens: u64,
     pub quit_requested: bool,
+    assistant_projection_cache: HashMap<String, Vec<Line<'static>>>,
     prompt_items: Vec<QueuedPrompt>,
     tool_call_items: Vec<ToolCallLine>,
     active_tool_ids_by_key: HashMap<String, VecDeque<u64>>,
@@ -122,6 +123,8 @@ pub struct AppState {
     transcript_cursor: Option<usize>,
     visual_selection: Option<TranscriptSelection>,
     clipboard_request: Option<String>,
+    #[cfg(test)]
+    assistant_projection_cache_misses: usize,
 }
 
 impl Default for AppState {
@@ -142,6 +145,7 @@ impl Default for AppState {
             latest_total_tokens: None,
             session_total_tokens: 0,
             quit_requested: false,
+            assistant_projection_cache: HashMap::new(),
             prompt_items: Vec::new(),
             tool_call_items: Vec::new(),
             active_tool_ids_by_key: HashMap::new(),
@@ -155,6 +159,8 @@ impl Default for AppState {
             transcript_cursor: None,
             visual_selection: None,
             clipboard_request: None,
+            #[cfg(test)]
+            assistant_projection_cache_misses: 0,
         }
     }
 }
@@ -662,6 +668,27 @@ impl AppState {
     pub fn push_transcript_rendered_line(&mut self, role: TranscriptRole, line: Line<'static>) {
         let text = rendered_line_to_plain_text(&line);
         self.push_transcript_entry(role, text, Some(line));
+    }
+
+    pub fn project_assistant_markdown_lines(&mut self, markdown: &str) -> Vec<Line<'static>> {
+        if let Some(cached) = self.assistant_projection_cache.get(markdown) {
+            return cached.clone();
+        }
+
+        let projected = project_markdown_to_lines(markdown);
+        self.assistant_projection_cache
+            .insert(markdown.to_string(), projected.clone());
+        #[cfg(test)]
+        {
+            self.assistant_projection_cache_misses =
+                self.assistant_projection_cache_misses.saturating_add(1);
+        }
+        projected
+    }
+
+    #[cfg(test)]
+    pub fn assistant_projection_cache_misses(&self) -> usize {
+        self.assistant_projection_cache_misses
     }
 
     fn push_transcript_entry(

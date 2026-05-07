@@ -1,6 +1,5 @@
 use super::{
     cancel::CancelController,
-    markdown::project_markdown_to_lines,
     state::{AppState, InputMode, PaneFocus, TranscriptRole, UiPhase},
 };
 use crate::commands::agent::ui::event::UiEvent;
@@ -263,7 +262,7 @@ fn reduce_ui_event(state: &mut AppState, event: UiEvent) {
             let trimmed = text.trim();
             if !trimmed.is_empty() {
                 state.scroll_transcript_to_bottom();
-                for line in project_markdown_to_lines(trimmed) {
+                for line in state.project_assistant_markdown_lines(trimmed) {
                     let text = super::markdown::rendered_line_to_plain_text(&line);
                     if text.trim().is_empty() {
                         continue;

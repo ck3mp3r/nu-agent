@@ -85,6 +85,21 @@ let tools = {
 
 This keeps pipelines stable while preserving interactive feedback.
 
+## TUI transcript markdown and fenced code
+
+When running in TUI mode, assistant markdown is projected into transcript-friendly
+lines.
+
+- Supported markdown constructs (for example headings, emphasis, lists,
+  blockquotes, and code fences) are rendered with deterministic formatting.
+- Fenced code blocks with recognized languages use token-level syntax styles in
+  the transcript.
+- Unknown or unsupported fence languages fall back to plain code rendering
+  (stable, readable, and non-panicking).
+
+The fallback behavior keeps transcript output predictable even when model output
+contains malformed markdown or uncommon language identifiers.
+
 ### Examples
 
 Pipeline-safe capture of final output:

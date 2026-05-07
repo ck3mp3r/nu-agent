@@ -451,3 +451,15 @@ fn append_newline_insert_and_boundary_deletes_work_across_lines() {
     state.delete_input_char();
     assert_eq!(state.input.buffer, "bcd");
 }
+
+#[test]
+fn assistant_projection_cache_reuses_projected_markdown_for_same_input() {
+    let mut state = AppState::new();
+    let markdown = "```rust\nfn main() {\n    let x = 42;\n}\n```";
+
+    let first = state.project_assistant_markdown_lines(markdown);
+    let second = state.project_assistant_markdown_lines(markdown);
+
+    assert_eq!(state.assistant_projection_cache_misses(), 1);
+    assert_eq!(first, second);
+}

@@ -1,5 +1,6 @@
 pub mod cancel;
 pub mod dispatch;
+pub mod highlight;
 pub mod input;
 pub mod layout;
 pub mod markdown;
@@ -27,6 +28,9 @@ mod input_test;
 mod hybrid_events_test;
 
 #[cfg(test)]
+mod highlight_test;
+
+#[cfg(test)]
 mod layout_test;
 
 #[cfg(test)]
@@ -52,6 +56,9 @@ mod state_test;
 
 #[cfg(test)]
 mod terminal_test;
+
+#[cfg(test)]
+mod theme_test;
 
 #[cfg(test)]
 mod transport_test;
