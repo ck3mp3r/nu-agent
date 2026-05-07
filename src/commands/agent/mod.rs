@@ -25,7 +25,7 @@ use self::{
     ui_runtime::{StderrProgressUi, TuiInteractiveUi},
 };
 use crate::commands::agent::ui::factory::UiRendererFactory;
-use crate::commands::agent::ui::tui::safety::RestoreRunError;
+use crate::commands::agent::ui::tui::platform::safety::RestoreRunError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AgentMode {
@@ -358,6 +358,70 @@ pub fn select_mcp_tools(
     crate::tools::mcp::registration::registerable_tools(discovered_tools, cli_allowlist_patterns)
 }
 
+pub(crate) fn builtin_fs_tool_definitions() -> Vec<rig::completion::ToolDefinition> {
+    vec![
+        rig::completion::ToolDefinition {
+            name: "read".to_string(),
+            description: "Read file content with optional line windowing and return content/version metadata".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string" },
+                    "offset": { "type": "integer", "minimum": 0 },
+                    "limit": { "type": "integer", "minimum": 0 }
+                },
+                "required": ["path"]
+            }),
+        },
+        rig::completion::ToolDefinition {
+            name: "edit".to_string(),
+            description: "Search/replace edit with compare-and-swap guard".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string" },
+                    "search": { "type": "string" },
+                    "replacement": { "type": "string" },
+                    "expected_version": { "type": "string" },
+                    "match_mode": { "type": "string", "enum": ["literal", "regex"] },
+                    "occurrence": { "type": "string", "enum": ["first", "all"] }
+                },
+                "required": ["path", "search", "replacement", "expected_version"]
+            }),
+        },
+        rig::completion::ToolDefinition {
+            name: "patch".to_string(),
+            description: "Apply line-range patch operations with compare-and-swap guard".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string" },
+                    "expected_version": { "type": "string" },
+                    "operations": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "range": {
+                                    "type": "object",
+                                    "properties": {
+                                        "start": { "type": "integer", "minimum": 1 },
+                                        "end": { "type": "integer", "minimum": 1 }
+                                    },
+                                    "required": ["start", "end"]
+                                },
+                                "replacement": { "type": "string" }
+                            },
+                            "required": ["range", "replacement"]
+                        }
+                    }
+                },
+                "required": ["path", "expected_version", "operations"]
+            }),
+        },
+    ]
+}
+
 pub struct Agent {
     store: crate::session::SessionStore,
     runtime_ctx: RuntimeCtx,
@@ -598,6 +662,8 @@ impl SimplePluginCommand for Agent {
             .map(|(name, closure)| closure_to_tool_definition(name.clone(), closure, engine, None))
             .collect();
 
+        tool_definitions.extend(builtin_fs_tool_definitions());
+
         tool_definitions.extend(discovered_mcp_tools.iter().map(|tool| {
             rig::completion::ToolDefinition {
                 name: tool.name.clone(),
@@ -689,7 +755,7 @@ fn run_tui_mode(
     tui_should_hydrate_transcript: bool,
     tui_initial_messages: Vec<crate::commands::agent::contracts::UiMessageSnapshot>,
 ) -> Result<Value, LabeledError> {
-    let mut terminal_lifecycle = ui::tui::terminal::TerminalLifecycle::new(
+    let mut terminal_lifecycle = ui::tui::platform::terminal::TerminalLifecycle::new(
         ui::tui::runtime::AnsiTerminalBackend::new(std::io::stderr()),
     );
 

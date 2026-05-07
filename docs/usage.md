@@ -43,6 +43,100 @@ let tools = {
 "what time is it" | agent --tools $tools
 ```
 
+## Built-in filesystem tools (CAS-safe)
+
+The agent exposes exactly three built-in filesystem tools:
+
+- `read`
+- `edit`
+- `patch`
+
+These names are unprefixed and exact. There are no builtin aliases like
+`fs__read` or `tool__edit`.
+
+### Contracts
+
+- `read` is non-mutating and returns file content plus metadata, including
+  `version` (content hash token).
+- `edit` and `patch` are mutating operations and **require**
+  `expected_version`.
+- `expected_version` is compared against the current file version (CAS guard)
+  to prevent blind overwrites.
+
+### `read` example
+
+```json
+{
+  "tool": "read",
+  "arguments": {
+    "path": "src/lib.rs",
+    "offset": 0,
+    "limit": 120
+  }
+}
+```
+
+Typical response fields:
+
+- `content`
+- `total_lines`
+- `offset`
+- `limit`
+- `version`
+
+### `edit` example (search/replace)
+
+```json
+{
+  "tool": "edit",
+  "arguments": {
+    "path": "src/lib.rs",
+    "search": "old_name",
+    "replacement": "new_name",
+    "expected_version": "<version-from-read>",
+    "match_mode": "literal",
+    "occurrence": "first"
+  }
+}
+```
+
+Notes:
+
+- `match_mode`: `literal` (default) or `regex`
+- `occurrence`: `first` (default) or `all`
+
+### `patch` example (line-range batch)
+
+```json
+{
+  "tool": "patch",
+  "arguments": {
+    "path": "src/lib.rs",
+    "expected_version": "<version-from-read>",
+    "operations": [
+      {
+        "range": { "start": 10, "end": 12 },
+        "replacement": "new block\n"
+      }
+    ]
+  }
+}
+```
+
+### CAS conflict recovery flow (required)
+
+When `edit`/`patch` detect a version mismatch, do not retry with stale args.
+Use this flow:
+
+1. `read` the file again to get latest `content` and `version`
+2. recompute your intended change against that latest content
+3. retry `edit`/`patch` with the new `expected_version`
+
+Short form: **read -> recompute change -> retry with latest version**.
+
+This is the required conflict recovery pattern for all mutating filesystem
+built-ins.
+
 ## Sessions
 
 ```nu

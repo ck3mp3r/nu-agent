@@ -309,6 +309,27 @@ fn select_mcp_tools_intersects_cli_allowlist_with_config() {
     assert_eq!(selected[0].name, "gh__list_prs");
 }
 
+#[test]
+fn builtin_fs_tool_registration_contains_exact_unprefixed_names() {
+    let names = super::builtin_fs_tool_definitions()
+        .into_iter()
+        .map(|tool| tool.name)
+        .collect::<Vec<_>>();
+
+    assert_eq!(names, vec!["read", "edit", "patch"]);
+}
+
+#[test]
+fn builtin_fs_tool_registration_explicitly_rejects_prefixed_names() {
+    let names = super::builtin_fs_tool_definitions()
+        .into_iter()
+        .map(|tool| tool.name)
+        .collect::<Vec<_>>();
+
+    assert!(!names.iter().any(|name| name.starts_with("fs__")));
+    assert!(!names.iter().any(|name| name.starts_with("tool__")));
+}
+
 // Helper to create an EvaluatedCall with named arguments for testing
 fn create_test_call(flags: Vec<(&str, Value)>) -> EvaluatedCall {
     let span = Span::test_data();

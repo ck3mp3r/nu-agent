@@ -20,7 +20,7 @@ mod tool_output_detail_test;
 mod spinner_test;
 
 #[cfg(test)]
-mod renderer_substitution_test;
+mod renderer_contract_test;
 
 #[cfg(test)]
 mod stderr_contract_test;

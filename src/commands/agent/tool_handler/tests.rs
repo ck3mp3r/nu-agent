@@ -1,8 +1,55 @@
 use super::*;
 use nu_protocol::{Span, Value};
 use serde_json::json;
+use std::fs;
+use tempfile::tempdir;
+
 fn empty_closure_registry() -> crate::tools::closure::ClosureRegistry {
     crate::tools::closure::ClosureRegistry::new()
+}
+
+#[test]
+fn classify_source_treats_builtin_fs_read_as_closure_tool() {
+    let closure_registry = empty_closure_registry();
+    let mcp_registry = McpToolRegistry::from_names(Vec::<String>::new());
+
+    let source = super::classify_tool_source("read", &closure_registry, &mcp_registry);
+    assert_eq!(source, Some(ToolSource::Closure));
+}
+
+#[test]
+fn classify_source_treats_builtin_fs_edit_as_closure_tool() {
+    let closure_registry = empty_closure_registry();
+    let mcp_registry = McpToolRegistry::from_names(Vec::<String>::new());
+
+    let source = super::classify_tool_source("edit", &closure_registry, &mcp_registry);
+    assert_eq!(source, Some(ToolSource::Closure));
+}
+
+#[test]
+fn classify_source_treats_builtin_fs_patch_as_closure_tool() {
+    let closure_registry = empty_closure_registry();
+    let mcp_registry = McpToolRegistry::from_names(Vec::<String>::new());
+
+    let source = super::classify_tool_source("patch", &closure_registry, &mcp_registry);
+    assert_eq!(source, Some(ToolSource::Closure));
+}
+
+#[test]
+fn classify_validation_error_message_detects_missing_expected_version_contract() {
+    assert!(super::classify_validation_error_message(
+        "missing expected_version for mutating operation"
+    ));
+}
+
+#[test]
+fn builtin_fs_tool_name_detection_matches_exact_contract() {
+    assert!(super::is_builtin_fs_tool_name("read"));
+    assert!(super::is_builtin_fs_tool_name("edit"));
+    assert!(super::is_builtin_fs_tool_name("patch"));
+
+    assert!(!super::is_builtin_fs_tool_name("fs__read"));
+    assert!(!super::is_builtin_fs_tool_name("tool__edit"));
 }
 
 #[test]
@@ -319,4 +366,124 @@ fn failure_payload_contract_contains_required_fields() {
     assert_eq!(payload["error_kind"], "transport");
     assert_eq!(payload["message"], "connection reset");
     assert_eq!(payload["details"]["retryable"], true);
+}
+
+#[test]
+fn builtin_read_dispatch_invokes_fs_read_file() {
+    let dir = tempdir().expect("temp dir");
+    let file = dir.path().join("dispatch-read.txt");
+    fs::write(&file, "a\nb\nc\n").expect("write");
+
+    let result = super::dispatch_builtin_fs_tool(
+        "read",
+        &json!({
+            "path": file.to_string_lossy(),
+            "offset": 1,
+            "limit": 1
+        }),
+        dir.path(),
+    )
+    .expect("dispatch should succeed")
+    .expect("read should be handled");
+
+    assert_eq!(result["content"], "b\n");
+    assert_eq!(result["total_lines"], 3);
+    assert_eq!(result["offset"], 1);
+    assert_eq!(result["limit"], 1);
+}
+
+#[test]
+fn builtin_edit_dispatch_invokes_fs_apply_search_replace_edit() {
+    let dir = tempdir().expect("temp dir");
+    let file = dir.path().join("dispatch-edit.txt");
+    let content = "alpha beta\n";
+    fs::write(&file, content).expect("write");
+    let expected_version = crate::tools::fs::core::version_token(content);
+
+    let result = super::dispatch_builtin_fs_tool(
+        "edit",
+        &json!({
+            "path": file.to_string_lossy(),
+            "search": "beta",
+            "replacement": "gamma",
+            "expected_version": expected_version,
+            "match_mode": "literal",
+            "occurrence": "first"
+        }),
+        dir.path(),
+    )
+    .expect("dispatch should succeed")
+    .expect("edit should be handled");
+
+    assert_eq!(result["changed"], true);
+    assert_eq!(result["replacements"], 1);
+    assert_eq!(fs::read_to_string(&file).expect("read"), "alpha gamma\n");
+}
+
+#[test]
+fn builtin_patch_dispatch_invokes_fs_apply_line_range_patch_batch() {
+    let dir = tempdir().expect("temp dir");
+    let file = dir.path().join("dispatch-patch.txt");
+    let content = "a\nb\nc\n";
+    fs::write(&file, content).expect("write");
+    let expected_version = crate::tools::fs::core::version_token(content);
+
+    let result = super::dispatch_builtin_fs_tool(
+        "patch",
+        &json!({
+            "path": file.to_string_lossy(),
+            "expected_version": expected_version,
+            "operations": [
+                {
+                    "range": { "start": 2, "end": 2 },
+                    "replacement": "beta\n"
+                }
+            ]
+        }),
+        dir.path(),
+    )
+    .expect("dispatch should succeed")
+    .expect("patch should be handled");
+
+    assert_eq!(result["changed"], true);
+    assert_eq!(result["operation_count"], 1);
+    assert_eq!(fs::read_to_string(&file).expect("read"), "a\nbeta\nc\n");
+}
+
+#[test]
+fn builtin_edit_dispatch_missing_expected_version_returns_validation_failure() {
+    let dir = tempdir().expect("temp dir");
+    let file = dir.path().join("dispatch-edit-missing-version.txt");
+    fs::write(&file, "alpha beta\n").expect("write");
+
+    let err = super::dispatch_builtin_fs_tool(
+        "edit",
+        &json!({
+            "path": file.to_string_lossy(),
+            "search": "beta",
+            "replacement": "gamma"
+        }),
+        dir.path(),
+    )
+    .expect_err("missing expected_version should fail validation");
+
+    assert_eq!(err.kind, ToolErrorKind::Validation);
+    assert!(err.message.contains("missing expected_version"));
+}
+
+#[test]
+fn builtin_fs_path_resolution_joins_relative_path_with_cwd() {
+    let dir = tempdir().expect("temp dir");
+    let cwd = dir.path();
+
+    let relative_name = "sample.txt";
+    let resolved = super::resolve_builtin_fs_path_for_cwd(relative_name, cwd);
+    assert_eq!(resolved, cwd.join(relative_name));
+
+    let absolute_input = cwd.join("already-absolute.txt");
+    let absolute = super::resolve_builtin_fs_path_for_cwd(
+        absolute_input.to_string_lossy().as_ref(),
+        cwd,
+    );
+    assert_eq!(absolute, absolute_input);
 }

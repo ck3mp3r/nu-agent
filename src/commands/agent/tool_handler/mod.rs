@@ -5,6 +5,55 @@ use serde_json::Value as JsonValue;
 
 use crate::tools::{closure::ClosureRegistry, error::ToolError, executor::ToolExecutor};
 
+#[derive(Debug, serde::Deserialize)]
+struct BuiltinReadArgs {
+    path: String,
+    #[serde(default)]
+    offset: Option<usize>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct BuiltinEditArgs {
+    path: String,
+    search: String,
+    replacement: String,
+    #[serde(default)]
+    expected_version: Option<String>,
+    #[serde(default)]
+    match_mode: Option<String>,
+    #[serde(default)]
+    occurrence: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct BuiltinPatchRangeArgs {
+    start: usize,
+    end: usize,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct BuiltinPatchOpArgs {
+    range: BuiltinPatchRangeArgs,
+    replacement: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct BuiltinPatchArgs {
+    path: String,
+    #[serde(default)]
+    expected_version: Option<String>,
+    operations: Vec<BuiltinPatchOpArgs>,
+}
+
+#[derive(Debug, Clone)]
+struct BuiltinFsToolError {
+    kind: ToolErrorKind,
+    message: String,
+    details: Option<JsonValue>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ToolSource {
     Closure,
@@ -168,12 +217,204 @@ fn classify_tool_source(
     closure_registry: &ClosureRegistry,
     mcp_registry: &McpToolRegistry,
 ) -> Option<ToolSource> {
-    if closure_registry.get(tool_name).is_some() {
+    if closure_registry.get(tool_name).is_some() || is_builtin_fs_tool_name(tool_name) {
         Some(ToolSource::Closure)
     } else if mcp_registry.contains(tool_name) {
         Some(ToolSource::Mcp)
     } else {
         None
+    }
+}
+
+pub(crate) fn is_builtin_fs_tool_name(tool_name: &str) -> bool {
+    matches!(tool_name, "read" | "edit" | "patch")
+}
+
+fn parse_edit_match_mode(value: Option<&str>) -> Result<crate::tools::fs::core::EditMatchMode, BuiltinFsToolError> {
+    match value.unwrap_or("literal") {
+        "literal" => Ok(crate::tools::fs::core::EditMatchMode::Literal),
+        "regex" => Ok(crate::tools::fs::core::EditMatchMode::Regex),
+        other => Err(BuiltinFsToolError {
+            kind: ToolErrorKind::Validation,
+            message: format!("Invalid edit.match_mode '{other}': expected 'literal' or 'regex'"),
+            details: None,
+        }),
+    }
+}
+
+fn parse_edit_occurrence(value: Option<&str>) -> Result<crate::tools::fs::core::EditOccurrence, BuiltinFsToolError> {
+    match value.unwrap_or("first") {
+        "first" => Ok(crate::tools::fs::core::EditOccurrence::First),
+        "all" => Ok(crate::tools::fs::core::EditOccurrence::All),
+        other => Err(BuiltinFsToolError {
+            kind: ToolErrorKind::Validation,
+            message: format!("Invalid edit.occurrence '{other}': expected 'first' or 'all'"),
+            details: None,
+        }),
+    }
+}
+
+fn map_mutate_error(error: crate::tools::fs::core::MutateError) -> BuiltinFsToolError {
+    use crate::tools::fs::core::MutateError;
+
+    match error {
+        MutateError::Io(io_error) => BuiltinFsToolError {
+            kind: ToolErrorKind::Runtime,
+            message: io_error.to_string(),
+            details: None,
+        },
+        other => BuiltinFsToolError {
+            kind: ToolErrorKind::Validation,
+            message: other.to_string(),
+            details: None,
+        },
+    }
+}
+
+fn resolve_builtin_fs_path_for_cwd(path: &str, cwd: &std::path::Path) -> std::path::PathBuf {
+    let raw = std::path::Path::new(path);
+    if raw.is_absolute() {
+        raw.to_path_buf()
+    } else {
+        cwd.join(raw)
+    }
+}
+
+fn resolve_builtin_fs_path(
+    path: &str,
+    engine: &EngineInterface,
+) -> Result<std::path::PathBuf, BuiltinFsToolError> {
+    let cwd = engine.get_current_dir().map_err(|e| BuiltinFsToolError {
+        kind: ToolErrorKind::Runtime,
+        message: format!("Unable to resolve current working directory: {e}"),
+        details: None,
+    })?;
+    Ok(resolve_builtin_fs_path_for_cwd(path, std::path::Path::new(&cwd)))
+}
+
+fn dispatch_builtin_fs_tool(
+    tool_name: &str,
+    arguments: &JsonValue,
+    cwd: &std::path::Path,
+) -> Result<Option<JsonValue>, BuiltinFsToolError> {
+    use crate::tools::fs::core::{
+        EditOperation, PatchOp, PatchRange, ReadRequest, apply_line_range_patch_batch,
+        apply_search_replace_edit, read_file,
+    };
+
+    match tool_name {
+        "read" => {
+            let args: BuiltinReadArgs =
+                serde_json::from_value(arguments.clone()).map_err(|e| BuiltinFsToolError {
+                    kind: ToolErrorKind::Validation,
+                    message: format!("Invalid read arguments: {e}"),
+                    details: None,
+                })?;
+
+            let resolved_path = resolve_builtin_fs_path_for_cwd(&args.path, cwd);
+            let response = read_file(
+                &resolved_path,
+                ReadRequest {
+                    offset: args.offset,
+                    limit: args.limit,
+                },
+            )
+            .map_err(|e| BuiltinFsToolError {
+                kind: ToolErrorKind::Runtime,
+                message: format!("read failed: {e}"),
+                details: None,
+            })?;
+
+            Ok(Some(serde_json::json!({
+                "path": args.path,
+                "content": response.content,
+                "total_lines": response.total_lines,
+                "offset": response.offset,
+                "limit": response.limit,
+                "version": response.version,
+            })))
+        }
+        "edit" => {
+            let args: BuiltinEditArgs =
+                serde_json::from_value(arguments.clone()).map_err(|e| BuiltinFsToolError {
+                    kind: ToolErrorKind::Validation,
+                    message: format!("Invalid edit arguments: {e}"),
+                    details: None,
+                })?;
+
+            let resolved_path = resolve_builtin_fs_path_for_cwd(&args.path, cwd);
+            let match_mode = parse_edit_match_mode(args.match_mode.as_deref())?;
+            let occurrence = parse_edit_occurrence(args.occurrence.as_deref())?;
+
+            let summary = apply_search_replace_edit(
+                &resolved_path,
+                args.expected_version.as_deref(),
+                &EditOperation {
+                    search: args.search,
+                    replacement: args.replacement,
+                    match_mode,
+                    occurrence,
+                },
+            )
+            .map_err(map_mutate_error)?;
+
+            Ok(Some(serde_json::json!({
+                "path": args.path,
+                "replacements": summary.replacements,
+                "wrote": summary.wrote,
+                "changed": summary.changed,
+                "noop": summary.noop,
+                "conflict": summary.conflict,
+                "expected_version": summary.expected_version,
+                "previous_version": summary.previous_version,
+                "new_version": summary.new_version,
+            })))
+        }
+        "patch" => {
+            let args: BuiltinPatchArgs =
+                serde_json::from_value(arguments.clone()).map_err(|e| BuiltinFsToolError {
+                    kind: ToolErrorKind::Validation,
+                    message: format!("Invalid patch arguments: {e}"),
+                    details: None,
+                })?;
+
+            let resolved_path = resolve_builtin_fs_path_for_cwd(&args.path, cwd);
+            let operations = args
+                .operations
+                .into_iter()
+                .map(|op| PatchOp {
+                    range: PatchRange::new(op.range.start, op.range.end),
+                    replacement: op.replacement,
+                })
+                .collect::<Vec<_>>();
+
+            let summary = apply_line_range_patch_batch(
+                &resolved_path,
+                args.expected_version.as_deref(),
+                operations,
+            )
+            .map_err(map_mutate_error)?;
+
+            Ok(Some(serde_json::json!({
+                "path": args.path,
+                "operation_count": summary.operation_count,
+                "applied_ranges": summary
+                    .applied_ranges
+                    .iter()
+                    .map(|range| serde_json::json!({"start": range.start, "end": range.end}))
+                    .collect::<Vec<_>>(),
+                "wrote": summary.wrote,
+                "changed": summary.changed,
+                "noop": summary.noop,
+                "conflict": summary.conflict,
+                "expected_version": summary.expected_version,
+                "previous_version": summary.previous_version,
+                "new_version": summary.new_version,
+                "previous_lines": summary.previous_lines,
+                "new_lines": summary.new_lines,
+            })))
+        }
+        _ => Ok(None),
     }
 }
 
@@ -454,6 +695,43 @@ async fn handle_single_tool_call(
             content,
             failure: None,
         };
+    }
+
+    let builtin_cwd = match resolve_builtin_fs_path(".", engine) {
+        Ok(path) => path,
+        Err(err) => {
+            return build_failure_result(
+                &tool_call,
+                ToolSource::Closure,
+                err.kind,
+                format!("Tool execution failed: {}", err.message),
+                err.details,
+            );
+        }
+    };
+
+    match dispatch_builtin_fs_tool(&tool_call.function.name, &tool_call.function.arguments, &builtin_cwd) {
+        Ok(Some(payload)) => {
+            let content = serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string());
+            return ToolCallResult {
+                tool_call_id: tool_call.id,
+                tool_name: tool_call.function.name,
+                arguments: serialized_arguments,
+                source,
+                content,
+                failure: None,
+            };
+        }
+        Ok(None) => {}
+        Err(err) => {
+            return build_failure_result(
+                &tool_call,
+                ToolSource::Closure,
+                err.kind,
+                format!("Tool execution failed: {}", err.message),
+                err.details,
+            );
+        }
     }
 
     let Some(closure) = closure_registry.get(&tool_call.function.name) else {

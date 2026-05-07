@@ -375,9 +375,10 @@ impl ConversationRuntime for AgentConversationRuntime {
 }
 
 fn persisted_tool_text_for(result: &tool_handler::ToolCallResult) -> String {
-    let summarized_args = crate::commands::agent::ui::tui::reducer::summarize_tool_arguments(
-        &result.arguments,
-    );
+    let summarized_args =
+        crate::commands::agent::ui::tui::interaction::reducer::summarize_tool_arguments(
+            &result.arguments,
+        );
     format!(
         "tool[{}] args={} · {}",
         result.tool_name,

@@ -2213,6 +2213,7 @@ dependencies = [
  "nu-protocol",
  "pulldown-cmark",
  "ratatui",
+ "regex",
  "reqwest",
  "rig-core",
  "rmcp",
