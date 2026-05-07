@@ -1,7 +1,7 @@
 use nu_plugin::{Plugin, PluginCommand};
 
-use crate::commands::agent::Agent;
-use crate::commands::agent::session::{AgentSessionClear, AgentSessionInspect, AgentSessionList};
+use crate::agent::application::command::Agent;
+use crate::agent::session::commands::{AgentSessionClear, AgentSessionInspect, AgentSessionList};
 use crate::llm::runtime::LlmRuntime;
 use crate::session::SessionStore;
 use std::sync::Arc;
