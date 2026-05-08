@@ -134,5 +134,5 @@ where
 }
 
 #[cfg(test)]
-#[path = "completion_tests.rs"]
+#[path = "completion/test.rs"]
 mod completion_tests;

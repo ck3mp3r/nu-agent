@@ -81,5 +81,5 @@ impl ProviderCache {
 }
 
 #[cfg(test)]
-#[path = "cache_tests.rs"]
+#[path = "cache/test.rs"]
 mod cache_tests;

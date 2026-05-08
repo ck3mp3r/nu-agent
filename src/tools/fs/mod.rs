@@ -1,21 +1,21 @@
 pub mod core;
 
 #[cfg(test)]
-#[path = "core_test.rs"]
+#[path = "core/test.rs"]
 mod core_test;
 
 #[cfg(test)]
-#[path = "read_test.rs"]
+#[path = "read/test.rs"]
 mod read_test;
 
 #[cfg(test)]
-#[path = "mutation_test.rs"]
+#[path = "mutation/test.rs"]
 mod mutation_test;
 
 #[cfg(test)]
-#[path = "patch_test.rs"]
+#[path = "patch/test.rs"]
 mod patch_test;
 
 #[cfg(test)]
-#[path = "edit_test.rs"]
+#[path = "edit/test.rs"]
 mod edit_test;

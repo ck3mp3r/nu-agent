@@ -4,6 +4,19 @@ use crate::agent::ui::tui::{
     runtime::render_transcript_lines,
 };
 
+fn wrapped_visual_rows_for_rendered_line(
+    rendered_line: &ratatui::text::Line<'_>,
+    content_width: usize,
+) -> usize {
+    let width = rendered_line
+        .spans
+        .iter()
+        .map(|span| span.content.chars().count())
+        .sum::<usize>()
+        .max(1);
+    width.div_ceil(content_width.max(1))
+}
+
 #[cfg(test)]
 pub(in crate::agent::ui::tui) fn visible_transcript_window(
     transcript: &[TranscriptLine],
@@ -118,17 +131,11 @@ fn fit_tail_window_by_wrapped_rows(
 }
 
 fn rendered_row_count_for_line(line: &TranscriptLine, content_width: usize) -> usize {
-    render_transcript_lines(
-        line.clone(),
-        content_width,
-        false,
-        false,
-        None,
-        0,
-        &TuiTheme::default(),
-    )
-    .len()
-    .max(1)
+    render_transcript_lines(line.clone(), content_width, false, false, None, 0, &TuiTheme::default())
+        .iter()
+        .map(|rendered_line| wrapped_visual_rows_for_rendered_line(rendered_line, content_width))
+        .sum::<usize>()
+        .max(1)
 }
 
 pub(super) fn should_insert_transition_spacer(previous: Option<TranscriptRole>, next: TranscriptRole) -> bool {

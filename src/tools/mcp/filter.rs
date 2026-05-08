@@ -47,5 +47,5 @@ fn glob_match_case_sensitive(pattern: &str, text: &str) -> bool {
 }
 
 #[cfg(test)]
-#[path = "filter_tests.rs"]
+#[path = "filter/test.rs"]
 mod filter_tests;

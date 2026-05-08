@@ -235,5 +235,5 @@ fn parse_transport(
 }
 
 #[cfg(test)]
-#[path = "config_tests.rs"]
+#[path = "config/test.rs"]
 mod config_tests;

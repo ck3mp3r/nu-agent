@@ -641,14 +641,13 @@ fn test_maybe_compact_summarize_strategy() {
             .expect("Failed to add message");
     }
 
-    // Should succeed (even if strategy is stubbed)
-    let compacted = session
-        .maybe_compact(&store)
-        .expect("maybe_compact should succeed");
+    let result = session.maybe_compact(&store);
 
+    assert!(result.is_err(), "Summarize strategy should be explicit and fail until implemented");
+    let err_msg = result.unwrap_err().to_string();
     assert!(
-        compacted,
-        "Should trigger compaction with Summarize strategy"
+        err_msg.contains("Summarize") || err_msg.contains("not implemented") || err_msg.contains("unsupported"),
+        "Error should clearly explain summarize compaction is unavailable, got: {err_msg}"
     );
 }
 

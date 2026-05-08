@@ -1249,8 +1249,11 @@ fn follow_tail_render_window_reflows_long_lines_when_narrower() {
         true,
         8,
     );
-    assert_eq!(narrow_window.len(), 2);
-    assert_eq!(narrow_window[1].text, "tail");
+    assert!(
+        narrow_window.len() <= 2,
+        "narrow window should prefer tail rows when previous line wraps"
+    );
+    assert_eq!(narrow_window.last().map(|line| line.text.as_str()), Some("tail"));
 }
 
 #[test]
@@ -1270,6 +1273,26 @@ fn follow_tail_window_keeps_last_rows_visible_with_transition_spacer_and_multili
     assert!(
         narrow_window.iter().any(|line| line.text.contains("tail response")),
         "tail line should remain visible at follow-tail"
+    );
+}
+
+#[test]
+fn follow_tail_window_accounts_for_wrapped_render_rows_and_keeps_last_line_visible() {
+    let mut state = AppState::new();
+    state.push_transcript_line(TranscriptRole::User, "abcdefghijklmnopqrstuvwxyz0123456789");
+    state.push_transcript_line(TranscriptRole::Assistant, "tail response");
+
+    let (_start, window) = visible_transcript_window_for_render_for_test(
+        &state.transcript_preview,
+        3,
+        0,
+        true,
+        8,
+    );
+
+    assert!(
+        window.iter().any(|line| line.text == "tail response"),
+        "tail line should remain visible even when previous line wraps"
     );
 }
 

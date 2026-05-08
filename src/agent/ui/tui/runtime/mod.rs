@@ -62,8 +62,6 @@ use status::{
 use render_frame::{
     current_time_millis, transcript_height_for_main, vertical_heights_for_main_with_input,
 };
-#[cfg(test)]
-use render_frame::main_pane_rects_for_height;
 use tool_hydration::{extract_tool_name, parse_persisted_tool_status_line};
 #[cfg(test)]
 use status::visual_indicator_line;
@@ -81,6 +79,16 @@ pub use terminal_events::ScriptedTerminalEvents;
 pub use terminal_io::{TtyTerminalEvents, open_tty_reader};
 #[cfg(test)]
 pub(crate) use terminal_events::map_crossterm_event_for_test;
+
+fn wrapped_visual_rows_for_rendered_line(rendered_line: &Line<'_>, content_width: usize) -> usize {
+    let width = rendered_line
+        .spans
+        .iter()
+        .map(|span| span.content.chars().count())
+        .sum::<usize>()
+        .max(1);
+    width.div_ceil(content_width.max(1))
+}
 
 #[derive(Debug)]
 pub struct RuntimeCoordinator {
@@ -320,7 +328,7 @@ impl RuntimeCoordinator {
             .height
             .saturating_add(self.layout.status_event.height)
             .saturating_add(self.layout.input.height);
-        let transcript_height = Self::transcript_height_for_main(main_height);
+        let transcript_height = transcript_height_for_main(main_height);
         let visible_lines = transcript_height.saturating_sub(2) as usize;
         self.state.set_transcript_viewport_lines(visible_lines.max(1));
     }
@@ -450,7 +458,7 @@ impl RuntimeCoordinator {
 
                 let main = horizontal[0];
                 let (header_h, transcript_h, status_h, input_h) =
-                    Self::vertical_heights_for_main_with_input(main.height, self.layout.input.height);
+                    vertical_heights_for_main_with_input(main.height, self.layout.input.height);
                 let vertical = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
@@ -479,10 +487,16 @@ impl RuntimeCoordinator {
                 );
                 let mut transcript = Vec::new();
                 let mut prev_role: Option<TranscriptRole> = None;
+                let transcript_row_budget = vertical[1].height.saturating_sub(1) as usize;
+                let mut transcript_rows_used = 0usize;
                 for (offset, line) in window_lines.into_iter().enumerate() {
                     let global_idx = window_start.saturating_add(offset);
                     if should_insert_transition_spacer(prev_role, line.role) {
+                        if transcript_rows_used >= transcript_row_budget {
+                            break;
+                        }
                         transcript.push(Line::from(vec![Span::raw(" ")]));
+                        transcript_rows_used = transcript_rows_used.saturating_add(1);
                     }
                     let line_status = self.state.transcript_line_status_for_index(global_idx);
                     let is_cursor_line = self.state.transcript_cursor_index() == Some(global_idx)
@@ -491,7 +505,7 @@ impl RuntimeCoordinator {
                     let is_selected = selected
                         .map(|(start, end)| global_idx >= start && global_idx <= end)
                         .unwrap_or(false);
-                    transcript.extend(render_transcript_lines(
+                    let rendered_lines = render_transcript_lines(
                         line,
                         vertical[1].width as usize,
                         is_selected,
@@ -499,12 +513,28 @@ impl RuntimeCoordinator {
                         line_status,
                         current_time_millis(),
                         &self.theme,
-                    ));
+                    );
+
+                    for rendered_line in rendered_lines {
+                        let visual_rows = wrapped_visual_rows_for_rendered_line(
+                            &rendered_line,
+                            vertical[1].width as usize,
+                        );
+                        if transcript_rows_used.saturating_add(visual_rows) > transcript_row_budget {
+                            break;
+                        }
+                        transcript.push(rendered_line);
+                        transcript_rows_used = transcript_rows_used.saturating_add(visual_rows);
+                    }
                     prev_role = self
                         .state
                         .transcript_preview
                         .get(global_idx)
                         .map(|entry| entry.role);
+
+                    if transcript_rows_used >= transcript_row_budget {
+                        break;
+                    }
                 }
                 let transcript_view_height = vertical[1].height.saturating_sub(1) as usize;
                 let _transcript_title = transcript_title_for_render(
@@ -533,6 +563,13 @@ impl RuntimeCoordinator {
                 }
 
                 let compact_status = compact_status_line(
+                    &self.state,
+                    &self.active_model_identity,
+                    &self.input_backend_status,
+                    &self.last_input_poll_status,
+                    self.last_input_error.as_deref(),
+                );
+                let _status_lines = build_status_lines(
                     &self.state,
                     &self.active_model_identity,
                     &self.input_backend_status,
@@ -622,14 +659,6 @@ impl RuntimeCoordinator {
         Ok(())
     }
 
-    fn vertical_heights_for_main_with_input(main_height: u16, input_target_height: u16) -> (u16, u16, u16, u16) {
-        vertical_heights_for_main_with_input(main_height, input_target_height)
-    }
-
-    fn transcript_height_for_main(main_height: u16) -> u16 {
-        transcript_height_for_main(main_height)
-    }
-
     #[cfg(test)]
     pub(super) fn main_pane_rects_for_height(
         main_height: u16,
@@ -639,7 +668,7 @@ impl RuntimeCoordinator {
         ratatui::layout::Rect,
         ratatui::layout::Rect,
     ) {
-        main_pane_rects_for_height(main_height)
+        render_frame::main_pane_rects_for_height(main_height)
     }
 
     #[cfg(test)]
@@ -647,23 +676,6 @@ impl RuntimeCoordinator {
         self.poll_terminal_event(event_source);
         self.drain_transport();
     }
-}
-
-#[allow(dead_code)]
-fn _legacy_status_lines_for_reference(
-    state: &AppState,
-    active_model_identity: &str,
-    input_backend_status: &str,
-    last_input_poll_status: &str,
-    last_input_error: Option<&str>,
-) -> Vec<String> {
-    build_status_lines(
-        state,
-        active_model_identity,
-        input_backend_status,
-        last_input_poll_status,
-        last_input_error,
-    )
 }
 
 #[cfg(test)]

@@ -136,8 +136,10 @@ impl Session {
     /// Adds a message to the session.
     ///
     /// This method appends the message to the session's messages vector and
-    /// persists it to the JSONL file. If the number of messages exceeds the
-    /// compaction threshold, compaction will be triggered (placeholder for now).
+    /// persists it to the JSONL file.
+    ///
+    /// Compaction is evaluated by callers via `maybe_compact` so strategy-specific
+    /// behavior is explicit at call sites.
     ///
     /// # Arguments
     /// * `store` - The SessionStore used to resolve the file path
@@ -156,13 +158,6 @@ impl Session {
 
         // Add to in-memory vector
         self.messages.push(message);
-
-        // Check if compaction threshold is exceeded
-        if self.messages.len() > self.config.compaction_threshold {
-            // Placeholder: trigger compaction
-            // TODO: Implement actual compaction in future tasks
-            self.trigger_compaction_placeholder();
-        }
 
         Ok(())
     }
@@ -255,8 +250,9 @@ impl Session {
 
     /// Compacts messages using summarization strategy.
     ///
-    /// This is a stub that will be implemented once we have LLM integration in the Session.
-    /// For now, it just returns Ok(()).
+    /// NOTE: This strategy is intentionally not implemented in this module yet because
+    /// it requires an LLM integration boundary. Callers receive an explicit error instead
+    /// of a silent no-op to preserve compaction contract clarity.
     ///
     /// # Arguments
     /// * `store` - The SessionStore used for file operations
@@ -264,9 +260,10 @@ impl Session {
     /// # Returns
     /// Ok(()) when summarization succeeds.
     fn compact_summarize(&mut self, _store: &SessionStore) -> io::Result<()> {
-        // Stub: Full LLM integration will be implemented in future tasks
-        // For now, tests use compact_summarize_with() directly with mock summarizers
-        Ok(())
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Summarize compaction strategy is not implemented in SessionStore",
+        ))
     }
 
     /// Compacts messages using truncation strategy.
@@ -408,13 +405,6 @@ impl Session {
         self.rewrite_jsonl(store)?;
 
         Ok(())
-    }
-
-    /// Placeholder for compaction trigger.
-    /// This will be implemented in future tasks.
-    fn trigger_compaction_placeholder(&self) {
-        // Placeholder: no-op for now
-        // Future implementation will handle message compaction
     }
 
     /// Appends a message to the session's JSONL file.

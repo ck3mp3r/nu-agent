@@ -33,5 +33,5 @@ impl ClosureRegistry {
 }
 
 #[cfg(test)]
-#[path = "registry_tests.rs"]
+#[path = "registry/test.rs"]
 mod registry_tests;

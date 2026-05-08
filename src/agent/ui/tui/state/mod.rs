@@ -6,10 +6,7 @@ mod viewport_state;
 mod test;
 
 use crate::agent::ui::tui::markdown::{project_markdown_to_lines, rendered_line_to_plain_text};
-use crate::agent::ui::tui::rendering::{
-    selection::TranscriptSelection,
-    viewport::TranscriptViewport,
-};
+use crate::agent::ui::tui::rendering::selection::TranscriptSelection;
 use ratatui::text::Line;
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -340,9 +337,9 @@ impl AppState {
     }
 
     pub fn set_transcript_viewport_lines(&mut self, lines: usize) {
-        let mut model = self.transcript_viewport_model();
+        let mut model = viewport_state::transcript_viewport_model(self);
         model.set_viewport_lines(lines.max(1));
-        self.apply_transcript_viewport_model(&model);
+        viewport_state::apply_transcript_viewport_model(self, &model);
     }
 
     pub fn extend_visual_cursor_line_up(&mut self) {
@@ -353,14 +350,14 @@ impl AppState {
             return;
         }
         self.transcript_follow_tail = false;
-        let mut model = self.transcript_viewport_model();
+        let mut model = viewport_state::transcript_viewport_model(self);
         model.line_up();
         if let (Some(selection), Some(cursor)) =
             (self.visual_selection.as_mut(), model.current_cursor_index())
         {
             selection.set_cursor(cursor);
         }
-        self.apply_transcript_viewport_model(&model);
+        viewport_state::apply_transcript_viewport_model(self, &model);
     }
 
     pub fn extend_visual_cursor_line_down(&mut self) {
@@ -370,14 +367,14 @@ impl AppState {
         if self.visual_selection.is_none() {
             return;
         }
-        let mut model = self.transcript_viewport_model();
+        let mut model = viewport_state::transcript_viewport_model(self);
         model.line_down();
         if let (Some(selection), Some(cursor)) =
             (self.visual_selection.as_mut(), model.current_cursor_index())
         {
             selection.set_cursor(cursor);
         }
-        self.apply_transcript_viewport_model(&model);
+        viewport_state::apply_transcript_viewport_model(self, &model);
     }
 
     pub fn extend_visual_cursor_page_up(&mut self, page_lines: usize) {
@@ -388,14 +385,14 @@ impl AppState {
             return;
         }
         self.transcript_follow_tail = false;
-        let mut model = self.transcript_viewport_model();
+        let mut model = viewport_state::transcript_viewport_model(self);
         model.page_up(page_lines.max(1));
         if let (Some(selection), Some(cursor)) =
             (self.visual_selection.as_mut(), model.current_cursor_index())
         {
             selection.set_cursor(cursor);
         }
-        self.apply_transcript_viewport_model(&model);
+        viewport_state::apply_transcript_viewport_model(self, &model);
     }
 
     pub fn extend_visual_cursor_page_down(&mut self, page_lines: usize) {
@@ -405,14 +402,14 @@ impl AppState {
         if self.visual_selection.is_none() {
             return;
         }
-        let mut model = self.transcript_viewport_model();
+        let mut model = viewport_state::transcript_viewport_model(self);
         model.page_down(page_lines.max(1));
         if let (Some(selection), Some(cursor)) =
             (self.visual_selection.as_mut(), model.current_cursor_index())
         {
             selection.set_cursor(cursor);
         }
-        self.apply_transcript_viewport_model(&model);
+        viewport_state::apply_transcript_viewport_model(self, &model);
     }
 
     pub fn extend_visual_cursor_to_top(&mut self) {
@@ -422,14 +419,14 @@ impl AppState {
         if self.visual_selection.is_none() {
             return;
         }
-        let mut model = self.transcript_viewport_model();
+        let mut model = viewport_state::transcript_viewport_model(self);
         model.jump_top();
         if let (Some(selection), Some(cursor)) =
             (self.visual_selection.as_mut(), model.current_cursor_index())
         {
             selection.set_cursor(cursor);
         }
-        self.apply_transcript_viewport_model(&model);
+        viewport_state::apply_transcript_viewport_model(self, &model);
     }
 
     pub fn extend_visual_cursor_to_bottom(&mut self) {
@@ -439,14 +436,14 @@ impl AppState {
         if self.visual_selection.is_none() {
             return;
         }
-        let mut model = self.transcript_viewport_model();
+        let mut model = viewport_state::transcript_viewport_model(self);
         model.jump_bottom();
         if let (Some(selection), Some(cursor)) =
             (self.visual_selection.as_mut(), model.current_cursor_index())
         {
             selection.set_cursor(cursor);
         }
-        self.apply_transcript_viewport_model(&model);
+        viewport_state::apply_transcript_viewport_model(self, &model);
     }
 
     pub fn queue_visual_selection_to_clipboard(&mut self) {
@@ -696,40 +693,40 @@ impl AppState {
 
     pub fn scroll_transcript_page_up(&mut self, page_lines: usize) {
         self.transcript_follow_tail = false;
-        let mut model = self.transcript_viewport_model();
+        let mut model = viewport_state::transcript_viewport_model(self);
         model.page_up(page_lines.max(1));
-        self.apply_transcript_viewport_model(&model);
+        viewport_state::apply_transcript_viewport_model(self, &model);
     }
 
     pub fn scroll_transcript_line_up(&mut self) {
         self.transcript_follow_tail = false;
-        let mut model = self.transcript_viewport_model();
+        let mut model = viewport_state::transcript_viewport_model(self);
         model.line_up();
-        self.apply_transcript_viewport_model(&model);
+        viewport_state::apply_transcript_viewport_model(self, &model);
     }
 
     pub fn scroll_transcript_page_down(&mut self, page_lines: usize) {
-        let mut model = self.transcript_viewport_model();
+        let mut model = viewport_state::transcript_viewport_model(self);
         model.page_down(page_lines.max(1));
-        self.apply_transcript_viewport_model(&model);
+        viewport_state::apply_transcript_viewport_model(self, &model);
     }
 
     pub fn scroll_transcript_line_down(&mut self) {
-        let mut model = self.transcript_viewport_model();
+        let mut model = viewport_state::transcript_viewport_model(self);
         model.line_down();
-        self.apply_transcript_viewport_model(&model);
+        viewport_state::apply_transcript_viewport_model(self, &model);
     }
 
     pub fn scroll_transcript_to_top(&mut self) {
-        let mut model = self.transcript_viewport_model();
+        let mut model = viewport_state::transcript_viewport_model(self);
         model.jump_top();
-        self.apply_transcript_viewport_model(&model);
+        viewport_state::apply_transcript_viewport_model(self, &model);
     }
 
     pub fn scroll_transcript_to_bottom(&mut self) {
-        let mut model = self.transcript_viewport_model();
+        let mut model = viewport_state::transcript_viewport_model(self);
         model.jump_bottom();
-        self.apply_transcript_viewport_model(&model);
+        viewport_state::apply_transcript_viewport_model(self, &model);
     }
 
     pub fn focus_prev_pane(&mut self) {
@@ -784,14 +781,14 @@ impl AppState {
             self.input.cursor = self.input.buffer.len();
         }
 
-        self.clamp_scroll_from_bottom();
+        viewport_state::clamp_scroll_from_bottom(self);
 
         while self.input.cursor > 0 && !self.input.buffer.is_char_boundary(self.input.cursor) {
             self.input.cursor -= 1;
         }
 
-        let model = self.transcript_viewport_model();
-        self.apply_transcript_viewport_model(&model);
+        let model = viewport_state::transcript_viewport_model(self);
+        viewport_state::apply_transcript_viewport_model(self, &model);
 
         if let Some(selection) = self.visual_selection.as_ref()
             && selection.bounded_range(self.transcript_preview.len()).is_none()
@@ -810,20 +807,11 @@ impl AppState {
         .enforce_single_active_invariant();
     }
 
-    fn clamp_scroll_from_bottom(&mut self) {
-        viewport_state::clamp_scroll_from_bottom(self)
-    }
+}
 
+impl AppState {
     fn current_transcript_cursor_index(&self) -> Option<usize> {
         viewport_state::current_transcript_cursor_index(self)
-    }
-
-    fn transcript_viewport_model(&self) -> TranscriptViewport {
-        viewport_state::transcript_viewport_model(self)
-    }
-
-    fn apply_transcript_viewport_model(&mut self, model: &TranscriptViewport) {
-        viewport_state::apply_transcript_viewport_model(self, model)
     }
 }
 

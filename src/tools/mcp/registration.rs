@@ -8,5 +8,5 @@ pub fn registerable_tools(
 }
 
 #[cfg(test)]
-#[path = "registration_tests.rs"]
+#[path = "registration/test.rs"]
 mod registration_tests;

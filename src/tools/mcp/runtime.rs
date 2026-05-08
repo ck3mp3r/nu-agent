@@ -331,5 +331,5 @@ async fn discover_tools_for_server(
 }
 
 #[cfg(test)]
-#[path = "runtime_tests.rs"]
+#[path = "runtime/test.rs"]
 mod runtime_tests;

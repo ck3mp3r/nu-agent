@@ -292,5 +292,5 @@ struct ResponsesUsage {
 }
 
 #[cfg(test)]
-#[path = "openai5x_tests.rs"]
+#[path = "openai5x/test.rs"]
 mod openai5x_tests;

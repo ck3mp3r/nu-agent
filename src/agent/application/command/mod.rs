@@ -1,14 +1,13 @@
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, LabeledError, Signature, Type, Value};
 use std::io::IsTerminal;
-use std::time::Duration;
+
+mod args;
+mod mode_execute;
+mod runtime_build;
 
 use crate::{
     agent::{
-        application::{
-            orchestrator::{run_hydrated_interactive_loop, run_interactive_loop, run_single_turn},
-            ui_runtime::{StderrProgressUi, TuiInteractiveUi},
-        },
         conversation::runtime::AgentConversationRuntime,
         protocol::contracts::UiMessageSnapshot,
         session::resolver::{
@@ -16,19 +15,8 @@ use crate::{
         },
         tools::handler::McpToolRegistry,
         ui::{
-            factory::{StderrUiFactory, UiRendererFactory},
             policy::{UiPolicy, resolve_ui_policy},
-            tui::{
-                platform::{
-                    safety::RestoreRunError,
-                    terminal::TerminalLifecycle,
-                },
-                runtime::{
-                    AnsiTerminalBackend, HybridTerminalEvents, RuntimeRunError,
-                    TtyTerminalEvents, TuiRuntimeRenderer, open_tty_reader,
-                    run_with_terminal_restore,
-                },
-            },
+            tui::{platform::safety::RestoreRunError, runtime::RuntimeRunError},
         },
     },
     AgentPlugin,
@@ -54,32 +42,6 @@ fn resolve_agent_mode(input_is_nothing: bool, stdin_is_tty: bool, stderr_is_tty:
     } else {
         AgentMode::Stderr
     }
-}
-
-#[cfg(test)]
-pub(crate) use crate::agent::session::resolver::{
-    SessionRequest, generate_session_id, resolve_session_request,
-};
-
-#[cfg(test)]
-pub(crate) fn materialize_pending_tui_session_if_needed(
-    store: &crate::session::SessionStore,
-    session_opt: &mut Option<crate::session::Session>,
-    pending_tui_session_id: &mut Option<String>,
-) -> Result<(), LabeledError> {
-    if session_opt.is_some() {
-        return Ok(());
-    }
-
-    let Some(session_id) = pending_tui_session_id.take() else {
-        return Ok(());
-    };
-
-    let session = store
-        .get_or_create(Some(session_id))
-        .map_err(|e| LabeledError::new(format!("Failed to load/create session: {e}")))?;
-    *session_opt = Some(session);
-    Ok(())
 }
 
 /// Trait abstracting the engine interface functionality needed for config resolution.
@@ -228,19 +190,7 @@ pub fn merge_prompt_with_context(prompt: &str, context: Option<&str>) -> String 
 pub fn extract_and_validate_session_flags(
     call: &EvaluatedCall,
 ) -> Result<(Option<String>, bool), LabeledError> {
-    // Extract flags
-    let session_id = call.get_flag::<String>("session").ok().flatten();
-    let new_session = call.has_flag("new-session")?;
-
-    // Validate mutual exclusion: can't use both --session and --new-session
-    if session_id.is_some() && new_session {
-        return Err(LabeledError::new("Conflicting session flags").with_label(
-            "Cannot use both --session and --new-session together",
-            call.head,
-        ));
-    }
-
-    Ok((session_id, new_session))
+    args::extract_and_validate_session_flags(call)
 }
 
 /// Extract and parse closures from --tools flag.
@@ -259,46 +209,7 @@ pub fn extract_tools_from_call(
     std::collections::HashMap<String, nu_protocol::Spanned<nu_protocol::engine::Closure>>,
     LabeledError,
 > {
-    use std::collections::HashMap;
-
-    // Try to get --tools flag
-    let tools_value: Option<Value> = call.get_flag("tools").ok().flatten();
-
-    match tools_value {
-        Some(Value::Record { val, .. }) => {
-            // Filter and extract closures from the record
-            let closures = val
-                .iter()
-                .filter_map(|(name, value)| {
-                    if let Value::Closure {
-                        val, internal_span, ..
-                    } = value
-                    {
-                        // val is a Box<Closure>, need to deref and clone
-                        // Wrap with span to preserve source location
-                        Some((
-                            name.to_string(),
-                            nu_protocol::Spanned {
-                                item: (**val).clone(),
-                                span: *internal_span,
-                            },
-                        ))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            Ok(closures)
-        }
-        Some(_) => {
-            // Non-record value provided - return empty HashMap (graceful handling)
-            Ok(HashMap::new())
-        }
-        None => {
-            // Flag not provided - return empty HashMap
-            Ok(HashMap::new())
-        }
-    }
+    args::extract_tools_from_call(call)
 }
 
 /// Extract and parse --tool-timeout flag.
@@ -312,13 +223,7 @@ pub fn extract_tools_from_call(
 /// # Returns
 /// Duration for tool execution timeout
 pub fn extract_tool_timeout(call: &EvaluatedCall) -> std::time::Duration {
-    // Extract the flag value (i64 nanoseconds)
-    let timeout_nanos: Option<i64> = call.get_flag("tool-timeout").ok().flatten();
-
-    // Convert to Duration, defaulting to 30 seconds
-    timeout_nanos
-        .map(|nanos| std::time::Duration::from_nanos(nanos as u64))
-        .unwrap_or(std::time::Duration::from_secs(30))
+    args::extract_tool_timeout(call)
 }
 
 /// Extract MCP tool name patterns from --mcp-tools flag.
@@ -328,27 +233,7 @@ pub fn extract_tool_timeout(call: &EvaluatedCall) -> std::time::Duration {
 /// Returns an empty vector when the flag is not provided.
 /// Empty vector means "no filtering" (match all MCP tools).
 pub fn extract_mcp_patterns_from_call(call: &EvaluatedCall) -> Result<Vec<String>, LabeledError> {
-    let patterns_value: Option<Value> = call.get_flag("mcp-tools").ok().flatten();
-
-    let Some(value) = patterns_value else {
-        return Ok(Vec::new());
-    };
-
-    let list = value.as_list().map_err(|_| {
-        LabeledError::new("Invalid --mcp-tools value")
-            .with_label("--mcp-tools must be a list of strings", value.span())
-    })?;
-
-    let mut patterns = Vec::with_capacity(list.len());
-    for item in list {
-        let pattern = item.as_str().map_err(|_| {
-            LabeledError::new("Invalid --mcp-tools entry")
-                .with_label("Each --mcp-tools entry must be a string", item.span())
-        })?;
-        patterns.push(pattern.to_string());
-    }
-
-    Ok(patterns)
+    args::extract_mcp_patterns_from_call(call)
 }
 
 /// Select MCP tools from config, optionally intersected by CLI allowlist patterns.
@@ -761,41 +646,15 @@ fn run_tui_mode(
     tui_should_hydrate_transcript: bool,
     tui_initial_messages: Vec<UiMessageSnapshot>,
 ) -> Result<Value, LabeledError> {
-    let mut terminal_lifecycle = TerminalLifecycle::new(AnsiTerminalBackend::new(std::io::stderr()));
-
-    let (columns, rows) = crossterm::terminal::size().unwrap_or((120, 30));
-    let fallback_events = open_tty_reader()
-        .ok()
-        .and_then(|tty_reader| TtyTerminalEvents::new(tty_reader, Duration::from_millis(30)).ok());
-
-    let runtime_renderer = TuiRuntimeRenderer::new_live(
-        StderrUiFactory::new(std::io::stderr(), false).create(ui_policy),
-        HybridTerminalEvents::new(Duration::from_millis(60), fallback_events),
-        columns,
-        rows,
+    mode_execute::run_tui_mode(
+        runtime_impl,
+        input,
+        input_is_nothing,
+        span,
+        ui_policy,
+        tui_should_hydrate_transcript,
+        tui_initial_messages,
     )
-    .map_err(|err| LabeledError::new(format!("Failed to initialize TUI renderer: {err}")))?;
-
-    let mut tui_ui = TuiInteractiveUi::new(runtime_renderer);
-    tui_ui.set_active_model_identity(format_active_model_identity(
-        &runtime_impl.config.provider,
-        &runtime_impl.config.model,
-    ));
-
-    let result = run_with_terminal_restore(&mut terminal_lifecycle, || {
-        if input_is_nothing {
-            if tui_should_hydrate_transcript {
-                run_hydrated_interactive_loop(runtime_impl, &mut tui_ui, tui_initial_messages, span)
-            } else {
-                run_interactive_loop(runtime_impl, &mut tui_ui, span)
-            }
-        } else {
-            let (prompt, context) = extract_prompt_and_context(input)?;
-            run_single_turn(runtime_impl, &mut tui_ui, prompt, context, span)
-        }
-    });
-
-    map_tui_run_result(result)
 }
 
 pub(crate) fn format_active_model_identity(provider: &str, model: &str) -> String {
@@ -813,10 +672,7 @@ fn run_stderr_mode(
     ui_policy: UiPolicy,
     stderr_is_tty: bool,
 ) -> Result<Value, LabeledError> {
-    let mut stderr_ui =
-        StderrProgressUi::new(StderrUiFactory::new(std::io::stderr(), stderr_is_tty).create(ui_policy));
-    let (prompt, context) = extract_prompt_and_context(input)?;
-    run_single_turn(runtime_impl, &mut stderr_ui, prompt, context, span)
+    mode_execute::run_stderr_mode(runtime_impl, input, span, ui_policy, stderr_is_tty)
 }
 
 fn extract_prompt_and_context(input: &Value) -> Result<(String, Option<String>), LabeledError> {
@@ -857,54 +713,7 @@ fn map_tui_run_result(
 /// # Returns
 /// Config with values from flags or Config::default() fields for unprovided flags
 pub fn extract_flag_config(call: &EvaluatedCall) -> Config {
-    // Helper to safely extract string flag
-    fn get_string_flag(call: &EvaluatedCall, name: &str) -> Option<String> {
-        call.get_flag(name)
-            .ok()
-            .flatten()
-            .and_then(|v: Value| v.as_str().map(|s| s.to_string()).ok())
-    }
-
-    // Helper to safely extract float flag
-    fn get_float_flag(call: &EvaluatedCall, name: &str) -> Option<f64> {
-        call.get_flag(name)
-            .ok()
-            .flatten()
-            .and_then(|v: Value| v.as_float().ok())
-    }
-
-    // Helper to safely extract u32 flag (from i64, rejecting negatives)
-    fn get_u32_flag(call: &EvaluatedCall, name: &str) -> Option<u32> {
-        call.get_flag(name)
-            .ok()
-            .flatten()
-            .and_then(|v: Value| v.as_int().ok())
-            .and_then(|i| if i >= 0 { Some(i as u32) } else { None })
-    }
-
-    // Extract all flags
-    let provider = get_string_flag(call, "provider").unwrap_or_default();
-    let model = get_string_flag(call, "model").unwrap_or_default();
-    let api_key = get_string_flag(call, "api-key");
-    let base_url = get_string_flag(call, "base-url");
-    let temperature = get_float_flag(call, "temperature");
-    let max_tokens = get_u32_flag(call, "max-tokens");
-    let max_context_tokens = get_u32_flag(call, "max-context-tokens");
-    let max_output_tokens = get_u32_flag(call, "max-output-tokens");
-    let max_tool_turns = get_u32_flag(call, "max-turns");
-
-    Config {
-        provider,
-        provider_impl: None,
-        model,
-        api_key,
-        base_url,
-        temperature,
-        max_tokens,
-        max_context_tokens,
-        max_output_tokens,
-        max_tool_turns,
-    }
+    runtime_build::extract_flag_config(call)
 }
 
 /// Resolve configuration from all sources with proper precedence.
@@ -956,100 +765,7 @@ fn resolve_with_new_config(
     plugin_config: PluginConfig,
     call: &EvaluatedCall,
 ) -> Result<Config, LabeledError> {
-    // Helper to get string flag
-    fn get_string_flag(call: &EvaluatedCall, name: &str) -> Option<String> {
-        call.get_flag(name)
-            .ok()
-            .flatten()
-            .and_then(|v: Value| v.as_str().map(|s| s.to_string()).ok())
-    }
-
-    // Helper to get bool flag (switch)
-    fn get_bool_flag(call: &EvaluatedCall, name: &str) -> bool {
-        call.get_flag(name).ok().flatten().unwrap_or(false)
-    }
-
-    // Determine which model to use (priority: --model > --small > config.model)
-    let model_ref = if let Some(model_flag) = get_string_flag(call, "model") {
-        // --model flag takes highest priority
-        model_flag
-    } else if get_bool_flag(call, "small") {
-        // --small flag uses small_model from config
-        plugin_config.small_model.clone().ok_or_else(|| {
-            LabeledError::new("No small model configured").with_label(
-                "Set 'small_model' in plugin config to use --small flag",
-                call.head,
-            )
-        })?
-    } else {
-        // Use default model from config
-        plugin_config.model.clone()
-    };
-
-    // Resolve model to Config using PluginConfig
-    let mut config = plugin_config
-        .resolve_model(&model_ref)
-        .map_err(|msg| LabeledError::new("Failed to resolve model").with_label(msg, call.head))?;
-
-    // Step 3: Apply flag overrides for optional fields
-    // These override any values from PluginConfig
-    if let Some(api_key) = get_string_flag(call, "api-key") {
-        config.api_key = Some(api_key);
-    }
-    if let Some(base_url) = get_string_flag(call, "base-url") {
-        config.base_url = Some(base_url);
-    }
-    if let Some(temperature) = call
-        .get_flag::<Value>("temperature")
-        .ok()
-        .flatten()
-        .and_then(|v| v.as_float().ok())
-    {
-        config.temperature = Some(temperature);
-    }
-    if let Some(max_tokens) = call
-        .get_flag::<Value>("max-tokens")
-        .ok()
-        .flatten()
-        .and_then(|v| v.as_int().ok())
-        .and_then(|i| if i >= 0 { Some(i as u32) } else { None })
-    {
-        config.max_tokens = Some(max_tokens);
-    }
-    if let Some(max_context) = call
-        .get_flag::<Value>("max-context-tokens")
-        .ok()
-        .flatten()
-        .and_then(|v| v.as_int().ok())
-        .and_then(|i| if i >= 0 { Some(i as u32) } else { None })
-    {
-        config.max_context_tokens = Some(max_context);
-    }
-    if let Some(max_output) = call
-        .get_flag::<Value>("max-output-tokens")
-        .ok()
-        .flatten()
-        .and_then(|v| v.as_int().ok())
-        .and_then(|i| if i >= 0 { Some(i as u32) } else { None })
-    {
-        config.max_output_tokens = Some(max_output);
-    }
-    if let Some(max_turns) = call
-        .get_flag::<Value>("max-turns")
-        .ok()
-        .flatten()
-        .and_then(|v| v.as_int().ok())
-        .and_then(|i| if i >= 0 { Some(i as u32) } else { None })
-    {
-        config.max_tool_turns = Some(max_turns);
-    }
-
-    // Step 4: Validate final config
-    config
-        .validate()
-        .map_err(|msg| LabeledError::new("Config validation failed").with_label(msg, call.head))?;
-
-    Ok(config)
+    runtime_build::resolve_with_new_config(plugin_config, call)
 }
 
 /// OLD resolution flow for backward compatibility
@@ -1057,58 +773,11 @@ fn resolve_with_old_config(
     plugin_config_opt: Option<Value>,
     call: &EvaluatedCall,
 ) -> Result<Config, LabeledError> {
-    // Step 1: Extract flag config first
-    let flag_config = extract_flag_config(call);
-
-    // Step 2: Determine provider/model for env lookup
-    // Use plugin config if available, then flags, then default
-    let (provider_hint, model_hint) = if let Some(ref plugin_value) = plugin_config_opt {
-        // Try to extract provider/model from plugin config for env lookup
-        let plugin_parsed = Config::from_plugin_config(plugin_value)?;
-        (plugin_parsed.provider.clone(), plugin_parsed.model.clone())
-    } else if !flag_config.provider.is_empty() && !flag_config.model.is_empty() {
-        (flag_config.provider.clone(), flag_config.model.clone())
-    } else {
-        ("openai".to_string(), "gpt-4".to_string())
-    };
-
-    // Step 3: Start with defaults and merge environment config
-    let env_config = Config::from_env(&provider_hint, &model_hint);
-    let mut config = Config::default().merge(env_config);
-
-    // Step 4: Merge plugin config if present
-    if let Some(plugin_value) = plugin_config_opt {
-        let plugin_config = Config::from_plugin_config(&plugin_value)?;
-        config = config.merge(plugin_config);
-    }
-
-    // Step 5: Merge flag config (highest precedence) - only if values are non-empty
-    // For required fields, only override if non-empty
-    if !flag_config.provider.is_empty() {
-        config.provider = flag_config.provider;
-    }
-    if !flag_config.model.is_empty() {
-        config.model = flag_config.model;
-    }
-    // For optional fields, use standard merge
-    config.api_key = flag_config.api_key.or(config.api_key);
-    config.base_url = flag_config.base_url.or(config.base_url);
-    config.temperature = flag_config.temperature.or(config.temperature);
-    config.max_tokens = flag_config.max_tokens.or(config.max_tokens);
-    config.max_context_tokens = flag_config.max_context_tokens.or(config.max_context_tokens);
-    config.max_output_tokens = flag_config.max_output_tokens.or(config.max_output_tokens);
-    config.max_tool_turns = flag_config.max_tool_turns.or(config.max_tool_turns);
-
-    // Step 6: Validate final config
-    config
-        .validate()
-        .map_err(|msg| LabeledError::new("Config validation failed").with_label(msg, call.head))?;
-
-    Ok(config)
+    runtime_build::resolve_with_old_config(plugin_config_opt, call)
 }
 
 #[cfg(test)]
-mod command_test;
+mod test;
 
 #[cfg(test)]
 mod prompt_test;
