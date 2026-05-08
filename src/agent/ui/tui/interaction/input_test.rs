@@ -96,6 +96,16 @@ fn table_driven_key_mapping_unlocked_state() {
             expected: Some(UserAction::ScrollPageDown),
         },
         MappingCase {
+            event: TerminalEvent::Key(TerminalKey::CtrlP),
+            locked: false,
+            expected: Some(UserAction::ToggleCommandPalette),
+        },
+        MappingCase {
+            event: TerminalEvent::Key(TerminalKey::Char(' ')),
+            locked: false,
+            expected: Some(UserAction::InsertChar(' ')),
+        },
+        MappingCase {
             event: TerminalEvent::Key(TerminalKey::Tab),
             locked: false,
             expected: Some(UserAction::CompleteForward),
@@ -223,6 +233,16 @@ fn table_driven_key_mapping_locked_state_blocks_mutation_and_submit_only() {
             event: TerminalEvent::Key(TerminalKey::CtrlD),
             locked: true,
             expected: Some(UserAction::ScrollPageDown),
+        },
+        MappingCase {
+            event: TerminalEvent::Key(TerminalKey::CtrlP),
+            locked: true,
+            expected: Some(UserAction::ToggleCommandPalette),
+        },
+        MappingCase {
+            event: TerminalEvent::Key(TerminalKey::Char(' ')),
+            locked: true,
+            expected: None,
         },
         MappingCase {
             event: TerminalEvent::Key(TerminalKey::Tab),

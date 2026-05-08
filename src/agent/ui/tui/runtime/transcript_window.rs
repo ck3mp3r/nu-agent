@@ -67,7 +67,7 @@ pub(super) fn visible_transcript_window_for_render(
     follow_tail: bool,
     content_width: usize,
 ) -> (usize, Vec<TranscriptLine>) {
-    if !follow_tail {
+    if !follow_tail && scroll_from_bottom > 0 {
         return visible_transcript_window_with_start(
             transcript,
             visible_lines,

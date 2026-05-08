@@ -1,7 +1,12 @@
 use nu_protocol::{Span, Value};
 
 use crate::agent::{
-    protocol::{contracts::{InteractiveUi, ProgressUi, UiMessageSnapshot}, event::UiEvent},
+    protocol::{
+        contracts::{
+            InteractiveUi, McpToggleRequest, McpUsabilityState, ProgressUi, UiMessageSnapshot,
+        },
+        event::UiEvent,
+    },
     ui::{renderer::UiRenderer, tui::runtime::{HybridTerminalEvents, TuiRuntimeRenderer}},
 };
 
@@ -57,6 +62,17 @@ where
         self.renderer
             .set_active_model_identity(active_model_identity);
     }
+
+    pub fn set_mcp_lifecycle_projection(
+        &mut self,
+        projection: Vec<crate::tools::mcp::runtime::McpServerLifecycle>,
+    ) {
+        self.renderer.set_mcp_lifecycle_projection(projection);
+    }
+
+    pub fn set_llm_visible_mcp_tool_count(&mut self, count: usize) {
+        self.renderer.set_llm_visible_mcp_tool_count(count);
+    }
 }
 
 impl<R> ProgressUi for TuiInteractiveUi<R>
@@ -90,6 +106,42 @@ where
 
     fn take_submitted_prompt(&mut self) -> Option<String> {
         self.renderer.take_submitted_prompt()
+    }
+
+    fn take_next_mcp_toggle_request(&mut self) -> Option<McpToggleRequest> {
+        self.renderer.take_next_mcp_toggle_request().map(|request| McpToggleRequest {
+            server_name: request.server_name,
+            enable: request.enable,
+        })
+    }
+
+    fn set_mcp_server_state(&mut self, server_name: &str, state: McpUsabilityState) {
+        let mapped = match state {
+            McpUsabilityState::Enabled => crate::agent::ui::tui::state::McpServerUsabilityState::Enabled,
+            McpUsabilityState::Disabled => crate::agent::ui::tui::state::McpServerUsabilityState::Disabled,
+            McpUsabilityState::Failed => crate::agent::ui::tui::state::McpServerUsabilityState::Failed,
+        };
+        let _ = self.renderer.set_mcp_server_state(server_name, mapped);
+    }
+
+    fn set_mcp_server_state_with_details(
+        &mut self,
+        server_name: &str,
+        state: McpUsabilityState,
+        reason: Option<String>,
+        llm_visible_mcp_tool_count: usize,
+    ) {
+        let mapped = match state {
+            McpUsabilityState::Enabled => crate::agent::ui::tui::state::McpServerUsabilityState::Enabled,
+            McpUsabilityState::Disabled => crate::agent::ui::tui::state::McpServerUsabilityState::Disabled,
+            McpUsabilityState::Failed => crate::agent::ui::tui::state::McpServerUsabilityState::Failed,
+        };
+        let _ = self.renderer.set_mcp_server_state_with_details(
+            server_name,
+            mapped,
+            reason,
+            llm_visible_mcp_tool_count,
+        );
     }
 
     fn quit_requested(&self) -> bool {

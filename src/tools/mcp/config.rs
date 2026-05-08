@@ -19,6 +19,8 @@ pub enum McpTransportType {
 pub struct McpServerConfig {
     pub name: String,
     pub transport: McpTransportType,
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
     pub url: Option<String>,
     #[serde(default)]
     pub headers: std::collections::HashMap<String, String>,
@@ -28,6 +30,10 @@ pub struct McpServerConfig {
     pub args: Vec<String>,
     #[serde(default)]
     pub env: std::collections::HashMap<String, String>,
+}
+
+fn default_enabled() -> bool {
+    true
 }
 
 impl McpConfig {
@@ -64,6 +70,7 @@ impl McpConfig {
             let url = get_optional_string(server_record, "url")?;
             let command = get_optional_string(server_record, "command")?;
             let cwd = get_optional_string(server_record, "cwd")?;
+            let enabled = get_optional_bool(server_record, "enabled")?.unwrap_or(true);
             let args = get_optional_string_list(server_record, "args")?;
             let headers = get_optional_string_record(server_record, "headers")?;
             let env = get_optional_string_record(server_record, "env")?;
@@ -71,6 +78,7 @@ impl McpConfig {
             servers.push(McpServerConfig {
                 name: server_name.clone(),
                 transport,
+                enabled,
                 url,
                 headers,
                 command,
@@ -138,6 +146,19 @@ impl McpConfig {
         }
 
         Ok(())
+    }
+}
+
+fn get_optional_bool(
+    record: &nu_protocol::Record,
+    key: &str,
+) -> Result<Option<bool>, nu_protocol::LabeledError> {
+    match record.get(key) {
+        Some(value) => value.as_bool().map(Some).map_err(|_| {
+            nu_protocol::LabeledError::new("Invalid field type")
+                .with_label(format!("'{key}' must be a bool"), value.span())
+        }),
+        None => Ok(None),
     }
 }
 

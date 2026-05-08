@@ -112,3 +112,12 @@ fn fallback_backend_emits_char_enter_and_ctrlc_when_primary_is_idle() {
     assert_eq!(hybrid.poll_event(), Ok(Some(TerminalEvent::Key(TerminalKey::Enter))));
     assert_eq!(hybrid.poll_event(), Ok(Some(TerminalEvent::Key(TerminalKey::CtrlC))));
 }
+
+#[test]
+fn fallback_backend_emits_ctrlp_when_primary_is_idle() {
+    let primary = SequenceEventSource::new(vec![Ok(None)]);
+    let fallback = SequenceEventSource::new(vec![Ok(Some(TerminalEvent::Key(TerminalKey::CtrlP)))]);
+    let mut hybrid = HybridTerminalEvents::new_for_test(primary, fallback);
+
+    assert_eq!(hybrid.poll_event(), Ok(Some(TerminalEvent::Key(TerminalKey::CtrlP))));
+}

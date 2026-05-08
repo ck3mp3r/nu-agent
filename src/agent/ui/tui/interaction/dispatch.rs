@@ -16,174 +16,420 @@ pub fn dispatch_terminal_event(
         return false;
     };
 
-    let action = rewrite_action(state, mapped_action);
+    let (action, force_changed) = rewrite_action(state, mapped_action);
     let previous = state.clone();
 
     reduce_with_cancel_controller(state, ReducerInput::User(action), cancel_controller);
 
-    *state != previous
+    force_changed || (*state != previous)
 }
 
-fn rewrite_action(state: &mut AppState, action: UserAction) -> UserAction {
+fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserAction, bool) {
+    if let Some(panel) = state.info_panel {
+        return (
+            match panel {
+                crate::agent::ui::tui::state::InfoPanel::Mcps => match action {
+                    UserAction::Esc => UserAction::Esc,
+                    UserAction::ToggleCommandPalette => UserAction::ToggleCommandPalette,
+                    UserAction::Quit => UserAction::Quit,
+                    UserAction::ScrollLineUp
+                    | UserAction::HistoryUp
+                    | UserAction::InsertChar('k') => {
+                        state.mcp_panel_move_up();
+                        UserAction::Noop
+                    }
+                    UserAction::ScrollLineDown
+                    | UserAction::HistoryDown
+                    | UserAction::InsertChar('j') => {
+                        state.mcp_panel_move_down();
+                        UserAction::Noop
+                    }
+                    UserAction::Submit | UserAction::InsertChar(' ') => {
+                        let _ = state.queue_selected_mcp_toggle_request();
+                        UserAction::Noop
+                    }
+                    _ => UserAction::Noop,
+                },
+                _ => {
+                    const PANEL_PAGE_LINES: usize = 8;
+                    match action {
+                        UserAction::Esc => UserAction::Esc,
+                        UserAction::ToggleCommandPalette => UserAction::ToggleCommandPalette,
+                        UserAction::Quit => UserAction::Quit,
+                        UserAction::ScrollLineUp
+                        | UserAction::HistoryUp
+                        | UserAction::InsertChar('k') => {
+                            state.info_panel_scroll = state.info_panel_scroll.saturating_sub(1);
+                            return (UserAction::Noop, true);
+                        }
+                        UserAction::ScrollLineDown
+                        | UserAction::HistoryDown
+                        | UserAction::InsertChar('j') => {
+                            state.info_panel_scroll = state.info_panel_scroll.saturating_add(1);
+                            return (UserAction::Noop, true);
+                        }
+                        UserAction::ScrollPageUp => {
+                            state.info_panel_scroll = state
+                                .info_panel_scroll
+                                .saturating_sub(PANEL_PAGE_LINES);
+                            return (UserAction::Noop, true);
+                        }
+                        UserAction::ScrollPageDown => {
+                            state.info_panel_scroll = state
+                                .info_panel_scroll
+                                .saturating_add(PANEL_PAGE_LINES);
+                            return (UserAction::Noop, true);
+                        }
+                        _ => UserAction::Noop,
+                    }
+                }
+            },
+            false,
+        );
+    }
+
+    if state.command_palette_open {
+        return (
+            match action {
+                UserAction::ToggleCommandPalette => UserAction::ToggleCommandPalette,
+                UserAction::Esc => UserAction::CommandPaletteClose,
+                UserAction::EnterInsertMode => UserAction::Noop,
+                UserAction::Submit => UserAction::CommandPaletteSelect,
+                UserAction::ScrollLineUp | UserAction::HistoryUp => UserAction::CommandPaletteMoveUp,
+                UserAction::ScrollLineDown | UserAction::HistoryDown => {
+                    UserAction::CommandPaletteMoveDown
+                }
+                UserAction::Backspace => {
+                    state.backspace_command_palette_query_char();
+                    UserAction::Noop
+                }
+                UserAction::InsertChar('j') => UserAction::CommandPaletteMoveDown,
+                UserAction::InsertChar('k') => UserAction::CommandPaletteMoveUp,
+                UserAction::InsertChar(ch) => {
+                    state.append_command_palette_query_char(ch);
+                    UserAction::Noop
+                }
+                UserAction::Quit => UserAction::Quit,
+                _ => UserAction::Noop,
+            },
+            false,
+        );
+    }
+
     if state.phase == UiPhase::Idle {
         match state.input_mode {
             InputMode::Normal => {
                 state.set_insert_exit_pending_j(false);
-                return match action {
-                    UserAction::InsertChar('i') => {
-                        state.clear_normal_pending_key();
-                        UserAction::EnterInsertMode
-                    }
-                    UserAction::InsertChar('v') => {
-                        state.clear_normal_pending_key();
-                        UserAction::EnterVisualMode
-                    }
-                    UserAction::InsertChar('j') => {
-                        state.clear_normal_pending_key();
-                        UserAction::ScrollLineDown
-                    }
-                    UserAction::InsertChar('k') => {
-                        state.clear_normal_pending_key();
-                        UserAction::ScrollLineUp
-                    }
-                    UserAction::InsertChar('h') => {
-                        state.clear_normal_pending_key();
-                        UserAction::FocusPaneLeft
-                    }
-                    UserAction::InsertChar('l') => {
-                        state.clear_normal_pending_key();
-                        UserAction::FocusPaneRight
-                    }
-                    UserAction::CompleteForward => {
-                        state.clear_normal_pending_key();
-                        UserAction::FocusPaneRight
-                    }
-                    UserAction::CompleteBackward => {
-                        state.clear_normal_pending_key();
-                        UserAction::FocusPaneLeft
-                    }
-                    UserAction::InsertChar('g') => {
-                        if state.take_normal_pending_key_if('g') {
-                            UserAction::ScrollToTop
-                        } else {
-                            state.arm_normal_pending_key('g');
+                return (
+                    match action {
+                        UserAction::ToggleCommandPalette => {
+                            state.clear_normal_pending_key();
+                            UserAction::ToggleCommandPalette
+                        }
+                        UserAction::InsertChar('i') => {
+                            state.clear_normal_pending_key();
+                            UserAction::EnterInsertMode
+                        }
+                        UserAction::InsertChar('v') => {
+                            state.clear_normal_pending_key();
+                            UserAction::EnterVisualMode
+                        }
+                        UserAction::InsertChar('j') => {
+                            state.clear_normal_pending_key();
+                            UserAction::ScrollLineDown
+                        }
+                        UserAction::InsertChar('k') => {
+                            state.clear_normal_pending_key();
+                            UserAction::ScrollLineUp
+                        }
+                        UserAction::InsertChar('h') => {
+                            state.clear_normal_pending_key();
+                            UserAction::FocusPaneLeft
+                        }
+                        UserAction::InsertChar('l') => {
+                            state.clear_normal_pending_key();
+                            UserAction::FocusPaneRight
+                        }
+                        UserAction::CompleteForward => {
+                            state.clear_normal_pending_key();
+                            UserAction::FocusPaneRight
+                        }
+                        UserAction::CompleteBackward => {
+                            state.clear_normal_pending_key();
+                            UserAction::FocusPaneLeft
+                        }
+                        UserAction::InsertChar('g') => {
+                            if state.take_normal_pending_key_if('g') {
+                                UserAction::ScrollToTop
+                            } else {
+                                state.arm_normal_pending_key('g');
+                                UserAction::Noop
+                            }
+                        }
+                        UserAction::InsertChar('G') => {
+                            state.clear_normal_pending_key();
+                            UserAction::ScrollToBottom
+                        }
+                        UserAction::ScrollPageUp
+                        | UserAction::ScrollPageDown
+                        | UserAction::Esc => {
+                            state.clear_normal_pending_key();
+                            action
+                        }
+                        UserAction::InsertChar(_) => {
+                            state.clear_normal_pending_key();
                             UserAction::Noop
                         }
-                    }
-                    UserAction::InsertChar('G') => {
-                        state.clear_normal_pending_key();
-                        UserAction::ScrollToBottom
-                    }
-                    UserAction::ScrollPageUp
-                    | UserAction::ScrollPageDown
-                    | UserAction::Esc => {
-                        state.clear_normal_pending_key();
-                        action
-                    }
-                    UserAction::InsertChar(_) => {
-                        state.clear_normal_pending_key();
-                        UserAction::Noop
-                    }
-                    UserAction::InsertNewline => {
-                        state.clear_normal_pending_key();
-                        UserAction::Noop
-                    }
-                    other => {
-                        state.clear_normal_pending_key();
-                        other
-                    }
-                };
+                        UserAction::InsertNewline => {
+                            state.clear_normal_pending_key();
+                            UserAction::Noop
+                        }
+                        other => {
+                            state.clear_normal_pending_key();
+                            other
+                        }
+                    },
+                    false,
+                );
             }
             InputMode::Visual => {
-                return match action {
-                    UserAction::InsertChar('j') => {
-                        state.clear_normal_pending_key();
-                        UserAction::ScrollLineDown
-                    }
-                    UserAction::InsertChar('k') => {
-                        state.clear_normal_pending_key();
-                        UserAction::ScrollLineUp
-                    }
-                    UserAction::InsertChar('g') => {
-                        if state.take_normal_pending_key_if('g') {
-                            UserAction::ScrollToTop
-                        } else {
-                            state.arm_normal_pending_key('g');
+                return (
+                    match action {
+                        UserAction::ToggleCommandPalette => {
+                            state.clear_normal_pending_key();
+                            UserAction::ToggleCommandPalette
+                        }
+                        UserAction::InsertChar('j') => {
+                            state.clear_normal_pending_key();
+                            UserAction::ScrollLineDown
+                        }
+                        UserAction::InsertChar('k') => {
+                            state.clear_normal_pending_key();
+                            UserAction::ScrollLineUp
+                        }
+                        UserAction::InsertChar('g') => {
+                            if state.take_normal_pending_key_if('g') {
+                                UserAction::ScrollToTop
+                            } else {
+                                state.arm_normal_pending_key('g');
+                                UserAction::Noop
+                            }
+                        }
+                        UserAction::InsertChar('G') => {
+                            state.clear_normal_pending_key();
+                            UserAction::ScrollToBottom
+                        }
+                        UserAction::InsertChar('y') => {
+                            state.clear_normal_pending_key();
+                            UserAction::YankSelection
+                        }
+                        UserAction::Esc => {
+                            state.clear_normal_pending_key();
+                            UserAction::Esc
+                        }
+                        UserAction::ScrollPageUp | UserAction::ScrollPageDown => {
+                            state.clear_normal_pending_key();
+                            action
+                        }
+                        UserAction::InsertNewline => {
+                            state.clear_normal_pending_key();
                             UserAction::Noop
                         }
-                    }
-                    UserAction::InsertChar('G') => {
-                        state.clear_normal_pending_key();
-                        UserAction::ScrollToBottom
-                    }
-                    UserAction::InsertChar('y') => {
-                        state.clear_normal_pending_key();
-                        UserAction::YankSelection
-                    }
-                    UserAction::Esc => {
-                        state.clear_normal_pending_key();
-                        UserAction::Esc
-                    }
-                    UserAction::ScrollPageUp | UserAction::ScrollPageDown => {
-                        state.clear_normal_pending_key();
-                        action
-                    }
-                    UserAction::InsertNewline => {
-                        state.clear_normal_pending_key();
-                        UserAction::Noop
-                    }
-                    _ => {
-                        state.clear_normal_pending_key();
-                        UserAction::Noop
-                    }
-                };
+                        _ => {
+                            state.clear_normal_pending_key();
+                            UserAction::Noop
+                        }
+                    },
+                    false,
+                );
             }
             InputMode::Insert => {
-                return match action {
-                    UserAction::InsertChar('j') => {
-                        if state.insert_exit_pending_j() {
+                return (
+                    match action {
+                        UserAction::ToggleCommandPalette => {
                             state.set_insert_exit_pending_j(false);
-                            UserAction::EnterNormalModeFromChord
-                        } else {
-                            state.set_insert_exit_pending_j(true);
-                            UserAction::InsertChar('j')
+                            state.clear_normal_pending_key();
+                            UserAction::ToggleCommandPalette
                         }
-                    }
-                    UserAction::InsertChar('k') => {
-                        if state.insert_exit_pending_j() {
-                            state.set_insert_exit_pending_j(false);
-                            UserAction::EnterNormalModeFromChord
-                        } else {
-                            state.set_insert_exit_pending_j(false);
-                            UserAction::InsertChar('k')
+                        UserAction::InsertChar('j') => {
+                            if state.insert_exit_pending_j() {
+                                state.set_insert_exit_pending_j(false);
+                                UserAction::EnterNormalModeFromChord
+                            } else {
+                                state.set_insert_exit_pending_j(true);
+                                UserAction::InsertChar('j')
+                            }
                         }
-                    }
-                    UserAction::Esc => {
-                        state.set_insert_exit_pending_j(false);
-                        state.clear_normal_pending_key();
-                        UserAction::Esc
-                    }
-                    other => {
-                        state.set_insert_exit_pending_j(false);
-                        state.clear_normal_pending_key();
-                        other
-                    }
-                };
+                        UserAction::InsertChar('k') => {
+                            if state.insert_exit_pending_j() {
+                                state.set_insert_exit_pending_j(false);
+                                UserAction::EnterNormalModeFromChord
+                            } else {
+                                state.set_insert_exit_pending_j(false);
+                                UserAction::InsertChar('k')
+                            }
+                        }
+                        UserAction::Esc => {
+                            state.set_insert_exit_pending_j(false);
+                            state.clear_normal_pending_key();
+                            UserAction::Esc
+                        }
+                        other => {
+                            state.set_insert_exit_pending_j(false);
+                            state.clear_normal_pending_key();
+                            other
+                        }
+                    },
+                    false,
+                );
             }
         }
     }
 
-    state.set_insert_exit_pending_j(false);
+    if state.input_mode == InputMode::Insert {
+        return match action {
+            UserAction::InsertChar('j') => {
+                if state.insert_exit_pending_j() {
+                    state.set_insert_exit_pending_j(false);
+                    state.backspace_input_char();
+                    state.enter_normal_mode();
+                    (UserAction::Noop, true)
+                } else {
+                    state.set_insert_exit_pending_j(true);
+                    (UserAction::InsertChar('j'), false)
+                }
+            }
+            UserAction::InsertChar('k') => {
+                if state.insert_exit_pending_j() {
+                    state.set_insert_exit_pending_j(false);
+                    state.backspace_input_char();
+                    state.enter_normal_mode();
+                    (UserAction::Noop, true)
+                } else {
+                    state.set_insert_exit_pending_j(false);
+                    (UserAction::InsertChar('k'), false)
+                }
+            }
+            UserAction::Esc => {
+                state.set_insert_exit_pending_j(false);
+                state.clear_normal_pending_key();
+                state.enter_normal_mode();
+                state.set_insert_exit_pending_j(true);
+                (UserAction::Noop, true)
+            }
+            other => {
+                state.set_insert_exit_pending_j(false);
+                state.clear_normal_pending_key();
+                (other, false)
+            }
+        };
+    }
+
+    if state.input_mode == InputMode::Normal {
+        let (rewritten, force_changed) = match action {
+            UserAction::InsertChar('i') => {
+                state.clear_normal_pending_key();
+                state.enter_insert_mode();
+                (UserAction::Noop, true)
+            }
+            UserAction::InsertChar('j') => {
+                state.clear_normal_pending_key();
+                (UserAction::ScrollLineDown, false)
+            }
+            UserAction::InsertChar('k') => {
+                state.clear_normal_pending_key();
+                (UserAction::ScrollLineUp, false)
+            }
+            UserAction::InsertChar('h') => {
+                state.clear_normal_pending_key();
+                (UserAction::FocusPaneLeft, false)
+            }
+            UserAction::InsertChar('l') => {
+                state.clear_normal_pending_key();
+                (UserAction::FocusPaneRight, false)
+            }
+            UserAction::CompleteForward => {
+                state.clear_normal_pending_key();
+                (UserAction::FocusPaneRight, false)
+            }
+            UserAction::CompleteBackward => {
+                state.clear_normal_pending_key();
+                (UserAction::FocusPaneLeft, false)
+            }
+            UserAction::InsertChar('g') => {
+                if state.take_normal_pending_key_if('g') {
+                    (UserAction::ScrollToTop, false)
+                } else {
+                    state.arm_normal_pending_key('g');
+                    (UserAction::Noop, false)
+                }
+            }
+            UserAction::InsertChar('G') => {
+                state.set_insert_exit_pending_j(false);
+                state.clear_normal_pending_key();
+                (UserAction::ScrollToBottom, false)
+            }
+            UserAction::ScrollPageUp | UserAction::ScrollPageDown => {
+                state.set_insert_exit_pending_j(false);
+                state.clear_normal_pending_key();
+                (action, false)
+            }
+            UserAction::Esc => {
+                let fast_confirm_after_mode_switch = state.insert_exit_pending_j();
+                state.clear_normal_pending_key();
+
+                if state.phase == UiPhase::AbortPending && state.abort.pending {
+                    state.set_insert_exit_pending_j(false);
+                    (UserAction::EscConfirm, false)
+                } else if state.phase == UiPhase::Busy && fast_confirm_after_mode_switch {
+                    state.set_insert_exit_pending_j(false);
+                    state.enter_insert_mode();
+                    state.request_abort_confirmation();
+                    (UserAction::EscConfirm, true)
+                } else {
+                    state.set_insert_exit_pending_j(false);
+                    (UserAction::Esc, false)
+                }
+            }
+            UserAction::InsertChar(_) | UserAction::InsertNewline => {
+                state.set_insert_exit_pending_j(false);
+                state.clear_normal_pending_key();
+                (UserAction::Noop, false)
+            }
+            other => {
+                state.set_insert_exit_pending_j(false);
+                state.clear_normal_pending_key();
+                (other, false)
+            }
+        };
+
+        return (rewritten, force_changed);
+    }
+
+    let fast_confirm_after_mode_switch = state.insert_exit_pending_j();
+    if !matches!(action, UserAction::Esc) {
+        state.set_insert_exit_pending_j(false);
+    }
     state.clear_normal_pending_key();
 
-    match action {
-        UserAction::Esc => {
-            if state.phase == UiPhase::AbortPending && state.abort.pending {
-                UserAction::EscConfirm
-            } else {
-                UserAction::Esc
+    (
+        match action {
+            UserAction::Esc => {
+                if state.phase == UiPhase::AbortPending && state.abort.pending {
+                    state.set_insert_exit_pending_j(false);
+                    UserAction::EscConfirm
+                } else if state.phase == UiPhase::Busy && fast_confirm_after_mode_switch {
+                    state.set_insert_exit_pending_j(false);
+                    state.enter_insert_mode();
+                    state.request_abort_confirmation();
+                    UserAction::EscConfirm
+                } else {
+                    state.set_insert_exit_pending_j(false);
+                    UserAction::Esc
+                }
             }
-        }
-        _ => action,
-    }
+            _ => action,
+        },
+        false,
+    )
 }

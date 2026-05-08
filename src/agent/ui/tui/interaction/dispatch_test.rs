@@ -5,11 +5,14 @@ use crate::agent::ui::tui::{
         input::{TerminalEvent, TerminalKey},
         reducer::ESC_ABORT_CONFIRM_STATUS,
     },
-    state::{AppState, InputMode, TranscriptRole, UiPhase},
+    state::{
+        AppState, CommandPaletteAction, InfoPanel, InputMode, McpServerState,
+        McpServerUsabilityState, TranscriptRole, UiPhase,
+    },
 };
 
 #[test]
-fn first_escape_in_busy_sets_abort_pending_with_exact_status_text() {
+fn first_escape_in_busy_normal_sets_abort_pending_with_exact_status_text() {
     let mut state = AppState::new();
     let cancel_controller = CancelController::new();
 
@@ -23,6 +26,7 @@ fn first_escape_in_busy_sets_abort_pending_with_exact_status_text() {
         &TerminalEvent::Key(TerminalKey::Enter),
         Some(&cancel_controller),
     );
+    state.enter_normal_mode();
 
     let changed = dispatch_terminal_event(
         &mut state,
@@ -38,7 +42,7 @@ fn first_escape_in_busy_sets_abort_pending_with_exact_status_text() {
 }
 
 #[test]
-fn second_escape_in_abort_pending_toggles_cancel_requested() {
+fn second_escape_in_abort_pending_after_busy_normal_toggles_cancel_requested() {
     let mut state = AppState::new();
     let cancel_controller = CancelController::new();
 
@@ -52,6 +56,7 @@ fn second_escape_in_abort_pending_toggles_cancel_requested() {
         &TerminalEvent::Key(TerminalKey::Enter),
         Some(&cancel_controller),
     );
+    state.enter_normal_mode();
     dispatch_terminal_event(
         &mut state,
         &TerminalEvent::Key(TerminalKey::Esc),
@@ -164,6 +169,140 @@ fn esc_in_idle_insert_mode_switches_to_normal_mode() {
     assert!(changed);
     assert_eq!(state.input_mode, InputMode::Normal);
     assert_eq!(state.phase, UiPhase::Idle);
+}
+
+#[test]
+fn esc_in_busy_insert_mode_switches_to_normal_without_abort_side_effect() {
+    let mut state = AppState::new();
+    let cancel_controller = CancelController::new();
+
+    dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('w')),
+        Some(&cancel_controller),
+    );
+    dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Enter),
+        Some(&cancel_controller),
+    );
+
+    assert_eq!(state.phase, UiPhase::Busy);
+    assert_eq!(state.input_mode, InputMode::Insert);
+
+    let changed = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Esc),
+        Some(&cancel_controller),
+    );
+
+    assert!(changed);
+    assert_eq!(state.phase, UiPhase::Busy);
+    assert_eq!(state.input_mode, InputMode::Normal);
+    assert!(!state.abort.pending);
+    assert!(!cancel_controller.is_cancel_requested());
+}
+
+#[test]
+fn jj_chord_in_busy_insert_mode_switches_to_normal_mode() {
+    let mut state = AppState::new();
+
+    dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('w')), None);
+    dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+
+    assert_eq!(state.phase, UiPhase::Busy);
+    assert_eq!(state.input_mode, InputMode::Insert);
+
+    let first = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('j')), None);
+    assert!(first);
+    assert_eq!(state.input_mode, InputMode::Insert);
+
+    let second = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('j')), None);
+    assert!(second);
+    assert_eq!(state.input_mode, InputMode::Normal);
+    assert_eq!(state.phase, UiPhase::Busy);
+}
+
+#[test]
+fn jk_chord_in_busy_insert_mode_switches_to_normal_mode() {
+    let mut state = AppState::new();
+
+    dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('w')), None);
+    dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+
+    assert_eq!(state.phase, UiPhase::Busy);
+    assert_eq!(state.input_mode, InputMode::Insert);
+
+    let first = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('j')), None);
+    assert!(first);
+    assert_eq!(state.input_mode, InputMode::Insert);
+
+    let second = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('k')), None);
+    assert!(second);
+    assert_eq!(state.input_mode, InputMode::Normal);
+    assert_eq!(state.phase, UiPhase::Busy);
+}
+
+#[test]
+fn busy_normal_mode_blocks_plain_typing_until_explicit_i() {
+    let mut state = AppState::new();
+
+    dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('w')), None);
+    dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+    assert_eq!(state.phase, UiPhase::Busy);
+    assert_eq!(state.input_mode, InputMode::Insert);
+
+    let esc = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Esc), None);
+    assert!(esc);
+    assert_eq!(state.input_mode, InputMode::Normal);
+    assert_eq!(state.phase, UiPhase::Busy);
+
+    let typed_while_normal =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('x')), None);
+    assert!(!typed_while_normal);
+    assert!(state.input.buffer.is_empty());
+    assert_eq!(state.input_mode, InputMode::Normal);
+
+    let enter_insert =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('i')), None);
+    assert!(enter_insert);
+    assert_eq!(state.input_mode, InputMode::Insert);
+
+    let typed_after_i =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('x')), None);
+    assert!(typed_after_i);
+    assert_eq!(state.input.buffer, "x");
+}
+
+#[test]
+fn busy_normal_mode_after_jk_chord_requires_i_before_typing() {
+    let mut state = AppState::new();
+
+    dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('w')), None);
+    dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+    assert_eq!(state.phase, UiPhase::Busy);
+    assert_eq!(state.input_mode, InputMode::Insert);
+
+    let first_j = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('j')), None);
+    assert!(first_j);
+    let second_k = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('k')), None);
+    assert!(second_k);
+    assert_eq!(state.input_mode, InputMode::Normal);
+
+    let typed_while_normal =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('z')), None);
+    assert!(!typed_while_normal);
+    assert!(state.input.buffer.is_empty());
+
+    let enter_insert =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('i')), None);
+    assert!(enter_insert);
+    assert_eq!(state.input_mode, InputMode::Insert);
+
+    let typed_after_i =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('z')), None);
+    assert!(typed_after_i);
+    assert_eq!(state.input.buffer, "z");
 }
 
 #[test]
@@ -483,4 +622,150 @@ fn insert_mode_alt_and_shift_enter_insert_newline_while_enter_submits() {
     assert_eq!(state.phase, UiPhase::Busy);
     assert_eq!(state.transcript_preview.len(), 1);
     assert_eq!(state.transcript_preview[0].text, "h\n\n");
+}
+
+#[test]
+fn ctrl_p_toggles_palette_open_and_close() {
+    let mut state = AppState::new();
+
+    let opened = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
+    assert!(opened);
+    assert!(state.command_palette_open);
+
+    let closed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
+    assert!(closed);
+    assert!(!state.command_palette_open);
+}
+
+#[test]
+fn escape_closes_palette_only_and_preserves_insert_mode() {
+    let mut state = AppState::new();
+    assert_eq!(state.input_mode, InputMode::Insert);
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
+    assert!(state.command_palette_open);
+
+    let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Esc), None);
+    assert!(changed);
+    assert!(!state.command_palette_open);
+    assert_eq!(state.input_mode, InputMode::Insert);
+}
+
+#[test]
+fn palette_navigation_supports_arrows_and_jk_and_enter_routes_action() {
+    let mut state = AppState::new();
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
+
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
+    assert_eq!(state.command_palette_selection, 1);
+
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('k')), None);
+    assert_eq!(state.command_palette_selection, 0);
+
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('j')), None);
+    assert_eq!(state.command_palette_selection, 1);
+
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+    assert_eq!(state.info_panel, Some(InfoPanel::Status));
+    assert!(!state.command_palette_open);
+}
+
+#[test]
+fn palette_selection_can_open_mcps_panel() {
+    let mut state = AppState::new();
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
+
+    // Help -> Status -> MCPs
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
+    assert_eq!(
+        state.command_palette_selected_action(),
+        Some(CommandPaletteAction::Mcps)
+    );
+
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+    assert_eq!(state.info_panel, Some(InfoPanel::Mcps));
+    assert!(!state.command_palette_open);
+}
+
+#[test]
+fn esc_closes_mcps_panel_and_preserves_insert_mode() {
+    let mut state = AppState::new();
+    state.open_info_panel(InfoPanel::Mcps);
+    assert_eq!(state.input_mode, InputMode::Insert);
+
+    let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Esc), None);
+    assert!(changed);
+    assert_eq!(state.info_panel, None);
+    assert_eq!(state.input_mode, InputMode::Insert);
+}
+
+#[test]
+fn mcps_panel_navigation_and_enter_toggle_updates_selected_server() {
+    let mut state = AppState::new();
+    state.set_mcp_servers(vec![
+        McpServerState {
+            name: "gh".to_string(),
+            state: McpServerUsabilityState::Enabled,
+        },
+        McpServerState {
+            name: "k8s".to_string(),
+            state: McpServerUsabilityState::Disabled,
+        },
+    ]);
+    state.open_info_panel(InfoPanel::Mcps);
+
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
+    assert_eq!(state.mcp_panel_selection, 1);
+
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+    assert_eq!(
+        state.mcp_servers[1].state,
+        McpServerUsabilityState::Disabled,
+        "enable is async; state remains disabled until runtime applies result"
+    );
+
+    let request = state.take_next_mcp_toggle_request().expect("queued toggle request");
+    assert_eq!(request.server_name, "k8s");
+    assert!(request.enable);
+}
+
+#[test]
+fn palette_filters_with_non_prefix_query_before_enter_routes_help() {
+    let mut state = AppState::new();
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
+
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('h')), None);
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('p')), None);
+    assert_eq!(
+        state.command_palette_actions(),
+        vec![crate::agent::ui::tui::state::CommandPaletteAction::Help]
+    );
+
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+    assert_eq!(state.info_panel, Some(InfoPanel::Help));
+    assert!(!state.command_palette_open);
+}
+
+#[test]
+fn escape_closes_info_panel_without_mode_regression() {
+    let mut state = AppState::new();
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+    assert_eq!(state.info_panel, Some(InfoPanel::Help));
+    assert_eq!(state.input_mode, InputMode::Insert);
+
+    let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Esc), None);
+    assert!(changed);
+    assert_eq!(state.info_panel, None);
+    assert_eq!(state.input_mode, InputMode::Insert);
+}
+
+#[test]
+fn existing_insert_mode_jk_chord_still_switches_to_normal_outside_palette() {
+    let mut state = AppState::new();
+    let first = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('j')), None);
+    assert!(first);
+    let second = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('k')), None);
+    assert!(second);
+    assert_eq!(state.input_mode, InputMode::Normal);
 }

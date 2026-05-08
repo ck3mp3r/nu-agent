@@ -8,60 +8,29 @@ use crate::agent::ui::tui::{
 pub(super) fn build_status_lines(
     state: &AppState,
     active_model_identity: &str,
-    input_backend_status: &str,
-    last_input_poll_status: &str,
-    last_input_error: Option<&str>,
+    _input_backend_status: &str,
+    _last_input_poll_status: &str,
+    _last_input_error: Option<&str>,
 ) -> Vec<String> {
-    let status = if state.status_line.is_empty() {
-        match state.phase {
-            crate::agent::ui::tui::state::UiPhase::Idle => {
-                "Idle (type and press Enter)"
-            }
-            crate::agent::ui::tui::state::UiPhase::Busy => "Thinking...",
-            crate::agent::ui::tui::state::UiPhase::AbortPending => {
-                crate::agent::ui::tui::interaction::reducer::ESC_ABORT_CONFIRM_STATUS
-            }
-        }
-    } else {
-        &state.status_line
-    };
+    let (configured, enabled, disabled, failed) = state.mcp_counts();
+    let model_phase = model_activity_label(state);
 
-    let input_error = last_input_error.unwrap_or("none");
-    let tokens_line = format_tokens_line(state);
-    let mode_line = match state.input_mode {
-        crate::agent::ui::tui::state::InputMode::Insert => {
-            "Mode: INSERT (typing · Esc/jj/jk -> NORMAL)".to_string()
-        }
-        crate::agent::ui::tui::state::InputMode::Normal => {
-            "Mode: NORMAL (navigation · i INSERT · v VISUAL · h/l or Tab pane · j/k · gg/G)"
-                .to_string()
-        }
-        crate::agent::ui::tui::state::InputMode::Visual => {
-            "Mode: VISUAL (transcript selection · j/k · gg/G · y yank · Esc)"
-                .to_string()
-        }
-    };
-    let focus_line = match state.pane_focus {
-        crate::agent::ui::tui::state::PaneFocus::Transcript => {
-            "Focus: Transcript".to_string()
-        }
-        crate::agent::ui::tui::state::PaneFocus::Input => "Focus: Input".to_string(),
-    };
-    let mut lines = vec![status.to_string(), mode_line, focus_line];
+    let failure_line = format_mcp_failure_line(state, 64, 48, 100);
 
-    if let Some(visual_line) = visual_indicator_line(state) {
-        lines.push(visual_line);
-    }
-
-    lines.extend([
-        tokens_line,
-        format!("Model: {active_model_identity}"),
-        format!("Input backend: {input_backend_status}"),
-        format!("Input poll: {last_input_poll_status}"),
-        format!("Input error: {input_error}"),
-    ]);
-
-    lines
+    vec![
+        format!(
+            "Model: {} ({model_phase})",
+            ellipsize(active_model_identity, 60)
+        ),
+        format!(
+            "MCP: configured={configured} enabled={enabled} disabled={disabled} failed={failed}"
+        ),
+        format!(
+            "LLM-visible MCP tools: {}",
+            state.llm_visible_mcp_tool_count()
+        ),
+        failure_line,
+    ]
 }
 
 pub(super) fn compact_status_line(
@@ -71,43 +40,85 @@ pub(super) fn compact_status_line(
     _last_input_poll_status: &str,
     _last_input_error: Option<&str>,
 ) -> String {
-    let status = if state.status_line.is_empty() {
-        match state.phase {
-            crate::agent::ui::tui::state::UiPhase::Idle => "",
-            crate::agent::ui::tui::state::UiPhase::Busy => "busy",
-            crate::agent::ui::tui::state::UiPhase::AbortPending => "abort-pending",
-        }
-    } else {
-        &state.status_line
-    };
+    let model_phase = model_activity_label(state);
 
-    let mode = match state.input_mode {
-        crate::agent::ui::tui::state::InputMode::Insert => "INS",
-        crate::agent::ui::tui::state::InputMode::Normal => "NOR",
-        crate::agent::ui::tui::state::InputMode::Visual => "VIS",
-    };
-
-    let tokens = match (
-        state.latest_input_tokens,
-        state.latest_output_tokens,
-        state.latest_total_tokens,
-    ) {
-        (_, _, Some(_)) => format!("tokens: {}", state.session_total_tokens),
-        _ => "tokens: n/a".to_string(),
-    };
-
-    let queue = state.pending_prompt_count();
+    let (configured, enabled, disabled, failed) = state.mcp_counts();
+    let failures = format_mcp_failure_line(state, 20, 20, 36);
+    let failures_suffix = failures.trim_start_matches("Failures: ");
 
     let mut parts = Vec::new();
-    if !status.is_empty() {
-        parts.push(status.to_string());
-    }
-    parts.push(mode.to_string());
-    parts.push(format!("queue: {queue}"));
-    parts.push(tokens);
-    parts.push(active_model_identity.to_string());
+    parts.push(format!(
+        "{} ({model_phase})",
+        ellipsize(active_model_identity, 30)
+    ));
+    parts.push(format!(
+        "mcp {configured}/{enabled}/{disabled}/{failed}"
+    ));
+    parts.push(format!("tools {}", state.llm_visible_mcp_tool_count()));
+    parts.push(ellipsize(failures_suffix, 36));
 
     parts.join(" | ")
+}
+
+fn ellipsize(input: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+
+    let count = input.chars().count();
+    if count <= max_chars {
+        return input.to_string();
+    }
+
+    if max_chars == 1 {
+        return "…".to_string();
+    }
+
+    let keep = max_chars - 1;
+    let mut out = input.chars().take(keep).collect::<String>();
+    out.push('…');
+    out
+}
+
+fn model_activity_label(state: &AppState) -> &'static str {
+    match state.phase {
+        crate::agent::ui::tui::state::UiPhase::Busy
+        | crate::agent::ui::tui::state::UiPhase::AbortPending => "busy",
+        crate::agent::ui::tui::state::UiPhase::Idle => {
+            if state.status_line == "Thinking..." || state.status_line.starts_with("Tool: ") {
+                "busy"
+            } else {
+                "idle"
+            }
+        }
+    }
+}
+
+fn format_mcp_failure_line(
+    state: &AppState,
+    max_name_chars: usize,
+    max_reason_chars: usize,
+    max_line_chars: usize,
+) -> String {
+    let failures = state.failed_mcp_servers_with_reasons();
+    if failures.is_empty() {
+        return "Failures: none (healthy)".to_string();
+    }
+
+    let joined = failures
+        .into_iter()
+        .map(|(name, reason)| match reason {
+            Some(reason) => format!(
+                "{} ({})",
+                ellipsize(name, max_name_chars),
+                ellipsize(reason, max_reason_chars)
+            ),
+            None => ellipsize(name, max_name_chars),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    format!("Failures: {}", ellipsize(&joined, max_line_chars))
 }
 
 pub(super) fn transcript_selection_for_render(state: &AppState) -> Option<TranscriptSelection> {
@@ -152,6 +163,7 @@ pub(super) fn transcript_title_for_render(state: &AppState, transcript_len: usiz
     }
 }
 
+#[cfg(test)]
 pub(super) fn visual_indicator_line(state: &AppState) -> Option<String> {
     let selection = transcript_selection_for_render(state)?;
     let (start, end) = selection.normalized_range();
@@ -171,20 +183,6 @@ pub(super) fn cursor_style_for_mode(
         crate::agent::ui::tui::state::InputMode::Insert => SetCursorStyle::SteadyBar,
         crate::agent::ui::tui::state::InputMode::Normal
         | crate::agent::ui::tui::state::InputMode::Visual => SetCursorStyle::SteadyBlock,
-    }
-}
-
-pub(super) fn format_tokens_line(state: &AppState) -> String {
-    match (
-        state.latest_input_tokens,
-        state.latest_output_tokens,
-        state.latest_total_tokens,
-    ) {
-        (Some(input), Some(output), Some(total)) => format!(
-            "Tokens: in={input} out={output} total={total} session={}",
-            state.session_total_tokens
-        ),
-        _ => "Tokens: n/a".to_string(),
     }
 }
 

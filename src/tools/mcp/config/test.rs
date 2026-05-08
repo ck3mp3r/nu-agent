@@ -8,6 +8,7 @@ fn mcp_config_from_plugin_config_reads_map_shape() {
             "c5t" => Value::test_record(record! {
                 "transport" => Value::test_string("sse"),
                 "url" => Value::test_string("http://0.0.0.0:3737/mcp"),
+                "enabled" => Value::test_bool(true),
             }),
             "nu" => Value::test_record(record! {
                 "transport" => Value::test_string("stdio"),
@@ -20,6 +21,7 @@ fn mcp_config_from_plugin_config_reads_map_shape() {
                 "env" => Value::test_record(record! {
                     "GIT_PAGER" => Value::test_string(""),
                 }),
+                "enabled" => Value::test_bool(false),
             }),
         }),
         "model" => Value::test_string("github-copilot/anthropic/claude-sonnet-4.5"),
@@ -35,6 +37,7 @@ fn mcp_config_from_plugin_config_reads_map_shape() {
         .find(|s| s.name == "c5t")
         .expect("c5t server exists");
     assert_eq!(c5t.url.as_deref(), Some("http://0.0.0.0:3737/mcp"));
+    assert!(c5t.enabled);
 
     let nu = parsed
         .mcp
@@ -45,6 +48,44 @@ fn mcp_config_from_plugin_config_reads_map_shape() {
     assert_eq!(nu.cwd.as_deref(), Some("/tmp"));
     assert_eq!(nu.args, vec!["--add-path".to_string(), "/tmp".to_string()]);
     assert_eq!(nu.env.get("GIT_PAGER").map(String::as_str), Some(""));
+    assert!(!nu.enabled);
+}
+
+#[test]
+fn mcp_config_enabled_defaults_true_when_omitted() {
+    let plugin_config = Value::test_record(record! {
+        "mcp" => Value::test_record(record! {
+            "c5t" => Value::test_record(record! {
+                "transport" => Value::test_string("sse"),
+                "url" => Value::test_string("http://0.0.0.0:3737/mcp"),
+            }),
+        }),
+    });
+
+    let parsed = McpConfig::from_plugin_config(&plugin_config).expect("should parse mcp config");
+    let c5t = parsed
+        .mcp
+        .iter()
+        .find(|s| s.name == "c5t")
+        .expect("c5t server exists");
+    assert!(c5t.enabled);
+}
+
+#[test]
+fn mcp_config_enabled_rejects_non_bool_values() {
+    let plugin_config = Value::test_record(record! {
+        "mcp" => Value::test_record(record! {
+            "c5t" => Value::test_record(record! {
+                "transport" => Value::test_string("sse"),
+                "url" => Value::test_string("http://0.0.0.0:3737/mcp"),
+                "enabled" => Value::test_string("true"),
+            }),
+        }),
+    });
+
+    let err = McpConfig::from_plugin_config(&plugin_config).expect_err("should fail");
+    let msg = err.to_string();
+    assert!(msg.contains("'enabled' must be a bool") || msg.contains("Invalid field type"));
 }
 
 #[test]

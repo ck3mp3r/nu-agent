@@ -2,6 +2,19 @@ use nu_protocol::{LabeledError, Span, Value};
 
 use crate::agent::protocol::event::UiEvent;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum McpUsabilityState {
+    Enabled,
+    Disabled,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct McpToggleRequest {
+    pub server_name: String,
+    pub enable: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct UiMessageSnapshot {
     role: String,
@@ -63,6 +76,19 @@ pub(crate) trait ProgressUi {
 pub(crate) trait InteractiveUi: ProgressUi {
     fn pump_once(&mut self);
     fn take_submitted_prompt(&mut self) -> Option<String>;
+    fn take_next_mcp_toggle_request(&mut self) -> Option<McpToggleRequest> {
+        None
+    }
+    fn set_mcp_server_state(&mut self, _server_name: &str, _state: McpUsabilityState) {}
+    fn set_mcp_server_state_with_details(
+        &mut self,
+        server_name: &str,
+        state: McpUsabilityState,
+        _reason: Option<String>,
+        _llm_visible_mcp_tool_count: usize,
+    ) {
+        self.set_mcp_server_state(server_name, state);
+    }
     fn quit_requested(&self) -> bool;
     fn fatal_error(&self) -> Option<&str>;
     fn hydrate_transcript_from_messages(
@@ -79,4 +105,12 @@ pub(crate) trait ConversationRuntime {
         context: Option<String>,
         span: Span,
     ) -> Result<Value, LabeledError>;
+
+    fn set_mcp_server_enabled(&mut self, _server_name: &str, _enabled: bool) -> Result<McpUsabilityState, String> {
+        Ok(McpUsabilityState::Disabled)
+    }
+
+    fn llm_visible_mcp_tool_count(&self) -> usize {
+        0
+    }
 }

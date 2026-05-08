@@ -1,5 +1,6 @@
 use crate::agent::ui::tui::rendering::layout::{
     LayoutInput,
+    MAIN_SIDE_MARGIN,
     SIDE_PANE_COLLAPSE_COLUMNS,
     input_content_row_count,
     input_cursor_row_col,
@@ -18,7 +19,8 @@ fn narrow_size_class_collapses_side_pane_even_if_preferred_visible() {
     });
 
     assert!(layout.side_pane.is_none());
-    assert_eq!(layout.transcript.width, 80);
+    assert_eq!(layout.transcript.x, MAIN_SIDE_MARGIN);
+    assert_eq!(layout.transcript.width, 80 - (MAIN_SIDE_MARGIN * 2));
 }
 
 #[test]
@@ -31,9 +33,12 @@ fn normal_size_class_uses_single_column_when_side_not_requested() {
     });
 
     assert!(layout.side_pane.is_none());
-    assert_eq!(layout.transcript.width, 110);
-    assert_eq!(layout.status_event.width, 110);
-    assert_eq!(layout.input.width, 110);
+    assert_eq!(layout.transcript.x, MAIN_SIDE_MARGIN);
+    assert_eq!(layout.status_event.x, MAIN_SIDE_MARGIN);
+    assert_eq!(layout.input.x, MAIN_SIDE_MARGIN);
+    assert_eq!(layout.transcript.width, 110 - (MAIN_SIDE_MARGIN * 2));
+    assert_eq!(layout.status_event.width, 110 - (MAIN_SIDE_MARGIN * 2));
+    assert_eq!(layout.input.width, 110 - (MAIN_SIDE_MARGIN * 2));
 }
 
 #[test]
@@ -49,7 +54,8 @@ fn wide_size_class_shows_side_pane_when_requested() {
         .side_pane
         .expect("side pane should be visible in wide class when requested");
     assert!(side.width > 0);
-    assert_eq!(layout.transcript.width + side.width, 160);
+    assert_eq!(layout.transcript.x, MAIN_SIDE_MARGIN);
+    assert_eq!(layout.transcript.width + side.width + (MAIN_SIDE_MARGIN * 2), 160);
     assert_eq!(side.height, 40);
 }
 
@@ -104,6 +110,25 @@ fn geometry_is_always_non_negative_and_clipped_to_terminal() {
                 rows
             );
         }
+    }
+}
+
+#[test]
+fn narrow_width_degrades_gracefully_without_negative_or_overlapping_margins() {
+    for columns in [0, 1, 2, 3, 4, 5, 6, 7] {
+        let layout = recompute_layout(LayoutInput {
+            columns,
+            rows: 5,
+            side_pane_visible: Some(false),
+            input_height: None,
+        });
+
+        assert_eq!(layout.transcript.x, 0);
+        assert_eq!(layout.status_event.x, 0);
+        assert_eq!(layout.input.x, 0);
+        assert!(layout.transcript.width <= columns);
+        assert!(layout.status_event.width <= columns);
+        assert!(layout.input.width <= columns);
     }
 }
 

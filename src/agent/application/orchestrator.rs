@@ -8,12 +8,23 @@ use nu_protocol::{LabeledError, Span, Value};
 
 use crate::agent::protocol::{
     cancellation::is_llm_call_cancelled,
-    contracts::{ConversationRuntime, InteractiveUi, ProgressUi, UiMessageSnapshot},
+    contracts::{
+        ConversationRuntime, InteractiveUi, McpToggleRequest, McpUsabilityState,
+        ProgressUi, UiMessageSnapshot,
+    },
     event::UiEvent,
 };
 
+type McpToggleResult = (Result<McpUsabilityState, String>, usize);
+type PendingMcpToggle = (String, mpsc::Receiver<McpToggleResult>);
+
 enum WorkerCommand {
     ExecuteTurn { prompt: String, span: Span },
+    ToggleMcp {
+        server_name: String,
+        enable: bool,
+        response_tx: mpsc::Sender<McpToggleResult>,
+    },
     Shutdown,
 }
 
@@ -47,6 +58,8 @@ where
     R: ConversationRuntime + Send,
     U: InteractiveUi,
 {
+    let mut last_authoritative_visible_count = runtime.llm_visible_mcp_tool_count();
+
     std::thread::scope(|scope| {
         let (worker_cmd_tx, worker_cmd_rx) = mpsc::channel::<WorkerCommand>();
         let (worker_event_tx, worker_event_rx) = mpsc::channel::<UiEvent>();
@@ -67,15 +80,80 @@ where
                         let result = runtime.execute_turn(&mut worker_ui, prompt, None, span);
                         let _ = worker_result_tx.send(result);
                     }
+                    WorkerCommand::ToggleMcp {
+                        server_name,
+                        enable,
+                        response_tx,
+                    } => {
+                        let result = runtime.set_mcp_server_enabled(&server_name, enable);
+                        let visible_count = runtime.llm_visible_mcp_tool_count();
+                        let _ = response_tx.send((result, visible_count));
+                    }
                     WorkerCommand::Shutdown => break,
                 }
             }
         });
 
         let mut worker_active = false;
+        let mut pending_mcp_toggles: Vec<PendingMcpToggle> = Vec::new();
 
         loop {
             ui.pump_once();
+
+            while let Some(McpToggleRequest { server_name, enable }) = ui.take_next_mcp_toggle_request() {
+                let (response_tx, response_rx) = mpsc::channel();
+                let send_result = worker_cmd_tx.send(WorkerCommand::ToggleMcp {
+                    server_name: server_name.clone(),
+                    enable,
+                    response_tx,
+                });
+
+                if send_result.is_err() {
+                    ui.set_mcp_server_state_with_details(
+                        &server_name,
+                        McpUsabilityState::Failed,
+                        Some("worker channel closed".to_string()),
+                        last_authoritative_visible_count,
+                    );
+                    continue;
+                }
+
+                pending_mcp_toggles.push((server_name, response_rx));
+            }
+
+            let mut retained = Vec::new();
+            for (server_name, response_rx) in pending_mcp_toggles.drain(..) {
+                match response_rx.try_recv() {
+                    Ok((Ok(state), visible_count)) => {
+                        last_authoritative_visible_count = visible_count;
+                        ui.set_mcp_server_state_with_details(
+                            &server_name,
+                            state,
+                            None,
+                            visible_count,
+                        )
+                    }
+                    Ok((Err(err), visible_count)) => {
+                        last_authoritative_visible_count = visible_count;
+                        ui.set_mcp_server_state_with_details(
+                            &server_name,
+                            McpUsabilityState::Failed,
+                            Some(err),
+                            visible_count,
+                        )
+                    }
+                    Err(mpsc::TryRecvError::Empty) => retained.push((server_name, response_rx)),
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        ui.set_mcp_server_state_with_details(
+                            &server_name,
+                            McpUsabilityState::Failed,
+                            Some("toggle worker disconnected".to_string()),
+                            last_authoritative_visible_count,
+                        )
+                    }
+                }
+            }
+            pending_mcp_toggles = retained;
 
             if ui.take_cancel_requested() {
                 cancel_requested.store(true, Ordering::SeqCst);

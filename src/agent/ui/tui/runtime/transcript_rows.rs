@@ -75,6 +75,24 @@ pub(super) fn parse_tool_row_parts(text: &str) -> ToolRowParts {
     ToolRowParts { label, metadata }
 }
 
+fn suppress_redundant_done_metadata(
+    metadata: String,
+    line_status: Option<TranscriptLineStatus>,
+) -> Option<String> {
+    let is_done = line_status == Some(TranscriptLineStatus::Tool(ToolCallStatus::Done));
+    if !is_done {
+        return Some(metadata);
+    }
+
+    let trimmed = metadata.trim_end();
+    let without_done = trimmed.strip_suffix(" · done").unwrap_or(trimmed).trim_end();
+    if without_done.is_empty() {
+        None
+    } else {
+        Some(without_done.to_string())
+    }
+}
+
 pub(super) fn build_row_spans(
     line: &TranscriptLine,
     line_status: Option<TranscriptLineStatus>,
@@ -117,7 +135,10 @@ pub(super) fn build_row_spans(
     } else if line.role == TranscriptRole::Tool {
         let parts = parse_tool_row_parts(&line.text);
         spans.push(Span::styled(parts.label, role_style.add_modifier(prompt_modifier)));
-        if let Some(metadata) = parts.metadata {
+        if let Some(metadata) = parts
+            .metadata
+            .and_then(|metadata| suppress_redundant_done_metadata(metadata, line_status))
+        {
             spans.push(Span::raw(" "));
             spans.push(Span::styled(
                 metadata,

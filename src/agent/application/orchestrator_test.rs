@@ -8,7 +8,10 @@ use std::time::Duration;
 use crate::agent::{
     application::orchestrator::{run_hydrated_interactive_loop, run_interactive_loop, run_single_turn},
     protocol::{
-        contracts::{ConversationRuntime, InteractiveUi, ProgressUi, UiMessageSnapshot},
+        contracts::{
+            ConversationRuntime, InteractiveUi, McpToggleRequest, McpUsabilityState, ProgressUi,
+            UiMessageSnapshot,
+        },
         event::UiEvent,
     },
 };
@@ -33,8 +36,13 @@ impl ProgressUi for FakeProgressUi {
 struct FakeInteractiveUi {
     submitted: std::collections::VecDeque<String>,
     quit: bool,
+    pump_count: usize,
     call_order: Vec<&'static str>,
     hydrated_messages: Vec<UiMessageSnapshot>,
+    mcp_toggle_requests: std::collections::VecDeque<McpToggleRequest>,
+    mcp_states: Vec<(String, McpUsabilityState)>,
+    mcp_details: Vec<(String, McpUsabilityState, Option<String>, usize)>,
+    expected_mcp_updates: usize,
 }
 
 impl FakeInteractiveUi {
@@ -42,9 +50,19 @@ impl FakeInteractiveUi {
         Self {
             submitted: prompts.iter().map(|s| s.to_string()).collect(),
             quit: false,
+            pump_count: 0,
             call_order: Vec::new(),
             hydrated_messages: Vec::new(),
+            mcp_toggle_requests: std::collections::VecDeque::new(),
+            mcp_states: Vec::new(),
+            mcp_details: Vec::new(),
+            expected_mcp_updates: 0,
         }
+    }
+
+    fn with_expected_mcp_updates(mut self, expected_mcp_updates: usize) -> Self {
+        self.expected_mcp_updates = expected_mcp_updates;
+        self
     }
 }
 
@@ -60,14 +78,43 @@ impl ProgressUi for FakeInteractiveUi {
 
 impl InteractiveUi for FakeInteractiveUi {
     fn pump_once(&mut self) {
+        self.pump_count = self.pump_count.saturating_add(1);
         self.call_order.push("pump_once");
-        if self.submitted.is_empty() {
+        if self.submitted.is_empty()
+            && self.mcp_toggle_requests.is_empty()
+            && self.mcp_states.len() >= self.expected_mcp_updates
+            && self.pump_count > 1
+        {
             self.quit = true;
         }
     }
 
     fn take_submitted_prompt(&mut self) -> Option<String> {
         self.submitted.pop_front()
+    }
+
+    fn take_next_mcp_toggle_request(&mut self) -> Option<McpToggleRequest> {
+        self.mcp_toggle_requests.pop_front()
+    }
+
+    fn set_mcp_server_state(&mut self, server_name: &str, state: McpUsabilityState) {
+        self.mcp_states.push((server_name.to_string(), state));
+    }
+
+    fn set_mcp_server_state_with_details(
+        &mut self,
+        server_name: &str,
+        state: McpUsabilityState,
+        reason: Option<String>,
+        llm_visible_mcp_tool_count: usize,
+    ) {
+        self.mcp_details.push((
+            server_name.to_string(),
+            state,
+            reason,
+            llm_visible_mcp_tool_count,
+        ));
+        self.set_mcp_server_state(server_name, state);
     }
 
     fn quit_requested(&self) -> bool {
@@ -93,6 +140,14 @@ struct FakeRuntime {
 }
 
 impl ConversationRuntime for FakeRuntime {
+    fn set_mcp_server_enabled(&mut self, _server_name: &str, enabled: bool) -> Result<McpUsabilityState, String> {
+        Ok(if enabled {
+            McpUsabilityState::Enabled
+        } else {
+            McpUsabilityState::Disabled
+        })
+    }
+
     fn execute_turn<U: ProgressUi>(
         &mut self,
         _ui: &mut U,
@@ -141,6 +196,14 @@ struct FakeValueRuntime {
 }
 
 impl ConversationRuntime for FakeValueRuntime {
+    fn set_mcp_server_enabled(&mut self, _server_name: &str, enabled: bool) -> Result<McpUsabilityState, String> {
+        Ok(if enabled {
+            McpUsabilityState::Enabled
+        } else {
+            McpUsabilityState::Disabled
+        })
+    }
+
     fn execute_turn<U: ProgressUi>(
         &mut self,
         _ui: &mut U,
@@ -171,6 +234,14 @@ struct CancelFirstRuntime {
 }
 
 impl ConversationRuntime for CancelFirstRuntime {
+    fn set_mcp_server_enabled(&mut self, _server_name: &str, enabled: bool) -> Result<McpUsabilityState, String> {
+        Ok(if enabled {
+            McpUsabilityState::Enabled
+        } else {
+            McpUsabilityState::Disabled
+        })
+    }
+
     fn execute_turn<U: ProgressUi>(
         &mut self,
         _ui: &mut U,
@@ -217,8 +288,8 @@ fn run_hydrated_interactive_loop_hydrates_before_first_pump() {
 
     assert!(value.is_nothing());
     assert_eq!(
-        ui.call_order,
-        vec!["hydrate", "pump_once"],
+        &ui.call_order[..2],
+        ["hydrate", "pump_once"],
         "expected hydrate before first pump"
     );
 }
@@ -253,6 +324,14 @@ impl LongRunningRuntime {
 }
 
 impl ConversationRuntime for LongRunningRuntime {
+    fn set_mcp_server_enabled(&mut self, _server_name: &str, enabled: bool) -> Result<McpUsabilityState, String> {
+        Ok(if enabled {
+            McpUsabilityState::Enabled
+        } else {
+            McpUsabilityState::Disabled
+        })
+    }
+
     fn execute_turn<U: ProgressUi>(
         &mut self,
         ui: &mut U,
@@ -295,6 +374,7 @@ struct ResponsiveInteractiveUi {
     completed_count: usize,
     expected_completions: usize,
     active_pump_count: Arc<AtomicUsize>,
+    mcp_states: Vec<(String, McpUsabilityState)>,
 }
 
 impl ResponsiveInteractiveUi {
@@ -318,6 +398,7 @@ impl ResponsiveInteractiveUi {
             completed_count: 0,
             expected_completions,
             active_pump_count,
+            mcp_states: Vec::new(),
         }
     }
 }
@@ -358,6 +439,10 @@ impl InteractiveUi for ResponsiveInteractiveUi {
 
     fn take_submitted_prompt(&mut self) -> Option<String> {
         self.submitted.pop_front()
+    }
+
+    fn set_mcp_server_state(&mut self, server_name: &str, state: McpUsabilityState) {
+        self.mcp_states.push((server_name.to_string(), state));
     }
 
     fn quit_requested(&self) -> bool {
@@ -434,6 +519,7 @@ struct AbortDuringActiveUi {
     active: Arc<AtomicBool>,
     cancel_requested: Arc<AtomicBool>,
     completed_count: usize,
+    mcp_states: Vec<(String, McpUsabilityState)>,
 }
 
 impl AbortDuringActiveUi {
@@ -446,6 +532,7 @@ impl AbortDuringActiveUi {
             active,
             cancel_requested: Arc::new(AtomicBool::new(false)),
             completed_count: 0,
+            mcp_states: Vec::new(),
         }
     }
 }
@@ -489,6 +576,10 @@ impl InteractiveUi for AbortDuringActiveUi {
         self.submitted.pop_front()
     }
 
+    fn set_mcp_server_state(&mut self, server_name: &str, state: McpUsabilityState) {
+        self.mcp_states.push((server_name.to_string(), state));
+    }
+
     fn quit_requested(&self) -> bool {
         self.quit
     }
@@ -517,5 +608,339 @@ fn interactive_loop_global_abort_cancels_active_and_does_not_run_queued_prompt()
     assert_eq!(
         runtime.prompts.lock().expect("prompts lock").as_slice(),
         ["first"]
+    );
+}
+
+struct McpToggleRuntime {
+    toggles: Vec<(String, bool)>,
+    next_state: McpUsabilityState,
+    visible_count: usize,
+}
+
+impl ConversationRuntime for McpToggleRuntime {
+    fn set_mcp_server_enabled(&mut self, server_name: &str, enabled: bool) -> Result<McpUsabilityState, String> {
+        self.toggles.push((server_name.to_string(), enabled));
+        Ok(self.next_state)
+    }
+
+    fn llm_visible_mcp_tool_count(&self) -> usize {
+        self.visible_count
+    }
+
+    fn execute_turn<U: ProgressUi>(
+        &mut self,
+        _ui: &mut U,
+        _prompt: String,
+        _context: Option<String>,
+        span: Span,
+    ) -> Result<Value, LabeledError> {
+        Ok(Value::nothing(span))
+    }
+}
+
+#[test]
+fn interactive_loop_processes_mcp_toggle_requests_and_updates_ui_state() {
+    let mut runtime = McpToggleRuntime {
+        toggles: Vec::new(),
+        next_state: McpUsabilityState::Disabled,
+        visible_count: 3,
+    };
+    let mut ui = FakeInteractiveUi::with_prompts(&[]).with_expected_mcp_updates(1);
+    ui.mcp_toggle_requests.push_back(McpToggleRequest {
+        server_name: "gh".to_string(),
+        enable: false,
+    });
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data())
+        .expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(runtime.toggles, vec![("gh".to_string(), false)]);
+    assert_eq!(
+        ui.mcp_states,
+        vec![("gh".to_string(), McpUsabilityState::Disabled)]
+    );
+    assert_eq!(
+        ui.mcp_details,
+        vec![("gh".to_string(), McpUsabilityState::Disabled, None, 3)]
+    );
+}
+
+#[test]
+fn interactive_loop_marks_enable_failure_as_failed_state() {
+    let mut runtime = McpToggleRuntime {
+        toggles: Vec::new(),
+        next_state: McpUsabilityState::Failed,
+        visible_count: 2,
+    };
+    let mut ui = FakeInteractiveUi::with_prompts(&[]).with_expected_mcp_updates(1);
+    ui.mcp_toggle_requests.push_back(McpToggleRequest {
+        server_name: "gh".to_string(),
+        enable: true,
+    });
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data())
+        .expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(runtime.toggles, vec![("gh".to_string(), true)]);
+    assert_eq!(ui.mcp_states, vec![("gh".to_string(), McpUsabilityState::Failed)]);
+    assert_eq!(
+        ui.mcp_details,
+        vec![("gh".to_string(), McpUsabilityState::Failed, None, 2)]
+    );
+}
+
+#[test]
+fn interactive_loop_marks_enable_success_as_enabled_state() {
+    let mut runtime = McpToggleRuntime {
+        toggles: Vec::new(),
+        next_state: McpUsabilityState::Enabled,
+        visible_count: 7,
+    };
+    let mut ui = FakeInteractiveUi::with_prompts(&[]).with_expected_mcp_updates(1);
+    ui.mcp_toggle_requests.push_back(McpToggleRequest {
+        server_name: "gh".to_string(),
+        enable: true,
+    });
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data())
+        .expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(runtime.toggles, vec![("gh".to_string(), true)]);
+    assert_eq!(ui.mcp_states, vec![("gh".to_string(), McpUsabilityState::Enabled)]);
+    assert_eq!(
+        ui.mcp_details,
+        vec![("gh".to_string(), McpUsabilityState::Enabled, None, 7)]
+    );
+}
+
+struct FailingMcpToggleRuntime {
+    toggles: Vec<(String, bool)>,
+    visible_count: usize,
+}
+
+impl ConversationRuntime for FailingMcpToggleRuntime {
+    fn set_mcp_server_enabled(&mut self, server_name: &str, enabled: bool) -> Result<McpUsabilityState, String> {
+        self.toggles.push((server_name.to_string(), enabled));
+        Err("connect timeout".to_string())
+    }
+
+    fn llm_visible_mcp_tool_count(&self) -> usize {
+        self.visible_count
+    }
+
+    fn execute_turn<U: ProgressUi>(
+        &mut self,
+        _ui: &mut U,
+        _prompt: String,
+        _context: Option<String>,
+        span: Span,
+    ) -> Result<Value, LabeledError> {
+        Ok(Value::nothing(span))
+    }
+}
+
+#[test]
+fn interactive_loop_propagates_failure_reason_and_visible_tool_count_on_toggle_error() {
+    let mut runtime = FailingMcpToggleRuntime {
+        toggles: Vec::new(),
+        visible_count: 4,
+    };
+    let mut ui = FakeInteractiveUi::with_prompts(&[]).with_expected_mcp_updates(1);
+    ui.mcp_toggle_requests.push_back(McpToggleRequest {
+        server_name: "gh".to_string(),
+        enable: true,
+    });
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data())
+        .expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(runtime.toggles, vec![("gh".to_string(), true)]);
+    assert_eq!(ui.mcp_states, vec![("gh".to_string(), McpUsabilityState::Failed)]);
+    assert_eq!(
+        ui.mcp_details,
+        vec![(
+            "gh".to_string(),
+            McpUsabilityState::Failed,
+            Some("connect timeout".to_string()),
+            4,
+        )]
+    );
+}
+
+struct PanicOnToggleRuntime {
+    visible_count: usize,
+}
+
+impl ConversationRuntime for PanicOnToggleRuntime {
+    fn set_mcp_server_enabled(&mut self, _server_name: &str, _enabled: bool) -> Result<McpUsabilityState, String> {
+        panic!("toggle panic")
+    }
+
+    fn llm_visible_mcp_tool_count(&self) -> usize {
+        self.visible_count
+    }
+
+    fn execute_turn<U: ProgressUi>(
+        &mut self,
+        _ui: &mut U,
+        _prompt: String,
+        _context: Option<String>,
+        span: Span,
+    ) -> Result<Value, LabeledError> {
+        Ok(Value::nothing(span))
+    }
+}
+
+#[test]
+fn interactive_loop_disconnected_toggle_worker_preserves_authoritative_visible_tool_count() {
+    let mut runtime = PanicOnToggleRuntime { visible_count: 9 };
+    let mut ui = FakeInteractiveUi::with_prompts(&[]).with_expected_mcp_updates(1);
+    ui.mcp_toggle_requests.push_back(McpToggleRequest {
+        server_name: "gh".to_string(),
+        enable: false,
+    });
+
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = run_interactive_loop(&mut runtime, &mut ui, Span::test_data());
+    }));
+
+    assert!(panic.is_err(), "expected panic from toggle worker thread");
+    assert_eq!(
+        ui.mcp_details,
+        vec![(
+            "gh".to_string(),
+            McpUsabilityState::Failed,
+            Some("toggle worker disconnected".to_string()),
+            9,
+        )]
+    );
+}
+
+struct StagedToggleUi {
+    quit: bool,
+    first_sent: bool,
+    second_sent: bool,
+    mcp_states: Vec<(String, McpUsabilityState)>,
+    mcp_details: Vec<(String, McpUsabilityState, Option<String>, usize)>,
+}
+
+impl StagedToggleUi {
+    fn new() -> Self {
+        Self {
+            quit: false,
+            first_sent: false,
+            second_sent: false,
+            mcp_states: Vec::new(),
+            mcp_details: Vec::new(),
+        }
+    }
+}
+
+impl ProgressUi for StagedToggleUi {
+    fn emit(&mut self, _event: &UiEvent) {}
+
+    fn flush(&mut self) {}
+
+    fn take_cancel_requested(&self) -> bool {
+        false
+    }
+}
+
+impl InteractiveUi for StagedToggleUi {
+    fn pump_once(&mut self) {
+        if self.mcp_details.len() >= 2 {
+            self.quit = true;
+        }
+    }
+
+    fn take_submitted_prompt(&mut self) -> Option<String> {
+        None
+    }
+
+    fn take_next_mcp_toggle_request(&mut self) -> Option<McpToggleRequest> {
+        if !self.first_sent {
+            self.first_sent = true;
+            return Some(McpToggleRequest {
+                server_name: "gh".to_string(),
+                enable: false,
+            });
+        }
+
+        if self.first_sent && !self.second_sent && !self.mcp_details.is_empty() {
+            self.second_sent = true;
+            return Some(McpToggleRequest {
+                server_name: "gh".to_string(),
+                enable: true,
+            });
+        }
+
+        None
+    }
+
+    fn set_mcp_server_state(&mut self, server_name: &str, state: McpUsabilityState) {
+        self.mcp_states.push((server_name.to_string(), state));
+    }
+
+    fn set_mcp_server_state_with_details(
+        &mut self,
+        server_name: &str,
+        state: McpUsabilityState,
+        reason: Option<String>,
+        llm_visible_mcp_tool_count: usize,
+    ) {
+        self.mcp_details.push((
+            server_name.to_string(),
+            state,
+            reason,
+            llm_visible_mcp_tool_count,
+        ));
+        self.set_mcp_server_state(server_name, state);
+    }
+
+    fn quit_requested(&self) -> bool {
+        self.quit
+    }
+
+    fn fatal_error(&self) -> Option<&str> {
+        None
+    }
+
+    fn hydrate_transcript_from_messages(
+        &mut self,
+        _messages: impl IntoIterator<Item = UiMessageSnapshot>,
+    ) {
+    }
+}
+
+#[test]
+fn interactive_loop_worker_channel_closed_preserves_authoritative_visible_tool_count() {
+    let mut runtime = PanicOnToggleRuntime { visible_count: 13 };
+    let mut ui = StagedToggleUi::new();
+
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = run_interactive_loop(&mut runtime, &mut ui, Span::test_data());
+    }));
+
+    assert!(panic.is_err(), "expected panic from toggle worker thread");
+    assert_eq!(
+        ui.mcp_details,
+        vec![
+            (
+                "gh".to_string(),
+                McpUsabilityState::Failed,
+                Some("toggle worker disconnected".to_string()),
+                13,
+            ),
+            (
+                "gh".to_string(),
+                McpUsabilityState::Failed,
+                Some("worker channel closed".to_string()),
+                13,
+            ),
+        ]
     );
 }

@@ -8,7 +8,7 @@ use crate::agent::{
         ui_runtime::{StderrProgressUi, TuiInteractiveUi},
     },
     conversation::runtime::AgentConversationRuntime,
-    protocol::contracts::UiMessageSnapshot,
+    protocol::contracts::{ConversationRuntime, UiMessageSnapshot},
     ui::{
         factory::{StderrUiFactory, UiRendererFactory},
         policy::UiPolicy,
@@ -51,6 +51,8 @@ pub(crate) fn run_tui_mode(
         &runtime_impl.config.provider,
         &runtime_impl.config.model,
     ));
+    tui_ui.set_mcp_lifecycle_projection(runtime_impl.mcp_lifecycle_projection.clone());
+    tui_ui.set_llm_visible_mcp_tool_count(runtime_impl.llm_visible_mcp_tool_count());
 
     let result = run_with_terminal_restore(&mut terminal_lifecycle, || {
         if input_is_nothing {

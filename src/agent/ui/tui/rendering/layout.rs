@@ -3,6 +3,7 @@ pub const INPUT_PROMPT_WIDTH: u16 = 2;
 pub const INPUT_MIN_HEIGHT: u16 = 2;
 pub const INPUT_MAX_HEIGHT: u16 = 8;
 pub const TRANSCRIPT_MIN_HEIGHT: u16 = 1;
+pub const MAIN_SIDE_MARGIN: u16 = 2;
 
 const MIN_MAIN_COLUMNS: u16 = 72;
 const MIN_SIDE_COLUMNS: u16 = 24;
@@ -36,12 +37,14 @@ pub struct LayoutOutput {
 pub fn recompute_layout(input: LayoutInput) -> LayoutOutput {
     let (main_width, side_pane) = compute_columns(input.columns, input.rows, input.side_pane_visible);
     let (transcript_height, status_height, input_height) = compute_rows(input.rows, input.input_height);
+    let margin = side_margin_for_main_width(main_width);
+    let inner_width = main_width.saturating_sub(margin.saturating_mul(2));
 
     let transcript = clip(
         PaneGeometry {
-            x: 0,
+            x: margin,
             y: 0,
-            width: main_width,
+            width: inner_width,
             height: transcript_height,
         },
         input.columns,
@@ -50,9 +53,9 @@ pub fn recompute_layout(input: LayoutInput) -> LayoutOutput {
 
     let status_event = clip(
         PaneGeometry {
-            x: 0,
+            x: margin,
             y: transcript.height,
-            width: main_width,
+            width: inner_width,
             height: status_height,
         },
         input.columns,
@@ -61,9 +64,9 @@ pub fn recompute_layout(input: LayoutInput) -> LayoutOutput {
 
     let input_pane = clip(
         PaneGeometry {
-            x: 0,
+            x: margin,
             y: transcript.height.saturating_add(status_event.height),
-            width: main_width,
+            width: inner_width,
             height: input_height,
         },
         input.columns,
@@ -133,6 +136,14 @@ fn clip(geometry: PaneGeometry, columns: u16, rows: u16) -> PaneGeometry {
         y,
         width,
         height,
+    }
+}
+
+fn side_margin_for_main_width(main_width: u16) -> u16 {
+    if main_width < 8 {
+        0
+    } else {
+        MAIN_SIDE_MARGIN
     }
 }
 

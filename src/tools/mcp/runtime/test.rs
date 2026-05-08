@@ -10,6 +10,7 @@ fn discovered_tools_accessor_returns_runtime_tools() {
     let runtime = McpRuntime {
         tool_server_handle: rig::tool::server::ToolServer::new().run(),
         sessions: vec![],
+        connected_servers: std::collections::BTreeSet::new(),
         discovered_tools: vec![McpToolDefinition {
             server: "s1".to_string(),
             name: "gh__list_prs".to_string(),
@@ -24,6 +25,126 @@ fn discovered_tools_accessor_returns_runtime_tools() {
 }
 
 #[test]
+fn connect_server_states_reports_all_configured_servers_with_deterministic_fields() {
+    let servers = vec![
+        McpServerConfig {
+            name: "enabled-server".to_string(),
+            transport: McpTransportType::Sse,
+            url: Some("https://example.com/mcp/sse".to_string()),
+            headers: Default::default(),
+            command: None,
+            cwd: None,
+            args: vec![],
+            env: Default::default(),
+            enabled: true,
+        },
+        McpServerConfig {
+            name: "disabled-server".to_string(),
+            transport: McpTransportType::Http,
+            url: Some("https://example.com/mcp/http".to_string()),
+            headers: Default::default(),
+            command: None,
+            cwd: None,
+            args: vec![],
+            env: Default::default(),
+            enabled: false,
+        },
+    ];
+
+    let runtime = McpRuntime {
+        tool_server_handle: rig::tool::server::ToolServer::new().run(),
+        sessions: vec![],
+        connected_servers: std::collections::BTreeSet::new(),
+        discovered_tools: vec![],
+    };
+
+    let projection = runtime.lifecycle_projection(&servers);
+    assert_eq!(projection.len(), 2);
+
+    let enabled = projection
+        .iter()
+        .find(|s| s.name == "enabled-server")
+        .expect("enabled server present");
+    assert!(enabled.configured);
+    assert!(enabled.enabled);
+    assert!(!enabled.connected);
+
+    let disabled = projection
+        .iter()
+        .find(|s| s.name == "disabled-server")
+        .expect("disabled server present");
+    assert!(disabled.configured);
+    assert!(!disabled.enabled);
+    assert!(!disabled.connected);
+}
+
+#[test]
+fn connect_server_states_marks_connected_when_runtime_session_exists_for_server() {
+    let servers = vec![McpServerConfig {
+        name: "connected-server".to_string(),
+        transport: McpTransportType::Sse,
+        url: Some("https://example.com/mcp/sse".to_string()),
+        headers: Default::default(),
+        command: None,
+        cwd: None,
+        args: vec![],
+        env: Default::default(),
+        enabled: true,
+    }];
+
+    let runtime = McpRuntime {
+        tool_server_handle: rig::tool::server::ToolServer::new().run(),
+        sessions: vec![],
+        connected_servers: std::collections::BTreeSet::from(["connected-server".to_string()]),
+        discovered_tools: vec![McpToolDefinition {
+            server: "connected-server".to_string(),
+            name: "connected-server__list".to_string(),
+            raw_name: "list".to_string(),
+            description: None,
+            parameters: None,
+        }],
+    };
+
+    let projection = runtime.lifecycle_projection(&servers);
+    assert_eq!(projection.len(), 1);
+    assert!(projection[0].configured);
+    assert!(projection[0].enabled);
+    assert!(projection[0].connected);
+}
+
+#[test]
+fn activation_gating_selects_only_enabled_servers() {
+    let servers = vec![
+        McpServerConfig {
+            name: "enabled-a".to_string(),
+            transport: McpTransportType::Sse,
+            url: Some("https://example.com/mcp/sse".to_string()),
+            headers: Default::default(),
+            command: None,
+            cwd: None,
+            args: vec![],
+            env: Default::default(),
+            enabled: true,
+        },
+        McpServerConfig {
+            name: "disabled-b".to_string(),
+            transport: McpTransportType::Http,
+            url: Some("https://example.com/mcp/http".to_string()),
+            headers: Default::default(),
+            command: None,
+            cwd: None,
+            args: vec![],
+            env: Default::default(),
+            enabled: false,
+        },
+    ];
+
+    let selected = super::select_enabled_servers(&servers);
+    assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0].name, "enabled-a");
+}
+
+#[test]
 fn sse_transport_config_is_stateless() {
     let server = McpServerConfig {
         name: "sse".to_string(),
@@ -34,6 +155,7 @@ fn sse_transport_config_is_stateless() {
         cwd: None,
         args: vec![],
         env: Default::default(),
+        enabled: true,
     };
 
     let config = build_http_transport_config(&server).expect("config");
@@ -51,6 +173,7 @@ fn http_transport_config_requires_session() {
         cwd: None,
         args: vec![],
         env: Default::default(),
+        enabled: true,
     };
 
     let config = build_http_transport_config(&server).expect("config");

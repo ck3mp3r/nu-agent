@@ -7,8 +7,8 @@ use ratatui::{
     Terminal,
     backend::CrosstermBackend,
     style::Style,
-    layout::Position,
-    layout::{Constraint, Direction, Layout},
+    layout::{Margin, Position},
+    layout::{Constraint, Direction, Layout, Rect},
     text::{Line, Span, Text},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
@@ -25,6 +25,9 @@ mod test;
 
 #[cfg(test)]
 mod hybrid_events_test;
+
+#[cfg(test)]
+mod transcript_rows_test;
 
 use crate::agent::ui::{renderer::UiRenderer,
     tui::{
@@ -46,10 +49,14 @@ use crate::agent::ui::{renderer::UiRenderer,
             },
             theme::TuiTheme,
         },
-        state::{AppState, TranscriptRole},
+        state::{
+            AppState, CommandPaletteAction, InfoPanel, McpServerState, McpToggleRequest,
+            McpServerUsabilityState, TranscriptRole,
+        },
     },
 };
 use crate::agent::protocol::event::UiEvent;
+use crate::tools::mcp::runtime::McpServerLifecycle;
 #[cfg(test)]
 use crate::agent::ui::tui::state::{PromptStatus, TranscriptLineStatus};
 use crate::agent::protocol::contracts::UiMessageSnapshot;
@@ -60,7 +67,7 @@ use status::{
     transcript_selection_range_for_render, transcript_title_for_render,
 };
 use render_frame::{
-    current_time_millis, transcript_height_for_main, vertical_heights_for_main_with_input,
+    current_time_millis, vertical_heights_for_main_with_input,
 };
 use tool_hydration::{extract_tool_name, parse_persisted_tool_status_line};
 #[cfg(test)]
@@ -90,12 +97,74 @@ fn wrapped_visual_rows_for_rendered_line(rendered_line: &Line<'_>, content_width
     width.div_ceil(content_width.max(1))
 }
 
+fn help_panel_total_visual_rows(lines: &[Line<'_>], content_width: usize) -> usize {
+    lines
+        .iter()
+        .map(|line| wrapped_visual_rows_for_rendered_line(line, content_width.max(1)))
+        .sum()
+}
+
+fn help_panel_max_scroll(lines: &[Line<'_>], viewport_height: u16, content_width: u16) -> usize {
+    let visible_rows = viewport_height.max(1) as usize;
+    let total_rows = help_panel_total_visual_rows(lines, content_width.max(1) as usize);
+    total_rows.saturating_sub(visible_rows)
+}
+
+fn help_panel_overflow_cue(
+    lines: &[Line<'_>],
+    viewport_height: u16,
+    content_width: u16,
+    scroll: usize,
+) -> Option<String> {
+    let visible_rows = viewport_height.max(1) as usize;
+    let total_rows = help_panel_total_visual_rows(lines, content_width.max(1) as usize);
+    if total_rows <= visible_rows {
+        return None;
+    }
+
+    let max_scroll = total_rows.saturating_sub(visible_rows);
+    let current = scroll.min(max_scroll);
+    let start = current.saturating_add(1);
+    let end = current.saturating_add(visible_rows).min(total_rows);
+    Some(format!(
+        "PgUp/PgDn j/k | Esc close | {}-{} / {}",
+        start, end, total_rows
+    ))
+}
+
+#[cfg(test)]
+fn help_panel_visible_window(lines: &[Line<'_>], content_width: usize, scroll: usize, rows: usize) -> Vec<Line<'static>> {
+    let mut visual_rows = Vec::new();
+    let width = content_width.max(1);
+
+    for line in lines {
+        let text = line.to_string();
+        if text.is_empty() {
+            visual_rows.push(String::new());
+            continue;
+        }
+        let chars = text.chars().collect::<Vec<_>>();
+        for chunk in chars.chunks(width) {
+            visual_rows.push(chunk.iter().collect::<String>());
+        }
+    }
+
+    visual_rows
+        .into_iter()
+        .skip(scroll)
+        .take(rows)
+        .map(Line::from)
+        .collect()
+}
+
 #[derive(Debug)]
 pub struct RuntimeCoordinator {
     state: AppState,
     transport: TuiTransport,
     cancel_controller: CancelController,
     layout: LayoutOutput,
+    terminal_columns: u16,
+    terminal_rows: u16,
     side_pane_visible: Option<bool>,
     quit_requested: bool,
     fatal_error: Option<String>,
@@ -187,6 +256,8 @@ impl RuntimeCoordinator {
             transport: TuiTransport::new(),
             cancel_controller: CancelController::new(),
             layout,
+            terminal_columns: columns,
+            terminal_rows: rows,
             side_pane_visible,
             quit_requested: false,
             fatal_error: None,
@@ -244,6 +315,53 @@ impl RuntimeCoordinator {
         self.active_model_identity = active_model_identity;
     }
 
+    pub(crate) fn set_mcp_lifecycle_projection(
+        &mut self,
+        projection: Vec<McpServerLifecycle>,
+    ) {
+        let servers = projection
+            .into_iter()
+            .map(|server| McpServerState {
+                name: server.name,
+                state: match (server.enabled, server.connected) {
+                    (true, true) => McpServerUsabilityState::Enabled,
+                    (true, false) => McpServerUsabilityState::Failed,
+                    (false, _) => McpServerUsabilityState::Disabled,
+                },
+            })
+            .collect();
+        self.state.set_mcp_servers(servers);
+    }
+
+    pub(crate) fn set_llm_visible_mcp_tool_count(&mut self, count: usize) {
+        self.state.set_llm_visible_mcp_tool_count(count);
+    }
+
+    pub(crate) fn take_next_mcp_toggle_request(&mut self) -> Option<McpToggleRequest> {
+        self.state.take_next_mcp_toggle_request()
+    }
+
+    pub(crate) fn set_mcp_server_state(
+        &mut self,
+        server_name: &str,
+        state: McpServerUsabilityState,
+    ) -> bool {
+        self.state.set_mcp_server_state_by_name(server_name, state)
+    }
+
+    pub(crate) fn set_mcp_server_state_with_details(
+        &mut self,
+        server_name: &str,
+        state: McpServerUsabilityState,
+        reason: Option<String>,
+        llm_visible_mcp_tool_count: usize,
+    ) -> bool {
+        self.state
+            .set_llm_visible_mcp_tool_count(llm_visible_mcp_tool_count);
+        self.state
+            .set_mcp_server_state_by_name_with_reason(server_name, state, reason)
+    }
+
     pub fn quit_requested(&self) -> bool {
         self.quit_requested
     }
@@ -291,6 +409,8 @@ impl RuntimeCoordinator {
 
         if let TerminalEvent::Key(TerminalKey::Esc) = event
             && self.state.phase == crate::agent::ui::tui::state::UiPhase::Idle
+            && !self.state.command_palette_open
+            && self.state.info_panel.is_none()
         {
             self.state.status_line = "Esc pressed. Press Ctrl+C to quit.".to_string();
         }
@@ -301,6 +421,8 @@ impl RuntimeCoordinator {
         }
 
         if let TerminalEvent::Resize(resize) = event {
+            self.terminal_columns = resize.columns;
+            self.terminal_rows = resize.rows;
             let input_height = input_pane_height_for_content(
                 &self.state.input.buffer,
                 resize.columns,
@@ -322,14 +444,7 @@ impl RuntimeCoordinator {
     }
 
     fn sync_transcript_viewport_lines_with_layout(&mut self) {
-        let main_height = self
-            .layout
-            .transcript
-            .height
-            .saturating_add(self.layout.status_event.height)
-            .saturating_add(self.layout.input.height);
-        let transcript_height = transcript_height_for_main(main_height);
-        let visible_lines = transcript_height.saturating_sub(2) as usize;
+        let visible_lines = self.layout.transcript.height.saturating_sub(1) as usize;
         self.state.set_transcript_viewport_lines(visible_lines.max(1));
     }
 
@@ -338,20 +453,9 @@ impl RuntimeCoordinator {
             &self.state.input.buffer,
             self.layout.transcript.width,
         );
-        let total_rows = self
-            .layout
-            .transcript
-            .height
-            .saturating_add(self.layout.status_event.height)
-            .saturating_add(self.layout.input.height);
-        let total_columns = self
-            .layout
-            .transcript
-            .width
-            .saturating_add(self.layout.side_pane.map(|s| s.width).unwrap_or(0));
         self.layout = recompute_layout(LayoutInput {
-            columns: total_columns,
-            rows: total_rows,
+            columns: self.terminal_columns,
+            rows: self.terminal_rows,
             side_pane_visible: self.side_pane_visible,
             input_height: Some(input_height),
         });
@@ -457,8 +561,13 @@ impl RuntimeCoordinator {
                 };
 
                 let main = horizontal[0];
+                let side_margin = if main.width >= 8 { 2 } else { 0 };
+                let content_main = main.inner(Margin {
+                    vertical: 0,
+                    horizontal: side_margin,
+                });
                 let (header_h, transcript_h, status_h, input_h) =
-                    vertical_heights_for_main_with_input(main.height, self.layout.input.height);
+                    vertical_heights_for_main_with_input(content_main.height, self.layout.input.height);
                 let vertical = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
@@ -467,12 +576,7 @@ impl RuntimeCoordinator {
                         Constraint::Length(input_h),
                         Constraint::Length(status_h),
                     ])
-                    .split(main);
-
-                let header = Paragraph::new(Line::from(vec![Span::raw(
-                    "nu-agent TUI  |  Ctrl+C quit  |  Esc/Esc abort  |  PgUp/PgDn/Ctrl+U/Ctrl+D scroll  |  Normal: h/l or Tab pane, j/k, gg/G, v visual",
-                )]));
-                frame.render_widget(header, vertical[0]);
+                    .split(content_main);
 
                 let (window_start, window_lines) = visible_transcript_window_for_render(
                     &self.state.transcript_preview,
@@ -620,7 +724,12 @@ impl RuntimeCoordinator {
                     frame.render_widget(input_widget, vertical[2]);
                 }
 
-                if !self.state.input.locked && vertical[2].height >= 2 && vertical[2].width >= 1 {
+                if !self.state.input.locked
+                    && !self.state.command_palette_open
+                    && self.state.info_panel.is_none()
+                    && vertical[2].height >= 2
+                    && vertical[2].width >= 1
+                {
                     let (cursor_row, cursor_col) = input_cursor_row_col(
                         &self.state.input.buffer,
                         self.state.input.cursor,
@@ -650,6 +759,97 @@ impl RuntimeCoordinator {
                         .block(Block::default().borders(Borders::ALL).title("Events"));
                     frame.render_widget(side_widget, side);
                 }
+
+                if self.state.command_palette_open {
+                    let popup_width = area.width.clamp(20, 48);
+                    let popup_height = area.height.clamp(5, 10);
+                    let popup = Rect {
+                        x: area.x.saturating_add(area.width.saturating_sub(popup_width) / 2),
+                        y: area.y.saturating_add(area.height.saturating_sub(popup_height) / 2),
+                        width: popup_width,
+                        height: popup_height,
+                    };
+
+                    let mut lines = vec![Line::from(format!("Query: {}", self.state.command_palette_query))];
+                    for (idx, action) in self.state.command_palette_actions().into_iter().enumerate() {
+                        let label = match action {
+                            CommandPaletteAction::Help => "Help",
+                            CommandPaletteAction::Status => "Status",
+                            CommandPaletteAction::Mcps => "MCPs",
+                        };
+                        let prefix = if idx == self.state.command_palette_selection {
+                            "❯ "
+                        } else {
+                            "  "
+                        };
+                        lines.push(Line::from(format!("{prefix}{label}")));
+                    }
+
+                    frame.render_widget(Clear, popup);
+                    frame.render_widget(
+                        Paragraph::new(lines).block(
+                            Block::default()
+                                .borders(Borders::ALL)
+                                .title("Command Palette"),
+                        ),
+                        popup,
+                    );
+                }
+
+                if let Some(panel) = self.state.info_panel {
+                    let popup_width = area.width.clamp(42, 90);
+                    let popup_height = area.height.clamp(8, 20);
+                    let popup = Rect {
+                        x: area.x.saturating_add(area.width.saturating_sub(popup_width) / 2),
+                        y: area.y.saturating_add(area.height.saturating_sub(popup_height) / 2),
+                        width: popup_width,
+                        height: popup_height,
+                    };
+
+                    let (title, lines) = match panel {
+                        InfoPanel::Help => help_panel_lines(),
+                        InfoPanel::Status => status_panel_lines(
+                            &self.state,
+                            &self.active_model_identity,
+                            &self.input_backend_status,
+                            &self.last_input_poll_status,
+                            self.last_input_error.as_deref(),
+                        ),
+                        InfoPanel::Mcps => mcp_panel_lines(&self.state),
+                    };
+
+                    let panel_inner_height = popup.height.saturating_sub(2);
+                    let panel_inner_width = popup.width.saturating_sub(2);
+                    let panel_scroll = self.state.info_panel_scroll.min(help_panel_max_scroll(
+                        &lines,
+                        panel_inner_height,
+                        panel_inner_width,
+                    ));
+                    let panel_title = match panel {
+                        InfoPanel::Help => {
+                            if let Some(cue) = help_panel_overflow_cue(
+                                &lines,
+                                panel_inner_height,
+                                panel_inner_width,
+                                panel_scroll,
+                            ) {
+                                format!("{title} ({cue})")
+                            } else {
+                                title.to_string()
+                            }
+                        }
+                        _ => title.to_string(),
+                    };
+
+                    frame.render_widget(Clear, popup);
+                    frame.render_widget(
+                        Paragraph::new(lines)
+                            .block(Block::default().borders(Borders::ALL).title(panel_title))
+                            .wrap(Wrap { trim: false })
+                            .scroll((panel_scroll.min(u16::MAX as usize) as u16, 0)),
+                        popup,
+                    );
+                }
             })
             .map_err(|err| format!("TUI render failed: {err}"))?;
 
@@ -676,6 +876,122 @@ impl RuntimeCoordinator {
         self.poll_terminal_event(event_source);
         self.drain_transport();
     }
+}
+
+fn help_panel_lines() -> (&'static str, Vec<Line<'static>>) {
+    (
+        "Help",
+        crate::agent::ui::tui::markdown::project_markdown_to_lines(help_panel_markdown_source()),
+    )
+}
+
+fn help_panel_markdown_source() -> &'static str {
+    include_str!("help/help.md")
+}
+
+fn status_panel_lines(
+    state: &AppState,
+    active_model_identity: &str,
+    input_backend_status: &str,
+    last_input_poll_status: &str,
+    last_input_error: Option<&str>,
+) -> (&'static str, Vec<Line<'static>>) {
+    let lines = build_status_lines(
+        state,
+        active_model_identity,
+        input_backend_status,
+        last_input_poll_status,
+        last_input_error,
+    )
+    .into_iter()
+    .map(Line::from)
+    .collect();
+    (
+        "Status",
+        lines,
+    )
+}
+
+fn mcp_panel_lines(state: &AppState) -> (&'static str, Vec<Line<'static>>) {
+    let mut lines = vec![
+        Line::from("Session-only toggles (not persisted to config)."),
+        Line::from("Use j/k or ↑/↓ to select, Enter to toggle, Esc to close."),
+        Line::from(""),
+        Line::from("name | state"),
+    ];
+
+    if state.mcp_servers.is_empty() {
+        lines.push(Line::from("(no MCP servers configured)"));
+    } else {
+        for (idx, server) in state.mcp_servers.iter().enumerate() {
+            let prefix = if idx == state.mcp_panel_selection {
+                "❯ "
+            } else {
+                "  "
+            };
+            let state_label = match server.state {
+                McpServerUsabilityState::Enabled => "enabled",
+                McpServerUsabilityState::Disabled => "disabled",
+                McpServerUsabilityState::Failed => "failed",
+            };
+            lines.push(Line::from(format!(
+                "{prefix}{} | {}",
+                server.name, state_label
+            )));
+        }
+    }
+
+    ("MCPs", lines)
+}
+
+#[cfg(test)]
+pub(super) fn help_panel_lines_for_test() -> (&'static str, Vec<Line<'static>>) {
+    help_panel_lines()
+}
+
+#[cfg(test)]
+pub(super) fn help_panel_max_scroll_for_test(lines: &[Line<'_>], viewport_height: u16) -> usize {
+    help_panel_max_scroll(lines, viewport_height, 80)
+}
+
+#[cfg(test)]
+pub(super) fn help_panel_overflow_cue_for_test(
+    lines: &[Line<'_>],
+    viewport_height: u16,
+    scroll: usize,
+) -> Option<String> {
+    help_panel_overflow_cue(lines, viewport_height, 80, scroll)
+}
+
+#[cfg(test)]
+pub(super) fn help_panel_visible_window_for_test(
+    lines: &[Line<'_>],
+    viewport_height: u16,
+    scroll: usize,
+) -> Vec<Line<'static>> {
+    help_panel_visible_window(lines, 80, scroll, viewport_height.max(1) as usize)
+}
+
+#[cfg(test)]
+pub(super) fn status_panel_lines_for_test(
+    state: &AppState,
+    active_model_identity: &str,
+    input_backend_status: &str,
+    last_input_poll_status: &str,
+    last_input_error: Option<&str>,
+) -> (&'static str, Vec<Line<'static>>) {
+    status_panel_lines(
+        state,
+        active_model_identity,
+        input_backend_status,
+        last_input_poll_status,
+        last_input_error,
+    )
+}
+
+#[cfg(test)]
+pub(super) fn mcp_panel_lines_for_test(state: &AppState) -> (&'static str, Vec<Line<'static>>) {
+    mcp_panel_lines(state)
 }
 
 #[cfg(test)]
@@ -950,6 +1266,44 @@ where
     pub(crate) fn set_active_model_identity(&mut self, active_model_identity: String) {
         self.coordinator
             .set_active_model_identity(active_model_identity);
+    }
+
+    pub(crate) fn set_mcp_lifecycle_projection(
+        &mut self,
+        projection: Vec<McpServerLifecycle>,
+    ) {
+        self.coordinator.set_mcp_lifecycle_projection(projection);
+    }
+
+    pub(crate) fn take_next_mcp_toggle_request(&mut self) -> Option<McpToggleRequest> {
+        self.coordinator.take_next_mcp_toggle_request()
+    }
+
+    pub(crate) fn set_mcp_server_state(
+        &mut self,
+        server_name: &str,
+        state: McpServerUsabilityState,
+    ) -> bool {
+        self.coordinator.set_mcp_server_state(server_name, state)
+    }
+
+    pub(crate) fn set_mcp_server_state_with_details(
+        &mut self,
+        server_name: &str,
+        state: McpServerUsabilityState,
+        reason: Option<String>,
+        llm_visible_mcp_tool_count: usize,
+    ) -> bool {
+        self.coordinator.set_mcp_server_state_with_details(
+            server_name,
+            state,
+            reason,
+            llm_visible_mcp_tool_count,
+        )
+    }
+
+    pub(crate) fn set_llm_visible_mcp_tool_count(&mut self, count: usize) {
+        self.coordinator.set_llm_visible_mcp_tool_count(count);
     }
 
     pub(crate) fn fatal_error(&self) -> Option<&str> {

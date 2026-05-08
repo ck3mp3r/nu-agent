@@ -1,6 +1,8 @@
 use crate::agent::ui::tui::state::{
     AppState,
+    CommandPaletteAction,
     InputMode,
+    McpServerUsabilityState,
     PaneFocus,
     PromptStatus,
     ToolCallStatus,
@@ -462,4 +464,122 @@ fn assistant_projection_cache_reuses_projected_markdown_for_same_input() {
 
     assert_eq!(state.assistant_projection_cache_misses(), 1);
     assert_eq!(first, second);
+}
+
+#[test]
+fn command_palette_empty_query_returns_canonical_help_status_order_only() {
+    let mut state = AppState::new();
+    state.open_command_palette();
+
+    assert_eq!(
+        state.command_palette_actions(),
+        vec![
+            CommandPaletteAction::Help,
+            CommandPaletteAction::Status,
+            CommandPaletteAction::Mcps,
+        ]
+    );
+}
+
+#[test]
+fn command_palette_fuzzy_matching_is_case_insensitive_and_non_prefix() {
+    let mut state = AppState::new();
+    state.open_command_palette();
+
+    for ch in "HP".chars() {
+        state.append_command_palette_query_char(ch);
+    }
+    assert_eq!(state.command_palette_actions(), vec![CommandPaletteAction::Help]);
+
+    state.command_palette_query.clear();
+    for ch in "tS".chars() {
+        state.append_command_palette_query_char(ch);
+    }
+    assert_eq!(
+        state.command_palette_actions(),
+        vec![CommandPaletteAction::Status]
+    );
+}
+
+#[test]
+fn command_palette_fuzzy_query_matches_mcps_entry() {
+    let mut state = AppState::new();
+    state.open_command_palette();
+
+    for ch in "mcp".chars() {
+        state.append_command_palette_query_char(ch);
+    }
+
+    assert_eq!(state.command_palette_actions(), vec![CommandPaletteAction::Mcps]);
+}
+
+#[test]
+fn mcp_server_toggle_and_counts_follow_selected_row() {
+    let mut state = AppState::new();
+    state.set_mcp_servers(vec![
+        crate::agent::ui::tui::state::McpServerState {
+            name: "gh".to_string(),
+            state: McpServerUsabilityState::Enabled,
+        },
+        crate::agent::ui::tui::state::McpServerState {
+            name: "k8s".to_string(),
+            state: McpServerUsabilityState::Disabled,
+        },
+    ]);
+
+    assert_eq!(state.mcp_counts(), (2, 1, 1, 0));
+
+    state.mcp_panel_move_down();
+    assert!(state.queue_selected_mcp_toggle_request());
+
+    assert_eq!(state.mcp_counts(), (2, 1, 1, 0));
+    assert_eq!(
+        state.selected_mcp_server_state(),
+        Some(McpServerUsabilityState::Disabled)
+    );
+
+    let request = state.take_next_mcp_toggle_request().expect("toggle request");
+    assert_eq!(request.server_name, "k8s");
+    assert!(request.enable);
+
+    assert!(state.set_mcp_server_state_by_name("k8s", McpServerUsabilityState::Enabled));
+    assert_eq!(state.mcp_counts(), (2, 2, 0, 0));
+}
+
+#[test]
+fn enabling_failed_server_queues_enable_and_can_transition_to_failed_on_outcome() {
+    let mut state = AppState::new();
+    state.set_mcp_servers(vec![crate::agent::ui::tui::state::McpServerState {
+        name: "gh".to_string(),
+        state: McpServerUsabilityState::Failed,
+    }]);
+
+    assert!(state.queue_selected_mcp_toggle_request());
+    let request = state.take_next_mcp_toggle_request().expect("request");
+    assert_eq!(request.server_name, "gh");
+    assert!(request.enable);
+
+    assert!(state.set_mcp_server_state_by_name("gh", McpServerUsabilityState::Failed));
+    assert_eq!(state.mcp_counts(), (1, 0, 0, 1));
+}
+
+#[test]
+fn disabling_enabled_server_applies_disabled_state_immediately_and_queues_disable_request() {
+    let mut state = AppState::new();
+    state.set_mcp_servers(vec![crate::agent::ui::tui::state::McpServerState {
+        name: "gh".to_string(),
+        state: McpServerUsabilityState::Enabled,
+    }]);
+
+    assert!(state.queue_selected_mcp_toggle_request());
+    assert_eq!(
+        state.selected_mcp_server_state(),
+        Some(McpServerUsabilityState::Disabled),
+        "disable must apply immediately in UI state"
+    );
+
+    let request = state.take_next_mcp_toggle_request().expect("disable request");
+    assert_eq!(request.server_name, "gh");
+    assert!(!request.enable);
+    assert_eq!(state.mcp_counts(), (1, 0, 1, 0));
 }

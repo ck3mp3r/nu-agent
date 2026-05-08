@@ -29,6 +29,11 @@ pub enum UserAction {
     ScrollPageDown,
     CompleteForward,
     CompleteBackward,
+    ToggleCommandPalette,
+    CommandPaletteMoveUp,
+    CommandPaletteMoveDown,
+    CommandPaletteSelect,
+    CommandPaletteClose,
     Resize { columns: u16, rows: u16 },
     Quit,
     Esc,
@@ -90,6 +95,11 @@ fn reduce_user_action(
         UserAction::FocusPaneRight => handle_focus_pane_right(state),
         UserAction::YankSelection => handle_yank_selection(state),
         UserAction::Resize { rows, .. } => handle_resize(state, rows),
+        UserAction::ToggleCommandPalette => handle_toggle_command_palette(state),
+        UserAction::CommandPaletteMoveUp => state.command_palette_move_up(),
+        UserAction::CommandPaletteMoveDown => state.command_palette_move_down(),
+        UserAction::CommandPaletteSelect => handle_command_palette_select(state),
+        UserAction::CommandPaletteClose => state.close_command_palette(),
         UserAction::HistoryUp
         | UserAction::HistoryDown
         | UserAction::CompleteForward
@@ -230,6 +240,31 @@ fn handle_resize(state: &mut AppState, rows: u16) {
     state.set_transcript_viewport_lines(transcript_lines);
 }
 
+fn handle_toggle_command_palette(state: &mut AppState) {
+    if state.command_palette_open {
+        state.close_command_palette();
+    } else {
+        state.open_command_palette();
+    }
+}
+
+fn handle_command_palette_select(state: &mut AppState) {
+    if let Some(action) = state.command_palette_selected_action() {
+        let panel = match action {
+            crate::agent::ui::tui::state::CommandPaletteAction::Help => {
+                crate::agent::ui::tui::state::InfoPanel::Help
+            }
+            crate::agent::ui::tui::state::CommandPaletteAction::Status => {
+                crate::agent::ui::tui::state::InfoPanel::Status
+            }
+            crate::agent::ui::tui::state::CommandPaletteAction::Mcps => {
+                crate::agent::ui::tui::state::InfoPanel::Mcps
+            }
+        };
+        state.open_info_panel(panel);
+    }
+}
+
 fn handle_scroll_page_up(state: &mut AppState) {
     if state.input_mode == InputMode::Visual {
         state.extend_visual_cursor_page_up(TRANSCRIPT_PAGE_LINES);
@@ -251,6 +286,11 @@ fn handle_quit(state: &mut AppState) {
 }
 
 fn handle_escape(state: &mut AppState) {
+    if state.info_panel.is_some() {
+        state.close_info_panel();
+        return;
+    }
+
     if state.phase == UiPhase::Idle && state.input_mode == InputMode::Insert {
         state.enter_normal_mode();
         return;
@@ -342,7 +382,9 @@ fn handle_warning(state: &mut AppState, message: String) {
 fn handle_assistant_message(state: &mut AppState, text: String) {
     let trimmed = text.trim();
     if !trimmed.is_empty() {
-        state.scroll_transcript_to_bottom();
+        if state.transcript_follow_tail {
+            state.scroll_transcript_to_bottom();
+        }
         for line in state.project_assistant_markdown_lines(trimmed) {
             let text = markdown::rendered_line_to_plain_text(&line);
             if text.trim().is_empty() {

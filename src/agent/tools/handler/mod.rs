@@ -151,6 +151,8 @@ impl ToolFailureOutcome {
 pub struct McpToolRegistry {
     names: std::collections::HashSet<String>,
     raw_name_by_exposed_name: std::collections::HashMap<String, String>,
+    server_by_exposed_name: std::collections::HashMap<String, String>,
+    enabled_servers: std::sync::Arc<std::sync::RwLock<std::collections::HashSet<String>>>,
 }
 
 impl McpToolRegistry {
@@ -161,11 +163,19 @@ impl McpToolRegistry {
         S: Into<String>,
     {
         let names: std::collections::HashSet<String> = names.into_iter().map(Into::into).collect();
+        let raw_name_by_exposed_name = names
+            .iter()
+            .map(|name| (name.clone(), name.clone()))
+            .collect::<std::collections::HashMap<_, _>>();
+        let server_by_exposed_name = names
+            .iter()
+            .map(|name| (name.clone(), name.clone()))
+            .collect::<std::collections::HashMap<_, _>>();
+        let enabled_servers = names.iter().cloned().collect();
         Self {
-            raw_name_by_exposed_name: names
-                .iter()
-                .map(|name| (name.clone(), name.clone()))
-                .collect(),
+            raw_name_by_exposed_name,
+            server_by_exposed_name,
+            enabled_servers: std::sync::Arc::new(std::sync::RwLock::new(enabled_servers)),
             names,
         }
     }
@@ -176,25 +186,37 @@ impl McpToolRegistry {
     {
         let mut names = std::collections::HashSet::new();
         let mut raw_name_by_exposed_name = std::collections::HashMap::new();
+        let mut server_by_exposed_name = std::collections::HashMap::new();
+        let mut enabled_servers = std::collections::HashSet::new();
 
         for tool in tools {
             let exposed_name = tool.name;
+            let raw_name = tool.raw_name;
+            let server_name = tool.server;
             if !names.insert(exposed_name.clone()) {
                 return Err(format!(
                     "duplicate exposed MCP tool name '{}' while building MCP registry",
                     exposed_name
                 ));
             }
-            raw_name_by_exposed_name.insert(exposed_name, tool.raw_name);
+            raw_name_by_exposed_name.insert(exposed_name.clone(), raw_name);
+            server_by_exposed_name.insert(exposed_name, server_name.clone());
+            enabled_servers.insert(server_name);
         }
 
         Ok(Self {
             names,
             raw_name_by_exposed_name,
+            server_by_exposed_name,
+            enabled_servers: std::sync::Arc::new(std::sync::RwLock::new(enabled_servers)),
         })
     }
 
     pub fn contains(&self, name: &str) -> bool {
+        self.names.contains(name) && self.is_tool_enabled(name)
+    }
+
+    pub fn is_registered(&self, name: &str) -> bool {
         self.names.contains(name)
     }
 
@@ -203,6 +225,39 @@ impl McpToolRegistry {
             .get(exposed_name)
             .map(String::as_str)
     }
+
+    pub fn is_tool_enabled(&self, exposed_name: &str) -> bool {
+        let Some(server_name) = self.server_by_exposed_name.get(exposed_name) else {
+            return false;
+        };
+
+        self.enabled_servers
+            .read()
+            .map(|servers| servers.contains(server_name))
+            .unwrap_or(false)
+    }
+
+    pub fn set_server_enabled(&self, server_name: &str, enabled: bool) -> Result<(), String> {
+        let mut servers = self
+            .enabled_servers
+            .write()
+            .map_err(|_| "MCP enabled-server state lock poisoned".to_string())?;
+
+        if enabled {
+            servers.insert(server_name.to_string());
+        } else {
+            servers.remove(server_name);
+        }
+
+        Ok(())
+    }
+
+    pub fn is_server_enabled(&self, server_name: &str) -> bool {
+        self.enabled_servers
+            .read()
+            .map(|servers| servers.contains(server_name))
+            .unwrap_or(false)
+    }
 }
 
 fn resolve_mcp_invocation_name<'a>(
@@ -210,6 +265,23 @@ fn resolve_mcp_invocation_name<'a>(
     exposed_tool_name: &str,
 ) -> Option<&'a str> {
     registry.raw_name_for(exposed_tool_name)
+}
+
+pub(crate) fn llm_visible_tool_definitions(
+    tool_definitions: &[rig::completion::ToolDefinition],
+    mcp_registry: &McpToolRegistry,
+) -> Vec<rig::completion::ToolDefinition> {
+    tool_definitions
+        .iter()
+        .filter(|tool| {
+            if mcp_registry.is_registered(tool.name.as_str()) {
+                mcp_registry.contains(tool.name.as_str())
+            } else {
+                true
+            }
+        })
+        .cloned()
+        .collect()
 }
 
 fn classify_tool_source(

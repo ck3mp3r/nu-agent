@@ -61,6 +61,39 @@ pub enum TranscriptLineStatus {
     Tool(ToolCallStatus),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandPaletteAction {
+    Help,
+    Status,
+    Mcps,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InfoPanel {
+    Help,
+    Status,
+    Mcps,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpServerState {
+    pub name: String,
+    pub state: McpServerUsabilityState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpToggleRequest {
+    pub server_name: String,
+    pub enable: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpServerUsabilityState {
+    Enabled,
+    Disabled,
+    Failed,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueuedPrompt {
     pub id: u64,
@@ -116,6 +149,16 @@ pub struct AppState {
     pub latest_total_tokens: Option<u64>,
     pub session_total_tokens: u64,
     pub quit_requested: bool,
+    pub command_palette_open: bool,
+    pub command_palette_query: String,
+    pub command_palette_selection: usize,
+    pub info_panel: Option<InfoPanel>,
+    pub info_panel_scroll: usize,
+    pub mcp_servers: Vec<McpServerState>,
+    pub mcp_panel_selection: usize,
+    llm_visible_mcp_tool_count: usize,
+    mcp_failure_reasons: HashMap<String, String>,
+    pending_mcp_toggle_requests: VecDeque<McpToggleRequest>,
     assistant_projection_cache: HashMap<String, Vec<Line<'static>>>,
     prompt_items: Vec<QueuedPrompt>,
     tool_call_items: Vec<ToolCallLine>,
@@ -152,6 +195,16 @@ impl Default for AppState {
             latest_total_tokens: None,
             session_total_tokens: 0,
             quit_requested: false,
+            command_palette_open: false,
+            command_palette_query: String::new(),
+            command_palette_selection: 0,
+            info_panel: None,
+            info_panel_scroll: 0,
+            mcp_servers: Vec::new(),
+            mcp_panel_selection: 0,
+            llm_visible_mcp_tool_count: 0,
+            mcp_failure_reasons: HashMap::new(),
+            pending_mcp_toggle_requests: VecDeque::new(),
             assistant_projection_cache: HashMap::new(),
             prompt_items: Vec::new(),
             tool_call_items: Vec::new(),
@@ -198,6 +251,241 @@ impl AppState {
 
     pub fn pending_prompt_count(&self) -> usize {
         self.pending_prompt_ids.len()
+    }
+
+    pub fn command_palette_actions(&self) -> Vec<CommandPaletteAction> {
+        let canonical = [
+            (CommandPaletteAction::Help, "Help"),
+            (CommandPaletteAction::Status, "Status"),
+            (CommandPaletteAction::Mcps, "MCPs"),
+        ];
+
+        if self.command_palette_query.is_empty() {
+            return canonical.iter().map(|(action, _)| *action).collect();
+        }
+
+        let query = self.command_palette_query.to_ascii_lowercase();
+        canonical
+            .iter()
+            .filter_map(|(action, label)| {
+                fuzzy_matches(&query, &label.to_ascii_lowercase()).then_some(*action)
+            })
+            .collect()
+    }
+
+    pub fn command_palette_selected_action(&self) -> Option<CommandPaletteAction> {
+        self.command_palette_actions()
+            .get(self.command_palette_selection)
+            .copied()
+    }
+
+    pub fn open_command_palette(&mut self) {
+        self.info_panel = None;
+        self.command_palette_open = true;
+        self.command_palette_query.clear();
+        self.command_palette_selection = 0;
+    }
+
+    pub fn close_command_palette(&mut self) {
+        self.command_palette_open = false;
+    }
+
+    pub fn open_info_panel(&mut self, panel: InfoPanel) {
+        self.command_palette_open = false;
+        self.info_panel = Some(panel);
+        self.info_panel_scroll = 0;
+    }
+
+    pub fn close_info_panel(&mut self) {
+        self.info_panel = None;
+        self.info_panel_scroll = 0;
+    }
+
+    pub fn set_mcp_servers(&mut self, servers: Vec<McpServerState>) {
+        self.mcp_servers = servers;
+        self.mcp_failure_reasons.retain(|name, _| {
+            self.mcp_servers.iter().any(|server| {
+                server.name == *name && server.state == McpServerUsabilityState::Failed
+            })
+        });
+        if self.mcp_servers.is_empty() {
+            self.mcp_panel_selection = 0;
+        } else if self.mcp_panel_selection >= self.mcp_servers.len() {
+            self.mcp_panel_selection = self.mcp_servers.len().saturating_sub(1);
+        }
+    }
+
+    pub fn set_llm_visible_mcp_tool_count(&mut self, count: usize) {
+        self.llm_visible_mcp_tool_count = count;
+    }
+
+    pub fn llm_visible_mcp_tool_count(&self) -> usize {
+        self.llm_visible_mcp_tool_count
+    }
+
+    pub fn mcp_panel_move_up(&mut self) {
+        let len = self.mcp_servers.len();
+        if len == 0 {
+            self.mcp_panel_selection = 0;
+            return;
+        }
+
+        self.mcp_panel_selection = if self.mcp_panel_selection == 0 {
+            len.saturating_sub(1)
+        } else {
+            self.mcp_panel_selection.saturating_sub(1)
+        };
+    }
+
+    pub fn mcp_panel_move_down(&mut self) {
+        let len = self.mcp_servers.len();
+        if len == 0 {
+            self.mcp_panel_selection = 0;
+            return;
+        }
+
+        self.mcp_panel_selection = (self.mcp_panel_selection + 1) % len;
+    }
+
+    pub fn selected_mcp_server_name(&self) -> Option<&str> {
+        self.mcp_servers
+            .get(self.mcp_panel_selection)
+            .map(|server| server.name.as_str())
+    }
+
+    pub fn selected_mcp_server_state(&self) -> Option<McpServerUsabilityState> {
+        self.mcp_servers
+            .get(self.mcp_panel_selection)
+            .map(|server| server.state)
+    }
+
+    pub fn set_mcp_server_state_by_name(&mut self, name: &str, state: McpServerUsabilityState) -> bool {
+        self.set_mcp_server_state_by_name_with_reason(name, state, None)
+    }
+
+    pub fn set_mcp_server_state_by_name_with_reason(
+        &mut self,
+        name: &str,
+        state: McpServerUsabilityState,
+        reason: Option<String>,
+    ) -> bool {
+        if let Some(server) = self.mcp_servers.iter_mut().find(|server| server.name == name) {
+            server.state = state;
+
+            match state {
+                McpServerUsabilityState::Failed => {
+                    if let Some(reason) = reason {
+                        let trimmed = reason.trim();
+                        if !trimmed.is_empty() {
+                            self.mcp_failure_reasons
+                                .insert(name.to_string(), trimmed.to_string());
+                        }
+                    }
+                }
+                McpServerUsabilityState::Enabled | McpServerUsabilityState::Disabled => {
+                    self.mcp_failure_reasons.remove(name);
+                }
+            }
+
+            return true;
+        }
+        false
+    }
+
+    pub fn failed_mcp_servers_with_reasons(&self) -> Vec<(&str, Option<&str>)> {
+        self.mcp_servers
+            .iter()
+            .filter(|server| server.state == McpServerUsabilityState::Failed)
+            .map(|server| {
+                (
+                    server.name.as_str(),
+                    self.mcp_failure_reasons
+                        .get(server.name.as_str())
+                        .map(String::as_str),
+                )
+            })
+            .collect()
+    }
+
+    pub fn queue_selected_mcp_toggle_request(&mut self) -> bool {
+        let Some(server) = self.mcp_servers.get_mut(self.mcp_panel_selection) else {
+            return false;
+        };
+
+        let request = match server.state {
+            McpServerUsabilityState::Enabled => {
+                server.state = McpServerUsabilityState::Disabled;
+                McpToggleRequest {
+                    server_name: server.name.clone(),
+                    enable: false,
+                }
+            }
+            McpServerUsabilityState::Disabled | McpServerUsabilityState::Failed => McpToggleRequest {
+                server_name: server.name.clone(),
+                enable: true,
+            },
+        };
+
+        self.pending_mcp_toggle_requests.push_back(request);
+        true
+    }
+
+    pub fn take_next_mcp_toggle_request(&mut self) -> Option<McpToggleRequest> {
+        self.pending_mcp_toggle_requests.pop_front()
+    }
+
+    pub fn mcp_counts(&self) -> (usize, usize, usize, usize) {
+        let configured = self.mcp_servers.len();
+        let enabled = self
+            .mcp_servers
+            .iter()
+            .filter(|s| s.state == McpServerUsabilityState::Enabled)
+            .count();
+        let disabled = self
+            .mcp_servers
+            .iter()
+            .filter(|s| s.state == McpServerUsabilityState::Disabled)
+            .count();
+        let failed = self
+            .mcp_servers
+            .iter()
+            .filter(|s| s.state == McpServerUsabilityState::Failed)
+            .count();
+        (configured, enabled, disabled, failed)
+    }
+
+    pub fn command_palette_move_up(&mut self) {
+        let len = self.command_palette_actions().len();
+        if len == 0 {
+            self.command_palette_selection = 0;
+            return;
+        }
+
+        self.command_palette_selection = if self.command_palette_selection == 0 {
+            len.saturating_sub(1)
+        } else {
+            self.command_palette_selection.saturating_sub(1)
+        };
+    }
+
+    pub fn command_palette_move_down(&mut self) {
+        let len = self.command_palette_actions().len();
+        if len == 0 {
+            self.command_palette_selection = 0;
+            return;
+        }
+
+        self.command_palette_selection = (self.command_palette_selection + 1) % len;
+    }
+
+    pub fn append_command_palette_query_char(&mut self, ch: char) {
+        self.command_palette_query.push(ch);
+        self.command_palette_selection = 0;
+    }
+
+    pub fn backspace_command_palette_query_char(&mut self) {
+        self.command_palette_query.pop();
+        self.command_palette_selection = 0;
     }
 
     pub fn prompt_status_for_transcript_line(&self, transcript_line_index: usize) -> Option<PromptStatus> {
@@ -781,6 +1069,19 @@ impl AppState {
             self.input.cursor = self.input.buffer.len();
         }
 
+        let palette_len = self.command_palette_actions().len();
+        if palette_len == 0 {
+            self.command_palette_selection = 0;
+        } else if self.command_palette_selection >= palette_len {
+            self.command_palette_selection = palette_len.saturating_sub(1);
+        }
+
+        if self.mcp_servers.is_empty() {
+            self.mcp_panel_selection = 0;
+        } else if self.mcp_panel_selection >= self.mcp_servers.len() {
+            self.mcp_panel_selection = self.mcp_servers.len().saturating_sub(1);
+        }
+
         viewport_state::clamp_scroll_from_bottom(self);
 
         while self.input.cursor > 0 && !self.input.buffer.is_char_boundary(self.input.cursor) {
@@ -807,6 +1108,24 @@ impl AppState {
         .enforce_single_active_invariant();
     }
 
+}
+
+fn fuzzy_matches(query: &str, candidate: &str) -> bool {
+    if query.is_empty() {
+        return true;
+    }
+
+    let mut query_chars = query.chars();
+    let mut needle = query_chars.next();
+    for ch in candidate.chars() {
+        if Some(ch) == needle {
+            needle = query_chars.next();
+            if needle.is_none() {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 impl AppState {

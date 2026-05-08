@@ -14,12 +14,13 @@ use crate::{
 use crate::agent::{
     protocol::{
         cancellation::{is_llm_call_cancelled, llm_call_cancelled_error},
-        contracts::{ConversationRuntime, ProgressUi},
+        contracts::{ConversationRuntime, McpUsabilityState, ProgressUi},
         event::UiEvent,
         tool_args::summarize_tool_arguments,
     },
     tools::handler::{self, McpToolRegistry, ToolSource},
 };
+use crate::tools::mcp::{config::McpServerConfig, runtime::McpServerLifecycle};
 
 enum LlmCallProgress {
     Tick,
@@ -95,6 +96,9 @@ pub(crate) struct AgentConversationRuntime {
     pub closure_registry: ClosureRegistry,
     pub mcp_registry: McpToolRegistry,
     pub mcp_tool_server_handle: Option<rig::tool::server::ToolServerHandle>,
+    pub mcp_lifecycle_projection: Vec<McpServerLifecycle>,
+    pub mcp_server_configs: Vec<McpServerConfig>,
+    pub mcp_caller_cwd: Option<std::path::PathBuf>,
     pub tool_executor: ToolExecutor,
     pub engine: EngineInterface,
     pub store: SessionStore,
@@ -103,6 +107,47 @@ pub(crate) struct AgentConversationRuntime {
 }
 
 impl ConversationRuntime for AgentConversationRuntime {
+    fn set_mcp_server_enabled(&mut self, server_name: &str, enabled: bool) -> Result<McpUsabilityState, String> {
+        if !enabled {
+            self.mcp_registry.set_server_enabled(server_name, false)?;
+            return Ok(McpUsabilityState::Disabled);
+        }
+
+        let Some(server_config) = self
+            .mcp_server_configs
+            .iter()
+            .find(|server| server.name == server_name)
+            .cloned()
+        else {
+            self.mcp_registry.set_server_enabled(server_name, false)?;
+            return Ok(McpUsabilityState::Failed);
+        };
+
+        match self.runtime.block_on(crate::tools::mcp::runtime::connect_servers(
+            &[McpServerConfig {
+                enabled: true,
+                ..server_config
+            }],
+            self.mcp_caller_cwd.as_deref(),
+        )) {
+            Ok(runtime) if runtime.has_sessions() => {
+                self.mcp_registry.set_server_enabled(server_name, true)?;
+                Ok(McpUsabilityState::Enabled)
+            }
+            Ok(_) | Err(_) => {
+                self.mcp_registry.set_server_enabled(server_name, false)?;
+                Ok(McpUsabilityState::Failed)
+            }
+        }
+    }
+
+    fn llm_visible_mcp_tool_count(&self) -> usize {
+        self.active_tool_definitions()
+            .iter()
+            .filter(|tool| self.mcp_registry.is_registered(tool.name.as_str()))
+            .count()
+    }
+
     fn execute_turn<U: ProgressUi>(
         &mut self,
         ui: &mut U,
@@ -124,12 +169,13 @@ impl ConversationRuntime for AgentConversationRuntime {
         }
 
         ui.emit(&UiEvent::LlmStart);
+        let active_tool_definitions = self.active_tool_definitions();
         let mut llm_response = match call_llm_with_ui_ticks(
             &self.runtime,
             &self.runtime_ctx,
             &self.config,
             &merged_prompt,
-            self.tool_definitions.clone(),
+            active_tool_definitions,
             ui,
         ) {
             Ok(response) => response,
@@ -277,12 +323,13 @@ impl ConversationRuntime for AgentConversationRuntime {
             };
 
             ui.emit(&UiEvent::LlmStart);
+            let active_tool_definitions = self.active_tool_definitions();
             llm_response = match call_llm_with_ui_ticks(
                 &self.runtime,
                 &self.runtime_ctx,
                 &self.config,
                 &history_prompt,
-                self.tool_definitions.clone(),
+                active_tool_definitions,
                 ui,
             ) {
                 Ok(response) => response,
@@ -379,6 +426,12 @@ impl ConversationRuntime for AgentConversationRuntime {
         }
 
         Ok(response_value)
+    }
+}
+
+impl AgentConversationRuntime {
+    fn active_tool_definitions(&self) -> Vec<rig::completion::ToolDefinition> {
+        handler::llm_visible_tool_definitions(&self.tool_definitions, &self.mcp_registry)
     }
 }
 

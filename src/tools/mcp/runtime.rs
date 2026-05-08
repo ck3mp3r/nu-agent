@@ -10,7 +10,16 @@ use crate::tools::mcp::{
 pub struct McpRuntime {
     tool_server_handle: rig::tool::server::ToolServerHandle,
     sessions: Vec<McpSessionHandle>,
+    connected_servers: std::collections::BTreeSet<String>,
     discovered_tools: Vec<McpToolDefinition>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpServerLifecycle {
+    pub name: String,
+    pub configured: bool,
+    pub enabled: bool,
+    pub connected: bool,
 }
 
 fn resolve_stdio_cwd(
@@ -113,6 +122,28 @@ enum McpSessionHandle {
     ),
 }
 
+fn select_enabled_servers(servers: &[McpServerConfig]) -> Vec<&McpServerConfig> {
+    servers.iter().filter(|server| server.enabled).collect()
+}
+
+fn project_server_lifecycle(
+    configured_servers: &[McpServerConfig],
+    connected_servers: &std::collections::BTreeSet<String>,
+) -> Vec<McpServerLifecycle> {
+    let mut projection: Vec<McpServerLifecycle> = configured_servers
+        .iter()
+        .map(|server| McpServerLifecycle {
+            name: server.name.clone(),
+            configured: true,
+            enabled: server.enabled,
+            connected: connected_servers.contains(&server.name),
+        })
+        .collect();
+
+    projection.sort_by(|a, b| a.name.cmp(&b.name));
+    projection
+}
+
 fn compose_exposed_tool_name(server_key: &str, raw_tool_name: &str) -> String {
     format!("{server_key}{MCP_TOOL_NAMESPACE_DELIMITER}{raw_tool_name}")
 }
@@ -202,6 +233,10 @@ impl McpRuntime {
     pub fn discovered_tools(&self) -> &[McpToolDefinition] {
         &self.discovered_tools
     }
+
+    pub fn lifecycle_projection(&self, configured_servers: &[McpServerConfig]) -> Vec<McpServerLifecycle> {
+        project_server_lifecycle(configured_servers, &self.connected_servers)
+    }
 }
 
 pub async fn connect_servers(
@@ -211,10 +246,11 @@ pub async fn connect_servers(
     let tool_server_handle = ToolServer::new().run();
 
     let mut sessions = Vec::new();
+    let mut connected_servers = std::collections::BTreeSet::new();
     let mut discovered_tools = Vec::new();
     let mut exposed_name_owner: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
-    for server in servers {
+    for server in select_enabled_servers(servers) {
         let (service, server_tools) =
             connect_server(&tool_server_handle, server, caller_cwd).await?;
 
@@ -222,6 +258,7 @@ pub async fn connect_servers(
             register_exposed_name(&mut exposed_name_owner, &tool.name, &server.name)?;
         }
 
+        connected_servers.insert(server.name.clone());
         discovered_tools.extend(server_tools);
         sessions.push(McpSessionHandle::Rmcp(service));
     }
@@ -229,6 +266,7 @@ pub async fn connect_servers(
     Ok(McpRuntime {
         tool_server_handle,
         sessions,
+        connected_servers,
         discovered_tools,
     })
 }

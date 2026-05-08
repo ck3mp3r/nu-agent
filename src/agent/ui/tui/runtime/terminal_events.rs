@@ -313,6 +313,9 @@ fn map_crossterm_event(event: crossterm::event::Event) -> Option<TerminalEvent> 
                 KeyCode::Char('d') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                     TerminalKey::CtrlD
                 }
+                KeyCode::Char('p') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                    TerminalKey::CtrlP
+                }
                 KeyCode::Char(ch) => TerminalKey::Char(ch),
                 KeyCode::Enter if key_event.modifiers.contains(KeyModifiers::ALT) => {
                     TerminalKey::AltEnter
@@ -371,6 +374,7 @@ fn parse_script_token(token: &str) -> Option<TerminalEvent> {
         "ctrlc" => Some(TerminalKey::CtrlC),
         "ctrlu" => Some(TerminalKey::CtrlU),
         "ctrld" => Some(TerminalKey::CtrlD),
+        "ctrlp" => Some(TerminalKey::CtrlP),
         _ => None,
     };
 

@@ -24,14 +24,20 @@ use crate::agent::ui::{renderer::UiRenderer,
             lane_prefix_spans_for_test, row_spans_for_test,
             indicator_style_for_status_for_test, transition_spacer_for_roles_for_test,
             parse_persisted_tool_status_line_for_test,
+            help_panel_lines_for_test,
+            help_panel_max_scroll_for_test,
+            help_panel_overflow_cue_for_test,
+            help_panel_visible_window_for_test,
+            status_panel_lines_for_test,
+            mcp_panel_lines_for_test,
             transcript_title_for_test, visible_transcript_window,
             visible_transcript_window_for_render_for_test,
             visual_indicator_line_for_test,
         },
         platform::safety::RestoreRunError,
         state::{
-            AppState, InputMode, PaneFocus, PromptStatus, ToolCallStatus, TranscriptLineStatus,
-            TranscriptRole, UiPhase,
+            AppState, InputMode, McpServerUsabilityState, PaneFocus, PromptStatus,
+            ToolCallStatus, TranscriptLineStatus, TranscriptRole, UiPhase,
         },
         platform::terminal::{
             TerminalAction, TerminalBackend, TerminalLifecycle, TerminalLifecycleError,
@@ -104,6 +110,68 @@ impl TerminalEventSource for DiagnosticsOnlyEventSource {
     }
 }
 
+fn wrapped_visual_rows_for_rendered_line_for_test(rendered_line: &Line<'_>, content_width: usize) -> usize {
+    let width = rendered_line
+        .spans
+        .iter()
+        .map(|span| span.content.chars().count())
+        .sum::<usize>()
+        .max(1);
+    width.div_ceil(content_width.max(1))
+}
+
+fn final_transcript_row_visible_for_window(
+    state: &AppState,
+    window_start: usize,
+    window_lines: &[crate::agent::ui::tui::state::TranscriptLine],
+    row_budget: usize,
+    width: usize,
+) -> bool {
+    let mut rows_used = 0usize;
+    let mut prev_role: Option<TranscriptRole> = None;
+
+    for (offset, line) in window_lines.iter().cloned().enumerate() {
+        let global_idx = window_start.saturating_add(offset);
+        if transition_spacer_for_roles_for_test(prev_role, line.role) {
+            if rows_used >= row_budget {
+                break;
+            }
+            rows_used = rows_used.saturating_add(1);
+        }
+
+        let rendered_lines = render_transcript_lines_with_flags_for_test(
+            line,
+            state.transcript_line_status_for_index(global_idx),
+            false,
+            false,
+            width,
+            0,
+        );
+
+        for rendered in rendered_lines {
+            let visual_rows = wrapped_visual_rows_for_rendered_line_for_test(&rendered, width);
+            if rows_used.saturating_add(visual_rows) > row_budget {
+                break;
+            }
+            rows_used = rows_used.saturating_add(visual_rows);
+            let has_tail = rendered
+                .spans
+                .iter()
+                .any(|span| span.content.contains("tail response"));
+            if has_tail {
+                return true;
+            }
+        }
+
+        prev_role = state.transcript_preview.get(global_idx).map(|entry| entry.role);
+        if rows_used >= row_budget {
+            break;
+        }
+    }
+
+    false
+}
+
 #[test]
 fn coordinator_submit_handoff_keeps_input_editable_and_preserves_transcript_preview() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
@@ -167,7 +235,7 @@ fn coordinator_resize_recomputes_layout() {
     let after = coordinator.layout();
     assert_ne!(before, after);
     assert!(after.side_pane.is_none());
-    assert_eq!(after.transcript.width, 160);
+    assert_eq!(after.transcript.width, 156);
 }
 
 #[test]
@@ -267,7 +335,7 @@ fn runtime_renderer_reuses_eventing_and_preserves_emit_passthrough() {
     assert_eq!(state.phase, UiPhase::Busy);
     let layout = runtime_renderer.coordinator().layout();
     assert!(layout.side_pane.is_none());
-    assert_eq!(layout.transcript.width, 140);
+    assert_eq!(layout.transcript.width, 136);
 }
 
 #[test]
@@ -522,7 +590,7 @@ fn status_updates_stay_in_status_area_and_do_not_pollute_input_line() {
     );
     let joined = status_lines.join("\n");
 
-    assert!(joined.contains("Thinking..."));
+    assert!(joined.contains("(busy)"));
     assert!(!joined.contains(&input_before));
     assert_eq!(
         crate::agent::ui::tui::runtime::input_line_for_test_at_millis(
@@ -542,41 +610,28 @@ fn status_updates_stay_in_status_area_and_do_not_pollute_input_line() {
         "event from crossterm",
         None,
     );
-    assert!(status_lines[0].contains("Idle (type and press Enter)"));
-    assert!(status_lines[1].contains("Mode:"));
+    assert!(status_lines[0].contains("(idle)"));
+    assert!(!status_lines.iter().any(|line| line.starts_with("Input mode:")));
     assert_eq!(coordinator.state().input.buffer, input_before);
 }
 
 #[test]
-fn status_lines_report_insert_and_normal_modes() {
-    let mut state = AppState::new();
+fn status_lines_do_not_report_input_mode() {
+    let state = AppState::new();
 
-    let insert_lines = crate::agent::ui::tui::runtime::status_lines_for_test(
+    let lines = crate::agent::ui::tui::runtime::status_lines_for_test(
         &state,
         "openai/gpt-4",
         "active=crossterm",
         "event",
         None,
     );
-    assert!(insert_lines[1].contains("INSERT"));
-
-    state.enter_normal_mode();
-    let normal_lines = crate::agent::ui::tui::runtime::status_lines_for_test(
-        &state,
-        "openai/gpt-4",
-        "active=crossterm",
-        "event",
-        None,
-    );
-    assert!(normal_lines[1].contains("NORMAL"));
+    assert!(!lines.iter().any(|line| line.starts_with("Input mode:")));
 }
 
 #[test]
-fn compact_status_line_is_concise_and_includes_mode_queue_tokens_model() {
-    let mut state = AppState::new();
-    state.enter_normal_mode();
-    state.latest_total_tokens = Some(7);
-    state.session_total_tokens = 27;
+fn compact_status_line_is_concise_and_excludes_input_mode() {
+    let state = AppState::new();
 
     let status_line = crate::agent::ui::tui::runtime::compact_status_line_for_test(
         &state,
@@ -586,10 +641,9 @@ fn compact_status_line_is_concise_and_includes_mode_queue_tokens_model() {
         None,
     );
 
-    assert!(status_line.contains("NOR"));
-    assert!(status_line.contains("queue: 0"));
-    assert!(status_line.contains("tokens: 27"));
+    assert!(status_line.contains("tools 0"));
     assert!(status_line.contains("openai/gpt-4o-mini"));
+    assert!(!status_line.contains("mode "));
 }
 
 #[test]
@@ -614,12 +668,7 @@ fn status_lines_report_visual_semantics_and_indicator_only_for_transcript_focus(
         "event",
         None,
     );
-    assert!(visual_lines[1].contains("VISUAL"));
-    assert!(
-        visual_lines
-            .iter()
-            .any(|line| line.starts_with("Visual: transcript "))
-    );
+    assert!(!visual_lines.iter().any(|line| line.starts_with("Input mode:")));
     assert!(
         visual_indicator_line_for_test(&state)
             .expect("visual indicator")
@@ -634,11 +683,9 @@ fn status_lines_report_visual_semantics_and_indicator_only_for_transcript_focus(
         "event",
         None,
     );
-    assert!(
-        !lines_without_transcript_focus
-            .iter()
-            .any(|line| line.starts_with("Visual: transcript "))
-    );
+    assert!(!lines_without_transcript_focus
+        .iter()
+        .any(|line| line.starts_with("Input mode:")));
     assert!(visual_indicator_line_for_test(&state).is_none());
 }
 
@@ -1293,6 +1340,58 @@ fn follow_tail_window_accounts_for_wrapped_render_rows_and_keeps_last_line_visib
     assert!(
         window.iter().any(|line| line.text == "tail response"),
         "tail line should remain visible even when previous line wraps"
+    );
+}
+
+#[test]
+fn scroll_end_with_margins_keeps_final_transcript_row_visible_even_when_not_following() {
+    let mut state = AppState::new();
+    state.push_transcript_line(TranscriptRole::User, "abcdefghijklmnopqrstuvwxyz0123456789");
+    state.push_transcript_line(TranscriptRole::Assistant, "tail response");
+    state.transcript_follow_tail = false;
+    state.transcript_scroll_lines_from_bottom = 0;
+
+    let row_budget = 3usize;
+    let content_width = 8usize;
+    let (window_start, window_lines) = visible_transcript_window_for_render_for_test(
+        &state.transcript_preview,
+        row_budget,
+        state.transcript_scroll_lines_from_bottom,
+        state.transcript_follow_tail,
+        content_width,
+    );
+
+    assert!(
+        final_transcript_row_visible_for_window(
+            &state,
+            window_start,
+            &window_lines,
+            row_budget,
+            content_width,
+        ),
+        "scroll-end render should keep the final transcript row visible even with wrapped rows"
+    );
+}
+
+#[test]
+fn transcript_bottom_detection_uses_effective_viewport_after_input_chrome_and_margins() {
+    let mut coordinator = RuntimeCoordinator::new(80, 20, Some(true));
+
+    for _ in 0..220 {
+        let mut source = StubEventSource {
+            next: Some(TerminalEvent::Key(TerminalKey::Char('x'))),
+        };
+        coordinator.pump_once(&mut source);
+    }
+
+    let layout = coordinator.layout();
+    let expected_visible_rows = layout.transcript.height.saturating_sub(1) as usize;
+
+    assert!(layout.input.height > 2, "input chrome should expand for wrapped text");
+    assert_eq!(
+        coordinator.state().transcript_viewport_lines,
+        expected_visible_rows,
+        "bottom detection viewport must match effective transcript rows after margins/chrome"
     );
 }
 
@@ -1953,8 +2052,9 @@ fn tool_rows_render_structured_label_and_dimmed_metadata() {
     let meta = rendered[0]
         .spans
         .iter()
-        .find(|span| span.content.as_ref().contains("args={\"namespace\":\"prod\"} · done"))
+        .find(|span| span.content.as_ref().contains("args={\"namespace\":\"prod\"}"))
         .expect("tool metadata span");
+    assert!(!meta.content.as_ref().contains("· done"));
     assert_eq!(meta.style.fg, Some(CTP_MOCHA_OVERLAY1));
     assert!(meta.style.add_modifier.contains(Modifier::DIM));
 }
@@ -2064,7 +2164,7 @@ fn global_abort_cancels_active_and_pending_and_new_submit_starts_fresh() {
 }
 
 #[test]
-fn manual_scroll_up_pauses_follow_tail_and_bottom_resume_restores_it() {
+fn assistant_message_does_not_force_bottom_when_follow_tail_is_paused() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
     for i in 0..30 {
         coordinator.enqueue_ui_event(UiEvent::AssistantMessage {
@@ -2086,13 +2186,45 @@ fn manual_scroll_up_pauses_follow_tail_and_bottom_resume_restores_it() {
         text: "line after scroll".to_string(),
     });
     coordinator.drain_transport();
-    assert!(coordinator.state().transcript_follow_tail);
-    assert_eq!(coordinator.state().transcript_scroll_lines_from_bottom, 0);
 
-    let mut page_down = StubEventSource {
-        next: Some(TerminalEvent::Key(TerminalKey::PageDown)),
+    assert!(
+        !coordinator.state().transcript_follow_tail,
+        "incoming assistant messages must not force jump-to-bottom while follow-tail is paused"
+    );
+    assert!(
+        coordinator.state().transcript_scroll_lines_from_bottom > 0,
+        "manual scroll offset should be preserved while paused"
+    );
+}
+
+#[test]
+fn explicit_page_down_resume_restores_follow_tail_after_manual_scroll_pause() {
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    for i in 0..30 {
+        coordinator.enqueue_ui_event(UiEvent::AssistantMessage {
+            text: format!("line {i}"),
+        });
+    }
+    coordinator.drain_transport();
+
+    let mut page_up = StubEventSource {
+        next: Some(TerminalEvent::Key(TerminalKey::PageUp)),
     };
-    coordinator.pump_once(&mut page_down);
+    coordinator.pump_once(&mut page_up);
+
+    assert!(!coordinator.state().transcript_follow_tail);
+
+    coordinator.enqueue_ui_event(UiEvent::AssistantMessage {
+        text: "line after scroll".to_string(),
+    });
+    coordinator.drain_transport();
+
+    for _ in 0..2 {
+        let mut page_down = StubEventSource {
+            next: Some(TerminalEvent::Key(TerminalKey::PageDown)),
+        };
+        coordinator.pump_once(&mut page_down);
+    }
 
     assert!(coordinator.state().transcript_follow_tail);
     assert_eq!(coordinator.state().transcript_scroll_lines_from_bottom, 0);
@@ -2112,6 +2244,7 @@ fn manual_scroll_up_pauses_follow_tail_and_bottom_resume_restores_it() {
 fn main_pane_vertical_split_has_no_overlap_or_bottom_cutoff() {
     let (_header, transcript, status, input) = RuntimeCoordinator::main_pane_rects_for_height(9);
 
+    assert_eq!(_header.height, 0);
     assert!(
         transcript.height > 0,
         "transcript pane should remain visible"
@@ -2119,6 +2252,15 @@ fn main_pane_vertical_split_has_no_overlap_or_bottom_cutoff() {
     assert_eq!(transcript.y + transcript.height, status.y);
     assert_eq!(status.y + status.height, input.y);
     assert_eq!(input.y + input.height, 9);
+}
+
+#[test]
+fn scripted_event_parser_supports_ctrlp_for_palette_toggle() {
+    let mut source = ScriptedTerminalEvents::from_script("ctrlp");
+    assert_eq!(
+        source.poll_event(),
+        Ok(Some(TerminalEvent::Key(TerminalKey::CtrlP)))
+    );
 }
 
 #[test]
@@ -2131,8 +2273,217 @@ fn multiline_input_prompt_icon_appears_only_on_first_visual_row() {
 }
 
 #[test]
-fn status_lines_include_stable_active_model_identity_line() {
+fn status_contract_a_model_line_reports_identity_and_busy_idle() {
+    let mut state = AppState::new();
+
+    let idle_lines = crate::agent::ui::tui::runtime::status_lines_for_test(
+        &state,
+        "openai/gpt-4o-mini",
+        "active=crossterm",
+        "event",
+        None,
+    );
+    assert!(idle_lines
+        .iter()
+        .any(|line| line == "Model: openai/gpt-4o-mini (idle)"));
+
+    state.phase = UiPhase::Busy;
+    let busy_lines = crate::agent::ui::tui::runtime::status_lines_for_test(
+        &state,
+        "openai/gpt-4o-mini",
+        "active=crossterm",
+        "event",
+        None,
+    );
+    assert!(busy_lines
+        .iter()
+        .any(|line| line == "Model: openai/gpt-4o-mini (busy)"));
+}
+
+#[test]
+fn status_contract_b_excludes_input_mode_backend_poll_and_hint_lines() {
     let state = AppState::new();
+
+    let lines = crate::agent::ui::tui::runtime::status_lines_for_test(
+        &state,
+        "openai/gpt-4o-mini",
+        "active=crossterm",
+        "event",
+        Some("err"),
+    );
+    assert!(!lines.iter().any(|line| line.starts_with("Input mode:")));
+    assert!(!lines.iter().any(|line| line.starts_with("Input backend:")));
+    assert!(!lines.iter().any(|line| line.starts_with("Input poll:")));
+    assert!(!lines.iter().any(|line| line.starts_with("Input error:")));
+    assert!(!lines.iter().any(|line| line.starts_with("Hint:")));
+}
+
+#[test]
+fn status_contract_c_mcp_counts_include_configured_enabled_disabled_failed() {
+    let mut state = AppState::new();
+    state.set_mcp_servers(vec![
+        crate::agent::ui::tui::state::McpServerState {
+            name: "gh".to_string(),
+            state: McpServerUsabilityState::Enabled,
+        },
+        crate::agent::ui::tui::state::McpServerState {
+            name: "k8s".to_string(),
+            state: McpServerUsabilityState::Disabled,
+        },
+        crate::agent::ui::tui::state::McpServerState {
+            name: "docs".to_string(),
+            state: McpServerUsabilityState::Failed,
+        },
+    ]);
+
+    let lines = crate::agent::ui::tui::runtime::status_lines_for_test(
+        &state,
+        "openai/gpt-4o-mini",
+        "active=crossterm",
+        "event",
+        None,
+    );
+    assert!(lines
+        .iter()
+        .any(|line| line == "MCP: configured=3 enabled=1 disabled=1 failed=1"));
+}
+
+#[test]
+fn status_contract_d_visible_mcp_tool_count_uses_runtime_truth_and_updates() {
+    let mut state = AppState::new();
+    state.set_llm_visible_mcp_tool_count(5);
+
+    let before = crate::agent::ui::tui::runtime::status_lines_for_test(
+        &state,
+        "openai/gpt-4o-mini",
+        "active=crossterm",
+        "event",
+        None,
+    );
+    assert!(before
+        .iter()
+        .any(|line| line == "LLM-visible MCP tools: 5"));
+
+    state.set_llm_visible_mcp_tool_count(2);
+    let after = crate::agent::ui::tui::runtime::status_lines_for_test(
+        &state,
+        "openai/gpt-4o-mini",
+        "active=crossterm",
+        "event",
+        None,
+    );
+    assert!(after
+        .iter()
+        .any(|line| line == "LLM-visible MCP tools: 2"));
+}
+
+#[test]
+fn status_contract_e_failures_show_names_and_reasons_and_healthy_none_when_clear() {
+    let mut state = AppState::new();
+    state.set_mcp_servers(vec![
+        crate::agent::ui::tui::state::McpServerState {
+            name: "gh".to_string(),
+            state: McpServerUsabilityState::Failed,
+        },
+        crate::agent::ui::tui::state::McpServerState {
+            name: "k8s".to_string(),
+            state: McpServerUsabilityState::Failed,
+        },
+    ]);
+    assert!(state.set_mcp_server_state_by_name_with_reason(
+        "gh",
+        McpServerUsabilityState::Failed,
+        Some("timeout".to_string())
+    ));
+    assert!(state.set_mcp_server_state_by_name_with_reason(
+        "k8s",
+        McpServerUsabilityState::Failed,
+        None
+    ));
+
+    let failed_lines = crate::agent::ui::tui::runtime::status_lines_for_test(
+        &state,
+        "openai/gpt-4o-mini",
+        "active=crossterm",
+        "event",
+        None,
+    );
+    let failed_rendered = failed_lines.join("\n");
+    assert!(failed_rendered.contains("Failures: gh (timeout), k8s"));
+
+    assert!(state.set_mcp_server_state_by_name_with_reason(
+        "gh",
+        McpServerUsabilityState::Enabled,
+        None
+    ));
+    assert!(state.set_mcp_server_state_by_name_with_reason(
+        "k8s",
+        McpServerUsabilityState::Enabled,
+        None
+    ));
+    let healthy_lines = crate::agent::ui::tui::runtime::status_lines_for_test(
+        &state,
+        "openai/gpt-4o-mini",
+        "active=crossterm",
+        "event",
+        None,
+    );
+    assert!(healthy_lines
+        .iter()
+        .any(|line| line == "Failures: none (healthy)"));
+}
+
+#[test]
+fn status_contract_f_narrow_layout_is_compact_and_ellipsizes_deterministically() {
+    let mut state = AppState::new();
+    state.phase = UiPhase::Busy;
+    state.set_mcp_servers(vec![crate::agent::ui::tui::state::McpServerState {
+        name: "very-long-mcp-server-name-that-must-be-truncated".to_string(),
+        state: McpServerUsabilityState::Failed,
+    }]);
+    assert!(state.set_mcp_server_state_by_name_with_reason(
+        "very-long-mcp-server-name-that-must-be-truncated",
+        McpServerUsabilityState::Failed,
+        Some("very long failure reason that should be truncated to keep the status line readable"
+            .to_string())
+    ));
+    state.set_llm_visible_mcp_tool_count(42);
+
+    let lines = crate::agent::ui::tui::runtime::status_lines_for_test(
+        &state,
+        "provider/super-long-model-name-that-needs-truncation",
+        "active=crossterm",
+        "event",
+        None,
+    );
+    let rendered = lines.join("\n");
+    assert!(rendered.contains('…'));
+    assert!(!rendered.contains("Hint: Ctrl-P -> MCPs"));
+
+    let compact = crate::agent::ui::tui::runtime::compact_status_line_for_test(
+        &state,
+        "provider/super-long-model-name-that-needs-truncation",
+        "active=crossterm",
+        "event",
+        None,
+    );
+    assert!(compact.contains("tools 42"));
+    assert!(compact.contains('…'));
+}
+
+#[test]
+fn status_lines_include_stable_active_model_identity_line() {
+    let mut state = AppState::new();
+    state.set_mcp_servers(vec![
+        crate::agent::ui::tui::state::McpServerState {
+            name: "gh".to_string(),
+            state: McpServerUsabilityState::Enabled,
+        },
+        crate::agent::ui::tui::state::McpServerState {
+            name: "k8s".to_string(),
+            state: McpServerUsabilityState::Disabled,
+        },
+    ]);
     let status_lines = crate::agent::ui::tui::runtime::status_lines_for_test(
         &state,
         "openai/gpt-4o-mini",
@@ -2144,23 +2495,276 @@ fn status_lines_include_stable_active_model_identity_line() {
     assert!(
         status_lines
             .iter()
-            .any(|line| line == "Model: openai/gpt-4o-mini")
+            .any(|line| line == "Model: openai/gpt-4o-mini (idle)")
     );
     assert!(
         status_lines
             .iter()
-            .any(|line| line.starts_with("Input backend:"))
+            .any(|line| line == "MCP: configured=2 enabled=1 disabled=1 failed=0")
+    );
+    assert!(!status_lines.iter().any(|line| line.starts_with("Hint:")));
+    assert!(!status_lines.iter().any(|line| line.starts_with("Input backend:")));
+    assert!(!status_lines.iter().any(|line| line.starts_with("Input poll:")));
+    assert!(!status_lines.iter().any(|line| line.starts_with("Input error:")));
+}
+
+#[test]
+fn help_panel_renders_required_sections_in_contract_order() {
+    let (title, lines) = help_panel_lines_for_test();
+    assert_eq!(title, "Help");
+    let rendered_lines = lines
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>();
+    let required_sections = [
+        "Getting started",
+        "Modes (insert vs normal)",
+        "Core keys (with explanations)",
+        "Command palette (Ctrl-P)",
+        "MCP basics (enabled/disabled/failed + where to toggle)",
+        "Troubleshooting",
+    ];
+
+    let mut previous_index = None;
+    for section in required_sections {
+        let section_index = rendered_lines
+            .iter()
+            .position(|line| line.trim() == section)
+            .unwrap_or_else(|| panic!("missing section heading: {section}"));
+        if let Some(previous_index) = previous_index {
+            assert!(
+                section_index > previous_index,
+                "section out of order: {section}"
+            );
+        }
+        previous_index = Some(section_index);
+    }
+}
+
+#[test]
+fn help_panel_copy_is_plain_language_and_includes_ctrl_p_and_mcp_basics() {
+    let (_title, lines) = help_panel_lines_for_test();
+    let rendered = lines
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(
+        rendered.contains("Ctrl-P"),
+        "help should explicitly mention Ctrl-P"
     );
     assert!(
-        status_lines
-            .iter()
-            .any(|line| line.starts_with("Input poll:"))
+        rendered.contains("open the command palette"),
+        "Ctrl-P entry should explain intent in plain language"
     );
     assert!(
-        status_lines
-            .iter()
-            .any(|line| line.starts_with("Input error:"))
+        rendered.contains("enabled")
+            && rendered.contains("disabled")
+            && rendered.contains("failed")
+            && rendered.contains("command palette")
+            && rendered.contains("MCPs"),
+        "MCP basics should describe state meanings and where to toggle"
     );
+
+    assert!(
+        rendered.contains("server is") || rendered.contains("return to normal mode"),
+        "help copy should include explanatory language rather than key-only jargon"
+    );
+}
+
+#[test]
+fn help_panel_markdown_projection_preserves_supported_formatting() {
+    let (_title, lines) = help_panel_lines_for_test();
+    let rendered = lines
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(
+        rendered.contains("• "),
+        "markdown bullet lists should be projected as list markers"
+    );
+    let inline_code_spans = lines
+        .iter()
+        .flat_map(|line| line.spans.iter())
+        .filter(|span| span.content.contains("Ctrl-P") || span.content.contains("Esc"))
+        .count();
+    assert!(
+        inline_code_spans > 0,
+        "inline code content should survive markdown projection"
+    );
+}
+
+#[test]
+fn help_panel_lines_remain_renderable_at_narrow_width() {
+    let (_title, lines) = help_panel_lines_for_test();
+
+    let narrow_width = 14usize;
+    for line in lines {
+        let wrapped_rows = wrapped_visual_rows_for_rendered_line_for_test(&line, narrow_width);
+        assert!(wrapped_rows >= 1);
+    }
+
+    let rendered = help_panel_lines_for_test()
+        .1
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        rendered.contains("Troubleshooting"),
+        "narrow rendering sanity check should still include terminal sections"
+    );
+}
+
+#[test]
+fn help_panel_scroll_can_reach_final_content_line_with_keyboard_scroll_model() {
+    let (_title, lines) = help_panel_lines_for_test();
+    let viewport_inner_height = 8u16;
+    let max_scroll = help_panel_max_scroll_for_test(&lines, viewport_inner_height);
+    let window = help_panel_visible_window_for_test(&lines, viewport_inner_height, max_scroll);
+    let rendered = window
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(
+        rendered.contains("If text looks stale after resize"),
+        "scroll window should reach help footer content"
+    );
+}
+
+#[test]
+fn help_panel_shows_overflow_position_cue_when_content_exceeds_viewport() {
+    let (_title, lines) = help_panel_lines_for_test();
+    let viewport_inner_height = 8u16;
+    let cue = help_panel_overflow_cue_for_test(&lines, viewport_inner_height, 3)
+        .expect("overflow cue should appear when help exceeds viewport");
+
+    assert!(cue.contains("PgUp/PgDn"));
+    assert!(cue.contains("Esc close"));
+    assert!(cue.contains("/"));
+}
+
+#[test]
+fn help_panel_escape_closes_panel_after_scroll() {
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    coordinator
+        .state
+        .open_info_panel(crate::agent::ui::tui::state::InfoPanel::Help);
+    coordinator.state.info_panel_scroll = 5;
+
+    let mut down = StubEventSource {
+        next: Some(TerminalEvent::Key(TerminalKey::Down)),
+    };
+    coordinator.pump_once(&mut down);
+    assert!(coordinator.state().info_panel_scroll >= 5);
+
+    let mut esc = StubEventSource {
+        next: Some(TerminalEvent::Key(TerminalKey::Esc)),
+    };
+    coordinator.pump_once(&mut esc);
+
+    assert_eq!(coordinator.state().info_panel, None);
+}
+
+#[test]
+fn status_panel_exposes_model_and_mcp_backend_status_lines() {
+    let mut state = AppState::new();
+    state.set_mcp_servers(vec![
+        crate::agent::ui::tui::state::McpServerState {
+            name: "gh".to_string(),
+            state: McpServerUsabilityState::Enabled,
+        },
+        crate::agent::ui::tui::state::McpServerState {
+            name: "k8s".to_string(),
+            state: McpServerUsabilityState::Disabled,
+        },
+    ]);
+
+    let (title, lines) = status_panel_lines_for_test(
+        &state,
+        "openai/gpt-4o-mini",
+        "active=tty, crossterm=available, /dev/tty=available",
+        "event from tty",
+        None,
+    );
+    assert_eq!(title, "Status");
+    let rendered = lines
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(rendered.contains("Model: openai/gpt-4o-mini (idle)"));
+    assert!(rendered.contains("MCP: configured=2 enabled=1 disabled=1 failed=0"));
+    assert!(rendered.contains("LLM-visible MCP tools: 0"));
+    assert!(rendered.contains("Failures: none (healthy)"));
+    assert!(!rendered.contains("Hint: Ctrl-P -> MCPs"));
+    assert!(!rendered.contains("Input backend:"));
+    assert!(!rendered.contains("Input poll:"));
+    assert!(!rendered.contains("Input error:"));
+    assert!(!rendered.contains("MCP + Model status"));
+    assert!(!rendered.contains("MCP/Input backend:"));
+}
+
+#[test]
+fn mcp_panel_renders_columns_selection_and_session_only_label() {
+    let mut state = AppState::new();
+    state.set_mcp_servers(vec![
+        crate::agent::ui::tui::state::McpServerState {
+            name: "gh".to_string(),
+            state: McpServerUsabilityState::Enabled,
+        },
+        crate::agent::ui::tui::state::McpServerState {
+            name: "k8s".to_string(),
+            state: McpServerUsabilityState::Failed,
+        },
+    ]);
+    state.mcp_panel_selection = 1;
+
+    let (title, lines) = mcp_panel_lines_for_test(&state);
+    assert_eq!(title, "MCPs");
+    let rendered = lines
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(rendered.contains("Session-only toggles (not persisted to config)."));
+    assert!(rendered.contains("name | state"));
+    assert!(rendered.contains("  gh | enabled"));
+    assert!(rendered.contains("❯ k8s | failed"));
+}
+
+#[test]
+fn status_lines_report_failed_state_count_when_present() {
+    let mut state = AppState::new();
+    state.set_mcp_servers(vec![
+        crate::agent::ui::tui::state::McpServerState {
+            name: "gh".to_string(),
+            state: McpServerUsabilityState::Enabled,
+        },
+        crate::agent::ui::tui::state::McpServerState {
+            name: "k8s".to_string(),
+            state: McpServerUsabilityState::Failed,
+        },
+    ]);
+
+    let status_lines = crate::agent::ui::tui::runtime::status_lines_for_test(
+        &state,
+        "openai/gpt-4o-mini",
+        "active=crossterm, crossterm=available, /dev/tty=available",
+        "event from crossterm",
+        None,
+    );
+
+    assert!(status_lines
+        .iter()
+        .any(|line| line == "MCP: configured=2 enabled=1 disabled=0 failed=1"));
 }
 
 #[test]
@@ -2174,7 +2778,9 @@ fn status_lines_include_tokens_line_with_na_before_any_llm_end() {
         None,
     );
 
-    assert!(status_lines.iter().any(|line| line == "Tokens: n/a"));
+    assert!(status_lines
+        .iter()
+        .any(|line| line == "LLM-visible MCP tools: 0"));
 }
 
 #[test]
@@ -2207,11 +2813,12 @@ fn status_lines_include_latest_and_rolling_tokens_after_llm_end_events() {
         None,
     );
 
-    assert!(
-        status_lines
-            .iter()
-            .any(|line| line == "Tokens: in=3 out=4 total=7 session=27")
-    );
+    assert!(status_lines
+        .iter()
+        .any(|line| line == "Model: openai/gpt-4o-mini (idle)"));
+    assert!(status_lines
+        .iter()
+        .any(|line| line == "LLM-visible MCP tools: 0"));
 }
 
 #[test]
@@ -2228,7 +2835,7 @@ fn compact_status_line_reports_session_total_tokens_only() {
         None,
     );
 
-    assert!(status_line.contains("tokens: 27"));
+    assert!(status_line.contains("tools 0"));
     assert!(!status_line.contains("3/4/7"));
     assert!(!status_line.contains("in="));
     assert!(!status_line.contains("out="));

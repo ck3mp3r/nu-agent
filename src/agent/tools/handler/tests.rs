@@ -243,6 +243,47 @@ fn classify_source_requires_namespaced_mcp_tool_name() {
 }
 
 #[test]
+fn mcp_registry_gating_blocks_tool_when_server_disabled() {
+    let registry = McpToolRegistry::from_tools(vec![crate::tools::mcp::client::McpToolDefinition {
+        server: "gh".to_string(),
+        name: "gh__list_prs".to_string(),
+        raw_name: "list_prs".to_string(),
+        description: None,
+        parameters: None,
+    }])
+    .expect("registry");
+
+    assert!(registry.contains("gh__list_prs"));
+    registry
+        .set_server_enabled("gh", false)
+        .expect("disable server should succeed");
+    assert!(!registry.contains("gh__list_prs"));
+    assert!(registry.is_registered("gh__list_prs"));
+}
+
+#[test]
+fn mcp_registry_reenable_restores_tool_visibility() {
+    let registry = McpToolRegistry::from_tools(vec![crate::tools::mcp::client::McpToolDefinition {
+        server: "gh".to_string(),
+        name: "gh__list_prs".to_string(),
+        raw_name: "list_prs".to_string(),
+        description: None,
+        parameters: None,
+    }])
+    .expect("registry");
+
+    registry
+        .set_server_enabled("gh", false)
+        .expect("disable server");
+    assert!(!registry.contains("gh__list_prs"));
+
+    registry
+        .set_server_enabled("gh", true)
+        .expect("re-enable server");
+    assert!(registry.contains("gh__list_prs"));
+}
+
+#[test]
 fn unknown_tool_error_mentions_exposed_namespaced_name() {
     let name = "gh__list_prs";
     let err = nu_protocol::shell_error::generic::GenericError::new(
@@ -486,4 +527,99 @@ fn builtin_fs_path_resolution_joins_relative_path_with_cwd() {
         cwd,
     );
     assert_eq!(absolute, absolute_input);
+}
+
+fn tool_definition_named(name: &str) -> rig::completion::ToolDefinition {
+    rig::completion::ToolDefinition {
+        name: name.to_string(),
+        description: format!("tool {name}"),
+        parameters: json!({"type":"object"}),
+    }
+}
+
+#[test]
+fn canonical_llm_tool_definition_path_hides_disabled_mcp_tools() {
+    let registry = McpToolRegistry::from_tools(vec![crate::tools::mcp::client::McpToolDefinition {
+        server: "gh".to_string(),
+        name: "gh__list_prs".to_string(),
+        raw_name: "list_prs".to_string(),
+        description: None,
+        parameters: None,
+    }])
+    .expect("registry");
+
+    let all_tools = vec![
+        tool_definition_named("read"),
+        tool_definition_named("gh__list_prs"),
+    ];
+
+    let initially_visible = super::llm_visible_tool_definitions(&all_tools, &registry);
+    assert!(initially_visible.iter().any(|tool| tool.name == "gh__list_prs"));
+
+    registry
+        .set_server_enabled("gh", false)
+        .expect("disable server should succeed");
+
+    let after_disable = super::llm_visible_tool_definitions(&all_tools, &registry);
+    assert!(after_disable.iter().all(|tool| tool.name != "gh__list_prs"));
+    assert!(after_disable.iter().any(|tool| tool.name == "read"));
+}
+
+#[test]
+fn canonical_llm_tool_definition_path_reveals_mcp_tools_after_reenable() {
+    let registry = McpToolRegistry::from_tools(vec![crate::tools::mcp::client::McpToolDefinition {
+        server: "gh".to_string(),
+        name: "gh__list_prs".to_string(),
+        raw_name: "list_prs".to_string(),
+        description: None,
+        parameters: None,
+    }])
+    .expect("registry");
+
+    let all_tools = vec![tool_definition_named("gh__list_prs")];
+
+    registry
+        .set_server_enabled("gh", false)
+        .expect("disable server should succeed");
+    assert!(
+        super::llm_visible_tool_definitions(&all_tools, &registry)
+            .iter()
+            .all(|tool| tool.name != "gh__list_prs")
+    );
+
+    registry
+        .set_server_enabled("gh", true)
+        .expect("re-enable server should succeed");
+
+    let after_enable = super::llm_visible_tool_definitions(&all_tools, &registry);
+    assert!(after_enable.iter().any(|tool| tool.name == "gh__list_prs"));
+}
+
+#[test]
+fn canonical_llm_tool_definition_path_has_no_stale_mcp_exposure_after_disable() {
+    let registry = McpToolRegistry::from_tools(vec![crate::tools::mcp::client::McpToolDefinition {
+        server: "gh".to_string(),
+        name: "gh__list_prs".to_string(),
+        raw_name: "list_prs".to_string(),
+        description: None,
+        parameters: None,
+    }])
+    .expect("registry");
+
+    let all_tools = vec![tool_definition_named("gh__list_prs")];
+
+    let before_disable = super::llm_visible_tool_definitions(&all_tools, &registry);
+    assert!(before_disable.iter().any(|tool| tool.name == "gh__list_prs"));
+
+    registry
+        .set_server_enabled("gh", false)
+        .expect("disable server should succeed");
+
+    let next_turn_visible = super::llm_visible_tool_definitions(&all_tools, &registry);
+    assert!(
+        next_turn_visible
+            .iter()
+            .all(|tool| tool.name != "gh__list_prs"),
+        "next canonical tool-definition snapshot must not expose disabled MCP tools"
+    );
 }

@@ -539,6 +539,14 @@ impl SimplePluginCommand for Agent {
 
         let mcp_tool_server_handle = mcp_runtime.as_ref().map(|r| r.tool_server_handle());
 
+        let mcp_lifecycle_projection = if let (Some(runtime), Some(cfg)) =
+            (mcp_runtime.as_ref(), mcp_config.as_ref())
+        {
+            runtime.lifecycle_projection(&cfg.mcp)
+        } else {
+            Vec::new()
+        };
+
         let mcp_registry = McpToolRegistry::from_tools(
             discovered_mcp_tools.clone(),
         )
@@ -609,6 +617,12 @@ impl SimplePluginCommand for Agent {
             closure_registry,
             mcp_registry,
             mcp_tool_server_handle,
+            mcp_lifecycle_projection,
+            mcp_server_configs: mcp_config.as_ref().map(|cfg| cfg.mcp.clone()).unwrap_or_default(),
+            mcp_caller_cwd: engine
+                .get_current_dir()
+                .ok()
+                .map(std::path::PathBuf::from),
             tool_executor,
             engine: engine.clone(),
             store: self.store.clone(),
