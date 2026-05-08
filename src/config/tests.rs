@@ -40,6 +40,7 @@ fn test_config_required_fields() {
         max_context_tokens: None,
         max_output_tokens: None,
         max_tool_turns: None,
+        preamble: None,
     };
 
     assert_eq!(config.provider, "openai");
@@ -61,6 +62,7 @@ fn test_config_all_fields() {
         max_context_tokens: Some(4096),
         max_output_tokens: Some(2048),
         max_tool_turns: Some(10),
+        preamble: None,
     };
 
     assert_eq!(config.provider, "anthropic");
@@ -352,6 +354,7 @@ fn test_merge_full_configs() {
         max_context_tokens: Some(4000),
         max_output_tokens: Some(2000),
         max_tool_turns: Some(10),
+        preamble: None,
     };
 
     let override_config = Config {
@@ -365,6 +368,7 @@ fn test_merge_full_configs() {
         max_context_tokens: Some(8000),
         max_output_tokens: Some(4000),
         max_tool_turns: Some(25),
+        preamble: None,
     };
 
     let merged = base.merge(override_config);
@@ -395,6 +399,7 @@ fn test_merge_with_partial_override() {
         max_context_tokens: Some(4000),
         max_output_tokens: Some(2000),
         max_tool_turns: Some(10),
+        preamble: None,
     };
 
     let override_config = Config {
@@ -408,6 +413,7 @@ fn test_merge_with_partial_override() {
         max_context_tokens: None,
         max_output_tokens: None,
         max_tool_turns: None,
+        preamble: None,
     };
 
     let merged = base.merge(override_config);
@@ -438,6 +444,7 @@ fn test_merge_with_empty_override() {
         max_context_tokens: Some(4000),
         max_output_tokens: Some(2000),
         max_tool_turns: Some(10),
+        preamble: None,
     };
 
     let empty_override = Config {
@@ -451,6 +458,7 @@ fn test_merge_with_empty_override() {
         max_context_tokens: None,
         max_output_tokens: None,
         max_tool_turns: None,
+        preamble: None,
     };
 
     let merged = base.clone().merge(empty_override);
@@ -473,6 +481,7 @@ fn test_merge_chain() {
         max_context_tokens: None,
         max_output_tokens: None,
         max_tool_turns: Some(20),
+        preamble: None,
     };
 
     let override1 = Config {
@@ -486,6 +495,7 @@ fn test_merge_chain() {
         max_context_tokens: None,
         max_output_tokens: None,
         max_tool_turns: None,
+        preamble: None,
     };
 
     let override2 = Config {
@@ -499,6 +509,7 @@ fn test_merge_chain() {
         max_context_tokens: None,
         max_output_tokens: None,
         max_tool_turns: None,
+        preamble: None,
     };
 
     let merged = base.merge(override1).merge(override2);
@@ -526,6 +537,7 @@ fn test_merge_required_fields() {
         max_context_tokens: None,
         max_output_tokens: None,
         max_tool_turns: None,
+        preamble: None,
     };
 
     let override_config = Config {
@@ -539,6 +551,7 @@ fn test_merge_required_fields() {
         max_context_tokens: None,
         max_output_tokens: None,
         max_tool_turns: None,
+        preamble: None,
     };
 
     let merged = base.merge(override_config);
@@ -562,6 +575,7 @@ fn test_validate_valid_config() {
         max_context_tokens: Some(4096),
         max_output_tokens: Some(2048),
         max_tool_turns: Some(20),
+        preamble: None,
     };
 
     assert!(config.validate().is_ok());
@@ -581,6 +595,7 @@ fn test_validate_minimal_config() {
         max_context_tokens: None,
         max_output_tokens: None,
         max_tool_turns: Some(20),
+        preamble: None,
     };
 
     assert!(config.validate().is_ok());
@@ -600,6 +615,7 @@ fn test_validate_empty_provider() {
         max_context_tokens: None,
         max_output_tokens: None,
         max_tool_turns: Some(20),
+        preamble: None,
     };
 
     let result = config.validate();
@@ -622,6 +638,7 @@ fn test_validate_empty_model() {
         max_context_tokens: None,
         max_output_tokens: None,
         max_tool_turns: Some(20),
+        preamble: None,
     };
 
     let result = config.validate();
@@ -644,6 +661,7 @@ fn test_validate_max_output_exceeds_context() {
         max_context_tokens: Some(2000),
         max_output_tokens: Some(3000), // Exceeds context
         max_tool_turns: Some(20),
+        preamble: None,
     };
 
     let result = config.validate();
@@ -667,6 +685,7 @@ fn test_validate_max_output_equals_context() {
         max_context_tokens: Some(4000),
         max_output_tokens: Some(4000), // Equal is OK
         max_tool_turns: Some(20),
+        preamble: None,
     };
 
     assert!(config.validate().is_ok());
@@ -686,6 +705,7 @@ fn test_validate_zero_max_tool_turns() {
         max_context_tokens: None,
         max_output_tokens: None,
         max_tool_turns: Some(0), // Invalid
+        preamble: None,
     };
 
     let result = config.validate();
@@ -708,6 +728,7 @@ fn test_validate_only_context_tokens_set() {
         max_context_tokens: Some(4096),
         max_output_tokens: None,
         max_tool_turns: Some(20),
+        preamble: None,
     };
 
     assert!(config.validate().is_ok());
@@ -727,6 +748,7 @@ fn test_validate_only_output_tokens_set() {
         max_context_tokens: None,
         max_output_tokens: Some(2048),
         max_tool_turns: Some(20),
+        preamble: None,
     };
 
     assert!(config.validate().is_ok());
@@ -747,10 +769,12 @@ fn test_plugin_config_full_structure() {
                 "name" => Value::test_string("OpenAI"),
                 "api_key" => Value::test_string("sk-test123"),
                 "base_url" => Value::test_string("https://api.openai.com/v1"),
+                "preamble" => Value::test_string("  provider preamble  "),
                 "models" => Value::test_record(record! {
                     "gpt-4" => Value::test_record(record! {
                         "name" => Value::test_string("GPT-4"),
                         "temperature" => Value::test_float(0.7),
+                        "preamble" => Value::test_string("  model preamble  "),
                         "tool_call" => Value::test_bool(true),
                         "limit" => Value::test_record(record! {
                             "context" => Value::test_int(128000),
@@ -799,11 +823,13 @@ fn test_plugin_config_full_structure() {
         openai.base_url,
         Some("https://api.openai.com/v1".to_string())
     );
+    assert_eq!(openai.preamble, Some("provider preamble".to_string()));
 
     // Verify OpenAI models
     let gpt4 = openai.models.get("gpt-4").expect("gpt-4 model");
     assert_eq!(gpt4.name, Some("GPT-4".to_string()));
     assert_eq!(gpt4.temperature, Some(0.7));
+    assert_eq!(gpt4.preamble, Some("model preamble".to_string()));
     assert_eq!(gpt4.tool_call, Some(true));
     assert!(gpt4.limit.is_some());
     let gpt4_limit = gpt4.limit.as_ref().unwrap();
@@ -935,6 +961,91 @@ fn test_plugin_config_provider_impl() {
     );
 }
 
+#[test]
+fn test_plugin_config_provider_preamble_whitespace_normalized_to_none() {
+    let value = Value::test_record(record! {
+        "model" => Value::test_string("openai/gpt-4"),
+        "providers" => Value::test_record(record! {
+            "openai" => Value::test_record(record! {
+                "preamble" => Value::test_string("   \n\t   "),
+                "models" => Value::test_record(record! {
+                    "gpt-4" => Value::test_record(record! {}),
+                }),
+            }),
+        }),
+    });
+
+    let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
+    let openai = plugin_config.providers.get("openai").expect("openai provider");
+    assert_eq!(openai.preamble, None);
+}
+
+#[test]
+fn test_plugin_config_model_preamble_whitespace_normalized_to_none() {
+    let value = Value::test_record(record! {
+        "model" => Value::test_string("openai/gpt-4"),
+        "providers" => Value::test_record(record! {
+            "openai" => Value::test_record(record! {
+                "models" => Value::test_record(record! {
+                    "gpt-4" => Value::test_record(record! {
+                        "preamble" => Value::test_string("   \n\t  "),
+                    }),
+                }),
+            }),
+        }),
+    });
+
+    let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
+    let openai = plugin_config.providers.get("openai").expect("openai provider");
+    let gpt4 = openai.models.get("gpt-4").expect("gpt-4 model");
+    assert_eq!(gpt4.preamble, None);
+}
+
+#[test]
+fn test_plugin_config_provider_preamble_invalid_type_errors() {
+    let value = Value::test_record(record! {
+        "model" => Value::test_string("openai/gpt-4"),
+        "providers" => Value::test_record(record! {
+            "openai" => Value::test_record(record! {
+                "preamble" => Value::test_int(42),
+                "models" => Value::test_record(record! {
+                    "gpt-4" => Value::test_record(record! {}),
+                }),
+            }),
+        }),
+    });
+
+    let err = PluginConfig::from_plugin_config(&value).expect_err("must fail");
+    let err_text = err.to_string();
+    assert!(
+        err_text.contains("Invalid field type") || err_text.contains("preamble"),
+        "unexpected error text: {err_text}"
+    );
+}
+
+#[test]
+fn test_plugin_config_model_preamble_invalid_type_errors() {
+    let value = Value::test_record(record! {
+        "model" => Value::test_string("openai/gpt-4"),
+        "providers" => Value::test_record(record! {
+            "openai" => Value::test_record(record! {
+                "models" => Value::test_record(record! {
+                    "gpt-4" => Value::test_record(record! {
+                        "preamble" => Value::test_bool(true),
+                    }),
+                }),
+            }),
+        }),
+    });
+
+    let err = PluginConfig::from_plugin_config(&value).expect_err("must fail");
+    let err_text = err.to_string();
+    assert!(
+        err_text.contains("Invalid field type") || err_text.contains("preamble"),
+        "unexpected error text: {err_text}"
+    );
+}
+
 // ============================================================================
 // PluginConfig::resolve_model() Tests
 // ============================================================================
@@ -954,6 +1065,7 @@ fn test_resolve_model_basic() {
                     api_key: Some("sk-test123".to_string()),
                     base_url: None,
                     provider_impl: None,
+                    preamble: None,
                     models: {
                         let mut models = HashMap::new();
                         models.insert(
@@ -961,6 +1073,7 @@ fn test_resolve_model_basic() {
                             ModelConfig {
                                 name: None,
                                 temperature: Some(0.7),
+                                preamble: None,
                                 tool_call: Some(true),
                                 limit: Some(ModelLimits {
                                     context: Some(128000),
@@ -1003,6 +1116,7 @@ fn test_resolve_model_with_env_fallback() {
                     api_key: None, // No API key in config
                     base_url: None,
                     provider_impl: None,
+                    preamble: None,
                     models: HashMap::new(),
                 },
             );
@@ -1073,6 +1187,7 @@ fn test_resolve_model_model_not_in_config() {
                     api_key: Some("sk-test123".to_string()),
                     base_url: None,
                     provider_impl: None,
+                    preamble: None,
                     models: HashMap::new(), // Empty models map
                 },
             );
@@ -1106,6 +1221,7 @@ fn test_resolve_model_with_provider_impl() {
                     api_key: Some("ghcp-token".to_string()),
                     base_url: Some("https://api.githubcopilot.com".to_string()),
                     provider_impl: Some("openai".to_string()), // Use OpenAI API
+                    preamble: None,
                     models: HashMap::new(),
                 },
             );
@@ -1141,6 +1257,7 @@ fn test_resolve_model_merges_limits() {
                     api_key: None,
                     base_url: None,
                     provider_impl: None,
+                    preamble: None,
                     models: {
                         let mut models = HashMap::new();
                         models.insert(
@@ -1148,6 +1265,7 @@ fn test_resolve_model_merges_limits() {
                             ModelConfig {
                                 name: Some("GPT-4".to_string()),
                                 temperature: None,
+                                preamble: None,
                                 tool_call: None,
                                 limit: Some(ModelLimits {
                                     context: Some(128000),
@@ -1190,6 +1308,7 @@ fn resolve_model_handles_two_part_format() {
                     api_key: Some("sk-test123".to_string()),
                     base_url: None,
                     provider_impl: None,
+                    preamble: None,
                     models: HashMap::new(),
                 },
             );
@@ -1248,6 +1367,7 @@ fn resolve_model_uses_split_once_for_multi_part_models() {
                     provider_impl: None,
                     api_key: Some("test-key".to_string()),
                     base_url: Some("https://api.githubcopilot.com".to_string()),
+                    preamble: None,
                     models: HashMap::new(),
                 },
             );
@@ -1283,6 +1403,7 @@ fn resolve_model_works_with_simple_two_part() {
                     provider_impl: None,
                     api_key: Some("test-key".to_string()),
                     base_url: None,
+                    preamble: None,
                     models: HashMap::new(),
                 },
             );
@@ -1318,6 +1439,7 @@ fn integration_github_copilot_with_backend_in_model() {
                     provider_impl: None,
                     api_key: Some("test-key".to_string()),
                     base_url: Some("https://api.githubcopilot.com".to_string()),
+                    preamble: None,
                     models: HashMap::new(),
                 },
             );

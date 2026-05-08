@@ -19,6 +19,7 @@ fn cfg(provider: &str, model: &str) -> Config {
         max_context_tokens: None,
         max_output_tokens: None,
         max_tool_turns: Some(20),
+        preamble: None,
     }
 }
 

@@ -1,6 +1,9 @@
 use nu_plugin::EvaluatedCall;
 use nu_protocol::{LabeledError, Value};
 
+use crate::agent::protocol::preamble::{
+    PreambleDefaults, UserPreambleInput, classify_model_family, resolve_preamble,
+};
 use crate::config::{Config, PluginConfig};
 
 /// Extract configuration from command-line flags.
@@ -61,6 +64,7 @@ pub(crate) fn extract_flag_config(call: &EvaluatedCall) -> Config {
         max_context_tokens,
         max_output_tokens,
         max_tool_turns,
+        preamble: None,
     }
 }
 
@@ -103,6 +107,23 @@ pub(crate) fn resolve_with_new_config(
     let mut config = plugin_config
         .resolve_model(&model_ref)
         .map_err(|msg| LabeledError::new("Failed to resolve model").with_label(msg, call.head))?;
+
+    // Resolve preamble via canonical resolver.
+    if let Some((provider_name, model_name)) = model_ref.split_once('/')
+        && let Some(provider_cfg) = plugin_config.providers.get(provider_name)
+    {
+        let model_cfg = provider_cfg.models.get(model_name);
+        let defaults = PreambleDefaults::builtin();
+        config.preamble = resolve_preamble(
+            UserPreambleInput {
+                provider: provider_name.to_string(),
+                model_family: Some(classify_model_family(provider_name, model_name)),
+                user_provider_preamble: provider_cfg.preamble.clone(),
+                user_provider_family_preamble: model_cfg.and_then(|cfg| cfg.preamble.clone()),
+            },
+            &defaults,
+        );
+    }
 
     // Step 3: Apply flag overrides for optional fields
     // These override any values from PluginConfig

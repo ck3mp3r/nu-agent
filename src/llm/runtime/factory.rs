@@ -70,7 +70,7 @@ pub fn build_cached_provider(config: &Config) -> Result<CachedProvider, LabeledE
             })
         }
         "github-copilot" => {
-            let variant = github_copilot::model::select_provider_variant(
+            let variant = github_copilot::model::ProviderVariant::from_provider_model(
                 "github-copilot",
                 &config.model,
             )

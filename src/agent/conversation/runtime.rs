@@ -16,7 +16,6 @@ use crate::agent::{
         cancellation::{is_llm_call_cancelled, llm_call_cancelled_error},
         contracts::{ConversationRuntime, ProgressUi},
         event::UiEvent,
-        prompt::merge_prompt_with_context,
         tool_args::summarize_tool_arguments,
     },
     tools::handler::{self, McpToolRegistry, ToolSource},
@@ -111,7 +110,11 @@ impl ConversationRuntime for AgentConversationRuntime {
         context: Option<String>,
         span: Span,
     ) -> Result<Value, LabeledError> {
-        let mut merged_prompt = merge_prompt_with_context(&prompt, context.as_deref());
+        let mut merged_prompt = crate::agent::protocol::prompt::merge_preamble_with_prompt_and_context(
+            &prompt,
+            context.as_deref(),
+            self.config.preamble.as_deref(),
+        );
 
         if let Some(ref session) = self.session {
             let history = session.format_history();

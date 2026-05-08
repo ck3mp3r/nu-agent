@@ -618,6 +618,7 @@ fn create_minimal_flag_config() -> Config {
         max_context_tokens: None,
         max_output_tokens: None,
         max_tool_turns: Some(20),
+        preamble: None,
     }
 }
 
@@ -1221,6 +1222,92 @@ mod new_plugin_config_tests {
         assert_eq!(config.provider, "openai");
         assert_eq!(config.model, "gpt-3.5-turbo"); // Uses small_model
         assert_eq!(config.temperature, Some(1.0)); // Model-specific temperature
+    }
+
+    #[test]
+    fn resolve_config_new_flow_resolves_model_preamble_over_provider_preamble() {
+        use std::collections::HashMap;
+
+        let mut providers_map = HashMap::new();
+        let mut openai_models = HashMap::new();
+        openai_models.insert(
+            "gpt-5-mini".to_string(),
+            Value::test_record(record! {
+                "preamble" => Value::test_string("model preamble"),
+            }),
+        );
+
+        providers_map.insert(
+            "openai".to_string(),
+            Value::test_record(record! {
+                "preamble" => Value::test_string("provider preamble"),
+                "models" => Value::test_record(openai_models.into_iter().collect()),
+            }),
+        );
+
+        let plugin_config = Value::test_record(record! {
+            "model" => Value::test_string("openai/gpt-5-mini"),
+            "providers" => Value::test_record(providers_map.into_iter().collect()),
+        });
+
+        let config = resolve_config(
+            &MockEngineInterface::with_config(plugin_config),
+            &create_test_call(vec![]),
+        )
+        .expect("resolve config");
+
+        assert_eq!(config.preamble.as_deref(), Some("model preamble"));
+    }
+
+    #[test]
+    fn resolve_config_new_flow_falls_back_to_global_preamble_on_complete_miss() {
+        use crate::agent::protocol::preamble::PreambleDefaults;
+        use std::collections::HashMap;
+
+        let mut providers_map = HashMap::new();
+        providers_map.insert(
+            "custom".to_string(),
+            Value::test_record(record! {
+                "models" => Value::test_record(record! {
+                    "unknown-model" => Value::test_record(record! {}),
+                }),
+            }),
+        );
+
+        let plugin_config = Value::test_record(record! {
+            "model" => Value::test_string("custom/unknown-model"),
+            "providers" => Value::test_record(providers_map.into_iter().collect()),
+        });
+
+        let config = resolve_config(
+            &MockEngineInterface::with_config(plugin_config),
+            &create_test_call(vec![]),
+        )
+        .expect("resolve config");
+
+        let defaults = PreambleDefaults::builtin();
+        let expected_global_fallback = defaults
+            .global_fallback()
+            .expect("builtin global fallback preamble should always be set");
+
+        assert_eq!(config.preamble.as_deref(), Some(expected_global_fallback));
+    }
+
+    #[test]
+    fn resolve_config_old_flow_parses_and_trims_preamble() {
+        let plugin_config = Value::test_record(record! {
+            "provider" => Value::test_string("openai"),
+            "model" => Value::test_string("gpt-4"),
+            "preamble" => Value::test_string("  legacy preamble  "),
+        });
+
+        let config = resolve_config(
+            &MockEngineInterface::with_config(plugin_config),
+            &create_test_call(vec![]),
+        )
+        .expect("resolve config");
+
+        assert_eq!(config.preamble.as_deref(), Some("legacy preamble"));
     }
 
     #[test]

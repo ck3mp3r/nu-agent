@@ -21,34 +21,29 @@ pub enum ProviderVariant {
     OpenAI5x,
 }
 
+impl ProviderVariant {
+    pub fn from_provider_model(provider_string: &str, model: &str) -> Result<Self, Error> {
+        if provider_string != "github-copilot" {
+            return Err(Error::InvalidProviderFormat(provider_string.to_string()));
+        }
+
+        let (backend, model_name) = model
+            .split_once('/')
+            .ok_or_else(|| Error::InvalidModelFormat(model.to_string()))?;
+
+        match backend {
+            "anthropic" => Ok(Self::Anthropic),
+            "openai" if model_name.starts_with("gpt-5") => Ok(Self::OpenAI5x),
+            "openai" => Ok(Self::OpenAI4x),
+            _ => Err(Error::UnknownBackend(backend.to_string())),
+        }
+    }
+}
+
 fn resolve_api_key(api_key: Option<String>) -> Result<String, Error> {
     api_key
         .or_else(|| std::env::var("GITHUB_TOKEN").ok())
         .ok_or(Error::MissingApiKey)
-}
-
-pub fn is_openai_5x_model(model_name: &str) -> bool {
-    model_name.starts_with("gpt-5")
-}
-
-pub fn select_provider_variant(
-    provider_string: &str,
-    model: &str,
-) -> Result<ProviderVariant, Error> {
-    if provider_string != "github-copilot" {
-        return Err(Error::InvalidProviderFormat(provider_string.to_string()));
-    }
-
-    let (backend, model_name) = model
-        .split_once('/')
-        .ok_or_else(|| Error::InvalidModelFormat(model.to_string()))?;
-
-    match backend {
-        "anthropic" => Ok(ProviderVariant::Anthropic),
-        "openai" if is_openai_5x_model(model_name) => Ok(ProviderVariant::OpenAI5x),
-        "openai" => Ok(ProviderVariant::OpenAI4x),
-        _ => Err(Error::UnknownBackend(backend.to_string())),
-    }
 }
 
 pub fn agent_from_config(
@@ -57,7 +52,7 @@ pub fn agent_from_config(
     api_key: Option<String>,
     base_url: Option<String>,
 ) -> Result<Agent, Error> {
-    let variant = select_provider_variant(provider_string, model)?;
+    let variant = ProviderVariant::from_provider_model(provider_string, model)?;
 
     let (_, model_name) = model
         .split_once('/')
@@ -88,3 +83,6 @@ pub fn agent_from_config(
 
     Ok(agent)
 }
+
+#[cfg(test)]
+mod test;

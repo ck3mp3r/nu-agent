@@ -19,6 +19,9 @@ pub struct ModelConfig {
     /// Temperature for this model
     pub temperature: Option<f64>,
 
+    /// Optional preamble text for this model
+    pub preamble: Option<String>,
+
     /// Whether this model supports tool calling
     pub tool_call: Option<bool>,
 }
@@ -37,6 +40,9 @@ pub struct ProviderConfig {
 
     /// Provider implementation to use (e.g., "openai" for github-copilot)
     pub provider_impl: Option<String>,
+
+    /// Optional preamble text for this provider
+    pub preamble: Option<String>,
 
     /// Models available for this provider
     pub models: HashMap<String, ModelConfig>,
@@ -150,6 +156,30 @@ impl PluginConfig {
     ) -> Result<ProviderConfig, nu_protocol::LabeledError> {
         use nu_protocol::LabeledError;
 
+        fn parse_optional_preamble(
+            record: &nu_protocol::Record,
+            span: nu_protocol::Span,
+        ) -> Result<Option<String>, LabeledError> {
+            let Some(preamble_value) = record.get("preamble") else {
+                return Ok(None);
+            };
+
+            let preamble = preamble_value
+                .as_str()
+                .map_err(|_| {
+                    LabeledError::new("Invalid field type")
+                        .with_label("'preamble' must be a string", span)
+                })?
+                .trim()
+                .to_string();
+
+            if preamble.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(preamble))
+            }
+        }
+
         let record = value.as_record().map_err(|_| {
             LabeledError::new("Invalid provider configuration")
                 .with_label("Provider configuration must be a record", value.span())
@@ -176,6 +206,8 @@ impl PluginConfig {
             .and_then(|v| v.as_str().ok())
             .map(|s| s.to_string());
 
+        let preamble = parse_optional_preamble(record, value.span())?;
+
         // Extract 'models' record (optional, defaults to empty)
         let models = if let Some(models_value) = record.get("models") {
             if let Ok(models_record) = models_value.as_record() {
@@ -197,6 +229,7 @@ impl PluginConfig {
             api_key,
             base_url,
             provider_impl,
+            preamble,
             models,
         })
     }
@@ -206,6 +239,30 @@ impl PluginConfig {
         value: &nu_protocol::Value,
     ) -> Result<ModelConfig, nu_protocol::LabeledError> {
         use nu_protocol::LabeledError;
+
+        fn parse_optional_preamble(
+            record: &nu_protocol::Record,
+            span: nu_protocol::Span,
+        ) -> Result<Option<String>, LabeledError> {
+            let Some(preamble_value) = record.get("preamble") else {
+                return Ok(None);
+            };
+
+            let preamble = preamble_value
+                .as_str()
+                .map_err(|_| {
+                    LabeledError::new("Invalid field type")
+                        .with_label("'preamble' must be a string", span)
+                })?
+                .trim()
+                .to_string();
+
+            if preamble.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(preamble))
+            }
+        }
 
         let record = value.as_record().map_err(|_| {
             LabeledError::new("Invalid model configuration")
@@ -224,6 +281,9 @@ impl PluginConfig {
         // Extract optional 'tool_call' field
         let tool_call = record.get("tool_call").and_then(|v| v.as_bool().ok());
 
+        // Extract optional 'preamble' field with strict type handling
+        let preamble = parse_optional_preamble(record, value.span())?;
+
         // Extract optional 'limit' field
         let limit = if let Some(limit_value) = record.get("limit") {
             if let Ok(limit_record) = limit_value.as_record() {
@@ -239,6 +299,7 @@ impl PluginConfig {
             limit,
             name,
             temperature,
+            preamble,
             tool_call,
         })
     }
@@ -390,6 +451,9 @@ pub struct Config {
 
     /// Maximum tool execution turns
     pub max_tool_turns: Option<u32>,
+
+    /// Resolved system preamble to prepend before prompt/context
+    pub preamble: Option<String>,
 }
 
 impl Config {
@@ -432,6 +496,7 @@ impl Config {
             max_context_tokens,
             max_output_tokens,
             max_tool_turns,
+            preamble: None,
         }
     }
 
@@ -512,6 +577,14 @@ impl Config {
         let max_context_tokens = get_optional_u32(record, "max_context_tokens");
         let max_output_tokens = get_optional_u32(record, "max_output_tokens");
         let max_tool_turns = get_optional_u32(record, "max_tool_turns").or(Some(20)); // Default to 20 if not provided
+        let preamble = get_optional_string(record, "preamble").and_then(|s| {
+            let trimmed = s.trim().to_string();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        });
 
         Ok(Self {
             provider,
@@ -524,6 +597,7 @@ impl Config {
             max_context_tokens,
             max_output_tokens,
             max_tool_turns,
+            preamble,
         })
     }
 
@@ -549,6 +623,7 @@ impl Config {
             max_context_tokens: other.max_context_tokens.or(self.max_context_tokens),
             max_output_tokens: other.max_output_tokens.or(self.max_output_tokens),
             max_tool_turns: other.max_tool_turns.or(self.max_tool_turns),
+            preamble: other.preamble.or(self.preamble),
         }
     }
 
@@ -607,6 +682,7 @@ impl Default for Config {
             max_context_tokens: None,
             max_output_tokens: None,
             max_tool_turns: Some(20),
+            preamble: None,
         }
     }
 }

@@ -1,61 +1,101 @@
-use super::{Agent, ProviderVariant, agent_from_config, select_provider_variant};
+use super::{Agent, ProviderVariant, agent_from_config};
+use crate::agent::protocol::preamble::{ModelFamily, classify_model_family};
 use crate::providers::github_copilot::Error;
 
 #[test]
 fn routes_anthropic_models_to_anthropic_chat_variant() {
-    let variant = select_provider_variant("github-copilot", "anthropic/claude-sonnet-4.5").unwrap();
+    let variant =
+        ProviderVariant::from_provider_model("github-copilot", "anthropic/claude-sonnet-4.5")
+            .unwrap();
     assert!(matches!(variant, ProviderVariant::Anthropic));
 }
 
 #[test]
 fn routes_openai_4x_models_to_openai_4x_chat_variant() {
-    let gpt4o = select_provider_variant("github-copilot", "openai/gpt-4o").unwrap();
+    let gpt4o = ProviderVariant::from_provider_model("github-copilot", "openai/gpt-4o").unwrap();
     assert!(matches!(gpt4o, ProviderVariant::OpenAI4x));
 
-    let gpt4o_mini = select_provider_variant("github-copilot", "openai/gpt-4o-mini").unwrap();
+    let gpt4o_mini =
+        ProviderVariant::from_provider_model("github-copilot", "openai/gpt-4o-mini").unwrap();
     assert!(matches!(gpt4o_mini, ProviderVariant::OpenAI4x));
 
-    let gpt41 = select_provider_variant("github-copilot", "openai/gpt-4.1").unwrap();
+    let gpt41 = ProviderVariant::from_provider_model("github-copilot", "openai/gpt-4.1").unwrap();
     assert!(matches!(gpt41, ProviderVariant::OpenAI4x));
 }
 
 #[test]
 fn routes_openai_5x_models_to_openai_5x_responses_variant() {
-    let gpt5 = select_provider_variant("github-copilot", "openai/gpt-5").unwrap();
+    let gpt5 = ProviderVariant::from_provider_model("github-copilot", "openai/gpt-5").unwrap();
     assert!(matches!(gpt5, ProviderVariant::OpenAI5x));
 
-    let gpt5mini = select_provider_variant("github-copilot", "openai/gpt-5-mini").unwrap();
+    let gpt5mini =
+        ProviderVariant::from_provider_model("github-copilot", "openai/gpt-5-mini").unwrap();
     assert!(matches!(gpt5mini, ProviderVariant::OpenAI5x));
 
-    let gpt53 = select_provider_variant("github-copilot", "openai/gpt-5.3-codex").unwrap();
+    let gpt53 =
+        ProviderVariant::from_provider_model("github-copilot", "openai/gpt-5.3-codex").unwrap();
     assert!(matches!(gpt53, ProviderVariant::OpenAI5x));
 
-    let gpt5codex = select_provider_variant("github-copilot", "openai/gpt-5-codex").unwrap();
+    let gpt5codex =
+        ProviderVariant::from_provider_model("github-copilot", "openai/gpt-5-codex").unwrap();
     assert!(matches!(gpt5codex, ProviderVariant::OpenAI5x));
 }
 
 #[test]
+fn preamble_classifier_aligns_with_provider_variant_for_copilot_models() {
+    let cases = [
+        (
+            "anthropic/claude-sonnet-4.5",
+            ProviderVariant::Anthropic,
+            ModelFamily::Anthropic,
+        ),
+        ("openai/gpt-4o", ProviderVariant::OpenAI4x, ModelFamily::Gpt4x),
+        (
+            "openai/o3-mini",
+            ProviderVariant::OpenAI4x,
+            ModelFamily::Gpt4x,
+        ),
+        (
+            "openai/gpt-5.3-codex",
+            ProviderVariant::OpenAI5x,
+            ModelFamily::Gpt5x,
+        ),
+    ];
+
+    for (model, expected_variant, expected_family) in cases {
+        let variant = ProviderVariant::from_provider_model("github-copilot", model).expect("variant");
+        let family = classify_model_family("github-copilot", model);
+        assert_eq!(variant, expected_variant);
+        assert_eq!(family, expected_family);
+    }
+}
+
+#[test]
 fn unknown_backend_returns_unknown_backend_error() {
-    let err = select_provider_variant("github-copilot", "foobar/some-model").unwrap_err();
+    let err = ProviderVariant::from_provider_model("github-copilot", "foobar/some-model")
+        .unwrap_err();
     assert!(matches!(err, Error::UnknownBackend(_)));
 }
 
 #[test]
 fn invalid_model_format_returns_invalid_model_format_error() {
-    let err = select_provider_variant("github-copilot", "gpt-4o").unwrap_err();
+    let err = ProviderVariant::from_provider_model("github-copilot", "gpt-4o").unwrap_err();
     assert!(matches!(err, Error::InvalidModelFormat(_)));
 }
 
 #[test]
 fn factory_selects_concrete_provider_once() {
     let anthropic =
-        select_provider_variant("github-copilot", "anthropic/claude-sonnet-4.5").unwrap();
+        ProviderVariant::from_provider_model("github-copilot", "anthropic/claude-sonnet-4.5")
+            .unwrap();
     assert!(matches!(anthropic, ProviderVariant::Anthropic));
 
-    let openai4x = select_provider_variant("github-copilot", "openai/gpt-4o-mini").unwrap();
+    let openai4x =
+        ProviderVariant::from_provider_model("github-copilot", "openai/gpt-4o-mini").unwrap();
     assert!(matches!(openai4x, ProviderVariant::OpenAI4x));
 
-    let openai5x = select_provider_variant("github-copilot", "openai/gpt-5.3-codex").unwrap();
+    let openai5x =
+        ProviderVariant::from_provider_model("github-copilot", "openai/gpt-5.3-codex").unwrap();
     assert!(matches!(openai5x, ProviderVariant::OpenAI5x));
 }
 

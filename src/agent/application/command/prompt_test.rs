@@ -1,6 +1,7 @@
 use nu_protocol::Value;
 
 use super::{extract_context_from_input, extract_prompt_from_input, merge_prompt_with_context};
+use crate::agent::protocol::prompt::merge_preamble_with_prompt_and_context;
 
 #[test]
 fn test_extract_prompt_from_string() {
@@ -218,4 +219,22 @@ fn test_merge_prompt_preserves_context_format() {
     assert!(result.contains("Line 2"));
     assert!(result.contains("Line 3"));
     assert!(result.contains("Summarize"));
+}
+
+#[test]
+fn test_merge_preamble_with_prompt_and_context_prepends_preamble() {
+    let result = merge_preamble_with_prompt_and_context(
+        "Explain the code",
+        Some("File: main.rs"),
+        Some("You are a strict reviewer."),
+    );
+
+    let expected = "You are a strict reviewer.\n\n---\n\nFile: main.rs\n\n---\n\nExplain the code";
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn test_merge_preamble_with_prompt_and_context_ignores_empty_preamble() {
+    let result = merge_preamble_with_prompt_and_context("Explain", Some("Ctx"), Some("  \n\t  "));
+    assert_eq!(result, "Ctx\n\n---\n\nExplain");
 }

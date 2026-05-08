@@ -21,6 +21,7 @@ fn cfg(provider: &str) -> Config {
         max_context_tokens: None,
         max_output_tokens: None,
         max_tool_turns: Some(20),
+        preamble: None,
     }
 }
 
@@ -522,6 +523,7 @@ fn llm_call_llm_has_no_model_family_endpoint_branching() {
         max_context_tokens: None,
         max_output_tokens: None,
         max_tool_turns: Some(20),
+        preamble: None,
     };
 
     let key = ProviderKey::from_config(&config);
