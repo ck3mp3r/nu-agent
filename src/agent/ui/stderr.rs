@@ -153,6 +153,21 @@ impl<W: Write> StderrUiRenderer<W> {
                 }
             }
             UiEvent::Warning { message } => Some(format!("warning: {message}")),
+            UiEvent::CompactionTriggered {
+                source,
+                summarized_count,
+                kept_recent_count,
+                summary_preview,
+                ..
+            } => {
+                if self.policy.quiet {
+                    None
+                } else {
+                    Some(format!(
+                        "compaction: source={source} summarized={summarized_count} kept={kept_recent_count} preview={summary_preview}"
+                    ))
+                }
+            }
             UiEvent::AssistantMessage { .. } => None,
             UiEvent::Completed { tool_calls } => {
                 if self.policy.quiet {

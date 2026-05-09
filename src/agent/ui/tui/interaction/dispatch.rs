@@ -116,6 +116,19 @@ fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserAction, bool
         );
     }
 
+    if state.inline_slash_open && state.input_mode == InputMode::Insert {
+        return (
+            match action {
+                UserAction::HistoryUp => UserAction::InlineSlashMoveUp,
+                UserAction::HistoryDown => UserAction::InlineSlashMoveDown,
+                UserAction::Submit | UserAction::CompleteForward => UserAction::InlineSlashAccept,
+                UserAction::Esc => UserAction::InlineSlashClose,
+                other => other,
+            },
+            false,
+        );
+    }
+
     if state.phase == UiPhase::Idle {
         match state.input_mode {
             InputMode::Normal => {

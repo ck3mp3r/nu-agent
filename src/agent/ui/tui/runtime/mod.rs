@@ -56,11 +56,12 @@ use crate::agent::ui::{renderer::UiRenderer,
     },
 };
 use crate::agent::protocol::event::UiEvent;
+use crate::agent::protocol::slash::{slash_command_label, slash_command_summary};
 use crate::agent::protocol::skills::DiscoverableSkill as ProtocolDiscoverableSkill;
 use crate::tools::mcp::runtime::McpServerLifecycle;
 #[cfg(test)]
 use crate::agent::ui::tui::state::{PromptStatus, TranscriptLineStatus};
-use crate::agent::protocol::contracts::UiMessageSnapshot;
+use crate::agent::protocol::contracts::{SharedUiAction, UiMessageSnapshot};
 
 use transcript_rows::render_transcript_lines;
 use status::{
@@ -142,10 +143,9 @@ fn help_panel_overflow_cue(
     ))
 }
 
-const COMMAND_PALETTE_MIN_KEYS_WIDTH: u16 = 44;
-
 fn command_palette_action_summary(action: CommandPaletteAction) -> &'static str {
     match action {
+        CommandPaletteAction::Compact => "Run /compact now",
         CommandPaletteAction::Help => "View key help",
         CommandPaletteAction::Status => "View runtime status",
         CommandPaletteAction::Mcps => "Manage MCP servers",
@@ -157,13 +157,58 @@ fn command_palette_action_keys() -> &'static str {
     "↑/↓ or j/k · Enter · Esc"
 }
 
+fn command_palette_title(overflow_cue: Option<&str>) -> String {
+    let base = "Command Palette";
+    let global_hint = command_palette_action_keys();
+    if let Some(cue) = overflow_cue {
+        format!("{base} ({global_hint} | {cue})")
+    } else {
+        format!("{base} ({global_hint})")
+    }
+}
+
 fn command_palette_action_label(action: CommandPaletteAction) -> &'static str {
     match action {
+        CommandPaletteAction::Compact => "/compact",
         CommandPaletteAction::Help => "Help",
         CommandPaletteAction::Status => "Status",
         CommandPaletteAction::Mcps => "MCPs",
         CommandPaletteAction::Skills => "Skills",
     }
+}
+
+fn inline_slash_lines_for_render(state: &AppState) -> Vec<Line<'static>> {
+    if !state.inline_slash_open {
+        return Vec::new();
+    }
+
+    state
+        .inline_slash_suggestions()
+        .iter()
+        .enumerate()
+        .map(|(idx, command)| {
+            let marker = if idx == state.inline_slash_selection {
+                "❯"
+            } else {
+                " "
+            };
+            let label = slash_command_label(*command);
+            let summary = slash_command_summary(*command);
+            Line::from(format!("{marker} {label} — {summary}"))
+        })
+        .collect()
+}
+
+fn input_buffer_for_layout(state: &AppState) -> String {
+    if !state.inline_slash_open {
+        return state.input.buffer.clone();
+    }
+
+    let mut synthetic = state.input.buffer.clone();
+    for _ in state.inline_slash_suggestions() {
+        synthetic.push('\n');
+    }
+    synthetic
 }
 
 fn skills_panel_lines(state: &AppState) -> (&'static str, Vec<Line<'static>>) {
@@ -298,25 +343,16 @@ fn command_palette_table_model(
     popup_height: u16,
 ) -> CommandPaletteTableModel {
     let actions = state.command_palette_actions();
-    let show_keys = popup_width.saturating_sub(2) >= COMMAND_PALETTE_MIN_KEYS_WIDTH;
-    let columns = if show_keys {
-        vec!["Action".to_string(), "Summary".to_string(), "Keys".to_string()]
-    } else {
-        vec!["Action".to_string(), "Summary".to_string()]
-    };
+    let _ = popup_width;
+    let columns = vec!["Action".to_string(), "Summary".to_string()];
 
     let all_rows = actions
         .iter()
         .map(|action| {
-            let keys = if show_keys {
-                command_palette_action_keys().to_string()
-            } else {
-                String::new()
-            };
             [
                 command_palette_action_label(*action).to_string(),
                 command_palette_action_summary(*action).to_string(),
-                keys,
+                String::new(),
             ]
         })
         .collect::<Vec<_>>();
@@ -691,7 +727,7 @@ impl RuntimeCoordinator {
             self.terminal_columns = resize.columns;
             self.terminal_rows = resize.rows;
             let input_height = input_pane_height_for_content(
-                &self.state.input.buffer,
+                &input_buffer_for_layout(&self.state),
                 resize.columns,
             );
             self.layout = recompute_layout(LayoutInput {
@@ -715,9 +751,26 @@ impl RuntimeCoordinator {
         self.state.set_transcript_viewport_lines(visible_lines.max(1));
     }
 
+    fn execute_shared_ui_action(&mut self, action: SharedUiAction) -> bool {
+        match action {
+            SharedUiAction::Help => {
+                self.state.open_info_panel(InfoPanel::Help);
+                true
+            }
+            SharedUiAction::Status => {
+                self.state.open_info_panel(InfoPanel::Status);
+                true
+            }
+            SharedUiAction::Mcps => {
+                self.state.open_info_panel(InfoPanel::Mcps);
+                true
+            }
+        }
+    }
+
     fn recompute_layout_for_current_input(&mut self) {
         let input_height = input_pane_height_for_content(
-            &self.state.input.buffer,
+            &input_buffer_for_layout(&self.state),
             self.layout.transcript.width,
         );
         self.layout = recompute_layout(LayoutInput {
@@ -982,6 +1035,7 @@ impl RuntimeCoordinator {
                         input_lines.push(Line::from(vec![Span::raw("  "), Span::raw(row.clone())]));
                     }
                 }
+                input_lines.extend(inline_slash_lines_for_render(&self.state));
                 let input_widget = Paragraph::new(Text::from(input_lines))
                 .block(
                     Block::default()
@@ -1043,13 +1097,9 @@ impl RuntimeCoordinator {
                     let model = command_palette_table_model(&self.state, popup_width, popup_height);
 
                     frame.render_widget(Clear, popup);
-                    let outer = Block::default().borders(Borders::ALL).title(
-                        if let Some(cue) = model.overflow_cue.as_deref() {
-                            format!("Command Palette ({cue})")
-                        } else {
-                            "Command Palette".to_string()
-                        },
-                    );
+                    let outer = Block::default()
+                        .borders(Borders::ALL)
+                        .title(command_palette_title(model.overflow_cue.as_deref()));
                     frame.render_widget(outer, popup);
 
                     let inner = popup.inner(Margin {
@@ -1063,30 +1113,13 @@ impl RuntimeCoordinator {
 
                     frame.render_widget(Paragraph::new(Line::from(model.query_line.clone())), rows[0]);
 
-                    let show_keys = model.columns.len() == 3;
-                    let header = if show_keys {
-                        Row::new(vec!["Action", "Summary", "Keys"])
-                    } else {
-                        Row::new(vec!["Action", "Summary"])
-                    };
+                    let header = Row::new(vec!["Action", "Summary"]);
 
                     let table_rows = model.rows.iter().map(|row| {
-                        if show_keys {
-                            Row::new(vec![
-                                Cell::from(row[0].clone()),
-                                Cell::from(row[1].clone()),
-                                Cell::from(row[2].clone()),
-                            ])
-                        } else {
-                            Row::new(vec![Cell::from(row[0].clone()), Cell::from(row[1].clone())])
-                        }
+                        Row::new(vec![Cell::from(row[0].clone()), Cell::from(row[1].clone())])
                     });
 
-                    let widths = if show_keys {
-                        vec![Constraint::Length(8), Constraint::Min(16), Constraint::Min(12)]
-                    } else {
-                        vec![Constraint::Length(8), Constraint::Min(12)]
-                    };
+                    let widths = vec![Constraint::Length(8), Constraint::Min(12)];
 
                     let table = Table::new(table_rows, widths)
                         .header(header)
@@ -1369,6 +1402,14 @@ pub(super) fn command_palette_table_model_for_test(
         selected: model.selected,
         overflow_cue: model.overflow_cue,
     }
+}
+
+#[cfg(test)]
+pub(super) fn inline_slash_lines_for_test(state: &AppState) -> Vec<String> {
+    inline_slash_lines_for_render(state)
+        .into_iter()
+        .map(|line| line.to_string())
+        .collect()
 }
 
 #[cfg(test)]
@@ -1723,6 +1764,10 @@ where
 
     pub(crate) fn take_submitted_prompt(&mut self) -> Option<String> {
         self.coordinator.take_submitted_prompt()
+    }
+
+    pub(crate) fn execute_shared_ui_action(&mut self, action: SharedUiAction) -> bool {
+        self.coordinator.execute_shared_ui_action(action)
     }
 
     pub fn quit_requested(&self) -> bool {

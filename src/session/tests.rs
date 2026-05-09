@@ -3,6 +3,263 @@ use std::fs;
 use std::os::unix::fs::MetadataExt;
 use tempfile::TempDir;
 
+#[test]
+fn compaction_strategy_defaults_to_sliding_summary_only() {
+    let cfg = crate::session::SessionConfig::default();
+    assert_eq!(cfg.compaction_strategy, crate::session::CompactionStrategy::SlidingSummary);
+    assert_eq!(cfg.compaction_strategy.as_str(), "sliding_summary");
+}
+
+#[test]
+fn legacy_strategy_values_normalize_to_sliding_summary() {
+    let truncate: crate::session::CompactionStrategy =
+        serde_json::from_str("\"truncate\"").expect("truncate alias");
+    let sliding: crate::session::CompactionStrategy =
+        serde_json::from_str("\"sliding\"").expect("sliding alias");
+    let summarize: crate::session::CompactionStrategy =
+        serde_json::from_str("\"summarize\"").expect("summarize alias");
+    let canonical: crate::session::CompactionStrategy =
+        serde_json::from_str("\"sliding_summary\"").expect("canonical");
+
+    assert_eq!(truncate, crate::session::CompactionStrategy::SlidingSummary);
+    assert_eq!(sliding, crate::session::CompactionStrategy::SlidingSummary);
+    assert_eq!(summarize, crate::session::CompactionStrategy::SlidingSummary);
+    assert_eq!(canonical, crate::session::CompactionStrategy::SlidingSummary);
+}
+
+#[test]
+fn session_config_roundtrip_preserves_sliding_summary_mode() {
+    let cfg = crate::session::SessionConfig {
+        compaction_threshold: 7,
+        compaction_strategy: crate::session::CompactionStrategy::SlidingSummary,
+        keep_recent: 3,
+    };
+    let json = serde_json::to_string(&cfg).expect("serialize");
+    assert!(json.contains("sliding_summary"));
+
+    let decoded: crate::session::SessionConfig = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(decoded.compaction_strategy, crate::session::CompactionStrategy::SlidingSummary);
+}
+
+#[test]
+fn manual_compact_force_bypasses_threshold_gate() {
+    use crate::session::{CompactionInvocationMode, Message, SessionConfig};
+
+    let temp_dir = TempDir::new().expect("tempdir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+    let mut session = store
+        .get_or_create(Some("manual-force-bypass-threshold".to_string()))
+        .expect("session");
+    session.set_config(SessionConfig {
+        compaction_threshold: 999,
+        compaction_strategy: crate::session::CompactionStrategy::SlidingSummary,
+        keep_recent: 1,
+    });
+
+    session
+        .add_message(&store, Message::new("user".to_string(), "msg0".to_string()))
+        .expect("add");
+    session
+        .add_message(
+            &store,
+            Message::new("assistant".to_string(), "msg1".to_string()),
+        )
+        .expect("add");
+
+    let outcome = session
+        .maybe_compact_with_mode(&store, CompactionInvocationMode::Force, |_old| {
+            Ok("FORCED SUMMARY".to_string())
+        })
+        .expect("force compaction");
+
+    assert!(outcome.is_some(), "force mode must bypass threshold gate");
+    assert_eq!(session.messages()[0].role(), "system");
+    assert_eq!(session.messages()[0].content(), "FORCED SUMMARY");
+}
+
+#[test]
+fn auto_compaction_still_respects_threshold_gate() {
+    use crate::session::{CompactionInvocationMode, Message, SessionConfig};
+
+    let temp_dir = TempDir::new().expect("tempdir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+    let mut session = store
+        .get_or_create(Some("auto-threshold-gated".to_string()))
+        .expect("session");
+    session.set_config(SessionConfig {
+        compaction_threshold: 10,
+        compaction_strategy: crate::session::CompactionStrategy::SlidingSummary,
+        keep_recent: 2,
+    });
+
+    for i in 0..3 {
+        session
+            .add_message(
+                &store,
+                Message::new("user".to_string(), format!("msg{i}")),
+            )
+            .expect("add");
+    }
+
+    let outcome = session
+        .maybe_compact_with_mode(&store, CompactionInvocationMode::Threshold, |_old| {
+            Ok("SHOULD NOT RUN".to_string())
+        })
+        .expect("threshold compaction");
+
+    assert!(outcome.is_none(), "threshold mode must remain gated");
+    assert_eq!(session.messages().len(), 3);
+    assert_eq!(session.compaction_count(), 0);
+}
+
+#[test]
+fn sliding_summary_compaction_replaces_old_segment_with_summary_message() {
+    use crate::session::{Message, SessionConfig};
+
+    let temp_dir = TempDir::new().expect("tempdir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+    let mut session = store
+        .get_or_create(Some("sliding-summary-replace".to_string()))
+        .expect("session");
+    session.set_config(SessionConfig {
+        compaction_threshold: 3,
+        compaction_strategy: crate::session::CompactionStrategy::SlidingSummary,
+        keep_recent: 2,
+    });
+
+    for i in 0..5 {
+        session
+            .add_message(&store, Message::new("user".to_string(), format!("msg{i}")))
+            .expect("add");
+    }
+
+    let did_compact = session
+        .maybe_compact_with(&store, |_old| Ok("SUMMARY BODY".to_string()))
+        .expect("compact")
+        .is_some();
+    assert!(did_compact);
+    assert_eq!(session.messages()[0].role(), "system");
+    assert_eq!(session.messages()[0].content(), "SUMMARY BODY");
+}
+
+#[test]
+fn sliding_summary_compaction_preserves_recent_window_verbatim() {
+    use crate::session::{Message, SessionConfig};
+
+    let temp_dir = TempDir::new().expect("tempdir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+    let mut session = store
+        .get_or_create(Some("sliding-summary-keep".to_string()))
+        .expect("session");
+    session.set_config(SessionConfig {
+        compaction_threshold: 3,
+        compaction_strategy: crate::session::CompactionStrategy::SlidingSummary,
+        keep_recent: 2,
+    });
+
+    for i in 0..5 {
+        session
+            .add_message(&store, Message::new("user".to_string(), format!("msg{i}")))
+            .expect("add");
+    }
+
+    let _ = session
+        .maybe_compact_with(&store, |_old| Ok("SUMMARY BODY".to_string()))
+        .expect("compact");
+    assert_eq!(session.messages().len(), 3);
+    assert_eq!(session.messages()[1].content(), "msg3");
+    assert_eq!(session.messages()[2].content(), "msg4");
+}
+
+#[test]
+fn sliding_summary_compaction_persists_jsonl_updates() {
+    use crate::session::{Message, SessionConfig};
+
+    let temp_dir = TempDir::new().expect("tempdir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+    let mut session = store
+        .get_or_create(Some("sliding-summary-persist".to_string()))
+        .expect("session");
+    session.set_config(SessionConfig {
+        compaction_threshold: 3,
+        compaction_strategy: crate::session::CompactionStrategy::SlidingSummary,
+        keep_recent: 2,
+    });
+
+    for i in 0..5 {
+        session
+            .add_message(&store, Message::new("user".to_string(), format!("msg{i}")))
+            .expect("add");
+    }
+
+    let _ = session
+        .maybe_compact_with(&store, |_old| Ok("SUMMARY BODY".to_string()))
+        .expect("compact");
+
+    let loaded = store
+        .load_session("sliding-summary-persist")
+        .expect("load");
+    assert_eq!(loaded.messages()[0].content(), "SUMMARY BODY");
+    assert_eq!(loaded.messages()[1].content(), "msg3");
+    assert_eq!(loaded.messages()[2].content(), "msg4");
+}
+
+#[test]
+fn sliding_summary_compaction_increments_compaction_count() {
+    use crate::session::{Message, SessionConfig};
+
+    let temp_dir = TempDir::new().expect("tempdir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+    let mut session = store
+        .get_or_create(Some("sliding-summary-count".to_string()))
+        .expect("session");
+    session.set_config(SessionConfig {
+        compaction_threshold: 3,
+        compaction_strategy: crate::session::CompactionStrategy::SlidingSummary,
+        keep_recent: 2,
+    });
+
+    for i in 0..5 {
+        session
+            .add_message(&store, Message::new("user".to_string(), format!("msg{i}")))
+            .expect("add");
+    }
+
+    let before = session.compaction_count();
+    let _ = session
+        .maybe_compact_with(&store, |_old| Ok("SUMMARY BODY".to_string()))
+        .expect("compact");
+    assert_eq!(session.compaction_count(), before + 1);
+}
+
+#[test]
+fn sliding_summary_compaction_failure_is_deterministic() {
+    use crate::session::{Message, SessionConfig};
+
+    let temp_dir = TempDir::new().expect("tempdir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+    let mut session = store
+        .get_or_create(Some("sliding-summary-failure".to_string()))
+        .expect("session");
+    session.set_config(SessionConfig {
+        compaction_threshold: 3,
+        compaction_strategy: crate::session::CompactionStrategy::SlidingSummary,
+        keep_recent: 2,
+    });
+
+    for i in 0..5 {
+        session
+            .add_message(&store, Message::new("user".to_string(), format!("msg{i}")))
+            .expect("add");
+    }
+
+    let result = session.maybe_compact_with(&store, |_old| {
+        Err(std::io::Error::other("deterministic-summary-failure"))
+    });
+    let err = result.expect_err("must fail");
+    assert!(err.to_string().contains("deterministic-summary-failure"));
+}
+
 /// Test that get_or_create with None generates a session ID with correct format.
 #[test]
 fn test_get_or_create_auto_generates_id() {
@@ -499,7 +756,7 @@ fn test_add_message_triggers_compaction_on_threshold() {
     // Set compaction threshold to 3
     session.set_config(SessionConfig {
         compaction_threshold: 3,
-        compaction_strategy: crate::session::CompactionStrategy::Truncate,
+        compaction_strategy: crate::session::CompactionStrategy::SlidingSummary,
         keep_recent: 10,
     });
 
@@ -550,8 +807,8 @@ fn test_maybe_compact_triggers_on_threshold() {
     // Set threshold to 5
     session.set_config(SessionConfig {
         compaction_threshold: 5,
-        compaction_strategy: crate::session::CompactionStrategy::Truncate,
-        keep_recent: 10,
+        compaction_strategy: crate::session::CompactionStrategy::SlidingSummary,
+        keep_recent: 2,
     });
 
     // Add 6 messages (1 over threshold)
@@ -589,7 +846,7 @@ fn test_maybe_compact_does_not_trigger_under_threshold() {
     // Set threshold to 10
     session.set_config(SessionConfig {
         compaction_threshold: 10,
-        compaction_strategy: crate::session::CompactionStrategy::Truncate,
+        compaction_strategy: crate::session::CompactionStrategy::SlidingSummary,
         keep_recent: 10,
     });
 
@@ -627,8 +884,8 @@ fn test_maybe_compact_summarize_strategy() {
 
     session.set_config(SessionConfig {
         compaction_threshold: 3,
-        compaction_strategy: crate::session::CompactionStrategy::Summarize,
-        keep_recent: 10,
+        compaction_strategy: crate::session::CompactionStrategy::SlidingSummary,
+        keep_recent: 2,
     });
 
     // Add 4 messages (over threshold)
@@ -643,12 +900,8 @@ fn test_maybe_compact_summarize_strategy() {
 
     let result = session.maybe_compact(&store);
 
-    assert!(result.is_err(), "Summarize strategy should be explicit and fail until implemented");
-    let err_msg = result.unwrap_err().to_string();
-    assert!(
-        err_msg.contains("Summarize") || err_msg.contains("not implemented") || err_msg.contains("unsupported"),
-        "Error should clearly explain summarize compaction is unavailable, got: {err_msg}"
-    );
+    assert!(result.is_ok(), "Sliding-summary strategy should be active and succeed");
+    assert!(result.expect("compaction result"));
 }
 
 /// Test that maybe_compact works with Sliding strategy.
@@ -666,8 +919,8 @@ fn test_maybe_compact_sliding_strategy() {
 
     session.set_config(SessionConfig {
         compaction_threshold: 3,
-        compaction_strategy: crate::session::CompactionStrategy::Sliding,
-        keep_recent: 10,
+        compaction_strategy: crate::session::CompactionStrategy::SlidingSummary,
+        keep_recent: 2,
     });
 
     // Add 4 messages (over threshold)
@@ -705,7 +958,7 @@ fn test_compact_truncate_keeps_recent_messages() {
     // Configure: threshold=5, keep_recent=2
     session.set_config(SessionConfig {
         compaction_threshold: 5,
-        compaction_strategy: crate::session::CompactionStrategy::Truncate,
+        compaction_strategy: crate::session::CompactionStrategy::SlidingSummary,
         keep_recent: 2,
     });
 
@@ -729,16 +982,17 @@ fn test_compact_truncate_keeps_recent_messages() {
 
     assert!(compacted, "Should have triggered compaction");
 
-    // After compaction, should keep only last 2 messages (msg8, msg9)
+    // After compaction, sliding summary keeps a summary + last 2 recent messages.
     assert_eq!(
         session.messages().len(),
-        2,
-        "Should keep only last 2 messages after truncation"
+        3,
+        "Should keep summary + last 2 messages after sliding summary compaction"
     );
 
-    // Verify the correct messages remain (last 2)
-    assert_eq!(session.messages()[0].content(), "msg8");
-    assert_eq!(session.messages()[1].content(), "msg9");
+    // Verify summary marker + last 2 messages remain.
+    assert_eq!(session.messages()[0].role(), "system");
+    assert_eq!(session.messages()[1].content(), "msg8");
+    assert_eq!(session.messages()[2].content(), "msg9");
 
     // Reload session from disk to verify persistence
     let loaded_session = store
@@ -747,11 +1001,12 @@ fn test_compact_truncate_keeps_recent_messages() {
 
     assert_eq!(
         loaded_session.messages().len(),
-        2,
-        "Reloaded session should have 2 messages"
+        3,
+        "Reloaded session should have summary + 2 messages"
     );
-    assert_eq!(loaded_session.messages()[0].content(), "msg8");
-    assert_eq!(loaded_session.messages()[1].content(), "msg9");
+    assert_eq!(loaded_session.messages()[0].role(), "system");
+    assert_eq!(loaded_session.messages()[1].content(), "msg8");
+    assert_eq!(loaded_session.messages()[2].content(), "msg9");
 }
 
 /// Test sliding window compaction strategy.
@@ -768,10 +1023,10 @@ fn test_compact_sliding_window_keeps_last_n_messages() {
         .get_or_create(Some(session_id.clone()))
         .expect("Failed to create session");
 
-    // Configure: threshold=5, keep_recent=3, strategy=Sliding
+    // Configure: threshold=5, keep_recent=3
     session.set_config(SessionConfig {
         compaction_threshold: 5,
-        compaction_strategy: crate::session::CompactionStrategy::Sliding,
+        compaction_strategy: crate::session::CompactionStrategy::SlidingSummary,
         keep_recent: 3,
     });
 
@@ -795,17 +1050,18 @@ fn test_compact_sliding_window_keeps_last_n_messages() {
 
     assert!(compacted, "Should have triggered compaction");
 
-    // After compaction, should keep only last 3 messages (msg7, msg8, msg9)
+    // After compaction, sliding summary keeps a summary + last 3 recent messages.
     assert_eq!(
         session.messages().len(),
-        3,
-        "Should keep only last 3 messages after sliding window compaction"
+        4,
+        "Should keep summary + last 3 messages after sliding summary compaction"
     );
 
-    // Verify the correct messages remain (last 3)
-    assert_eq!(session.messages()[0].content(), "msg7");
-    assert_eq!(session.messages()[1].content(), "msg8");
-    assert_eq!(session.messages()[2].content(), "msg9");
+    // Verify summary marker + last 3 messages remain.
+    assert_eq!(session.messages()[0].role(), "system");
+    assert_eq!(session.messages()[1].content(), "msg7");
+    assert_eq!(session.messages()[2].content(), "msg8");
+    assert_eq!(session.messages()[3].content(), "msg9");
 
     // Reload session from disk to verify persistence
     let loaded_session = store
@@ -814,12 +1070,13 @@ fn test_compact_sliding_window_keeps_last_n_messages() {
 
     assert_eq!(
         loaded_session.messages().len(),
-        3,
-        "Reloaded session should have 3 messages"
+        4,
+        "Reloaded session should have summary + 3 messages"
     );
-    assert_eq!(loaded_session.messages()[0].content(), "msg7");
-    assert_eq!(loaded_session.messages()[1].content(), "msg8");
-    assert_eq!(loaded_session.messages()[2].content(), "msg9");
+    assert_eq!(loaded_session.messages()[0].role(), "system");
+    assert_eq!(loaded_session.messages()[1].content(), "msg7");
+    assert_eq!(loaded_session.messages()[2].content(), "msg8");
+    assert_eq!(loaded_session.messages()[3].content(), "msg9");
 }
 
 /// Test that sliding window compaction correctly updates when adding more messages.
@@ -836,10 +1093,10 @@ fn test_compact_sliding_window_slides_correctly() {
         .get_or_create(Some(session_id.clone()))
         .expect("Failed to create session");
 
-    // Configure: threshold=3, keep_recent=3, strategy=Sliding
+    // Configure: threshold=3, keep_recent=3
     session.set_config(SessionConfig {
         compaction_threshold: 3,
-        compaction_strategy: crate::session::CompactionStrategy::Sliding,
+        compaction_strategy: crate::session::CompactionStrategy::SlidingSummary,
         keep_recent: 3,
     });
 
@@ -860,11 +1117,12 @@ fn test_compact_sliding_window_slides_correctly() {
 
     assert!(compacted, "Should have triggered compaction");
 
-    // Should keep last 3: msg2, msg3, msg4
-    assert_eq!(session.messages().len(), 3);
-    assert_eq!(session.messages()[0].content(), "msg2");
-    assert_eq!(session.messages()[1].content(), "msg3");
-    assert_eq!(session.messages()[2].content(), "msg4");
+    // Should keep summary + last 3: msg2, msg3, msg4
+    assert_eq!(session.messages().len(), 4);
+    assert_eq!(session.messages()[0].role(), "system");
+    assert_eq!(session.messages()[1].content(), "msg2");
+    assert_eq!(session.messages()[2].content(), "msg3");
+    assert_eq!(session.messages()[3].content(), "msg4");
 
     // Add 3 more messages (bringing total to 6, over threshold again)
     for i in 5..8 {
@@ -876,8 +1134,8 @@ fn test_compact_sliding_window_slides_correctly() {
             .expect("Failed to add message");
     }
 
-    // Should have 6 messages now
-    assert_eq!(session.messages().len(), 6);
+    // Should have 7 messages now (summary + prior recent + 3 newly added)
+    assert_eq!(session.messages().len(), 7);
 
     // Trigger second compaction
     let compacted2 = session
@@ -886,15 +1144,16 @@ fn test_compact_sliding_window_slides_correctly() {
 
     assert!(compacted2, "Should have triggered compaction again");
 
-    // Window should have slid: should keep last 3: msg5, msg6, msg7
+    // Window should have slid: summary + last 3: msg5, msg6, msg7
     assert_eq!(
         session.messages().len(),
-        3,
-        "Window should slide to keep last 3 messages"
+        4,
+        "Window should slide to keep summary + last 3 messages"
     );
-    assert_eq!(session.messages()[0].content(), "msg5");
-    assert_eq!(session.messages()[1].content(), "msg6");
-    assert_eq!(session.messages()[2].content(), "msg7");
+    assert_eq!(session.messages()[0].role(), "system");
+    assert_eq!(session.messages()[1].content(), "msg5");
+    assert_eq!(session.messages()[2].content(), "msg6");
+    assert_eq!(session.messages()[3].content(), "msg7");
 }
 
 /// Test that LLM-based summarization is called with old messages.
@@ -915,7 +1174,7 @@ fn test_compact_summarize_calls_llm_with_old_messages() {
     // Configure: threshold=10, keep_recent=5, strategy=Summarize
     session.set_config(SessionConfig {
         compaction_threshold: 10,
-        compaction_strategy: crate::session::CompactionStrategy::Summarize,
+        compaction_strategy: crate::session::CompactionStrategy::SlidingSummary,
         keep_recent: 5,
     });
 
@@ -985,7 +1244,7 @@ fn test_compact_summarize_replaces_old_with_summary() {
     // Configure: threshold=10, keep_recent=3, strategy=Summarize
     session.set_config(SessionConfig {
         compaction_threshold: 10,
-        compaction_strategy: crate::session::CompactionStrategy::Summarize,
+        compaction_strategy: crate::session::CompactionStrategy::SlidingSummary,
         keep_recent: 3,
     });
 

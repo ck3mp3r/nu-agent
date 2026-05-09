@@ -838,6 +838,37 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
 }
 
 #[test]
+fn compaction_summary_is_rendered_in_transcript() {
+    let mut state = AppState::new();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::CompactionTriggered {
+            source: "slash_compact".to_string(),
+            summarized_count: 5,
+            kept_recent_count: 2,
+            summary_preview: "short summary preview".to_string(),
+            summary_body: "full summary body".to_string(),
+        }),
+        None,
+    );
+
+    assert_eq!(state.transcript_preview.len(), 2);
+    assert_eq!(state.transcript_preview[0].role, TranscriptRole::System);
+    assert!(state.transcript_preview[0]
+        .text
+        .contains("source=slash_compact"));
+    assert!(state.transcript_preview[0].text.contains("summarized=5"));
+    assert!(state.transcript_preview[0].text.contains("kept=2"));
+    assert!(state.transcript_preview[0]
+        .text
+        .contains("preview: short summary preview"));
+
+    assert_eq!(state.transcript_preview[1].role, TranscriptRole::System);
+    assert_eq!(state.transcript_preview[1].text, "full summary body");
+}
+
+#[test]
 fn table_driven_user_action_noop_and_contract_matrix() {
     struct Case {
         name: &'static str,

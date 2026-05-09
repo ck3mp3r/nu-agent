@@ -28,6 +28,7 @@ use crate::agent::ui::{renderer::UiRenderer,
             indicator_style_for_status_for_test, transition_spacer_for_roles_for_test,
             parse_persisted_tool_status_line_for_test,
             command_palette_table_model_for_test,
+            inline_slash_lines_for_test,
             help_panel_lines_for_test,
             help_panel_max_scroll_for_test,
             help_panel_overflow_cue_for_test,
@@ -201,6 +202,110 @@ fn coordinator_submit_handoff_keeps_input_editable_and_preserves_transcript_prev
         TranscriptRole::User
     );
     assert_eq!(coordinator.state().transcript_preview[0].text, "x");
+}
+
+#[test]
+fn slash_commands_do_not_append_command_text_to_transcript() {
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+
+    for event in [
+        TerminalEvent::Key(TerminalKey::Char('/')),
+        TerminalEvent::Key(TerminalKey::Char('h')),
+        TerminalEvent::Key(TerminalKey::Char('e')),
+        TerminalEvent::Key(TerminalKey::Char('l')),
+        TerminalEvent::Key(TerminalKey::Char('p')),
+        TerminalEvent::Key(TerminalKey::Enter),
+    ] {
+        let mut source = StubEventSource { next: Some(event) };
+        coordinator.pump_once(&mut source);
+    }
+
+    assert_eq!(coordinator.take_submitted_prompt(), Some("/help".to_string()));
+    assert_eq!(coordinator.state().phase, UiPhase::Idle);
+    assert_eq!(coordinator.state().pending_prompt_count(), 0);
+    assert!(coordinator.state().prompt_items().is_empty());
+    assert!(coordinator.state().transcript_preview.is_empty());
+}
+
+#[test]
+fn compact_result_artifact_is_visible_without_slash_command_echo() {
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+
+    for event in [
+        TerminalEvent::Key(TerminalKey::Char('/')),
+        TerminalEvent::Key(TerminalKey::Char('c')),
+        TerminalEvent::Key(TerminalKey::Char('o')),
+        TerminalEvent::Key(TerminalKey::Char('m')),
+        TerminalEvent::Key(TerminalKey::Char('p')),
+        TerminalEvent::Key(TerminalKey::Char('a')),
+        TerminalEvent::Key(TerminalKey::Char('c')),
+        TerminalEvent::Key(TerminalKey::Char('t')),
+        TerminalEvent::Key(TerminalKey::Enter),
+    ] {
+        let mut source = StubEventSource { next: Some(event) };
+        coordinator.pump_once(&mut source);
+    }
+
+    assert_eq!(coordinator.take_submitted_prompt(), Some("/compact".to_string()));
+    assert!(coordinator.state().transcript_preview.is_empty());
+
+    coordinator.enqueue_ui_event(UiEvent::CompactionTriggered {
+        source: "slash_compact".to_string(),
+        summarized_count: 3,
+        kept_recent_count: 2,
+        summary_preview: "preview".to_string(),
+        summary_body: "summary body".to_string(),
+    });
+    coordinator.drain_transport();
+
+    let lines = coordinator
+        .state()
+        .transcript_preview
+        .iter()
+        .map(|line| line.text.as_str())
+        .collect::<Vec<_>>();
+    assert!(lines
+        .iter()
+        .any(|line| line.contains("[compaction source=slash_compact summarized=3 kept=2]")));
+    assert!(lines.contains(&"summary body"));
+    assert!(!lines.iter().any(|line| line.starts_with("/compact")));
+}
+
+#[test]
+fn immediate_slash_commands_do_not_set_busy_or_spinner() {
+    for command in ["/compact", "/mcp", "/help", "/status"] {
+        let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+
+        for ch in command.chars() {
+            let mut source = StubEventSource {
+                next: Some(TerminalEvent::Key(TerminalKey::Char(ch))),
+            };
+            coordinator.pump_once(&mut source);
+        }
+        let mut submit = StubEventSource {
+            next: Some(TerminalEvent::Key(TerminalKey::Enter)),
+        };
+        coordinator.pump_once(&mut submit);
+
+        assert_eq!(
+            coordinator.take_submitted_prompt(),
+            Some(command.to_string()),
+            "expected immediate slash command handoff"
+        );
+        assert_eq!(
+            coordinator.state().phase,
+            UiPhase::Idle,
+            "immediate command must not transition into Busy"
+        );
+        assert!(
+            !coordinator.state().is_active_cycle(),
+            "immediate command must not activate prompt lifecycle"
+        );
+        assert!(
+            coordinator.state().status_line != "Thinking...",
+            "spinner lane status must not be set for immediate slash commands"
+        );
+    }
 }
 
 #[test]
@@ -2958,10 +3063,10 @@ fn command_palette_table_renders_required_columns_and_rows() {
 
     let model = command_palette_table_model_for_test(&state, 80, 8);
 
-    assert_eq!(model.columns, vec!["Action", "Summary", "Keys"]);
+    assert_eq!(model.columns, vec!["Action", "Summary"]);
     let actions = model.rows.iter().map(|row| row[0].as_str()).collect::<Vec<_>>();
     assert_eq!(actions, vec!["Help", "Status", "MCPs", "Skills"]);
-    assert!(model.rows.iter().any(|row| row[2].contains("↑/↓")));
+    assert!(model.rows.iter().all(|row| row[2].is_empty()));
     assert_eq!(model.selected, Some(0));
 }
 
@@ -3026,14 +3131,17 @@ fn skills_panel_lists_skills_in_deterministic_order() {
 }
 
 #[test]
-fn command_palette_table_hides_keys_column_on_narrow_width() {
+fn inline_slash_suggestions_render_inline_with_single_hint_contract() {
     let mut state = AppState::new();
-    state.open_command_palette();
+    state.append_input_char('/');
 
-    let model = command_palette_table_model_for_test(&state, 30, 8);
+    let rows = inline_slash_lines_for_test(&state);
+    assert!(!rows.is_empty());
+    assert!(rows[0].contains("/compact"));
+    assert!(rows[0].starts_with('❯'));
 
-    assert_eq!(model.columns, vec!["Action", "Summary"]);
-    assert!(model.rows.iter().all(|row| row[2].is_empty()));
+    let title = super::command_palette_title(None);
+    assert!(title.contains("↑/↓ or j/k · Enter · Esc"));
 }
 
 #[test]

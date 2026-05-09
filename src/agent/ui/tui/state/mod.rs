@@ -6,6 +6,7 @@ mod viewport_state;
 mod test;
 
 use crate::agent::ui::tui::markdown::{project_markdown_to_lines, rendered_line_to_plain_text};
+use crate::agent::protocol::slash::{SlashCommand, filter_inline_slash_suggestions};
 use crate::agent::ui::tui::rendering::selection::TranscriptSelection;
 use ratatui::text::Line;
 use std::collections::HashMap;
@@ -63,6 +64,7 @@ pub enum TranscriptLineStatus {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandPaletteAction {
+    Compact,
     Help,
     Status,
     Mcps,
@@ -162,6 +164,8 @@ pub struct AppState {
     pub command_palette_open: bool,
     pub command_palette_query: String,
     pub command_palette_selection: usize,
+    pub inline_slash_open: bool,
+    pub inline_slash_selection: usize,
     pub info_panel: Option<InfoPanel>,
     pub info_panel_scroll: usize,
     pub mcp_servers: Vec<McpServerState>,
@@ -176,12 +180,14 @@ pub struct AppState {
     tool_call_items: Vec<ToolCallLine>,
     active_tool_ids_by_key: HashMap<String, VecDeque<u64>>,
     pending_prompt_ids: VecDeque<u64>,
+    pending_immediate_submissions: VecDeque<String>,
     active_prompt_id: Option<u64>,
     next_prompt_id: u64,
     next_tool_call_id: u64,
     active_cycle: bool,
     insert_exit_pending_j: bool,
     normal_pending_key: Option<char>,
+    inline_slash_commands: Vec<SlashCommand>,
     transcript_cursor: Option<usize>,
     visual_selection: Option<TranscriptSelection>,
     clipboard_request: Option<String>,
@@ -211,6 +217,8 @@ impl Default for AppState {
             command_palette_open: false,
             command_palette_query: String::new(),
             command_palette_selection: 0,
+            inline_slash_open: false,
+            inline_slash_selection: 0,
             info_panel: None,
             info_panel_scroll: 0,
             mcp_servers: Vec::new(),
@@ -225,12 +233,14 @@ impl Default for AppState {
             tool_call_items: Vec::new(),
             active_tool_ids_by_key: HashMap::new(),
             pending_prompt_ids: VecDeque::new(),
+            pending_immediate_submissions: VecDeque::new(),
             active_prompt_id: None,
             next_prompt_id: 1,
             next_tool_call_id: 1,
             active_cycle: false,
             insert_exit_pending_j: false,
             normal_pending_key: None,
+            inline_slash_commands: Vec::new(),
             transcript_cursor: None,
             visual_selection: None,
             clipboard_request: None,
@@ -304,6 +314,46 @@ impl AppState {
 
     pub fn close_command_palette(&mut self) {
         self.command_palette_open = false;
+    }
+
+    pub(crate) fn inline_slash_suggestions(&self) -> &[SlashCommand] {
+        &self.inline_slash_commands
+    }
+
+    pub(crate) fn inline_slash_selected_command(&self) -> Option<SlashCommand> {
+        self.inline_slash_commands
+            .get(self.inline_slash_selection)
+            .copied()
+    }
+
+    pub(crate) fn close_inline_slash_suggestions(&mut self) {
+        self.inline_slash_open = false;
+        self.inline_slash_selection = 0;
+        self.inline_slash_commands.clear();
+    }
+
+    pub(crate) fn inline_slash_move_up(&mut self) {
+        let len = self.inline_slash_commands.len();
+        if len == 0 {
+            self.inline_slash_selection = 0;
+            return;
+        }
+
+        self.inline_slash_selection = if self.inline_slash_selection == 0 {
+            len.saturating_sub(1)
+        } else {
+            self.inline_slash_selection.saturating_sub(1)
+        };
+    }
+
+    pub(crate) fn inline_slash_move_down(&mut self) {
+        let len = self.inline_slash_commands.len();
+        if len == 0 {
+            self.inline_slash_selection = 0;
+            return;
+        }
+
+        self.inline_slash_selection = (self.inline_slash_selection + 1) % len;
     }
 
     pub fn open_info_panel(&mut self, panel: InfoPanel) {
@@ -880,6 +930,14 @@ impl AppState {
         id
     }
 
+    pub fn enqueue_immediate_submission(&mut self, submitted_text: String) {
+        self.pending_immediate_submissions.push_back(submitted_text);
+        self.input.buffer.clear();
+        self.input.cursor = 0;
+        self.abort.pending = false;
+        self.ensure_invariants();
+    }
+
     pub fn activate_next_prompt(&mut self) -> Option<u64> {
         let maybe_id = prompt_queue::PromptQueueLifecycle::new(
             &mut self.prompt_items,
@@ -902,6 +960,11 @@ impl AppState {
     }
 
     pub fn take_next_prompt_for_execution(&mut self) -> Option<String> {
+        if let Some(immediate) = self.pending_immediate_submissions.pop_front() {
+            self.ensure_invariants();
+            return Some(immediate);
+        }
+
         let active_id = self.activate_next_prompt()?;
         self.prompt_items
             .iter()
@@ -1128,6 +1191,14 @@ impl AppState {
 
         self.active_cycle = self.active_prompt_id.is_some() || !self.pending_prompt_ids.is_empty();
 
+        self.inline_slash_commands = filter_inline_slash_suggestions(&self.input.buffer);
+        self.inline_slash_open = !self.inline_slash_commands.is_empty();
+        if !self.inline_slash_open {
+            self.inline_slash_selection = 0;
+        } else if self.inline_slash_selection >= self.inline_slash_commands.len() {
+            self.inline_slash_selection = self.inline_slash_commands.len().saturating_sub(1);
+        }
+
         if self.phase == UiPhase::Idle && self.active_cycle {
             self.phase = UiPhase::Busy;
         }
@@ -1180,6 +1251,16 @@ impl AppState {
         .enforce_single_active_invariant();
     }
 
+}
+
+pub fn info_panel_for_command_palette_action(action: CommandPaletteAction) -> Option<InfoPanel> {
+    match action {
+        CommandPaletteAction::Compact => None,
+        CommandPaletteAction::Help => Some(InfoPanel::Help),
+        CommandPaletteAction::Status => Some(InfoPanel::Status),
+        CommandPaletteAction::Mcps => Some(InfoPanel::Mcps),
+        CommandPaletteAction::Skills => Some(InfoPanel::Skills),
+    }
 }
 
 fn fuzzy_matches(query: &str, candidate: &str) -> bool {

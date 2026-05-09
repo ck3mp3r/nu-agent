@@ -19,14 +19,32 @@ pub struct SessionStore {
 }
 
 /// Strategy for compacting messages when threshold is exceeded.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CompactionStrategy {
-    /// Summarize messages using LLM (tasks 1.11)
-    Summarize,
-    /// Truncate oldest messages (task 1.12)
-    Truncate,
-    /// Keep sliding window of recent messages (task 1.13)
-    Sliding,
+    /// Summarize old messages and keep a recent verbatim window.
+    #[serde(rename = "sliding_summary", alias = "truncate", alias = "sliding", alias = "summarize")]
+    SlidingSummary,
+}
+
+impl CompactionStrategy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::SlidingSummary => "sliding_summary",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompactionOutcome {
+    pub summarized_count: usize,
+    pub kept_recent_count: usize,
+    pub summary_text: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompactionInvocationMode {
+    Threshold,
+    Force,
 }
 
 /// Configuration for session behavior.
@@ -44,7 +62,7 @@ impl Default for SessionConfig {
     fn default() -> Self {
         Self {
             compaction_threshold: 100,                         // Default threshold
-            compaction_strategy: CompactionStrategy::Truncate, // Default strategy
+            compaction_strategy: CompactionStrategy::SlidingSummary, // Canonical strategy
             keep_recent: 10,                                   // Default keep last 10 messages
         }
     }
@@ -178,19 +196,52 @@ impl Session {
     /// # Errors
     /// Returns an error if the chosen compaction strategy fails.
     pub fn maybe_compact(&mut self, store: &SessionStore) -> io::Result<bool> {
-        // Check if we exceed the threshold
-        if self.messages.len() <= self.config.compaction_threshold {
-            return Ok(false);
+        self.maybe_compact_with(store, |old_messages| {
+            Ok(Self::fallback_summary_text(old_messages))
+        })
+        .map(|outcome| outcome.is_some())
+    }
+
+    pub fn maybe_compact_with<F>(
+        &mut self,
+        store: &SessionStore,
+        summarizer: F,
+    ) -> io::Result<Option<CompactionOutcome>>
+    where
+        F: FnOnce(&[Message]) -> io::Result<String>,
+    {
+        self.maybe_compact_with_mode(store, CompactionInvocationMode::Threshold, summarizer)
+    }
+
+    pub fn maybe_compact_with_mode<F>(
+        &mut self,
+        store: &SessionStore,
+        mode: CompactionInvocationMode,
+        summarizer: F,
+    ) -> io::Result<Option<CompactionOutcome>>
+    where
+        F: FnOnce(&[Message]) -> io::Result<String>,
+    {
+        let should_compact = match mode {
+            CompactionInvocationMode::Threshold => {
+                self.messages.len() > self.config.compaction_threshold
+            }
+            CompactionInvocationMode::Force => true,
+        };
+
+        if !should_compact {
+            return Ok(None);
         }
 
-        // Trigger compaction based on strategy
-        match self.config.compaction_strategy {
-            CompactionStrategy::Summarize => self.compact_summarize(store),
-            CompactionStrategy::Truncate => self.compact_truncate(store),
-            CompactionStrategy::Sliding => self.compact_sliding(store),
-        }?;
+        let outcome = match self.config.compaction_strategy {
+            CompactionStrategy::SlidingSummary => self.compact_sliding_summary_with(store, summarizer)?,
+        };
 
-        Ok(true)
+        if outcome.summarized_count == 0 {
+            return Ok(None);
+        }
+
+        Ok(Some(outcome))
     }
 
     /// Compacts messages using summarization strategy with a custom summarizer function.
@@ -212,7 +263,18 @@ impl Session {
         &mut self,
         store: &SessionStore,
         summarizer: F,
-    ) -> io::Result<()>
+    ) -> io::Result<CompactionOutcome>
+    where
+        F: FnOnce(&[Message]) -> io::Result<String>,
+    {
+        self.compact_sliding_summary_with(store, summarizer)
+    }
+
+    pub fn compact_sliding_summary_with<F>(
+        &mut self,
+        store: &SessionStore,
+        summarizer: F,
+    ) -> io::Result<CompactionOutcome>
     where
         F: FnOnce(&[Message]) -> io::Result<String>,
     {
@@ -220,13 +282,19 @@ impl Session {
 
         // If we have fewer messages than keep_recent, nothing to do
         if self.messages.len() <= keep_count {
-            return Ok(());
+            return Ok(CompactionOutcome {
+                summarized_count: 0,
+                kept_recent_count: self.messages.len(),
+                summary_text: String::new(),
+            });
         }
 
         // Split messages into old (to summarize) and recent (to keep)
         let split_index = self.messages.len() - keep_count;
         let old_messages = &self.messages[..split_index];
         let recent_messages = &self.messages[split_index..];
+        let summarized_count = old_messages.len();
+        let kept_recent_count = recent_messages.len();
 
         // Call summarizer with old messages
         let summary = summarizer(old_messages)?;
@@ -245,60 +313,11 @@ impl Session {
         // Rewrite the JSONL file with updated metadata and compacted messages
         self.rewrite_jsonl(store)?;
 
-        Ok(())
-    }
-
-    /// Compacts messages using summarization strategy.
-    ///
-    /// NOTE: This strategy is intentionally not implemented in this module yet because
-    /// it requires an LLM integration boundary. Callers receive an explicit error instead
-    /// of a silent no-op to preserve compaction contract clarity.
-    ///
-    /// # Arguments
-    /// * `store` - The SessionStore used for file operations
-    ///
-    /// # Returns
-    /// Ok(()) when summarization succeeds.
-    fn compact_summarize(&mut self, _store: &SessionStore) -> io::Result<()> {
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "Summarize compaction strategy is not implemented in SessionStore",
-        ))
-    }
-
-    /// Compacts messages using truncation strategy.
-    ///
-    /// Keeps only the last N messages (configured via `keep_recent`),
-    /// dropping all older messages. After truncation, rewrites the JSONL
-    /// file with the new message list and increments the compaction count.
-    ///
-    /// # Arguments
-    /// * `store` - The SessionStore used for file operations
-    ///
-    /// # Returns
-    /// Ok(()) when truncation succeeds.
-    ///
-    /// # Errors
-    /// Returns an error if file operations fail.
-    fn compact_truncate(&mut self, store: &SessionStore) -> io::Result<()> {
-        let keep_count = self.config.keep_recent;
-
-        // If we have fewer messages than keep_recent, nothing to do
-        if self.messages.len() <= keep_count {
-            return Ok(());
-        }
-
-        // Keep only the last N messages
-        let start_index = self.messages.len() - keep_count;
-        self.messages = self.messages[start_index..].to_vec();
-
-        // Increment compaction count
-        self.compaction_count += 1;
-
-        // Rewrite the JSONL file with updated metadata and truncated messages
-        self.rewrite_jsonl(store)?;
-
-        Ok(())
+        Ok(CompactionOutcome {
+            summarized_count,
+            kept_recent_count,
+            summary_text: self.messages[0].content().to_string(),
+        })
     }
 
     /// Rewrites the entire JSONL file with current metadata and messages.
@@ -369,42 +388,18 @@ impl Session {
         Ok(())
     }
 
-    /// Compacts messages using sliding window strategy.
-    ///
-    /// Keeps only the last N messages (configured via `keep_recent`),
-    /// dropping all older messages. This is similar to truncation, but the name
-    /// emphasizes the "sliding window" behavior where new messages push out old ones.
-    ///
-    /// After compaction, rewrites the JSONL file with the new message list
-    /// and increments the compaction count.
-    ///
-    /// # Arguments
-    /// * `store` - The SessionStore used for file operations
-    ///
-    /// # Returns
-    /// Ok(()) when sliding window compaction succeeds.
-    ///
-    /// # Errors
-    /// Returns an error if file operations fail.
-    fn compact_sliding(&mut self, store: &SessionStore) -> io::Result<()> {
-        let keep_count = self.config.keep_recent;
-
-        // If we have fewer messages than keep_recent, nothing to do
-        if self.messages.len() <= keep_count {
-            return Ok(());
+    fn fallback_summary_text(messages: &[Message]) -> String {
+        let preview = messages
+            .iter()
+            .take(8)
+            .map(|m| format!("{}: {}", m.role(), m.content()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if preview.is_empty() {
+            "Session summary: (no prior messages)".to_string()
+        } else {
+            format!("Session summary:\n{preview}")
         }
-
-        // Keep only the last N messages
-        let start_index = self.messages.len() - keep_count;
-        self.messages = self.messages[start_index..].to_vec();
-
-        // Increment compaction count
-        self.compaction_count += 1;
-
-        // Rewrite the JSONL file with updated metadata and compacted messages
-        self.rewrite_jsonl(store)?;
-
-        Ok(())
     }
 
     /// Appends a message to the session's JSONL file.

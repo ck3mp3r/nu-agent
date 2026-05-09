@@ -26,6 +26,13 @@ pub enum UiEvent {
     Warning {
         message: String,
     },
+    CompactionTriggered {
+        source: String,
+        summarized_count: usize,
+        kept_recent_count: usize,
+        summary_preview: String,
+        summary_body: String,
+    },
     AssistantMessage {
         text: String,
     },

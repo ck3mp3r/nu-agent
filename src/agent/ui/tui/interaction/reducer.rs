@@ -1,8 +1,9 @@
 use crate::agent::ui::tui::{
     interaction::cancel::CancelController,
     markdown,
-    state::{AppState, InputMode, PaneFocus, TranscriptRole, UiPhase},
+    state::{AppState, InputMode, PaneFocus, TranscriptRole, UiPhase, info_panel_for_command_palette_action},
 };
+use crate::agent::protocol::slash::{SlashParseResult, parse_slash_command, slash_command_label};
 use crate::agent::protocol::event::UiEvent;
 
 pub const ESC_ABORT_CONFIRM_STATUS: &str = "Hit escape again to abort.";
@@ -34,6 +35,10 @@ pub enum UserAction {
     CommandPaletteMoveDown,
     CommandPaletteSelect,
     CommandPaletteClose,
+    InlineSlashMoveUp,
+    InlineSlashMoveDown,
+    InlineSlashAccept,
+    InlineSlashClose,
     Resize { columns: u16, rows: u16 },
     Quit,
     Esc,
@@ -100,6 +105,10 @@ fn reduce_user_action(
         UserAction::CommandPaletteMoveDown => state.command_palette_move_down(),
         UserAction::CommandPaletteSelect => handle_command_palette_select(state),
         UserAction::CommandPaletteClose => state.close_command_palette(),
+        UserAction::InlineSlashMoveUp => state.inline_slash_move_up(),
+        UserAction::InlineSlashMoveDown => state.inline_slash_move_down(),
+        UserAction::InlineSlashAccept => handle_inline_slash_accept(state),
+        UserAction::InlineSlashClose => state.close_inline_slash_suggestions(),
         UserAction::HistoryUp
         | UserAction::HistoryDown
         | UserAction::CompleteForward
@@ -135,6 +144,15 @@ fn handle_submit(state: &mut AppState) {
     if submitted_text.trim().is_empty() {
         return;
     }
+
+    if matches!(
+        parse_slash_command(&submitted_text),
+        SlashParseResult::Command(_) | SlashParseResult::Unknown(_)
+    ) {
+        state.enqueue_immediate_submission(submitted_text);
+        return;
+    }
+
     state.enqueue_prompt(submitted_text);
     state.input.buffer.clear();
     state.input.cursor = 0;
@@ -250,22 +268,23 @@ fn handle_toggle_command_palette(state: &mut AppState) {
 
 fn handle_command_palette_select(state: &mut AppState) {
     if let Some(action) = state.command_palette_selected_action() {
-        let panel = match action {
-            crate::agent::ui::tui::state::CommandPaletteAction::Help => {
-                crate::agent::ui::tui::state::InfoPanel::Help
-            }
-            crate::agent::ui::tui::state::CommandPaletteAction::Status => {
-                crate::agent::ui::tui::state::InfoPanel::Status
-            }
-            crate::agent::ui::tui::state::CommandPaletteAction::Mcps => {
-                crate::agent::ui::tui::state::InfoPanel::Mcps
-            }
-            crate::agent::ui::tui::state::CommandPaletteAction::Skills => {
-                crate::agent::ui::tui::state::InfoPanel::Skills
-            }
-        };
-        state.open_info_panel(panel);
+        if let Some(panel) = info_panel_for_command_palette_action(action) {
+            state.open_info_panel(panel);
+        } else {
+            state.close_command_palette();
+        }
     }
+}
+
+fn handle_inline_slash_accept(state: &mut AppState) {
+    let Some(command) = state.inline_slash_selected_command() else {
+        return;
+    };
+    let selected = slash_command_label(command).to_string();
+    state.input.buffer = selected;
+    state.input.cursor = state.input.buffer.len();
+    state.ensure_invariants();
+    handle_submit(state);
 }
 
 fn handle_scroll_page_up(state: &mut AppState) {
@@ -339,6 +358,26 @@ fn reduce_ui_event(state: &mut AppState, event: UiEvent) {
             ..
         } => handle_llm_end(state, response_chars, input_tokens, output_tokens, total_tokens),
         UiEvent::Warning { message } => handle_warning(state, message),
+        UiEvent::CompactionTriggered {
+            source,
+            summarized_count,
+            kept_recent_count,
+            summary_preview,
+            summary_body,
+        } => {
+            let body = if summary_body.trim().is_empty() {
+                "(empty summary)".to_string()
+            } else {
+                summary_body
+            };
+            state.push_transcript_line(
+                TranscriptRole::System,
+                format!(
+                    "[compaction source={source} summarized={summarized_count} kept={kept_recent_count}] preview: {summary_preview}"
+                ),
+            );
+            state.push_transcript_line(TranscriptRole::System, body);
+        }
         UiEvent::AssistantMessage { text } => handle_assistant_message(state, text),
         UiEvent::Completed { .. } => finalize(state),
     }

@@ -87,3 +87,23 @@ fn test_agent_session_inspect_command_signature() {
     assert_eq!(sig.required_positional.len(), 1);
     assert_eq!(sig.required_positional[0].name, "id");
 }
+
+#[test]
+fn session_inspect_reports_canonical_sliding_summary_mode() {
+    let temp_dir = TempDir::new().expect("tempdir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+    let mut session = store
+        .get_or_create(Some("inspect-canonical-strategy".to_string()))
+        .expect("create session");
+
+    session.set_config(crate::session::SessionConfig {
+        compaction_threshold: 4,
+        compaction_strategy: crate::session::CompactionStrategy::SlidingSummary,
+        keep_recent: 2,
+    });
+
+    assert_eq!(
+        session.config().compaction_strategy.as_str(),
+        "sliding_summary"
+    );
+}

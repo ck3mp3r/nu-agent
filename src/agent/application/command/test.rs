@@ -224,6 +224,16 @@ fn agent_command_signature_has_mcp_tools_flag() {
 }
 
 #[test]
+fn cli_does_not_expose_unsupported_compaction_modes() {
+    let (agent, _temp_dir) = create_test_agent();
+    let sig = SimplePluginCommand::signature(&agent);
+    let rendered = format!("{sig:?}").to_ascii_lowercase();
+    assert!(!rendered.contains("truncate"));
+    assert!(!rendered.contains("sliding\""));
+    assert!(!rendered.contains("summarize"));
+}
+
+#[test]
 fn agent_command_signature_has_quiet_flag() {
     let (agent, _temp_dir) = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
@@ -1879,7 +1889,7 @@ mod session_integration_tests {
         // Set low threshold for testing
         let config = SessionConfig {
             compaction_threshold: 3,
-            compaction_strategy: CompactionStrategy::Truncate,
+            compaction_strategy: CompactionStrategy::SlidingSummary,
             keep_recent: 2,
         };
         session.set_config(config);

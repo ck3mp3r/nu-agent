@@ -1,0 +1,80 @@
+use std::fs;
+use std::path::Path;
+
+fn read_help_markdown() -> String {
+    fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/agent/ui/tui/runtime/help/help.md"))
+        .expect("help markdown")
+}
+
+fn read_usage_docs() -> String {
+    fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/usage.md"))
+        .expect("usage docs")
+}
+
+#[test]
+fn help_includes_compact_mcp_help_status_slash_commands() {
+    let help = read_help_markdown();
+    assert!(help.contains("`/compact`"));
+    assert!(help.contains("`/mcp`"));
+    assert!(help.contains("`/help`"));
+    assert!(help.contains("`/status`"));
+}
+
+#[test]
+fn help_describes_auto_compaction_threshold_behavior() {
+    let help = read_help_markdown();
+    assert!(help.contains("threshold - tolerance"));
+    assert!(help.contains("threshold - (tolerance + hysteresis_margin)"));
+}
+
+#[test]
+fn help_describes_force_compact_behavior() {
+    let help = read_help_markdown();
+    assert!(help.contains("force compaction"));
+    assert!(help.contains("bypasses threshold gating"));
+}
+
+#[test]
+fn docs_do_not_claim_skills_listing_tool_for_slash_commands() {
+    let docs = read_usage_docs();
+    let lowered = docs.to_ascii_lowercase();
+    assert!(lowered.contains("/compact"));
+    assert!(!lowered.contains("skills listing tool"));
+}
+
+#[test]
+fn docs_describe_session_memory_persistence_after_compaction() {
+    let docs = read_usage_docs();
+    assert!(docs.contains("session JSONL"));
+    assert!(docs.contains("compaction_count"));
+}
+
+#[test]
+fn help_describes_inline_slash_suggestions_behavior() {
+    let help = read_help_markdown();
+    assert!(help.contains("Inline slash suggestions"));
+    assert!(help.contains("open when input starts with `/`"));
+    assert!(help.contains("filters incrementally"));
+    assert!(help.contains("independent of the command palette"));
+}
+
+#[test]
+fn help_describes_sliding_summary_only_compaction() {
+    let help = read_help_markdown();
+    assert!(help.contains("sliding_summary"));
+    assert!(help.contains("single active compaction mode"));
+}
+
+#[test]
+fn docs_describe_transcript_visible_compaction_summary() {
+    let docs = read_usage_docs();
+    assert!(docs.contains("transcript-visible compaction summary"));
+    assert!(docs.contains("source + summarized/kept counts"));
+}
+
+#[test]
+fn help_describes_no_transcript_echo_for_slash_commands() {
+    let help = read_help_markdown();
+    assert!(help.contains("not echoed into the transcript"));
+    assert!(help.contains("only resulting artifacts"));
+}

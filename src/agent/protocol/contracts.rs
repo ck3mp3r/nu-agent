@@ -1,6 +1,9 @@
 use nu_protocol::{LabeledError, Span, Value};
 
-use crate::agent::protocol::event::UiEvent;
+use crate::agent::protocol::{
+    compaction::{CompactionTriggerDecision, CompactionTriggerSource},
+    event::UiEvent,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum McpUsabilityState {
@@ -13,6 +16,13 @@ pub(crate) enum McpUsabilityState {
 pub(crate) struct McpToggleRequest {
     pub server_name: String,
     pub enable: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SharedUiAction {
+    Help,
+    Status,
+    Mcps,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -132,6 +142,9 @@ pub(crate) trait InteractiveUi: ProgressUi {
         self.set_mcp_server_state(server_name, state);
     }
     fn quit_requested(&self) -> bool;
+    fn execute_shared_ui_action(&mut self, _action: SharedUiAction) -> bool {
+        false
+    }
     fn fatal_error(&self) -> Option<&str>;
     fn hydrate_transcript_from_messages(
         &mut self,
@@ -154,5 +167,17 @@ pub(crate) trait ConversationRuntime {
 
     fn llm_visible_mcp_tool_count(&self) -> usize {
         0
+    }
+
+    fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
+        None
+    }
+
+    fn execute_compaction_trigger<U: ProgressUi>(
+        &mut self,
+        _ui: &mut U,
+        _source: CompactionTriggerSource,
+    ) -> Result<(), String> {
+        Ok(())
     }
 }

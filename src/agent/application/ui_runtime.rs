@@ -3,7 +3,8 @@ use nu_protocol::{Span, Value};
 use crate::agent::{
     protocol::{
         contracts::{
-            InteractiveUi, McpToggleRequest, McpUsabilityState, ProgressUi, UiMessageSnapshot,
+            InteractiveUi, McpToggleRequest, McpUsabilityState, ProgressUi, SharedUiAction,
+            UiMessageSnapshot,
         },
         event::UiEvent,
     },
@@ -164,6 +165,10 @@ where
 
     fn quit_requested(&self) -> bool {
         self.renderer.quit_requested()
+    }
+
+    fn execute_shared_ui_action(&mut self, action: SharedUiAction) -> bool {
+        self.renderer.execute_shared_ui_action(action)
     }
 
     fn fatal_error(&self) -> Option<&str> {

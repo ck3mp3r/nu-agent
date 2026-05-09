@@ -9,7 +9,10 @@ mod runtime_build;
 use crate::{
     agent::{
         conversation::runtime::AgentConversationRuntime,
-        protocol::contracts::UiMessageSnapshot,
+        protocol::{
+            compaction::CompactionTriggerState,
+            contracts::UiMessageSnapshot,
+        },
         session::resolver::{
             DefaultSessionResolver, SessionResolutionInput, SessionResolver,
         },
@@ -639,6 +642,9 @@ impl SimplePluginCommand for Agent {
             store: self.store.clone(),
             session: session_resolution.session,
             final_session_id: session_resolution.final_session_id,
+            auto_compaction_tolerance: 0,
+            auto_compaction_hysteresis_margin: 0,
+            auto_compaction_state: CompactionTriggerState::default(),
         };
 
         match mode {

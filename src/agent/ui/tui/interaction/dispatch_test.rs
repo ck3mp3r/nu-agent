@@ -818,6 +818,71 @@ fn existing_insert_mode_jk_chord_still_switches_to_normal_outside_palette() {
 }
 
 #[test]
+fn inline_slash_suggestions_open_on_leading_slash() {
+    let mut state = AppState::new();
+
+    let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('/')), None);
+    assert!(changed);
+    assert!(state.inline_slash_open);
+    assert!(!state.command_palette_open);
+}
+
+#[test]
+fn inline_slash_enter_on_compact_triggers_compaction_path() {
+    let mut state = AppState::new();
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('/')), None);
+
+    let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+    assert!(changed);
+    assert!(state.transcript_preview.is_empty());
+    assert_eq!(state.take_next_prompt_for_execution(), Some("/compact".to_string()));
+    assert!(!state.inline_slash_open);
+    assert!(!state.command_palette_open);
+}
+
+#[test]
+fn immediate_slash_commands_do_not_set_busy_or_spinner() {
+    for command in ["/compact", "/mcp", "/help", "/status"] {
+        let mut state = AppState::new();
+
+        for ch in command.chars() {
+            let changed = dispatch_terminal_event(
+                &mut state,
+                &TerminalEvent::Key(TerminalKey::Char(ch)),
+                None,
+            );
+            assert!(changed);
+        }
+
+        let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+        assert!(changed);
+        assert_eq!(state.phase, UiPhase::Idle);
+        assert!(!state.is_active_cycle());
+        assert_eq!(state.pending_prompt_count(), 0);
+        assert!(state.prompt_items().is_empty());
+        assert!(state.status_line != "Thinking...");
+    }
+}
+
+#[test]
+fn inline_slash_suggestions_close_when_prefix_removed() {
+    let mut state = AppState::new();
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('/')), None);
+    assert!(state.inline_slash_open);
+
+    let changed = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Backspace),
+        None,
+    );
+    assert!(changed);
+
+    assert_eq!(state.input.buffer, "");
+    assert!(!state.inline_slash_open);
+    assert!(!state.command_palette_open);
+}
+
+#[test]
 fn palette_escape_closes_without_panel_route_regression() {
     let mut state = AppState::new();
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);

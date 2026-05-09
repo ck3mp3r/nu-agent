@@ -8,8 +8,10 @@ use std::time::Duration;
 use crate::agent::{
     application::orchestrator::{run_hydrated_interactive_loop, run_interactive_loop, run_single_turn},
     protocol::{
+        compaction::{CompactionTriggerDecision, CompactionTriggerSource},
         contracts::{
             ConversationRuntime, InteractiveUi, McpToggleRequest, McpUsabilityState, ProgressUi,
+            SharedUiAction,
             UiMessageUsageSnapshot,
             UiMessageSnapshot,
         },
@@ -43,7 +45,9 @@ struct FakeInteractiveUi {
     mcp_toggle_requests: std::collections::VecDeque<McpToggleRequest>,
     mcp_states: Vec<(String, McpUsabilityState)>,
     mcp_details: Vec<(String, McpUsabilityState, Option<String>, usize)>,
+    warnings: Vec<String>,
     expected_mcp_updates: usize,
+    shared_actions: Vec<SharedUiAction>,
 }
 
 impl FakeInteractiveUi {
@@ -57,7 +61,9 @@ impl FakeInteractiveUi {
             mcp_toggle_requests: std::collections::VecDeque::new(),
             mcp_states: Vec::new(),
             mcp_details: Vec::new(),
+            warnings: Vec::new(),
             expected_mcp_updates: 0,
+            shared_actions: Vec::new(),
         }
     }
 
@@ -68,7 +74,11 @@ impl FakeInteractiveUi {
 }
 
 impl ProgressUi for FakeInteractiveUi {
-    fn emit(&mut self, _event: &UiEvent) {}
+    fn emit(&mut self, event: &UiEvent) {
+        if let UiEvent::Warning { message } = event {
+            self.warnings.push(message.clone());
+        }
+    }
 
     fn flush(&mut self) {}
 
@@ -126,6 +136,11 @@ impl InteractiveUi for FakeInteractiveUi {
         None
     }
 
+    fn execute_shared_ui_action(&mut self, action: SharedUiAction) -> bool {
+        self.shared_actions.push(action);
+        true
+    }
+
     fn hydrate_transcript_from_messages(
         &mut self,
         messages: impl IntoIterator<Item = UiMessageSnapshot>,
@@ -138,6 +153,10 @@ impl InteractiveUi for FakeInteractiveUi {
 #[derive(Default)]
 struct FakeRuntime {
     prompts: Vec<String>,
+    auto_decisions: std::collections::VecDeque<CompactionTriggerDecision>,
+    executed_compaction_sources: Vec<CompactionTriggerSource>,
+    fail_compaction: bool,
+    compaction_call_count: usize,
 }
 
 impl ConversationRuntime for FakeRuntime {
@@ -159,6 +178,258 @@ impl ConversationRuntime for FakeRuntime {
         self.prompts.push(prompt);
         Ok(Value::nothing(Span::test_data()))
     }
+
+    fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
+        self.auto_decisions.pop_front()
+    }
+
+    fn execute_compaction_trigger<U: ProgressUi>(
+        &mut self,
+        _ui: &mut U,
+        source: CompactionTriggerSource,
+    ) -> Result<(), String> {
+        self.compaction_call_count = self.compaction_call_count.saturating_add(1);
+        self.executed_compaction_sources.push(source);
+        if self.fail_compaction {
+            return Err("auto compaction failed".to_string());
+        }
+        Ok(())
+    }
+}
+
+#[test]
+fn interactive_loop_emits_auto_compaction_when_policy_fires() {
+    let mut runtime = FakeRuntime {
+        auto_decisions: [CompactionTriggerDecision::Fire {
+            source: CompactionTriggerSource::AutoThreshold,
+            reason: "threshold_reached".to_string(),
+        }]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    };
+    let mut ui = FakeInteractiveUi::with_prompts(&[]);
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(
+        runtime.executed_compaction_sources,
+        vec![CompactionTriggerSource::AutoThreshold]
+    );
+}
+
+#[test]
+fn interactive_loop_skips_auto_compaction_when_policy_no_fire() {
+    let mut runtime = FakeRuntime {
+        auto_decisions: [CompactionTriggerDecision::NoFire {
+            reason: "below_lower_bound".to_string(),
+        }]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    };
+    let mut ui = FakeInteractiveUi::with_prompts(&[]);
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert!(runtime.executed_compaction_sources.is_empty());
+}
+
+#[test]
+fn interactive_loop_does_not_duplicate_auto_compaction_while_disarmed() {
+    let mut runtime = FakeRuntime {
+        auto_decisions: [
+            CompactionTriggerDecision::Fire {
+                source: CompactionTriggerSource::AutoThreshold,
+                reason: "threshold_reached".to_string(),
+            },
+            CompactionTriggerDecision::NoFire {
+                reason: "disarmed".to_string(),
+            },
+            CompactionTriggerDecision::NoFire {
+                reason: "disarmed".to_string(),
+            },
+        ]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    };
+    let mut ui = FakeInteractiveUi::with_prompts(&[]);
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(runtime.executed_compaction_sources.len(), 1);
+    assert_eq!(
+        runtime.executed_compaction_sources[0],
+        CompactionTriggerSource::AutoThreshold
+    );
+}
+
+#[test]
+fn interactive_loop_continues_turn_processing_with_auto_compaction_enabled() {
+    let mut runtime = FakeRuntime {
+        auto_decisions: [CompactionTriggerDecision::Fire {
+            source: CompactionTriggerSource::AutoThreshold,
+            reason: "threshold_reached".to_string(),
+        }]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    };
+    let mut ui = FakeInteractiveUi::with_prompts(&["hello"]);
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(runtime.prompts, vec!["hello".to_string()]);
+    assert_eq!(
+        runtime.executed_compaction_sources,
+        vec![CompactionTriggerSource::AutoThreshold]
+    );
+}
+
+#[test]
+fn recognized_slash_commands_never_sent_to_llm() {
+    let mut runtime = FakeRuntime::default();
+    let mut ui = FakeInteractiveUi::with_prompts(&["/help", "/status", "/mcp", "/compact"]);
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert!(runtime.prompts.is_empty());
+    assert_eq!(
+        runtime.executed_compaction_sources,
+        vec![CompactionTriggerSource::SlashCompact]
+    );
+}
+
+#[test]
+fn interactive_loop_routes_compact_slash_to_compaction_executor() {
+    let mut runtime = FakeRuntime::default();
+    let mut ui = FakeInteractiveUi::with_prompts(&["/compact", "hello"]);
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(
+        runtime.executed_compaction_sources,
+        vec![CompactionTriggerSource::SlashCompact]
+    );
+    assert_eq!(runtime.prompts, vec!["hello".to_string()]);
+}
+
+#[test]
+fn typed_compact_submit_triggers_compaction_path() {
+    let mut runtime = FakeRuntime::default();
+    let mut ui = FakeInteractiveUi::with_prompts(&["/compact"]);
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(
+        runtime.executed_compaction_sources,
+        vec![CompactionTriggerSource::SlashCompact]
+    );
+    assert!(runtime.prompts.is_empty());
+}
+
+#[test]
+fn interactive_loop_unknown_slash_emits_warning_and_continues() {
+    let mut runtime = FakeRuntime::default();
+    let mut ui = FakeInteractiveUi::with_prompts(&["/compact now", "real prompt"]);
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert!(
+        ui.warnings
+            .iter()
+            .any(|entry| entry == "Unknown slash command: /compact now")
+    );
+    assert_eq!(runtime.prompts, vec!["real prompt".to_string()]);
+}
+
+#[test]
+fn recognized_slash_commands_not_persisted_as_session_turn_messages() {
+    let mut runtime = FakeRuntime::default();
+    let mut ui = FakeInteractiveUi::with_prompts(&["/help", "/status", "/mcp", "/compact"]);
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert!(runtime.prompts.is_empty());
+    assert!(
+        runtime.executed_compaction_sources == vec![CompactionTriggerSource::SlashCompact],
+        "only /compact should route to compaction trigger"
+    );
+}
+
+#[test]
+fn manual_and_auto_compaction_failure_surface_is_consistent() {
+    let mut runtime = FakeRuntime {
+        fail_compaction: true,
+        auto_decisions: [CompactionTriggerDecision::Fire {
+            source: CompactionTriggerSource::AutoThreshold,
+            reason: "threshold_reached".to_string(),
+        }]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    };
+    let mut ui = FakeInteractiveUi::with_prompts(&["/compact"]);
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert!(
+        runtime.compaction_call_count >= 1,
+        "expected compaction executor to be invoked at least once"
+    );
+    assert!(ui.warnings.iter().all(|w| {
+        !w.starts_with("Session compaction failed:")
+            || w.as_str() == "Session compaction failed: sliding_summary summarization unavailable"
+    }));
+}
+
+#[test]
+fn slash_commands_reuse_command_palette_action_handlers() {
+    let mut runtime = FakeRuntime::default();
+    let mut ui = FakeInteractiveUi::with_prompts(&["/help", "/status", "/mcp"]);
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(
+        ui.shared_actions,
+        vec![SharedUiAction::Help, SharedUiAction::Status, SharedUiAction::Mcps]
+    );
+    assert!(runtime.prompts.is_empty());
+}
+
+#[test]
+fn manual_and_auto_compaction_share_single_execution_path() {
+    let mut runtime = FakeRuntime {
+        auto_decisions: [CompactionTriggerDecision::Fire {
+            source: CompactionTriggerSource::AutoThreshold,
+            reason: "threshold_reached".to_string(),
+        }]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    };
+    let mut ui = FakeInteractiveUi::with_prompts(&["/compact"]);
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(runtime.compaction_call_count, 2);
+    assert_eq!(
+        runtime.executed_compaction_sources,
+        vec![CompactionTriggerSource::AutoThreshold, CompactionTriggerSource::SlashCompact]
+    );
 }
 
 #[test]
@@ -461,6 +732,10 @@ impl InteractiveUi for ResponsiveInteractiveUi {
         self.fatal.as_deref()
     }
 
+    fn execute_shared_ui_action(&mut self, _action: SharedUiAction) -> bool {
+        true
+    }
+
     fn hydrate_transcript_from_messages(
         &mut self,
         _messages: impl IntoIterator<Item = UiMessageSnapshot>,
@@ -594,6 +869,10 @@ impl InteractiveUi for AbortDuringActiveUi {
 
     fn fatal_error(&self) -> Option<&str> {
         self.fatal.as_deref()
+    }
+
+    fn execute_shared_ui_action(&mut self, _action: SharedUiAction) -> bool {
+        true
     }
 
     fn hydrate_transcript_from_messages(
@@ -915,6 +1194,10 @@ impl InteractiveUi for StagedToggleUi {
 
     fn fatal_error(&self) -> Option<&str> {
         None
+    }
+
+    fn execute_shared_ui_action(&mut self, _action: SharedUiAction) -> bool {
+        true
     }
 
     fn hydrate_transcript_from_messages(

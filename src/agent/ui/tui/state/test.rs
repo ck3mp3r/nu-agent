@@ -546,6 +546,71 @@ fn command_palette_fuzzy_query_matches_skills_entry() {
 }
 
 #[test]
+fn inline_slash_suggestions_open_on_leading_slash() {
+    let mut state = AppState::new();
+
+    state.append_input_char('/');
+
+    assert!(state.inline_slash_open);
+    assert_eq!(state.inline_slash_selection, 0);
+    assert_eq!(
+        state.inline_slash_suggestions(),
+        &[
+            crate::agent::protocol::slash::SlashCommand::Compact,
+            crate::agent::protocol::slash::SlashCommand::Mcp,
+            crate::agent::protocol::slash::SlashCommand::Help,
+            crate::agent::protocol::slash::SlashCommand::Status,
+        ]
+    );
+}
+
+#[test]
+fn inline_slash_suggestions_filter_incrementally_as_input_grows() {
+    let mut state = AppState::new();
+
+    state.append_input_char('/');
+    assert_eq!(state.inline_slash_suggestions().len(), 4);
+
+    state.append_input_char('c');
+    assert_eq!(
+        state.inline_slash_suggestions(),
+        &[crate::agent::protocol::slash::SlashCommand::Compact]
+    );
+
+    state.append_input_char('o');
+    assert_eq!(
+        state.inline_slash_suggestions(),
+        &[crate::agent::protocol::slash::SlashCommand::Compact]
+    );
+}
+
+#[test]
+fn inline_slash_suggestions_close_when_prefix_removed() {
+    let mut state = AppState::new();
+
+    state.append_input_char('/');
+    state.append_input_char('c');
+    assert!(state.inline_slash_open);
+
+    state.backspace_input_char();
+    state.backspace_input_char();
+
+    assert_eq!(state.input.buffer, "");
+    assert!(!state.inline_slash_open);
+    assert!(state.inline_slash_suggestions().is_empty());
+}
+
+#[test]
+fn inline_slash_suggestions_do_not_open_command_palette() {
+    let mut state = AppState::new();
+
+    state.append_input_char('/');
+
+    assert!(state.inline_slash_open);
+    assert!(!state.command_palette_open);
+}
+
+#[test]
 fn mcp_server_toggle_and_counts_follow_selected_row() {
     let mut state = AppState::new();
     state.set_mcp_servers(vec![

@@ -8,18 +8,33 @@ use nu_protocol::{LabeledError, Span, Value};
 
 use crate::agent::protocol::{
     cancellation::is_llm_call_cancelled,
+    compaction::{CompactionTriggerDecision, CompactionTriggerSource},
     contracts::{
         ConversationRuntime, InteractiveUi, McpToggleRequest, McpUsabilityState,
         ProgressUi, UiMessageSnapshot,
+        SharedUiAction,
     },
     event::UiEvent,
+    slash::{SlashCommand, SlashParseResult, parse_slash_command},
 };
+
+const COMPACTION_FAILURE_WARNING: &str =
+    "Session compaction failed: sliding_summary summarization unavailable";
 
 type McpToggleResult = (Result<McpUsabilityState, String>, usize);
 type PendingMcpToggle = (String, mpsc::Receiver<McpToggleResult>);
+type PendingAutoCompaction = mpsc::Receiver<Option<String>>;
+type PendingCompactionTrigger = mpsc::Receiver<Option<String>>;
 
 enum WorkerCommand {
     ExecuteTurn { prompt: String, span: Span },
+    EvaluateAutoCompaction {
+        response_tx: mpsc::Sender<Option<String>>,
+    },
+    ExecuteCompactionTrigger {
+        source: CompactionTriggerSource,
+        response_tx: mpsc::Sender<Option<String>>,
+    },
     ToggleMcp {
         server_name: String,
         enable: bool,
@@ -80,6 +95,26 @@ where
                         let result = runtime.execute_turn(&mut worker_ui, prompt, None, span);
                         let _ = worker_result_tx.send(result);
                     }
+                    WorkerCommand::EvaluateAutoCompaction { response_tx } => {
+                        let warning = match runtime.evaluate_auto_compaction() {
+                            Some(CompactionTriggerDecision::Fire { source, .. }) => runtime
+                                .execute_compaction_trigger(&mut worker_ui, source)
+                                .err()
+                                .map(|_error| COMPACTION_FAILURE_WARNING.to_string()),
+                            _ => None,
+                        };
+                        let _ = response_tx.send(warning);
+                    }
+                    WorkerCommand::ExecuteCompactionTrigger {
+                        source,
+                        response_tx,
+                    } => {
+                        let warning = runtime
+                            .execute_compaction_trigger(&mut worker_ui, source)
+                            .err()
+                            .map(|_error| COMPACTION_FAILURE_WARNING.to_string());
+                        let _ = response_tx.send(warning);
+                    }
                     WorkerCommand::ToggleMcp {
                         server_name,
                         enable,
@@ -96,6 +131,8 @@ where
 
         let mut worker_active = false;
         let mut pending_mcp_toggles: Vec<PendingMcpToggle> = Vec::new();
+        let mut pending_auto_compaction: Option<PendingAutoCompaction> = None;
+        let mut pending_compaction_trigger: Option<PendingCompactionTrigger> = None;
 
         loop {
             ui.pump_once();
@@ -155,6 +192,47 @@ where
             }
             pending_mcp_toggles = retained;
 
+            if !worker_active {
+                if let Some(response_rx) = pending_compaction_trigger.take() {
+                    match response_rx.try_recv() {
+                        Ok(Some(message)) => ui.emit(&UiEvent::Warning { message }),
+                        Ok(None) => {}
+                        Err(mpsc::TryRecvError::Empty) => {
+                            pending_compaction_trigger = Some(response_rx)
+                        }
+                        Err(mpsc::TryRecvError::Disconnected) => {
+                            ui.emit(&UiEvent::Warning {
+                                message: "Compaction worker disconnected".to_string(),
+                            });
+                        }
+                    }
+                }
+
+                if pending_auto_compaction.is_none() {
+                    let (response_tx, response_rx) = mpsc::channel();
+                    if worker_cmd_tx
+                        .send(WorkerCommand::EvaluateAutoCompaction { response_tx })
+                        .is_ok()
+                    {
+                        pending_auto_compaction = Some(response_rx);
+                    }
+                }
+
+                if let Some(response_rx) = pending_auto_compaction.take() {
+                    match response_rx.try_recv() {
+                        Ok(Some(message)) => ui.emit(&UiEvent::Warning { message }),
+                        Ok(None) => {}
+                        Err(mpsc::TryRecvError::Empty) => {
+                            pending_auto_compaction = Some(response_rx)
+                        }
+                        Err(mpsc::TryRecvError::Disconnected) => {}
+                    }
+                }
+            } else {
+                pending_auto_compaction = None;
+                pending_compaction_trigger = None;
+            }
+
             if ui.take_cancel_requested() {
                 cancel_requested.store(true, Ordering::SeqCst);
             }
@@ -184,6 +262,45 @@ where
                 while let Some(prompt) = ui.take_submitted_prompt() {
                     if prompt.trim().is_empty() {
                         continue;
+                    }
+
+                    match parse_slash_command(&prompt) {
+                        SlashParseResult::Command(SlashCommand::Compact) => {
+                            let (response_tx, response_rx) = mpsc::channel();
+                            if worker_cmd_tx
+                                .send(WorkerCommand::ExecuteCompactionTrigger {
+                                    source: CompactionTriggerSource::SlashCompact,
+                                    response_tx,
+                                })
+                                .is_ok()
+                            {
+                                pending_compaction_trigger = Some(response_rx);
+                            } else {
+                                ui.emit(&UiEvent::Warning {
+                                    message: "Compaction worker channel closed".to_string(),
+                                });
+                            }
+                            continue;
+                        }
+                        SlashParseResult::Command(SlashCommand::Help) => {
+                            let _ = ui.execute_shared_ui_action(SharedUiAction::Help);
+                            continue;
+                        }
+                        SlashParseResult::Command(SlashCommand::Status) => {
+                            let _ = ui.execute_shared_ui_action(SharedUiAction::Status);
+                            continue;
+                        }
+                        SlashParseResult::Command(SlashCommand::Mcp) => {
+                            let _ = ui.execute_shared_ui_action(SharedUiAction::Mcps);
+                            continue;
+                        }
+                        SlashParseResult::Unknown(command) => {
+                            ui.emit(&UiEvent::Warning {
+                                message: format!("Unknown slash command: {command}"),
+                            });
+                            continue;
+                        }
+                        SlashParseResult::NotSlash => {}
                     }
 
                     worker_cmd_tx

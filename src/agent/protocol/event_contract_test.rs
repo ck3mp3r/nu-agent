@@ -29,11 +29,18 @@ fn ui_event_contract_exposes_required_variants() {
         UiEvent::Warning {
             message: "compaction failed".to_string(),
         },
+        UiEvent::CompactionTriggered {
+            source: "auto_threshold".to_string(),
+            summarized_count: 3,
+            kept_recent_count: 2,
+            summary_preview: "summary preview".to_string(),
+            summary_body: "summary body".to_string(),
+        },
         UiEvent::AssistantMessage {
             text: "done".to_string(),
         },
         UiEvent::Completed { tool_calls: 1 },
     ];
 
-    assert_eq!(events.len(), 8);
+    assert_eq!(events.len(), 9);
 }

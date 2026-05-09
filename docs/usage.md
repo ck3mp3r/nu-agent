@@ -147,6 +147,44 @@ built-ins.
 "continue" | agent --session "session-id"
 ```
 
+### Compaction triggers and persistence
+
+- Auto compaction trigger evaluation uses threshold tolerance and hysteresis:
+  - fire bound: `threshold - tolerance`
+  - rearm bound: `threshold - (tolerance + hysteresis_margin)`
+- Manual slash trigger:
+  - `/compact` triggers force compaction immediately (bypasses threshold gate)
+  - `/compact <args>` is treated as unknown for now
+  - unknown slash commands emit a warning and processing continues
+- Slash command text is runtime control input and is not forwarded as prompt text to the LLM.
+- Manual and auto trigger sources share one execution path, and compaction persistence is durable:
+  - session JSONL content is rewritten through session APIs
+  - compacted message set and `compaction_count` metadata are persisted
+  - transcript-visible compaction summary artifact includes source + summarized/kept counts
+  - compaction summary artifact includes summary preview/body from the produced summary text
+
+### Compaction strategy contract
+
+- Canonical strategy name is `sliding_summary`.
+- Current runtime exposes a single active compaction mode only (`sliding_summary`).
+- Legacy stored strategy values `truncate`, `sliding`, and `summarize` normalize to `sliding_summary` on deserialize.
+
+### Inline slash suggestions and slash commands
+
+- Inline slash suggestions open immediately when input starts with `/`.
+- Suggestions are non-modal and independent of command palette popup/table/state.
+- Filtering is deterministic and incremental as input grows (`/c`, `/co`, ...).
+- If slash prefix is removed, inline suggestions close cleanly and never fallback to command palette.
+- Supported slash commands:
+  - `/compact`
+  - `/mcp`
+  - `/help`
+  - `/status`
+- `/help`, `/status`, and `/mcp` route to the same action handlers as Ctrl-P entries.
+- Unknown slash commands emit deterministic warning text and the interactive loop continues.
+- Immediate slash command text is not echoed into the transcript and is not persisted as a session turn message.
+- Compaction result artifacts remain transcript-visible (for example, compaction summary/source/count rows).
+
 ## MCP tool filtering
 
 ```nu

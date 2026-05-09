@@ -72,10 +72,7 @@ impl SimplePluginCommand for AgentSessionInspect {
         );
         config_record.push(
             "compaction_strategy",
-            Value::string(
-                format!("{:?}", session.config().compaction_strategy),
-                call.head,
-            ),
+            Value::string(session.config().compaction_strategy.as_str(), call.head),
         );
         config_record.push(
             "keep_recent",
