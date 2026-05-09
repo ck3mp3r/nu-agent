@@ -310,6 +310,17 @@ pub(crate) fn builtin_fs_tool_definitions() -> Vec<rig::completion::ToolDefiniti
                 "required": ["path", "expected_version", "operations"]
             }),
         },
+        rig::completion::ToolDefinition {
+            name: "skill".to_string(),
+            description: "Load skill content by explicit name from local or home skill roots".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" }
+                },
+                "required": ["name"]
+            }),
+        },
     ]
 }
 

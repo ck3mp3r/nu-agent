@@ -7,7 +7,10 @@ use crate::agent::{
         },
         event::UiEvent,
     },
-    ui::{renderer::UiRenderer, tui::runtime::{HybridTerminalEvents, TuiRuntimeRenderer}},
+    ui::{
+        renderer::UiRenderer,
+        tui::runtime::{HybridTerminalEvents, TuiRuntimeRenderer},
+    },
 };
 
 pub(crate) struct StderrProgressUi<R>
@@ -68,6 +71,17 @@ where
         projection: Vec<crate::tools::mcp::runtime::McpServerLifecycle>,
     ) {
         self.renderer.set_mcp_lifecycle_projection(projection);
+    }
+
+    pub fn set_skills_projection(
+        &mut self,
+        skills: Vec<crate::agent::protocol::skills::DiscoverableSkill>,
+    ) {
+        self.renderer.set_skills_projection(skills);
+    }
+
+    pub fn mark_skills_discovery_failed(&mut self) {
+        self.renderer.mark_skills_discovery_failed();
     }
 
     pub fn set_llm_visible_mcp_tool_count(&mut self, count: usize) {

@@ -66,6 +66,7 @@ pub enum CommandPaletteAction {
     Help,
     Status,
     Mcps,
+    Skills,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,6 +74,14 @@ pub enum InfoPanel {
     Help,
     Status,
     Mcps,
+    Skills,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiscoverableSkill {
+    pub source_priority: u8,
+    pub source: String,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -157,6 +166,8 @@ pub struct AppState {
     pub info_panel_scroll: usize,
     pub mcp_servers: Vec<McpServerState>,
     pub mcp_panel_selection: usize,
+    discoverable_skills: Vec<DiscoverableSkill>,
+    skills_discovery_failed: bool,
     llm_visible_mcp_tool_count: usize,
     mcp_failure_reasons: HashMap<String, String>,
     pending_mcp_toggle_requests: VecDeque<McpToggleRequest>,
@@ -204,6 +215,8 @@ impl Default for AppState {
             info_panel_scroll: 0,
             mcp_servers: Vec::new(),
             mcp_panel_selection: 0,
+            discoverable_skills: Vec::new(),
+            skills_discovery_failed: false,
             llm_visible_mcp_tool_count: 0,
             mcp_failure_reasons: HashMap::new(),
             pending_mcp_toggle_requests: VecDeque::new(),
@@ -260,6 +273,7 @@ impl AppState {
             (CommandPaletteAction::Help, "Help"),
             (CommandPaletteAction::Status, "Status"),
             (CommandPaletteAction::Mcps, "MCPs"),
+            (CommandPaletteAction::Skills, "Skills"),
         ];
 
         if self.command_palette_query.is_empty() {
@@ -319,6 +333,30 @@ impl AppState {
 
     pub fn set_llm_visible_mcp_tool_count(&mut self, count: usize) {
         self.llm_visible_mcp_tool_count = count;
+    }
+
+    pub fn set_discoverable_skills(&mut self, mut skills: Vec<DiscoverableSkill>) {
+        skills.sort_by(|left, right| {
+            left.source_priority
+                .cmp(&right.source_priority)
+                .then_with(|| left.name.to_ascii_lowercase().cmp(&right.name.to_ascii_lowercase()))
+                .then_with(|| left.source.to_ascii_lowercase().cmp(&right.source.to_ascii_lowercase()))
+        });
+        self.discoverable_skills = skills;
+        self.skills_discovery_failed = false;
+    }
+
+    pub fn mark_skills_discovery_failed(&mut self) {
+        self.discoverable_skills.clear();
+        self.skills_discovery_failed = true;
+    }
+
+    pub fn discoverable_skills(&self) -> &[DiscoverableSkill] {
+        &self.discoverable_skills
+    }
+
+    pub fn skills_discovery_failed(&self) -> bool {
+        self.skills_discovery_failed
     }
 
     pub fn llm_visible_mcp_tool_count(&self) -> usize {

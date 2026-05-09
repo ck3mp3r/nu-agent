@@ -51,6 +51,13 @@ pub(crate) fn run_tui_mode(
         &runtime_impl.config.provider,
         &runtime_impl.config.model,
     ));
+    match std::env::current_dir() {
+        Ok(cwd) => {
+            let skills = crate::agent::protocol::skills::discover_skill_catalog_for_cwd(&cwd);
+            tui_ui.set_skills_projection(skills);
+        }
+        Err(_err) => tui_ui.mark_skills_discovery_failed(),
+    }
     tui_ui.set_mcp_lifecycle_projection(runtime_impl.mcp_lifecycle_projection.clone());
     tui_ui.set_llm_visible_mcp_tool_count(runtime_impl.llm_visible_mcp_tool_count());
     tui_ui.set_context_window_max_tokens(runtime_impl.config.max_context_tokens.map(u64::from));

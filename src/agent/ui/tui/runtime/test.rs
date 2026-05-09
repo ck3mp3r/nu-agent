@@ -2960,9 +2960,69 @@ fn command_palette_table_renders_required_columns_and_rows() {
 
     assert_eq!(model.columns, vec!["Action", "Summary", "Keys"]);
     let actions = model.rows.iter().map(|row| row[0].as_str()).collect::<Vec<_>>();
-    assert_eq!(actions, vec!["Help", "Status", "MCPs"]);
+    assert_eq!(actions, vec!["Help", "Status", "MCPs", "Skills"]);
     assert!(model.rows.iter().any(|row| row[2].contains("↑/↓")));
     assert_eq!(model.selected, Some(0));
+}
+
+#[test]
+fn command_palette_table_renders_skills_action_row() {
+    let mut state = AppState::new();
+    state.open_command_palette();
+
+    let model = command_palette_table_model_for_test(&state, 80, 8);
+    let actions = model.rows.iter().map(|row| row[0].as_str()).collect::<Vec<_>>();
+
+    assert!(actions.contains(&"Skills"));
+}
+
+#[test]
+fn skills_panel_renders_empty_state_when_no_skills_available() {
+    let state = AppState::new();
+    let (title, lines) = crate::agent::ui::tui::runtime::skills_panel_lines_for_test(&state);
+
+    assert_eq!(title, "Skills");
+    let rendered = lines
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(rendered.contains("No discoverable skills available."));
+}
+
+#[test]
+fn skills_panel_lists_skills_in_deterministic_order() {
+    let mut state = AppState::new();
+    state.set_discoverable_skills(vec![
+        crate::agent::ui::tui::state::DiscoverableSkill {
+            source_priority: 1,
+            source: "home".to_string(),
+            name: "zeta".to_string(),
+        },
+        crate::agent::ui::tui::state::DiscoverableSkill {
+            source_priority: 0,
+            source: "repo".to_string(),
+            name: "beta".to_string(),
+        },
+        crate::agent::ui::tui::state::DiscoverableSkill {
+            source_priority: 0,
+            source: "repo".to_string(),
+            name: "alpha".to_string(),
+        },
+    ]);
+
+    let (_title, lines) = crate::agent::ui::tui::runtime::skills_panel_lines_for_test(&state);
+    let rendered = lines
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let alpha_idx = rendered.find("alpha").expect("alpha row present");
+    let beta_idx = rendered.find("beta").expect("beta row present");
+    let zeta_idx = rendered.find("zeta").expect("zeta row present");
+    assert!(alpha_idx < beta_idx);
+    assert!(beta_idx < zeta_idx);
 }
 
 #[test]

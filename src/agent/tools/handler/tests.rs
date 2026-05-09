@@ -47,9 +47,60 @@ fn builtin_fs_tool_name_detection_matches_exact_contract() {
     assert!(super::is_builtin_fs_tool_name("read"));
     assert!(super::is_builtin_fs_tool_name("edit"));
     assert!(super::is_builtin_fs_tool_name("patch"));
+    assert!(super::is_builtin_fs_tool_name("skill"));
 
     assert!(!super::is_builtin_fs_tool_name("fs__read"));
     assert!(!super::is_builtin_fs_tool_name("tool__edit"));
+}
+
+#[test]
+fn builtin_skill_dispatch_loads_from_explicit_resolver_for_cwd() {
+    let dir = tempdir().expect("temp dir");
+    let cwd = dir.path().join("repo");
+
+    fs::create_dir_all(cwd.join(".agents/skills/context")).expect("local skill dir");
+    fs::write(
+        cwd.join(".agents/skills/context/SKILL.md"),
+        "local context skill\n",
+    )
+    .expect("local skill file");
+    fs::create_dir_all(&cwd).expect("cwd");
+
+    let result = super::dispatch_builtin_fs_tool(
+        "skill",
+        &json!({
+            "name": "context"
+        }),
+        cwd.as_path(),
+    )
+    .expect("dispatch should succeed")
+    .expect("skill should be handled");
+
+    assert_eq!(result["name"], "context");
+    assert_eq!(result["source"], "local");
+    assert_eq!(result["content"], "local context skill\n");
+}
+
+#[test]
+fn builtin_skill_dispatch_preserves_missing_skill_not_found_semantics() {
+    let dir = tempdir().expect("temp dir");
+    let cwd = dir.path().join("repo");
+
+    fs::create_dir_all(cwd.join(".agents/skills")).expect("local skills root");
+    fs::create_dir_all(&cwd).expect("cwd");
+
+    let result = super::dispatch_builtin_fs_tool(
+        "skill",
+        &json!({
+            "name": "does-not-exist"
+        }),
+        cwd.as_path(),
+    )
+    .expect("dispatch should succeed")
+    .expect("skill should be handled");
+
+    assert_eq!(result["name"], "does-not-exist");
+    assert_eq!(result["found"], false);
 }
 
 #[test]

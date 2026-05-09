@@ -260,6 +260,9 @@ fn handle_command_palette_select(state: &mut AppState) {
             crate::agent::ui::tui::state::CommandPaletteAction::Mcps => {
                 crate::agent::ui::tui::state::InfoPanel::Mcps
             }
+            crate::agent::ui::tui::state::CommandPaletteAction::Skills => {
+                crate::agent::ui::tui::state::InfoPanel::Skills
+            }
         };
         state.open_info_panel(panel);
     }

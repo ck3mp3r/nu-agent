@@ -316,7 +316,7 @@ fn builtin_fs_tool_registration_contains_exact_unprefixed_names() {
         .map(|tool| tool.name)
         .collect::<Vec<_>>();
 
-    assert_eq!(names, vec!["read", "edit", "patch"]);
+    assert_eq!(names, vec!["read", "edit", "patch", "skill"]);
 }
 
 #[test]

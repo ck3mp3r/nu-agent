@@ -25,7 +25,7 @@
 
 - Press `Ctrl-P` to open the command palette.
 - Type to filter, then press `Enter`.
-- Use it to open Help, Status, or MCPs.
+- Use it to open Help, Status, MCPs, or Skills.
 - Press `Esc` to close the palette.
 
 # MCP basics (enabled/disabled/failed + where to toggle)

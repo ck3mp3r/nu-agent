@@ -56,6 +56,7 @@ use crate::agent::ui::{renderer::UiRenderer,
     },
 };
 use crate::agent::protocol::event::UiEvent;
+use crate::agent::protocol::skills::DiscoverableSkill as ProtocolDiscoverableSkill;
 use crate::tools::mcp::runtime::McpServerLifecycle;
 #[cfg(test)]
 use crate::agent::ui::tui::state::{PromptStatus, TranscriptLineStatus};
@@ -148,6 +149,7 @@ fn command_palette_action_summary(action: CommandPaletteAction) -> &'static str 
         CommandPaletteAction::Help => "View key help",
         CommandPaletteAction::Status => "View runtime status",
         CommandPaletteAction::Mcps => "Manage MCP servers",
+        CommandPaletteAction::Skills => "List available skills",
     }
 }
 
@@ -160,7 +162,30 @@ fn command_palette_action_label(action: CommandPaletteAction) -> &'static str {
         CommandPaletteAction::Help => "Help",
         CommandPaletteAction::Status => "Status",
         CommandPaletteAction::Mcps => "MCPs",
+        CommandPaletteAction::Skills => "Skills",
     }
+}
+
+fn skills_panel_lines(state: &AppState) -> (&'static str, Vec<Line<'static>>) {
+    if state.skills_discovery_failed() {
+        return (
+            "Skills",
+            vec![Line::from("Skills discovery unavailable. Showing no skills.")],
+        );
+    }
+
+    if state.discoverable_skills().is_empty() {
+        return (
+            "Skills",
+            vec![Line::from("No discoverable skills available.")],
+        );
+    }
+
+    let mut lines = vec![Line::from("Discoverable skills")];
+    lines.extend(state.discoverable_skills().iter().map(|skill| {
+        Line::from(format!("- {} ({})", skill.name, skill.source))
+    }));
+    ("Skills", lines)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -553,6 +578,22 @@ impl RuntimeCoordinator {
             })
             .collect();
         self.state.set_mcp_servers(servers);
+    }
+
+    pub(crate) fn set_skills_projection(&mut self, skills: Vec<ProtocolDiscoverableSkill>) {
+        let mapped = skills
+            .into_iter()
+            .map(|skill| crate::agent::ui::tui::state::DiscoverableSkill {
+                source_priority: skill.source.priority(),
+                source: skill.source.label().to_string(),
+                name: skill.name,
+            })
+            .collect();
+        self.state.set_discoverable_skills(mapped);
+    }
+
+    pub(crate) fn mark_skills_discovery_failed(&mut self) {
+        self.state.mark_skills_discovery_failed();
     }
 
     pub(crate) fn set_llm_visible_mcp_tool_count(&mut self, count: usize) {
@@ -1129,6 +1170,7 @@ impl RuntimeCoordinator {
                                     &self.last_input_poll_status,
                                     self.last_input_error.as_deref(),
                                 ),
+                                InfoPanel::Skills => skills_panel_lines(&self.state),
                                 InfoPanel::Mcps => unreachable!("handled above"),
                             };
 
@@ -1271,6 +1313,11 @@ pub(super) fn status_panel_lines_for_test(
         last_input_poll_status,
         last_input_error,
     )
+}
+
+#[cfg(test)]
+pub(super) fn skills_panel_lines_for_test(state: &AppState) -> (&'static str, Vec<Line<'static>>) {
+    skills_panel_lines(state)
 }
 
 #[cfg(test)]
@@ -1610,6 +1657,14 @@ where
         projection: Vec<McpServerLifecycle>,
     ) {
         self.coordinator.set_mcp_lifecycle_projection(projection);
+    }
+
+    pub(crate) fn set_skills_projection(&mut self, skills: Vec<ProtocolDiscoverableSkill>) {
+        self.coordinator.set_skills_projection(skills);
+    }
+
+    pub(crate) fn mark_skills_discovery_failed(&mut self) {
+        self.coordinator.mark_skills_discovery_failed();
     }
 
     pub(crate) fn take_next_mcp_toggle_request(&mut self) -> Option<McpToggleRequest> {

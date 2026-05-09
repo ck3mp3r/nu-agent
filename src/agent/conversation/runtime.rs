@@ -88,6 +88,24 @@ fn call_llm_with_ui_ticks<U: ProgressUi>(
     }
 }
 
+fn merge_runtime_prompt(
+    prompt: &str,
+    context: Option<&str>,
+    preamble: Option<&str>,
+    agents_chain: Option<&str>,
+    available_skills: Option<&str>,
+) -> String {
+    let prompt_with_skills =
+        crate::agent::protocol::prompt::merge_prompt_with_context(prompt, available_skills);
+    let prompt_with_agents =
+        crate::agent::protocol::prompt::merge_prompt_with_context(&prompt_with_skills, agents_chain);
+    crate::agent::protocol::prompt::merge_preamble_with_prompt_and_context(
+        &prompt_with_agents,
+        context,
+        preamble,
+    )
+}
+
 pub(crate) struct AgentConversationRuntime {
     pub runtime: tokio::runtime::Runtime,
     pub runtime_ctx: RuntimeCtx,
@@ -155,10 +173,29 @@ impl ConversationRuntime for AgentConversationRuntime {
         context: Option<String>,
         span: Span,
     ) -> Result<Value, LabeledError> {
-        let mut merged_prompt = crate::agent::protocol::prompt::merge_preamble_with_prompt_and_context(
+        let loaded_agents = self
+            .mcp_caller_cwd
+            .as_deref()
+            .map(crate::agent::protocol::agents::load_agents_chain_for_cwd)
+            .unwrap_or_default();
+
+        for warning in &loaded_agents.warnings {
+            ui.emit(&UiEvent::Warning {
+                message: warning.clone(),
+            });
+        }
+
+        let available_skills = self
+            .mcp_caller_cwd
+            .as_deref()
+            .and_then(crate::agent::protocol::skills::render_available_skills_preamble);
+
+        let mut merged_prompt = merge_runtime_prompt(
             &prompt,
             context.as_deref(),
             self.config.preamble.as_deref(),
+            loaded_agents.merged_chain.as_deref(),
+            available_skills.as_deref(),
         );
 
         if let Some(ref session) = self.session {
@@ -457,7 +494,7 @@ fn persisted_assistant_message(content: &str, usage: &crate::llm::LlmUsage) -> M
 mod tests {
     use tempfile::tempdir;
 
-    use super::persisted_assistant_message;
+    use super::{merge_runtime_prompt, persisted_assistant_message};
     use crate::{
         llm::LlmUsage,
         session::SessionStore,
@@ -495,5 +532,49 @@ mod tests {
         assert_eq!(persisted_usage.input_tokens(), Some(21));
         assert_eq!(persisted_usage.output_tokens(), Some(34));
         assert_eq!(persisted_usage.total_tokens(), Some(55));
+    }
+
+    #[test]
+    fn runtime_prompt_includes_merged_agents_chain_before_user_prompt() {
+        let merged = merge_runtime_prompt(
+            "user prompt",
+            Some("ctx"),
+            Some("preamble"),
+            Some("AGENT-HOME\n\nAGENT-CWD"),
+            Some("<available_skills>\n  <skill><name>context</name></skill>\n</available_skills>"),
+        );
+
+        let preamble_pos = merged.find("preamble").expect("preamble present");
+        let agents_pos = merged.find("AGENT-HOME").expect("agents present");
+        let user_pos = merged.find("user prompt").expect("user prompt present");
+
+        assert!(
+            preamble_pos < agents_pos,
+            "preamble should remain before injected agents chain"
+        );
+        assert!(
+            agents_pos < user_pos,
+            "agents chain must appear before user prompt in merged runtime prompt"
+        );
+    }
+
+    #[test]
+    fn runtime_prompt_includes_available_skills_after_agents_chain_and_before_user_prompt() {
+        let merged = merge_runtime_prompt(
+            "user prompt",
+            Some("ctx"),
+            Some("preamble"),
+            Some("AGENT-HOME\n\nAGENT-CWD"),
+            Some("<available_skills>\n  <skill><name>context</name></skill>\n</available_skills>"),
+        );
+
+        let preamble_pos = merged.find("preamble").expect("preamble present");
+        let skills_pos = merged.find("<available_skills>").expect("skills present");
+        let agents_pos = merged.find("AGENT-HOME").expect("agents present");
+        let user_pos = merged.find("user prompt").expect("user prompt present");
+
+        assert!(preamble_pos < agents_pos, "preamble should remain first");
+        assert!(agents_pos < skills_pos, "agents should appear before skills list");
+        assert!(skills_pos < user_pos, "skills should remain before user prompt");
     }
 }

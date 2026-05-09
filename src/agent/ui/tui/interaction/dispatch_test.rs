@@ -688,6 +688,25 @@ fn palette_selection_can_open_mcps_panel() {
 }
 
 #[test]
+fn palette_selection_can_open_skills_panel() {
+    let mut state = AppState::new();
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
+
+    // Help -> Status -> MCPs -> Skills
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
+    assert_eq!(
+        state.command_palette_selected_action(),
+        Some(CommandPaletteAction::Skills)
+    );
+
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+    assert_eq!(state.info_panel, Some(InfoPanel::Skills));
+    assert!(!state.command_palette_open);
+}
+
+#[test]
 fn esc_closes_mcps_panel_and_preserves_insert_mode() {
     let mut state = AppState::new();
     state.open_info_panel(InfoPanel::Mcps);

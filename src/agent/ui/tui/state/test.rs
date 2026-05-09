@@ -477,6 +477,23 @@ fn command_palette_empty_query_returns_canonical_help_status_order_only() {
             CommandPaletteAction::Help,
             CommandPaletteAction::Status,
             CommandPaletteAction::Mcps,
+            CommandPaletteAction::Skills,
+        ]
+    );
+}
+
+#[test]
+fn command_palette_empty_query_returns_canonical_help_status_mcps_skills_order() {
+    let mut state = AppState::new();
+    state.open_command_palette();
+
+    assert_eq!(
+        state.command_palette_actions(),
+        vec![
+            CommandPaletteAction::Help,
+            CommandPaletteAction::Status,
+            CommandPaletteAction::Mcps,
+            CommandPaletteAction::Skills,
         ]
     );
 }
@@ -511,6 +528,21 @@ fn command_palette_fuzzy_query_matches_mcps_entry() {
     }
 
     assert_eq!(state.command_palette_actions(), vec![CommandPaletteAction::Mcps]);
+}
+
+#[test]
+fn command_palette_fuzzy_query_matches_skills_entry() {
+    let mut state = AppState::new();
+    state.open_command_palette();
+
+    for ch in "skls".chars() {
+        state.append_command_palette_query_char(ch);
+    }
+
+    assert_eq!(
+        state.command_palette_actions(),
+        vec![CommandPaletteAction::Skills]
+    );
 }
 
 #[test]

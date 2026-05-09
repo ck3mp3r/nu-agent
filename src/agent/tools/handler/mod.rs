@@ -47,6 +47,11 @@ struct BuiltinPatchArgs {
     operations: Vec<BuiltinPatchOpArgs>,
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct BuiltinSkillArgs {
+    name: String,
+}
+
 #[derive(Debug, Clone)]
 struct BuiltinFsToolError {
     kind: ToolErrorKind,
@@ -299,7 +304,7 @@ fn classify_tool_source(
 }
 
 pub(crate) fn is_builtin_fs_tool_name(tool_name: &str) -> bool {
-    matches!(tool_name, "read" | "edit" | "patch")
+    matches!(tool_name, "read" | "edit" | "patch" | "skill")
 }
 
 fn parse_edit_match_mode(value: Option<&str>) -> Result<crate::tools::fs::core::EditMatchMode, BuiltinFsToolError> {
@@ -485,6 +490,39 @@ fn dispatch_builtin_fs_tool(
                 "previous_lines": summary.previous_lines,
                 "new_lines": summary.new_lines,
             })))
+        }
+        "skill" => {
+            let args: BuiltinSkillArgs =
+                serde_json::from_value(arguments.clone()).map_err(|e| BuiltinFsToolError {
+                    kind: ToolErrorKind::Validation,
+                    message: format!("Invalid skill arguments: {e}"),
+                    details: None,
+                })?;
+
+            let resolved = crate::agent::protocol::skills::resolve_explicit_skill_request_for_cwd(
+                cwd,
+                &args.name,
+            )
+            .map_err(|e| BuiltinFsToolError {
+                kind: ToolErrorKind::Validation,
+                message: format!("skill resolution failed: {e}"),
+                details: None,
+            })?;
+
+            let payload = match resolved {
+                Some(resolved) => serde_json::json!({
+                    "name": resolved.name,
+                    "source": resolved.source.label(),
+                    "path": resolved.path,
+                    "content": resolved.content,
+                }),
+                None => serde_json::json!({
+                    "name": args.name,
+                    "found": false,
+                }),
+            };
+
+            Ok(Some(payload))
         }
         _ => Ok(None),
     }
