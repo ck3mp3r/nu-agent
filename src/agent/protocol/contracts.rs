@@ -22,6 +22,14 @@ pub(crate) struct UiMessageSnapshot {
     tool_arguments: Option<String>,
     tool_result: Option<String>,
     tool_success: Option<bool>,
+    usage: Option<UiMessageUsageSnapshot>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct UiMessageUsageSnapshot {
+    input_tokens: Option<u64>,
+    output_tokens: Option<u64>,
+    total_tokens: Option<u64>,
 }
 
 impl UiMessageSnapshot {
@@ -32,6 +40,7 @@ impl UiMessageSnapshot {
             tool_arguments: None,
             tool_result: None,
             tool_success: None,
+            usage: None,
         }
     }
 
@@ -51,6 +60,13 @@ impl UiMessageSnapshot {
         &self.role
     }
 
+    pub fn with_usage(mut self, usage: UiMessageUsageSnapshot) -> Self {
+        if usage.input_tokens.is_some() || usage.output_tokens.is_some() || usage.total_tokens.is_some() {
+            self.usage = Some(usage);
+        }
+        self
+    }
+
     pub fn content(&self) -> &str {
         &self.content
     }
@@ -61,6 +77,32 @@ impl UiMessageSnapshot {
 
     pub fn tool_success(&self) -> Option<bool> {
         self.tool_success
+    }
+
+    pub fn usage(&self) -> Option<UiMessageUsageSnapshot> {
+        self.usage
+    }
+}
+
+impl UiMessageUsageSnapshot {
+    pub fn new(input_tokens: Option<u64>, output_tokens: Option<u64>, total_tokens: Option<u64>) -> Self {
+        Self {
+            input_tokens,
+            output_tokens,
+            total_tokens,
+        }
+    }
+
+    pub fn input_tokens(&self) -> Option<u64> {
+        self.input_tokens
+    }
+
+    pub fn output_tokens(&self) -> Option<u64> {
+        self.output_tokens
+    }
+
+    pub fn total_tokens(&self) -> Option<u64> {
+        self.total_tokens
     }
 }
 

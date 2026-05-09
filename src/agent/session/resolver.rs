@@ -1,6 +1,6 @@
 use nu_protocol::LabeledError;
 
-use crate::agent::protocol::contracts::UiMessageSnapshot;
+use crate::agent::protocol::contracts::{UiMessageSnapshot, UiMessageUsageSnapshot};
 use crate::session::{Session, SessionStore};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,6 +65,11 @@ impl SessionResolver for DefaultSessionResolver<'_> {
                                         message.tool_result().map(ToOwned::to_owned),
                                         message.tool_success(),
                                     )
+                                    .with_usage(UiMessageUsageSnapshot::new(
+                                        message.usage().and_then(|usage| usage.input_tokens()),
+                                        message.usage().and_then(|usage| usage.output_tokens()),
+                                        message.usage().and_then(|usage| usage.total_tokens()),
+                                    ))
                             })
                             .collect()
                     } else {

@@ -1219,3 +1219,46 @@ fn test_atomic_write_implementation() {
          Got: same inode (non-atomic in-place write)"
     );
 }
+
+#[test]
+fn test_message_deserializes_old_record_without_usage_fields() {
+    use crate::session::Message;
+
+    let old_record = r#"{"role":"assistant","content":"Legacy record","timestamp":"2026-05-09T12:00:00Z"}"#;
+
+    let message: Message = serde_json::from_str(old_record)
+        .expect("Legacy message record without usage fields should deserialize");
+
+    assert_eq!(message.role(), "assistant");
+    assert_eq!(message.content(), "Legacy record");
+    assert!(message.usage().is_none());
+}
+
+#[test]
+fn test_message_usage_roundtrip_serde_and_builder_setter_api() {
+    use crate::session::{Message, MessageUsage};
+
+    let mut message = Message::new("assistant".to_string(), "Response with usage".to_string())
+        .with_usage(MessageUsage::new(11, 7, 18));
+    message.set_usage(MessageUsage::new(12, 8, 20));
+
+    let json = serde_json::to_string(&message).expect("Message should serialize with usage");
+    let value: serde_json::Value =
+        serde_json::from_str(&json).expect("Serialized message should be valid JSON");
+
+    let usage = value
+        .get("usage")
+        .expect("Serialized message should include usage object");
+    assert_eq!(usage.get("input_tokens").and_then(|v| v.as_u64()), Some(12));
+    assert_eq!(usage.get("output_tokens").and_then(|v| v.as_u64()), Some(8));
+    assert_eq!(usage.get("total_tokens").and_then(|v| v.as_u64()), Some(20));
+
+    let decoded: Message =
+        serde_json::from_str(&json).expect("Serialized message should deserialize");
+    let decoded_usage = decoded
+        .usage()
+        .expect("Deserialized message should include usage");
+    assert_eq!(decoded_usage.input_tokens(), Some(12));
+    assert_eq!(decoded_usage.output_tokens(), Some(8));
+    assert_eq!(decoded_usage.total_tokens(), Some(20));
+}

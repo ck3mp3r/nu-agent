@@ -9,8 +9,11 @@ use ratatui::{
     text::{Line, Span},
 };
 
-use crate::agent::protocol::contracts::UiMessageSnapshot;
+use crate::agent::protocol::contracts::{UiMessageSnapshot, UiMessageUsageSnapshot};
 use crate::agent::protocol::event::UiEvent;
+use crate::agent::session::resolver::{
+    DefaultSessionResolver, SessionResolutionInput, SessionResolver,
+};
 use crate::agent::ui::{renderer::UiRenderer,
     tui::{
         interaction::input::{TerminalEvent, TerminalKey},
@@ -24,12 +27,13 @@ use crate::agent::ui::{renderer::UiRenderer,
             lane_prefix_spans_for_test, row_spans_for_test,
             indicator_style_for_status_for_test, transition_spacer_for_roles_for_test,
             parse_persisted_tool_status_line_for_test,
+            command_palette_table_model_for_test,
             help_panel_lines_for_test,
             help_panel_max_scroll_for_test,
             help_panel_overflow_cue_for_test,
             help_panel_visible_window_for_test,
             status_panel_lines_for_test,
-            mcp_panel_lines_for_test,
+            mcp_table_model_for_test,
             transcript_title_for_test, visible_transcript_window,
             visible_transcript_window_for_render_for_test,
             visual_indicator_line_for_test,
@@ -45,7 +49,7 @@ use crate::agent::ui::{renderer::UiRenderer,
     },
 };
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use crate::session::{Message, SessionStore};
+use crate::session::{Message, MessageUsage, SessionStore};
 use crate::agent::ui::tui::test_support::markdown_fixture;
 
 const CTP_MOCHA_RED: Color = Color::Rgb(243, 139, 168);
@@ -630,7 +634,7 @@ fn status_lines_do_not_report_input_mode() {
 }
 
 #[test]
-fn compact_status_line_is_concise_and_excludes_input_mode() {
+fn compact_status_line_matches_lane_1_contract() {
     let state = AppState::new();
 
     let status_line = crate::agent::ui::tui::runtime::compact_status_line_for_test(
@@ -641,9 +645,132 @@ fn compact_status_line_is_concise_and_excludes_input_mode() {
         None,
     );
 
-    assert!(status_line.contains("tools 0"));
-    assert!(status_line.contains("openai/gpt-4o-mini"));
-    assert!(!status_line.contains("mode "));
+    assert!(status_line.starts_with("openai/gpt-4o-mini"));
+    assert!(!status_line.contains('|'));
+}
+
+#[test]
+fn lane_1_wide_no_truncation() {
+    let state = AppState::new();
+    let line = crate::agent::ui::tui::runtime::status::compact_status_line_with_branch_for_test(
+        &state,
+        "abcdefghijklmnop",
+        Some("branchname"),
+        40,
+    );
+
+    assert_eq!(line, "abcdefghijklmnop              branchname");
+    assert!(!line.contains('|'));
+}
+
+#[test]
+fn lane_1_medium_one_side_truncation() {
+    let state = AppState::new();
+    let line = crate::agent::ui::tui::runtime::status::compact_status_line_with_branch_for_test(
+        &state,
+        "abcdefghijklmnop",
+        Some("branchname"),
+        23,
+    );
+
+    assert_eq!(line, "...hijklmnop branchname");
+    assert!(!line.contains('|'));
+}
+
+#[test]
+fn lane_1_narrow_both_side_truncation() {
+    let state = AppState::new();
+    let line = crate::agent::ui::tui::runtime::status::compact_status_line_with_branch_for_test(
+        &state,
+        "abcdefghijklmnop",
+        Some("branchname"),
+        20,
+    );
+
+    assert_eq!(line, "...klmnop branchname");
+    assert!(!line.contains('|'));
+}
+
+#[test]
+fn lane_1_branch_segment_is_right_aligned_when_present() {
+    let state = AppState::new();
+    let width = 40usize;
+    let line = crate::agent::ui::tui::runtime::status::compact_status_line_with_branch_for_test(
+        &state,
+        "abcdefghijklmnop",
+        Some("branchname"),
+        width,
+    );
+
+    assert_eq!(line.chars().count(), width);
+    assert!(line.starts_with("abcdefghijklmnop"));
+    assert!(line.ends_with("branchname"));
+    assert!(!line.contains('|'));
+}
+
+#[test]
+fn lane_1_narrow_truncation_keeps_branch_right_anchored() {
+    let state = AppState::new();
+    let width = 20usize;
+    let line = crate::agent::ui::tui::runtime::status::compact_status_line_with_branch_for_test(
+        &state,
+        "abcdefghijklmnop",
+        Some("branchname"),
+        width,
+    );
+
+    assert_eq!(line.chars().count(), width);
+    assert!(line.ends_with("branchname"));
+    assert!(line.contains("...klmnop"));
+    assert!(!line.contains('|'));
+}
+
+#[test]
+fn lane_1_omits_branch_when_unavailable() {
+    let state = AppState::new();
+    let line = crate::agent::ui::tui::runtime::status::compact_status_line_with_branch_for_test(
+        &state,
+        "openai/gpt-4o-mini",
+        None,
+        80,
+    );
+
+    assert_eq!(line, "openai/gpt-4o-mini");
+    assert!(!line.contains('|'));
+}
+
+#[test]
+fn lane_1_has_no_mode_token_in_any_input_mode() {
+    let mut insert = AppState::new();
+    insert.input_mode = InputMode::Insert;
+    let insert_line = crate::agent::ui::tui::runtime::status::compact_status_line_with_branch_for_test(
+        &insert,
+        "model",
+        None,
+        80,
+    );
+
+    let mut normal = AppState::new();
+    normal.input_mode = InputMode::Normal;
+    let normal_line = crate::agent::ui::tui::runtime::status::compact_status_line_with_branch_for_test(
+        &normal,
+        "model",
+        None,
+        80,
+    );
+
+    let mut visual = AppState::new();
+    visual.input_mode = InputMode::Visual;
+    let visual_line = crate::agent::ui::tui::runtime::status::compact_status_line_with_branch_for_test(
+        &visual,
+        "model",
+        None,
+        80,
+    );
+
+    assert_eq!(insert_line, "model");
+    assert_eq!(normal_line, "model");
+    assert_eq!(visual_line, "model");
 }
 
 #[test]
@@ -2242,16 +2369,17 @@ fn explicit_page_down_resume_restores_follow_tail_after_manual_scroll_pause() {
 
 #[test]
 fn main_pane_vertical_split_has_no_overlap_or_bottom_cutoff() {
-    let (_header, transcript, status, input) = RuntimeCoordinator::main_pane_rects_for_height(9);
+    let (_header, transcript, input, status) = RuntimeCoordinator::main_pane_rects_for_height(10);
 
     assert_eq!(_header.height, 0);
     assert!(
         transcript.height > 0,
         "transcript pane should remain visible"
     );
-    assert_eq!(transcript.y + transcript.height, status.y);
-    assert_eq!(status.y + status.height, input.y);
-    assert_eq!(input.y + input.height, 9);
+    assert_eq!(status.height, 2, "footer must reserve two rows for two lanes");
+    assert_eq!(transcript.y + transcript.height, input.y);
+    assert_eq!(input.y + input.height, status.y);
+    assert_eq!(status.y + status.height, 10);
 }
 
 #[test]
@@ -2266,10 +2394,42 @@ fn scripted_event_parser_supports_ctrlp_for_palette_toggle() {
 #[test]
 fn multiline_input_prompt_icon_appears_only_on_first_visual_row() {
     let mut state = AppState::new();
+    state.input_mode = InputMode::Insert;
     state.input.buffer = "ab\n12345".to_string();
 
     let rows = input_rows_with_prompt_for_test(&state, 5);
     assert_eq!(rows, vec!["❯ ab", "  123", "  45"]);
+}
+
+#[test]
+fn prompt_prefix_uses_mode_indicator_insert_vs_normal_visual() {
+    let mut insert = AppState::new();
+    insert.input_mode = InputMode::Insert;
+    insert.input.buffer = "hello".to_string();
+
+    let mut normal = AppState::new();
+    normal.input_mode = InputMode::Normal;
+    normal.input.buffer = "hello".to_string();
+
+    let mut visual = AppState::new();
+    visual.input_mode = InputMode::Visual;
+    visual.input.buffer = "hello".to_string();
+
+    assert_eq!(input_rows_with_prompt_for_test(&insert, 20), vec!["❯ hello"]);
+    assert_eq!(input_rows_with_prompt_for_test(&normal, 20), vec!["❮ hello"]);
+    assert_eq!(input_rows_with_prompt_for_test(&visual, 20), vec!["❮ hello"]);
+}
+
+#[test]
+fn prompt_prefix_switches_immediately_when_mode_changes() {
+    let mut state = AppState::new();
+    state.input.buffer = "hello".to_string();
+
+    state.input_mode = InputMode::Insert;
+    assert_eq!(input_rows_with_prompt_for_test(&state, 20), vec!["❯ hello"]);
+
+    state.input_mode = InputMode::Normal;
+    assert_eq!(input_rows_with_prompt_for_test(&state, 20), vec!["❮ hello"]);
 }
 
 #[test]
@@ -2467,8 +2627,16 @@ fn status_contract_f_narrow_layout_is_compact_and_ellipsizes_deterministically()
         "event",
         None,
     );
-    assert!(compact.contains("tools 42"));
-    assert!(compact.contains('…'));
+    let compact_narrow = crate::agent::ui::tui::runtime::status::compact_status_line_with_branch_for_test(
+        &state,
+        "provider/super-long-model-name-that-needs-truncation",
+        Some("feature/very-long-branch-name-that-needs-truncation"),
+        24,
+    );
+    assert!(!compact.starts_with("❯ "));
+    assert!(!compact.contains('|'));
+    assert!(compact_narrow.contains("..."));
+    assert!(!compact_narrow.contains('|'));
 }
 
 #[test]
@@ -2726,18 +2894,99 @@ fn mcp_panel_renders_columns_selection_and_session_only_label() {
     ]);
     state.mcp_panel_selection = 1;
 
-    let (title, lines) = mcp_panel_lines_for_test(&state);
-    assert_eq!(title, "MCPs");
-    let rendered = lines
-        .iter()
-        .map(|line| line.to_string())
-        .collect::<Vec<_>>()
-        .join("\n");
+    state.set_mcp_server_state_by_name_with_reason(
+        "k8s",
+        McpServerUsabilityState::Failed,
+        Some("connect timeout".to_string()),
+    );
 
-    assert!(rendered.contains("Session-only toggles (not persisted to config)."));
-    assert!(rendered.contains("name | state"));
-    assert!(rendered.contains("  gh | enabled"));
-    assert!(rendered.contains("❯ k8s | failed"));
+    let model = mcp_table_model_for_test(&state, 80, 10);
+    assert_eq!(model.columns, vec!["Name", "State", "Visible tools", "Error"]);
+    assert_eq!(model.selected, Some(1));
+    assert_eq!(model.rows.len(), 2);
+    assert_eq!(model.rows[0][0], "gh");
+    assert_eq!(model.rows[0][1], "enabled");
+    assert_eq!(model.rows[0][2], "-");
+    assert_eq!(model.rows[0][3], "-");
+    assert_eq!(model.rows[1][0], "k8s");
+    assert_eq!(model.rows[1][1], "failed");
+    assert_eq!(model.rows[1][2], "-");
+    assert_eq!(model.rows[1][3], "connect timeout");
+}
+
+#[test]
+fn mcp_table_model_narrow_width_keeps_required_columns() {
+    let mut state = AppState::new();
+    state.set_mcp_servers(vec![crate::agent::ui::tui::state::McpServerState {
+        name: "gh".to_string(),
+        state: McpServerUsabilityState::Enabled,
+    }]);
+
+    let model = mcp_table_model_for_test(&state, 32, 8);
+    assert_eq!(model.columns, vec!["Name", "State", "Visible tools", "Error"]);
+    assert_eq!(model.rows.len(), 1);
+}
+
+#[test]
+fn mcp_table_model_emits_overflow_position_cue_for_long_lists() {
+    let mut state = AppState::new();
+    state.set_mcp_servers((0..8)
+        .map(|idx| crate::agent::ui::tui::state::McpServerState {
+            name: format!("srv-{idx}"),
+            state: if idx % 2 == 0 {
+                McpServerUsabilityState::Enabled
+            } else {
+                McpServerUsabilityState::Disabled
+            },
+        })
+        .collect());
+    state.mcp_panel_selection = 6;
+
+    let model = mcp_table_model_for_test(&state, 80, 7);
+    let cue = model
+        .overflow_cue
+        .expect("expected overflow cue for long MCP table");
+    assert!(cue.contains("Esc close"));
+    assert!(cue.contains("/"));
+    assert!(model.selected.is_some());
+}
+
+#[test]
+fn command_palette_table_renders_required_columns_and_rows() {
+    let mut state = AppState::new();
+    state.open_command_palette();
+
+    let model = command_palette_table_model_for_test(&state, 80, 8);
+
+    assert_eq!(model.columns, vec!["Action", "Summary", "Keys"]);
+    let actions = model.rows.iter().map(|row| row[0].as_str()).collect::<Vec<_>>();
+    assert_eq!(actions, vec!["Help", "Status", "MCPs"]);
+    assert!(model.rows.iter().any(|row| row[2].contains("↑/↓")));
+    assert_eq!(model.selected, Some(0));
+}
+
+#[test]
+fn command_palette_table_hides_keys_column_on_narrow_width() {
+    let mut state = AppState::new();
+    state.open_command_palette();
+
+    let model = command_palette_table_model_for_test(&state, 30, 8);
+
+    assert_eq!(model.columns, vec!["Action", "Summary"]);
+    assert!(model.rows.iter().all(|row| row[2].is_empty()));
+}
+
+#[test]
+fn command_palette_table_emits_overflow_position_cue_when_viewport_is_small() {
+    let mut state = AppState::new();
+    state.open_command_palette();
+
+    let model = command_palette_table_model_for_test(&state, 80, 5);
+    let cue = model
+        .overflow_cue
+        .expect("expected overflow cue when rows exceed viewport");
+    assert!(cue.contains("/"));
+    assert!(cue.contains("Esc close"));
 }
 
 #[test]
@@ -2822,7 +3071,7 @@ fn status_lines_include_latest_and_rolling_tokens_after_llm_end_events() {
 }
 
 #[test]
-fn compact_status_line_reports_session_total_tokens_only() {
+fn compact_status_line_reports_lane_1_only() {
     let mut state = AppState::new();
     state.latest_total_tokens = Some(7);
     state.session_total_tokens = 27;
@@ -2835,10 +3084,324 @@ fn compact_status_line_reports_session_total_tokens_only() {
         None,
     );
 
-    assert!(status_line.contains("tools 0"));
-    assert!(!status_line.contains("3/4/7"));
-    assert!(!status_line.contains("in="));
-    assert!(!status_line.contains("out="));
+    assert!(status_line.starts_with("openai/gpt-4o-mini"));
+    assert!(!status_line.contains('|'));
+}
+
+#[test]
+fn lane_2_context_line_uses_exact_usage_format_without_extra_text() {
+    let mut state = AppState::new();
+    state.latest_total_tokens = Some(250);
+    state.set_context_window_max_tokens(Some(1000));
+
+    let line = crate::agent::ui::tui::runtime::lane_2_status_line_for_test(&state, 120);
+
+    assert_eq!(line, "                                                                                                               250 (25%)");
+    assert!(!line.contains("Context"));
+    assert!(!line.contains("Ctrl-P"));
+    assert!(!line.contains('|'));
+}
+
+#[test]
+fn lane_2_context_line_falls_back_to_used_only_when_max_unavailable() {
+    let mut state = AppState::new();
+    state.latest_total_tokens = Some(42);
+    state.set_context_window_max_tokens(None);
+
+    let line = crate::agent::ui::tui::runtime::lane_2_status_line_for_test(&state, 120);
+
+    assert_eq!(line, "                                                                                                                      42");
+    assert!(!line.contains("Context"));
+    assert!(!line.contains("Ctrl-P"));
+    assert!(!line.contains('|'));
+}
+
+#[test]
+fn footer_two_lane_contract_exposes_lane_1_and_lane_2_simultaneously() {
+    let mut state = AppState::new();
+    state.latest_total_tokens = Some(250);
+    state.set_context_window_max_tokens(Some(1000));
+
+    let lane_1 = crate::agent::ui::tui::runtime::compact_status_line_for_test(
+        &state,
+        "openai/gpt-4o-mini",
+        "active=crossterm",
+        "event",
+        None,
+    );
+    let lane_2 = crate::agent::ui::tui::runtime::lane_2_status_line_for_test(&state, 120);
+
+    assert!(lane_1.starts_with("openai/gpt-4o-mini"));
+    assert!(!lane_1.contains('|'));
+    assert!(lane_2.ends_with("250 (25%)"));
+}
+
+#[test]
+fn configured_path_resolves_context_max_without_fallback_format() {
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    coordinator.set_context_window_max_tokens(Some(128_000));
+    coordinator.enqueue_ui_event(UiEvent::LlmEnd {
+        response_chars: 40,
+        tool_calls: 0,
+        input_tokens: 2_500,
+        output_tokens: 500,
+        total_tokens: 3_000,
+    });
+    coordinator.drain_transport();
+
+    let lane_2 = crate::agent::ui::tui::runtime::lane_2_status_line_for_test(coordinator.state(), 120);
+
+    assert!(lane_2.ends_with("3k (2%)"));
+    assert!(!lane_2.contains('/'));
+}
+
+#[test]
+fn lane_2_context_line_updates_after_each_turn_and_does_not_stale() {
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    coordinator.set_context_window_max_tokens(Some(100));
+
+    coordinator.enqueue_ui_event(UiEvent::LlmEnd {
+        response_chars: 12,
+        tool_calls: 0,
+        input_tokens: 2,
+        output_tokens: 8,
+        total_tokens: 10,
+    });
+    coordinator.drain_transport();
+    let first = crate::agent::ui::tui::runtime::lane_2_status_line_for_test(coordinator.state(), 120);
+    assert!(first.ends_with("10 (10%)"));
+
+    coordinator.enqueue_ui_event(UiEvent::LlmEnd {
+        response_chars: 20,
+        tool_calls: 0,
+        input_tokens: 8,
+        output_tokens: 32,
+        total_tokens: 40,
+    });
+    coordinator.drain_transport();
+    let second = crate::agent::ui::tui::runtime::lane_2_status_line_for_test(coordinator.state(), 120);
+    assert!(second.ends_with("40 (40%)"));
+}
+
+#[test]
+fn lane_2_context_line_truncation_removes_any_extra_labels_or_hints() {
+    let mut state = AppState::new();
+    state.latest_total_tokens = Some(12345);
+    state.set_context_window_max_tokens(Some(128000));
+
+    let line = crate::agent::ui::tui::runtime::lane_2_status_line_for_test(&state, 30);
+
+    assert_eq!(line, "                    12.3k (9%)");
+    assert!(!line.contains("Context"));
+    assert!(!line.contains("Ctrl-P"));
+    assert!(!line.contains('|'));
+}
+
+#[test]
+fn lane_2_rehydrates_used_tokens_from_hydrated_history_metadata() {
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    coordinator.hydrate_transcript_from_messages(vec![
+        UiMessageSnapshot::new("user", "hello"),
+        UiMessageSnapshot::new("assistant", "history")
+            .with_usage(UiMessageUsageSnapshot::new(None, None, Some(444))),
+    ]);
+
+    let lane_2 = crate::agent::ui::tui::runtime::lane_2_status_line_for_test(coordinator.state(), 120);
+    assert_eq!(lane_2.chars().count(), 120);
+    assert!(lane_2.ends_with("444"));
+}
+
+#[test]
+fn lane_2_rehydrate_with_known_max_shows_ratio_immediately() {
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    coordinator.set_context_window_max_tokens(Some(1000));
+    coordinator.hydrate_transcript_from_messages(vec![UiMessageSnapshot::new("assistant", "history")
+        .with_usage(UiMessageUsageSnapshot::new(None, None, Some(250)))]);
+
+    let lane_2 = crate::agent::ui::tui::runtime::lane_2_status_line_for_test(coordinator.state(), 120);
+    assert!(lane_2.ends_with("250 (25%)"));
+}
+
+#[test]
+fn lane_2_rehydrate_without_usage_metadata_and_without_max_uses_fallback() {
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    coordinator.hydrate_transcript_from_messages(vec![UiMessageSnapshot::new("assistant", "history")]);
+
+    let lane_2 = crate::agent::ui::tui::runtime::lane_2_status_line_for_test(coordinator.state(), 120);
+    assert_eq!(lane_2.chars().count(), 120);
+    assert!(lane_2.ends_with("0"));
+}
+
+#[test]
+fn lane_2_rehydrate_without_usage_metadata_with_known_max_shows_ratio_not_fallback() {
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    coordinator.set_context_window_max_tokens(Some(100));
+    coordinator.hydrate_transcript_from_messages(vec![UiMessageSnapshot::new("assistant", "history")]);
+
+    let lane_2 = crate::agent::ui::tui::runtime::lane_2_status_line_for_test(coordinator.state(), 120);
+    assert!(lane_2.ends_with("0 (0%)"));
+}
+
+#[test]
+fn lane_2_rehydrate_is_replaced_by_live_turn_usage() {
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    coordinator.set_context_window_max_tokens(Some(100));
+    coordinator.hydrate_transcript_from_messages(vec![UiMessageSnapshot::new("assistant", "history")
+        .with_usage(UiMessageUsageSnapshot::new(None, None, Some(7)))]);
+
+    let hydrated = crate::agent::ui::tui::runtime::lane_2_status_line_for_test(coordinator.state(), 120);
+    assert!(hydrated.ends_with("7 (7%)"));
+
+    coordinator.enqueue_ui_event(UiEvent::LlmEnd {
+        response_chars: 20,
+        tool_calls: 0,
+        input_tokens: 8,
+        output_tokens: 32,
+        total_tokens: 40,
+    });
+    coordinator.drain_transport();
+
+    let live = crate::agent::ui::tui::runtime::lane_2_status_line_for_test(coordinator.state(), 120);
+    assert!(live.ends_with("40 (40%)"));
+}
+
+#[test]
+fn lane_2_threshold_formatting_contract_100_and_1000_and_11657() {
+    let mut state = AppState::new();
+    state.set_context_window_max_tokens(Some(200_000));
+
+    state.latest_total_tokens = Some(100);
+    let one_hundred = crate::agent::ui::tui::runtime::lane_2_status_line_for_test(&state, 40);
+    assert!(one_hundred.ends_with("100 (0%)"));
+
+    state.latest_total_tokens = Some(1_000);
+    let one_thousand = crate::agent::ui::tui::runtime::lane_2_status_line_for_test(&state, 40);
+    assert!(one_thousand.ends_with("1k (0%)"));
+
+    state.latest_total_tokens = Some(11_657);
+    let eleven_point_six = crate::agent::ui::tui::runtime::lane_2_status_line_for_test(&state, 40);
+    assert!(eleven_point_six.ends_with("11.6k (5%)"));
+}
+
+#[test]
+fn lane_2_is_right_aligned_in_wide_layout() {
+    let mut state = AppState::new();
+    state.latest_total_tokens = Some(11_657);
+    state.set_context_window_max_tokens(Some(200_000));
+
+    let width = 40usize;
+    let line = crate::agent::ui::tui::runtime::lane_2_status_line_for_test(&state, width);
+
+    assert_eq!(line.chars().count(), width);
+    assert!(line.ends_with("11.6k (5%)"));
+    assert!(line.starts_with(" "));
+}
+
+#[test]
+fn lane_2_narrow_width_uses_deterministic_right_anchored_truncation() {
+    let mut state = AppState::new();
+    state.latest_total_tokens = Some(11_657);
+    state.set_context_window_max_tokens(Some(200_000));
+
+    let line = crate::agent::ui::tui::runtime::lane_2_status_line_for_test(&state, 8);
+
+    assert_eq!(line, "... (5%)");
+}
+
+#[test]
+fn lane_2_restart_attach_rehydrates_from_structured_usage_fields() {
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+    let resolver = DefaultSessionResolver::new(&store);
+    let mut session = store
+        .get_or_create(Some("structured-usage-restart".to_string()))
+        .expect("session");
+
+    session
+        .add_message(
+            &store,
+            Message::new("user".to_string(), "hello".to_string()),
+        )
+        .expect("user msg");
+    session
+        .add_message(
+            &store,
+            Message::new(
+                "assistant".to_string(),
+                "content with misleading \"total_tokens\": 9999 marker".to_string(),
+            )
+            .with_usage(MessageUsage::new(11, 22, 333)),
+        )
+        .expect("assistant msg");
+
+    let resolved = resolver
+        .resolve(SessionResolutionInput {
+            use_tui: true,
+            input_is_nothing: true,
+            session_id: Some("structured-usage-restart".to_string()),
+            new_session: false,
+        })
+        .expect("resolve attached session");
+
+    assert!(resolved.tui_should_hydrate_transcript);
+    let snapshots = resolved.tui_initial_messages;
+    let assistant_snapshot = snapshots
+        .iter()
+        .find(|snapshot| snapshot.role() == "assistant")
+        .expect("assistant snapshot");
+    let usage = assistant_snapshot.usage().expect("structured usage");
+    assert_eq!(usage.input_tokens(), Some(11));
+    assert_eq!(usage.output_tokens(), Some(22));
+    assert_eq!(usage.total_tokens(), Some(333));
+
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    coordinator.hydrate_transcript_from_messages(snapshots);
+    let lane_2 = crate::agent::ui::tui::runtime::lane_2_status_line_for_test(coordinator.state(), 120);
+    assert_eq!(lane_2.chars().count(), 120);
+    assert!(lane_2.ends_with("333"));
+}
+
+#[test]
+fn lane_2_restart_attach_does_not_parse_usage_from_message_content() {
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+    let resolver = DefaultSessionResolver::new(&store);
+    let mut session = store
+        .get_or_create(Some("no-content-parsing".to_string()))
+        .expect("session");
+
+    session
+        .add_message(
+            &store,
+            Message::new(
+                "assistant".to_string(),
+                "legacy text {\"total_tokens\":777} should not hydrate usage".to_string(),
+            ),
+        )
+        .expect("assistant msg");
+
+    let resolved = resolver
+        .resolve(SessionResolutionInput {
+            use_tui: true,
+            input_is_nothing: true,
+            session_id: Some("no-content-parsing".to_string()),
+            new_session: false,
+        })
+        .expect("resolve attached session");
+
+    assert!(resolved.tui_should_hydrate_transcript);
+    let snapshots = resolved.tui_initial_messages;
+    let assistant_snapshot = snapshots
+        .iter()
+        .find(|snapshot| snapshot.role() == "assistant")
+        .expect("assistant snapshot");
+    assert!(assistant_snapshot.usage().is_none());
+
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    coordinator.hydrate_transcript_from_messages(snapshots);
+    let lane_2 = crate::agent::ui::tui::runtime::lane_2_status_line_for_test(coordinator.state(), 120);
+    assert_eq!(lane_2.chars().count(), 120);
+    assert!(lane_2.ends_with("0"));
 }
 
 #[derive(Clone)]

@@ -583,3 +583,21 @@ fn disabling_enabled_server_applies_disabled_state_immediately_and_queues_disabl
     assert!(!request.enable);
     assert_eq!(state.mcp_counts(), (1, 0, 1, 0));
 }
+
+#[test]
+fn failed_server_reason_round_trips_through_state_query() {
+    let mut state = AppState::new();
+    state.set_mcp_servers(vec![crate::agent::ui::tui::state::McpServerState {
+        name: "k8s".to_string(),
+        state: McpServerUsabilityState::Disabled,
+    }]);
+
+    assert!(state.set_mcp_server_state_by_name_with_reason(
+        "k8s",
+        McpServerUsabilityState::Failed,
+        Some("dial tcp timeout".to_string()),
+    ));
+
+    let failed = state.failed_mcp_servers_with_reasons();
+    assert_eq!(failed, vec![("k8s", Some("dial tcp timeout"))]);
+}

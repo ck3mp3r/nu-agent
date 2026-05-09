@@ -730,6 +730,34 @@ fn mcps_panel_navigation_and_enter_toggle_updates_selected_server() {
 }
 
 #[test]
+fn mcps_panel_supports_up_k_and_space_toggle() {
+    let mut state = AppState::new();
+    state.set_mcp_servers(vec![
+        McpServerState {
+            name: "gh".to_string(),
+            state: McpServerUsabilityState::Enabled,
+        },
+        McpServerState {
+            name: "k8s".to_string(),
+            state: McpServerUsabilityState::Disabled,
+        },
+    ]);
+    state.open_info_panel(InfoPanel::Mcps);
+    state.mcp_panel_selection = 1;
+
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Up), None);
+    assert_eq!(state.mcp_panel_selection, 0);
+
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('k')), None);
+    assert_eq!(state.mcp_panel_selection, 1);
+
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char(' ')), None);
+    let request = state.take_next_mcp_toggle_request().expect("queued toggle request");
+    assert_eq!(request.server_name, "k8s");
+    assert!(request.enable);
+}
+
+#[test]
 fn palette_filters_with_non_prefix_query_before_enter_routes_help() {
     let mut state = AppState::new();
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
@@ -768,4 +796,16 @@ fn existing_insert_mode_jk_chord_still_switches_to_normal_outside_palette() {
     let second = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('k')), None);
     assert!(second);
     assert_eq!(state.input_mode, InputMode::Normal);
+}
+
+#[test]
+fn palette_escape_closes_without_panel_route_regression() {
+    let mut state = AppState::new();
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
+    assert!(state.command_palette_open);
+
+    let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Esc), None);
+    assert!(changed);
+    assert!(!state.command_palette_open);
+    assert_eq!(state.info_panel, None);
 }

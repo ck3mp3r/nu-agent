@@ -8,7 +8,7 @@ use crate::agent::ui::tui::rendering::layout::{INPUT_MIN_HEIGHT, TRANSCRIPT_MIN_
 pub(super) const IN_PROGRESS_SPINNER_FRAMES: [&str; 10] =
     ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-const STATUS_TARGET_HEIGHT: u16 = 1;
+const STATUS_TARGET_HEIGHT: u16 = 2;
 
 pub(super) fn current_time_millis() -> u128 {
     SystemTime::now()

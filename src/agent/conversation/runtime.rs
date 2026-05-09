@@ -7,7 +7,7 @@ use crate::{
     config::Config,
     llm::LlmResponse,
     plugin::RuntimeCtx,
-    session::{Message, Session, SessionStore},
+    session::{Message, MessageUsage, Session, SessionStore},
     tools::{closure::ClosureRegistry, executor::ToolExecutor},
 };
 
@@ -377,7 +377,7 @@ impl ConversationRuntime for AgentConversationRuntime {
                 .add_message(&self.store, user_msg)
                 .map_err(|e| LabeledError::new(format!("Failed to save user message: {}", e)))?;
 
-            let assistant_msg = Message::new("assistant".to_string(), response_text.clone());
+            let assistant_msg = persisted_assistant_message(&response_text, &llm_response.usage);
             session
                 .add_message(&self.store, assistant_msg)
                 .map_err(|e| LabeledError::new(format!("Failed to save assistant message: {}", e)))?;
@@ -443,4 +443,57 @@ fn persisted_tool_text_for(result: &handler::ToolCallResult) -> String {
         summarized_args,
         if result.failure.is_none() { "done" } else { "failed" }
     )
+}
+
+fn persisted_assistant_message(content: &str, usage: &crate::llm::LlmUsage) -> Message {
+    Message::new("assistant".to_string(), content.to_string()).with_usage(MessageUsage::new(
+        usage.input_tokens,
+        usage.output_tokens,
+        usage.total_tokens,
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use tempfile::tempdir;
+
+    use super::persisted_assistant_message;
+    use crate::{
+        llm::LlmUsage,
+        session::SessionStore,
+    };
+
+    #[test]
+    fn persisted_assistant_message_includes_structured_usage_fields() {
+        let tmp = tempdir().expect("tempdir");
+        let store = SessionStore::new_with_cache_dir(tmp.path().to_path_buf());
+        let mut session = store
+            .get_or_create(Some("assistant-usage-persist".to_string()))
+            .expect("create session");
+
+        let usage = LlmUsage {
+            input_tokens: 21,
+            output_tokens: 34,
+            total_tokens: 55,
+            cached_input_tokens: 8,
+            cache_creation_input_tokens: 13,
+        };
+
+        let assistant = persisted_assistant_message("hello", &usage);
+        session.add_message(&store, assistant).expect("persist message");
+
+        let loaded = store
+            .load_session("assistant-usage-persist")
+            .expect("load session");
+        let persisted = loaded
+            .messages()
+            .iter()
+            .find(|m| m.role() == "assistant")
+            .expect("assistant message persisted");
+
+        let persisted_usage = persisted.usage().expect("assistant usage persisted");
+        assert_eq!(persisted_usage.input_tokens(), Some(21));
+        assert_eq!(persisted_usage.output_tokens(), Some(34));
+        assert_eq!(persisted_usage.total_tokens(), Some(55));
+    }
 }

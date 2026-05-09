@@ -10,7 +10,7 @@ use ratatui::{
     layout::{Margin, Position},
     layout::{Constraint, Direction, Layout, Rect},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, TableState, Wrap},
 };
 mod transcript_window;
 mod transcript_rows;
@@ -64,6 +64,7 @@ use crate::agent::protocol::contracts::UiMessageSnapshot;
 use transcript_rows::render_transcript_lines;
 use status::{
     availability_label, build_status_lines, compact_status_line, cursor_style_for_mode,
+    lane_2_status_line,
     transcript_selection_range_for_render, transcript_title_for_render,
 };
 use render_frame::{
@@ -95,6 +96,14 @@ fn wrapped_visual_rows_for_rendered_line(rendered_line: &Line<'_>, content_width
         .sum::<usize>()
         .max(1);
     width.div_ceil(content_width.max(1))
+}
+
+fn input_prompt_prefix(mode: crate::agent::ui::tui::state::InputMode) -> &'static str {
+    match mode {
+        crate::agent::ui::tui::state::InputMode::Insert => "❯ ",
+        crate::agent::ui::tui::state::InputMode::Normal
+        | crate::agent::ui::tui::state::InputMode::Visual => "❮ ",
+    }
 }
 
 fn help_panel_total_visual_rows(lines: &[Line<'_>], content_width: usize) -> usize {
@@ -130,6 +139,212 @@ fn help_panel_overflow_cue(
         "PgUp/PgDn j/k | Esc close | {}-{} / {}",
         start, end, total_rows
     ))
+}
+
+const COMMAND_PALETTE_MIN_KEYS_WIDTH: u16 = 44;
+
+fn command_palette_action_summary(action: CommandPaletteAction) -> &'static str {
+    match action {
+        CommandPaletteAction::Help => "View key help",
+        CommandPaletteAction::Status => "View runtime status",
+        CommandPaletteAction::Mcps => "Manage MCP servers",
+    }
+}
+
+fn command_palette_action_keys() -> &'static str {
+    "↑/↓ or j/k · Enter · Esc"
+}
+
+fn command_palette_action_label(action: CommandPaletteAction) -> &'static str {
+    match action {
+        CommandPaletteAction::Help => "Help",
+        CommandPaletteAction::Status => "Status",
+        CommandPaletteAction::Mcps => "MCPs",
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CommandPaletteTableModel {
+    query_line: String,
+    columns: Vec<String>,
+    rows: Vec<[String; 3]>,
+    selected: Option<usize>,
+    overflow_cue: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct McpTableModel {
+    columns: Vec<String>,
+    rows: Vec<[String; 4]>,
+    selected: Option<usize>,
+    overflow_cue: Option<String>,
+}
+
+fn mcp_table_model(state: &AppState, popup_height: u16) -> McpTableModel {
+    let columns = vec![
+        "Name".to_string(),
+        "State".to_string(),
+        "Visible tools".to_string(),
+        "Error".to_string(),
+    ];
+    let failed_with_reasons = state.failed_mcp_servers_with_reasons();
+    let all_rows = state
+        .mcp_servers
+        .iter()
+        .map(|server| {
+            let state_label = match server.state {
+                McpServerUsabilityState::Enabled => "enabled",
+                McpServerUsabilityState::Disabled => "disabled",
+                McpServerUsabilityState::Failed => "failed",
+            }
+            .to_string();
+            let error = if server.state == McpServerUsabilityState::Failed {
+                failed_with_reasons
+                    .iter()
+                    .find(|(name, _)| *name == server.name.as_str())
+                    .and_then(|(_, reason)| *reason)
+                    .unwrap_or("-")
+                    .to_string()
+            } else {
+                "-".to_string()
+            };
+            [server.name.clone(), state_label, "-".to_string(), error]
+        })
+        .collect::<Vec<_>>();
+
+    let selected_global = if all_rows.is_empty() {
+        None
+    } else {
+        Some(state.mcp_panel_selection.min(all_rows.len().saturating_sub(1)))
+    };
+
+    let table_view_rows = popup_height.saturating_sub(3) as usize;
+    let visible_body_rows = table_view_rows.saturating_sub(1);
+    let (window_start, window_len) = if visible_body_rows == 0 || all_rows.is_empty() {
+        (0, 0)
+    } else {
+        let max_start = all_rows.len().saturating_sub(visible_body_rows);
+        let start = selected_global
+            .unwrap_or(0)
+            .saturating_sub(visible_body_rows.saturating_sub(1))
+            .min(max_start);
+        (start, visible_body_rows)
+    };
+
+    let rows = all_rows
+        .iter()
+        .skip(window_start)
+        .take(window_len)
+        .cloned()
+        .collect::<Vec<_>>();
+
+    let selected = selected_global.and_then(|global| {
+        if global >= window_start && global < window_start.saturating_add(rows.len()) {
+            Some(global.saturating_sub(window_start))
+        } else {
+            None
+        }
+    });
+
+    let overflow_cue = if all_rows.len() > window_len && window_len > 0 {
+        let start = window_start.saturating_add(1);
+        let end = window_start.saturating_add(window_len).min(all_rows.len());
+        Some(format!(
+            "↑/↓ or j/k | Enter/Space toggle | Esc close | {}-{} / {}",
+            start,
+            end,
+            all_rows.len()
+        ))
+    } else {
+        None
+    };
+
+    McpTableModel {
+        columns,
+        rows,
+        selected,
+        overflow_cue,
+    }
+}
+
+fn command_palette_table_model(
+    state: &AppState,
+    popup_width: u16,
+    popup_height: u16,
+) -> CommandPaletteTableModel {
+    let actions = state.command_palette_actions();
+    let show_keys = popup_width.saturating_sub(2) >= COMMAND_PALETTE_MIN_KEYS_WIDTH;
+    let columns = if show_keys {
+        vec!["Action".to_string(), "Summary".to_string(), "Keys".to_string()]
+    } else {
+        vec!["Action".to_string(), "Summary".to_string()]
+    };
+
+    let all_rows = actions
+        .iter()
+        .map(|action| {
+            let keys = if show_keys {
+                command_palette_action_keys().to_string()
+            } else {
+                String::new()
+            };
+            [
+                command_palette_action_label(*action).to_string(),
+                command_palette_action_summary(*action).to_string(),
+                keys,
+            ]
+        })
+        .collect::<Vec<_>>();
+
+    let selected_global = if all_rows.is_empty() {
+        None
+    } else {
+        Some(state.command_palette_selection.min(all_rows.len().saturating_sub(1)))
+    };
+
+    let table_view_rows = popup_height.saturating_sub(3) as usize;
+    let visible_body_rows = table_view_rows.saturating_sub(1);
+    let (window_start, window_len) = if visible_body_rows == 0 || all_rows.is_empty() {
+        (0, 0)
+    } else {
+        let max_start = all_rows.len().saturating_sub(visible_body_rows);
+        let start = selected_global
+            .unwrap_or(0)
+            .saturating_sub(visible_body_rows.saturating_sub(1))
+            .min(max_start);
+        (start, visible_body_rows)
+    };
+
+    let rows = all_rows
+        .iter()
+        .skip(window_start)
+        .take(window_len)
+        .cloned()
+        .collect::<Vec<_>>();
+
+    let selected = selected_global.and_then(|global| {
+        if global >= window_start && global < window_start.saturating_add(rows.len()) {
+            Some(global.saturating_sub(window_start))
+        } else {
+            None
+        }
+    });
+
+    let overflow_cue = if all_rows.len() > window_len && window_len > 0 {
+        let start = window_start.saturating_add(1);
+        let end = window_start.saturating_add(window_len).min(all_rows.len());
+        Some(format!("Esc close | {}-{} / {}", start, end, all_rows.len()))
+    } else {
+        None
+    };
+
+    CommandPaletteTableModel {
+        query_line: format!("Query: {}", state.command_palette_query),
+        columns,
+        rows,
+        selected,
+        overflow_cue,
+    }
 }
 
 #[cfg(test)]
@@ -194,6 +409,13 @@ impl RuntimeCoordinator {
         messages: impl IntoIterator<Item = UiMessageSnapshot>,
     ) {
         for message in messages {
+            if let Some(usage) = message.usage() {
+                self.state.hydrate_usage(
+                    usage.input_tokens(),
+                    usage.output_tokens(),
+                    usage.total_tokens(),
+                );
+            }
             let role = match message.role() {
                 "user" => TranscriptRole::User,
                 "assistant" => TranscriptRole::Assistant,
@@ -335,6 +557,10 @@ impl RuntimeCoordinator {
 
     pub(crate) fn set_llm_visible_mcp_tool_count(&mut self, count: usize) {
         self.state.set_llm_visible_mcp_tool_count(count);
+    }
+
+    pub(crate) fn set_context_window_max_tokens(&mut self, max_tokens: Option<u64>) {
+        self.state.set_context_window_max_tokens(max_tokens);
     }
 
     pub(crate) fn take_next_mcp_toggle_request(&mut self) -> Option<McpToggleRequest> {
@@ -666,13 +892,15 @@ impl RuntimeCoordinator {
                     frame.render_widget(transcript_widget, vertical[1]);
                 }
 
-                let compact_status = compact_status_line(
+                let lane_1 = compact_status_line(
                     &self.state,
                     &self.active_model_identity,
                     &self.input_backend_status,
                     &self.last_input_poll_status,
                     self.last_input_error.as_deref(),
+                    vertical[3].width as usize,
                 );
+                let lane_2 = lane_2_status_line(&self.state, vertical[3].width as usize);
                 let _status_lines = build_status_lines(
                     &self.state,
                     &self.active_model_identity,
@@ -680,9 +908,9 @@ impl RuntimeCoordinator {
                     &self.last_input_poll_status,
                     self.last_input_error.as_deref(),
                 );
-                let status_widget = Paragraph::new(Line::from(vec![
-                    Span::styled("ℹ ", self.theme.subtle_meta),
-                    Span::raw(compact_status),
+                let status_widget = Paragraph::new(Text::from(vec![
+                    Line::from(lane_1),
+                    Line::from(lane_2),
                 ]))
                     .block(Block::default())
                     .wrap(Wrap { trim: false });
@@ -703,9 +931,10 @@ impl RuntimeCoordinator {
                     Style::default()
                 };
                 let mut input_lines = Vec::new();
+                let prompt_prefix = input_prompt_prefix(self.state.input_mode);
                 if let Some((first, rest)) = input_rows.split_first() {
                     input_lines.push(Line::from(vec![
-                        Span::styled("❯ ", self.theme.input_prompt),
+                        Span::styled(prompt_prefix, self.theme.input_prompt),
                         Span::raw(first.clone()),
                     ]));
                     for row in rest {
@@ -770,30 +999,61 @@ impl RuntimeCoordinator {
                         height: popup_height,
                     };
 
-                    let mut lines = vec![Line::from(format!("Query: {}", self.state.command_palette_query))];
-                    for (idx, action) in self.state.command_palette_actions().into_iter().enumerate() {
-                        let label = match action {
-                            CommandPaletteAction::Help => "Help",
-                            CommandPaletteAction::Status => "Status",
-                            CommandPaletteAction::Mcps => "MCPs",
-                        };
-                        let prefix = if idx == self.state.command_palette_selection {
-                            "❯ "
-                        } else {
-                            "  "
-                        };
-                        lines.push(Line::from(format!("{prefix}{label}")));
-                    }
+                    let model = command_palette_table_model(&self.state, popup_width, popup_height);
 
                     frame.render_widget(Clear, popup);
-                    frame.render_widget(
-                        Paragraph::new(lines).block(
-                            Block::default()
-                                .borders(Borders::ALL)
-                                .title("Command Palette"),
-                        ),
-                        popup,
+                    let outer = Block::default().borders(Borders::ALL).title(
+                        if let Some(cue) = model.overflow_cue.as_deref() {
+                            format!("Command Palette ({cue})")
+                        } else {
+                            "Command Palette".to_string()
+                        },
                     );
+                    frame.render_widget(outer, popup);
+
+                    let inner = popup.inner(Margin {
+                        vertical: 1,
+                        horizontal: 1,
+                    });
+                    let rows = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([Constraint::Length(1), Constraint::Min(0)])
+                        .split(inner);
+
+                    frame.render_widget(Paragraph::new(Line::from(model.query_line.clone())), rows[0]);
+
+                    let show_keys = model.columns.len() == 3;
+                    let header = if show_keys {
+                        Row::new(vec!["Action", "Summary", "Keys"])
+                    } else {
+                        Row::new(vec!["Action", "Summary"])
+                    };
+
+                    let table_rows = model.rows.iter().map(|row| {
+                        if show_keys {
+                            Row::new(vec![
+                                Cell::from(row[0].clone()),
+                                Cell::from(row[1].clone()),
+                                Cell::from(row[2].clone()),
+                            ])
+                        } else {
+                            Row::new(vec![Cell::from(row[0].clone()), Cell::from(row[1].clone())])
+                        }
+                    });
+
+                    let widths = if show_keys {
+                        vec![Constraint::Length(8), Constraint::Min(16), Constraint::Min(12)]
+                    } else {
+                        vec![Constraint::Length(8), Constraint::Min(12)]
+                    };
+
+                    let table = Table::new(table_rows, widths)
+                        .header(header)
+                        .column_spacing(2)
+                        .highlight_symbol("❯ ");
+                    let mut table_state = TableState::default();
+                    table_state.select(model.selected);
+                    frame.render_stateful_widget(table, rows[1], &mut table_state);
                 }
 
                 if let Some(panel) = self.state.info_panel {
@@ -806,49 +1066,105 @@ impl RuntimeCoordinator {
                         height: popup_height,
                     };
 
-                    let (title, lines) = match panel {
-                        InfoPanel::Help => help_panel_lines(),
-                        InfoPanel::Status => status_panel_lines(
-                            &self.state,
-                            &self.active_model_identity,
-                            &self.input_backend_status,
-                            &self.last_input_poll_status,
-                            self.last_input_error.as_deref(),
-                        ),
-                        InfoPanel::Mcps => mcp_panel_lines(&self.state),
-                    };
+                    match panel {
+                        InfoPanel::Mcps => {
+                            let model = mcp_table_model(&self.state, popup_height);
+                            frame.render_widget(Clear, popup);
+                            let title = if let Some(cue) = model.overflow_cue.as_deref() {
+                                format!("MCPs ({cue})")
+                            } else {
+                                "MCPs".to_string()
+                            };
+                            frame.render_widget(
+                                Block::default().borders(Borders::ALL).title(title),
+                                popup,
+                            );
 
-                    let panel_inner_height = popup.height.saturating_sub(2);
-                    let panel_inner_width = popup.width.saturating_sub(2);
-                    let panel_scroll = self.state.info_panel_scroll.min(help_panel_max_scroll(
-                        &lines,
-                        panel_inner_height,
-                        panel_inner_width,
-                    ));
-                    let panel_title = match panel {
-                        InfoPanel::Help => {
-                            if let Some(cue) = help_panel_overflow_cue(
+                            let inner = popup.inner(Margin {
+                                vertical: 1,
+                                horizontal: 1,
+                            });
+                            let rows = Layout::default()
+                                .direction(Direction::Vertical)
+                                .constraints([Constraint::Length(1), Constraint::Min(0)])
+                                .split(inner);
+
+                            frame.render_widget(
+                                Paragraph::new(Line::from(
+                                    "Session-only toggles | Enter/Space toggle | Esc close",
+                                )),
+                                rows[0],
+                            );
+
+                            let header = Row::new(model.columns.clone());
+                            let table_rows = model.rows.iter().map(|row| {
+                                Row::new(vec![
+                                    Cell::from(row[0].clone()),
+                                    Cell::from(row[1].clone()),
+                                    Cell::from(row[2].clone()),
+                                    Cell::from(row[3].clone()),
+                                ])
+                            });
+                            let widths = [
+                                Constraint::Length(18),
+                                Constraint::Length(9),
+                                Constraint::Length(14),
+                                Constraint::Min(12),
+                            ];
+                            let table = Table::new(table_rows, widths)
+                                .header(header)
+                                .column_spacing(1)
+                                .highlight_symbol("❯ ");
+                            let mut table_state = TableState::default();
+                            table_state.select(model.selected);
+                            frame.render_stateful_widget(table, rows[1], &mut table_state);
+                        }
+                        _ => {
+                            let (title, lines) = match panel {
+                                InfoPanel::Help => help_panel_lines(),
+                                InfoPanel::Status => status_panel_lines(
+                                    &self.state,
+                                    &self.active_model_identity,
+                                    &self.input_backend_status,
+                                    &self.last_input_poll_status,
+                                    self.last_input_error.as_deref(),
+                                ),
+                                InfoPanel::Mcps => unreachable!("handled above"),
+                            };
+
+                            let panel_inner_height = popup.height.saturating_sub(2);
+                            let panel_inner_width = popup.width.saturating_sub(2);
+                            let panel_scroll = self.state.info_panel_scroll.min(help_panel_max_scroll(
                                 &lines,
                                 panel_inner_height,
                                 panel_inner_width,
-                                panel_scroll,
-                            ) {
-                                format!("{title} ({cue})")
-                            } else {
-                                title.to_string()
-                            }
-                        }
-                        _ => title.to_string(),
-                    };
+                            ));
+                            let panel_title = match panel {
+                                InfoPanel::Help => {
+                                    if let Some(cue) = help_panel_overflow_cue(
+                                        &lines,
+                                        panel_inner_height,
+                                        panel_inner_width,
+                                        panel_scroll,
+                                    ) {
+                                        format!("{title} ({cue})")
+                                    } else {
+                                        title.to_string()
+                                    }
+                                }
+                                _ => title.to_string(),
+                            };
 
-                    frame.render_widget(Clear, popup);
-                    frame.render_widget(
-                        Paragraph::new(lines)
-                            .block(Block::default().borders(Borders::ALL).title(panel_title))
-                            .wrap(Wrap { trim: false })
-                            .scroll((panel_scroll.min(u16::MAX as usize) as u16, 0)),
-                        popup,
-                    );
+                            frame.render_widget(Clear, popup);
+                            frame.render_widget(
+                                Paragraph::new(lines)
+                                    .block(Block::default().borders(Borders::ALL).title(panel_title))
+                                    .wrap(Wrap { trim: false })
+                                    .scroll((panel_scroll.min(u16::MAX as usize) as u16, 0)),
+                                popup,
+                            );
+                        }
+                    }
                 }
             })
             .map_err(|err| format!("TUI render failed: {err}"))?;
@@ -912,38 +1228,6 @@ fn status_panel_lines(
     )
 }
 
-fn mcp_panel_lines(state: &AppState) -> (&'static str, Vec<Line<'static>>) {
-    let mut lines = vec![
-        Line::from("Session-only toggles (not persisted to config)."),
-        Line::from("Use j/k or ↑/↓ to select, Enter to toggle, Esc to close."),
-        Line::from(""),
-        Line::from("name | state"),
-    ];
-
-    if state.mcp_servers.is_empty() {
-        lines.push(Line::from("(no MCP servers configured)"));
-    } else {
-        for (idx, server) in state.mcp_servers.iter().enumerate() {
-            let prefix = if idx == state.mcp_panel_selection {
-                "❯ "
-            } else {
-                "  "
-            };
-            let state_label = match server.state {
-                McpServerUsabilityState::Enabled => "enabled",
-                McpServerUsabilityState::Disabled => "disabled",
-                McpServerUsabilityState::Failed => "failed",
-            };
-            lines.push(Line::from(format!(
-                "{prefix}{} | {}",
-                server.name, state_label
-            )));
-        }
-    }
-
-    ("MCPs", lines)
-}
-
 #[cfg(test)]
 pub(super) fn help_panel_lines_for_test() -> (&'static str, Vec<Line<'static>>) {
     help_panel_lines()
@@ -990,8 +1274,54 @@ pub(super) fn status_panel_lines_for_test(
 }
 
 #[cfg(test)]
-pub(super) fn mcp_panel_lines_for_test(state: &AppState) -> (&'static str, Vec<Line<'static>>) {
-    mcp_panel_lines(state)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct McpTableModelForTest {
+    pub columns: Vec<String>,
+    pub rows: Vec<[String; 4]>,
+    pub selected: Option<usize>,
+    pub overflow_cue: Option<String>,
+}
+
+#[cfg(test)]
+pub(super) fn mcp_table_model_for_test(
+    state: &AppState,
+    popup_width: u16,
+    popup_height: u16,
+) -> McpTableModelForTest {
+    let _ = popup_width;
+    let model = mcp_table_model(state, popup_height);
+    McpTableModelForTest {
+        columns: model.columns,
+        rows: model.rows,
+        selected: model.selected,
+        overflow_cue: model.overflow_cue,
+    }
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct CommandPaletteTableModelForTest {
+    pub query_line: String,
+    pub columns: Vec<String>,
+    pub rows: Vec<[String; 3]>,
+    pub selected: Option<usize>,
+    pub overflow_cue: Option<String>,
+}
+
+#[cfg(test)]
+pub(super) fn command_palette_table_model_for_test(
+    state: &AppState,
+    popup_width: u16,
+    popup_height: u16,
+) -> CommandPaletteTableModelForTest {
+    let model = command_palette_table_model(state, popup_width, popup_height);
+    CommandPaletteTableModelForTest {
+        query_line: model.query_line,
+        columns: model.columns,
+        rows: model.rows,
+        selected: model.selected,
+        overflow_cue: model.overflow_cue,
+    }
 }
 
 #[cfg(test)]
@@ -1008,7 +1338,13 @@ pub(super) fn compact_status_line_for_test(
         input_backend_status,
         last_input_poll_status,
         last_input_error,
+        120,
     )
+}
+
+#[cfg(test)]
+pub(super) fn lane_2_status_line_for_test(state: &AppState, width: usize) -> String {
+    lane_2_status_line(state, width)
 }
 
 #[cfg(test)]
@@ -1177,8 +1513,9 @@ pub(super) fn input_rows_with_prompt_for_test(state: &AppState, pane_width: u16)
     );
 
     let mut lines = Vec::new();
+    let prompt_prefix = input_prompt_prefix(state.input_mode);
     if let Some((first, rest)) = rows.split_first() {
-        lines.push(format!("❯ {first}"));
+        lines.push(format!("{prompt_prefix}{first}"));
         for row in rest {
             lines.push(format!("  {row}"));
         }
@@ -1304,6 +1641,10 @@ where
 
     pub(crate) fn set_llm_visible_mcp_tool_count(&mut self, count: usize) {
         self.coordinator.set_llm_visible_mcp_tool_count(count);
+    }
+
+    pub(crate) fn set_context_window_max_tokens(&mut self, max_tokens: Option<u64>) {
+        self.coordinator.set_context_window_max_tokens(max_tokens);
     }
 
     pub(crate) fn fatal_error(&self) -> Option<&str> {

@@ -478,6 +478,18 @@ pub struct Message {
     tool_result: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     tool_success: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    usage: Option<MessageUsage>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageUsage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    input_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    output_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    total_tokens: Option<u64>,
 }
 
 impl Message {
@@ -491,7 +503,17 @@ impl Message {
             tool_arguments: None,
             tool_result: None,
             tool_success: None,
+            usage: None,
         }
+    }
+
+    pub fn with_usage(mut self, usage: MessageUsage) -> Self {
+        self.usage = Some(usage);
+        self
+    }
+
+    pub fn set_usage(&mut self, usage: MessageUsage) {
+        self.usage = Some(usage);
     }
 
     pub fn with_tool_details(
@@ -531,6 +553,32 @@ impl Message {
 
     pub fn tool_success(&self) -> Option<bool> {
         self.tool_success
+    }
+
+    pub fn usage(&self) -> Option<&MessageUsage> {
+        self.usage.as_ref()
+    }
+}
+
+impl MessageUsage {
+    pub fn new(input_tokens: u64, output_tokens: u64, total_tokens: u64) -> Self {
+        Self {
+            input_tokens: Some(input_tokens),
+            output_tokens: Some(output_tokens),
+            total_tokens: Some(total_tokens),
+        }
+    }
+
+    pub fn input_tokens(&self) -> Option<u64> {
+        self.input_tokens
+    }
+
+    pub fn output_tokens(&self) -> Option<u64> {
+        self.output_tokens
+    }
+
+    pub fn total_tokens(&self) -> Option<u64> {
+        self.total_tokens
     }
 }
 

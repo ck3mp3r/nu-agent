@@ -148,6 +148,7 @@ pub struct AppState {
     pub latest_output_tokens: Option<u64>,
     pub latest_total_tokens: Option<u64>,
     pub session_total_tokens: u64,
+    context_window_max_tokens: Option<u64>,
     pub quit_requested: bool,
     pub command_palette_open: bool,
     pub command_palette_query: String,
@@ -194,6 +195,7 @@ impl Default for AppState {
             latest_output_tokens: None,
             latest_total_tokens: None,
             session_total_tokens: 0,
+            context_window_max_tokens: None,
             quit_requested: false,
             command_palette_open: false,
             command_palette_query: String::new(),
@@ -1042,6 +1044,38 @@ impl AppState {
         self.latest_output_tokens = Some(output_tokens);
         self.latest_total_tokens = Some(total_tokens);
         self.session_total_tokens = self.session_total_tokens.saturating_add(total_tokens);
+    }
+
+    pub fn hydrate_latest_total_tokens(&mut self, total_tokens: u64) {
+        self.latest_total_tokens = Some(total_tokens);
+        if self.session_total_tokens < total_tokens {
+            self.session_total_tokens = total_tokens;
+        }
+    }
+
+    pub fn hydrate_usage(
+        &mut self,
+        input_tokens: Option<u64>,
+        output_tokens: Option<u64>,
+        total_tokens: Option<u64>,
+    ) {
+        if let Some(input_tokens) = input_tokens {
+            self.latest_input_tokens = Some(input_tokens);
+        }
+        if let Some(output_tokens) = output_tokens {
+            self.latest_output_tokens = Some(output_tokens);
+        }
+        if let Some(total_tokens) = total_tokens {
+            self.hydrate_latest_total_tokens(total_tokens);
+        }
+    }
+
+    pub fn set_context_window_max_tokens(&mut self, max_tokens: Option<u64>) {
+        self.context_window_max_tokens = max_tokens;
+    }
+
+    pub fn context_window_max_tokens(&self) -> Option<u64> {
+        self.context_window_max_tokens
     }
 
     pub fn ensure_invariants(&mut self) {

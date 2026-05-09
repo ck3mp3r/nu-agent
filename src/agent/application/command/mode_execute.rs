@@ -53,6 +53,7 @@ pub(crate) fn run_tui_mode(
     ));
     tui_ui.set_mcp_lifecycle_projection(runtime_impl.mcp_lifecycle_projection.clone());
     tui_ui.set_llm_visible_mcp_tool_count(runtime_impl.llm_visible_mcp_tool_count());
+    tui_ui.set_context_window_max_tokens(runtime_impl.config.max_context_tokens.map(u64::from));
 
     let result = run_with_terminal_restore(&mut terminal_lifecycle, || {
         if input_is_nothing {

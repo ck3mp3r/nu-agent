@@ -10,6 +10,7 @@ use crate::agent::{
     protocol::{
         contracts::{
             ConversationRuntime, InteractiveUi, McpToggleRequest, McpUsabilityState, ProgressUi,
+            UiMessageUsageSnapshot,
             UiMessageSnapshot,
         },
         event::UiEvent,
@@ -299,7 +300,14 @@ fn run_hydrated_interactive_loop_hydrates_exactly_once() {
     let mut runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&[]);
 
-    let messages = vec![UiMessageSnapshot::new("user", "history")];
+    let messages = vec![
+        UiMessageSnapshot::new("user", "history"),
+        UiMessageSnapshot::new("assistant", "response").with_usage(UiMessageUsageSnapshot::new(
+            None,
+            None,
+            Some(321),
+        )),
+    ];
     run_hydrated_interactive_loop(&mut runtime, &mut ui, messages.clone(), Span::test_data())
         .expect("interactive loop with hydration");
 

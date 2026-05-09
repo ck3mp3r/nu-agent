@@ -73,6 +73,10 @@ where
     pub fn set_llm_visible_mcp_tool_count(&mut self, count: usize) {
         self.renderer.set_llm_visible_mcp_tool_count(count);
     }
+
+    pub fn set_context_window_max_tokens(&mut self, max_tokens: Option<u64>) {
+        self.renderer.set_context_window_max_tokens(max_tokens);
+    }
 }
 
 impl<R> ProgressUi for TuiInteractiveUi<R>
