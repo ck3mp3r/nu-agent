@@ -661,7 +661,6 @@ impl SimplePluginCommand for Agent {
                 .get_plugin_config()?
                 .and_then(|value| PluginConfig::from_plugin_config(&value).ok()),
         };
-
         match mode {
             AgentMode::Tui => run_tui_mode(
                 &mut runtime_impl,

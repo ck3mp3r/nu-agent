@@ -97,6 +97,10 @@ where
     pub fn set_model_picker_options(&mut self, options: Vec<ModelPickerOption>) {
         self.renderer.set_model_picker_options(options);
     }
+
+    pub fn set_repo_branch_caller_cwd(&mut self, caller_cwd: Option<std::path::PathBuf>) {
+        self.renderer.set_repo_branch_caller_cwd(caller_cwd);
+    }
 }
 
 impl<R> ProgressUi for TuiInteractiveUi<R>

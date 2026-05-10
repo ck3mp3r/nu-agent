@@ -57,12 +57,14 @@ pub(crate) fn run_tui_mode(
         active_model_identity.as_str(),
     );
     tui_ui.set_model_picker_options(model_picker_catalog);
-    match std::env::current_dir() {
-        Ok(cwd) => {
+    let caller_cwd = runtime_impl.mcp_caller_cwd.clone();
+    tui_ui.set_repo_branch_caller_cwd(caller_cwd.clone());
+    match caller_cwd {
+        Some(cwd) => {
             let skills = crate::agent::protocol::skills::discover_skill_catalog_for_cwd(&cwd);
             tui_ui.set_skills_projection(skills);
         }
-        Err(_err) => tui_ui.mark_skills_discovery_failed(),
+        None => tui_ui.mark_skills_discovery_failed(),
     }
     tui_ui.set_mcp_lifecycle_projection(runtime_impl.mcp_lifecycle_projection.clone());
     tui_ui.set_llm_visible_mcp_tool_count(runtime_impl.llm_visible_mcp_tool_count());

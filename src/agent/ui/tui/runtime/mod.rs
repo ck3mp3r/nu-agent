@@ -1,5 +1,6 @@
 use std::{
     io::Write,
+    path::PathBuf,
     time::{Duration, Instant},
 };
 
@@ -455,6 +456,7 @@ pub struct RuntimeCoordinator {
     last_input_error: Option<String>,
     input_watchdog_started_at: Instant,
     input_watchdog_timeout: Duration,
+    repo_branch_tracker: Option<status::RepoBranchTracker>,
     theme: TuiTheme,
 }
 
@@ -555,6 +557,7 @@ impl RuntimeCoordinator {
             last_input_error: None,
             input_watchdog_started_at: Instant::now(),
             input_watchdog_timeout,
+            repo_branch_tracker: None,
             theme: TuiTheme::default(),
         };
         coordinator.sync_transcript_viewport_lines_with_layout();
@@ -653,6 +656,10 @@ impl RuntimeCoordinator {
         self.state.set_model_picker_options(options);
     }
 
+    pub(crate) fn set_repo_branch_caller_cwd(&mut self, caller_cwd: Option<PathBuf>) {
+        self.repo_branch_tracker = Some(status::RepoBranchTracker::from_caller_cwd(caller_cwd));
+    }
+
     pub(crate) fn take_next_mcp_toggle_request(&mut self) -> Option<McpToggleRequest> {
         self.state.take_next_mcp_toggle_request()
     }
@@ -699,6 +706,10 @@ impl RuntimeCoordinator {
     }
 
     pub fn poll_terminal_event(&mut self, event_source: &mut impl TerminalEventSource) {
+        if let Some(tracker) = self.repo_branch_tracker.as_mut() {
+            tracker.tick();
+        }
+
         let poll_result = event_source.poll_event();
         let diagnostics = event_source.diagnostics();
         self.update_input_diagnostics(&diagnostics);
@@ -1010,6 +1021,9 @@ impl RuntimeCoordinator {
                 let lane_1 = compact_status_line(
                     &self.state,
                     &self.active_model_identity,
+                    self.repo_branch_tracker
+                        .as_ref()
+                        .and_then(|tracker| tracker.branch()),
                     &self.input_backend_status,
                     &self.last_input_poll_status,
                     self.last_input_error.as_deref(),
@@ -1530,6 +1544,7 @@ pub(super) fn compact_status_line_for_test(
     compact_status_line(
         state,
         active_model_identity,
+        None,
         input_backend_status,
         last_input_poll_status,
         last_input_error,
@@ -1856,6 +1871,10 @@ where
 
     pub(crate) fn set_model_picker_options(&mut self, options: Vec<ModelPickerOption>) {
         self.coordinator.set_model_picker_options(options);
+    }
+
+    pub(crate) fn set_repo_branch_caller_cwd(&mut self, caller_cwd: Option<PathBuf>) {
+        self.coordinator.set_repo_branch_caller_cwd(caller_cwd);
     }
 
     pub(crate) fn fatal_error(&self) -> Option<&str> {
