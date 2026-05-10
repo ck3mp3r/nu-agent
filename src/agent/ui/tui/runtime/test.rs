@@ -249,6 +249,11 @@ fn compact_result_artifact_is_visible_without_slash_command_echo() {
     assert_eq!(coordinator.take_submitted_prompt(), Some("/compact".to_string()));
     assert!(coordinator.state().transcript_preview.is_empty());
 
+    coordinator.enqueue_ui_event(UiEvent::CompactionStarted {
+        source: "slash_compact".to_string(),
+    });
+    coordinator.drain_transport();
+
     coordinator.enqueue_ui_event(UiEvent::CompactionTriggered {
         source: "slash_compact".to_string(),
         summarized_count: 3,
@@ -264,10 +269,11 @@ fn compact_result_artifact_is_visible_without_slash_command_echo() {
         .iter()
         .map(|line| line.text.as_str())
         .collect::<Vec<_>>();
-    assert!(lines
-        .iter()
-        .any(|line| line.contains("[compaction source=slash_compact summarized=3 kept=2]")));
+    assert!(lines.contains(&"Compaction"));
+    assert!(lines.contains(&"summarized=3 · kept=2"));
     assert!(lines.contains(&"summary body"));
+    assert!(!lines.iter().any(|line| line.contains("source=")));
+    assert!(!lines.iter().any(|line| line.contains("status=running")));
     assert!(!lines.iter().any(|line| line.starts_with("/compact")));
 }
 
@@ -1855,7 +1861,7 @@ fn lane_prefix_builder_composes_distinct_prefix_spans_by_role() {
 
     assert_eq!(user_text, "  ▏ ");
     assert_eq!(assistant_text, "    ");
-    assert_eq!(tool_text, "  ⚒ ");
+    assert_eq!(tool_text, "  ⚙ ");
 }
 
 #[test]
@@ -2280,6 +2286,10 @@ fn tool_rows_render_structured_label_and_dimmed_metadata() {
     assert!(rendered[0]
         .spans
         .iter()
+        .any(|span| span.content.as_ref() == "k8s__list_pods"));
+    assert!(!rendered[0]
+        .spans
+        .iter()
         .any(|span| span.content.as_ref() == "tool[k8s__list_pods]"));
     let meta = rendered[0]
         .spans
@@ -2493,6 +2503,15 @@ fn scripted_event_parser_supports_ctrlp_for_palette_toggle() {
     assert_eq!(
         source.poll_event(),
         Ok(Some(TerminalEvent::Key(TerminalKey::CtrlP)))
+    );
+}
+
+#[test]
+fn scripted_event_parser_supports_ctrln_for_query_picker_navigation() {
+    let mut source = ScriptedTerminalEvents::from_script("ctrln");
+    assert_eq!(
+        source.poll_event(),
+        Ok(Some(TerminalEvent::Key(TerminalKey::CtrlN)))
     );
 }
 
@@ -3061,11 +3080,11 @@ fn command_palette_table_renders_required_columns_and_rows() {
     let mut state = AppState::new();
     state.open_command_palette();
 
-    let model = command_palette_table_model_for_test(&state, 80, 8);
+    let model = command_palette_table_model_for_test(&state, 80, 10);
 
     assert_eq!(model.columns, vec!["Action", "Summary"]);
     let actions = model.rows.iter().map(|row| row[0].as_str()).collect::<Vec<_>>();
-    assert_eq!(actions, vec!["Help", "Status", "MCPs", "Skills"]);
+    assert_eq!(actions, vec!["Help", "Status", "MCPs", "Skills", "Models"]);
     assert!(model.rows.iter().all(|row| row[2].is_empty()));
     assert_eq!(model.selected, Some(0));
 }
@@ -3075,10 +3094,11 @@ fn command_palette_table_renders_skills_action_row() {
     let mut state = AppState::new();
     state.open_command_palette();
 
-    let model = command_palette_table_model_for_test(&state, 80, 8);
+    let model = command_palette_table_model_for_test(&state, 80, 10);
     let actions = model.rows.iter().map(|row| row[0].as_str()).collect::<Vec<_>>();
 
     assert!(actions.contains(&"Skills"));
+    assert!(actions.contains(&"Models"));
 }
 
 #[test]
@@ -3141,7 +3161,7 @@ fn inline_slash_suggestions_render_inline_with_single_hint_contract() {
     assert!(rows[0].starts_with('❯'));
 
     let title = super::command_palette_title(None);
-    assert!(title.contains("↑/↓ or j/k · Enter · Esc"));
+    assert!(title.contains("↑/↓ or Ctrl-N · Enter · Esc"));
 }
 
 #[test]
@@ -3155,6 +3175,98 @@ fn command_palette_table_emits_overflow_position_cue_when_viewport_is_small() {
         .expect("expected overflow cue when rows exceed viewport");
     assert!(cue.contains("/"));
     assert!(cue.contains("Esc close"));
+}
+
+#[test]
+fn help_modal_uses_large_readable_layout() {
+    let area = ratatui::layout::Rect::new(0, 0, 120, 40);
+    let popup = super::render_frame::modal_rect_for_panel(
+        area,
+        super::render_frame::ModalPanelKind::Help,
+    );
+
+    assert!(popup.width >= 72);
+    assert!(popup.height >= 18);
+}
+
+#[test]
+fn status_modal_uses_compact_layout() {
+    let area = ratatui::layout::Rect::new(0, 0, 120, 40);
+    let popup = super::render_frame::modal_rect_for_panel(
+        area,
+        super::render_frame::ModalPanelKind::Status,
+    );
+
+    assert!(popup.width <= 72);
+    assert!(popup.height <= 14);
+}
+
+#[test]
+fn modal_layout_policy_applies_consistently_across_panels() {
+    let area = ratatui::layout::Rect::new(0, 0, 120, 40);
+    let command_palette = super::render_frame::modal_rect_for_panel(
+        area,
+        super::render_frame::ModalPanelKind::CommandPalette,
+    );
+    let skills = super::render_frame::modal_rect_for_panel(
+        area,
+        super::render_frame::ModalPanelKind::Skills,
+    );
+    let mcps = super::render_frame::modal_rect_for_panel(
+        area,
+        super::render_frame::ModalPanelKind::Mcps,
+    );
+
+    assert_eq!(skills.width, mcps.width);
+    assert_eq!(skills.height, mcps.height);
+    assert!(command_palette.width < skills.width);
+}
+
+#[test]
+fn models_modal_uses_layout_policy_defaults() {
+    let area = ratatui::layout::Rect::new(0, 0, 120, 40);
+    let models = super::render_frame::modal_rect_for_panel(
+        area,
+        super::render_frame::ModalPanelKind::Models,
+    );
+    let skills = super::render_frame::modal_rect_for_panel(
+        area,
+        super::render_frame::ModalPanelKind::Skills,
+    );
+
+    assert_eq!(models.width, skills.width);
+    assert_eq!(models.height, skills.height);
+}
+
+#[test]
+fn modal_frame_uses_rounded_border_style() {
+    assert!(super::modal_frame_uses_rounded_border_style_for_test());
+}
+
+#[test]
+fn modal_open_state_applies_dimmed_backdrop() {
+    let mut state = AppState::new();
+    state.open_command_palette();
+
+    assert!(super::modal_open_state_applies_dimmed_backdrop_for_test(&state));
+}
+
+#[test]
+fn inline_model_picker_modal_respects_border_and_backdrop_policy() {
+    let mut state = AppState::new();
+    state.open_model_picker();
+
+    assert!(super::inline_model_picker_modal_respects_border_and_backdrop_policy_for_test(&state));
+}
+
+#[test]
+fn model_picker_empty_catalog_shows_deterministic_empty_state() {
+    let state = AppState::new();
+    assert_eq!(
+        super::model_picker_empty_state_message_for_test(),
+        "No models available in cached startup config."
+    );
+    assert!(state.model_picker_filtered_options().is_empty());
 }
 
 #[test]

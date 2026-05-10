@@ -57,9 +57,24 @@ pub enum ToolCallStatus {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompactionStatus {
+    InProgress,
+    Done,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TranscriptLineStatus {
     Prompt(PromptStatus),
     Tool(ToolCallStatus),
+    Compaction(CompactionStatus),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompactionLine {
+    pub transcript_line_index: usize,
+    pub source: String,
+    pub status: CompactionStatus,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,6 +84,7 @@ pub enum CommandPaletteAction {
     Status,
     Mcps,
     Skills,
+    Models,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,6 +100,15 @@ pub struct DiscoverableSkill {
     pub source_priority: u8,
     pub source: String,
     pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelPickerOption {
+    pub provider: String,
+    pub model: String,
+    pub identity: String,
+    pub display: String,
+    pub active: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -166,6 +191,10 @@ pub struct AppState {
     pub command_palette_selection: usize,
     pub inline_slash_open: bool,
     pub inline_slash_selection: usize,
+    pub model_picker_open: bool,
+    pub model_picker_query: String,
+    pub model_picker_selection: usize,
+    pub model_picker_options: Vec<ModelPickerOption>,
     pub info_panel: Option<InfoPanel>,
     pub info_panel_scroll: usize,
     pub mcp_servers: Vec<McpServerState>,
@@ -175,9 +204,12 @@ pub struct AppState {
     llm_visible_mcp_tool_count: usize,
     mcp_failure_reasons: HashMap<String, String>,
     pending_mcp_toggle_requests: VecDeque<McpToggleRequest>,
+    pending_model_switch_requests: VecDeque<String>,
+    pending_model_picker_launch_requests: usize,
     assistant_projection_cache: HashMap<String, Vec<Line<'static>>>,
     prompt_items: Vec<QueuedPrompt>,
     tool_call_items: Vec<ToolCallLine>,
+    compaction_items: Vec<CompactionLine>,
     active_tool_ids_by_key: HashMap<String, VecDeque<u64>>,
     pending_prompt_ids: VecDeque<u64>,
     pending_immediate_submissions: VecDeque<String>,
@@ -219,6 +251,10 @@ impl Default for AppState {
             command_palette_selection: 0,
             inline_slash_open: false,
             inline_slash_selection: 0,
+            model_picker_open: false,
+            model_picker_query: String::new(),
+            model_picker_selection: 0,
+            model_picker_options: Vec::new(),
             info_panel: None,
             info_panel_scroll: 0,
             mcp_servers: Vec::new(),
@@ -228,9 +264,12 @@ impl Default for AppState {
             llm_visible_mcp_tool_count: 0,
             mcp_failure_reasons: HashMap::new(),
             pending_mcp_toggle_requests: VecDeque::new(),
+            pending_model_switch_requests: VecDeque::new(),
+            pending_model_picker_launch_requests: 0,
             assistant_projection_cache: HashMap::new(),
             prompt_items: Vec::new(),
             tool_call_items: Vec::new(),
+            compaction_items: Vec::new(),
             active_tool_ids_by_key: HashMap::new(),
             pending_prompt_ids: VecDeque::new(),
             pending_immediate_submissions: VecDeque::new(),
@@ -284,6 +323,7 @@ impl AppState {
             (CommandPaletteAction::Status, "Status"),
             (CommandPaletteAction::Mcps, "MCPs"),
             (CommandPaletteAction::Skills, "Skills"),
+            (CommandPaletteAction::Models, "Models"),
         ];
 
         if self.command_palette_query.is_empty() {
@@ -358,6 +398,7 @@ impl AppState {
 
     pub fn open_info_panel(&mut self, panel: InfoPanel) {
         self.command_palette_open = false;
+        self.model_picker_open = false;
         self.info_panel = Some(panel);
         self.info_panel_scroll = 0;
     }
@@ -399,6 +440,127 @@ impl AppState {
     pub fn mark_skills_discovery_failed(&mut self) {
         self.discoverable_skills.clear();
         self.skills_discovery_failed = true;
+    }
+
+    pub fn set_model_picker_options(&mut self, mut options: Vec<ModelPickerOption>) {
+        options.sort_by(|left, right| {
+            left.provider
+                .to_ascii_lowercase()
+                .cmp(&right.provider.to_ascii_lowercase())
+                .then_with(|| left.model.to_ascii_lowercase().cmp(&right.model.to_ascii_lowercase()))
+                .then_with(|| left.identity.to_ascii_lowercase().cmp(&right.identity.to_ascii_lowercase()))
+        });
+        self.model_picker_options = options;
+        self.ensure_invariants();
+    }
+
+    pub fn open_model_picker(&mut self) {
+        self.command_palette_open = false;
+        self.info_panel = None;
+        self.model_picker_open = true;
+        self.model_picker_query.clear();
+        self.model_picker_selection = 0;
+        self.ensure_invariants();
+    }
+
+    pub fn close_model_picker(&mut self) {
+        self.model_picker_open = false;
+        self.model_picker_query.clear();
+        self.model_picker_selection = 0;
+        self.ensure_invariants();
+    }
+
+    pub fn model_picker_close_on_escape(&mut self) {
+        self.close_model_picker();
+    }
+
+    pub fn model_picker_move_up(&mut self) {
+        let len = self.model_picker_filtered_options().len();
+        if len == 0 {
+            self.model_picker_selection = 0;
+            return;
+        }
+
+        self.model_picker_selection = if self.model_picker_selection == 0 {
+            len.saturating_sub(1)
+        } else {
+            self.model_picker_selection.saturating_sub(1)
+        };
+    }
+
+    pub fn model_picker_move_down(&mut self) {
+        let len = self.model_picker_filtered_options().len();
+        if len == 0 {
+            self.model_picker_selection = 0;
+            return;
+        }
+
+        self.model_picker_selection = (self.model_picker_selection + 1) % len;
+    }
+
+    pub fn append_model_picker_query_char(&mut self, ch: char) {
+        self.model_picker_query.push(ch);
+        self.model_picker_selection = 0;
+        self.ensure_invariants();
+    }
+
+    pub fn backspace_model_picker_query_char(&mut self) {
+        self.model_picker_query.pop();
+        self.model_picker_selection = 0;
+        self.ensure_invariants();
+    }
+
+    pub fn model_picker_filtered_options(&self) -> Vec<ModelPickerOption> {
+        if self.model_picker_query.is_empty() {
+            return self.model_picker_options.clone();
+        }
+
+        let query = self.model_picker_query.to_ascii_lowercase();
+        self.model_picker_options
+            .iter()
+            .filter(|option| {
+                option.identity.to_ascii_lowercase().contains(query.as_str())
+                    || option.display.to_ascii_lowercase().contains(query.as_str())
+            })
+            .cloned()
+            .collect()
+    }
+
+    pub fn selected_model_picker_option(&self) -> Option<ModelPickerOption> {
+        self.model_picker_filtered_options()
+            .get(self.model_picker_selection)
+            .cloned()
+    }
+
+    pub fn queue_selected_model_switch_request(&mut self) -> bool {
+        let Some(selected) = self.selected_model_picker_option() else {
+            return false;
+        };
+        self.pending_model_switch_requests
+            .push_back(selected.identity.clone());
+        true
+    }
+
+    pub fn take_next_model_switch_request(&mut self) -> Option<String> {
+        self.pending_model_switch_requests.pop_front()
+    }
+
+    pub fn queue_model_picker_launch_request(&mut self) {
+        self.pending_model_picker_launch_requests =
+            self.pending_model_picker_launch_requests.saturating_add(1);
+        self.input.buffer.clear();
+        self.input.cursor = 0;
+        self.abort.pending = false;
+        self.ensure_invariants();
+    }
+
+    pub fn take_next_model_picker_launch_request(&mut self) -> bool {
+        if self.pending_model_picker_launch_requests == 0 {
+            return false;
+        }
+        self.pending_model_picker_launch_requests =
+            self.pending_model_picker_launch_requests.saturating_sub(1);
+        true
     }
 
     pub fn discoverable_skills(&self) -> &[DiscoverableSkill] {
@@ -594,11 +756,59 @@ impl AppState {
             return Some(TranscriptLineStatus::Prompt(status));
         }
 
+        if let Some(status) = self
+            .compaction_items
+            .iter()
+            .rev()
+            .find(|item| item.transcript_line_index == transcript_line_index)
+            .map(|item| item.status)
+        {
+            return Some(TranscriptLineStatus::Compaction(status));
+        }
+
         self.tool_call_items
             .iter()
             .rev()
             .find(|tool| tool.transcript_line_index == transcript_line_index)
             .map(|tool| TranscriptLineStatus::Tool(tool.status))
+    }
+
+    pub fn start_compaction_block(&mut self, source: &str) {
+        if self
+            .compaction_items
+            .iter()
+            .any(|item| item.source == source && item.status == CompactionStatus::InProgress)
+        {
+            return;
+        }
+        self.push_transcript_line(TranscriptRole::System, "Compaction".to_string());
+        let transcript_line_index = self.transcript_preview.len().saturating_sub(1);
+        self.compaction_items.push(CompactionLine {
+            transcript_line_index,
+            source: source.to_string(),
+            status: CompactionStatus::InProgress,
+        });
+    }
+
+    pub fn finish_compaction_block(&mut self, source: &str, status: CompactionStatus) {
+        if let Some(item) = self
+            .compaction_items
+            .iter_mut()
+            .rev()
+            .find(|item| item.source == source && item.status == CompactionStatus::InProgress)
+        {
+            item.status = status;
+            return;
+        }
+
+        if let Some(item) = self
+            .compaction_items
+            .iter_mut()
+            .rev()
+            .find(|item| item.status == CompactionStatus::InProgress)
+        {
+            item.status = status;
+        }
     }
 
     pub fn start_tool_call(&mut self, name: &str, arguments: &str) {
@@ -1225,6 +1435,18 @@ impl AppState {
             self.mcp_panel_selection = self.mcp_servers.len().saturating_sub(1);
         }
 
+        if !self.model_picker_open {
+            self.model_picker_selection = 0;
+            self.model_picker_query.clear();
+        } else {
+            let len = self.model_picker_filtered_options().len();
+            if len == 0 {
+                self.model_picker_selection = 0;
+            } else if self.model_picker_selection >= len {
+                self.model_picker_selection = len.saturating_sub(1);
+            }
+        }
+
         viewport_state::clamp_scroll_from_bottom(self);
 
         while self.input.cursor > 0 && !self.input.buffer.is_char_boundary(self.input.cursor) {
@@ -1260,6 +1482,7 @@ pub fn info_panel_for_command_palette_action(action: CommandPaletteAction) -> Op
         CommandPaletteAction::Status => Some(InfoPanel::Status),
         CommandPaletteAction::Mcps => Some(InfoPanel::Mcps),
         CommandPaletteAction::Skills => Some(InfoPanel::Skills),
+        CommandPaletteAction::Models => None,
     }
 }
 

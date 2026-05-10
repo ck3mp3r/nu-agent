@@ -132,6 +132,11 @@ pub(crate) struct AgentConversationRuntime {
     pub auto_compaction_tolerance: usize,
     pub auto_compaction_hysteresis_margin: usize,
     pub auto_compaction_state: CompactionTriggerState,
+    pub startup_plugin_config: Option<crate::config::PluginConfig>,
+}
+
+fn apply_switched_config(current: &mut Config, switched: Config) {
+    *current = switched;
 }
 
 impl ConversationRuntime for AgentConversationRuntime {
@@ -174,6 +179,20 @@ impl ConversationRuntime for AgentConversationRuntime {
             .iter()
             .filter(|tool| self.mcp_registry.is_registered(tool.name.as_str()))
             .count()
+    }
+
+    fn switch_model(&mut self, model_spec: &str) -> Result<String, String> {
+        let plugin_config = self.startup_plugin_config.clone().ok_or_else(|| {
+            "model switch unavailable: startup plugin config cache is missing".to_string()
+        })?;
+
+        let resolved = plugin_config.resolve_model(model_spec)?;
+        apply_switched_config(&mut self.config, resolved);
+        Ok(format!("{}/{}", self.config.provider, self.config.model))
+    }
+
+    fn active_model_identity(&self) -> String {
+        format!("{}/{}", self.config.provider, self.config.model)
     }
 
     fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
@@ -523,7 +542,11 @@ impl AgentConversationRuntime {
         let config = &self.config;
         let store = &self.store;
 
-        let event = execute_compaction_event_shared(source, || {
+        let source_label = source.as_str().to_string();
+        ui.emit(&UiEvent::CompactionStarted {
+            source: source_label.clone(),
+        });
+        let result = execute_compaction_event_shared(source, || {
             let session = self
                 .session
                 .as_mut()
@@ -535,9 +558,20 @@ impl AgentConversationRuntime {
             execute_compaction_persisted(session, store, |old_messages| {
                 summarize_old_segment_with_llm(runtime, runtime_ctx, config, ui, old_messages)
             }, mode)
-        })?;
-        ui.emit(&event);
-        Ok(())
+        });
+        match result {
+            Ok(event) => {
+                ui.emit(&event);
+                Ok(())
+            }
+            Err(error) => {
+                ui.emit(&UiEvent::CompactionFailed {
+                    source: source_label,
+                    message: COMPACTION_FAILURE_WARNING.to_string(),
+                });
+                Err(error)
+            }
+        }
     }
 }
 

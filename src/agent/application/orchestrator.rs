@@ -23,6 +23,8 @@ const COMPACTION_FAILURE_WARNING: &str =
 
 type McpToggleResult = (Result<McpUsabilityState, String>, usize);
 type PendingMcpToggle = (String, mpsc::Receiver<McpToggleResult>);
+type ModelSwitchResult = Result<String, String>;
+type PendingModelSwitch = mpsc::Receiver<ModelSwitchResult>;
 type PendingAutoCompaction = mpsc::Receiver<Option<String>>;
 type PendingCompactionTrigger = mpsc::Receiver<Option<String>>;
 
@@ -39,6 +41,10 @@ enum WorkerCommand {
         server_name: String,
         enable: bool,
         response_tx: mpsc::Sender<McpToggleResult>,
+    },
+    SwitchModel {
+        model_spec: String,
+        response_tx: mpsc::Sender<ModelSwitchResult>,
     },
     Shutdown,
 }
@@ -73,7 +79,8 @@ where
     R: ConversationRuntime + Send,
     U: InteractiveUi,
 {
-    let mut last_authoritative_visible_count = runtime.llm_visible_mcp_tool_count();
+        let mut last_authoritative_visible_count = runtime.llm_visible_mcp_tool_count();
+        ui.set_active_model_identity(runtime.active_model_identity().as_str());
 
     std::thread::scope(|scope| {
         let (worker_cmd_tx, worker_cmd_rx) = mpsc::channel::<WorkerCommand>();
@@ -124,6 +131,12 @@ where
                         let visible_count = runtime.llm_visible_mcp_tool_count();
                         let _ = response_tx.send((result, visible_count));
                     }
+                    WorkerCommand::SwitchModel {
+                        model_spec,
+                        response_tx,
+                    } => {
+                        let _ = response_tx.send(runtime.switch_model(&model_spec));
+                    }
                     WorkerCommand::Shutdown => break,
                 }
             }
@@ -133,6 +146,8 @@ where
         let mut pending_mcp_toggles: Vec<PendingMcpToggle> = Vec::new();
         let mut pending_auto_compaction: Option<PendingAutoCompaction> = None;
         let mut pending_compaction_trigger: Option<PendingCompactionTrigger> = None;
+        let mut pending_model_switch: Option<PendingModelSwitch> = None;
+        let mut queued_model_switch: Option<String> = None;
 
         loop {
             ui.pump_once();
@@ -156,6 +171,28 @@ where
                 }
 
                 pending_mcp_toggles.push((server_name, response_rx));
+            }
+
+            if let Some(response_rx) = pending_model_switch.take() {
+                match response_rx.try_recv() {
+                    Ok(Ok(active_identity)) => {
+                        ui.set_active_model_identity(active_identity.as_str());
+                        ui.emit(&UiEvent::Warning {
+                            message: format!("Model switched: {active_identity}"),
+                        });
+                    }
+                    Ok(Err(message)) => {
+                        ui.emit(&UiEvent::Warning { message });
+                    }
+                    Err(mpsc::TryRecvError::Empty) => {
+                        pending_model_switch = Some(response_rx);
+                    }
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        ui.emit(&UiEvent::Warning {
+                            message: "Model switch worker disconnected".to_string(),
+                        });
+                    }
+                }
             }
 
             let mut retained = Vec::new();
@@ -258,7 +295,57 @@ where
                 return Err(LabeledError::new(format!("Interactive UI failed: {error}")));
             }
 
-            if !worker_active {
+            while ui.take_next_model_picker_launch_request() {
+                let _ = ui.execute_shared_ui_action(SharedUiAction::Models);
+            }
+
+            while let Some(model_spec) = ui.take_next_model_switch_request() {
+                if worker_active {
+                    queued_model_switch = Some(model_spec.clone());
+                    ui.emit(&UiEvent::Warning {
+                        message: format!("Model switch queued for next turn: {model_spec}"),
+                    });
+                } else if pending_model_switch.is_none() {
+                    let (response_tx, response_rx) = mpsc::channel();
+                    if worker_cmd_tx
+                        .send(WorkerCommand::SwitchModel {
+                            model_spec,
+                            response_tx,
+                        })
+                        .is_ok()
+                    {
+                        pending_model_switch = Some(response_rx);
+                    } else {
+                        ui.emit(&UiEvent::Warning {
+                            message: "Model switch worker channel closed".to_string(),
+                        });
+                    }
+                } else {
+                    queued_model_switch = Some(model_spec);
+                }
+            }
+
+            if !worker_active
+                && pending_model_switch.is_none()
+                && let Some(model_spec) = queued_model_switch.take()
+            {
+                let (response_tx, response_rx) = mpsc::channel();
+                if worker_cmd_tx
+                    .send(WorkerCommand::SwitchModel {
+                        model_spec,
+                        response_tx,
+                    })
+                    .is_ok()
+                {
+                    pending_model_switch = Some(response_rx);
+                } else {
+                    ui.emit(&UiEvent::Warning {
+                        message: "Model switch worker channel closed".to_string(),
+                    });
+                }
+            }
+
+            if !worker_active && pending_model_switch.is_none() {
                 while let Some(prompt) = ui.take_submitted_prompt() {
                     if prompt.trim().is_empty() {
                         continue;
@@ -294,6 +381,10 @@ where
                             let _ = ui.execute_shared_ui_action(SharedUiAction::Mcps);
                             continue;
                         }
+                        SlashParseResult::Command(SlashCommand::Models) => {
+                            let _ = ui.execute_shared_ui_action(SharedUiAction::Models);
+                            continue;
+                        }
                         SlashParseResult::Unknown(command) => {
                             ui.emit(&UiEvent::Warning {
                                 message: format!("Unknown slash command: {command}"),
@@ -316,6 +407,13 @@ where
             if ui.quit_requested() {
                 if worker_active {
                     cancel_requested.store(true, Ordering::SeqCst);
+                    continue;
+                }
+                if pending_model_switch.is_some()
+                    || !pending_mcp_toggles.is_empty()
+                    || pending_auto_compaction.is_some()
+                    || pending_compaction_trigger.is_some()
+                {
                     continue;
                 }
                 break;

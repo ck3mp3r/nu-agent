@@ -99,6 +99,7 @@ fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserAction, bool
                 UserAction::ScrollLineDown | UserAction::HistoryDown => {
                     UserAction::CommandPaletteMoveDown
                 }
+                UserAction::QueryNext => UserAction::CommandPaletteMoveDown,
                 UserAction::Backspace => {
                     state.backspace_command_palette_query_char();
                     UserAction::Noop
@@ -113,6 +114,44 @@ fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserAction, bool
                 _ => UserAction::Noop,
             },
             false,
+        );
+    }
+
+    if state.model_picker_open {
+        return (
+            match action {
+                UserAction::Esc => {
+                    state.model_picker_close_on_escape();
+                    UserAction::Noop
+                }
+                UserAction::Submit => {
+                    let _ = state.queue_selected_model_switch_request();
+                    state.close_model_picker();
+                    UserAction::Noop
+                }
+                UserAction::ScrollLineUp | UserAction::HistoryUp => {
+                    state.model_picker_move_up();
+                    UserAction::Noop
+                }
+                UserAction::ScrollLineDown | UserAction::HistoryDown => {
+                    state.model_picker_move_down();
+                    UserAction::Noop
+                }
+                UserAction::QueryNext => {
+                    state.model_picker_move_down();
+                    UserAction::Noop
+                }
+                UserAction::Backspace => {
+                    state.backspace_model_picker_query_char();
+                    UserAction::Noop
+                }
+                UserAction::InsertChar(ch) => {
+                    state.append_model_picker_query_char(ch);
+                    UserAction::Noop
+                }
+                _ => UserAction::Noop,
+            },
+            true,
         );
     }
 

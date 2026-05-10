@@ -29,6 +29,14 @@ fn parse_slash_command_compact_mcp_help_status_exact() {
 }
 
 #[test]
+fn parse_slash_command_models_exact() {
+    assert_eq!(
+        parse_slash_command(" /models "),
+        SlashParseResult::Command(SlashCommand::Models)
+    );
+}
+
+#[test]
 fn parse_slash_command_non_slash_returns_not_slash() {
     assert_eq!(
         parse_slash_command("hello world"),
@@ -53,6 +61,7 @@ fn inline_slash_filter_is_prefix_based_and_deterministic() {
             SlashCommand::Mcp,
             SlashCommand::Help,
             SlashCommand::Status,
+            SlashCommand::Models,
         ]
     );
     assert_eq!(
@@ -65,7 +74,7 @@ fn inline_slash_filter_is_prefix_based_and_deterministic() {
     );
     assert_eq!(
         filter_inline_slash_suggestions("/m"),
-        vec![SlashCommand::Mcp]
+        vec![SlashCommand::Mcp, SlashCommand::Models]
     );
     assert!(filter_inline_slash_suggestions("/x").is_empty());
     assert!(filter_inline_slash_suggestions("hello").is_empty());
@@ -80,6 +89,7 @@ fn slash_command_catalog_exports_expected_labels_and_order() {
             SlashCommand::Mcp,
             SlashCommand::Help,
             SlashCommand::Status,
+            SlashCommand::Models,
         ]
     );
 
@@ -87,9 +97,11 @@ fn slash_command_catalog_exports_expected_labels_and_order() {
     assert_eq!(slash_command_label(SlashCommand::Mcp), "/mcp");
     assert_eq!(slash_command_label(SlashCommand::Help), "/help");
     assert_eq!(slash_command_label(SlashCommand::Status), "/status");
+    assert_eq!(slash_command_label(SlashCommand::Models), "/models");
 
     assert!(!slash_command_summary(SlashCommand::Compact).is_empty());
     assert!(!slash_command_summary(SlashCommand::Mcp).is_empty());
     assert!(!slash_command_summary(SlashCommand::Help).is_empty());
     assert!(!slash_command_summary(SlashCommand::Status).is_empty());
+    assert!(!slash_command_summary(SlashCommand::Models).is_empty());
 }

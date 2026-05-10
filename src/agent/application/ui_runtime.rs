@@ -13,6 +13,7 @@ use crate::agent::{
         tui::runtime::{HybridTerminalEvents, TuiRuntimeRenderer},
     },
 };
+use crate::agent::ui::tui::state::ModelPickerOption;
 
 pub(crate) struct StderrProgressUi<R>
 where
@@ -92,6 +93,10 @@ where
     pub fn set_context_window_max_tokens(&mut self, max_tokens: Option<u64>) {
         self.renderer.set_context_window_max_tokens(max_tokens);
     }
+
+    pub fn set_model_picker_options(&mut self, options: Vec<ModelPickerOption>) {
+        self.renderer.set_model_picker_options(options);
+    }
 }
 
 impl<R> ProgressUi for TuiInteractiveUi<R>
@@ -127,11 +132,19 @@ where
         self.renderer.take_submitted_prompt()
     }
 
+    fn take_next_model_picker_launch_request(&mut self) -> bool {
+        self.renderer.take_next_model_picker_launch_request()
+    }
+
     fn take_next_mcp_toggle_request(&mut self) -> Option<McpToggleRequest> {
         self.renderer.take_next_mcp_toggle_request().map(|request| McpToggleRequest {
             server_name: request.server_name,
             enable: request.enable,
         })
+    }
+
+    fn take_next_model_switch_request(&mut self) -> Option<String> {
+        self.renderer.take_next_model_switch_request()
     }
 
     fn set_mcp_server_state(&mut self, server_name: &str, state: McpUsabilityState) {
@@ -169,6 +182,11 @@ where
 
     fn execute_shared_ui_action(&mut self, action: SharedUiAction) -> bool {
         self.renderer.execute_shared_ui_action(action)
+    }
+
+    fn set_active_model_identity(&mut self, active_model_identity: &str) {
+        self.renderer
+            .set_active_model_identity(active_model_identity.to_string());
     }
 
     fn fatal_error(&self) -> Option<&str> {

@@ -29,6 +29,9 @@ fn ui_event_contract_exposes_required_variants() {
         UiEvent::Warning {
             message: "compaction failed".to_string(),
         },
+        UiEvent::CompactionStarted {
+            source: "auto_threshold".to_string(),
+        },
         UiEvent::CompactionTriggered {
             source: "auto_threshold".to_string(),
             summarized_count: 3,
@@ -36,11 +39,15 @@ fn ui_event_contract_exposes_required_variants() {
             summary_preview: "summary preview".to_string(),
             summary_body: "summary body".to_string(),
         },
+        UiEvent::CompactionFailed {
+            source: "auto_threshold".to_string(),
+            message: "failed".to_string(),
+        },
         UiEvent::AssistantMessage {
             text: "done".to_string(),
         },
         UiEvent::Completed { tool_calls: 1 },
     ];
 
-    assert_eq!(events.len(), 9);
+    assert_eq!(events.len(), 11);
 }

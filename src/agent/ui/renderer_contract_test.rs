@@ -31,7 +31,9 @@ impl UiRenderer for FakeRenderer {
             UiEvent::ToolStart { .. } => "tool_start",
             UiEvent::ToolEnd { .. } => "tool_end",
             UiEvent::Warning { .. } => "warning",
+            UiEvent::CompactionStarted { .. } => "compaction_started",
             UiEvent::CompactionTriggered { .. } => "compaction_triggered",
+            UiEvent::CompactionFailed { .. } => "compaction_failed",
             UiEvent::AssistantMessage { .. } => "assistant_message",
             UiEvent::Completed { .. } => "completed",
         };

@@ -1,7 +1,10 @@
 use crate::agent::ui::tui::{
     interaction::cancel::CancelController,
     markdown,
-    state::{AppState, InputMode, PaneFocus, TranscriptRole, UiPhase, info_panel_for_command_palette_action},
+    state::{
+        AppState, CompactionStatus, InputMode, PaneFocus, TranscriptRole, UiPhase,
+        info_panel_for_command_palette_action,
+    },
 };
 use crate::agent::protocol::slash::{SlashParseResult, parse_slash_command, slash_command_label};
 use crate::agent::protocol::event::UiEvent;
@@ -30,6 +33,7 @@ pub enum UserAction {
     ScrollPageDown,
     CompleteForward,
     CompleteBackward,
+    QueryNext,
     ToggleCommandPalette,
     CommandPaletteMoveUp,
     CommandPaletteMoveDown,
@@ -111,6 +115,7 @@ fn reduce_user_action(
         UserAction::InlineSlashClose => state.close_inline_slash_suggestions(),
         UserAction::HistoryUp
         | UserAction::HistoryDown
+        | UserAction::QueryNext
         | UserAction::CompleteForward
         | UserAction::CompleteBackward => {}
         UserAction::ScrollPageUp => handle_scroll_page_up(state),
@@ -145,12 +150,16 @@ fn handle_submit(state: &mut AppState) {
         return;
     }
 
-    if matches!(
-        parse_slash_command(&submitted_text),
-        SlashParseResult::Command(_) | SlashParseResult::Unknown(_)
-    ) {
-        state.enqueue_immediate_submission(submitted_text);
-        return;
+    match parse_slash_command(&submitted_text) {
+        SlashParseResult::Command(crate::agent::protocol::slash::SlashCommand::Models) => {
+            state.queue_model_picker_launch_request();
+            return;
+        }
+        SlashParseResult::Command(_) | SlashParseResult::Unknown(_) => {
+            state.enqueue_immediate_submission(submitted_text);
+            return;
+        }
+        SlashParseResult::NotSlash => {}
     }
 
     state.enqueue_prompt(submitted_text);
@@ -268,6 +277,12 @@ fn handle_toggle_command_palette(state: &mut AppState) {
 
 fn handle_command_palette_select(state: &mut AppState) {
     if let Some(action) = state.command_palette_selected_action() {
+        if action == crate::agent::ui::tui::state::CommandPaletteAction::Models {
+            state.close_command_palette();
+            state.queue_model_picker_launch_request();
+            return;
+        }
+
         if let Some(panel) = info_panel_for_command_palette_action(action) {
             state.open_info_panel(panel);
         } else {
@@ -358,25 +373,44 @@ fn reduce_ui_event(state: &mut AppState, event: UiEvent) {
             ..
         } => handle_llm_end(state, response_chars, input_tokens, output_tokens, total_tokens),
         UiEvent::Warning { message } => handle_warning(state, message),
+        UiEvent::CompactionStarted { source } => {
+            state.start_compaction_block(&source);
+        }
         UiEvent::CompactionTriggered {
             source,
             summarized_count,
             kept_recent_count,
-            summary_preview,
+            summary_preview: _,
             summary_body,
         } => {
+            state.start_compaction_block(&source);
+            state.finish_compaction_block(&source, CompactionStatus::Done);
             let body = if summary_body.trim().is_empty() {
                 "(empty summary)".to_string()
             } else {
                 summary_body
             };
+
             state.push_transcript_line(
                 TranscriptRole::System,
-                format!(
-                    "[compaction source={source} summarized={summarized_count} kept={kept_recent_count}] preview: {summary_preview}"
-                ),
+                format!("summarized={summarized_count} · kept={kept_recent_count}"),
             );
-            state.push_transcript_line(TranscriptRole::System, body);
+
+            for line in state.project_assistant_markdown_lines(&body) {
+                let text = markdown::rendered_line_to_plain_text(&line);
+                if text.trim().is_empty() {
+                    continue;
+                }
+                state.push_transcript_rendered_line(TranscriptRole::System, line);
+            }
+        }
+        UiEvent::CompactionFailed { source, message } => {
+            state.start_compaction_block(&source);
+            state.finish_compaction_block(&source, CompactionStatus::Failed);
+            state.push_transcript_line(
+                TranscriptRole::System,
+                format!("Compaction failed deterministically: {message}"),
+            );
         }
         UiEvent::AssistantMessage { text } => handle_assistant_message(state, text),
         UiEvent::Completed { .. } => finalize(state),

@@ -2,7 +2,10 @@ use crate::agent::ui::{tui::{
         interaction::reducer::{
             ESC_ABORT_CONFIRM_STATUS, ReducerInput, UserAction, reduce_with_cancel_controller,
         },
-        state::{AppState, InputMode, ToolCallStatus, TranscriptLineStatus, TranscriptRole, UiPhase},
+        state::{
+            AppState, CompactionStatus, InputMode, ToolCallStatus, TranscriptLineStatus,
+            TranscriptRole, UiPhase,
+        },
     },
 };
 use crate::agent::protocol::event::UiEvent;
@@ -853,19 +856,388 @@ fn compaction_summary_is_rendered_in_transcript() {
         None,
     );
 
-    assert_eq!(state.transcript_preview.len(), 2);
-    assert_eq!(state.transcript_preview[0].role, TranscriptRole::System);
-    assert!(state.transcript_preview[0]
-        .text
-        .contains("source=slash_compact"));
-    assert!(state.transcript_preview[0].text.contains("summarized=5"));
-    assert!(state.transcript_preview[0].text.contains("kept=2"));
-    assert!(state.transcript_preview[0]
-        .text
-        .contains("preview: short summary preview"));
+    let lines = state
+        .transcript_preview
+        .iter()
+        .map(|line| line.text.as_str())
+        .collect::<Vec<_>>();
+    assert!(lines.contains(&"Compaction"));
+    assert!(lines.contains(&"summarized=5 · kept=2"));
+    assert!(lines.contains(&"full summary body"));
+}
 
-    assert_eq!(state.transcript_preview[1].role, TranscriptRole::System);
-    assert_eq!(state.transcript_preview[1].text, "full summary body");
+#[test]
+fn compaction_artifact_renders_as_single_markdown_block() {
+    let mut state = AppState::new();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::CompactionTriggered {
+            source: "slash_compact".to_string(),
+            summarized_count: 3,
+            kept_recent_count: 2,
+            summary_preview: "preview".to_string(),
+            summary_body: "## Summary\n- one\n- two".to_string(),
+        }),
+        None,
+    );
+
+    let lines = state
+        .transcript_preview
+        .iter()
+        .map(|line| line.text.as_str())
+        .collect::<Vec<_>>();
+    assert!(lines.contains(&"Compaction"));
+    assert!(lines.contains(&"Summary"));
+    assert!(!lines
+        .iter()
+        .any(|line| line.starts_with("[compaction source=")));
+}
+
+#[test]
+fn compaction_artifact_does_not_double_wrap_summary_heading() {
+    let mut state = AppState::new();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::CompactionTriggered {
+            source: "slash_compact".to_string(),
+            summarized_count: 1,
+            kept_recent_count: 1,
+            summary_preview: "## Summary".to_string(),
+            summary_body: "## Summary\n- single".to_string(),
+        }),
+        None,
+    );
+
+    let summary_lines = state
+        .transcript_preview
+        .iter()
+        .filter(|line| line.text == "Summary")
+        .count();
+    assert_eq!(summary_lines, 1);
+}
+
+#[test]
+fn compaction_artifact_preserves_bullets_without_duplication() {
+    let mut state = AppState::new();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::CompactionTriggered {
+            source: "auto_threshold".to_string(),
+            summarized_count: 8,
+            kept_recent_count: 4,
+            summary_preview: "preview".to_string(),
+            summary_body: "- alpha\n- beta".to_string(),
+        }),
+        None,
+    );
+
+    let lines = state
+        .transcript_preview
+        .iter()
+        .map(|line| line.text.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(lines.iter().filter(|line| **line == "• alpha").count(), 1);
+    assert_eq!(lines.iter().filter(|line| **line == "• beta").count(), 1);
+    assert!(!lines.iter().any(|line| line.contains("• •")));
+}
+
+#[test]
+fn compaction_block_completion_hides_source_and_explanatory_copy() {
+    let mut state = AppState::new();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::CompactionTriggered {
+            source: "auto_threshold".to_string(),
+            summarized_count: 9,
+            kept_recent_count: 3,
+            summary_preview: "preview".to_string(),
+            summary_body: "## Summary\ncontent line".to_string(),
+        }),
+        None,
+    );
+
+    let lines = state
+        .transcript_preview
+        .iter()
+        .map(|line| line.text.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(lines.contains(&"Compaction"));
+    assert!(lines.contains(&"summarized=9 · kept=3"));
+    assert!(lines.contains(&"Summary"));
+    assert!(lines.contains(&"content line"));
+    assert!(!lines.iter().any(|line| line.contains("source=")));
+    assert!(!lines
+        .iter()
+        .any(|line| line.contains("metadata above is UI diagnostic only")));
+    assert!(!lines
+        .iter()
+        .any(|line| line.contains("persisted as system summary")));
+}
+
+#[test]
+fn compaction_block_header_is_concise_without_artifact_label() {
+    let mut state = AppState::new();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::CompactionStarted {
+            source: "auto_threshold".to_string(),
+        }),
+        None,
+    );
+
+    let lines = state
+        .transcript_preview
+        .iter()
+        .map(|line| line.text.as_str())
+        .collect::<Vec<_>>();
+    assert!(lines.contains(&"Compaction"));
+    assert!(!lines.contains(&"Compaction artifact"));
+}
+
+#[test]
+fn compaction_block_running_state_has_no_source_or_status_metadata_line() {
+    let mut state = AppState::new();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::CompactionStarted {
+            source: "auto_threshold".to_string(),
+        }),
+        None,
+    );
+
+    let idx = state
+        .transcript_preview
+        .iter()
+        .position(|line| line.text == "Compaction")
+        .expect("compaction line");
+    assert_eq!(
+        state.transcript_line_status_for_index(idx),
+        Some(TranscriptLineStatus::Compaction(CompactionStatus::InProgress))
+    );
+
+    let lines = state
+        .transcript_preview
+        .iter()
+        .map(|line| line.text.as_str())
+        .collect::<Vec<_>>();
+    assert!(!lines.iter().any(|line| line.contains("source=")));
+    assert!(!lines.iter().any(|line| line.contains("status=running")));
+}
+
+#[test]
+fn compaction_block_shows_tick_on_success() {
+    let mut state = AppState::new();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::CompactionStarted {
+            source: "slash_compact".to_string(),
+        }),
+        None,
+    );
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::CompactionTriggered {
+            source: "slash_compact".to_string(),
+            summarized_count: 3,
+            kept_recent_count: 2,
+            summary_preview: "preview".to_string(),
+            summary_body: "summary body".to_string(),
+        }),
+        None,
+    );
+
+    let idx = state
+        .transcript_preview
+        .iter()
+        .position(|line| line.text == "Compaction")
+        .expect("compaction line");
+    assert_eq!(
+        state.transcript_line_status_for_index(idx),
+        Some(TranscriptLineStatus::Compaction(CompactionStatus::Done))
+    );
+}
+
+#[test]
+fn compaction_block_shows_failure_state_on_error() {
+    let mut state = AppState::new();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::CompactionStarted {
+            source: "auto_threshold".to_string(),
+        }),
+        None,
+    );
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::CompactionFailed {
+            source: "auto_threshold".to_string(),
+            message: "sliding_summary summarization unavailable".to_string(),
+        }),
+        None,
+    );
+
+    let idx = state
+        .transcript_preview
+        .iter()
+        .position(|line| line.text == "Compaction")
+        .expect("compaction line");
+    assert_eq!(
+        state.transcript_line_status_for_index(idx),
+        Some(TranscriptLineStatus::Compaction(CompactionStatus::Failed))
+    );
+    assert!(state
+        .transcript_preview
+        .iter()
+        .any(|line| line.text.contains("Compaction failed deterministically")));
+}
+
+#[test]
+fn compaction_block_summary_rendering_remains_clean_after_copy_removal() {
+    let mut state = AppState::new();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::CompactionStarted {
+            source: "slash_compact".to_string(),
+        }),
+        None,
+    );
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::CompactionTriggered {
+            source: "slash_compact".to_string(),
+            summarized_count: 1,
+            kept_recent_count: 1,
+            summary_preview: "preview".to_string(),
+            summary_body: "## Summary\n- alpha\n- beta".to_string(),
+        }),
+        None,
+    );
+
+    let lines = state
+        .transcript_preview
+        .iter()
+        .map(|line| line.text.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(lines.iter().filter(|line| **line == "Summary").count(), 1);
+    assert_eq!(lines.iter().filter(|line| **line == "• alpha").count(), 1);
+    assert_eq!(lines.iter().filter(|line| **line == "• beta").count(), 1);
+}
+
+#[test]
+fn compaction_metadata_not_included_in_future_prompt_history() {
+    let mut state = AppState::new();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::CompactionStarted {
+            source: "slash_compact".to_string(),
+        }),
+        None,
+    );
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::CompactionTriggered {
+            source: "slash_compact".to_string(),
+            summarized_count: 4,
+            kept_recent_count: 2,
+            summary_preview: "preview".to_string(),
+            summary_body: "persisted summary body".to_string(),
+        }),
+        None,
+    );
+
+    assert_eq!(
+        state.transcript_preview[0].text,
+        "Compaction",
+        "metadata is transcript UI chrome, not session system summary payload"
+    );
+    assert!(state
+        .transcript_preview
+        .iter()
+        .any(|line| line.text == "persisted summary body"));
+}
+
+#[test]
+fn compaction_noop_does_not_claim_persisted_summary() {
+    let mut state = AppState::new();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::CompactionStarted {
+            source: "auto_threshold".to_string(),
+        }),
+        None,
+    );
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::CompactionTriggered {
+            source: "auto_threshold".to_string(),
+            summarized_count: 0,
+            kept_recent_count: 6,
+            summary_preview: "preview".to_string(),
+            summary_body: "(empty summary)".to_string(),
+        }),
+        None,
+    );
+
+    let lines = state
+        .transcript_preview
+        .iter()
+        .map(|line| line.text.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(lines.contains(&"summarized=0 · kept=6"));
+    assert!(!lines.iter().any(|line| line.contains("source=")));
+    assert!(!lines
+        .iter()
+        .any(|line| line.contains("metadata above is UI diagnostic only and NOT included in future LLM prompt history")));
+    assert!(!lines
+        .iter()
+        .any(|line| line.contains("Summary text below is persisted as system summary and IS included in future history")));
+}
+
+#[test]
+fn compaction_block_renders_for_slash_and_auto_triggers() {
+    let mut state = AppState::new();
+
+    for source in ["slash_compact", "auto_threshold"] {
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::Event(UiEvent::CompactionStarted {
+                source: source.to_string(),
+            }),
+            None,
+        );
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::Event(UiEvent::CompactionTriggered {
+                source: source.to_string(),
+                summarized_count: 2,
+                kept_recent_count: 1,
+                summary_preview: "preview".to_string(),
+                summary_body: format!("summary from {source}"),
+            }),
+            None,
+        );
+    }
+
+    let lines = state
+        .transcript_preview
+        .iter()
+        .map(|line| line.text.as_str())
+        .collect::<Vec<_>>();
+    assert!(lines.contains(&"summary from slash_compact"));
+    assert!(lines.contains(&"summary from auto_threshold"));
 }
 
 #[test]

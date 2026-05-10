@@ -26,6 +26,7 @@
 - Press `Ctrl-P` to open the command palette.
 - Type to filter, then press `Enter`.
 - Use it to open Help, Status, MCPs, or Skills.
+- Use it to open Help, Status, MCPs, Skills, or Models.
 - Press `Esc` to close the palette.
 
 # Inline slash suggestions
@@ -36,7 +37,9 @@
 - If the slash prefix is removed, suggestions close cleanly without falling back to command palette.
 - Up/Down selects a suggestion; `Enter` submits the selected slash command.
 - Supported commands: `/compact`, `/mcp`, `/help`, `/status`.
+- Supported commands: `/compact`, `/mcp`, `/help`, `/status`, `/models`.
 - `/help`, `/status`, and `/mcp` map to the same handlers as Ctrl-P actions.
+- `/models` and Ctrl-P `Models` use the same shared model-picker action path.
 - Unknown slash commands warn deterministically and continue the loop.
 
 # MCP basics (enabled/disabled/failed + where to toggle)
@@ -55,6 +58,21 @@
 - Unknown slash commands show a warning and continue the loop.
 - Slash command text is handled by the runtime and is not sent to the LLM.
 - Slash command text is not echoed into the transcript; only resulting artifacts (for example compaction summary output) may appear.
+
+# Model switching
+
+- `/models` opens the inline model picker.
+- Ctrl-P `Models` launches the same picker path as `/models`.
+- Model switching uses cached startup `PluginConfig` metadata (no per-switch plugin config re-read).
+- Applying a model switch updates active identity immediately in the footer/status lane.
+- Model switches apply full resolved model config (provider/provider_impl/model/limits/settings) for subsequent turns.
+
+# Modal presentation
+
+- Modal surfaces use a consolidated layout policy by panel kind.
+- Help uses larger readable layout; Status uses compact layout; MCP/Skills/Models use balanced defaults.
+- Modal frames use rounded borders.
+- Modal-open states apply dimmed backdrop treatment for non-modal regions.
 
 # Compaction mode
 

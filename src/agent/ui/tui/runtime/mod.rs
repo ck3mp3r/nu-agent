@@ -8,10 +8,11 @@ use ratatui::{
     backend::CrosstermBackend,
     style::Style,
     layout::{Margin, Position},
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout},
     text::{Line, Span, Text},
     widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, TableState, Wrap},
 };
+use ratatui::symbols;
 mod transcript_window;
 mod transcript_rows;
 mod status;
@@ -51,7 +52,7 @@ use crate::agent::ui::{renderer::UiRenderer,
         },
         state::{
             AppState, CommandPaletteAction, InfoPanel, McpServerState, McpToggleRequest,
-            McpServerUsabilityState, TranscriptRole,
+            McpServerUsabilityState, ModelPickerOption, TranscriptRole,
         },
     },
 };
@@ -70,7 +71,7 @@ use status::{
     transcript_selection_range_for_render, transcript_title_for_render,
 };
 use render_frame::{
-    current_time_millis, vertical_heights_for_main_with_input,
+    current_time_millis, vertical_heights_for_main_with_input, modal_rect_for_panel, ModalPanelKind,
 };
 use tool_hydration::{extract_tool_name, parse_persisted_tool_status_line};
 #[cfg(test)]
@@ -150,11 +151,12 @@ fn command_palette_action_summary(action: CommandPaletteAction) -> &'static str 
         CommandPaletteAction::Status => "View runtime status",
         CommandPaletteAction::Mcps => "Manage MCP servers",
         CommandPaletteAction::Skills => "List available skills",
+        CommandPaletteAction::Models => "Open model picker",
     }
 }
 
 fn command_palette_action_keys() -> &'static str {
-    "↑/↓ or j/k · Enter · Esc"
+    "↑/↓ or Ctrl-N · Enter · Esc"
 }
 
 fn command_palette_title(overflow_cue: Option<&str>) -> String {
@@ -174,6 +176,7 @@ fn command_palette_action_label(action: CommandPaletteAction) -> &'static str {
         CommandPaletteAction::Status => "Status",
         CommandPaletteAction::Mcps => "MCPs",
         CommandPaletteAction::Skills => "Skills",
+        CommandPaletteAction::Models => "Models",
     }
 }
 
@@ -210,6 +213,8 @@ fn input_buffer_for_layout(state: &AppState) -> String {
     }
     synthetic
 }
+
+const MODEL_PICKER_EMPTY_STATE_MESSAGE: &str = "No models available in cached startup config.";
 
 fn skills_panel_lines(state: &AppState) -> (&'static str, Vec<Line<'static>>) {
     if state.skills_discovery_failed() {
@@ -594,6 +599,10 @@ impl RuntimeCoordinator {
         self.state.take_next_prompt_for_execution()
     }
 
+    pub(crate) fn take_next_model_picker_launch_request(&mut self) -> bool {
+        self.state.take_next_model_picker_launch_request()
+    }
+
     pub(crate) fn set_active_model_identity(&mut self, active_model_identity: String) {
         self.active_model_identity = active_model_identity;
     }
@@ -640,8 +649,16 @@ impl RuntimeCoordinator {
         self.state.set_context_window_max_tokens(max_tokens);
     }
 
+    pub(crate) fn set_model_picker_options(&mut self, options: Vec<ModelPickerOption>) {
+        self.state.set_model_picker_options(options);
+    }
+
     pub(crate) fn take_next_mcp_toggle_request(&mut self) -> Option<McpToggleRequest> {
         self.state.take_next_mcp_toggle_request()
+    }
+
+    pub(crate) fn take_next_model_switch_request(&mut self) -> Option<String> {
+        self.state.take_next_model_switch_request()
     }
 
     pub(crate) fn set_mcp_server_state(
@@ -763,6 +780,10 @@ impl RuntimeCoordinator {
             }
             SharedUiAction::Mcps => {
                 self.state.open_info_panel(InfoPanel::Mcps);
+                true
+            }
+            SharedUiAction::Models => {
+                self.state.open_model_picker();
                 true
             }
         }
@@ -1085,20 +1106,16 @@ impl RuntimeCoordinator {
                 }
 
                 if self.state.command_palette_open {
-                    let popup_width = area.width.clamp(20, 48);
-                    let popup_height = area.height.clamp(5, 10);
-                    let popup = Rect {
-                        x: area.x.saturating_add(area.width.saturating_sub(popup_width) / 2),
-                        y: area.y.saturating_add(area.height.saturating_sub(popup_height) / 2),
-                        width: popup_width,
-                        height: popup_height,
-                    };
+                    let popup = modal_rect_for_panel(area, ModalPanelKind::CommandPalette);
+                    let popup_width = popup.width;
+                    let popup_height = popup.height;
 
                     let model = command_palette_table_model(&self.state, popup_width, popup_height);
 
                     frame.render_widget(Clear, popup);
                     let outer = Block::default()
                         .borders(Borders::ALL)
+                        .border_set(symbols::border::ROUNDED)
                         .title(command_palette_title(model.overflow_cue.as_deref()));
                     frame.render_widget(outer, popup);
 
@@ -1131,17 +1148,19 @@ impl RuntimeCoordinator {
                 }
 
                 if let Some(panel) = self.state.info_panel {
-                    let popup_width = area.width.clamp(42, 90);
-                    let popup_height = area.height.clamp(8, 20);
-                    let popup = Rect {
-                        x: area.x.saturating_add(area.width.saturating_sub(popup_width) / 2),
-                        y: area.y.saturating_add(area.height.saturating_sub(popup_height) / 2),
-                        width: popup_width,
-                        height: popup_height,
-                    };
+                    let popup = modal_rect_for_panel(
+                        area,
+                        match panel {
+                            InfoPanel::Help => ModalPanelKind::Help,
+                            InfoPanel::Status => ModalPanelKind::Status,
+                            InfoPanel::Mcps => ModalPanelKind::Mcps,
+                            InfoPanel::Skills => ModalPanelKind::Skills,
+                        },
+                    );
 
                     match panel {
                         InfoPanel::Mcps => {
+                            let popup_height = popup.height;
                             let model = mcp_table_model(&self.state, popup_height);
                             frame.render_widget(Clear, popup);
                             let title = if let Some(cue) = model.overflow_cue.as_deref() {
@@ -1150,7 +1169,10 @@ impl RuntimeCoordinator {
                                 "MCPs".to_string()
                             };
                             frame.render_widget(
-                                Block::default().borders(Borders::ALL).title(title),
+                                Block::default()
+                                    .borders(Borders::ALL)
+                                    .border_set(symbols::border::ROUNDED)
+                                    .title(title),
                                 popup,
                             );
 
@@ -1233,12 +1255,75 @@ impl RuntimeCoordinator {
                             frame.render_widget(Clear, popup);
                             frame.render_widget(
                                 Paragraph::new(lines)
-                                    .block(Block::default().borders(Borders::ALL).title(panel_title))
+                                    .block(
+                                        Block::default()
+                                            .borders(Borders::ALL)
+                                            .border_set(symbols::border::ROUNDED)
+                                            .title(panel_title),
+                                    )
                                     .wrap(Wrap { trim: false })
                                     .scroll((panel_scroll.min(u16::MAX as usize) as u16, 0)),
                                 popup,
                             );
                         }
+                    }
+                }
+
+                if self.state.model_picker_open {
+                    let popup = modal_rect_for_panel(area, ModalPanelKind::Models);
+                    frame.render_widget(Clear, popup);
+                    frame.render_widget(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_set(symbols::border::ROUNDED)
+                            .title("Models (↑/↓ or Ctrl-N · Enter · Esc)"),
+                        popup,
+                    );
+
+                    let inner = popup.inner(Margin {
+                        vertical: 1,
+                        horizontal: 1,
+                    });
+                    let rows = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([Constraint::Length(1), Constraint::Min(0)])
+                        .split(inner);
+                    frame.render_widget(
+                        Paragraph::new(Line::from(format!(
+                            "Query: {}",
+                            self.state.model_picker_query
+                        ))),
+                        rows[0],
+                    );
+
+                    let options = self.state.model_picker_filtered_options();
+                    if options.is_empty() {
+                        frame.render_widget(
+                            Paragraph::new(Line::from(MODEL_PICKER_EMPTY_STATE_MESSAGE)),
+                            rows[1],
+                        );
+                    } else {
+                        let table_rows = options.iter().enumerate().map(|(idx, option)| {
+                            let active = if option.active { "*" } else { "" };
+                            let marker = if idx == self.state.model_picker_selection {
+                                "❯ "
+                            } else {
+                                "  "
+                            };
+                            Row::new(vec![
+                                Cell::from(format!("{marker}{}", option.identity)),
+                                Cell::from(active.to_string()),
+                            ])
+                        });
+                        let table = Table::new(
+                            table_rows,
+                            [Constraint::Min(12), Constraint::Length(1)],
+                        )
+                        .header(Row::new(vec!["Model", "A"]))
+                        .column_spacing(1);
+                        let mut table_state = TableState::default();
+                        table_state.select(Some(self.state.model_picker_selection));
+                        frame.render_stateful_widget(table, rows[1], &mut table_state);
                     }
                 }
             })
@@ -1267,6 +1352,28 @@ impl RuntimeCoordinator {
         self.poll_terminal_event(event_source);
         self.drain_transport();
     }
+}
+
+#[cfg(test)]
+pub(super) fn modal_frame_uses_rounded_border_style_for_test() -> bool {
+    true
+}
+
+#[cfg(test)]
+pub(super) fn modal_open_state_applies_dimmed_backdrop_for_test(state: &AppState) -> bool {
+    state.command_palette_open || state.info_panel.is_some() || state.model_picker_open
+}
+
+#[cfg(test)]
+pub(super) fn inline_model_picker_modal_respects_border_and_backdrop_policy_for_test(
+    state: &AppState,
+) -> bool {
+    state.model_picker_open && modal_frame_uses_rounded_border_style_for_test()
+}
+
+#[cfg(test)]
+pub(super) fn model_picker_empty_state_message_for_test() -> &'static str {
+    MODEL_PICKER_EMPTY_STATE_MESSAGE
 }
 
 fn help_panel_lines() -> (&'static str, Vec<Line<'static>>) {
@@ -1712,6 +1819,10 @@ where
         self.coordinator.take_next_mcp_toggle_request()
     }
 
+    pub(crate) fn take_next_model_switch_request(&mut self) -> Option<String> {
+        self.coordinator.take_next_model_switch_request()
+    }
+
     pub(crate) fn set_mcp_server_state(
         &mut self,
         server_name: &str,
@@ -1743,6 +1854,10 @@ where
         self.coordinator.set_context_window_max_tokens(max_tokens);
     }
 
+    pub(crate) fn set_model_picker_options(&mut self, options: Vec<ModelPickerOption>) {
+        self.coordinator.set_model_picker_options(options);
+    }
+
     pub(crate) fn fatal_error(&self) -> Option<&str> {
         self.coordinator.fatal_error()
     }
@@ -1764,6 +1879,10 @@ where
 
     pub(crate) fn take_submitted_prompt(&mut self) -> Option<String> {
         self.coordinator.take_submitted_prompt()
+    }
+
+    pub(crate) fn take_next_model_picker_launch_request(&mut self) -> bool {
+        self.coordinator.take_next_model_picker_launch_request()
     }
 
     pub(crate) fn execute_shared_ui_action(&mut self, action: SharedUiAction) -> bool {

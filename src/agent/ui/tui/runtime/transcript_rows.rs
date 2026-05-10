@@ -5,7 +5,7 @@ use ratatui::{
 
 use crate::agent::ui::tui::{
     rendering::theme::TuiTheme,
-    state::{PromptStatus, ToolCallStatus, TranscriptLine, TranscriptLineStatus, TranscriptRole},
+    state::{CompactionStatus, PromptStatus, ToolCallStatus, TranscriptLine, TranscriptLineStatus, TranscriptRole},
 };
 
 pub(super) fn transcript_role_style(role: TranscriptRole) -> Style {
@@ -38,7 +38,7 @@ pub(super) fn lane_prefix_spans(
     let (lane_label, lane_style) = match role {
         TranscriptRole::User => ("▏ ", theme.lane_prefix_user),
         TranscriptRole::Assistant => ("  ", theme.lane_prefix_assistant),
-        TranscriptRole::Tool => ("⚒ ", theme.lane_prefix_tool),
+        TranscriptRole::Tool => ("⚙ ", theme.lane_prefix_tool),
         TranscriptRole::System => ("· ", theme.lane_prefix_system),
         TranscriptRole::Separator => ("  ", theme.role_separator),
     };
@@ -56,23 +56,30 @@ pub(super) struct ToolRowParts {
 }
 
 pub(super) fn parse_tool_row_parts(text: &str) -> ToolRowParts {
-    if !(text.starts_with("tool[") && text.contains(']')) {
-        return ToolRowParts {
-            label: text.to_string(),
-            metadata: None,
+    if let Some(rest) = text.strip_prefix("tool[")
+        && let Some((tool_name, tail)) = rest.split_once(']')
+    {
+        let label = if tool_name.is_empty() {
+            "unknown".to_string()
+        } else {
+            tool_name.to_string()
         };
+        let metadata = {
+            let trimmed_tail = tail.trim();
+            if trimmed_tail.is_empty() {
+                None
+            } else {
+                Some(trimmed_tail.to_string())
+            }
+        };
+
+        return ToolRowParts { label, metadata };
     }
 
-    let closing = text.find(']').unwrap_or(text.len().saturating_sub(1));
-    let label = text[..=closing].to_string();
-    let tail = text[closing + 1..].trim();
-    let metadata = if tail.is_empty() {
-        None
-    } else {
-        Some(tail.to_string())
-    };
-
-    ToolRowParts { label, metadata }
+    ToolRowParts {
+        label: text.to_string(),
+        metadata: None,
+    }
 }
 
 fn suppress_redundant_done_metadata(
@@ -317,6 +324,14 @@ pub(super) fn indicator_for_line_status(status: TranscriptLineStatus, now_millis
     match status {
         TranscriptLineStatus::Prompt(prompt) => prompt_indicator_for_status(prompt, now_millis),
         TranscriptLineStatus::Tool(tool) => tool_indicator_for_status(tool, now_millis),
+        TranscriptLineStatus::Compaction(compaction) => match compaction {
+            CompactionStatus::InProgress => {
+                let idx = ((now_millis / 100) % super::IN_PROGRESS_SPINNER_FRAMES.len() as u128) as usize;
+                super::IN_PROGRESS_SPINNER_FRAMES[idx]
+            }
+            CompactionStatus::Done => "✓",
+            CompactionStatus::Failed => "✕",
+        },
     }
 }
 
@@ -332,6 +347,11 @@ pub(super) fn indicator_style_for_status(status: TranscriptLineStatus, theme: &T
             ToolCallStatus::InProgress => theme.status_running,
             ToolCallStatus::Done => theme.status_done,
             ToolCallStatus::Failed => theme.status_failed,
+        },
+        TranscriptLineStatus::Compaction(compaction_status) => match compaction_status {
+            CompactionStatus::InProgress => theme.status_running,
+            CompactionStatus::Done => theme.status_done,
+            CompactionStatus::Failed => theme.status_failed,
         },
     }
 }

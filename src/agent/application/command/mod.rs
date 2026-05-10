@@ -645,6 +645,9 @@ impl SimplePluginCommand for Agent {
             auto_compaction_tolerance: 0,
             auto_compaction_hysteresis_margin: 0,
             auto_compaction_state: CompactionTriggerState::default(),
+            startup_plugin_config: engine
+                .get_plugin_config()?
+                .and_then(|value| PluginConfig::from_plugin_config(&value).ok()),
         };
 
         match mode {
@@ -694,6 +697,45 @@ pub(crate) fn format_active_model_identity(provider: &str, model: &str) -> Strin
     } else {
         format!("{provider}/{model}")
     }
+}
+
+pub(crate) fn build_model_picker_catalog_from_plugin_config(
+    plugin_config: &PluginConfig,
+    active_model_identity: &str,
+) -> Vec<crate::agent::ui::tui::state::ModelPickerOption> {
+    let mut options = plugin_config
+        .providers
+        .iter()
+        .flat_map(|(provider, provider_config)| {
+            provider_config.models.keys().map(move |model| {
+                let identity = format!("{provider}/{model}");
+                crate::agent::ui::tui::state::ModelPickerOption {
+                    provider: provider.clone(),
+                    model: model.clone(),
+                    identity: identity.clone(),
+                    display: format!("{provider} / {model}"),
+                    active: identity == active_model_identity,
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+
+    options.sort_by(|left, right| {
+        left.provider
+            .to_ascii_lowercase()
+            .cmp(&right.provider.to_ascii_lowercase())
+            .then_with(|| left.model.to_ascii_lowercase().cmp(&right.model.to_ascii_lowercase()))
+    });
+    options
+}
+
+pub(crate) fn model_picker_catalog_from_cached_startup_plugin_config(
+    startup_plugin_config: Option<&PluginConfig>,
+    active_model_identity: &str,
+) -> Vec<crate::agent::ui::tui::state::ModelPickerOption> {
+    startup_plugin_config
+        .map(|config| build_model_picker_catalog_from_plugin_config(config, active_model_identity))
+        .unwrap_or_default()
 }
 
 fn run_stderr_mode(

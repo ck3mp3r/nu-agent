@@ -2,6 +2,7 @@ use crate::agent::ui::tui::state::{
     AppState,
     CommandPaletteAction,
     InputMode,
+    ModelPickerOption,
     McpServerUsabilityState,
     PaneFocus,
     PromptStatus,
@@ -478,6 +479,7 @@ fn command_palette_empty_query_returns_canonical_help_status_order_only() {
             CommandPaletteAction::Status,
             CommandPaletteAction::Mcps,
             CommandPaletteAction::Skills,
+            CommandPaletteAction::Models,
         ]
     );
 }
@@ -494,6 +496,7 @@ fn command_palette_empty_query_returns_canonical_help_status_mcps_skills_order()
             CommandPaletteAction::Status,
             CommandPaletteAction::Mcps,
             CommandPaletteAction::Skills,
+            CommandPaletteAction::Models,
         ]
     );
 }
@@ -546,6 +549,16 @@ fn command_palette_fuzzy_query_matches_skills_entry() {
 }
 
 #[test]
+fn command_palette_includes_models_action() {
+    let mut state = AppState::new();
+    state.open_command_palette();
+
+    assert!(state
+        .command_palette_actions()
+        .contains(&CommandPaletteAction::Models));
+}
+
+#[test]
 fn inline_slash_suggestions_open_on_leading_slash() {
     let mut state = AppState::new();
 
@@ -560,6 +573,7 @@ fn inline_slash_suggestions_open_on_leading_slash() {
             crate::agent::protocol::slash::SlashCommand::Mcp,
             crate::agent::protocol::slash::SlashCommand::Help,
             crate::agent::protocol::slash::SlashCommand::Status,
+            crate::agent::protocol::slash::SlashCommand::Models,
         ]
     );
 }
@@ -569,7 +583,7 @@ fn inline_slash_suggestions_filter_incrementally_as_input_grows() {
     let mut state = AppState::new();
 
     state.append_input_char('/');
-    assert_eq!(state.inline_slash_suggestions().len(), 4);
+    assert_eq!(state.inline_slash_suggestions().len(), 5);
 
     state.append_input_char('c');
     assert_eq!(
@@ -697,4 +711,180 @@ fn failed_server_reason_round_trips_through_state_query() {
 
     let failed = state.failed_mcp_servers_with_reasons();
     assert_eq!(failed, vec![("k8s", Some("dial tcp timeout"))]);
+}
+
+#[test]
+fn inline_model_picker_opens_with_available_models() {
+    let mut state = AppState::new();
+    state.set_model_picker_options(vec![
+        ModelPickerOption {
+            provider: "openai".to_string(),
+            model: "gpt-4o-mini".to_string(),
+            identity: "openai/gpt-4o-mini".to_string(),
+            display: "openai / gpt-4o-mini".to_string(),
+            active: true,
+        },
+        ModelPickerOption {
+            provider: "anthropic".to_string(),
+            model: "claude-3-5-sonnet".to_string(),
+            identity: "anthropic/claude-3-5-sonnet".to_string(),
+            display: "anthropic / claude-3-5-sonnet".to_string(),
+            active: false,
+        },
+    ]);
+
+    state.open_model_picker();
+
+    assert!(state.model_picker_open);
+    assert_eq!(state.model_picker_selection, 0);
+    assert_eq!(state.model_picker_query, "");
+    assert_eq!(state.model_picker_filtered_options().len(), 2);
+}
+
+#[test]
+fn inline_model_picker_filters_incrementally() {
+    let mut state = AppState::new();
+    state.set_model_picker_options(vec![
+        ModelPickerOption {
+            provider: "openai".to_string(),
+            model: "gpt-4o-mini".to_string(),
+            identity: "openai/gpt-4o-mini".to_string(),
+            display: "openai / gpt-4o-mini".to_string(),
+            active: true,
+        },
+        ModelPickerOption {
+            provider: "anthropic".to_string(),
+            model: "claude-3-5-sonnet".to_string(),
+            identity: "anthropic/claude-3-5-sonnet".to_string(),
+            display: "anthropic / claude-3-5-sonnet".to_string(),
+            active: false,
+        },
+    ]);
+    state.open_model_picker();
+
+    for ch in "openai".chars() {
+        state.append_model_picker_query_char(ch);
+    }
+
+    let filtered = state.model_picker_filtered_options();
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0].identity, "openai/gpt-4o-mini");
+}
+
+#[test]
+fn inline_model_picker_moves_selection_deterministically() {
+    let mut state = AppState::new();
+    state.set_model_picker_options(vec![
+        ModelPickerOption {
+            provider: "openai".to_string(),
+            model: "gpt-4o-mini".to_string(),
+            identity: "openai/gpt-4o-mini".to_string(),
+            display: "openai / gpt-4o-mini".to_string(),
+            active: true,
+        },
+        ModelPickerOption {
+            provider: "anthropic".to_string(),
+            model: "claude-3-5-sonnet".to_string(),
+            identity: "anthropic/claude-3-5-sonnet".to_string(),
+            display: "anthropic / claude-3-5-sonnet".to_string(),
+            active: false,
+        },
+    ]);
+    state.open_model_picker();
+
+    state.model_picker_move_down();
+    assert_eq!(state.model_picker_selection, 1);
+
+    state.model_picker_move_down();
+    assert_eq!(state.model_picker_selection, 0);
+
+    state.model_picker_move_up();
+    assert_eq!(state.model_picker_selection, 1);
+}
+
+#[test]
+fn inline_model_picker_closes_on_escape() {
+    let mut state = AppState::new();
+    state.set_model_picker_options(vec![ModelPickerOption {
+        provider: "openai".to_string(),
+        model: "gpt-4o-mini".to_string(),
+        identity: "openai/gpt-4o-mini".to_string(),
+        display: "openai / gpt-4o-mini".to_string(),
+        active: true,
+    }]);
+    state.open_model_picker();
+
+    state.model_picker_close_on_escape();
+
+    assert!(!state.model_picker_open);
+    assert_eq!(state.model_picker_query, "");
+    assert_eq!(state.model_picker_selection, 0);
+}
+
+#[test]
+fn inline_model_picker_uses_cached_startup_plugin_config_catalog() {
+    let mut state = AppState::new();
+    state.set_model_picker_options(vec![
+        ModelPickerOption {
+            provider: "z-provider".to_string(),
+            model: "z-model".to_string(),
+            identity: "z-provider/z-model".to_string(),
+            display: "z-provider / z-model".to_string(),
+            active: false,
+        },
+        ModelPickerOption {
+            provider: "a-provider".to_string(),
+            model: "a-model".to_string(),
+            identity: "a-provider/a-model".to_string(),
+            display: "a-provider / a-model".to_string(),
+            active: true,
+        },
+    ]);
+    state.open_model_picker();
+
+    let ordered = state.model_picker_filtered_options();
+    assert_eq!(ordered[0].identity, "a-provider/a-model");
+    assert_eq!(ordered[1].identity, "z-provider/z-model");
+}
+
+#[test]
+fn model_picker_query_changes_results_with_hydrated_catalog() {
+    let mut state = AppState::new();
+    state.set_model_picker_options(vec![
+        ModelPickerOption {
+            provider: "openai".to_string(),
+            model: "gpt-4o-mini".to_string(),
+            identity: "openai/gpt-4o-mini".to_string(),
+            display: "openai / gpt-4o-mini".to_string(),
+            active: true,
+        },
+        ModelPickerOption {
+            provider: "anthropic".to_string(),
+            model: "claude-3-5-sonnet".to_string(),
+            identity: "anthropic/claude-3-5-sonnet".to_string(),
+            display: "anthropic / claude-3-5-sonnet".to_string(),
+            active: false,
+        },
+    ]);
+    state.open_model_picker();
+
+    let all = state.model_picker_filtered_options();
+    assert_eq!(all.len(), 2);
+
+    for ch in "claude".chars() {
+        state.append_model_picker_query_char(ch);
+    }
+    let narrowed = state.model_picker_filtered_options();
+    assert_eq!(narrowed.len(), 1);
+    assert_eq!(narrowed[0].identity, "anthropic/claude-3-5-sonnet");
+}
+
+#[test]
+fn model_picker_empty_catalog_shows_deterministic_empty_state() {
+    let mut state = AppState::new();
+    state.set_model_picker_options(Vec::new());
+    state.open_model_picker();
+
+    assert!(state.model_picker_open);
+    assert!(state.model_picker_filtered_options().is_empty());
 }

@@ -48,6 +48,8 @@ struct FakeInteractiveUi {
     warnings: Vec<String>,
     expected_mcp_updates: usize,
     shared_actions: Vec<SharedUiAction>,
+    model_switch_requests: std::collections::VecDeque<String>,
+    active_model_identity: Option<String>,
 }
 
 impl FakeInteractiveUi {
@@ -64,6 +66,8 @@ impl FakeInteractiveUi {
             warnings: Vec::new(),
             expected_mcp_updates: 0,
             shared_actions: Vec::new(),
+            model_switch_requests: std::collections::VecDeque::new(),
+            active_model_identity: None,
         }
     }
 
@@ -108,6 +112,10 @@ impl InteractiveUi for FakeInteractiveUi {
         self.mcp_toggle_requests.pop_front()
     }
 
+    fn take_next_model_switch_request(&mut self) -> Option<String> {
+        self.model_switch_requests.pop_front()
+    }
+
     fn set_mcp_server_state(&mut self, server_name: &str, state: McpUsabilityState) {
         self.mcp_states.push((server_name.to_string(), state));
     }
@@ -141,6 +149,10 @@ impl InteractiveUi for FakeInteractiveUi {
         true
     }
 
+    fn set_active_model_identity(&mut self, active_model_identity: &str) {
+        self.active_model_identity = Some(active_model_identity.to_string());
+    }
+
     fn hydrate_transcript_from_messages(
         &mut self,
         messages: impl IntoIterator<Item = UiMessageSnapshot>,
@@ -157,6 +169,8 @@ struct FakeRuntime {
     executed_compaction_sources: Vec<CompactionTriggerSource>,
     fail_compaction: bool,
     compaction_call_count: usize,
+    switched_models: Vec<String>,
+    switch_model_result: Option<Result<String, String>>,
 }
 
 impl ConversationRuntime for FakeRuntime {
@@ -194,6 +208,18 @@ impl ConversationRuntime for FakeRuntime {
             return Err("auto compaction failed".to_string());
         }
         Ok(())
+    }
+
+    fn switch_model(&mut self, model_spec: &str) -> Result<String, String> {
+        self.switched_models.push(model_spec.to_string());
+        if let Some(result) = self.switch_model_result.clone() {
+            return result;
+        }
+        Ok(model_spec.to_string())
+    }
+
+    fn active_model_identity(&self) -> String {
+        "openai/gpt-4o-mini".to_string()
     }
 }
 
@@ -294,7 +320,8 @@ fn interactive_loop_continues_turn_processing_with_auto_compaction_enabled() {
 #[test]
 fn recognized_slash_commands_never_sent_to_llm() {
     let mut runtime = FakeRuntime::default();
-    let mut ui = FakeInteractiveUi::with_prompts(&["/help", "/status", "/mcp", "/compact"]);
+    let mut ui =
+        FakeInteractiveUi::with_prompts(&["/help", "/status", "/mcp", "/models", "/compact"]);
 
     let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
 
@@ -304,6 +331,28 @@ fn recognized_slash_commands_never_sent_to_llm() {
         runtime.executed_compaction_sources,
         vec![CompactionTriggerSource::SlashCompact]
     );
+}
+
+#[test]
+fn models_slash_command_not_sent_to_llm() {
+    let mut runtime = FakeRuntime::default();
+    let mut ui = FakeInteractiveUi::with_prompts(&["/models"]);
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert!(runtime.prompts.is_empty());
+}
+
+#[test]
+fn models_slash_command_routes_to_shared_models_action() {
+    let mut runtime = FakeRuntime::default();
+    let mut ui = FakeInteractiveUi::with_prompts(&["/models"]);
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(ui.shared_actions, vec![SharedUiAction::Models]);
 }
 
 #[test]
@@ -397,16 +446,247 @@ fn manual_and_auto_compaction_failure_surface_is_consistent() {
 #[test]
 fn slash_commands_reuse_command_palette_action_handlers() {
     let mut runtime = FakeRuntime::default();
-    let mut ui = FakeInteractiveUi::with_prompts(&["/help", "/status", "/mcp"]);
+    let mut ui = FakeInteractiveUi::with_prompts(&["/help", "/status", "/mcp", "/models"]);
 
     let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
         ui.shared_actions,
-        vec![SharedUiAction::Help, SharedUiAction::Status, SharedUiAction::Mcps]
+        vec![
+            SharedUiAction::Help,
+            SharedUiAction::Status,
+            SharedUiAction::Mcps,
+            SharedUiAction::Models,
+        ]
     );
     assert!(runtime.prompts.is_empty());
+}
+
+#[test]
+fn command_palette_models_action_opens_inline_model_picker() {
+    let mut runtime = FakeRuntime::default();
+    let mut ui = FakeInteractiveUi::with_prompts(&["/models"]);
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(ui.shared_actions, vec![SharedUiAction::Models]);
+}
+
+#[test]
+fn palette_models_does_not_bypass_shared_models_action_path() {
+    let mut runtime = FakeRuntime::default();
+    let mut ui = FakeInteractiveUi::with_prompts(&["/models"]);
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(ui.shared_actions, vec![SharedUiAction::Models]);
+    assert!(runtime.prompts.is_empty());
+}
+
+#[test]
+fn inline_model_picker_enter_switches_active_model_and_provider() {
+    let mut runtime = FakeRuntime::default();
+    let mut ui = FakeInteractiveUi::with_prompts(&[]);
+    ui.model_switch_requests
+        .push_back("openai/gpt-4o-mini".to_string());
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(runtime.switched_models, vec!["openai/gpt-4o-mini".to_string()]);
+    assert_eq!(ui.active_model_identity, Some("openai/gpt-4o-mini".to_string()));
+}
+
+#[test]
+fn model_switch_failure_keeps_previous_model_and_warns() {
+    let mut runtime = FakeRuntime {
+        switch_model_result: Some(Err("switch failed".to_string())),
+        ..Default::default()
+    };
+    let mut ui = FakeInteractiveUi::with_prompts(&[]);
+    ui.model_switch_requests
+        .push_back("openai/gpt-4o-mini".to_string());
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(runtime.switched_models, vec!["openai/gpt-4o-mini".to_string()]);
+    assert_eq!(ui.active_model_identity, Some("openai/gpt-4o-mini".to_string()));
+    assert!(ui.warnings.iter().any(|w| w == "switch failed"));
+}
+
+#[test]
+fn model_switch_uses_cached_startup_plugin_config() {
+    let mut runtime = FakeRuntime::default();
+    let mut ui = FakeInteractiveUi::with_prompts(&[]);
+    ui.model_switch_requests
+        .push_back("openai/gpt-4o-mini".to_string());
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(runtime.switched_models, vec!["openai/gpt-4o-mini".to_string()]);
+}
+
+#[test]
+fn model_switch_updates_footer_active_model_identity_immediately() {
+    let mut runtime = FakeRuntime::default();
+    let mut ui = FakeInteractiveUi::with_prompts(&[]);
+    ui.model_switch_requests
+        .push_back("openai/gpt-4o-mini".to_string());
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(ui.active_model_identity, Some("openai/gpt-4o-mini".to_string()));
+}
+
+#[test]
+fn model_switch_result_artifact_is_rendered() {
+    let mut runtime = FakeRuntime::default();
+    let mut ui = FakeInteractiveUi::with_prompts(&[]);
+    ui.model_switch_requests
+        .push_back("openai/gpt-4o-mini".to_string());
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert!(ui
+        .warnings
+        .iter()
+        .any(|w| w == "Model switched: openai/gpt-4o-mini"));
+}
+
+#[test]
+fn next_turn_uses_newly_selected_model() {
+    let mut runtime = FakeRuntime::default();
+    let mut ui = FakeInteractiveUi::with_prompts(&["after-switch"]);
+    ui.model_switch_requests
+        .push_back("openai/gpt-4o-mini".to_string());
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(runtime.switched_models, vec!["openai/gpt-4o-mini".to_string()]);
+    assert_eq!(runtime.prompts, vec!["after-switch".to_string()]);
+}
+
+#[test]
+fn model_switch_while_worker_active_is_queued_for_next_turn() {
+    let block_first_turn = Arc::new(AtomicBool::new(false));
+    let mut runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn));
+    let active_pump_count = Arc::new(AtomicUsize::new(0));
+    let mut ui = ResponsiveInteractiveUi::new(
+        &["first"],
+        &[],
+        &["openai/gpt-4o-mini"],
+        Arc::clone(&runtime.active),
+        Arc::clone(&block_first_turn),
+        1,
+        Arc::clone(&active_pump_count),
+    );
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(runtime.prompts.lock().expect("prompts lock").as_slice(), ["first"]);
+    assert_eq!(
+        runtime
+            .switched_models
+            .lock()
+            .expect("switched models lock")
+            .as_slice(),
+        ["openai/gpt-4o-mini"]
+    );
+    assert!(ui
+        .warnings
+        .iter()
+        .any(|w| w == "Model switch queued for next turn: openai/gpt-4o-mini"));
+}
+
+#[test]
+fn queued_model_switch_applies_after_current_turn_before_next_dispatch() {
+    let block_first_turn = Arc::new(AtomicBool::new(false));
+    let mut runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn));
+    let active_pump_count = Arc::new(AtomicUsize::new(0));
+    let mut ui = ResponsiveInteractiveUi::new(
+        &["first"],
+        &["second"],
+        &["openai/gpt-4o-mini"],
+        Arc::clone(&runtime.active),
+        Arc::clone(&block_first_turn),
+        2,
+        Arc::clone(&active_pump_count),
+    );
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(
+        runtime.action_log.lock().expect("action log lock").as_slice(),
+        ["turn:first", "switch:openai/gpt-4o-mini", "turn:second"]
+    );
+}
+
+#[test]
+fn queued_model_switch_last_write_wins() {
+    let block_first_turn = Arc::new(AtomicBool::new(false));
+    let mut runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn));
+    let active_pump_count = Arc::new(AtomicUsize::new(0));
+    let mut ui = ResponsiveInteractiveUi::new(
+        &["first"],
+        &[],
+        &["openai/gpt-4o-mini", "anthropic/claude-3-5-sonnet"],
+        Arc::clone(&runtime.active),
+        Arc::clone(&block_first_turn),
+        1,
+        Arc::clone(&active_pump_count),
+    );
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(
+        runtime
+            .switched_models
+            .lock()
+            .expect("switched models lock")
+            .as_slice(),
+        ["anthropic/claude-3-5-sonnet"]
+    );
+}
+
+#[test]
+fn queued_model_switch_failure_keeps_previous_model_and_warns() {
+    let block_first_turn = Arc::new(AtomicBool::new(false));
+    let mut runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn))
+        .with_switch_model_result(Err("queued switch failed".to_string()));
+    let active_pump_count = Arc::new(AtomicUsize::new(0));
+    let mut ui = ResponsiveInteractiveUi::new(
+        &["first"],
+        &[],
+        &["openai/gpt-4o-mini"],
+        Arc::clone(&runtime.active),
+        Arc::clone(&block_first_turn),
+        1,
+        Arc::clone(&active_pump_count),
+    );
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(
+        runtime.active_model_identity(),
+        "openai/gpt-4o-mini",
+        "failed queued switch must keep previous active identity"
+    );
+    assert!(ui
+        .warnings
+        .iter()
+        .any(|w| w == "queued switch failed"));
 }
 
 #[test]
@@ -588,17 +868,30 @@ fn run_hydrated_interactive_loop_hydrates_exactly_once() {
 #[derive(Default)]
 struct LongRunningRuntime {
     prompts: Arc<Mutex<Vec<String>>>,
+    switched_models: Arc<Mutex<Vec<String>>>,
+    action_log: Arc<Mutex<Vec<String>>>,
     active: Arc<AtomicBool>,
     block_first_turn: Arc<AtomicBool>,
+    switch_model_result: Option<Result<String, String>>,
+    active_identity: Arc<Mutex<String>>,
 }
 
 impl LongRunningRuntime {
     fn new(block_first_turn: Arc<AtomicBool>) -> Self {
         Self {
             prompts: Arc::new(Mutex::new(Vec::new())),
+            switched_models: Arc::new(Mutex::new(Vec::new())),
+            action_log: Arc::new(Mutex::new(Vec::new())),
             active: Arc::new(AtomicBool::new(false)),
             block_first_turn,
+            switch_model_result: None,
+            active_identity: Arc::new(Mutex::new("openai/gpt-4o-mini".to_string())),
         }
+    }
+
+    fn with_switch_model_result(mut self, result: Result<String, String>) -> Self {
+        self.switch_model_result = Some(result);
+        self
     }
 }
 
@@ -619,6 +912,10 @@ impl ConversationRuntime for LongRunningRuntime {
         _span: Span,
     ) -> Result<Value, LabeledError> {
         self.active.store(true, Ordering::SeqCst);
+        self.action_log
+            .lock()
+            .expect("action log lock")
+            .push(format!("turn:{prompt}"));
         self.prompts
             .lock()
             .expect("prompts lock")
@@ -639,11 +936,36 @@ impl ConversationRuntime for LongRunningRuntime {
         self.active.store(false, Ordering::SeqCst);
         Ok(Value::nothing(Span::test_data()))
     }
+
+    fn switch_model(&mut self, model_spec: &str) -> Result<String, String> {
+        self.action_log
+            .lock()
+            .expect("action log lock")
+            .push(format!("switch:{model_spec}"));
+        self.switched_models
+            .lock()
+            .expect("switched models lock")
+            .push(model_spec.to_string());
+
+        if let Some(result) = self.switch_model_result.clone() {
+            return result;
+        }
+
+        let mut identity = self.active_identity.lock().expect("identity lock");
+        *identity = model_spec.to_string();
+        Ok(model_spec.to_string())
+    }
+
+    fn active_model_identity(&self) -> String {
+        self.active_identity.lock().expect("identity lock").clone()
+    }
 }
 
 struct ResponsiveInteractiveUi {
     submitted: std::collections::VecDeque<String>,
     injected_during_active: Vec<String>,
+    injected_model_switch_during_active: Vec<String>,
+    model_switch_requests: std::collections::VecDeque<String>,
     injected: bool,
     quit: bool,
     fatal: Option<String>,
@@ -654,12 +976,14 @@ struct ResponsiveInteractiveUi {
     expected_completions: usize,
     active_pump_count: Arc<AtomicUsize>,
     mcp_states: Vec<(String, McpUsabilityState)>,
+    warnings: Vec<String>,
 }
 
 impl ResponsiveInteractiveUi {
     fn new(
         initial_prompts: &[&str],
         injected_during_active: &[&str],
+        injected_model_switch_during_active: &[&str],
         active: Arc<AtomicBool>,
         block_first_turn: Arc<AtomicBool>,
         expected_completions: usize,
@@ -668,6 +992,11 @@ impl ResponsiveInteractiveUi {
         Self {
             submitted: initial_prompts.iter().map(|s| s.to_string()).collect(),
             injected_during_active: injected_during_active.iter().map(|s| s.to_string()).collect(),
+            injected_model_switch_during_active: injected_model_switch_during_active
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            model_switch_requests: std::collections::VecDeque::new(),
             injected: false,
             quit: false,
             fatal: None,
@@ -678,6 +1007,7 @@ impl ResponsiveInteractiveUi {
             expected_completions,
             active_pump_count,
             mcp_states: Vec::new(),
+            warnings: Vec::new(),
         }
     }
 }
@@ -689,6 +1019,8 @@ impl ProgressUi for ResponsiveInteractiveUi {
             if self.completed_count >= self.expected_completions {
                 self.quit = true;
             }
+        } else if let UiEvent::Warning { message } = event {
+            self.warnings.push(message.clone());
         }
     }
 
@@ -708,6 +1040,9 @@ impl InteractiveUi for ResponsiveInteractiveUi {
                 for prompt in self.injected_during_active.clone() {
                     self.submitted.push_back(prompt);
                 }
+                for request in self.injected_model_switch_during_active.clone() {
+                    self.model_switch_requests.push_back(request);
+                }
                 self.injected = true;
                 // Deterministic unblock: once we've injected prompts during active work,
                 // allow the first turn to complete so queued prompts can proceed.
@@ -718,6 +1053,10 @@ impl InteractiveUi for ResponsiveInteractiveUi {
 
     fn take_submitted_prompt(&mut self) -> Option<String> {
         self.submitted.pop_front()
+    }
+
+    fn take_next_model_switch_request(&mut self) -> Option<String> {
+        self.model_switch_requests.pop_front()
     }
 
     fn set_mcp_server_state(&mut self, server_name: &str, state: McpUsabilityState) {
@@ -751,6 +1090,7 @@ fn interactive_loop_processes_input_while_first_turn_is_running() {
     let mut ui = ResponsiveInteractiveUi::new(
         &["first"],
         &["second"],
+        &[],
         Arc::clone(&runtime.active),
         Arc::clone(&block_first_turn),
         2,
@@ -779,6 +1119,7 @@ fn interactive_loop_preserves_fifo_for_prompts_queued_while_active() {
     let mut ui = ResponsiveInteractiveUi::new(
         &["first"],
         &["second", "third"],
+        &[],
         Arc::clone(&runtime.active),
         Arc::clone(&block_first_turn),
         3,
@@ -792,6 +1133,151 @@ fn interactive_loop_preserves_fifo_for_prompts_queued_while_active() {
         runtime.prompts.lock().expect("prompts lock").as_slice(),
         ["first", "second", "third"]
     );
+}
+
+struct ModelPickerLaunchWhileActiveUi {
+    submitted: std::collections::VecDeque<String>,
+    pending_model_picker_launch_requests: usize,
+    injected: bool,
+    quit: bool,
+    fatal: Option<String>,
+    active: Arc<AtomicBool>,
+    block_first_turn: Arc<AtomicBool>,
+    completed_count: usize,
+    expected_completions: usize,
+    shared_actions: Vec<SharedUiAction>,
+    shared_actions_observed_while_active: Vec<bool>,
+    mcp_states: Vec<(String, McpUsabilityState)>,
+}
+
+impl ModelPickerLaunchWhileActiveUi {
+    fn new(
+        initial_prompts: &[&str],
+        expected_completions: usize,
+        active: Arc<AtomicBool>,
+        block_first_turn: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            submitted: initial_prompts.iter().map(|s| s.to_string()).collect(),
+            pending_model_picker_launch_requests: 0,
+            injected: false,
+            quit: false,
+            fatal: None,
+            active,
+            block_first_turn,
+            completed_count: 0,
+            expected_completions,
+            shared_actions: Vec::new(),
+            shared_actions_observed_while_active: Vec::new(),
+            mcp_states: Vec::new(),
+        }
+    }
+}
+
+impl ProgressUi for ModelPickerLaunchWhileActiveUi {
+    fn emit(&mut self, event: &UiEvent) {
+        if let UiEvent::Completed { .. } = event {
+            self.completed_count += 1;
+            if self.completed_count >= self.expected_completions {
+                self.quit = true;
+            }
+        }
+    }
+
+    fn flush(&mut self) {}
+
+    fn take_cancel_requested(&self) -> bool {
+        false
+    }
+}
+
+impl InteractiveUi for ModelPickerLaunchWhileActiveUi {
+    fn pump_once(&mut self) {
+        if self.active.load(Ordering::SeqCst) && !self.injected {
+            self.pending_model_picker_launch_requests =
+                self.pending_model_picker_launch_requests.saturating_add(1);
+            self.injected = true;
+            self.block_first_turn.store(true, Ordering::SeqCst);
+        }
+    }
+
+    fn take_submitted_prompt(&mut self) -> Option<String> {
+        self.submitted.pop_front()
+    }
+
+    fn take_next_model_picker_launch_request(&mut self) -> bool {
+        if self.pending_model_picker_launch_requests == 0 {
+            return false;
+        }
+        self.pending_model_picker_launch_requests =
+            self.pending_model_picker_launch_requests.saturating_sub(1);
+        true
+    }
+
+    fn set_mcp_server_state(&mut self, server_name: &str, state: McpUsabilityState) {
+        self.mcp_states.push((server_name.to_string(), state));
+    }
+
+    fn quit_requested(&self) -> bool {
+        self.quit
+    }
+
+    fn fatal_error(&self) -> Option<&str> {
+        self.fatal.as_deref()
+    }
+
+    fn execute_shared_ui_action(&mut self, action: SharedUiAction) -> bool {
+        self.shared_actions.push(action);
+        self.shared_actions_observed_while_active
+            .push(self.active.load(Ordering::SeqCst));
+        true
+    }
+
+    fn hydrate_transcript_from_messages(
+        &mut self,
+        _messages: impl IntoIterator<Item = UiMessageSnapshot>,
+    ) {
+    }
+}
+
+#[test]
+fn models_launcher_opens_picker_while_worker_active() {
+    let block_first_turn = Arc::new(AtomicBool::new(false));
+    let mut runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn));
+    let mut ui = ModelPickerLaunchWhileActiveUi::new(
+        &["first"],
+        1,
+        Arc::clone(&runtime.active),
+        Arc::clone(&block_first_turn),
+    );
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data())
+        .expect("interactive loop should process model launcher while active");
+
+    assert!(value.is_nothing());
+    assert_eq!(ui.shared_actions, vec![SharedUiAction::Models]);
+    assert_eq!(ui.shared_actions_observed_while_active, vec![true]);
+    assert_eq!(runtime.prompts.lock().expect("prompts lock").as_slice(), ["first"]);
+}
+
+#[test]
+fn models_slash_opens_picker_while_worker_active() {
+    let block_first_turn = Arc::new(AtomicBool::new(false));
+    let mut runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn));
+    let mut ui = ModelPickerLaunchWhileActiveUi::new(
+        &["first"],
+        1,
+        Arc::clone(&runtime.active),
+        Arc::clone(&block_first_turn),
+    );
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data())
+        .expect("interactive loop should process /models while active");
+
+    assert!(value.is_nothing());
+    assert_eq!(ui.shared_actions, vec![SharedUiAction::Models]);
+    assert_eq!(ui.shared_actions_observed_while_active, vec![true]);
+    assert_eq!(runtime.prompts.lock().expect("prompts lock").as_slice(), ["first"]);
 }
 
 struct AbortDuringActiveUi {

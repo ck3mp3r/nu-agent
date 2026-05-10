@@ -23,6 +23,7 @@ pub(crate) enum SharedUiAction {
     Help,
     Status,
     Mcps,
+    Models,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,7 +129,13 @@ pub(crate) trait ProgressUi {
 pub(crate) trait InteractiveUi: ProgressUi {
     fn pump_once(&mut self);
     fn take_submitted_prompt(&mut self) -> Option<String>;
+    fn take_next_model_picker_launch_request(&mut self) -> bool {
+        false
+    }
     fn take_next_mcp_toggle_request(&mut self) -> Option<McpToggleRequest> {
+        None
+    }
+    fn take_next_model_switch_request(&mut self) -> Option<String> {
         None
     }
     fn set_mcp_server_state(&mut self, _server_name: &str, _state: McpUsabilityState) {}
@@ -145,6 +152,7 @@ pub(crate) trait InteractiveUi: ProgressUi {
     fn execute_shared_ui_action(&mut self, _action: SharedUiAction) -> bool {
         false
     }
+    fn set_active_model_identity(&mut self, _active_model_identity: &str) {}
     fn fatal_error(&self) -> Option<&str>;
     fn hydrate_transcript_from_messages(
         &mut self,
@@ -167,6 +175,14 @@ pub(crate) trait ConversationRuntime {
 
     fn llm_visible_mcp_tool_count(&self) -> usize {
         0
+    }
+
+    fn switch_model(&mut self, _model_spec: &str) -> Result<String, String> {
+        Err("model switching not supported".to_string())
+    }
+
+    fn active_model_identity(&self) -> String {
+        "unknown/unknown".to_string()
     }
 
     fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {

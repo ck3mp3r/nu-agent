@@ -18,6 +18,7 @@ fn help_includes_compact_mcp_help_status_slash_commands() {
     assert!(help.contains("`/mcp`"));
     assert!(help.contains("`/help`"));
     assert!(help.contains("`/status`"));
+    assert!(help.contains("`/models`"));
 }
 
 #[test]
@@ -77,4 +78,32 @@ fn help_describes_no_transcript_echo_for_slash_commands() {
     let help = read_help_markdown();
     assert!(help.contains("not echoed into the transcript"));
     assert!(help.contains("only resulting artifacts"));
+}
+
+#[test]
+fn help_includes_models_slash_command() {
+    let help = read_help_markdown();
+    assert!(help.contains("`/models`"));
+    assert!(help.contains("opens the inline model picker"));
+}
+
+#[test]
+fn help_describes_models_launcher_via_command_palette() {
+    let help = read_help_markdown();
+    assert!(help.contains("Ctrl-P `Models`"));
+    assert!(help.contains("same picker path"));
+}
+
+#[test]
+fn help_describes_model_switch_uses_cached_startup_config() {
+    let help = read_help_markdown();
+    assert!(help.contains("cached startup `PluginConfig`"));
+    assert!(help.contains("no per-switch plugin config re-read"));
+}
+
+#[test]
+fn help_describes_modal_rounded_border_and_dim_backdrop() {
+    let help = read_help_markdown();
+    assert!(help.contains("rounded borders"));
+    assert!(help.contains("dimmed backdrop"));
 }

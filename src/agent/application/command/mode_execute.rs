@@ -47,10 +47,16 @@ pub(crate) fn run_tui_mode(
     .map_err(|err| LabeledError::new(format!("Failed to initialize TUI renderer: {err}")))?;
 
     let mut tui_ui = TuiInteractiveUi::new(runtime_renderer);
-    tui_ui.set_active_model_identity(super::format_active_model_identity(
+    let active_model_identity = super::format_active_model_identity(
         &runtime_impl.config.provider,
         &runtime_impl.config.model,
-    ));
+    );
+    tui_ui.set_active_model_identity(active_model_identity.clone());
+    let model_picker_catalog = super::model_picker_catalog_from_cached_startup_plugin_config(
+        runtime_impl.startup_plugin_config.as_ref(),
+        active_model_identity.as_str(),
+    );
+    tui_ui.set_model_picker_options(model_picker_catalog);
     match std::env::current_dir() {
         Ok(cwd) => {
             let skills = crate::agent::protocol::skills::discover_skill_catalog_for_cwd(&cwd);

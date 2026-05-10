@@ -8,6 +8,7 @@ use crate::agent::ui::tui::{
     state::{
         AppState, CommandPaletteAction, InfoPanel, InputMode, McpServerState,
         McpServerUsabilityState, TranscriptRole, UiPhase,
+        ModelPickerOption,
     },
 };
 
@@ -704,6 +705,282 @@ fn palette_selection_can_open_skills_panel() {
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
     assert_eq!(state.info_panel, Some(InfoPanel::Skills));
     assert!(!state.command_palette_open);
+}
+
+#[test]
+fn command_palette_models_action_opens_inline_model_picker() {
+    let mut state = AppState::new();
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
+
+    // Help -> Status -> MCPs -> Skills -> Models
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
+    assert_eq!(
+        state.command_palette_selected_action(),
+        Some(CommandPaletteAction::Models)
+    );
+
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+    assert!(state.take_next_model_picker_launch_request());
+    assert_eq!(state.take_next_prompt_for_execution(), None);
+    assert!(!state.command_palette_open);
+}
+
+#[test]
+fn models_slash_and_palette_share_same_action_handler() {
+    let mut slash_state = AppState::new();
+    for ch in "/models".chars() {
+        let _ = dispatch_terminal_event(
+            &mut slash_state,
+            &TerminalEvent::Key(TerminalKey::Char(ch)),
+            None,
+        );
+    }
+    let _ = dispatch_terminal_event(
+        &mut slash_state,
+        &TerminalEvent::Key(TerminalKey::Enter),
+        None,
+    );
+    assert!(slash_state.take_next_model_picker_launch_request());
+    assert_eq!(slash_state.take_next_prompt_for_execution(), None);
+
+    let mut palette_state = AppState::new();
+    let _ = dispatch_terminal_event(
+        &mut palette_state,
+        &TerminalEvent::Key(TerminalKey::CtrlP),
+        None,
+    );
+    let _ = dispatch_terminal_event(&mut palette_state, &TerminalEvent::Key(TerminalKey::Down), None);
+    let _ = dispatch_terminal_event(&mut palette_state, &TerminalEvent::Key(TerminalKey::Down), None);
+    let _ = dispatch_terminal_event(&mut palette_state, &TerminalEvent::Key(TerminalKey::Down), None);
+    let _ = dispatch_terminal_event(&mut palette_state, &TerminalEvent::Key(TerminalKey::Down), None);
+    let _ = dispatch_terminal_event(
+        &mut palette_state,
+        &TerminalEvent::Key(TerminalKey::Enter),
+        None,
+    );
+
+    assert!(palette_state.take_next_model_picker_launch_request());
+    assert_eq!(palette_state.take_next_prompt_for_execution(), None);
+}
+
+#[test]
+fn palette_models_does_not_bypass_shared_models_action_path() {
+    let mut state = AppState::new();
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
+
+    let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+
+    assert!(changed);
+    assert!(!state.model_picker_open);
+    assert!(!state.command_palette_open);
+    assert!(state.take_next_model_picker_launch_request());
+    assert_eq!(state.take_next_prompt_for_execution(), None);
+}
+
+#[test]
+fn models_launcher_opens_picker_while_worker_active() {
+    let mut state = AppState::new();
+    state.enqueue_prompt("first".to_string());
+    assert_eq!(state.take_next_prompt_for_execution(), Some("first".to_string()));
+
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
+
+    let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+
+    assert!(changed);
+    assert!(state.take_next_model_picker_launch_request());
+    assert_eq!(state.take_next_prompt_for_execution(), None);
+    assert_eq!(state.phase, UiPhase::Busy);
+    assert!(state.is_active_cycle());
+}
+
+#[test]
+fn models_slash_opens_picker_while_worker_active() {
+    let mut state = AppState::new();
+    state.enqueue_prompt("first".to_string());
+    assert_eq!(state.take_next_prompt_for_execution(), Some("first".to_string()));
+
+    for ch in "/models".chars() {
+        let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char(ch)), None);
+    }
+
+    let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+
+    assert!(changed);
+    assert!(state.take_next_model_picker_launch_request());
+    assert_eq!(state.take_next_prompt_for_execution(), None);
+    assert_eq!(state.phase, UiPhase::Busy);
+    assert!(state.is_active_cycle());
+}
+
+#[test]
+fn model_picker_query_accepts_j_and_k_characters() {
+    let mut state = AppState::new();
+    state.set_model_picker_options(vec![
+        ModelPickerOption {
+            provider: "jk-provider-a".to_string(),
+            model: "jk-model-a".to_string(),
+            identity: "jk-provider-a/jk-model-a".to_string(),
+            display: "jk-provider-a / jk-model-a".to_string(),
+            active: true,
+        },
+        ModelPickerOption {
+            provider: "jk-provider-b".to_string(),
+            model: "jk-model-b".to_string(),
+            identity: "jk-provider-b/jk-model-b".to_string(),
+            display: "jk-provider-b / jk-model-b".to_string(),
+            active: false,
+        },
+    ]);
+    state.open_model_picker();
+
+    let j_changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('j')), None);
+    let k_changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('k')), None);
+
+    assert!(j_changed);
+    assert!(k_changed);
+    assert_eq!(state.model_picker_query, "jk");
+    assert_eq!(state.model_picker_filtered_options().len(), 2);
+}
+
+#[test]
+fn model_picker_navigation_does_not_consume_query_jk_input() {
+    let mut state = AppState::new();
+    state.set_model_picker_options(vec![
+        ModelPickerOption {
+            provider: "jk-provider-a".to_string(),
+            model: "jk-model-a".to_string(),
+            identity: "jk-provider-a/jk-model-a".to_string(),
+            display: "jk-provider-a / jk-model-a".to_string(),
+            active: true,
+        },
+        ModelPickerOption {
+            provider: "jk-provider-b".to_string(),
+            model: "jk-model-b".to_string(),
+            identity: "jk-provider-b/jk-model-b".to_string(),
+            display: "jk-provider-b / jk-model-b".to_string(),
+            active: false,
+        },
+        ModelPickerOption {
+            provider: "jk-provider-c".to_string(),
+            model: "jk-model-c".to_string(),
+            identity: "jk-provider-c/jk-model-c".to_string(),
+            display: "jk-provider-c / jk-model-c".to_string(),
+            active: false,
+        },
+    ]);
+    state.open_model_picker();
+
+    let down_changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
+    assert!(down_changed);
+    assert_eq!(state.model_picker_selection, 1);
+
+    let j_changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('j')), None);
+    assert!(j_changed);
+    assert_eq!(state.model_picker_query, "j");
+    assert_eq!(state.model_picker_selection, 0);
+
+    let k_changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('k')), None);
+    assert!(k_changed);
+    assert_eq!(state.model_picker_query, "jk");
+    assert_eq!(state.model_picker_selection, 0);
+
+    let down_again_changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
+    assert!(down_again_changed);
+    assert_eq!(state.model_picker_selection, 1);
+
+    let up_changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Up), None);
+    assert!(up_changed);
+    assert_eq!(state.model_picker_selection, 0);
+}
+
+#[test]
+fn model_picker_ctrl_n_moves_to_next_item() {
+    let mut state = AppState::new();
+    state.set_model_picker_options(vec![
+        ModelPickerOption {
+            provider: "openai".to_string(),
+            model: "gpt-4o-mini".to_string(),
+            identity: "openai/gpt-4o-mini".to_string(),
+            display: "openai / gpt-4o-mini".to_string(),
+            active: true,
+        },
+        ModelPickerOption {
+            provider: "anthropic".to_string(),
+            model: "claude-3-5-sonnet".to_string(),
+            identity: "anthropic/claude-3-5-sonnet".to_string(),
+            display: "anthropic / claude-3-5-sonnet".to_string(),
+            active: false,
+        },
+    ]);
+    state.open_model_picker();
+
+    let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlN), None);
+
+    assert!(changed);
+    assert_eq!(state.model_picker_selection, 1);
+}
+
+#[test]
+fn query_picker_ctrl_n_moves_to_next_item_consistently() {
+    let mut palette_state = AppState::new();
+    let _ = dispatch_terminal_event(
+        &mut palette_state,
+        &TerminalEvent::Key(TerminalKey::CtrlP),
+        None,
+    );
+    assert!(palette_state.command_palette_open);
+
+    let palette_changed = dispatch_terminal_event(
+        &mut palette_state,
+        &TerminalEvent::Key(TerminalKey::CtrlN),
+        None,
+    );
+    assert!(palette_changed);
+    assert_eq!(palette_state.command_palette_selection, 1);
+
+    let mut model_state = AppState::new();
+    model_state.set_model_picker_options(vec![
+        ModelPickerOption {
+            provider: "openai".to_string(),
+            model: "gpt-4o-mini".to_string(),
+            identity: "openai/gpt-4o-mini".to_string(),
+            display: "openai / gpt-4o-mini".to_string(),
+            active: true,
+        },
+        ModelPickerOption {
+            provider: "anthropic".to_string(),
+            model: "claude-3-5-sonnet".to_string(),
+            identity: "anthropic/claude-3-5-sonnet".to_string(),
+            display: "anthropic / claude-3-5-sonnet".to_string(),
+            active: false,
+        },
+    ]);
+    model_state.open_model_picker();
+
+    let model_changed = dispatch_terminal_event(
+        &mut model_state,
+        &TerminalEvent::Key(TerminalKey::CtrlN),
+        None,
+    );
+    assert!(model_changed);
+    assert_eq!(model_state.model_picker_selection, 1);
 }
 
 #[test]

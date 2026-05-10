@@ -180,10 +180,28 @@ built-ins.
   - `/mcp`
   - `/help`
   - `/status`
+  - `/models`
 - `/help`, `/status`, and `/mcp` route to the same action handlers as Ctrl-P entries.
+- `/models` and Ctrl-P `Models` route to the same shared model-picker action handler.
 - Unknown slash commands emit deterministic warning text and the interactive loop continues.
 - Immediate slash command text is not echoed into the transcript and is not persisted as a session turn message.
 - Compaction result artifacts remain transcript-visible (for example, compaction summary/source/count rows).
+
+### Model picker and switch semantics
+
+- `/models` opens an inline model picker in TUI.
+- Ctrl-P `Models` opens the same picker path (launcher parity with slash).
+- Model switch resolution uses cached startup `PluginConfig` for session lifetime (no plugin-config re-read per switch).
+- Successful switch applies full resolved model configuration for next turn execution.
+- Footer/status active model identity updates immediately after successful switch.
+
+### Consolidated modal system
+
+- Modal layout uses one policy source keyed by panel kind.
+- Help modal uses larger readable viewport.
+- Status modal uses compact content-fit viewport.
+- MCP/Skills/Models use balanced default modal layout.
+- Modal containers use rounded borders with dimmed backdrop while modal/picker is open.
 
 ## MCP tool filtering
 

@@ -153,6 +153,13 @@ impl<W: Write> StderrUiRenderer<W> {
                 }
             }
             UiEvent::Warning { message } => Some(format!("warning: {message}")),
+            UiEvent::CompactionStarted { source } => {
+                if self.policy.quiet {
+                    None
+                } else {
+                    Some(format!("compaction: source={source} status=running"))
+                }
+            }
             UiEvent::CompactionTriggered {
                 source,
                 summarized_count,
@@ -166,6 +173,13 @@ impl<W: Write> StderrUiRenderer<W> {
                     Some(format!(
                         "compaction: source={source} summarized={summarized_count} kept={kept_recent_count} preview={summary_preview}"
                     ))
+                }
+            }
+            UiEvent::CompactionFailed { source, message } => {
+                if self.policy.quiet {
+                    None
+                } else {
+                    Some(format!("compaction: source={source} status=failed message={message}"))
                 }
             }
             UiEvent::AssistantMessage { .. } => None,
