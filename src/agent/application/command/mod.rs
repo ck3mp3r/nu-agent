@@ -269,18 +269,30 @@ pub(crate) fn builtin_fs_tool_definitions() -> Vec<rig::completion::ToolDefiniti
         },
         rig::completion::ToolDefinition {
             name: "edit".to_string(),
-            description: "Search/replace edit with compare-and-swap guard".to_string(),
+            description: "Canonical edit contract with explicit mode (preview/apply), CAS guard, and legacy compatibility".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "path": { "type": "string" },
-                    "search": { "type": "string" },
-                    "replacement": { "type": "string" },
+                    "mode": { "type": "string", "enum": ["preview", "apply"], "default": "apply" },
                     "expected_version": { "type": "string" },
-                    "match_mode": { "type": "string", "enum": ["literal", "regex"] },
-                    "occurrence": { "type": "string", "enum": ["first", "all"] }
+                    "operation": {
+                        "type": "object",
+                        "properties": {
+                            "type": { "type": "string", "enum": ["search_replace"], "default": "search_replace" },
+                            "search": { "type": "string" },
+                            "replacement": { "type": "string" },
+                            "match_mode": { "type": "string", "enum": ["literal", "regex"], "default": "literal" },
+                            "occurrence": { "type": "string", "enum": ["first", "all"], "default": "first" }
+                        },
+                        "required": ["search", "replacement"]
+                    },
+                    "search": { "type": "string", "description": "legacy compatibility field; prefer operation.search" },
+                    "replacement": { "type": "string", "description": "legacy compatibility field; prefer operation.replacement" },
+                    "match_mode": { "type": "string", "enum": ["literal", "regex"], "description": "legacy compatibility field; prefer operation.match_mode" },
+                    "occurrence": { "type": "string", "enum": ["first", "all"], "description": "legacy compatibility field; prefer operation.occurrence" }
                 },
-                "required": ["path", "search", "replacement", "expected_version"]
+                "required": ["path", "expected_version"]
             }),
         },
         rig::completion::ToolDefinition {

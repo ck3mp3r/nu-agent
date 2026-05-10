@@ -132,6 +132,7 @@ impl<W: Write> StderrUiRenderer<W> {
                 arguments,
                 success,
                 result,
+                display: _,
                 error_kind,
                 message,
             } => {

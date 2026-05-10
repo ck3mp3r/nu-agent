@@ -64,6 +64,7 @@ fn run_mock_flow<R: UiRenderer>(renderer: &mut R) {
         arguments: "{}".to_string(),
         success: true,
         result: "ok".to_string(),
+        display: None,
         error_kind: None,
         message: None,
     });

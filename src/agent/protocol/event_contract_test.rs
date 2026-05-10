@@ -23,6 +23,7 @@ fn ui_event_contract_exposes_required_variants() {
             arguments: "{}".to_string(),
             success: true,
             result: "[]".to_string(),
+            display: None,
             error_kind: None,
             message: None,
         },

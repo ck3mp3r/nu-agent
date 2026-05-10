@@ -3,6 +3,11 @@ use nu_protocol::{Span, Value, shell_error::generic::GenericError};
 use rig::completion::message::{AssistantContent, ToolCall};
 use serde_json::Value as JsonValue;
 
+#[cfg(test)]
+use std::cell::RefCell;
+
+use crate::agent::protocol::event::{ToolDisplay, ToolDisplaySection, ToolDisplayStats};
+
 use crate::tools::{closure::ClosureRegistry, error::ToolError, executor::ToolExecutor};
 
 #[derive(Debug, serde::Deserialize)]
@@ -17,10 +22,29 @@ struct BuiltinReadArgs {
 #[derive(Debug, serde::Deserialize)]
 struct BuiltinEditArgs {
     path: String,
-    search: String,
-    replacement: String,
+    #[serde(default)]
+    search: Option<String>,
+    #[serde(default)]
+    replacement: Option<String>,
     #[serde(default)]
     expected_version: Option<String>,
+    #[serde(default)]
+    match_mode: Option<String>,
+    #[serde(default)]
+    occurrence: Option<String>,
+    #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
+    operation: Option<BuiltinEditOperationArgs>,
+}
+
+#[derive(Debug, serde::Deserialize, Clone)]
+struct BuiltinEditOperationArgs {
+    #[serde(default)]
+    #[serde(rename = "type")]
+    operation_type: Option<String>,
+    search: String,
+    replacement: String,
     #[serde(default)]
     match_mode: Option<String>,
     #[serde(default)]
@@ -331,6 +355,355 @@ fn parse_edit_occurrence(value: Option<&str>) -> Result<crate::tools::fs::core::
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EditToolMode {
+    Preview,
+    Apply,
+}
+
+impl EditToolMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Preview => "preview",
+            Self::Apply => "apply",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
+enum EditWriteDecision {
+    Approve,
+    Deny { message: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EditWritePolicy {
+    AutoApprove,
+}
+
+impl EditWritePolicy {
+    fn decide(self, _path: &std::path::Path, _plan: &crate::tools::fs::core::EditPlan) -> EditWriteDecision {
+        match self {
+            Self::AutoApprove => EditWriteDecision::Approve,
+        }
+    }
+}
+
+fn decide_edit_write(path: &std::path::Path, plan: &crate::tools::fs::core::EditPlan) -> EditWriteDecision {
+    EditWritePolicy::AutoApprove.decide(path, plan)
+}
+
+fn parse_edit_mode(value: Option<&str>) -> Result<EditToolMode, BuiltinFsToolError> {
+    match value.unwrap_or("apply") {
+        "preview" => Ok(EditToolMode::Preview),
+        "apply" => Ok(EditToolMode::Apply),
+        other => Err(BuiltinFsToolError {
+            kind: ToolErrorKind::Validation,
+            message: format!("Invalid edit.mode '{other}': expected 'preview' or 'apply'"),
+            details: None,
+        }),
+    }
+}
+
+fn make_edit_diagnostic(class: &str, message: impl Into<String>) -> JsonValue {
+    serde_json::json!({
+        "class": class,
+        "message": message.into(),
+    })
+}
+
+fn build_edit_preview_display(path: &str, plan: &crate::tools::fs::core::EditPlan) -> ToolDisplay {
+    let diff = crate::tools::fs::diff::compute_edit_unified_diff(
+        std::path::Path::new("file"),
+        &plan.previous_content,
+        &plan.new_content,
+    );
+
+    ToolDisplay {
+        title: format!("edit {path}"),
+        sections: vec![ToolDisplaySection {
+            label: path.to_string(),
+            language: "diff".to_string(),
+            content: diff.text,
+            stats: Some(ToolDisplayStats {
+                files_changed: Some(diff.stats.files_changed),
+                insertions: Some(diff.stats.insertions),
+                deletions: Some(diff.stats.deletions),
+                diff_truncated: Some(diff.truncated),
+                omitted_files: Some(diff.omitted_files),
+                omitted_hunks: Some(diff.omitted_hunks),
+            }),
+        }],
+    }
+}
+
+fn attach_display_payload(response: &mut JsonValue, display: &ToolDisplay) {
+    let sections = display
+        .sections
+        .iter()
+        .map(|section| {
+            let mut section_obj = serde_json::Map::new();
+            section_obj.insert("label".to_string(), JsonValue::String(section.label.clone()));
+            section_obj.insert(
+                "language".to_string(),
+                JsonValue::String(section.language.clone()),
+            );
+            section_obj.insert("content".to_string(), JsonValue::String(section.content.clone()));
+            if let Some(stats) = &section.stats {
+                let mut stats_obj = serde_json::Map::new();
+                if let Some(files_changed) = stats.files_changed {
+                    stats_obj.insert("files_changed".to_string(), JsonValue::from(files_changed));
+                }
+                if let Some(insertions) = stats.insertions {
+                    stats_obj.insert("insertions".to_string(), JsonValue::from(insertions));
+                }
+                if let Some(deletions) = stats.deletions {
+                    stats_obj.insert("deletions".to_string(), JsonValue::from(deletions));
+                }
+                if let Some(diff_truncated) = stats.diff_truncated {
+                    stats_obj.insert("diff_truncated".to_string(), JsonValue::Bool(diff_truncated));
+                }
+                if let Some(omitted_files) = stats.omitted_files {
+                    stats_obj.insert("omitted_files".to_string(), JsonValue::from(omitted_files));
+                }
+                if let Some(omitted_hunks) = stats.omitted_hunks {
+                    stats_obj.insert("omitted_hunks".to_string(), JsonValue::from(omitted_hunks));
+                }
+                section_obj.insert("stats".to_string(), JsonValue::Object(stats_obj));
+            }
+            JsonValue::Object(section_obj)
+        })
+        .collect::<Vec<_>>();
+
+    let mut display_obj = serde_json::Map::new();
+    display_obj.insert("title".to_string(), JsonValue::String(display.title.clone()));
+    display_obj.insert("sections".to_string(), JsonValue::Array(sections));
+
+    if let Some(obj) = response.as_object_mut() {
+        obj.insert("display".to_string(), JsonValue::Object(display_obj));
+    }
+}
+
+fn resolve_edit_operation(args: &BuiltinEditArgs) -> Result<crate::tools::fs::core::EditOperation, BuiltinFsToolError> {
+    if let Some(operation) = &args.operation {
+        if let Some(operation_type) = operation.operation_type.as_deref()
+            && operation_type != "search_replace"
+        {
+            return Err(BuiltinFsToolError {
+                kind: ToolErrorKind::Validation,
+                message: format!(
+                    "Invalid edit.operation.type '{operation_type}': expected 'search_replace'"
+                ),
+                details: None,
+            });
+        }
+
+        let match_mode = parse_edit_match_mode(operation.match_mode.as_deref())?;
+        let occurrence = parse_edit_occurrence(operation.occurrence.as_deref())?;
+        return Ok(crate::tools::fs::core::EditOperation {
+            search: operation.search.clone(),
+            replacement: operation.replacement.clone(),
+            match_mode,
+            occurrence,
+        });
+    }
+
+    let search = args.search.clone().ok_or(BuiltinFsToolError {
+        kind: ToolErrorKind::Validation,
+        message: "Invalid edit arguments: missing field `search`".to_string(),
+        details: None,
+    })?;
+    let replacement = args.replacement.clone().ok_or(BuiltinFsToolError {
+        kind: ToolErrorKind::Validation,
+        message: "Invalid edit arguments: missing field `replacement`".to_string(),
+        details: None,
+    })?;
+    let match_mode = parse_edit_match_mode(args.match_mode.as_deref())?;
+    let occurrence = parse_edit_occurrence(args.occurrence.as_deref())?;
+
+    Ok(crate::tools::fs::core::EditOperation {
+        search,
+        replacement,
+        match_mode,
+        occurrence,
+    })
+}
+
+fn map_edit_contract_error(error: &BuiltinFsToolError) -> &'static str {
+    if let Some(class) = error
+        .details
+        .as_ref()
+        .and_then(|details| details.get("diagnostic_class"))
+        .and_then(serde_json::Value::as_str)
+    {
+        return match class {
+            "validation" => "validation",
+            "stale" => "stale",
+            "permission" => "permission",
+            "conflict" => "conflict",
+            _ => "internal",
+        };
+    }
+
+    match error.kind {
+        ToolErrorKind::Validation => "validation",
+        ToolErrorKind::Runtime => "internal",
+        ToolErrorKind::Transport | ToolErrorKind::Timeout | ToolErrorKind::Unknown => "internal",
+    }
+}
+
+#[cfg(test)]
+type EditApplyPreviewHook = fn(&std::path::Path, &ToolDisplay);
+#[cfg(test)]
+type EditApplyDecisionHook = fn(&std::path::Path, &EditWriteDecision);
+
+#[cfg(test)]
+thread_local! {
+    static EDIT_APPLY_POST_PLAN_HOOK: RefCell<Option<fn(&std::path::Path)>> = RefCell::new(None);
+    static EDIT_APPLY_PREVIEW_HOOK: RefCell<Option<EditApplyPreviewHook>> = RefCell::new(None);
+    static EDIT_APPLY_DECISION_HOOK: RefCell<Option<EditApplyDecisionHook>> = RefCell::new(None);
+}
+
+#[cfg(test)]
+fn set_edit_apply_post_plan_hook(hook: Option<fn(&std::path::Path)>) {
+    EDIT_APPLY_POST_PLAN_HOOK.with(|slot| {
+        *slot.borrow_mut() = hook;
+    });
+}
+
+#[cfg(test)]
+fn set_edit_apply_preview_hook(hook: Option<EditApplyPreviewHook>) {
+    EDIT_APPLY_PREVIEW_HOOK.with(|slot| {
+        *slot.borrow_mut() = hook;
+    });
+}
+
+#[cfg(test)]
+fn set_edit_apply_decision_hook(hook: Option<EditApplyDecisionHook>) {
+    EDIT_APPLY_DECISION_HOOK.with(|slot| {
+        *slot.borrow_mut() = hook;
+    });
+}
+
+#[cfg(test)]
+fn run_edit_apply_post_plan_hook(path: &std::path::Path) {
+    let hook = EDIT_APPLY_POST_PLAN_HOOK.with(|slot| *slot.borrow());
+    if let Some(hook) = hook {
+        hook(path);
+    }
+}
+
+#[cfg(test)]
+fn run_edit_apply_preview_hook(path: &std::path::Path, display: &ToolDisplay) {
+    let hook = EDIT_APPLY_PREVIEW_HOOK.with(|slot| *slot.borrow());
+    if let Some(hook) = hook {
+        hook(path, display);
+    }
+}
+
+#[cfg(not(test))]
+fn run_edit_apply_preview_hook(_path: &std::path::Path, _display: &ToolDisplay) {}
+
+#[cfg(test)]
+fn run_edit_apply_decision_hook(path: &std::path::Path, decision: &EditWriteDecision) {
+    let hook = EDIT_APPLY_DECISION_HOOK.with(|slot| *slot.borrow());
+    if let Some(hook) = hook {
+        hook(path, decision);
+    }
+}
+
+#[cfg(not(test))]
+fn run_edit_apply_decision_hook(_path: &std::path::Path, _decision: &EditWriteDecision) {}
+
+#[cfg(not(test))]
+fn run_edit_apply_post_plan_hook(_path: &std::path::Path) {}
+
+fn build_edit_contract_response(
+    path: &str,
+    mode: EditToolMode,
+    plan: crate::tools::fs::core::EditPlan,
+    applied: bool,
+) -> JsonValue {
+    let diff = crate::tools::fs::diff::compute_edit_unified_diff(
+        std::path::Path::new("file"),
+        &plan.previous_content,
+        &plan.new_content,
+    );
+
+    let mut diagnostics = Vec::new();
+    if plan.conflict {
+        diagnostics.push(make_edit_diagnostic(
+            "stale",
+            format!(
+                "stale expected_version '{}' (current '{}')",
+                plan.expected_version, plan.previous_version
+            ),
+        ));
+    }
+
+    serde_json::json!({
+        "path": path,
+        "mode": mode.as_str(),
+        "proposal_id": serde_json::Value::Null,
+        "applied": applied,
+        "would_change": plan.would_change,
+        "diff": diff.text,
+        "stats": {
+            "replacements": plan.replacements,
+            "previous_bytes": plan.previous_bytes,
+            "new_bytes": plan.new_bytes,
+            "previous_lines": plan.previous_lines,
+            "new_lines": plan.new_lines,
+            "files_changed": diff.stats.files_changed,
+            "insertions": diff.stats.insertions,
+            "deletions": diff.stats.deletions,
+            "diff_truncated": diff.truncated,
+            "omitted_files": diff.omitted_files,
+            "omitted_hunks": diff.omitted_hunks
+        },
+        "diagnostics": diagnostics,
+        "changed": plan.would_change,
+        "replacements": plan.replacements,
+        "wrote": applied && plan.would_change,
+        "noop": plan.noop,
+        "conflict": plan.conflict,
+        "expected_version": plan.expected_version,
+        "previous_version": plan.previous_version,
+        "new_version": plan.new_version,
+    })
+}
+
+fn build_edit_contract_error_response(
+    path: &str,
+    mode: EditToolMode,
+    class: &str,
+    message: impl Into<String>,
+) -> JsonValue {
+    serde_json::json!({
+        "path": path,
+        "mode": mode.as_str(),
+        "proposal_id": serde_json::Value::Null,
+        "applied": false,
+        "would_change": false,
+        "diff": "",
+        "stats": {
+            "replacements": 0,
+            "previous_bytes": 0,
+            "new_bytes": 0,
+            "previous_lines": 0,
+            "new_lines": 0,
+            "files_changed": 0,
+            "insertions": 0,
+            "deletions": 0,
+            "diff_truncated": false,
+            "omitted_files": 0,
+            "omitted_hunks": 0
+        },
+        "diagnostics": [make_edit_diagnostic(class, message)],
+    })
+}
+
 fn map_mutate_error(error: crate::tools::fs::core::MutateError) -> BuiltinFsToolError {
     use crate::tools::fs::core::MutateError;
 
@@ -338,12 +711,28 @@ fn map_mutate_error(error: crate::tools::fs::core::MutateError) -> BuiltinFsTool
         MutateError::Io(io_error) => BuiltinFsToolError {
             kind: ToolErrorKind::Runtime,
             message: io_error.to_string(),
-            details: None,
+            details: Some(serde_json::json!({
+                "io_kind": format!("{:?}", io_error.kind()),
+                "diagnostic_class": if io_error.kind() == std::io::ErrorKind::PermissionDenied {
+                    "permission"
+                } else {
+                    "internal"
+                }
+            })),
+        },
+        MutateError::Conflict(_) => BuiltinFsToolError {
+            kind: ToolErrorKind::Validation,
+            message: error.to_string(),
+            details: Some(serde_json::json!({
+                "diagnostic_class": "stale"
+            })),
         },
         other => BuiltinFsToolError {
             kind: ToolErrorKind::Validation,
             message: other.to_string(),
-            details: None,
+            details: Some(serde_json::json!({
+                "diagnostic_class": "validation"
+            })),
         },
     }
 }
@@ -375,7 +764,7 @@ fn dispatch_builtin_fs_tool(
     cwd: &std::path::Path,
 ) -> Result<Option<JsonValue>, BuiltinFsToolError> {
     use crate::tools::fs::core::{
-        EditOperation, PatchOp, PatchRange, ReadRequest, apply_line_range_patch_batch,
+        PatchOp, PatchRange, ReadRequest, apply_line_range_patch_batch,
         apply_search_replace_edit, read_file,
     };
 
@@ -420,32 +809,174 @@ fn dispatch_builtin_fs_tool(
                 })?;
 
             let resolved_path = resolve_builtin_fs_path_for_cwd(&args.path, cwd);
-            let match_mode = parse_edit_match_mode(args.match_mode.as_deref())?;
-            let occurrence = parse_edit_occurrence(args.occurrence.as_deref())?;
+            let mode = match parse_edit_mode(args.mode.as_deref()) {
+                Ok(mode) => mode,
+                Err(err) => {
+                    return Ok(Some(build_edit_contract_error_response(
+                        &args.path,
+                        EditToolMode::Apply,
+                        map_edit_contract_error(&err),
+                        err.message,
+                    )));
+                }
+            };
 
-            let summary = apply_search_replace_edit(
+            let operation = match resolve_edit_operation(&args) {
+                Ok(operation) => operation,
+                Err(err) => {
+                    return Ok(Some(build_edit_contract_error_response(
+                        &args.path,
+                        mode,
+                        map_edit_contract_error(&err),
+                        err.message,
+                    )));
+                }
+            };
+
+            let plan = match crate::tools::fs::core::plan_search_replace_edit(
                 &resolved_path,
                 args.expected_version.as_deref(),
-                &EditOperation {
-                    search: args.search,
-                    replacement: args.replacement,
-                    match_mode,
-                    occurrence,
-                },
-            )
-            .map_err(map_mutate_error)?;
+                &operation,
+            ) {
+                Ok(plan) => plan,
+                Err(err) => {
+                    let mapped = map_mutate_error(err);
+                    return Ok(Some(build_edit_contract_error_response(
+                        &args.path,
+                        mode,
+                        map_edit_contract_error(&mapped),
+                        mapped.message,
+                    )));
+                }
+            };
 
-            Ok(Some(serde_json::json!({
-                "path": args.path,
-                "replacements": summary.replacements,
-                "wrote": summary.wrote,
-                "changed": summary.changed,
-                "noop": summary.noop,
-                "conflict": summary.conflict,
-                "expected_version": summary.expected_version,
-                "previous_version": summary.previous_version,
-                "new_version": summary.new_version,
-            })))
+            match mode {
+                EditToolMode::Preview => {
+                    Ok(Some(build_edit_contract_response(&args.path, mode, plan, false)))
+                }
+                EditToolMode::Apply => {
+                    let preview_display = build_edit_preview_display(&args.path, &plan);
+                    run_edit_apply_preview_hook(&resolved_path, &preview_display);
+
+                    let decision = decide_edit_write(&resolved_path, &plan);
+                    run_edit_apply_decision_hook(&resolved_path, &decision);
+
+                    if plan.conflict || !plan.would_change {
+                        let mut response = build_edit_contract_response(&args.path, mode, plan, false);
+                        attach_display_payload(&mut response, &preview_display);
+                        return Ok(Some(response));
+                    }
+
+                    if let EditWriteDecision::Deny { message } = decision {
+                        let mut response = build_edit_contract_response(&args.path, mode, plan, false);
+                        if let Some(obj) = response.as_object_mut()
+                            && let Some(diagnostics) = obj.get_mut("diagnostics").and_then(JsonValue::as_array_mut)
+                        {
+                            diagnostics.push(make_edit_diagnostic("permission", message));
+                        }
+                        attach_display_payload(&mut response, &preview_display);
+                        return Ok(Some(response));
+                    }
+
+                    run_edit_apply_post_plan_hook(&resolved_path);
+
+                    let summary = match apply_search_replace_edit(
+                        &resolved_path,
+                        args.expected_version.as_deref(),
+                        &operation,
+                    )
+                    {
+                        Ok(summary) => summary,
+                        Err(crate::tools::fs::core::MutateError::Conflict(_)) => {
+                            let refreshed_plan = match crate::tools::fs::core::plan_search_replace_edit(
+                                &resolved_path,
+                                args.expected_version.as_deref(),
+                                &operation,
+                            ) {
+                                Ok(refreshed_plan) => refreshed_plan,
+                                Err(err) => {
+                                    let mapped = map_mutate_error(err);
+                                    let mut response = build_edit_contract_error_response(
+                                        &args.path,
+                                        mode,
+                                        map_edit_contract_error(&mapped),
+                                        mapped.message,
+                                    );
+                                    attach_display_payload(&mut response, &preview_display);
+                                    return Ok(Some(response));
+                                }
+                            };
+                            let mut response = build_edit_contract_response(
+                                &args.path,
+                                mode,
+                                refreshed_plan,
+                                false,
+                            );
+                            attach_display_payload(&mut response, &preview_display);
+                            return Ok(Some(response));
+                        }
+                        Err(err) => {
+                            let mapped = map_mutate_error(err);
+                            let mut response = build_edit_contract_error_response(
+                                &args.path,
+                                mode,
+                                map_edit_contract_error(&mapped),
+                                mapped.message,
+                            );
+                            attach_display_payload(&mut response, &preview_display);
+                            return Ok(Some(response));
+                        }
+                    };
+
+                    if summary.conflict {
+                        let refreshed_plan = match crate::tools::fs::core::plan_search_replace_edit(
+                            &resolved_path,
+                            args.expected_version.as_deref(),
+                            &operation,
+                        ) {
+                            Ok(refreshed_plan) => refreshed_plan,
+                            Err(err) => {
+                                let mapped = map_mutate_error(err);
+                                let mut response = build_edit_contract_error_response(
+                                    &args.path,
+                                    mode,
+                                    map_edit_contract_error(&mapped),
+                                    mapped.message,
+                                );
+                                attach_display_payload(&mut response, &preview_display);
+                                return Ok(Some(response));
+                            }
+                        };
+                        let mut response = build_edit_contract_response(
+                            &args.path,
+                            mode,
+                            refreshed_plan,
+                            false,
+                        );
+                        attach_display_payload(&mut response, &preview_display);
+                        return Ok(Some(response));
+                    }
+
+                    let mut response = build_edit_contract_response(&args.path, mode, plan, summary.wrote);
+                    if let Some(obj) = response.as_object_mut() {
+                        obj.insert("wrote".to_string(), JsonValue::Bool(summary.wrote));
+                        obj.insert("changed".to_string(), JsonValue::Bool(summary.changed));
+                        obj.insert("noop".to_string(), JsonValue::Bool(summary.noop));
+                        obj.insert("conflict".to_string(), JsonValue::Bool(summary.conflict));
+                        obj.insert(
+                            "expected_version".to_string(),
+                            JsonValue::String(summary.expected_version),
+                        );
+                        obj.insert(
+                            "previous_version".to_string(),
+                            JsonValue::String(summary.previous_version),
+                        );
+                        obj.insert("new_version".to_string(), JsonValue::String(summary.new_version));
+                    }
+                    attach_display_payload(&mut response, &preview_display);
+                    Ok(Some(response))
+                }
+            }
         }
         "patch" => {
             let args: BuiltinPatchArgs =
@@ -629,6 +1160,7 @@ pub struct ToolCallResult {
     pub arguments: String,
     pub source: ToolSource,
     pub content: String,
+    pub display: Option<ToolDisplay>,
     pub failure: Option<ToolFailureOutcome>,
 }
 
@@ -711,8 +1243,94 @@ fn build_failure_result(
         arguments: serialized_arguments,
         source,
         content: failure.to_json_string(),
+        display: None,
         failure: Some(failure),
     }
+}
+
+fn parse_display_stats(stats: Option<&JsonValue>) -> Option<ToolDisplayStats> {
+    let stats = stats?.as_object()?;
+    Some(ToolDisplayStats {
+        files_changed: stats
+            .get("files_changed")
+            .and_then(JsonValue::as_u64)
+            .map(|v| v as usize),
+        insertions: stats
+            .get("insertions")
+            .and_then(JsonValue::as_u64)
+            .map(|v| v as usize),
+        deletions: stats
+            .get("deletions")
+            .and_then(JsonValue::as_u64)
+            .map(|v| v as usize),
+        diff_truncated: stats.get("diff_truncated").and_then(JsonValue::as_bool),
+        omitted_files: stats
+            .get("omitted_files")
+            .and_then(JsonValue::as_u64)
+            .map(|v| v as usize),
+        omitted_hunks: stats
+            .get("omitted_hunks")
+            .and_then(JsonValue::as_u64)
+            .map(|v| v as usize),
+    })
+}
+
+fn tool_display_from_minimal_object(display: &JsonValue) -> Option<ToolDisplay> {
+    let display = display.as_object()?;
+    if display.contains_key("kind") {
+        return None;
+    }
+    let title = display.get("title")?.as_str()?.to_string();
+    let sections = display.get("sections")?.as_array()?;
+    let mut parsed_sections = Vec::with_capacity(sections.len());
+    for section in sections {
+        let section = section.as_object()?;
+        if section.contains_key("kind") {
+            return None;
+        }
+        parsed_sections.push(ToolDisplaySection {
+            label: section.get("label")?.as_str()?.to_string(),
+            language: section.get("language")?.as_str()?.to_string(),
+            content: section.get("content")?.as_str()?.to_string(),
+            stats: parse_display_stats(section.get("stats")),
+        });
+    }
+    if parsed_sections.is_empty() {
+        return None;
+    }
+    Some(ToolDisplay {
+        title,
+        sections: parsed_sections,
+    })
+}
+
+fn build_direct_tool_display(tool_name: &str, payload: &JsonValue) -> Option<ToolDisplay> {
+    if let Some(explicit_display) = payload.get("display")
+        && let Some(display) = tool_display_from_minimal_object(explicit_display)
+    {
+        return Some(display);
+    }
+
+    if tool_name != "edit" {
+        return None;
+    }
+
+    let path = payload.get("path")?.as_str()?;
+    let diff = payload
+        .get("diff")
+        .and_then(JsonValue::as_str)
+        .unwrap_or_default()
+        .to_string();
+
+    Some(ToolDisplay {
+        title: format!("edit {path}"),
+        sections: vec![ToolDisplaySection {
+            label: path.to_string(),
+            language: "diff".to_string(),
+            content: diff,
+            stats: parse_display_stats(payload.get("stats")),
+        }],
+    })
 }
 
 /// Handle a single tool call.
@@ -803,6 +1421,7 @@ async fn handle_single_tool_call(
             arguments: serialized_arguments,
             source,
             content,
+            display: None,
             failure: None,
         };
     }
@@ -822,6 +1441,7 @@ async fn handle_single_tool_call(
 
     match dispatch_builtin_fs_tool(&tool_call.function.name, &tool_call.function.arguments, &builtin_cwd) {
         Ok(Some(payload)) => {
+            let display = build_direct_tool_display(&tool_call.function.name, &payload);
             let content = serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string());
             return ToolCallResult {
                 tool_call_id: tool_call.id,
@@ -829,6 +1449,7 @@ async fn handle_single_tool_call(
                 arguments: serialized_arguments,
                 source,
                 content,
+                display,
                 failure: None,
             };
         }
@@ -963,6 +1584,7 @@ async fn handle_single_tool_call(
         arguments: serialized_arguments,
         source,
         content,
+        display: None,
         failure: None,
     }
 }

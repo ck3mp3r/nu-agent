@@ -340,6 +340,42 @@ fn builtin_fs_tool_registration_explicitly_rejects_prefixed_names() {
     assert!(!names.iter().any(|name| name.starts_with("tool__")));
 }
 
+#[test]
+fn builtin_edit_definition_uses_mode_and_operation_contract_with_legacy_compat_fields() {
+    let edit = super::builtin_fs_tool_definitions()
+        .into_iter()
+        .find(|tool| tool.name == "edit")
+        .expect("edit tool definition");
+
+    let required = edit.parameters["required"]
+        .as_array()
+        .expect("required array")
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(required, vec!["path", "expected_version"]);
+
+    assert_eq!(edit.parameters["properties"]["mode"]["enum"][0], "preview");
+    assert_eq!(edit.parameters["properties"]["mode"]["enum"][1], "apply");
+    assert_eq!(
+        edit.parameters["properties"]["operation"]["required"],
+        serde_json::json!(["search", "replacement"])
+    );
+
+    assert!(
+        edit.parameters["properties"]["search"]["description"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("legacy")
+    );
+    assert!(
+        edit.parameters["properties"]["replacement"]["description"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("legacy")
+    );
+}
+
 // Helper to create an EvaluatedCall with named arguments for testing
 fn create_test_call(flags: Vec<(&str, Value)>) -> EvaluatedCall {
     let span = Span::test_data();

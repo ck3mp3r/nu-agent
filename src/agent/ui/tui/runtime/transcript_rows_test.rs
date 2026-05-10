@@ -132,3 +132,22 @@ fn tool_failure_keeps_failed_text_token_and_failure_indicator() {
         .iter()
         .any(|span| span.content.contains("· failed")));
 }
+
+#[test]
+fn non_display_tool_rows_keep_existing_prefix_behavior() {
+    let line = TranscriptLine {
+        role: TranscriptRole::Tool,
+        text: "tool[nu__run] args={\"command\":\"version\"}".to_string(),
+        rendered: None,
+    };
+
+    let rendered = render_transcript_lines_for_test(line, None, 0);
+    let row_text = rendered[0]
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+
+    assert!(row_text.starts_with("  ⚙ "));
+    assert!(row_text.contains("nu__run"));
+}

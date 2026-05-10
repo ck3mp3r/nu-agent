@@ -171,6 +171,7 @@ fn default_tool_lifecycle_is_single_completion_line_with_result_block() {
         arguments: "{}".to_string(),
         success: true,
         result: "[]".to_string(),
+        display: None,
         error_kind: None,
         message: None,
     });
@@ -206,6 +207,7 @@ fn default_tool_lifecycle_prints_non_empty_payloads() {
             arguments: "{}".to_string(),
             success: true,
             result: payload.to_string(),
+            display: None,
             error_kind: None,
             message: None,
         });

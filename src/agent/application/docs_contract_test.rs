@@ -107,3 +107,24 @@ fn help_describes_modal_rounded_border_and_dim_backdrop() {
     assert!(help.contains("rounded borders"));
     assert!(help.contains("dimmed backdrop"));
 }
+
+#[test]
+fn usage_docs_describe_edit_mode_preview_apply_contract_and_envelope_fields() {
+    let docs = read_usage_docs();
+    assert!(docs.contains("canonical contract (preview/apply)"));
+    assert!(docs.contains("\"mode\": \"preview\""));
+    assert!(docs.contains("`mode: \"apply\"`"));
+    assert!(docs.contains("proposal_id"));
+    assert!(docs.contains("would_change"));
+    assert!(docs.contains("diagnostics"));
+}
+
+#[test]
+fn usage_docs_list_deterministic_edit_error_taxonomy_classes() {
+    let docs = read_usage_docs();
+    assert!(docs.contains("validation"));
+    assert!(docs.contains("stale"));
+    assert!(docs.contains("permission"));
+    assert!(docs.contains("conflict"));
+    assert!(docs.contains("internal"));
+}

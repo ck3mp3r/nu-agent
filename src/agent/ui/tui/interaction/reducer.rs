@@ -7,7 +7,7 @@ use crate::agent::ui::tui::{
     },
 };
 use crate::agent::protocol::slash::{SlashParseResult, parse_slash_command, slash_command_label};
-use crate::agent::protocol::event::UiEvent;
+use crate::agent::protocol::event::{ToolDisplay, ToolDisplaySection, UiEvent};
 
 pub const ESC_ABORT_CONFIRM_STATUS: &str = "Hit escape again to abort.";
 const ABORT_REQUESTED_STATUS: &str = "Abort requested.";
@@ -363,8 +363,9 @@ fn reduce_ui_event(state: &mut AppState, event: UiEvent) {
             name,
             arguments,
             success,
+            display,
             ..
-        } => handle_tool_end(state, &name, &arguments, success),
+        } => handle_tool_end(state, &name, &arguments, success, display),
         UiEvent::LlmEnd {
             response_chars,
             input_tokens,
@@ -435,9 +436,156 @@ fn handle_tool_start(state: &mut AppState, name: &str, arguments: &str) {
     state.status_line = format!("Tool: {name}");
 }
 
-fn handle_tool_end(state: &mut AppState, name: &str, arguments: &str, success: bool) {
+fn append_direct_tool_display(state: &mut AppState, display: ToolDisplay) {
+    let suppress_title = should_suppress_redundant_edit_title(&display);
+    let suppress_single_section_stats = suppress_title && display.sections.len() == 1;
+
+    if !suppress_title {
+        state.push_transcript_line(TranscriptRole::ToolDisplay, display.title);
+    }
+
+    for section in display.sections {
+        append_direct_tool_display_section(state, section, suppress_single_section_stats);
+    }
+}
+
+fn should_suppress_redundant_edit_title(display: &ToolDisplay) -> bool {
+    display.title.starts_with("edit ")
+        && display.sections.len() == 1
+        && display.sections[0].language == "diff"
+}
+
+fn append_direct_tool_display_section(
+    state: &mut AppState,
+    section: ToolDisplaySection,
+    suppress_stats_line: bool,
+) {
+    state.push_transcript_line(
+        TranscriptRole::ToolDisplay,
+        format!("{} ({})", section.label, section.language),
+    );
+
+    if !suppress_stats_line
+        && let Some(stats) = section.stats
+    {
+        let mut stat_parts = Vec::new();
+        if let Some(files_changed) = stats.files_changed {
+            stat_parts.push(format!("files={files_changed}"));
+        }
+        if let Some(insertions) = stats.insertions {
+            stat_parts.push(format!("+{insertions}"));
+        }
+        if let Some(deletions) = stats.deletions {
+            stat_parts.push(format!("-{deletions}"));
+        }
+        if let Some(true) = stats.diff_truncated {
+            stat_parts.push("truncated=true".to_string());
+        }
+        if !stat_parts.is_empty() {
+            state.push_transcript_line(TranscriptRole::ToolDisplay, stat_parts.join(" "));
+        }
+    }
+
+    let section_content = if section.language == "diff" {
+        add_diff_line_number_readability(&section.content)
+    } else {
+        section.content
+    };
+
+    let markdown = format!("```{}\n{}\n```", section.language, section_content);
+    for rendered_line in state.project_assistant_markdown_lines(&markdown) {
+        let text = markdown::rendered_line_to_plain_text(&rendered_line);
+        if text.trim().is_empty() {
+            continue;
+        }
+        state.push_transcript_rendered_line(TranscriptRole::ToolDisplay, rendered_line);
+    }
+}
+
+fn handle_tool_end(
+    state: &mut AppState,
+    name: &str,
+    arguments: &str,
+    success: bool,
+    display: Option<ToolDisplay>,
+) {
     state.finish_tool_call(name, arguments, success);
+    if let Some(display) = display {
+        append_direct_tool_display(state, display);
+    }
     state.status_line = "Thinking...".to_string();
+}
+
+fn parse_hunk_start(line: &str, prefix: char) -> Option<usize> {
+    let mut chars = line.chars();
+    while let Some(ch) = chars.next() {
+        if ch == prefix {
+            let remainder = chars.as_str();
+            let digits: String = remainder
+                .chars()
+                .take_while(|ch| ch.is_ascii_digit())
+                .collect();
+            if digits.is_empty() {
+                return None;
+            }
+            return digits.parse::<usize>().ok();
+        }
+    }
+    None
+}
+
+fn add_diff_line_number_readability(diff: &str) -> String {
+    let mut old_line: Option<usize> = None;
+    let mut new_line: Option<usize> = None;
+    let mut out = String::new();
+
+    for segment in diff.split_inclusive('\n') {
+        let (line, newline) = if let Some(stripped) = segment.strip_suffix('\n') {
+            (stripped, "\n")
+        } else {
+            (segment, "")
+        };
+
+        if line.starts_with("@@") {
+            old_line = parse_hunk_start(line, '-');
+            new_line = parse_hunk_start(line, '+');
+            out.push_str(line);
+            out.push_str(newline);
+            continue;
+        }
+
+        if line.starts_with("--- ") || line.starts_with("+++ ") || line.starts_with("\\ ") {
+            out.push_str(line);
+            out.push_str(newline);
+            continue;
+        }
+
+        let mut chars = line.chars();
+        let prefix = chars.next();
+        let body = chars.as_str();
+
+        match (prefix, old_line, new_line) {
+            (Some(' '), Some(old), Some(new)) => {
+                out.push_str(&format!(" {:>4} {:>4} │{}{}", old, new, body, newline));
+                old_line = Some(old.saturating_add(1));
+                new_line = Some(new.saturating_add(1));
+            }
+            (Some('-'), Some(old), _) => {
+                out.push_str(&format!("-{:>4}      │{}{}", old, body, newline));
+                old_line = Some(old.saturating_add(1));
+            }
+            (Some('+'), _, Some(new)) => {
+                out.push_str(&format!("+     {:>4} │{}{}", new, body, newline));
+                new_line = Some(new.saturating_add(1));
+            }
+            _ => {
+                out.push_str(line);
+                out.push_str(newline);
+            }
+        }
+    }
+
+    out
 }
 
 fn handle_llm_end(
@@ -458,10 +606,15 @@ fn handle_warning(state: &mut AppState, message: String) {
 fn handle_assistant_message(state: &mut AppState, text: String) {
     let trimmed = text.trim();
     if !trimmed.is_empty() {
+        let projected_lines = state.project_assistant_markdown_lines(trimmed);
+        if assistant_diff_regurgitation_is_redundant(state, &projected_lines) {
+            return;
+        }
+
         if state.transcript_follow_tail {
             state.scroll_transcript_to_bottom();
         }
-        for line in state.project_assistant_markdown_lines(trimmed) {
+        for line in projected_lines {
             let text = markdown::rendered_line_to_plain_text(&line);
             if text.trim().is_empty() {
                 continue;
@@ -469,6 +622,93 @@ fn handle_assistant_message(state: &mut AppState, text: String) {
             state.push_transcript_rendered_line(TranscriptRole::Assistant, line);
         }
     }
+}
+
+fn assistant_diff_regurgitation_is_redundant(state: &AppState, assistant_lines: &[ratatui::text::Line<'static>]) -> bool {
+    let latest_tool_display_diff = latest_tool_display_diff_lines(state);
+    let Some(latest_tool_display_diff) = latest_tool_display_diff else {
+        return false;
+    };
+
+    let candidate = assistant_lines
+        .iter()
+        .map(markdown::rendered_line_to_plain_text)
+        .map(|line| normalize_diff_line_for_comparison(line.trim()))
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+
+    if candidate.is_empty() {
+        return false;
+    }
+
+    let contains_diff_signature = candidate
+        .iter()
+        .any(|line| line.starts_with("--- ") || line.starts_with("+++ ") || line.starts_with("@@ "));
+    if !contains_diff_signature {
+        return false;
+    }
+
+    let diff_lines = latest_tool_display_diff
+        .iter()
+        .map(|line| normalize_diff_line_for_comparison(line.trim()))
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+
+    candidate.iter().all(|line| {
+        diff_lines.contains(line)
+            || line.eq_ignore_ascii_case("dry-run diff")
+            || line.eq_ignore_ascii_case("dry run diff")
+            || line.ends_with(':')
+    })
+}
+
+fn normalize_diff_line_for_comparison(line: &str) -> String {
+    if let Some((_, rhs)) = line.split_once('│') {
+        let rhs = rhs.trim_start();
+        if line.starts_with('+') {
+            return format!("+{rhs}");
+        }
+        if line.starts_with('-') {
+            return format!("-{rhs}");
+        }
+        return format!(" {rhs}");
+    }
+
+    line.to_string()
+}
+
+fn latest_tool_display_diff_lines(state: &AppState) -> Option<Vec<String>> {
+    let mut lines = Vec::new();
+    for entry in state.transcript_preview.iter().rev() {
+        if entry.role == TranscriptRole::ToolDisplay {
+            lines.push(entry.text.clone());
+            continue;
+        }
+
+        if !lines.is_empty() {
+            break;
+        }
+    }
+
+    if lines.is_empty() {
+        return None;
+    }
+
+    lines.reverse();
+    Some(
+        lines
+            .into_iter()
+            .filter(|line| {
+                line.starts_with("--- ")
+                    || line.starts_with("+++ ")
+                    || line.starts_with("@@ ")
+                    || line.starts_with(' ')
+                    || line.starts_with('-')
+                    || line.starts_with('+')
+                    || line.starts_with('\\')
+            })
+            .collect(),
+    )
 }
 
 fn finalize(state: &mut AppState) {

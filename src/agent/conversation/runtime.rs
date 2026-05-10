@@ -68,6 +68,72 @@ impl HistoryEntry {
     }
 }
 
+fn is_edit_sanitizable_mode(arguments: &str) -> bool {
+    match serde_json::from_str::<serde_json::Value>(arguments)
+        .ok()
+        .and_then(|value| value.get("mode").and_then(serde_json::Value::as_str).map(str::to_string))
+    {
+        Some(mode) => mode == "preview" || mode == "apply",
+        None => true,
+    }
+}
+
+fn compact_edit_preview_stats(stats: &serde_json::Value) -> Option<serde_json::Value> {
+    let stats_obj = stats.as_object()?;
+    let mut compact = serde_json::Map::new();
+    for key in [
+        "files_changed",
+        "insertions",
+        "deletions",
+        "diff_truncated",
+        "omitted_files",
+        "omitted_hunks",
+    ] {
+        if let Some(value) = stats_obj.get(key) {
+            compact.insert(key.to_string(), value.clone());
+        }
+    }
+    if compact.is_empty() {
+        None
+    } else {
+        Some(serde_json::Value::Object(compact))
+    }
+}
+
+fn sanitize_tool_result_for_history_prompt(result: &handler::ToolCallResult) -> String {
+    if result.tool_name != "edit" || !is_edit_sanitizable_mode(&result.arguments) {
+        return result.content.clone();
+    }
+
+    let Ok(content) = serde_json::from_str::<serde_json::Value>(&result.content) else {
+        return result.content.clone();
+    };
+    let Some(content_obj) = content.as_object() else {
+        return result.content.clone();
+    };
+
+    let mut compact = serde_json::Map::new();
+    if let Some(mode) = content_obj.get("mode") {
+        compact.insert("mode".to_string(), mode.clone());
+    }
+    if let Some(path) = content_obj.get("path") {
+        compact.insert("path".to_string(), path.clone());
+    }
+    for key in ["applied", "would_change", "noop", "conflict"] {
+        if let Some(value) = content_obj.get(key) {
+            compact.insert(key.to_string(), value.clone());
+        }
+    }
+    if let Some(stats) = content_obj.get("stats")
+        && let Some(compact_stats) = compact_edit_preview_stats(stats)
+    {
+        compact.insert("stats".to_string(), compact_stats);
+    }
+    compact.insert("diff_rendered_directly".to_string(), serde_json::Value::Bool(true));
+
+    serde_json::to_string(&serde_json::Value::Object(compact)).unwrap_or_else(|_| result.content.clone())
+}
+
 fn call_llm_with_ui_ticks<U: ProgressUi>(
     runtime: &tokio::runtime::Runtime,
     runtime_ctx: &RuntimeCtx,
@@ -345,6 +411,7 @@ impl ConversationRuntime for AgentConversationRuntime {
                     arguments: result.arguments.clone(),
                     success: result.failure.is_none(),
                     result: result.content.clone(),
+                    display: result.display.clone(),
                     error_kind: result
                         .failure
                         .as_ref()
@@ -373,7 +440,7 @@ impl ConversationRuntime for AgentConversationRuntime {
             for result in &tool_results {
                 conversation_messages.push(HistoryEntry::tool(
                     persisted_tool_text_for(result),
-                    result.content.clone(),
+                    sanitize_tool_result_for_history_prompt(result),
                 ));
             }
 
@@ -673,7 +740,7 @@ mod tests {
 
     use super::{
         execute_compaction_event_shared, execute_compaction_persisted, merge_runtime_prompt,
-        persisted_assistant_message, COMPACTION_FAILURE_WARNING,
+        persisted_assistant_message, sanitize_tool_result_for_history_prompt, COMPACTION_FAILURE_WARNING,
     };
     use crate::{
         agent::protocol::{
@@ -682,8 +749,62 @@ mod tests {
             event::UiEvent,
         },
         llm::LlmUsage,
+        agent::tools::handler::{ToolCallResult, ToolSource},
         session::{CompactionOutcome, Message, SessionConfig, SessionStore},
     };
+
+    fn preview_edit_result(content: serde_json::Value) -> ToolCallResult {
+        ToolCallResult {
+            tool_call_id: "tool-call-1".to_string(),
+            tool_name: "edit".to_string(),
+            arguments: serde_json::json!({
+                "path": "sample.txt",
+                "mode": "preview",
+                "search": "old",
+                "replacement": "new"
+            })
+            .to_string(),
+            source: ToolSource::Closure,
+            content: content.to_string(),
+            display: None,
+            failure: None,
+        }
+    }
+
+    fn apply_edit_result(content: serde_json::Value) -> ToolCallResult {
+        ToolCallResult {
+            tool_call_id: "tool-call-2".to_string(),
+            tool_name: "edit".to_string(),
+            arguments: serde_json::json!({
+                "path": "sample.txt",
+                "mode": "apply",
+                "search": "old",
+                "replacement": "new"
+            })
+            .to_string(),
+            source: ToolSource::Closure,
+            content: content.to_string(),
+            display: None,
+            failure: None,
+        }
+    }
+
+    fn apply_edit_result_with_omitted_mode(content: serde_json::Value) -> ToolCallResult {
+        ToolCallResult {
+            tool_call_id: "tool-call-3".to_string(),
+            tool_name: "edit".to_string(),
+            arguments: serde_json::json!({
+                "path": "sample.txt",
+                "search": "old",
+                "replacement": "new"
+            })
+            .to_string(),
+            source: ToolSource::Closure,
+            content: content.to_string(),
+            display: None,
+            failure: None,
+        }
+    }
 
     #[derive(Default)]
     struct TestProgressUi {
@@ -1018,5 +1139,172 @@ mod tests {
             .expect("reload session");
         assert!(loaded.compaction_count() > 0);
         let _ = Span::test_data();
+    }
+
+    #[test]
+    fn history_prompt_omits_full_edit_preview_diff_payload() {
+        let result = preview_edit_result(serde_json::json!({
+            "mode": "preview",
+            "path": "sample.txt",
+            "diff": "--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n",
+            "applied": false,
+            "would_change": true,
+            "noop": false,
+            "conflict": false,
+            "stats": {
+                "files_changed": 1,
+                "insertions": 1,
+                "deletions": 1,
+                "diff_truncated": false
+            }
+        }));
+
+        let sanitized = sanitize_tool_result_for_history_prompt(&result);
+
+        assert!(!sanitized.contains("\"diff\""));
+        assert!(!sanitized.contains("--- a/sample.txt"));
+    }
+
+    #[test]
+    fn history_prompt_includes_compact_edit_preview_status_marker() {
+        let result = preview_edit_result(serde_json::json!({
+            "mode": "preview",
+            "path": "sample.txt",
+            "diff": "--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n",
+            "applied": false,
+            "would_change": true,
+            "noop": false,
+            "conflict": false,
+            "stats": {
+                "files_changed": 1,
+                "insertions": 1,
+                "deletions": 1,
+                "diff_truncated": false,
+                "omitted_files": 0,
+                "omitted_hunks": 0
+            }
+        }));
+
+        let sanitized = sanitize_tool_result_for_history_prompt(&result);
+        let payload: serde_json::Value = serde_json::from_str(&sanitized).expect("sanitized json");
+
+        assert_eq!(payload["diff_rendered_directly"], serde_json::Value::Bool(true));
+        assert_eq!(payload["applied"], serde_json::Value::Bool(false));
+        assert_eq!(payload["would_change"], serde_json::Value::Bool(true));
+        assert_eq!(payload["noop"], serde_json::Value::Bool(false));
+        assert_eq!(payload["conflict"], serde_json::Value::Bool(false));
+        assert_eq!(payload["stats"]["files_changed"], serde_json::Value::from(1));
+    }
+
+    #[test]
+    fn non_preview_tool_history_payload_remains_unchanged() {
+        let content = serde_json::json!({
+            "ok": true,
+            "diff": "--- untouched"
+        });
+        let result = ToolCallResult {
+            tool_call_id: "tool-call-non-edit".to_string(),
+            tool_name: "read".to_string(),
+            arguments: serde_json::json!({ "path": "sample.txt" }).to_string(),
+            source: ToolSource::Closure,
+            content: content.to_string(),
+            display: None,
+            failure: None,
+        };
+
+        let sanitized = sanitize_tool_result_for_history_prompt(&result);
+        assert_eq!(sanitized, content.to_string());
+    }
+
+    #[test]
+    fn edit_apply_history_prompt_remains_compact_without_full_diff_payload() {
+        let content = serde_json::json!({
+            "mode": "apply",
+            "path": "sample.txt",
+            "diff": "--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n",
+            "applied": true,
+            "would_change": true,
+            "stats": {
+                "files_changed": 1,
+                "insertions": 1,
+                "deletions": 1,
+                "diff_truncated": false,
+                "omitted_files": 0,
+                "omitted_hunks": 0
+            },
+            "display": {
+                "title": "edit sample.txt",
+                "sections": [
+                    {
+                        "label": "sample.txt",
+                        "language": "diff",
+                        "content": "--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n"
+                    }
+                ]
+            }
+        });
+        let result = apply_edit_result(content.clone());
+
+        let sanitized = sanitize_tool_result_for_history_prompt(&result);
+        let payload: serde_json::Value = serde_json::from_str(&sanitized).expect("sanitized json");
+
+        assert!(!sanitized.contains("\"diff\""));
+        assert!(!sanitized.contains("--- a/sample.txt"));
+        assert!(payload.get("display").is_none());
+        assert_eq!(payload["mode"], serde_json::Value::String("apply".to_string()));
+        assert_eq!(payload["path"], serde_json::Value::String("sample.txt".to_string()));
+        assert_eq!(payload["diff_rendered_directly"], serde_json::Value::Bool(true));
+    }
+
+    #[test]
+    fn direct_tool_display_payload_still_contains_full_diff_for_ui() {
+        let diff = "--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n";
+        let content = serde_json::json!({
+            "mode": "preview",
+            "path": "sample.txt",
+            "diff": diff,
+            "applied": false,
+            "would_change": true
+        });
+        let result = preview_edit_result(content.clone());
+
+        let _sanitized = sanitize_tool_result_for_history_prompt(&result);
+
+        let original_payload: serde_json::Value =
+            serde_json::from_str(&result.content).expect("original json");
+        assert_eq!(original_payload["diff"], serde_json::Value::String(diff.to_string()));
+    }
+
+    #[test]
+    fn history_prompt_omits_full_edit_apply_diff_payload_when_mode_is_omitted() {
+        let content = serde_json::json!({
+            "mode": "apply",
+            "path": "sample.txt",
+            "diff": "--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n",
+            "applied": true,
+            "would_change": true,
+            "noop": false,
+            "conflict": false,
+            "stats": {
+                "files_changed": 1,
+                "insertions": 1,
+                "deletions": 1,
+                "diff_truncated": false,
+                "omitted_files": 0,
+                "omitted_hunks": 0
+            }
+        });
+        let result = apply_edit_result_with_omitted_mode(content);
+
+        let sanitized = sanitize_tool_result_for_history_prompt(&result);
+        let payload: serde_json::Value = serde_json::from_str(&sanitized).expect("sanitized json");
+
+        assert!(!sanitized.contains("\"diff\""));
+        assert!(!sanitized.contains("--- a/sample.txt"));
+        assert_eq!(payload["mode"], serde_json::Value::String("apply".to_string()));
+        assert_eq!(payload["path"], serde_json::Value::String("sample.txt".to_string()));
+        assert_eq!(payload["applied"], serde_json::Value::Bool(true));
+        assert_eq!(payload["would_change"], serde_json::Value::Bool(true));
+        assert_eq!(payload["diff_rendered_directly"], serde_json::Value::Bool(true));
     }
 }

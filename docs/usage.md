@@ -84,7 +84,60 @@ Typical response fields:
 - `limit`
 - `version`
 
-### `edit` example (search/replace)
+### `edit` canonical contract (preview/apply)
+
+`edit` now uses a single stable contract with explicit mode:
+
+- `mode: "preview"` computes validation + planning + diff without writing.
+- `mode: "apply"` uses the exact same validation + planning semantics, then writes if allowed.
+- Legacy top-level `search`/`replacement`/`match_mode`/`occurrence` are still accepted for compatibility.
+
+Canonical request shape:
+
+```json
+{
+  "tool": "edit",
+  "arguments": {
+    "path": "src/lib.rs",
+    "mode": "preview",
+    "expected_version": "<version-from-read>",
+    "operation": {
+      "type": "search_replace",
+      "search": "old_name",
+      "replacement": "new_name",
+      "match_mode": "literal",
+      "occurrence": "first"
+    }
+  }
+}
+```
+
+Stable response envelope fields:
+
+- `proposal_id` (currently `null` in this slice)
+- `applied` (bool)
+- `would_change` (bool)
+- `diff` (deterministic diff text for this plan)
+- `stats` (deterministic counters)
+- `diagnostics` (deterministic class/message entries)
+
+Diff/newline semantics:
+
+- Diff rendering is deterministic for identical input snapshots and operation plans.
+- Paths in diff headers are stable (`--- a/file`, `+++ b/file`) for edit contract parity between preview/apply.
+- Newline model preserves source line endings (LF/CRLF) in emitted line payloads.
+- EOF newline transitions use unified-diff marker `\\ No newline at end of file`.
+- Large diff output is bounded and can include a truncation marker with omitted-count metadata while preserving full summary stats.
+
+Deterministic diagnostic classes used by the edit contract:
+
+- `validation`
+- `stale`
+- `permission`
+- `conflict`
+- `internal`
+
+### `edit` legacy-compatible example (search/replace)
 
 ```json
 {
@@ -104,6 +157,7 @@ Notes:
 
 - `match_mode`: `literal` (default) or `regex`
 - `occurrence`: `first` (default) or `all`
+- If `mode` is omitted, behavior defaults to `apply` for backward compatibility.
 
 ### `patch` example (line-range batch)
 

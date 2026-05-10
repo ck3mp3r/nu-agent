@@ -8,7 +8,7 @@ use crate::agent::ui::{tui::{
         },
     },
 };
-use crate::agent::protocol::event::UiEvent;
+use crate::agent::protocol::event::{ToolDisplay, ToolDisplaySection, UiEvent};
 
 fn assert_reducer_invariants(state: &AppState) {
     assert!(!state.input.locked);
@@ -81,6 +81,7 @@ fn table_driven_ui_event_mapping_keeps_completed_as_finalize_boundary() {
             arguments: "{}".to_string(),
             success: true,
             result: "[]".to_string(),
+            display: None,
             error_kind: None,
             message: None,
         },
@@ -517,6 +518,7 @@ fn tool_end_transcript_line_shows_args_summary_without_result_payload_dump() {
             arguments: r#"{"namespace":"prod"}"#.to_string(),
             success: true,
             result: "[{\"name\":\"api-0\",\"ns\":\"prod\"}]".to_string(),
+            display: None,
             error_kind: None,
             message: None,
         }),
@@ -579,6 +581,7 @@ fn tool_end_transitions_same_row_to_done_or_failed_status() {
             arguments: r#"{"number":1}"#.to_string(),
             success: true,
             result: "ok".to_string(),
+            display: None,
             error_kind: None,
             message: None,
         }),
@@ -610,6 +613,7 @@ fn tool_end_transitions_same_row_to_done_or_failed_status() {
             arguments: r#"{"number":2}"#.to_string(),
             success: false,
             result: "err".to_string(),
+            display: None,
             error_kind: Some("tool_error".to_string()),
             message: Some("boom".to_string()),
         }),
@@ -738,6 +742,7 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
                 arguments: r#"{"namespace":"prod"}"#.to_string(),
                 success: true,
                 result: "[]".to_string(),
+                display: None,
                 error_kind: None,
                 message: None,
             },
@@ -1401,4 +1406,437 @@ fn tool_start_truncates_long_args_summary_with_ellipsis() {
     assert!(text.starts_with("tool[k8s__describe] args="));
     assert!(text.ends_with('…'));
     assert!(text.chars().count() < 180);
+}
+
+#[test]
+fn tool_display_renders_diff_sections_as_dedicated_code_blocks() {
+    let mut state = AppState::new();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::ToolStart {
+            name: "edit".to_string(),
+            source: "closure".to_string(),
+            arguments: r#"{"path":"sample.txt"}"#.to_string(),
+        }),
+        None,
+    );
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::ToolEnd {
+            name: "edit".to_string(),
+            source: "closure".to_string(),
+            arguments: r#"{"path":"sample.txt"}"#.to_string(),
+            success: true,
+            result: "{}".to_string(),
+            display: Some(ToolDisplay {
+                title: "edit sample.txt".to_string(),
+                sections: vec![ToolDisplaySection {
+                    label: "sample.txt".to_string(),
+                    language: "diff".to_string(),
+                    content: "--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n"
+                        .to_string(),
+                    stats: None,
+                }],
+            }),
+            error_kind: None,
+            message: None,
+        }),
+        None,
+    );
+
+    let lines = state
+        .transcript_preview
+        .iter()
+        .map(|line| line.text.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(!lines.contains(&"edit sample.txt"));
+    assert!(lines.contains(&"sample.txt (diff)"));
+    assert!(!lines.iter().any(|line| line.contains("fn main")));
+    assert!(lines.iter().any(|line| line.contains("--- a/sample.txt")));
+    assert!(lines.iter().any(|line| line.contains("+++ b/sample.txt")));
+}
+
+#[test]
+fn tool_display_body_lines_are_unprefixed_while_tool_call_line_remains_prefixed() {
+    let mut state = AppState::new();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::ToolStart {
+            name: "edit".to_string(),
+            source: "closure".to_string(),
+            arguments: r#"{"path":"sample.txt"}"#.to_string(),
+        }),
+        None,
+    );
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::ToolEnd {
+            name: "edit".to_string(),
+            source: "closure".to_string(),
+            arguments: r#"{"path":"sample.txt"}"#.to_string(),
+            success: true,
+            result: "{}".to_string(),
+            display: Some(ToolDisplay {
+                title: "edit sample.txt".to_string(),
+                sections: vec![ToolDisplaySection {
+                    label: "sample.txt".to_string(),
+                    language: "diff".to_string(),
+                    content: "--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n"
+                        .to_string(),
+                    stats: None,
+                }],
+            }),
+            error_kind: None,
+            message: None,
+        }),
+        None,
+    );
+
+    let call_row = state
+        .transcript_preview
+        .iter()
+        .find(|line| line.text.starts_with("tool[edit] args="))
+        .expect("tool call row should exist");
+    assert_eq!(call_row.role, TranscriptRole::Tool);
+
+    let display_rows = state
+        .transcript_preview
+        .iter()
+        .filter(|line| {
+            line.text == "edit sample.txt"
+                || line.text == "sample.txt (diff)"
+                || line.text.contains("--- a/sample.txt")
+                || line.text.contains("+++ b/sample.txt")
+        })
+        .collect::<Vec<_>>();
+
+    assert!(!display_rows.is_empty());
+    assert!(display_rows
+        .iter()
+        .all(|line| line.role == TranscriptRole::ToolDisplay));
+}
+
+#[test]
+fn tool_display_diff_block_highlighting_remains_after_prefix_hygiene_fix() {
+    let mut state = AppState::new();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::ToolStart {
+            name: "edit".to_string(),
+            source: "closure".to_string(),
+            arguments: r#"{"path":"sample.txt"}"#.to_string(),
+        }),
+        None,
+    );
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::ToolEnd {
+            name: "edit".to_string(),
+            source: "closure".to_string(),
+            arguments: r#"{"path":"sample.txt"}"#.to_string(),
+            success: true,
+            result: "{}".to_string(),
+            display: Some(ToolDisplay {
+                title: "edit sample.txt".to_string(),
+                sections: vec![ToolDisplaySection {
+                    label: "sample.txt".to_string(),
+                    language: "diff".to_string(),
+                    content: "--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n"
+                        .to_string(),
+                    stats: None,
+                }],
+            }),
+            error_kind: None,
+            message: None,
+        }),
+        None,
+    );
+
+    let diff_rows = state
+        .transcript_preview
+        .iter()
+        .filter(|line| {
+            line.role == TranscriptRole::ToolDisplay
+                && (line.text.contains("--- a/sample.txt") || line.text.contains("+++ b/sample.txt"))
+        })
+        .collect::<Vec<_>>();
+
+    assert!(!diff_rows.is_empty());
+    assert!(diff_rows.iter().all(|line| line.rendered.is_some()));
+}
+
+#[test]
+fn edit_preview_display_omits_redundant_edit_path_header() {
+    let mut state = AppState::new();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::ToolStart {
+            name: "edit".to_string(),
+            source: "closure".to_string(),
+            arguments: r#"{"path":"sample.txt"}"#.to_string(),
+        }),
+        None,
+    );
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::ToolEnd {
+            name: "edit".to_string(),
+            source: "closure".to_string(),
+            arguments: r#"{"path":"sample.txt"}"#.to_string(),
+            success: true,
+            result: "{}".to_string(),
+            display: Some(ToolDisplay {
+                title: "edit sample.txt".to_string(),
+                sections: vec![ToolDisplaySection {
+                    label: "sample.txt".to_string(),
+                    language: "diff".to_string(),
+                    content: "--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n"
+                        .to_string(),
+                    stats: None,
+                }],
+            }),
+            error_kind: None,
+            message: None,
+        }),
+        None,
+    );
+
+    let lines = state
+        .transcript_preview
+        .iter()
+        .map(|line| line.text.as_str())
+        .collect::<Vec<_>>();
+    assert!(!lines.contains(&"edit sample.txt"));
+    assert!(lines.contains(&"sample.txt (diff)"));
+}
+
+#[test]
+fn edit_preview_display_omits_redundant_single_file_stats_line() {
+    let mut state = AppState::new();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::ToolStart {
+            name: "edit".to_string(),
+            source: "closure".to_string(),
+            arguments: r#"{"path":"sample.txt"}"#.to_string(),
+        }),
+        None,
+    );
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::ToolEnd {
+            name: "edit".to_string(),
+            source: "closure".to_string(),
+            arguments: r#"{"path":"sample.txt"}"#.to_string(),
+            success: true,
+            result: "{}".to_string(),
+            display: Some(ToolDisplay {
+                title: "edit sample.txt".to_string(),
+                sections: vec![ToolDisplaySection {
+                    label: "sample.txt".to_string(),
+                    language: "diff".to_string(),
+                    content: "--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n"
+                        .to_string(),
+                    stats: Some(crate::agent::protocol::event::ToolDisplayStats {
+                        files_changed: Some(1),
+                        insertions: Some(3),
+                        deletions: Some(1),
+                        diff_truncated: Some(false),
+                        omitted_files: Some(0),
+                        omitted_hunks: Some(0),
+                    }),
+                }],
+            }),
+            error_kind: None,
+            message: None,
+        }),
+        None,
+    );
+
+    let lines = state
+        .transcript_preview
+        .iter()
+        .map(|line| line.text.as_str())
+        .collect::<Vec<_>>();
+    assert!(!lines.iter().any(|line| line.starts_with("files=")));
+    assert!(!lines.iter().any(|line| line.contains("+3 -1")));
+}
+
+#[test]
+fn assistant_dry_run_diff_regurgitation_is_suppressed_when_direct_display_present() {
+    let mut state = AppState::new();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::ToolStart {
+            name: "edit".to_string(),
+            source: "closure".to_string(),
+            arguments: r#"{"path":"sample.txt"}"#.to_string(),
+        }),
+        None,
+    );
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::ToolEnd {
+            name: "edit".to_string(),
+            source: "closure".to_string(),
+            arguments: r#"{"path":"sample.txt"}"#.to_string(),
+            success: true,
+            result: "{}".to_string(),
+            display: Some(ToolDisplay {
+                title: "edit sample.txt".to_string(),
+                sections: vec![ToolDisplaySection {
+                    label: "sample.txt".to_string(),
+                    language: "diff".to_string(),
+                    content: "--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n"
+                        .to_string(),
+                    stats: None,
+                }],
+            }),
+            error_kind: None,
+            message: None,
+        }),
+        None,
+    );
+
+    let before = state.transcript_preview.len();
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::AssistantMessage {
+            text: "Dry-run diff:\n```diff\n--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n```"
+                .to_string(),
+        }),
+        None,
+    );
+
+    assert_eq!(state.transcript_preview.len(), before);
+}
+
+#[test]
+fn normal_assistant_response_remains_when_no_direct_display_is_present() {
+    let mut state = AppState::new();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::AssistantMessage {
+            text: "Dry-run diff:\n```diff\n--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n```"
+                .to_string(),
+        }),
+        None,
+    );
+
+    assert!(!state.transcript_preview.is_empty());
+    assert!(state
+        .transcript_preview
+        .iter()
+        .any(|line| line.role == TranscriptRole::Assistant));
+}
+
+#[test]
+fn diff_display_preserves_hunk_line_range_context() {
+    let mut state = AppState::new();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::ToolStart {
+            name: "edit".to_string(),
+            source: "closure".to_string(),
+            arguments: r#"{"path":"sample.txt"}"#.to_string(),
+        }),
+        None,
+    );
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::ToolEnd {
+            name: "edit".to_string(),
+            source: "closure".to_string(),
+            arguments: r#"{"path":"sample.txt"}"#.to_string(),
+            success: true,
+            result: "{}".to_string(),
+            display: Some(ToolDisplay {
+                title: "edit sample.txt".to_string(),
+                sections: vec![ToolDisplaySection {
+                    label: "sample.txt".to_string(),
+                    language: "diff".to_string(),
+                    content: "--- a/sample.txt\n+++ b/sample.txt\n@@ -10,3 +10,4 @@\n line-a\n-line-b\n+line-c\n line-d\n"
+                        .to_string(),
+                    stats: None,
+                }],
+            }),
+            error_kind: None,
+            message: None,
+        }),
+        None,
+    );
+
+    assert!(state
+        .transcript_preview
+        .iter()
+        .any(|line| line.text.contains("@@ -10,3 +10,4 @@")));
+}
+
+#[test]
+fn diff_display_supports_line_number_readability_without_breaking_highlighting() {
+    let mut state = AppState::new();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::ToolStart {
+            name: "edit".to_string(),
+            source: "closure".to_string(),
+            arguments: r#"{"path":"sample.txt"}"#.to_string(),
+        }),
+        None,
+    );
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::ToolEnd {
+            name: "edit".to_string(),
+            source: "closure".to_string(),
+            arguments: r#"{"path":"sample.txt"}"#.to_string(),
+            success: true,
+            result: "{}".to_string(),
+            display: Some(ToolDisplay {
+                title: "edit sample.txt".to_string(),
+                sections: vec![ToolDisplaySection {
+                    label: "sample.txt".to_string(),
+                    language: "diff".to_string(),
+                    content: "--- a/sample.txt\n+++ b/sample.txt\n@@ -3,2 +3,2 @@\n alpha\n-beta\n+omega\n"
+                        .to_string(),
+                    stats: None,
+                }],
+            }),
+            error_kind: None,
+            message: None,
+        }),
+        None,
+    );
+
+    let diff_rows = state
+        .transcript_preview
+        .iter()
+        .filter(|line| line.role == TranscriptRole::ToolDisplay)
+        .collect::<Vec<_>>();
+
+    assert!(diff_rows
+        .iter()
+        .any(|line| line.text.contains("│alpha") || line.text.contains("│beta") || line.text.contains("│omega")));
+    assert!(diff_rows
+        .iter()
+        .filter(|line| line.text.contains("@@ -3,2 +3,2 @@"))
+        .all(|line| line.rendered.is_some()));
 }

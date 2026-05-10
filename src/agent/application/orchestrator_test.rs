@@ -15,7 +15,7 @@ use crate::agent::{
             UiMessageUsageSnapshot,
             UiMessageSnapshot,
         },
-        event::UiEvent,
+        event::{ToolDisplay, ToolDisplaySection, UiEvent},
     },
 };
 
@@ -160,6 +160,81 @@ impl InteractiveUi for FakeInteractiveUi {
         self.call_order.push("hydrate");
         self.hydrated_messages.extend(messages);
     }
+}
+
+#[derive(Default)]
+struct ToolDisplayOnlyRuntime;
+
+impl ConversationRuntime for ToolDisplayOnlyRuntime {
+    fn execute_turn<U: ProgressUi>(
+        &mut self,
+        ui: &mut U,
+        _prompt: String,
+        _context: Option<String>,
+        span: Span,
+    ) -> Result<Value, LabeledError> {
+        ui.emit(&UiEvent::ToolStart {
+            name: "edit".to_string(),
+            source: "closure".to_string(),
+            arguments: "{}".to_string(),
+        });
+        ui.emit(&UiEvent::ToolEnd {
+            name: "edit".to_string(),
+            source: "closure".to_string(),
+            arguments: "{}".to_string(),
+            success: true,
+            result: r#"{"path":"file.txt","diff":"--- a/file.txt\n+++ b/file.txt\n"}"#.to_string(),
+            display: Some(ToolDisplay {
+                title: "edit file.txt".to_string(),
+                sections: vec![ToolDisplaySection {
+                    label: "file.txt".to_string(),
+                    language: "diff".to_string(),
+                    content: "--- a/file.txt\n+++ b/file.txt\n".to_string(),
+                    stats: None,
+                }],
+            }),
+            error_kind: None,
+            message: None,
+        });
+        ui.emit(&UiEvent::Completed { tool_calls: 1 });
+        Ok(Value::nothing(span))
+    }
+
+    fn set_mcp_server_enabled(&mut self, _server_name: &str, enabled: bool) -> Result<McpUsabilityState, String> {
+        Ok(if enabled {
+            McpUsabilityState::Enabled
+        } else {
+            McpUsabilityState::Disabled
+        })
+    }
+}
+
+#[test]
+fn tool_display_path_does_not_require_assistant_synthesis_round_trip() {
+    let mut runtime = ToolDisplayOnlyRuntime;
+    let mut ui = FakeProgressUi::default();
+
+    let value = run_single_turn(
+        &mut runtime,
+        &mut ui,
+        "show me diff".to_string(),
+        None,
+        Span::test_data(),
+    )
+    .expect("single turn");
+
+    assert!(value.is_nothing());
+    assert!(ui.events.iter().any(|event| matches!(
+        event,
+        UiEvent::ToolEnd {
+            display: Some(_),
+            ..
+        }
+    )));
+    assert!(!ui
+        .events
+        .iter()
+        .any(|event| matches!(event, UiEvent::AssistantMessage { .. })));
 }
 
 #[derive(Default)]

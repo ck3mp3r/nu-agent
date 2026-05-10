@@ -15,6 +15,7 @@ pub(super) fn transcript_role_style(role: TranscriptRole) -> Style {
         TranscriptRole::Assistant => theme.role_assistant,
         TranscriptRole::System => theme.role_system,
         TranscriptRole::Tool => theme.role_tool,
+        TranscriptRole::ToolDisplay => theme.role_assistant,
         TranscriptRole::Separator => theme.role_separator,
     }
 }
@@ -24,6 +25,7 @@ pub(super) fn transcript_row_style(role: TranscriptRole, theme: &TuiTheme) -> St
         TranscriptRole::User => theme.row_user,
         TranscriptRole::Assistant => theme.row_assistant,
         TranscriptRole::Tool => theme.row_tool,
+        TranscriptRole::ToolDisplay => theme.row_assistant,
         TranscriptRole::System => theme.row_system,
         TranscriptRole::Separator => Style::default(),
     }
@@ -39,6 +41,7 @@ pub(super) fn lane_prefix_spans(
         TranscriptRole::User => ("▏ ", theme.lane_prefix_user),
         TranscriptRole::Assistant => ("  ", theme.lane_prefix_assistant),
         TranscriptRole::Tool => ("⚙ ", theme.lane_prefix_tool),
+        TranscriptRole::ToolDisplay => ("  ", theme.lane_prefix_assistant),
         TranscriptRole::System => ("· ", theme.lane_prefix_system),
         TranscriptRole::Separator => ("  ", theme.role_separator),
     };

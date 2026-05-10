@@ -159,5 +159,7 @@ fn is_user_assistant_transition(previous: TranscriptRole, next: TranscriptRole) 
         (previous, next),
         (TranscriptRole::User, TranscriptRole::Assistant)
             | (TranscriptRole::Assistant, TranscriptRole::User)
+            | (TranscriptRole::Tool, TranscriptRole::ToolDisplay)
+            | (TranscriptRole::ToolDisplay, TranscriptRole::Tool)
     )
 }

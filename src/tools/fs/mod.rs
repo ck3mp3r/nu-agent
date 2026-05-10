@@ -1,4 +1,5 @@
 pub mod core;
+pub mod diff;
 
 #[cfg(test)]
 #[path = "core/test.rs"]
@@ -19,3 +20,7 @@ mod patch_test;
 #[cfg(test)]
 #[path = "edit/test.rs"]
 mod edit_test;
+
+#[cfg(test)]
+#[path = "diff/test.rs"]
+mod diff_test;

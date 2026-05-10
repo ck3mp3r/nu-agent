@@ -115,6 +115,23 @@ pub struct EditSummary {
     pub new_version: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditPlan {
+    pub replacements: usize,
+    pub would_change: bool,
+    pub noop: bool,
+    pub conflict: bool,
+    pub expected_version: String,
+    pub previous_version: String,
+    pub new_version: String,
+    pub previous_bytes: usize,
+    pub new_bytes: usize,
+    pub previous_lines: usize,
+    pub new_lines: usize,
+    pub previous_content: String,
+    pub new_content: String,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum MutateError {
     #[error("missing expected_version for mutating operation")]
@@ -276,49 +293,104 @@ pub fn apply_search_replace_edit(
     expected_version: Option<&str>,
     operation: &EditOperation,
 ) -> Result<EditSummary, MutateError> {
-    let expected = expected_version.ok_or(MutateError::MissingExpectedVersion)?;
-    let current_content = fs::read_to_string(path)?;
-    let current_version = version_token(&current_content);
+    let plan = plan_search_replace_edit(path, expected_version, operation)?;
 
-    if expected != current_version {
+    if plan.conflict {
         return Ok(EditSummary {
             replacements: 0,
             wrote: false,
             changed: false,
             noop: false,
             conflict: true,
-            expected_version: expected.to_string(),
-            previous_version: current_version.clone(),
-            new_version: current_version,
+            expected_version: plan.expected_version,
+            previous_version: plan.previous_version,
+            new_version: plan.new_version,
         });
     }
 
-    let (new_content, replacements) = compute_edit_result(&current_content, operation)?;
-
-    if replacements == 0 {
+    if !plan.would_change {
         return Ok(EditSummary {
-            replacements,
+            replacements: plan.replacements,
             wrote: false,
             changed: false,
             noop: true,
             conflict: false,
-            expected_version: expected.to_string(),
-            previous_version: current_version.clone(),
-            new_version: current_version,
+            expected_version: plan.expected_version,
+            previous_version: plan.previous_version,
+            new_version: plan.new_version,
         });
     }
 
-    let applied = apply_full_content_mutation(path, Some(expected), &new_content)?;
+    let applied = apply_full_content_mutation(
+        path,
+        Some(plan.expected_version.as_str()),
+        &plan.new_content,
+    )?;
 
     Ok(EditSummary {
-        replacements,
+        replacements: plan.replacements,
         wrote: applied.wrote,
         changed: applied.changed,
         noop: !applied.changed,
         conflict: false,
-        expected_version: expected.to_string(),
+        expected_version: plan.expected_version,
         previous_version: applied.previous_version,
         new_version: applied.new_version,
+    })
+}
+
+pub fn plan_search_replace_edit(
+    path: &Path,
+    expected_version: Option<&str>,
+    operation: &EditOperation,
+) -> Result<EditPlan, MutateError> {
+    let expected = expected_version.ok_or(MutateError::MissingExpectedVersion)?;
+    let current_content = fs::read_to_string(path)?;
+    let current_version = version_token(&current_content);
+    let previous_lines = split_lines_preserving_terminators(&current_content).len();
+    let previous_bytes = current_content.len();
+
+    if expected != current_version {
+        return Ok(EditPlan {
+            replacements: 0,
+            would_change: false,
+            noop: false,
+            conflict: true,
+            expected_version: expected.to_string(),
+            previous_version: current_version.clone(),
+            new_version: current_version,
+            previous_bytes,
+            new_bytes: previous_bytes,
+            previous_lines,
+            new_lines: previous_lines,
+            previous_content: current_content.clone(),
+            new_content: current_content,
+        });
+    }
+
+    let (new_content, replacements) = compute_edit_result(&current_content, operation)?;
+    let new_lines = split_lines_preserving_terminators(&new_content).len();
+    let new_bytes = new_content.len();
+    let would_change = new_content != current_content;
+
+    Ok(EditPlan {
+        replacements,
+        would_change,
+        noop: !would_change,
+        conflict: false,
+        expected_version: expected.to_string(),
+        previous_version: current_version.clone(),
+        new_version: if would_change {
+            version_token(&new_content)
+        } else {
+            current_version
+        },
+        previous_bytes,
+        new_bytes,
+        previous_lines,
+        new_lines,
+        previous_content: current_content,
+        new_content,
     })
 }
 

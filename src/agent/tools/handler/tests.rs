@@ -1,6 +1,7 @@
 use super::*;
 use nu_protocol::{Span, Value};
 use serde_json::json;
+use std::cell::RefCell;
 use std::fs;
 use tempfile::tempdir;
 
@@ -513,6 +514,534 @@ fn builtin_edit_dispatch_invokes_fs_apply_search_replace_edit() {
 }
 
 #[test]
+fn builtin_edit_contract_preview_returns_envelope_and_does_not_write() {
+    let dir = tempdir().expect("temp dir");
+    let file = dir.path().join("dispatch-edit-preview.txt");
+    let content = "alpha beta\n";
+    fs::write(&file, content).expect("write");
+    let expected_version = crate::tools::fs::core::version_token(content);
+
+    let result = super::dispatch_builtin_fs_tool(
+        "edit",
+        &json!({
+            "path": file.to_string_lossy(),
+            "mode": "preview",
+            "expected_version": expected_version,
+            "operation": {
+                "type": "search_replace",
+                "search": "beta",
+                "replacement": "gamma",
+                "match_mode": "literal",
+                "occurrence": "first"
+            }
+        }),
+        dir.path(),
+    )
+    .expect("dispatch should succeed")
+    .expect("edit should be handled");
+
+    assert_eq!(result["proposal_id"], serde_json::Value::Null);
+    assert_eq!(result["applied"], false);
+    assert_eq!(result["would_change"], true);
+    assert!(result["diff"].as_str().unwrap_or_default().contains("---"));
+    assert!(result["stats"]["previous_bytes"].is_number());
+    assert!(result["stats"]["new_bytes"].is_number());
+    assert_eq!(result["stats"]["files_changed"], 1);
+    assert_eq!(result["stats"]["insertions"], 1);
+    assert_eq!(result["stats"]["deletions"], 1);
+    assert_eq!(result["stats"]["diff_truncated"], false);
+    assert_eq!(result["stats"]["omitted_files"], 0);
+    assert_eq!(result["stats"]["omitted_hunks"], 0);
+    assert!(result["diagnostics"].is_array());
+    assert_eq!(fs::read_to_string(&file).expect("read"), content);
+}
+
+#[test]
+fn edit_preview_noop_replacement_reports_would_change_false() {
+    let dir = tempdir().expect("temp dir");
+    let file = dir.path().join("dispatch-edit-preview-noop.txt");
+    let content = "alpha beta\n";
+    fs::write(&file, content).expect("write");
+    let expected_version = crate::tools::fs::core::version_token(content);
+
+    let result = super::dispatch_builtin_fs_tool(
+        "edit",
+        &json!({
+            "path": file.to_string_lossy(),
+            "mode": "preview",
+            "expected_version": expected_version,
+            "operation": {
+                "type": "search_replace",
+                "search": "beta",
+                "replacement": "beta",
+                "match_mode": "literal",
+                "occurrence": "all"
+            }
+        }),
+        dir.path(),
+    )
+    .expect("dispatch should succeed")
+    .expect("edit should be handled");
+
+    assert_eq!(result["applied"], false);
+    assert_eq!(result["would_change"], false);
+    assert_eq!(result["changed"], false);
+    assert_eq!(result["wrote"], false);
+    assert_eq!(result["noop"], true);
+    assert_eq!(result["diff"], "");
+    assert_eq!(result["stats"]["replacements"], 1);
+    assert_eq!(result["stats"]["files_changed"], 0);
+    assert_eq!(result["stats"]["insertions"], 0);
+    assert_eq!(result["stats"]["deletions"], 0);
+    assert_eq!(result["stats"]["diff_truncated"], false);
+    assert_eq!(fs::read_to_string(&file).expect("read"), content);
+}
+
+#[test]
+fn builtin_edit_contract_preview_and_apply_share_planning_semantics() {
+    let dir = tempdir().expect("temp dir");
+    let preview_file = dir.path().join("dispatch-edit-preview-plan.txt");
+    let apply_file = dir.path().join("dispatch-edit-apply-plan.txt");
+    let content = "alpha beta alpha\n";
+    fs::write(&preview_file, content).expect("write");
+    fs::write(&apply_file, content).expect("write");
+    let preview_expected_version = crate::tools::fs::core::version_token(content);
+    let apply_expected_version = crate::tools::fs::core::version_token(content);
+
+    let preview = super::dispatch_builtin_fs_tool(
+        "edit",
+        &json!({
+            "path": preview_file.to_string_lossy(),
+            "mode": "preview",
+            "expected_version": preview_expected_version,
+            "operation": {
+                "type": "search_replace",
+                "search": "alpha",
+                "replacement": "omega",
+                "match_mode": "literal",
+                "occurrence": "all"
+            }
+        }),
+        dir.path(),
+    )
+    .expect("preview dispatch")
+    .expect("preview payload");
+
+    let apply = super::dispatch_builtin_fs_tool(
+        "edit",
+        &json!({
+            "path": apply_file.to_string_lossy(),
+            "mode": "apply",
+            "expected_version": apply_expected_version,
+            "operation": {
+                "type": "search_replace",
+                "search": "alpha",
+                "replacement": "omega",
+                "match_mode": "literal",
+                "occurrence": "all"
+            }
+        }),
+        dir.path(),
+    )
+    .expect("apply dispatch")
+    .expect("apply payload");
+
+    assert_eq!(preview["would_change"], apply["would_change"]);
+    assert_eq!(preview["diff"], apply["diff"]);
+    assert_eq!(preview["stats"]["new_bytes"], apply["stats"]["new_bytes"]);
+    assert_eq!(preview["applied"], false);
+    assert_eq!(apply["applied"], true);
+}
+
+#[test]
+fn builtin_edit_contract_legacy_payload_remains_compatible() {
+    let dir = tempdir().expect("temp dir");
+    let file = dir.path().join("dispatch-edit-legacy.txt");
+    let content = "alpha beta\n";
+    fs::write(&file, content).expect("write");
+    let expected_version = crate::tools::fs::core::version_token(content);
+
+    let result = super::dispatch_builtin_fs_tool(
+        "edit",
+        &json!({
+            "path": file.to_string_lossy(),
+            "search": "beta",
+            "replacement": "gamma",
+            "expected_version": expected_version,
+            "match_mode": "literal",
+            "occurrence": "first"
+        }),
+        dir.path(),
+    )
+    .expect("dispatch should succeed")
+    .expect("edit should be handled");
+
+    assert_eq!(result["applied"], true);
+    assert_eq!(result["would_change"], true);
+    assert_eq!(result["changed"], true);
+    assert_eq!(result["replacements"], 1);
+    assert!(result.get("stats").is_some());
+    assert!(result.get("diagnostics").is_some());
+}
+
+#[test]
+fn builtin_edit_contract_stale_version_uses_stale_diagnostic_class() {
+    let dir = tempdir().expect("temp dir");
+    let file = dir.path().join("dispatch-edit-stale.txt");
+    let content = "alpha beta\n";
+    fs::write(&file, content).expect("write");
+
+    let result = super::dispatch_builtin_fs_tool(
+        "edit",
+        &json!({
+            "path": file.to_string_lossy(),
+            "mode": "apply",
+            "expected_version": "stale-version",
+            "search": "beta",
+            "replacement": "gamma"
+        }),
+        dir.path(),
+    )
+    .expect("dispatch should succeed")
+    .expect("edit should be handled");
+
+    assert_eq!(result["applied"], false);
+    assert_eq!(result["diagnostics"][0]["class"], "stale");
+}
+
+fn mutate_edit_apply_file_for_conflict(path: &std::path::Path) {
+    fs::write(path, "delta gamma\n").expect("mutate file for conflict");
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ApplyHookEvent {
+    Preview,
+    DecisionApprove,
+    WriteAttempt,
+}
+
+thread_local! {
+    static APPLY_HOOK_EVENTS: RefCell<Vec<ApplyHookEvent>> = const { RefCell::new(Vec::new()) };
+}
+
+fn reset_apply_hook_events() {
+    APPLY_HOOK_EVENTS.with(|events| events.borrow_mut().clear());
+}
+
+fn record_preview_event(_path: &std::path::Path, _display: &crate::agent::protocol::event::ToolDisplay) {
+    APPLY_HOOK_EVENTS.with(|events| events.borrow_mut().push(ApplyHookEvent::Preview));
+}
+
+fn record_decision_event(_path: &std::path::Path, decision: &super::EditWriteDecision) {
+    match decision {
+        super::EditWriteDecision::Approve => {
+            APPLY_HOOK_EVENTS.with(|events| events.borrow_mut().push(ApplyHookEvent::DecisionApprove));
+        }
+        super::EditWriteDecision::Deny { .. } => {}
+    }
+}
+
+fn record_write_attempt_event(_path: &std::path::Path) {
+    APPLY_HOOK_EVENTS.with(|events| events.borrow_mut().push(ApplyHookEvent::WriteAttempt));
+}
+
+fn snapshot_apply_hook_events() -> Vec<ApplyHookEvent> {
+    APPLY_HOOK_EVENTS.with(|events| events.borrow().clone())
+}
+
+#[test]
+fn edit_apply_conflict_response_is_coherent_with_actual_outcome() {
+    let dir = tempdir().expect("temp dir");
+    let file = dir.path().join("dispatch-edit-apply-conflict.txt");
+    let original = "alpha beta\n";
+    let mutated = "delta gamma\n";
+    fs::write(&file, original).expect("seed file");
+    let expected_version = crate::tools::fs::core::version_token(original);
+
+    super::set_edit_apply_post_plan_hook(Some(mutate_edit_apply_file_for_conflict));
+
+    let result = super::dispatch_builtin_fs_tool(
+        "edit",
+        &json!({
+            "path": file.to_string_lossy(),
+            "mode": "apply",
+            "expected_version": expected_version,
+            "operation": {
+                "type": "search_replace",
+                "search": "beta",
+                "replacement": "omega",
+                "match_mode": "literal",
+                "occurrence": "first"
+            }
+        }),
+        dir.path(),
+    )
+    .expect("dispatch should succeed")
+    .expect("edit should be handled");
+
+    super::set_edit_apply_post_plan_hook(None);
+
+    assert_eq!(result["applied"], false);
+    assert_eq!(result["conflict"], true);
+    assert_eq!(result["would_change"], false);
+    assert_eq!(result["changed"], false);
+    assert_eq!(result["wrote"], false);
+    assert_eq!(result["noop"], false);
+    assert_eq!(result["stats"]["replacements"], 0);
+    assert_eq!(result["diff"], "");
+    assert_eq!(result["diagnostics"][0]["class"], "stale");
+    assert_eq!(fs::read_to_string(&file).expect("read"), mutated);
+}
+
+#[test]
+fn edit_apply_emits_preview_display_before_write_attempt() {
+    let dir = tempdir().expect("temp dir");
+    let file = dir.path().join("dispatch-edit-preview-before-write.txt");
+    let content = "alpha beta\n";
+    fs::write(&file, content).expect("write");
+    let expected_version = crate::tools::fs::core::version_token(content);
+
+    reset_apply_hook_events();
+    super::set_edit_apply_preview_hook(Some(record_preview_event));
+    super::set_edit_apply_post_plan_hook(Some(record_write_attempt_event));
+
+    let result = super::dispatch_builtin_fs_tool(
+        "edit",
+        &json!({
+            "path": file.to_string_lossy(),
+            "mode": "apply",
+            "expected_version": expected_version,
+            "operation": {
+                "type": "search_replace",
+                "search": "beta",
+                "replacement": "gamma",
+                "match_mode": "literal",
+                "occurrence": "first"
+            }
+        }),
+        dir.path(),
+    )
+    .expect("dispatch")
+    .expect("payload");
+
+    super::set_edit_apply_preview_hook(None);
+    super::set_edit_apply_post_plan_hook(None);
+
+    let events = snapshot_apply_hook_events();
+    assert_eq!(
+        events,
+        vec![ApplyHookEvent::Preview, ApplyHookEvent::WriteAttempt]
+    );
+    assert!(result.get("display").is_some(), "apply result must include direct preview display payload");
+    assert_eq!(result["display"]["sections"][0]["language"], "diff");
+}
+
+#[test]
+fn edit_apply_uses_autoapprove_decision_hook_before_write() {
+    let dir = tempdir().expect("temp dir");
+    let file = dir.path().join("dispatch-edit-autoapprove-decision.txt");
+    let content = "alpha beta\n";
+    fs::write(&file, content).expect("write");
+    let expected_version = crate::tools::fs::core::version_token(content);
+
+    reset_apply_hook_events();
+    super::set_edit_apply_decision_hook(Some(record_decision_event));
+    super::set_edit_apply_post_plan_hook(Some(record_write_attempt_event));
+
+    let result = super::dispatch_builtin_fs_tool(
+        "edit",
+        &json!({
+            "path": file.to_string_lossy(),
+            "mode": "apply",
+            "expected_version": expected_version,
+            "operation": {
+                "type": "search_replace",
+                "search": "beta",
+                "replacement": "gamma",
+                "match_mode": "literal",
+                "occurrence": "first"
+            }
+        }),
+        dir.path(),
+    )
+    .expect("dispatch")
+    .expect("payload");
+
+    super::set_edit_apply_decision_hook(None);
+    super::set_edit_apply_post_plan_hook(None);
+
+    let events = snapshot_apply_hook_events();
+    assert_eq!(
+        events,
+        vec![ApplyHookEvent::DecisionApprove, ApplyHookEvent::WriteAttempt]
+    );
+    assert_eq!(result["applied"], true);
+    assert_eq!(result["wrote"], true);
+}
+
+#[test]
+fn edit_apply_conflict_semantics_remain_unchanged_with_implicit_preview() {
+    let dir = tempdir().expect("temp dir");
+    let file = dir.path().join("dispatch-edit-apply-conflict-implicit-preview.txt");
+    let original = "alpha beta\n";
+    let mutated = "delta gamma\n";
+    fs::write(&file, original).expect("seed file");
+    let expected_version = crate::tools::fs::core::version_token(original);
+
+    super::set_edit_apply_post_plan_hook(Some(mutate_edit_apply_file_for_conflict));
+
+    let result = super::dispatch_builtin_fs_tool(
+        "edit",
+        &json!({
+            "path": file.to_string_lossy(),
+            "mode": "apply",
+            "expected_version": expected_version,
+            "operation": {
+                "type": "search_replace",
+                "search": "beta",
+                "replacement": "omega",
+                "match_mode": "literal",
+                "occurrence": "first"
+            }
+        }),
+        dir.path(),
+    )
+    .expect("dispatch")
+    .expect("payload");
+
+    super::set_edit_apply_post_plan_hook(None);
+
+    assert_eq!(result["applied"], false);
+    assert_eq!(result["conflict"], true);
+    assert_eq!(result["would_change"], false);
+    assert_eq!(result["changed"], false);
+    assert_eq!(result["wrote"], false);
+    assert_eq!(result["noop"], false);
+    assert_eq!(result["stats"]["replacements"], 0);
+    assert_eq!(result["diff"], "");
+    assert_eq!(result["diagnostics"][0]["class"], "stale");
+    assert!(result.get("display").is_some());
+    assert_eq!(fs::read_to_string(&file).expect("read"), mutated);
+}
+
+#[test]
+fn edit_preview_mode_remains_supported_as_read_only() {
+    let dir = tempdir().expect("temp dir");
+    let file = dir.path().join("dispatch-edit-preview-read-only.txt");
+    let content = "alpha beta\n";
+    fs::write(&file, content).expect("seed file");
+    let expected_version = crate::tools::fs::core::version_token(content);
+
+    let result = super::dispatch_builtin_fs_tool(
+        "edit",
+        &json!({
+            "path": file.to_string_lossy(),
+            "mode": "preview",
+            "expected_version": expected_version,
+            "operation": {
+                "type": "search_replace",
+                "search": "beta",
+                "replacement": "gamma",
+                "match_mode": "literal",
+                "occurrence": "first"
+            }
+        }),
+        dir.path(),
+    )
+    .expect("dispatch")
+    .expect("payload");
+
+    assert_eq!(result["mode"], "preview");
+    assert_eq!(result["applied"], false);
+    assert_eq!(result["would_change"], true);
+    assert_eq!(result["wrote"], false);
+    assert_eq!(fs::read_to_string(&file).expect("read"), content);
+}
+
+#[test]
+fn builtin_edit_contract_invalid_mode_uses_validation_diagnostic_class() {
+    let dir = tempdir().expect("temp dir");
+    let file = dir.path().join("dispatch-edit-invalid-mode.txt");
+    let content = "alpha beta\n";
+    fs::write(&file, content).expect("write");
+    let expected_version = crate::tools::fs::core::version_token(content);
+
+    let result = super::dispatch_builtin_fs_tool(
+        "edit",
+        &json!({
+            "path": file.to_string_lossy(),
+            "mode": "invalid",
+            "expected_version": expected_version,
+            "search": "beta",
+            "replacement": "gamma"
+        }),
+        dir.path(),
+    )
+    .expect("dispatch should succeed")
+    .expect("edit should be handled");
+
+    assert_eq!(result["applied"], false);
+    assert_eq!(result["diagnostics"][0]["class"], "validation");
+}
+
+#[test]
+fn edit_contract_error_taxonomy_maps_permission_conflict_internal_classes_deterministically() {
+    let permission = super::BuiltinFsToolError {
+        kind: ToolErrorKind::Runtime,
+        message: "opaque runtime error".to_string(),
+        details: Some(json!({ "diagnostic_class": "permission" })),
+    };
+    assert_eq!(super::map_edit_contract_error(&permission), "permission");
+
+    let conflict = super::BuiltinFsToolError {
+        kind: ToolErrorKind::Validation,
+        message: "version conflict: expected 'x', current 'y'".to_string(),
+        details: Some(json!({ "diagnostic_class": "stale" })),
+    };
+    assert_eq!(super::map_edit_contract_error(&conflict), "stale");
+
+    let internal = super::BuiltinFsToolError {
+        kind: ToolErrorKind::Runtime,
+        message: "i/o failure".to_string(),
+        details: None,
+    };
+    assert_eq!(super::map_edit_contract_error(&internal), "internal");
+}
+
+#[test]
+fn edit_diagnostics_taxonomy_is_deterministic_without_substring_matching() {
+    let runtime_with_permission_word = super::BuiltinFsToolError {
+        kind: ToolErrorKind::Runtime,
+        message: "this mentions permission but no typed mapping".to_string(),
+        details: None,
+    };
+    assert_eq!(
+        super::map_edit_contract_error(&runtime_with_permission_word),
+        "internal"
+    );
+
+    let runtime_with_typed_permission = super::BuiltinFsToolError {
+        kind: ToolErrorKind::Runtime,
+        message: "opaque runtime error".to_string(),
+        details: Some(json!({ "diagnostic_class": "permission" })),
+    };
+    assert_eq!(
+        super::map_edit_contract_error(&runtime_with_typed_permission),
+        "permission"
+    );
+
+    let runtime_with_unknown_typed_class = super::BuiltinFsToolError {
+        kind: ToolErrorKind::Runtime,
+        message: "opaque runtime error".to_string(),
+        details: Some(json!({ "diagnostic_class": "something-else" })),
+    };
+    assert_eq!(
+        super::map_edit_contract_error(&runtime_with_unknown_typed_class),
+        "internal"
+    );
+}
+
+#[test]
 fn builtin_patch_dispatch_invokes_fs_apply_line_range_patch_batch() {
     let dir = tempdir().expect("temp dir");
     let file = dir.path().join("dispatch-patch.txt");
@@ -548,7 +1077,7 @@ fn builtin_edit_dispatch_missing_expected_version_returns_validation_failure() {
     let file = dir.path().join("dispatch-edit-missing-version.txt");
     fs::write(&file, "alpha beta\n").expect("write");
 
-    let err = super::dispatch_builtin_fs_tool(
+    let result = super::dispatch_builtin_fs_tool(
         "edit",
         &json!({
             "path": file.to_string_lossy(),
@@ -557,10 +1086,16 @@ fn builtin_edit_dispatch_missing_expected_version_returns_validation_failure() {
         }),
         dir.path(),
     )
-    .expect_err("missing expected_version should fail validation");
+    .expect("dispatch should succeed")
+    .expect("edit should be handled");
 
-    assert_eq!(err.kind, ToolErrorKind::Validation);
-    assert!(err.message.contains("missing expected_version"));
+    assert_eq!(result["applied"], false);
+    assert_eq!(result["would_change"], false);
+    assert_eq!(result["diagnostics"][0]["class"], "validation");
+    assert!(result["diagnostics"][0]["message"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("missing expected_version"));
 }
 
 #[test]
@@ -672,5 +1207,102 @@ fn canonical_llm_tool_definition_path_has_no_stale_mcp_exposure_after_disable() 
             .iter()
             .all(|tool| tool.name != "gh__list_prs"),
         "next canonical tool-definition snapshot must not expose disabled MCP tools"
+    );
+}
+
+#[test]
+fn direct_tool_display_contract_accepts_minimal_sections_shape() {
+    let payload = json!({
+        "display": {
+            "title": "edit sample.txt",
+            "sections": [
+                {
+                    "label": "sample.txt",
+                    "language": "diff",
+                    "content": "--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n"
+                }
+            ]
+        },
+        "ok": true
+    });
+
+    let display = super::build_direct_tool_display("patch", &payload).expect("display expected");
+    assert_eq!(display.title, "edit sample.txt");
+    assert_eq!(display.sections.len(), 1);
+    assert_eq!(display.sections[0].label, "sample.txt");
+    assert_eq!(display.sections[0].language, "diff");
+    assert!(display.sections[0].stats.is_none());
+}
+
+#[test]
+fn edit_preview_emits_single_display_section() {
+    let dir = tempdir().expect("temp dir");
+    let file = dir.path().join("single-section.txt");
+    let content = "alpha beta\n";
+    fs::write(&file, content).expect("write");
+    let expected_version = crate::tools::fs::core::version_token(content);
+
+    let payload = super::dispatch_builtin_fs_tool(
+        "edit",
+        &json!({
+            "path": file.to_string_lossy(),
+            "mode": "preview",
+            "expected_version": expected_version,
+            "operation": {
+                "type": "search_replace",
+                "search": "beta",
+                "replacement": "gamma",
+                "match_mode": "literal",
+                "occurrence": "first"
+            }
+        }),
+        dir.path(),
+    )
+    .expect("dispatch")
+    .expect("payload");
+
+    let display = super::build_direct_tool_display("edit", &payload).expect("display expected");
+    assert_eq!(display.sections.len(), 1);
+    assert_eq!(display.sections[0].label, file.to_string_lossy().to_string());
+    assert_eq!(display.sections[0].language, "diff");
+}
+
+#[test]
+fn tool_display_preserves_machine_payload_contract() {
+    let dir = tempdir().expect("temp dir");
+    let file = dir.path().join("machine-contract.txt");
+    let content = "alpha beta\n";
+    fs::write(&file, content).expect("write");
+    let expected_version = crate::tools::fs::core::version_token(content);
+
+    let payload = super::dispatch_builtin_fs_tool(
+        "edit",
+        &json!({
+            "path": file.to_string_lossy(),
+            "mode": "preview",
+            "expected_version": expected_version,
+            "operation": {
+                "type": "search_replace",
+                "search": "beta",
+                "replacement": "gamma",
+                "match_mode": "literal",
+                "occurrence": "first"
+            }
+        }),
+        dir.path(),
+    )
+    .expect("dispatch")
+    .expect("payload");
+
+    let machine_diff = payload["diff"].as_str().unwrap_or_default().to_string();
+    let machine_files_changed = payload["stats"]["files_changed"].as_u64();
+    let display = super::build_direct_tool_display("edit", &payload).expect("display expected");
+
+    assert_eq!(payload["mode"], "preview");
+    assert_eq!(payload["would_change"], true);
+    assert_eq!(display.sections[0].content, machine_diff);
+    assert_eq!(
+        display.sections[0].stats.as_ref().and_then(|stats| stats.files_changed),
+        machine_files_changed.map(|v| v as usize)
     );
 }

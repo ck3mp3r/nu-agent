@@ -1,4 +1,28 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolDisplay {
+    pub title: String,
+    pub sections: Vec<ToolDisplaySection>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolDisplaySection {
+    pub label: String,
+    pub language: String,
+    pub content: String,
+    pub stats: Option<ToolDisplayStats>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ToolDisplayStats {
+    pub files_changed: Option<usize>,
+    pub insertions: Option<usize>,
+    pub deletions: Option<usize>,
+    pub diff_truncated: Option<bool>,
+    pub omitted_files: Option<usize>,
+    pub omitted_hunks: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UiEvent {
     LlmStart,
     Tick,
@@ -20,6 +44,7 @@ pub enum UiEvent {
         arguments: String,
         success: bool,
         result: String,
+        display: Option<ToolDisplay>,
         error_kind: Option<String>,
         message: Option<String>,
     },

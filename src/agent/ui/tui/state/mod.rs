@@ -38,6 +38,7 @@ pub enum TranscriptRole {
     Assistant,
     System,
     Tool,
+    ToolDisplay,
     Separator,
 }
 

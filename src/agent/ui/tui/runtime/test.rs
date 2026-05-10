@@ -646,6 +646,7 @@ fn tui_active_mode_does_not_forward_payload_like_events_to_inner_renderer() {
         arguments: r#"{"namespace":"prod"}"#.to_string(),
         success: true,
         result: r#"[{"name":"api-0"}]"#.to_string(),
+        display: None,
         error_kind: None,
         message: None,
     });
@@ -1862,6 +1863,13 @@ fn lane_prefix_builder_composes_distinct_prefix_spans_by_role() {
     assert_eq!(user_text, "  ▏ ");
     assert_eq!(assistant_text, "    ");
     assert_eq!(tool_text, "  ⚙ ");
+
+    let tool_display = lane_prefix_spans_for_test(TranscriptRole::ToolDisplay, false);
+    let tool_display_text = tool_display
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+    assert_eq!(tool_display_text, "    ");
 }
 
 #[test]
