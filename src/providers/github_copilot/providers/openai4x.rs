@@ -199,5 +199,5 @@ impl From<GitHubCopilotCompletionResponse>
 }
 
 #[cfg(test)]
-#[path = "openai4x/test.rs"]
-mod openai4x_tests;
+#[path = "openai4x_test.rs"]
+mod openai4x_test;

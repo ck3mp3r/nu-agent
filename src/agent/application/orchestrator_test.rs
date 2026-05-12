@@ -6,16 +6,19 @@ use std::sync::{
 use std::time::Duration;
 
 use crate::agent::{
-    application::orchestrator::{run_hydrated_interactive_loop, run_interactive_loop, run_single_turn},
+    application::orchestrator::{
+        run_hydrated_interactive_loop, run_interactive_loop, run_single_turn,
+    },
     protocol::{
         compaction::{CompactionTriggerDecision, CompactionTriggerSource},
         contracts::{
             ConversationRuntime, InteractiveUi, McpToggleRequest, McpUsabilityState, ProgressUi,
-            SharedUiAction,
-            UiMessageUsageSnapshot,
-            UiMessageSnapshot,
+            SharedUiAction, UiMessageSnapshot, UiMessageUsageSnapshot,
         },
-        event::{ToolDisplay, ToolDisplaySection, UiEvent},
+        event::{
+            PermissionDecision, PermissionDecisionSubmission, PermissionRequestContext,
+            ToolDisplay, ToolDisplaySection, UiEvent,
+        },
     },
 };
 
@@ -200,7 +203,11 @@ impl ConversationRuntime for ToolDisplayOnlyRuntime {
         Ok(Value::nothing(span))
     }
 
-    fn set_mcp_server_enabled(&mut self, _server_name: &str, enabled: bool) -> Result<McpUsabilityState, String> {
+    fn set_mcp_server_enabled(
+        &mut self,
+        _server_name: &str,
+        enabled: bool,
+    ) -> Result<McpUsabilityState, String> {
         Ok(if enabled {
             McpUsabilityState::Enabled
         } else {
@@ -231,10 +238,11 @@ fn tool_display_path_does_not_require_assistant_synthesis_round_trip() {
             ..
         }
     )));
-    assert!(!ui
-        .events
-        .iter()
-        .any(|event| matches!(event, UiEvent::AssistantMessage { .. })));
+    assert!(
+        !ui.events
+            .iter()
+            .any(|event| matches!(event, UiEvent::AssistantMessage { .. }))
+    );
 }
 
 #[derive(Default)]
@@ -249,7 +257,11 @@ struct FakeRuntime {
 }
 
 impl ConversationRuntime for FakeRuntime {
-    fn set_mcp_server_enabled(&mut self, _server_name: &str, enabled: bool) -> Result<McpUsabilityState, String> {
+    fn set_mcp_server_enabled(
+        &mut self,
+        _server_name: &str,
+        enabled: bool,
+    ) -> Result<McpUsabilityState, String> {
         Ok(if enabled {
             McpUsabilityState::Enabled
         } else {
@@ -311,7 +323,8 @@ fn interactive_loop_emits_auto_compaction_when_policy_fires() {
     };
     let mut ui = FakeInteractiveUi::with_prompts(&[]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -332,7 +345,8 @@ fn interactive_loop_skips_auto_compaction_when_policy_no_fire() {
     };
     let mut ui = FakeInteractiveUi::with_prompts(&[]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
 
     assert!(value.is_nothing());
     assert!(runtime.executed_compaction_sources.is_empty());
@@ -359,7 +373,8 @@ fn interactive_loop_does_not_duplicate_auto_compaction_while_disarmed() {
     };
     let mut ui = FakeInteractiveUi::with_prompts(&[]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(runtime.executed_compaction_sources.len(), 1);
@@ -382,7 +397,8 @@ fn interactive_loop_continues_turn_processing_with_auto_compaction_enabled() {
     };
     let mut ui = FakeInteractiveUi::with_prompts(&["hello"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(runtime.prompts, vec!["hello".to_string()]);
@@ -398,7 +414,8 @@ fn recognized_slash_commands_never_sent_to_llm() {
     let mut ui =
         FakeInteractiveUi::with_prompts(&["/help", "/status", "/mcp", "/models", "/compact"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
 
     assert!(value.is_nothing());
     assert!(runtime.prompts.is_empty());
@@ -413,7 +430,8 @@ fn models_slash_command_not_sent_to_llm() {
     let mut runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["/models"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
 
     assert!(value.is_nothing());
     assert!(runtime.prompts.is_empty());
@@ -424,7 +442,8 @@ fn models_slash_command_routes_to_shared_models_action() {
     let mut runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["/models"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(ui.shared_actions, vec![SharedUiAction::Models]);
@@ -435,7 +454,8 @@ fn interactive_loop_routes_compact_slash_to_compaction_executor() {
     let mut runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["/compact", "hello"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -450,7 +470,8 @@ fn typed_compact_submit_triggers_compaction_path() {
     let mut runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["/compact"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -465,7 +486,8 @@ fn interactive_loop_unknown_slash_emits_warning_and_continues() {
     let mut runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["/compact now", "real prompt"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
 
     assert!(value.is_nothing());
     assert!(
@@ -481,7 +503,8 @@ fn recognized_slash_commands_not_persisted_as_session_turn_messages() {
     let mut runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["/help", "/status", "/mcp", "/compact"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
 
     assert!(value.is_nothing());
     assert!(runtime.prompts.is_empty());
@@ -505,7 +528,8 @@ fn manual_and_auto_compaction_failure_surface_is_consistent() {
     };
     let mut ui = FakeInteractiveUi::with_prompts(&["/compact"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
 
     assert!(value.is_nothing());
     assert!(
@@ -523,7 +547,8 @@ fn slash_commands_reuse_command_palette_action_handlers() {
     let mut runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["/help", "/status", "/mcp", "/models"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -543,7 +568,8 @@ fn command_palette_models_action_opens_inline_model_picker() {
     let mut runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["/models"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(ui.shared_actions, vec![SharedUiAction::Models]);
@@ -554,7 +580,8 @@ fn palette_models_does_not_bypass_shared_models_action_path() {
     let mut runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["/models"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(ui.shared_actions, vec![SharedUiAction::Models]);
@@ -568,11 +595,18 @@ fn inline_model_picker_enter_switches_active_model_and_provider() {
     ui.model_switch_requests
         .push_back("openai/gpt-4o-mini".to_string());
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
 
     assert!(value.is_nothing());
-    assert_eq!(runtime.switched_models, vec!["openai/gpt-4o-mini".to_string()]);
-    assert_eq!(ui.active_model_identity, Some("openai/gpt-4o-mini".to_string()));
+    assert_eq!(
+        runtime.switched_models,
+        vec!["openai/gpt-4o-mini".to_string()]
+    );
+    assert_eq!(
+        ui.active_model_identity,
+        Some("openai/gpt-4o-mini".to_string())
+    );
 }
 
 #[test]
@@ -585,11 +619,18 @@ fn model_switch_failure_keeps_previous_model_and_warns() {
     ui.model_switch_requests
         .push_back("openai/gpt-4o-mini".to_string());
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
 
     assert!(value.is_nothing());
-    assert_eq!(runtime.switched_models, vec!["openai/gpt-4o-mini".to_string()]);
-    assert_eq!(ui.active_model_identity, Some("openai/gpt-4o-mini".to_string()));
+    assert_eq!(
+        runtime.switched_models,
+        vec!["openai/gpt-4o-mini".to_string()]
+    );
+    assert_eq!(
+        ui.active_model_identity,
+        Some("openai/gpt-4o-mini".to_string())
+    );
     assert!(ui.warnings.iter().any(|w| w == "switch failed"));
 }
 
@@ -600,10 +641,14 @@ fn model_switch_uses_cached_startup_plugin_config() {
     ui.model_switch_requests
         .push_back("openai/gpt-4o-mini".to_string());
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
 
     assert!(value.is_nothing());
-    assert_eq!(runtime.switched_models, vec!["openai/gpt-4o-mini".to_string()]);
+    assert_eq!(
+        runtime.switched_models,
+        vec!["openai/gpt-4o-mini".to_string()]
+    );
 }
 
 #[test]
@@ -613,10 +658,14 @@ fn model_switch_updates_footer_active_model_identity_immediately() {
     ui.model_switch_requests
         .push_back("openai/gpt-4o-mini".to_string());
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
 
     assert!(value.is_nothing());
-    assert_eq!(ui.active_model_identity, Some("openai/gpt-4o-mini".to_string()));
+    assert_eq!(
+        ui.active_model_identity,
+        Some("openai/gpt-4o-mini".to_string())
+    );
 }
 
 #[test]
@@ -626,13 +675,15 @@ fn model_switch_result_artifact_is_rendered() {
     ui.model_switch_requests
         .push_back("openai/gpt-4o-mini".to_string());
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
 
     assert!(value.is_nothing());
-    assert!(ui
-        .warnings
-        .iter()
-        .any(|w| w == "Model switched: openai/gpt-4o-mini"));
+    assert!(
+        ui.warnings
+            .iter()
+            .any(|w| w == "Model switched: openai/gpt-4o-mini")
+    );
 }
 
 #[test]
@@ -642,10 +693,14 @@ fn next_turn_uses_newly_selected_model() {
     ui.model_switch_requests
         .push_back("openai/gpt-4o-mini".to_string());
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
 
     assert!(value.is_nothing());
-    assert_eq!(runtime.switched_models, vec!["openai/gpt-4o-mini".to_string()]);
+    assert_eq!(
+        runtime.switched_models,
+        vec!["openai/gpt-4o-mini".to_string()]
+    );
     assert_eq!(runtime.prompts, vec!["after-switch".to_string()]);
 }
 
@@ -664,10 +719,14 @@ fn model_switch_while_worker_active_is_queued_for_next_turn() {
         Arc::clone(&active_pump_count),
     );
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
 
     assert!(value.is_nothing());
-    assert_eq!(runtime.prompts.lock().expect("prompts lock").as_slice(), ["first"]);
+    assert_eq!(
+        runtime.prompts.lock().expect("prompts lock").as_slice(),
+        ["first"]
+    );
     assert_eq!(
         runtime
             .switched_models
@@ -676,10 +735,11 @@ fn model_switch_while_worker_active_is_queued_for_next_turn() {
             .as_slice(),
         ["openai/gpt-4o-mini"]
     );
-    assert!(ui
-        .warnings
-        .iter()
-        .any(|w| w == "Model switch queued for next turn: openai/gpt-4o-mini"));
+    assert!(
+        ui.warnings
+            .iter()
+            .any(|w| w == "Model switch queued for next turn: openai/gpt-4o-mini")
+    );
 }
 
 #[test]
@@ -697,11 +757,16 @@ fn queued_model_switch_applies_after_current_turn_before_next_dispatch() {
         Arc::clone(&active_pump_count),
     );
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
-        runtime.action_log.lock().expect("action log lock").as_slice(),
+        runtime
+            .action_log
+            .lock()
+            .expect("action log lock")
+            .as_slice(),
         ["turn:first", "switch:openai/gpt-4o-mini", "turn:second"]
     );
 }
@@ -721,7 +786,8 @@ fn queued_model_switch_last_write_wins() {
         Arc::clone(&active_pump_count),
     );
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -750,7 +816,8 @@ fn queued_model_switch_failure_keeps_previous_model_and_warns() {
         Arc::clone(&active_pump_count),
     );
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -758,10 +825,7 @@ fn queued_model_switch_failure_keeps_previous_model_and_warns() {
         "openai/gpt-4o-mini",
         "failed queued switch must keep previous active identity"
     );
-    assert!(ui
-        .warnings
-        .iter()
-        .any(|w| w == "queued switch failed"));
+    assert!(ui.warnings.iter().any(|w| w == "queued switch failed"));
 }
 
 #[test]
@@ -777,13 +841,17 @@ fn manual_and_auto_compaction_share_single_execution_path() {
     };
     let mut ui = FakeInteractiveUi::with_prompts(&["/compact"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(runtime.compaction_call_count, 2);
     assert_eq!(
         runtime.executed_compaction_sources,
-        vec![CompactionTriggerSource::AutoThreshold, CompactionTriggerSource::SlashCompact]
+        vec![
+            CompactionTriggerSource::AutoThreshold,
+            CompactionTriggerSource::SlashCompact
+        ]
     );
 }
 
@@ -823,7 +891,11 @@ struct FakeValueRuntime {
 }
 
 impl ConversationRuntime for FakeValueRuntime {
-    fn set_mcp_server_enabled(&mut self, _server_name: &str, enabled: bool) -> Result<McpUsabilityState, String> {
+    fn set_mcp_server_enabled(
+        &mut self,
+        _server_name: &str,
+        enabled: bool,
+    ) -> Result<McpUsabilityState, String> {
         Ok(if enabled {
             McpUsabilityState::Enabled
         } else {
@@ -861,7 +933,11 @@ struct CancelFirstRuntime {
 }
 
 impl ConversationRuntime for CancelFirstRuntime {
-    fn set_mcp_server_enabled(&mut self, _server_name: &str, enabled: bool) -> Result<McpUsabilityState, String> {
+    fn set_mcp_server_enabled(
+        &mut self,
+        _server_name: &str,
+        enabled: bool,
+    ) -> Result<McpUsabilityState, String> {
         Ok(if enabled {
             McpUsabilityState::Enabled
         } else {
@@ -926,14 +1002,12 @@ fn run_hydrated_interactive_loop_hydrates_exactly_once() {
     let mut runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&[]);
 
-    let messages = vec![
-        UiMessageSnapshot::new("user", "history"),
-        UiMessageSnapshot::new("assistant", "response").with_usage(UiMessageUsageSnapshot::new(
-            None,
-            None,
-            Some(321),
-        )),
-    ];
+    let messages =
+        vec![
+            UiMessageSnapshot::new("user", "history"),
+            UiMessageSnapshot::new("assistant", "response")
+                .with_usage(UiMessageUsageSnapshot::new(None, None, Some(321))),
+        ];
     run_hydrated_interactive_loop(&mut runtime, &mut ui, messages.clone(), Span::test_data())
         .expect("interactive loop with hydration");
 
@@ -971,7 +1045,11 @@ impl LongRunningRuntime {
 }
 
 impl ConversationRuntime for LongRunningRuntime {
-    fn set_mcp_server_enabled(&mut self, _server_name: &str, enabled: bool) -> Result<McpUsabilityState, String> {
+    fn set_mcp_server_enabled(
+        &mut self,
+        _server_name: &str,
+        enabled: bool,
+    ) -> Result<McpUsabilityState, String> {
         Ok(if enabled {
             McpUsabilityState::Enabled
         } else {
@@ -1054,6 +1132,201 @@ struct ResponsiveInteractiveUi {
     warnings: Vec<String>,
 }
 
+struct PermissionGateRuntime {
+    side_effects: Arc<AtomicUsize>,
+    requested: Arc<AtomicBool>,
+    finished: Arc<AtomicBool>,
+    active: Arc<AtomicBool>,
+    request_id: String,
+    rule_identity: String,
+}
+
+impl PermissionGateRuntime {
+    fn new() -> Self {
+        Self {
+            side_effects: Arc::new(AtomicUsize::new(0)),
+            requested: Arc::new(AtomicBool::new(false)),
+            finished: Arc::new(AtomicBool::new(false)),
+            active: Arc::new(AtomicBool::new(false)),
+            request_id: "ask-0000000000000abc".to_string(),
+            rule_identity: "nested:nu__run.command:*".to_string(),
+        }
+    }
+}
+
+impl ConversationRuntime for PermissionGateRuntime {
+    fn execute_turn<U: ProgressUi>(
+        &mut self,
+        ui: &mut U,
+        _prompt: String,
+        _context: Option<String>,
+        span: Span,
+    ) -> Result<Value, LabeledError> {
+        self.active.store(true, Ordering::SeqCst);
+
+        let controller =
+            crate::agent::protocol::permission::PermissionController::new(Duration::from_secs(2));
+        let (token, requested_event) = controller
+            .begin_request(crate::agent::protocol::permission::PermissionRequest {
+                request_id: self.request_id.clone(),
+                context: PermissionRequestContext {
+                    tool: "nu__run".to_string(),
+                    source: "closure".to_string(),
+                    mode: Some("apply".to_string()),
+                    matched_rule_identity: self.rule_identity.clone(),
+                    scope: "nested".to_string(),
+                    target_field: Some("command".to_string()),
+                    pattern: "*".to_string(),
+                    summary: "tool[nu__run] args={\"command\":\"echo hi\"}".to_string(),
+                    pre_authorize_display: None,
+                },
+            })
+            .expect("permission request");
+
+        crate::agent::protocol::permission::install_active_permission_submission_sender(Some(
+            token.sender_clone(),
+        ));
+        ui.emit(&requested_event);
+        self.requested.store(true, Ordering::SeqCst);
+
+        let (resolution, events) = controller.await_resolution(&token);
+        for event in events {
+            ui.emit(&event);
+        }
+
+        crate::agent::protocol::permission::install_active_permission_submission_sender(None);
+
+        if let crate::agent::protocol::permission::PermissionResolution::Decision {
+            decision, ..
+        } = resolution
+            && decision != PermissionDecision::Deny
+        {
+            self.side_effects.fetch_add(1, Ordering::SeqCst);
+            ui.emit(&UiEvent::ToolStart {
+                name: "nu__run".to_string(),
+                source: "closure".to_string(),
+                arguments: r#"{"command":"echo hi"}"#.to_string(),
+            });
+        }
+
+        ui.emit(&UiEvent::Completed { tool_calls: 0 });
+        self.finished.store(true, Ordering::SeqCst);
+        self.active.store(false, Ordering::SeqCst);
+        Ok(Value::nothing(span))
+    }
+}
+
+struct PermissionOrderingUi {
+    submitted: std::collections::VecDeque<String>,
+    pending_decisions: std::collections::VecDeque<PermissionDecisionSubmission>,
+    events: Vec<UiEvent>,
+    decision: PermissionDecision,
+    decision_delay_pumps: usize,
+    pumps_since_request: usize,
+    request_seen: bool,
+    quit: bool,
+    active: Arc<AtomicBool>,
+    pumps_while_waiting: Arc<AtomicUsize>,
+    side_effects: Arc<AtomicUsize>,
+}
+
+impl PermissionOrderingUi {
+    fn new(
+        decision: PermissionDecision,
+        decision_delay_pumps: usize,
+        active: Arc<AtomicBool>,
+        pumps_while_waiting: Arc<AtomicUsize>,
+        side_effects: Arc<AtomicUsize>,
+    ) -> Self {
+        Self {
+            submitted: ["run".to_string()].into_iter().collect(),
+            pending_decisions: std::collections::VecDeque::new(),
+            events: Vec::new(),
+            decision,
+            decision_delay_pumps,
+            pumps_since_request: 0,
+            request_seen: false,
+            quit: false,
+            active,
+            pumps_while_waiting,
+            side_effects,
+        }
+    }
+}
+
+impl ProgressUi for PermissionOrderingUi {
+    fn emit(&mut self, event: &UiEvent) {
+        self.events.push(event.clone());
+        if let UiEvent::PermissionRequested {
+            request_id,
+            context,
+        } = event
+        {
+            self.request_seen = true;
+            self.pending_decisions
+                .push_back(PermissionDecisionSubmission {
+                    request_id: request_id.clone(),
+                    decision: self.decision,
+                    matched_rule_identity: context.matched_rule_identity.clone(),
+                });
+        }
+        if matches!(event, UiEvent::Completed { .. }) {
+            self.quit = true;
+        }
+    }
+
+    fn flush(&mut self) {}
+
+    fn take_cancel_requested(&self) -> bool {
+        false
+    }
+}
+
+impl InteractiveUi for PermissionOrderingUi {
+    fn pump_once(&mut self) {
+        if self.request_seen {
+            self.pumps_since_request = self.pumps_since_request.saturating_add(1);
+        }
+        if self.active.load(Ordering::SeqCst)
+            && self.request_seen
+            && self.side_effects.load(Ordering::SeqCst) == 0
+        {
+            self.pumps_while_waiting.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    fn take_submitted_prompt(&mut self) -> Option<String> {
+        self.submitted.pop_front()
+    }
+
+    fn take_next_permission_decision_submission(&mut self) -> Option<PermissionDecisionSubmission> {
+        if self.pumps_since_request < self.decision_delay_pumps {
+            return None;
+        }
+        self.pending_decisions.pop_front()
+    }
+
+    fn set_mcp_server_state(&mut self, _server_name: &str, _state: McpUsabilityState) {}
+
+    fn quit_requested(&self) -> bool {
+        self.quit
+    }
+
+    fn fatal_error(&self) -> Option<&str> {
+        None
+    }
+
+    fn execute_shared_ui_action(&mut self, _action: SharedUiAction) -> bool {
+        true
+    }
+
+    fn hydrate_transcript_from_messages(
+        &mut self,
+        _messages: impl IntoIterator<Item = UiMessageSnapshot>,
+    ) {
+    }
+}
+
 impl ResponsiveInteractiveUi {
     fn new(
         initial_prompts: &[&str],
@@ -1066,7 +1339,10 @@ impl ResponsiveInteractiveUi {
     ) -> Self {
         Self {
             submitted: initial_prompts.iter().map(|s| s.to_string()).collect(),
-            injected_during_active: injected_during_active.iter().map(|s| s.to_string()).collect(),
+            injected_during_active: injected_during_active
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
             injected_model_switch_during_active: injected_model_switch_during_active
                 .iter()
                 .map(|s| s.to_string())
@@ -1210,6 +1486,91 @@ fn interactive_loop_preserves_fifo_for_prompts_queued_while_active() {
     );
 }
 
+#[test]
+#[serial_test::serial]
+fn permission_requested_emits_before_execution_and_waits_for_decision_before_side_effects() {
+    let mut runtime = PermissionGateRuntime::new();
+    let pumps_while_waiting = Arc::new(AtomicUsize::new(0));
+    let mut ui = PermissionOrderingUi::new(
+        PermissionDecision::AllowOnce,
+        4,
+        Arc::clone(&runtime.active),
+        Arc::clone(&pumps_while_waiting),
+        Arc::clone(&runtime.side_effects),
+    );
+
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(runtime.side_effects.load(Ordering::SeqCst), 1);
+    assert!(
+        pumps_while_waiting.load(Ordering::SeqCst) > 0,
+        "execution must pause while waiting for permission decision"
+    );
+
+    let requested_idx = ui
+        .events
+        .iter()
+        .position(|event| matches!(event, UiEvent::PermissionRequested { .. }))
+        .expect("PermissionRequested must be emitted");
+    let submitted_idx = ui
+        .events
+        .iter()
+        .position(|event| matches!(event, UiEvent::PermissionDecisionSubmitted { .. }))
+        .expect("PermissionDecisionSubmitted must be emitted");
+    let tool_start_idx = ui
+        .events
+        .iter()
+        .position(|event| matches!(event, UiEvent::ToolStart { .. }))
+        .expect("ToolStart should happen after allow decision");
+
+    assert!(requested_idx < submitted_idx);
+    assert!(submitted_idx < tool_start_idx);
+}
+
+#[test]
+#[serial_test::serial]
+fn deny_decision_resumes_deterministically_without_pre_decision_handler_side_effects() {
+    let mut runtime = PermissionGateRuntime::new();
+    let pumps_while_waiting = Arc::new(AtomicUsize::new(0));
+    let mut ui = PermissionOrderingUi::new(
+        PermissionDecision::Deny,
+        3,
+        Arc::clone(&runtime.active),
+        Arc::clone(&pumps_while_waiting),
+        Arc::clone(&runtime.side_effects),
+    );
+
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(runtime.side_effects.load(Ordering::SeqCst), 0);
+    assert!(
+        pumps_while_waiting.load(Ordering::SeqCst) > 0,
+        "execution must remain paused until deny decision arrives"
+    );
+
+    assert!(
+        ui.events
+            .iter()
+            .any(|event| matches!(event, UiEvent::PermissionRequested { .. }))
+    );
+    assert!(ui.events.iter().any(|event| matches!(
+        event,
+        UiEvent::PermissionDecisionSubmitted {
+            decision: PermissionDecision::Deny,
+            ..
+        }
+    )));
+    assert!(
+        !ui.events
+            .iter()
+            .any(|event| matches!(event, UiEvent::ToolStart { .. }))
+    );
+}
+
 struct ModelPickerLaunchWhileActiveUi {
     submitted: std::collections::VecDeque<String>,
     pending_model_picker_launch_requests: usize,
@@ -1332,7 +1693,10 @@ fn models_launcher_opens_picker_while_worker_active() {
     assert!(value.is_nothing());
     assert_eq!(ui.shared_actions, vec![SharedUiAction::Models]);
     assert_eq!(ui.shared_actions_observed_while_active, vec![true]);
-    assert_eq!(runtime.prompts.lock().expect("prompts lock").as_slice(), ["first"]);
+    assert_eq!(
+        runtime.prompts.lock().expect("prompts lock").as_slice(),
+        ["first"]
+    );
 }
 
 #[test]
@@ -1352,7 +1716,10 @@ fn models_slash_opens_picker_while_worker_active() {
     assert!(value.is_nothing());
     assert_eq!(ui.shared_actions, vec![SharedUiAction::Models]);
     assert_eq!(ui.shared_actions_observed_while_active, vec![true]);
-    assert_eq!(runtime.prompts.lock().expect("prompts lock").as_slice(), ["first"]);
+    assert_eq!(
+        runtime.prompts.lock().expect("prompts lock").as_slice(),
+        ["first"]
+    );
 }
 
 struct AbortDuringActiveUi {
@@ -1369,7 +1736,9 @@ struct AbortDuringActiveUi {
 impl AbortDuringActiveUi {
     fn new(active: Arc<AtomicBool>) -> Self {
         Self {
-            submitted: ["first".to_string(), "queued".to_string()].into_iter().collect(),
+            submitted: ["first".to_string(), "queued".to_string()]
+                .into_iter()
+                .collect(),
             quit: false,
             fatal: None,
             esc_stage: 0,
@@ -1466,7 +1835,11 @@ struct McpToggleRuntime {
 }
 
 impl ConversationRuntime for McpToggleRuntime {
-    fn set_mcp_server_enabled(&mut self, server_name: &str, enabled: bool) -> Result<McpUsabilityState, String> {
+    fn set_mcp_server_enabled(
+        &mut self,
+        server_name: &str,
+        enabled: bool,
+    ) -> Result<McpUsabilityState, String> {
         self.toggles.push((server_name.to_string(), enabled));
         Ok(self.next_state)
     }
@@ -1499,8 +1872,8 @@ fn interactive_loop_processes_mcp_toggle_requests_and_updates_ui_state() {
         enable: false,
     });
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data())
-        .expect("interactive loop");
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(runtime.toggles, vec![("gh".to_string(), false)]);
@@ -1527,12 +1900,15 @@ fn interactive_loop_marks_enable_failure_as_failed_state() {
         enable: true,
     });
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data())
-        .expect("interactive loop");
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(runtime.toggles, vec![("gh".to_string(), true)]);
-    assert_eq!(ui.mcp_states, vec![("gh".to_string(), McpUsabilityState::Failed)]);
+    assert_eq!(
+        ui.mcp_states,
+        vec![("gh".to_string(), McpUsabilityState::Failed)]
+    );
     assert_eq!(
         ui.mcp_details,
         vec![("gh".to_string(), McpUsabilityState::Failed, None, 2)]
@@ -1552,12 +1928,15 @@ fn interactive_loop_marks_enable_success_as_enabled_state() {
         enable: true,
     });
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data())
-        .expect("interactive loop");
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(runtime.toggles, vec![("gh".to_string(), true)]);
-    assert_eq!(ui.mcp_states, vec![("gh".to_string(), McpUsabilityState::Enabled)]);
+    assert_eq!(
+        ui.mcp_states,
+        vec![("gh".to_string(), McpUsabilityState::Enabled)]
+    );
     assert_eq!(
         ui.mcp_details,
         vec![("gh".to_string(), McpUsabilityState::Enabled, None, 7)]
@@ -1570,7 +1949,11 @@ struct FailingMcpToggleRuntime {
 }
 
 impl ConversationRuntime for FailingMcpToggleRuntime {
-    fn set_mcp_server_enabled(&mut self, server_name: &str, enabled: bool) -> Result<McpUsabilityState, String> {
+    fn set_mcp_server_enabled(
+        &mut self,
+        server_name: &str,
+        enabled: bool,
+    ) -> Result<McpUsabilityState, String> {
         self.toggles.push((server_name.to_string(), enabled));
         Err("connect timeout".to_string())
     }
@@ -1602,12 +1985,15 @@ fn interactive_loop_propagates_failure_reason_and_visible_tool_count_on_toggle_e
         enable: true,
     });
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data())
-        .expect("interactive loop");
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(runtime.toggles, vec![("gh".to_string(), true)]);
-    assert_eq!(ui.mcp_states, vec![("gh".to_string(), McpUsabilityState::Failed)]);
+    assert_eq!(
+        ui.mcp_states,
+        vec![("gh".to_string(), McpUsabilityState::Failed)]
+    );
     assert_eq!(
         ui.mcp_details,
         vec![(
@@ -1624,7 +2010,11 @@ struct PanicOnToggleRuntime {
 }
 
 impl ConversationRuntime for PanicOnToggleRuntime {
-    fn set_mcp_server_enabled(&mut self, _server_name: &str, _enabled: bool) -> Result<McpUsabilityState, String> {
+    fn set_mcp_server_enabled(
+        &mut self,
+        _server_name: &str,
+        _enabled: bool,
+    ) -> Result<McpUsabilityState, String> {
         panic!("toggle panic")
     }
 

@@ -2,7 +2,12 @@ use super::core::{PatchOp, PatchRange, PatchSummary, apply_line_range_patch_batc
 use std::fs;
 use tempfile::tempdir;
 
-fn assert_conflict_and_unchanged(summary: PatchSummary, expected_version: &str, current: &str, file: &std::path::Path) {
+fn assert_conflict_and_unchanged(
+    summary: PatchSummary,
+    expected_version: &str,
+    current: &str,
+    file: &std::path::Path,
+) {
     assert_eq!(summary.operation_count, 0);
     assert!(!summary.wrote);
     assert!(!summary.changed);
@@ -11,7 +16,10 @@ fn assert_conflict_and_unchanged(summary: PatchSummary, expected_version: &str, 
     assert_eq!(summary.previous_version, current);
     assert_eq!(summary.new_version, current);
     assert_eq!(summary.expected_version, expected_version);
-    assert_eq!(fs::read_to_string(file).expect("read"), "alpha\nbeta\ngamma\ndelta\n");
+    assert_eq!(
+        fs::read_to_string(file).expect("read"),
+        "alpha\nbeta\ngamma\ndelta\n"
+    );
 }
 
 #[test]
@@ -30,7 +38,10 @@ fn apply_line_range_patch_batch_requires_expected_version() {
     )
     .expect_err("expected validation error");
 
-    assert_eq!(err.to_string(), "missing expected_version for mutating operation");
+    assert_eq!(
+        err.to_string(),
+        "missing expected_version for mutating operation"
+    );
     assert_eq!(fs::read_to_string(&file).expect("read"), "alpha\nbeta\n");
 }
 
@@ -87,7 +98,10 @@ fn apply_line_range_patch_batch_applies_multiple_ops_in_reverse_order() {
     assert!(!summary.noop);
     assert_eq!(summary.previous_version, expected_version);
     assert_ne!(summary.new_version, summary.previous_version);
-    assert_eq!(fs::read_to_string(&file).expect("read"), "line1\nX\nY\ntail\n");
+    assert_eq!(
+        fs::read_to_string(&file).expect("read"),
+        "line1\nX\nY\ntail\n"
+    );
 }
 
 #[test]
@@ -108,9 +122,10 @@ fn apply_line_range_patch_batch_rejects_out_of_bounds_range() {
     )
     .expect_err("expected validation error");
 
-    assert!(err
-        .to_string()
-        .contains("patch range out of bounds: start=2 end=3 total_lines=2"));
+    assert!(
+        err.to_string()
+            .contains("patch range out of bounds: start=2 end=3 total_lines=2")
+    );
     assert_eq!(fs::read_to_string(&file).expect("read"), content);
 }
 
@@ -138,9 +153,10 @@ fn apply_line_range_patch_batch_rejects_overlapping_ranges() {
     )
     .expect_err("expected overlap error");
 
-    assert!(err
-        .to_string()
-        .contains("patch ranges overlap: [2,3] with [3,4]"));
+    assert!(
+        err.to_string()
+            .contains("patch ranges overlap: [2,3] with [3,4]")
+    );
     assert_eq!(fs::read_to_string(&file).expect("read"), content);
 }
 

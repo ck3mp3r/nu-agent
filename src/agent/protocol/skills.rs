@@ -53,7 +53,10 @@ impl std::fmt::Display for SkillResolveError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidSkillName(name) => {
-                write!(f, "invalid skill name '{name}': expected a single path segment")
+                write!(
+                    f,
+                    "invalid skill name '{name}': expected a single path segment"
+                )
             }
             Self::HomeSkillEscapesRoot { skill_name } => {
                 write!(f, "skill '{skill_name}' resolves outside home skills root")
@@ -85,13 +88,17 @@ pub(crate) fn render_available_skills_preamble_for_tests(
     render_available_skills_preamble_from_catalog(catalog)
 }
 
-fn render_available_skills_preamble_from_catalog(catalog: Vec<DiscoverableSkill>) -> Option<String> {
+fn render_available_skills_preamble_from_catalog(
+    catalog: Vec<DiscoverableSkill>,
+) -> Option<String> {
     if catalog.is_empty() {
         return None;
     }
 
     let mut lines = Vec::with_capacity(catalog.len() + 3);
-    lines.push("Skills provide specialized instructions and workflows for specific tasks.".to_string());
+    lines.push(
+        "Skills provide specialized instructions and workflows for specific tasks.".to_string(),
+    );
     lines.push(
         "Use the skill tool to load a skill when a task matches its description.".to_string(),
     );
@@ -164,16 +171,28 @@ fn discover_skill_catalog_internal(
                 name: name.clone(),
                 source: SkillSource::Home,
             };
-            upsert_skill_by_precedence(&mut selected, name, (SkillSource::Home.priority(), 0), entry);
+            upsert_skill_by_precedence(
+                &mut selected,
+                name,
+                (SkillSource::Home.priority(), 0),
+                entry,
+            );
         }
     }
 
-    let mut catalog = selected.into_values().map(|(_, entry)| entry).collect::<Vec<_>>();
+    let mut catalog = selected
+        .into_values()
+        .map(|(_, entry)| entry)
+        .collect::<Vec<_>>();
     catalog.sort_by(|left, right| {
         left.source
             .priority()
             .cmp(&right.source.priority())
-            .then_with(|| left.name.to_ascii_lowercase().cmp(&right.name.to_ascii_lowercase()))
+            .then_with(|| {
+                left.name
+                    .to_ascii_lowercase()
+                    .cmp(&right.name.to_ascii_lowercase())
+            })
     });
     catalog
 }
@@ -210,10 +229,18 @@ fn resolve_explicit_skill_request_internal(
     };
 
     let canonical_home_root = fs::canonicalize(&home_root).map_err(|err| {
-        SkillResolveError::Io(format!("failed to canonicalize {}: {}", home_root.display(), err))
+        SkillResolveError::Io(format!(
+            "failed to canonicalize {}: {}",
+            home_root.display(),
+            err
+        ))
     })?;
     let canonical_target = fs::canonicalize(&path).map_err(|err| {
-        SkillResolveError::Io(format!("failed to canonicalize {}: {}", path.display(), err))
+        SkillResolveError::Io(format!(
+            "failed to canonicalize {}: {}",
+            path.display(),
+            err
+        ))
     })?;
 
     if !canonical_target.starts_with(&canonical_home_root) {
@@ -222,8 +249,9 @@ fn resolve_explicit_skill_request_internal(
         });
     }
 
-    let content = fs::read_to_string(&path)
-        .map_err(|err| SkillResolveError::Io(format!("failed to read {}: {}", path.display(), err)))?;
+    let content = fs::read_to_string(&path).map_err(|err| {
+        SkillResolveError::Io(format!("failed to read {}: {}", path.display(), err))
+    })?;
 
     Ok(Some(ResolvedSkill {
         name: normalized_name.to_string(),
@@ -252,7 +280,10 @@ fn is_higher_precedence(candidate: (u8, usize), existing: (u8, usize)) -> bool {
 }
 
 #[cfg(test)]
-pub(crate) fn is_higher_precedence_for_tests(candidate: (u8, usize), existing: (u8, usize)) -> bool {
+pub(crate) fn is_higher_precedence_for_tests(
+    candidate: (u8, usize),
+    existing: (u8, usize),
+) -> bool {
     is_higher_precedence(candidate, existing)
 }
 

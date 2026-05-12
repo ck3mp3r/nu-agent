@@ -20,5 +20,5 @@ pub fn filter_tools(tools: &[McpToolDefinition], patterns: &[String]) -> Vec<Mcp
 }
 
 #[cfg(test)]
-#[path = "client/test.rs"]
-mod client_tests;
+#[path = "client_test.rs"]
+mod client_test;

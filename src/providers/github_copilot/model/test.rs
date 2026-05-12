@@ -49,7 +49,11 @@ fn preamble_classifier_aligns_with_provider_variant_for_copilot_models() {
             ProviderVariant::Anthropic,
             ModelFamily::Anthropic,
         ),
-        ("openai/gpt-4o", ProviderVariant::OpenAI4x, ModelFamily::Gpt4x),
+        (
+            "openai/gpt-4o",
+            ProviderVariant::OpenAI4x,
+            ModelFamily::Gpt4x,
+        ),
         (
             "openai/o3-mini",
             ProviderVariant::OpenAI4x,
@@ -63,7 +67,8 @@ fn preamble_classifier_aligns_with_provider_variant_for_copilot_models() {
     ];
 
     for (model, expected_variant, expected_family) in cases {
-        let variant = ProviderVariant::from_provider_model("github-copilot", model).expect("variant");
+        let variant =
+            ProviderVariant::from_provider_model("github-copilot", model).expect("variant");
         let family = classify_model_family("github-copilot", model);
         assert_eq!(variant, expected_variant);
         assert_eq!(family, expected_family);
@@ -72,8 +77,8 @@ fn preamble_classifier_aligns_with_provider_variant_for_copilot_models() {
 
 #[test]
 fn unknown_backend_returns_unknown_backend_error() {
-    let err = ProviderVariant::from_provider_model("github-copilot", "foobar/some-model")
-        .unwrap_err();
+    let err =
+        ProviderVariant::from_provider_model("github-copilot", "foobar/some-model").unwrap_err();
     assert!(matches!(err, Error::UnknownBackend(_)));
 }
 

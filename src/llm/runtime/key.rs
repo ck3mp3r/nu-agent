@@ -78,5 +78,5 @@ fn resolve_model_family(config: &Config) -> Option<String> {
 }
 
 #[cfg(test)]
-#[path = "key/test.rs"]
-mod key_tests;
+#[path = "key_test.rs"]
+mod key_test;

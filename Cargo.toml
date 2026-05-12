@@ -44,3 +44,4 @@ syntect = { version = "5.3", default-features = false, features = ["default-synt
 
 [dev-dependencies]
 serial_test = "3.4.0"
+nu-parser = "0.112.2"

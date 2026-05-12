@@ -1,13 +1,7 @@
-use std::{
-    cell::RefCell,
-    rc::Rc,
-};
+use std::{cell::RefCell, rc::Rc};
 
 use crate::agent::ui::tui::platform::terminal::{
-    TerminalAction,
-    TerminalBackend,
-    TerminalLifecycle,
-    TerminalLifecycleError,
+    TerminalAction, TerminalBackend, TerminalLifecycle, TerminalLifecycleError,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -170,7 +164,9 @@ fn enter_failure_recovers_partial_state_and_followup_restore_is_noop() {
     );
     let mut lifecycle = TerminalLifecycle::new(backend);
 
-    let error = lifecycle.enter().expect_err("enter should fail on hide_cursor");
+    let error = lifecycle
+        .enter()
+        .expect_err("enter should fail on hide_cursor");
     assert_eq!(error.action, TerminalAction::HideCursor);
 
     assert_eq!(
@@ -204,8 +200,11 @@ fn enter_failure_recovers_partial_state_and_followup_restore_is_noop() {
 fn enter_failure_before_full_init_keeps_terminal_in_restored_state() {
     let actions = Rc::new(RefCell::new(Vec::new()));
     let state = Rc::new(RefCell::new(MockTerminalState::default()));
-    let backend =
-        MockTerminalBackend::new(actions.clone(), state.clone(), Some(TerminalAction::EnableRawMode));
+    let backend = MockTerminalBackend::new(
+        actions.clone(),
+        state.clone(),
+        Some(TerminalAction::EnableRawMode),
+    );
     let mut lifecycle = TerminalLifecycle::new(backend);
 
     let error = lifecycle

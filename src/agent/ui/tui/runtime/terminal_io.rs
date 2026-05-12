@@ -1,9 +1,4 @@
-use std::{
-    fs::File,
-    io::Read,
-    os::fd::AsRawFd,
-    time::Duration,
-};
+use std::{fs::File, io::Read, os::fd::AsRawFd, time::Duration};
 
 use crate::agent::ui::tui::interaction::input::{TerminalEvent, TerminalKey};
 

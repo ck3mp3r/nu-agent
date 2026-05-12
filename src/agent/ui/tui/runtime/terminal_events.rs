@@ -91,7 +91,8 @@ impl TerminalEventSource for CrosstermTerminalEvents {
             return Ok(None);
         }
 
-        let event = crossterm::event::read().map_err(|err| format!("crossterm read failed: {err}"))?;
+        let event =
+            crossterm::event::read().map_err(|err| format!("crossterm read failed: {err}"))?;
         Ok(map_crossterm_event(event))
     }
 }
@@ -194,9 +195,12 @@ where
                     diagnostics.primary_available = Some(false);
                     diagnostics.fallback_available = Some(false);
                     diagnostics.last_poll_state = "crossterm error; /dev/tty error".to_string();
-                    diagnostics.last_error =
-                        Some(format!("{primary_error}; tty fallback failed: {fallback_error}"));
-                    Err(format!("{primary_error}; tty fallback failed: {fallback_error}"))
+                    diagnostics.last_error = Some(format!(
+                        "{primary_error}; tty fallback failed: {fallback_error}"
+                    ));
+                    Err(format!(
+                        "{primary_error}; tty fallback failed: {fallback_error}"
+                    ))
                 }
             },
             None => {
@@ -224,10 +228,7 @@ where
 
 #[cfg(test)]
 impl HybridTerminalEvents {
-    pub(crate) fn new_for_test<P, F>(
-        primary: P,
-        fallback: F,
-    ) -> HybridTerminalEventsForTest<P, F>
+    pub(crate) fn new_for_test<P, F>(primary: P, fallback: F) -> HybridTerminalEventsForTest<P, F>
     where
         P: TerminalEventSource,
         F: TerminalEventSource,
@@ -282,22 +283,12 @@ impl TerminalEventSource for HybridTerminalEvents {
 }
 
 fn map_crossterm_event(event: crossterm::event::Event) -> Option<TerminalEvent> {
-    use crossterm::event::{
-        Event,
-        KeyCode,
-        KeyEventKind,
-        KeyModifiers,
-    };
+    use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 
     match event {
-        Event::Resize(columns, rows) => {
-            Some(TerminalEvent::Resize(
-                crate::agent::ui::tui::interaction::input::TerminalResize {
-                columns,
-                rows,
-                },
-            ))
-        }
+        Event::Resize(columns, rows) => Some(TerminalEvent::Resize(
+            crate::agent::ui::tui::interaction::input::TerminalResize { columns, rows },
+        )),
         Event::Key(key_event) => {
             if key_event.kind != KeyEventKind::Press && key_event.kind != KeyEventKind::Repeat {
                 return None;
@@ -350,7 +341,9 @@ fn map_crossterm_event(event: crossterm::event::Event) -> Option<TerminalEvent> 
 }
 
 #[cfg(test)]
-pub(crate) fn map_crossterm_event_for_test(event: crossterm::event::Event) -> Option<TerminalEvent> {
+pub(crate) fn map_crossterm_event_for_test(
+    event: crossterm::event::Event,
+) -> Option<TerminalEvent> {
     map_crossterm_event(event)
 }
 

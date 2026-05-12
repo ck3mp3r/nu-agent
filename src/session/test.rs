@@ -6,7 +6,10 @@ use tempfile::TempDir;
 #[test]
 fn compaction_strategy_defaults_to_sliding_summary_only() {
     let cfg = crate::session::SessionConfig::default();
-    assert_eq!(cfg.compaction_strategy, crate::session::CompactionStrategy::SlidingSummary);
+    assert_eq!(
+        cfg.compaction_strategy,
+        crate::session::CompactionStrategy::SlidingSummary
+    );
     assert_eq!(cfg.compaction_strategy.as_str(), "sliding_summary");
 }
 
@@ -23,8 +26,14 @@ fn legacy_strategy_values_normalize_to_sliding_summary() {
 
     assert_eq!(truncate, crate::session::CompactionStrategy::SlidingSummary);
     assert_eq!(sliding, crate::session::CompactionStrategy::SlidingSummary);
-    assert_eq!(summarize, crate::session::CompactionStrategy::SlidingSummary);
-    assert_eq!(canonical, crate::session::CompactionStrategy::SlidingSummary);
+    assert_eq!(
+        summarize,
+        crate::session::CompactionStrategy::SlidingSummary
+    );
+    assert_eq!(
+        canonical,
+        crate::session::CompactionStrategy::SlidingSummary
+    );
 }
 
 #[test]
@@ -38,7 +47,10 @@ fn session_config_roundtrip_preserves_sliding_summary_mode() {
     assert!(json.contains("sliding_summary"));
 
     let decoded: crate::session::SessionConfig = serde_json::from_str(&json).expect("deserialize");
-    assert_eq!(decoded.compaction_strategy, crate::session::CompactionStrategy::SlidingSummary);
+    assert_eq!(
+        decoded.compaction_strategy,
+        crate::session::CompactionStrategy::SlidingSummary
+    );
 }
 
 #[test]
@@ -94,10 +106,7 @@ fn auto_compaction_still_respects_threshold_gate() {
 
     for i in 0..3 {
         session
-            .add_message(
-                &store,
-                Message::new("user".to_string(), format!("msg{i}")),
-            )
+            .add_message(&store, Message::new("user".to_string(), format!("msg{i}")))
             .expect("add");
     }
 
@@ -196,9 +205,7 @@ fn sliding_summary_compaction_persists_jsonl_updates() {
         .maybe_compact_with(&store, |_old| Ok("SUMMARY BODY".to_string()))
         .expect("compact");
 
-    let loaded = store
-        .load_session("sliding-summary-persist")
-        .expect("load");
+    let loaded = store.load_session("sliding-summary-persist").expect("load");
     assert_eq!(loaded.messages()[0].content(), "SUMMARY BODY");
     assert_eq!(loaded.messages()[1].content(), "msg3");
     assert_eq!(loaded.messages()[2].content(), "msg4");
@@ -468,8 +475,11 @@ fn test_append_tool_message_writes_structured_tool_fields() {
         .get_or_create(Some(session_id.clone()))
         .expect("Failed to create session");
 
-    let msg = Message::new("tool".to_string(), "tool[nu__run] args={\"command\":\"ls\"} · done".to_string())
-        .with_tool_details("{\"command\":\"ls\"}", "src\nCargo.toml", true);
+    let msg = Message::new(
+        "tool".to_string(),
+        "tool[nu__run] args={\"command\":\"ls\"} · done".to_string(),
+    )
+    .with_tool_details("{\"command\":\"ls\"}", "src\nCargo.toml", true);
     session
         .append_message(&store, msg)
         .expect("Failed to append tool message");
@@ -488,7 +498,10 @@ fn test_append_tool_message_writes_structured_tool_fields() {
         tool_json.get("tool_result").and_then(|v| v.as_str()),
         Some("src\nCargo.toml")
     );
-    assert_eq!(tool_json.get("tool_success").and_then(|v| v.as_bool()), Some(true));
+    assert_eq!(
+        tool_json.get("tool_success").and_then(|v| v.as_bool()),
+        Some(true)
+    );
 }
 
 /// Test that list_sessions returns correct metadata for multiple sessions.
@@ -900,7 +913,10 @@ fn test_maybe_compact_summarize_strategy() {
 
     let result = session.maybe_compact(&store);
 
-    assert!(result.is_ok(), "Sliding-summary strategy should be active and succeed");
+    assert!(
+        result.is_ok(),
+        "Sliding-summary strategy should be active and succeed"
+    );
     assert!(result.expect("compaction result"));
 }
 
@@ -1483,7 +1499,8 @@ fn test_atomic_write_implementation() {
 fn test_message_deserializes_old_record_without_usage_fields() {
     use crate::session::Message;
 
-    let old_record = r#"{"role":"assistant","content":"Legacy record","timestamp":"2026-05-09T12:00:00Z"}"#;
+    let old_record =
+        r#"{"role":"assistant","content":"Legacy record","timestamp":"2026-05-09T12:00:00Z"}"#;
 
     let message: Message = serde_json::from_str(old_record)
         .expect("Legacy message record without usage fields should deserialize");

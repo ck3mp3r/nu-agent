@@ -1,8 +1,6 @@
-use crate::agent::ui::tui::{
-    interaction::{
-        input::{map_terminal_event, TerminalEvent, TerminalKey, TerminalResize},
-        reducer::UserAction,
-    },
+use crate::agent::ui::tui::interaction::{
+    input::{TerminalEvent, TerminalKey, TerminalResize, map_terminal_event},
+    reducer::UserAction,
 };
 
 #[derive(Debug)]
@@ -271,5 +269,11 @@ fn resize_event_maps_to_user_action_with_dimensions() {
 
     let actual = map_terminal_event(&event, false);
 
-    assert_eq!(actual, Some(UserAction::Resize { columns: 120, rows: 42 }));
+    assert_eq!(
+        actual,
+        Some(UserAction::Resize {
+            columns: 120,
+            rows: 42
+        })
+    );
 }

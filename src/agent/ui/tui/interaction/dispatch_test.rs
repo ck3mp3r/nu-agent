@@ -1,3 +1,4 @@
+use crate::agent::protocol::event::PermissionDecision;
 use crate::agent::ui::tui::{
     interaction::{
         cancel::CancelController,
@@ -7,10 +8,25 @@ use crate::agent::ui::tui::{
     },
     state::{
         AppState, CommandPaletteAction, InfoPanel, InputMode, McpServerState,
-        McpServerUsabilityState, TranscriptRole, UiPhase,
-        ModelPickerOption,
+        McpServerUsabilityState, ModelPickerOption, TranscriptRole, UiPhase,
     },
 };
+
+fn open_permission_prompt(state: &mut AppState) {
+    state.open_permission_prompt(crate::agent::ui::tui::state::PermissionPrompt {
+        request_id: "ask-0000000000000001".to_string(),
+        matched_rule_identity: "nested:nu__run.command:*".to_string(),
+        tool: "nu__run".to_string(),
+        source: "closure".to_string(),
+        mode: Some("apply".to_string()),
+        scope: "nested".to_string(),
+        pattern: "*".to_string(),
+        target_field: Some("command".to_string()),
+        summary: "tool[nu__run] args={\"command\":\"echo hi\"}".to_string(),
+        pre_authorize_display: None,
+        attached_tool_transcript_line_index: None,
+    });
+}
 
 #[test]
 fn first_escape_in_busy_normal_sets_abort_pending_with_exact_status_text() {
@@ -131,7 +147,8 @@ fn submit_path_appends_prompt_and_keeps_input_editable() {
         &TerminalEvent::Key(TerminalKey::Char('s')),
         None,
     );
-    let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+    let changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
 
     assert!(changed);
     assert_eq!(state.phase, UiPhase::Busy);
@@ -150,7 +167,11 @@ fn backspace_and_cursor_movement_edit_in_dispatch_path() {
         dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char(ch)), None);
     }
     dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Left), None);
-    dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Backspace), None);
+    dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Backspace),
+        None,
+    );
 
     assert_eq!(state.input.buffer, "ac");
     assert_eq!(state.input.cursor, 1);
@@ -208,17 +229,29 @@ fn esc_in_busy_insert_mode_switches_to_normal_without_abort_side_effect() {
 fn jj_chord_in_busy_insert_mode_switches_to_normal_mode() {
     let mut state = AppState::new();
 
-    dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('w')), None);
+    dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('w')),
+        None,
+    );
     dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
 
     assert_eq!(state.phase, UiPhase::Busy);
     assert_eq!(state.input_mode, InputMode::Insert);
 
-    let first = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('j')), None);
+    let first = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('j')),
+        None,
+    );
     assert!(first);
     assert_eq!(state.input_mode, InputMode::Insert);
 
-    let second = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('j')), None);
+    let second = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('j')),
+        None,
+    );
     assert!(second);
     assert_eq!(state.input_mode, InputMode::Normal);
     assert_eq!(state.phase, UiPhase::Busy);
@@ -228,17 +261,29 @@ fn jj_chord_in_busy_insert_mode_switches_to_normal_mode() {
 fn jk_chord_in_busy_insert_mode_switches_to_normal_mode() {
     let mut state = AppState::new();
 
-    dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('w')), None);
+    dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('w')),
+        None,
+    );
     dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
 
     assert_eq!(state.phase, UiPhase::Busy);
     assert_eq!(state.input_mode, InputMode::Insert);
 
-    let first = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('j')), None);
+    let first = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('j')),
+        None,
+    );
     assert!(first);
     assert_eq!(state.input_mode, InputMode::Insert);
 
-    let second = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('k')), None);
+    let second = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('k')),
+        None,
+    );
     assert!(second);
     assert_eq!(state.input_mode, InputMode::Normal);
     assert_eq!(state.phase, UiPhase::Busy);
@@ -248,7 +293,11 @@ fn jk_chord_in_busy_insert_mode_switches_to_normal_mode() {
 fn busy_normal_mode_blocks_plain_typing_until_explicit_i() {
     let mut state = AppState::new();
 
-    dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('w')), None);
+    dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('w')),
+        None,
+    );
     dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
     assert_eq!(state.phase, UiPhase::Busy);
     assert_eq!(state.input_mode, InputMode::Insert);
@@ -258,19 +307,28 @@ fn busy_normal_mode_blocks_plain_typing_until_explicit_i() {
     assert_eq!(state.input_mode, InputMode::Normal);
     assert_eq!(state.phase, UiPhase::Busy);
 
-    let typed_while_normal =
-        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('x')), None);
+    let typed_while_normal = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('x')),
+        None,
+    );
     assert!(!typed_while_normal);
     assert!(state.input.buffer.is_empty());
     assert_eq!(state.input_mode, InputMode::Normal);
 
-    let enter_insert =
-        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('i')), None);
+    let enter_insert = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('i')),
+        None,
+    );
     assert!(enter_insert);
     assert_eq!(state.input_mode, InputMode::Insert);
 
-    let typed_after_i =
-        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('x')), None);
+    let typed_after_i = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('x')),
+        None,
+    );
     assert!(typed_after_i);
     assert_eq!(state.input.buffer, "x");
 }
@@ -279,29 +337,50 @@ fn busy_normal_mode_blocks_plain_typing_until_explicit_i() {
 fn busy_normal_mode_after_jk_chord_requires_i_before_typing() {
     let mut state = AppState::new();
 
-    dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('w')), None);
+    dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('w')),
+        None,
+    );
     dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
     assert_eq!(state.phase, UiPhase::Busy);
     assert_eq!(state.input_mode, InputMode::Insert);
 
-    let first_j = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('j')), None);
+    let first_j = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('j')),
+        None,
+    );
     assert!(first_j);
-    let second_k = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('k')), None);
+    let second_k = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('k')),
+        None,
+    );
     assert!(second_k);
     assert_eq!(state.input_mode, InputMode::Normal);
 
-    let typed_while_normal =
-        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('z')), None);
+    let typed_while_normal = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('z')),
+        None,
+    );
     assert!(!typed_while_normal);
     assert!(state.input.buffer.is_empty());
 
-    let enter_insert =
-        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('i')), None);
+    let enter_insert = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('i')),
+        None,
+    );
     assert!(enter_insert);
     assert_eq!(state.input_mode, InputMode::Insert);
 
-    let typed_after_i =
-        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('z')), None);
+    let typed_after_i = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('z')),
+        None,
+    );
     assert!(typed_after_i);
     assert_eq!(state.input.buffer, "z");
 }
@@ -317,13 +396,19 @@ fn normal_mode_jk_scroll_transcript_without_editing_input() {
     state.scroll_transcript_page_up(2);
     let before = state.transcript_scroll_lines_from_bottom;
 
-    let changed_down =
-        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('j')), None);
+    let changed_down = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('j')),
+        None,
+    );
     assert!(changed_down);
     assert!(state.transcript_scroll_lines_from_bottom <= before);
 
-    let changed_up =
-        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('k')), None);
+    let changed_up = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('k')),
+        None,
+    );
     assert!(changed_up);
     assert!(!state.transcript_follow_tail);
     assert!(state.input.buffer.is_empty());
@@ -334,8 +419,11 @@ fn normal_mode_blocks_plain_typing_and_keeps_input_unchanged() {
     let mut state = AppState::new();
     state.enter_normal_mode();
 
-    let changed =
-        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('x')), None);
+    let changed = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('x')),
+        None,
+    );
 
     assert!(!changed);
     assert!(state.input.buffer.is_empty());
@@ -347,13 +435,27 @@ fn normal_mode_hl_cycles_focus_between_panes() {
     let mut state = AppState::new();
     state.enter_normal_mode();
 
-    let first = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('l')), None);
+    let first = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('l')),
+        None,
+    );
     assert!(first);
-    assert_eq!(state.pane_focus, crate::agent::ui::tui::state::PaneFocus::Input);
+    assert_eq!(
+        state.pane_focus,
+        crate::agent::ui::tui::state::PaneFocus::Input
+    );
 
-    let second = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('h')), None);
+    let second = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('h')),
+        None,
+    );
     assert!(second);
-    assert_eq!(state.pane_focus, crate::agent::ui::tui::state::PaneFocus::Transcript);
+    assert_eq!(
+        state.pane_focus,
+        crate::agent::ui::tui::state::PaneFocus::Transcript
+    );
 }
 
 #[test]
@@ -363,12 +465,144 @@ fn normal_mode_tab_and_backtab_cycle_focus_between_transcript_and_input() {
 
     let tab = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Tab), None);
     assert!(tab);
-    assert_eq!(state.pane_focus, crate::agent::ui::tui::state::PaneFocus::Input);
+    assert_eq!(
+        state.pane_focus,
+        crate::agent::ui::tui::state::PaneFocus::Input
+    );
 
     let backtab =
         dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::BackTab), None);
     assert!(backtab);
-    assert_eq!(state.pane_focus, crate::agent::ui::tui::state::PaneFocus::Transcript);
+    assert_eq!(
+        state.pane_focus,
+        crate::agent::ui::tui::state::PaneFocus::Transcript
+    );
+}
+
+#[test]
+fn permission_prompt_key_a_submits_allow_once() {
+    let mut state = AppState::new();
+    open_permission_prompt(&mut state);
+
+    let changed = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('a')),
+        None,
+    );
+    assert!(changed);
+    assert!(!state.has_permission_prompt());
+
+    let submission = state
+        .take_next_permission_decision_submission()
+        .expect("permission submission");
+    assert_eq!(submission.decision, PermissionDecision::AllowOnce);
+}
+
+#[test]
+fn permission_prompt_key_upper_a_submits_allow_always() {
+    let mut state = AppState::new();
+    open_permission_prompt(&mut state);
+
+    let changed = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('A')),
+        None,
+    );
+    assert!(changed);
+    assert!(!state.has_permission_prompt());
+
+    let submission = state
+        .take_next_permission_decision_submission()
+        .expect("permission submission");
+    assert_eq!(submission.decision, PermissionDecision::AllowAlways);
+}
+
+#[test]
+fn permission_prompt_key_d_submits_deny() {
+    let mut state = AppState::new();
+    open_permission_prompt(&mut state);
+
+    let changed = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('d')),
+        None,
+    );
+    assert!(changed);
+    assert!(!state.has_permission_prompt());
+
+    let submission = state
+        .take_next_permission_decision_submission()
+        .expect("permission submission");
+    assert_eq!(submission.decision, PermissionDecision::Deny);
+}
+
+#[test]
+fn permission_prompt_esc_submits_deny() {
+    let mut state = AppState::new();
+    open_permission_prompt(&mut state);
+
+    let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Esc), None);
+    assert!(changed);
+    assert!(!state.has_permission_prompt());
+
+    let submission = state
+        .take_next_permission_decision_submission()
+        .expect("permission submission");
+    assert_eq!(submission.decision, PermissionDecision::Deny);
+}
+
+#[test]
+fn permission_prompt_page_scroll_sets_manual_override_without_submitting_decision() {
+    let mut state = AppState::new();
+    state.set_transcript_viewport_lines(3);
+    for i in 0..10 {
+        state.push_transcript_line(TranscriptRole::Assistant, format!("line {i}"));
+    }
+    open_permission_prompt(&mut state);
+    assert!(state.should_preserve_permission_prompt_row());
+    assert!(state.should_auto_recenter_permission_prompt_row());
+
+    let changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::PageUp), None);
+
+    assert!(changed);
+    assert!(state.has_permission_prompt());
+    assert!(state.take_next_permission_decision_submission().is_none());
+    assert!(
+        state.should_preserve_permission_prompt_row(),
+        "scrolling must not disable controls visibility guarantee"
+    );
+    assert!(
+        !state.should_auto_recenter_permission_prompt_row(),
+        "scrolling during active prompt should disable aggressive auto-recentering"
+    );
+}
+
+#[test]
+fn permission_prompt_arrow_scroll_sets_manual_override_without_submitting_decision() {
+    let mut state = AppState::new();
+    state.set_transcript_viewport_lines(3);
+    for i in 0..10 {
+        state.push_transcript_line(TranscriptRole::Assistant, format!("line {i}"));
+    }
+    state.scroll_transcript_page_up(3);
+    open_permission_prompt(&mut state);
+    assert!(state.should_preserve_permission_prompt_row());
+    assert!(state.should_auto_recenter_permission_prompt_row());
+
+    let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
+
+    assert!(changed);
+    assert!(state.has_permission_prompt());
+    assert!(state.take_next_permission_decision_submission().is_none());
+    assert!(
+        state.should_preserve_permission_prompt_row(),
+        "arrow scrolling must not disable controls visibility guarantee"
+    );
+    assert!(
+        !state.should_auto_recenter_permission_prompt_row(),
+        "arrow scrolling during active prompt should disable aggressive auto-recentering"
+    );
 }
 
 #[test]
@@ -381,24 +615,43 @@ fn normal_mode_gg_and_g_scroll_to_top_and_bottom() {
     }
     state.scroll_transcript_page_up(5);
 
-    let g1 = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('g')), None);
+    let g1 = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('g')),
+        None,
+    );
     assert!(!g1);
 
-    let g2 = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('g')), None);
+    let g2 = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('g')),
+        None,
+    );
     assert!(g2);
     assert!(!state.transcript_follow_tail);
     assert_eq!(state.transcript_scroll_lines_from_bottom, 7);
 
-    let k = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('k')), None);
+    let k = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('k')),
+        None,
+    );
     assert!(!k);
     assert_eq!(state.transcript_scroll_lines_from_bottom, 7);
 
-    let j = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('j')), None);
+    let j = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('j')),
+        None,
+    );
     assert!(j);
     assert_eq!(state.transcript_scroll_lines_from_bottom, 7);
 
-    let g_cap =
-        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('G')), None);
+    let g_cap = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('G')),
+        None,
+    );
     assert!(g_cap);
     assert!(state.transcript_follow_tail);
     assert_eq!(state.transcript_scroll_lines_from_bottom, 0);
@@ -435,11 +688,19 @@ fn normal_mode_v_enters_visual_and_yanks_selection_back_to_normal() {
     state.push_transcript_line(TranscriptRole::Assistant, "l2");
     state.enter_normal_mode();
 
-    let v = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('v')), None);
+    let v = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('v')),
+        None,
+    );
     assert!(v);
     assert_eq!(state.input_mode, InputMode::Visual);
 
-    let y = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('y')), None);
+    let y = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('y')),
+        None,
+    );
     assert!(y);
     assert_eq!(state.input_mode, InputMode::Normal);
     assert!(state.take_clipboard_request().is_some());
@@ -450,10 +711,16 @@ fn v_from_input_focus_is_noop_with_feedback() {
     let mut state = AppState::new();
     state.enter_normal_mode();
     state.focus_next_pane();
-    assert_eq!(state.pane_focus, crate::agent::ui::tui::state::PaneFocus::Input);
+    assert_eq!(
+        state.pane_focus,
+        crate::agent::ui::tui::state::PaneFocus::Input
+    );
 
-    let changed =
-        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('v')), None);
+    let changed = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('v')),
+        None,
+    );
 
     assert!(changed);
     assert_eq!(state.input_mode, InputMode::Normal);
@@ -472,16 +739,36 @@ fn gg_then_v_and_g_then_v_anchor_from_current_transcript_cursor() {
     }
     state.enter_normal_mode();
 
-    dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('g')), None);
-    dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('g')), None);
-    dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('v')), None);
+    dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('g')),
+        None,
+    );
+    dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('g')),
+        None,
+    );
+    dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('v')),
+        None,
+    );
     assert_eq!(state.visual_anchor_index(), Some(0));
     assert_eq!(state.visual_cursor_index(), Some(0));
     assert_eq!(state.selected_transcript_range(), Some((0, 0)));
 
     dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Esc), None);
-    dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('G')), None);
-    dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('v')), None);
+    dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('G')),
+        None,
+    );
+    dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('v')),
+        None,
+    );
     assert_eq!(state.visual_anchor_index(), Some(9));
     assert_eq!(state.visual_cursor_index(), Some(9));
     assert_eq!(state.selected_transcript_range(), Some((9, 9)));
@@ -492,7 +779,11 @@ fn normal_mode_z_is_noop() {
     let mut state = AppState::new();
     state.enter_normal_mode();
 
-    let z = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('z')), None);
+    let z = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('z')),
+        None,
+    );
     assert!(!z);
 }
 
@@ -504,11 +795,19 @@ fn g_then_k_detaches_follow_tail_immediately_in_normal_mode() {
         state.push_transcript_line(TranscriptRole::Assistant, format!("line {i}"));
     }
     state.enter_normal_mode();
-    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('G')), None);
+    let _ = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('G')),
+        None,
+    );
     assert!(state.transcript_follow_tail);
     assert_eq!(state.transcript_cursor_index(), Some(19));
 
-    let k = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('k')), None);
+    let k = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('k')),
+        None,
+    );
     assert!(k);
     assert!(!state.transcript_follow_tail);
     assert_eq!(state.transcript_cursor_index(), Some(18));
@@ -523,7 +822,11 @@ fn g_then_ctrl_u_detaches_follow_tail_immediately_in_normal_mode() {
     }
     state.enter_normal_mode();
 
-    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('G')), None);
+    let _ = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('G')),
+        None,
+    );
     assert!(state.transcript_follow_tail);
     assert_eq!(state.transcript_cursor_index(), Some(19));
 
@@ -542,7 +845,11 @@ fn g_then_page_up_detaches_follow_tail_immediately_in_normal_mode() {
     }
     state.enter_normal_mode();
 
-    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('G')), None);
+    let _ = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('G')),
+        None,
+    );
     assert!(state.transcript_follow_tail);
     assert_eq!(state.transcript_cursor_index(), Some(19));
 
@@ -561,13 +868,25 @@ fn g_then_k_detaches_follow_tail_immediately_in_visual_mode() {
     }
     state.enter_normal_mode();
 
-    dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('G')), None);
-    dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('v')), None);
+    dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('G')),
+        None,
+    );
+    dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('v')),
+        None,
+    );
     assert_eq!(state.input_mode, InputMode::Visual);
     assert!(state.transcript_follow_tail);
     assert_eq!(state.visual_cursor_index(), Some(19));
 
-    let k = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('k')), None);
+    let k = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('k')),
+        None,
+    );
     assert!(k);
     assert!(!state.transcript_follow_tail);
     assert_eq!(state.visual_cursor_index(), Some(18));
@@ -582,8 +901,16 @@ fn g_then_ctrl_u_detaches_follow_tail_immediately_in_visual_mode() {
     }
     state.enter_normal_mode();
 
-    dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('G')), None);
-    dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('v')), None);
+    dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('G')),
+        None,
+    );
+    dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('v')),
+        None,
+    );
     assert_eq!(state.input_mode, InputMode::Visual);
     assert!(state.transcript_follow_tail);
     assert_eq!(state.visual_cursor_index(), Some(19));
@@ -603,11 +930,7 @@ fn insert_mode_alt_and_shift_enter_insert_newline_while_enter_submits() {
         &TerminalEvent::Key(TerminalKey::Char('h')),
         None,
     );
-    dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::AltEnter),
-        None,
-    );
+    dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::AltEnter), None);
     dispatch_terminal_event(
         &mut state,
         &TerminalEvent::Key(TerminalKey::ShiftEnter),
@@ -618,7 +941,8 @@ fn insert_mode_alt_and_shift_enter_insert_newline_while_enter_submits() {
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(state.transcript_preview.is_empty());
 
-    let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+    let changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
     assert!(changed);
     assert_eq!(state.phase, UiPhase::Busy);
     assert_eq!(state.transcript_preview.len(), 1);
@@ -659,10 +983,18 @@ fn palette_navigation_supports_arrows_and_jk_and_enter_routes_action() {
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
     assert_eq!(state.command_palette_selection, 1);
 
-    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('k')), None);
+    let _ = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('k')),
+        None,
+    );
     assert_eq!(state.command_palette_selection, 0);
 
-    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('j')), None);
+    let _ = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('j')),
+        None,
+    );
     assert_eq!(state.command_palette_selection, 1);
 
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
@@ -752,10 +1084,26 @@ fn models_slash_and_palette_share_same_action_handler() {
         &TerminalEvent::Key(TerminalKey::CtrlP),
         None,
     );
-    let _ = dispatch_terminal_event(&mut palette_state, &TerminalEvent::Key(TerminalKey::Down), None);
-    let _ = dispatch_terminal_event(&mut palette_state, &TerminalEvent::Key(TerminalKey::Down), None);
-    let _ = dispatch_terminal_event(&mut palette_state, &TerminalEvent::Key(TerminalKey::Down), None);
-    let _ = dispatch_terminal_event(&mut palette_state, &TerminalEvent::Key(TerminalKey::Down), None);
+    let _ = dispatch_terminal_event(
+        &mut palette_state,
+        &TerminalEvent::Key(TerminalKey::Down),
+        None,
+    );
+    let _ = dispatch_terminal_event(
+        &mut palette_state,
+        &TerminalEvent::Key(TerminalKey::Down),
+        None,
+    );
+    let _ = dispatch_terminal_event(
+        &mut palette_state,
+        &TerminalEvent::Key(TerminalKey::Down),
+        None,
+    );
+    let _ = dispatch_terminal_event(
+        &mut palette_state,
+        &TerminalEvent::Key(TerminalKey::Down),
+        None,
+    );
     let _ = dispatch_terminal_event(
         &mut palette_state,
         &TerminalEvent::Key(TerminalKey::Enter),
@@ -775,7 +1123,8 @@ fn palette_models_does_not_bypass_shared_models_action_path() {
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
 
-    let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+    let changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
 
     assert!(changed);
     assert!(!state.model_picker_open);
@@ -788,7 +1137,10 @@ fn palette_models_does_not_bypass_shared_models_action_path() {
 fn models_launcher_opens_picker_while_worker_active() {
     let mut state = AppState::new();
     state.enqueue_prompt("first".to_string());
-    assert_eq!(state.take_next_prompt_for_execution(), Some("first".to_string()));
+    assert_eq!(
+        state.take_next_prompt_for_execution(),
+        Some("first".to_string())
+    );
 
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
@@ -796,7 +1148,8 @@ fn models_launcher_opens_picker_while_worker_active() {
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
 
-    let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+    let changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
 
     assert!(changed);
     assert!(state.take_next_model_picker_launch_request());
@@ -809,13 +1162,18 @@ fn models_launcher_opens_picker_while_worker_active() {
 fn models_slash_opens_picker_while_worker_active() {
     let mut state = AppState::new();
     state.enqueue_prompt("first".to_string());
-    assert_eq!(state.take_next_prompt_for_execution(), Some("first".to_string()));
+    assert_eq!(
+        state.take_next_prompt_for_execution(),
+        Some("first".to_string())
+    );
 
     for ch in "/models".chars() {
-        let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char(ch)), None);
+        let _ =
+            dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char(ch)), None);
     }
 
-    let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+    let changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
 
     assert!(changed);
     assert!(state.take_next_model_picker_launch_request());
@@ -845,10 +1203,16 @@ fn model_picker_query_accepts_j_and_k_characters() {
     ]);
     state.open_model_picker();
 
-    let j_changed =
-        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('j')), None);
-    let k_changed =
-        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('k')), None);
+    let j_changed = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('j')),
+        None,
+    );
+    let k_changed = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('k')),
+        None,
+    );
 
     assert!(j_changed);
     assert!(k_changed);
@@ -884,18 +1248,25 @@ fn model_picker_navigation_does_not_consume_query_jk_input() {
     ]);
     state.open_model_picker();
 
-    let down_changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
+    let down_changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
     assert!(down_changed);
     assert_eq!(state.model_picker_selection, 1);
 
-    let j_changed =
-        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('j')), None);
+    let j_changed = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('j')),
+        None,
+    );
     assert!(j_changed);
     assert_eq!(state.model_picker_query, "j");
     assert_eq!(state.model_picker_selection, 0);
 
-    let k_changed =
-        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('k')), None);
+    let k_changed = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('k')),
+        None,
+    );
     assert!(k_changed);
     assert_eq!(state.model_picker_query, "jk");
     assert_eq!(state.model_picker_selection, 0);
@@ -905,7 +1276,8 @@ fn model_picker_navigation_does_not_consume_query_jk_input() {
     assert!(down_again_changed);
     assert_eq!(state.model_picker_selection, 1);
 
-    let up_changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Up), None);
+    let up_changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Up), None);
     assert!(up_changed);
     assert_eq!(state.model_picker_selection, 0);
 }
@@ -931,7 +1303,8 @@ fn model_picker_ctrl_n_moves_to_next_item() {
     ]);
     state.open_model_picker();
 
-    let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlN), None);
+    let changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlN), None);
 
     assert!(changed);
     assert_eq!(state.model_picker_selection, 1);
@@ -1020,7 +1393,9 @@ fn mcps_panel_navigation_and_enter_toggle_updates_selected_server() {
         "enable is async; state remains disabled until runtime applies result"
     );
 
-    let request = state.take_next_mcp_toggle_request().expect("queued toggle request");
+    let request = state
+        .take_next_mcp_toggle_request()
+        .expect("queued toggle request");
     assert_eq!(request.server_name, "k8s");
     assert!(request.enable);
 }
@@ -1044,11 +1419,21 @@ fn mcps_panel_supports_up_k_and_space_toggle() {
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Up), None);
     assert_eq!(state.mcp_panel_selection, 0);
 
-    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('k')), None);
+    let _ = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('k')),
+        None,
+    );
     assert_eq!(state.mcp_panel_selection, 1);
 
-    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char(' ')), None);
-    let request = state.take_next_mcp_toggle_request().expect("queued toggle request");
+    let _ = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char(' ')),
+        None,
+    );
+    let request = state
+        .take_next_mcp_toggle_request()
+        .expect("queued toggle request");
     assert_eq!(request.server_name, "k8s");
     assert!(request.enable);
 }
@@ -1058,8 +1443,16 @@ fn palette_filters_with_non_prefix_query_before_enter_routes_help() {
     let mut state = AppState::new();
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
 
-    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('h')), None);
-    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('p')), None);
+    let _ = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('h')),
+        None,
+    );
+    let _ = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('p')),
+        None,
+    );
     assert_eq!(
         state.command_palette_actions(),
         vec![crate::agent::ui::tui::state::CommandPaletteAction::Help]
@@ -1087,9 +1480,17 @@ fn escape_closes_info_panel_without_mode_regression() {
 #[test]
 fn existing_insert_mode_jk_chord_still_switches_to_normal_outside_palette() {
     let mut state = AppState::new();
-    let first = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('j')), None);
+    let first = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('j')),
+        None,
+    );
     assert!(first);
-    let second = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('k')), None);
+    let second = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('k')),
+        None,
+    );
     assert!(second);
     assert_eq!(state.input_mode, InputMode::Normal);
 }
@@ -1098,7 +1499,11 @@ fn existing_insert_mode_jk_chord_still_switches_to_normal_outside_palette() {
 fn inline_slash_suggestions_open_on_leading_slash() {
     let mut state = AppState::new();
 
-    let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('/')), None);
+    let changed = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('/')),
+        None,
+    );
     assert!(changed);
     assert!(state.inline_slash_open);
     assert!(!state.command_palette_open);
@@ -1107,12 +1512,20 @@ fn inline_slash_suggestions_open_on_leading_slash() {
 #[test]
 fn inline_slash_enter_on_compact_triggers_compaction_path() {
     let mut state = AppState::new();
-    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('/')), None);
+    let _ = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('/')),
+        None,
+    );
 
-    let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+    let changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
     assert!(changed);
     assert!(state.transcript_preview.is_empty());
-    assert_eq!(state.take_next_prompt_for_execution(), Some("/compact".to_string()));
+    assert_eq!(
+        state.take_next_prompt_for_execution(),
+        Some("/compact".to_string())
+    );
     assert!(!state.inline_slash_open);
     assert!(!state.command_palette_open);
 }
@@ -1131,7 +1544,8 @@ fn immediate_slash_commands_do_not_set_busy_or_spinner() {
             assert!(changed);
         }
 
-        let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+        let changed =
+            dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
         assert!(changed);
         assert_eq!(state.phase, UiPhase::Idle);
         assert!(!state.is_active_cycle());
@@ -1144,7 +1558,11 @@ fn immediate_slash_commands_do_not_set_busy_or_spinner() {
 #[test]
 fn inline_slash_suggestions_close_when_prefix_removed() {
     let mut state = AppState::new();
-    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char('/')), None);
+    let _ = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('/')),
+        None,
+    );
     assert!(state.inline_slash_open);
 
     let changed = dispatch_terminal_event(

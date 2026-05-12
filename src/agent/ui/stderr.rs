@@ -1,8 +1,9 @@
+use crate::agent::protocol::event::UiEvent;
 use std::io::Write;
 use std::time::{Duration, Instant};
-use crate::agent::protocol::event::UiEvent;
 
-use super::{formatter::{ToolEndView, format_tool_end, format_tool_start},
+use super::{
+    formatter::{ToolEndView, format_tool_end, format_tool_start},
     policy::UiPolicy,
     renderer::UiRenderer,
     spinner::SpinnerState,
@@ -123,7 +124,12 @@ impl<W: Write> StderrUiRenderer<W> {
                 if self.policy.quiet || self.spinner.is_enabled() {
                     None
                 } else {
-                    Some(format_tool_start(self.policy.verbosity, name, source, arguments))
+                    Some(format_tool_start(
+                        self.policy.verbosity,
+                        name,
+                        source,
+                        arguments,
+                    ))
                 }
             }
             UiEvent::ToolEnd {
@@ -139,17 +145,63 @@ impl<W: Write> StderrUiRenderer<W> {
                 if self.policy.quiet {
                     None
                 } else {
-                    Some(format_tool_end(
-                        ToolEndView {
-                            verbosity: self.policy.verbosity,
-                            name,
-                            source,
-                            arguments,
-                            success: *success,
-                            result,
-                            error_kind: error_kind.as_deref(),
-                            message: message.as_deref(),
-                        }
+                    Some(format_tool_end(ToolEndView {
+                        verbosity: self.policy.verbosity,
+                        name,
+                        source,
+                        arguments,
+                        success: *success,
+                        result,
+                        error_kind: error_kind.as_deref(),
+                        message: message.as_deref(),
+                    }))
+                }
+            }
+            UiEvent::PermissionRequested {
+                request_id,
+                context,
+            } => {
+                if self.policy.quiet {
+                    None
+                } else {
+                    Some(format!(
+                        "permission requested: request_id={request_id} tool={} source={} rule={} summary={}",
+                        context.tool,
+                        context.source,
+                        context.matched_rule_identity,
+                        context.summary
+                    ))
+                }
+            }
+            UiEvent::PermissionDecisionSubmitted {
+                request_id,
+                decision,
+                matched_rule_identity,
+            } => {
+                if self.policy.quiet {
+                    None
+                } else {
+                    Some(format!(
+                        "permission decision: request_id={request_id} decision={} rule={matched_rule_identity}",
+                        decision.as_str()
+                    ))
+                }
+            }
+            UiEvent::PermissionDecisionTimedOut { request_id } => {
+                if self.policy.quiet {
+                    None
+                } else {
+                    Some(format!(
+                        "permission timeout: request_id={request_id} action=deny"
+                    ))
+                }
+            }
+            UiEvent::PermissionDecisionIgnored { request_id, reason } => {
+                if self.policy.quiet {
+                    None
+                } else {
+                    Some(format!(
+                        "permission decision ignored: request_id={request_id} reason={reason}"
                     ))
                 }
             }
@@ -180,7 +232,9 @@ impl<W: Write> StderrUiRenderer<W> {
                 if self.policy.quiet {
                     None
                 } else {
-                    Some(format!("compaction: source={source} status=failed message={message}"))
+                    Some(format!(
+                        "compaction: source={source} status=failed message={message}"
+                    ))
                 }
             }
             UiEvent::AssistantMessage { .. } => None,
@@ -223,9 +277,7 @@ impl<W: Write> UiRenderer for StderrUiRenderer<W> {
                 self.spinner.start();
                 self.draw_spinner();
             }
-            UiEvent::ToolStart { name, .. }
-                if self.spinner.is_enabled() && !self.policy.quiet =>
-            {
+            UiEvent::ToolStart { name, .. } if self.spinner.is_enabled() && !self.policy.quiet => {
                 self.active_tool_name = Some(name.clone());
                 if let UiEvent::ToolStart { arguments, .. } = event {
                     self.active_tool_args = Some(arguments.clone());
@@ -238,9 +290,7 @@ impl<W: Write> UiRenderer for StderrUiRenderer<W> {
                 self.draw_spinner();
                 return;
             }
-            UiEvent::LlmEnd { .. }
-                | UiEvent::ToolEnd { .. }
-                | UiEvent::Completed { .. }
+            UiEvent::LlmEnd { .. } | UiEvent::ToolEnd { .. } | UiEvent::Completed { .. }
                 if self.spinner.is_active() =>
             {
                 self.clear_spinner_line();

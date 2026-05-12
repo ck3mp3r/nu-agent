@@ -1,9 +1,10 @@
 use std::sync::{Arc, Mutex};
 
-use crate::agent::ui::{policy::{UiPolicy, Verbosity},
+use crate::agent::protocol::event::UiEvent;
+use crate::agent::ui::{
+    policy::{UiPolicy, Verbosity},
     renderer::UiRenderer,
 };
-use crate::agent::protocol::event::UiEvent;
 
 #[derive(Clone)]
 struct FakeRenderer {
@@ -30,6 +31,10 @@ impl UiRenderer for FakeRenderer {
             UiEvent::LlmEnd { .. } => "llm_end",
             UiEvent::ToolStart { .. } => "tool_start",
             UiEvent::ToolEnd { .. } => "tool_end",
+            UiEvent::PermissionRequested { .. } => "permission_requested",
+            UiEvent::PermissionDecisionSubmitted { .. } => "permission_decision_submitted",
+            UiEvent::PermissionDecisionTimedOut { .. } => "permission_decision_timed_out",
+            UiEvent::PermissionDecisionIgnored { .. } => "permission_decision_ignored",
             UiEvent::Warning { .. } => "warning",
             UiEvent::CompactionStarted { .. } => "compaction_started",
             UiEvent::CompactionTriggered { .. } => "compaction_triggered",

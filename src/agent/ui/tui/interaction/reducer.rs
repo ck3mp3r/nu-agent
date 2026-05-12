@@ -1,3 +1,7 @@
+use crate::agent::protocol::event::{
+    PermissionDecision, PermissionRequestContext, ToolDisplay, ToolDisplaySection, UiEvent,
+};
+use crate::agent::protocol::slash::{SlashParseResult, parse_slash_command, slash_command_label};
 use crate::agent::ui::tui::{
     interaction::cancel::CancelController,
     markdown,
@@ -6,8 +10,6 @@ use crate::agent::ui::tui::{
         info_panel_for_command_palette_action,
     },
 };
-use crate::agent::protocol::slash::{SlashParseResult, parse_slash_command, slash_command_label};
-use crate::agent::protocol::event::{ToolDisplay, ToolDisplaySection, UiEvent};
 
 pub const ESC_ABORT_CONFIRM_STATUS: &str = "Hit escape again to abort.";
 const ABORT_REQUESTED_STATUS: &str = "Abort requested.";
@@ -57,10 +59,14 @@ pub enum UserAction {
     FocusPaneRight,
     EnterVisualMode,
     YankSelection,
+    PermissionAllowOnce,
+    PermissionAllowAlways,
+    PermissionDeny,
     Noop,
 }
 
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum ReducerInput {
     User(UserAction),
     Event(UiEvent),
@@ -103,6 +109,15 @@ fn reduce_user_action(
         UserAction::FocusPaneLeft => handle_focus_pane_left(state),
         UserAction::FocusPaneRight => handle_focus_pane_right(state),
         UserAction::YankSelection => handle_yank_selection(state),
+        UserAction::PermissionAllowOnce => {
+            let _ = state.submit_permission_decision(PermissionDecision::AllowOnce);
+        }
+        UserAction::PermissionAllowAlways => {
+            let _ = state.submit_permission_decision(PermissionDecision::AllowAlways);
+        }
+        UserAction::PermissionDeny => {
+            let _ = state.submit_permission_decision(PermissionDecision::Deny);
+        }
         UserAction::Resize { rows, .. } => handle_resize(state, rows),
         UserAction::ToggleCommandPalette => handle_toggle_command_palette(state),
         UserAction::CommandPaletteMoveUp => state.command_palette_move_up(),
@@ -207,6 +222,7 @@ fn handle_enter_normal_mode_from_chord(state: &mut AppState) {
 }
 
 fn handle_scroll_line_up(state: &mut AppState) {
+    state.note_user_transcript_scroll_override();
     if state.input_mode == InputMode::Visual {
         state.extend_visual_cursor_line_up();
     } else {
@@ -215,6 +231,7 @@ fn handle_scroll_line_up(state: &mut AppState) {
 }
 
 fn handle_scroll_line_down(state: &mut AppState) {
+    state.note_user_transcript_scroll_override();
     if state.input_mode == InputMode::Visual {
         state.extend_visual_cursor_line_down();
     } else {
@@ -223,6 +240,7 @@ fn handle_scroll_line_down(state: &mut AppState) {
 }
 
 fn handle_scroll_to_top(state: &mut AppState) {
+    state.note_user_transcript_scroll_override();
     if state.input_mode == InputMode::Visual {
         state.extend_visual_cursor_to_top();
     } else {
@@ -231,6 +249,7 @@ fn handle_scroll_to_top(state: &mut AppState) {
 }
 
 fn handle_scroll_to_bottom(state: &mut AppState) {
+    state.note_user_transcript_scroll_override();
     if state.input_mode == InputMode::Visual {
         state.extend_visual_cursor_to_bottom();
     } else {
@@ -303,6 +322,7 @@ fn handle_inline_slash_accept(state: &mut AppState) {
 }
 
 fn handle_scroll_page_up(state: &mut AppState) {
+    state.note_user_transcript_scroll_override();
     if state.input_mode == InputMode::Visual {
         state.extend_visual_cursor_page_up(TRANSCRIPT_PAGE_LINES);
     } else {
@@ -311,6 +331,7 @@ fn handle_scroll_page_up(state: &mut AppState) {
 }
 
 fn handle_scroll_page_down(state: &mut AppState) {
+    state.note_user_transcript_scroll_override();
     if state.input_mode == InputMode::Visual {
         state.extend_visual_cursor_page_down(TRANSCRIPT_PAGE_LINES);
     } else {
@@ -323,6 +344,11 @@ fn handle_quit(state: &mut AppState) {
 }
 
 fn handle_escape(state: &mut AppState) {
+    if state.has_permission_prompt() {
+        let _ = state.submit_permission_decision(PermissionDecision::Deny);
+        return;
+    }
+
     if state.info_panel.is_some() {
         state.close_info_panel();
         return;
@@ -366,13 +392,26 @@ fn reduce_ui_event(state: &mut AppState, event: UiEvent) {
             display,
             ..
         } => handle_tool_end(state, &name, &arguments, success, display),
+        UiEvent::PermissionRequested {
+            request_id,
+            context,
+        } => handle_permission_requested(state, request_id, context),
+        UiEvent::PermissionDecisionSubmitted { .. }
+        | UiEvent::PermissionDecisionTimedOut { .. }
+        | UiEvent::PermissionDecisionIgnored { .. } => {}
         UiEvent::LlmEnd {
             response_chars,
             input_tokens,
             output_tokens,
             total_tokens,
             ..
-        } => handle_llm_end(state, response_chars, input_tokens, output_tokens, total_tokens),
+        } => handle_llm_end(
+            state,
+            response_chars,
+            input_tokens,
+            output_tokens,
+            total_tokens,
+        ),
         UiEvent::Warning { message } => handle_warning(state, message),
         UiEvent::CompactionStarted { source } => {
             state.start_compaction_block(&source);
@@ -436,6 +475,30 @@ fn handle_tool_start(state: &mut AppState, name: &str, arguments: &str) {
     state.status_line = format!("Tool: {name}");
 }
 
+fn handle_permission_requested(
+    state: &mut AppState,
+    request_id: String,
+    context: PermissionRequestContext,
+) {
+    let attached_tool_transcript_line_index =
+        state.latest_in_progress_tool_transcript_line_for_tool(&context.tool);
+
+    state.open_permission_prompt(crate::agent::ui::tui::state::PermissionPrompt {
+        request_id,
+        matched_rule_identity: context.matched_rule_identity,
+        tool: context.tool,
+        source: context.source,
+        mode: context.mode,
+        scope: context.scope,
+        pattern: context.pattern,
+        target_field: context.target_field,
+        summary: context.summary,
+        pre_authorize_display: context.pre_authorize_display,
+        attached_tool_transcript_line_index,
+    });
+    state.focus_transcript_pane();
+}
+
 fn append_direct_tool_display(state: &mut AppState, display: ToolDisplay) {
     let suppress_title = should_suppress_redundant_edit_title(&display);
     let suppress_single_section_stats = suppress_title && display.sections.len() == 1;
@@ -465,9 +528,7 @@ fn append_direct_tool_display_section(
         format!("{} ({})", section.label, section.language),
     );
 
-    if !suppress_stats_line
-        && let Some(stats) = section.stats
-    {
+    if !suppress_stats_line && let Some(stats) = section.stats {
         let mut stat_parts = Vec::new();
         if let Some(files_changed) = stats.files_changed {
             stat_parts.push(format!("files={files_changed}"));
@@ -624,7 +685,10 @@ fn handle_assistant_message(state: &mut AppState, text: String) {
     }
 }
 
-fn assistant_diff_regurgitation_is_redundant(state: &AppState, assistant_lines: &[ratatui::text::Line<'static>]) -> bool {
+fn assistant_diff_regurgitation_is_redundant(
+    state: &AppState,
+    assistant_lines: &[ratatui::text::Line<'static>],
+) -> bool {
     let latest_tool_display_diff = latest_tool_display_diff_lines(state);
     let Some(latest_tool_display_diff) = latest_tool_display_diff else {
         return false;
@@ -641,9 +705,9 @@ fn assistant_diff_regurgitation_is_redundant(state: &AppState, assistant_lines: 
         return false;
     }
 
-    let contains_diff_signature = candidate
-        .iter()
-        .any(|line| line.starts_with("--- ") || line.starts_with("+++ ") || line.starts_with("@@ "));
+    let contains_diff_signature = candidate.iter().any(|line| {
+        line.starts_with("--- ") || line.starts_with("+++ ") || line.starts_with("@@ ")
+    });
     if !contains_diff_signature {
         return false;
     }

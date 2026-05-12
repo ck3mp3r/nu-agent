@@ -7,22 +7,23 @@ mod mode_execute;
 mod runtime_build;
 
 use crate::{
+    AgentPlugin,
     agent::{
         conversation::runtime::AgentConversationRuntime,
-        protocol::{
-            compaction::CompactionTriggerState,
-            contracts::UiMessageSnapshot,
+        protocol::{compaction::CompactionTriggerState, contracts::UiMessageSnapshot},
+        session::resolver::{DefaultSessionResolver, SessionResolutionInput, SessionResolver},
+        tools::{
+            authz::{
+                AskRuntimeConfig, AsyncAskHook, NonInteractiveAskMode, PermissionsConfig,
+                PermissionsOverlay, SessionGrantCache,
+            },
+            handler::McpToolRegistry,
         },
-        session::resolver::{
-            DefaultSessionResolver, SessionResolutionInput, SessionResolver,
-        },
-        tools::handler::McpToolRegistry,
         ui::{
             policy::{UiPolicy, resolve_ui_policy},
             tui::{platform::safety::RestoreRunError, runtime::RuntimeRunError},
         },
     },
-    AgentPlugin,
     config::{Config, PluginConfig},
     plugin::RuntimeCtx,
 };
@@ -39,12 +40,75 @@ impl AgentMode {
     }
 }
 
-fn resolve_agent_mode(input_is_nothing: bool, stdin_is_tty: bool, stderr_is_tty: bool) -> AgentMode {
+fn resolve_agent_mode(
+    input_is_nothing: bool,
+    stdin_is_tty: bool,
+    stderr_is_tty: bool,
+) -> AgentMode {
     if input_is_nothing && stdin_is_tty && stderr_is_tty {
         AgentMode::Tui
     } else {
         AgentMode::Stderr
     }
+}
+
+fn resolve_non_interactive_ask_mode(
+    plugin_config: Option<&Value>,
+) -> Result<NonInteractiveAskMode, LabeledError> {
+    let Some(config) = plugin_config else {
+        return Ok(NonInteractiveAskMode::Deny);
+    };
+    let Ok(record) = config.as_record() else {
+        return Ok(NonInteractiveAskMode::Deny);
+    };
+    let Some(value) = record.get("non_interactive_ask") else {
+        return Ok(NonInteractiveAskMode::Deny);
+    };
+    let raw = value.as_str().map_err(|_| {
+        LabeledError::new("Invalid non_interactive_ask type").with_label(
+            "non_interactive_ask must be 'deny' or 'allow'",
+            config.span(),
+        )
+    })?;
+    match raw {
+        "deny" => Ok(NonInteractiveAskMode::Deny),
+        "allow" => Ok(NonInteractiveAskMode::Allow),
+        other => Err(
+            LabeledError::new("Invalid non_interactive_ask value").with_label(
+                format!("unsupported value '{other}'; expected 'deny' or 'allow'"),
+                config.span(),
+            ),
+        ),
+    }
+}
+
+fn resolve_effective_permissions_config(
+    call: &EvaluatedCall,
+    plugin_config: Option<&Value>,
+) -> Result<(PermissionsConfig, String), LabeledError> {
+    let base = PermissionsConfig::parse_from_plugin_config(plugin_config);
+    let cli_permissions: Option<Value> = call.get_flag("permissions").ok().flatten();
+
+    let effective = if let Some(value) = cli_permissions.as_ref() {
+        let overlay = PermissionsOverlay::parse_from_cli_value(value).map_err(|msg| {
+            LabeledError::new("Invalid --permissions value").with_label(msg, value.span())
+        })?;
+        base.with_overlay(&overlay)
+    } else {
+        base
+    };
+
+    let summary = effective.summary();
+    let overlay_active = cli_permissions.is_some();
+    let startup_message = format!(
+        "permissions policy: overlay_active={} global={} tool_rules={} nu__run.command_rules={}",
+        overlay_active,
+        summary.global.as_str(),
+        summary.tool_rule_count,
+        summary.nu_run_command_rule_count,
+    );
+
+    Ok((effective, startup_message))
 }
 
 /// Trait abstracting the engine interface functionality needed for config resolution.
@@ -372,12 +436,6 @@ impl SimplePluginCommand for Agent {
             ])
             .category(Category::Experimental)
             .named(
-                "provider",
-                nu_protocol::SyntaxShape::String,
-                "[DEPRECATED] LLM provider name - use --model with provider/model format instead",
-                Some('p'),
-            )
-            .named(
                 "model",
                 nu_protocol::SyntaxShape::String,
                 "Model to use in provider/model format (e.g., 'openai/gpt-4', 'anthropic/claude-3-opus')",
@@ -404,12 +462,6 @@ impl SimplePluginCommand for Agent {
                 "temperature",
                 nu_protocol::SyntaxShape::Number,
                 "Sampling temperature (0.0 to 2.0)",
-                None,
-            )
-            .named(
-                "max-tokens",
-                nu_protocol::SyntaxShape::Int,
-                "Maximum tokens to generate",
                 None,
             )
             .named(
@@ -440,6 +492,12 @@ impl SimplePluginCommand for Agent {
                 "mcp-tools",
                 nu_protocol::SyntaxShape::List(Box::new(nu_protocol::SyntaxShape::String)),
                 "List of MCP tool name glob patterns, e.g. ['k8s__*', 'gh__list_*']",
+                None,
+            )
+            .named(
+                "permissions",
+                nu_protocol::SyntaxShape::Record(vec![]),
+                "Structured permissions overlay record for this run",
                 None,
             )
             .named(
@@ -516,14 +574,19 @@ impl SimplePluginCommand for Agent {
         // Empty patterns means "no filtering" (match all MCP tools).
         let mcp_patterns = extract_mcp_patterns_from_call(call)?;
 
-        let mcp_config = engine
-            .get_plugin_config()?
-            .map(|value| crate::tools::mcp::config::McpConfig::from_plugin_config(&value))
+        let plugin_config_value = engine.get_plugin_config()?;
+
+        let mcp_config = plugin_config_value
+            .as_ref()
+            .map(crate::tools::mcp::config::McpConfig::from_plugin_config)
             .transpose()
             .map_err(|err| {
                 LabeledError::new("Failed to load MCP config")
                     .with_label(err.to_string(), call.head)
             })?;
+
+        let (effective_permissions, permissions_startup_summary) =
+            resolve_effective_permissions_config(call, plugin_config_value.as_ref())?;
 
         // Create async runtime for LLM and MCP tool execution
         let runtime = tokio::runtime::Runtime::new()
@@ -565,20 +628,17 @@ impl SimplePluginCommand for Agent {
 
         let mcp_tool_server_handle = mcp_runtime.as_ref().map(|r| r.tool_server_handle());
 
-        let mcp_lifecycle_projection = if let (Some(runtime), Some(cfg)) =
-            (mcp_runtime.as_ref(), mcp_config.as_ref())
-        {
-            runtime.lifecycle_projection(&cfg.mcp)
-        } else {
-            Vec::new()
-        };
+        let mcp_lifecycle_projection =
+            if let (Some(runtime), Some(cfg)) = (mcp_runtime.as_ref(), mcp_config.as_ref()) {
+                runtime.lifecycle_projection(&cfg.mcp)
+            } else {
+                Vec::new()
+            };
 
-        let mcp_registry = McpToolRegistry::from_tools(
-            discovered_mcp_tools.clone(),
-        )
-        .map_err(|msg| {
-            LabeledError::new("Failed to build MCP tool registry").with_label(msg, call.head)
-        })?;
+        let mcp_registry =
+            McpToolRegistry::from_tools(discovered_mcp_tools.clone()).map_err(|msg| {
+                LabeledError::new("Failed to build MCP tool registry").with_label(msg, call.head)
+            })?;
 
         // Convert closures to tool definitions for LLM
         use crate::tools::closure::closure_to_tool_definition;
@@ -644,11 +704,11 @@ impl SimplePluginCommand for Agent {
             mcp_registry,
             mcp_tool_server_handle,
             mcp_lifecycle_projection,
-            mcp_server_configs: mcp_config.as_ref().map(|cfg| cfg.mcp.clone()).unwrap_or_default(),
-            mcp_caller_cwd: engine
-                .get_current_dir()
-                .ok()
-                .map(std::path::PathBuf::from),
+            mcp_server_configs: mcp_config
+                .as_ref()
+                .map(|cfg| cfg.mcp.clone())
+                .unwrap_or_default(),
+            mcp_caller_cwd: engine.get_current_dir().ok().map(std::path::PathBuf::from),
             tool_executor,
             engine: engine.clone(),
             store: self.store.clone(),
@@ -657,9 +717,19 @@ impl SimplePluginCommand for Agent {
             auto_compaction_tolerance: 0,
             auto_compaction_hysteresis_margin: 0,
             auto_compaction_state: CompactionTriggerState::default(),
-            startup_plugin_config: engine
-                .get_plugin_config()?
-                .and_then(|value| PluginConfig::from_plugin_config(&value).ok()),
+            startup_plugin_config: plugin_config_value
+                .as_ref()
+                .and_then(|value| PluginConfig::from_plugin_config(value).ok()),
+            permissions: effective_permissions,
+            permissions_startup_summary,
+            permissions_startup_emitted: false,
+            session_grants: SessionGrantCache::default(),
+            ask_hook: AsyncAskHook::new(AskRuntimeConfig {
+                interactive: mode.is_tui(),
+                non_interactive_mode:
+                    resolve_non_interactive_ask_mode(plugin_config_value.as_ref())?,
+                ..AskRuntimeConfig::default()
+            }),
         };
         match mode {
             AgentMode::Tui => run_tui_mode(
@@ -735,7 +805,11 @@ pub(crate) fn build_model_picker_catalog_from_plugin_config(
         left.provider
             .to_ascii_lowercase()
             .cmp(&right.provider.to_ascii_lowercase())
-            .then_with(|| left.model.to_ascii_lowercase().cmp(&right.model.to_ascii_lowercase()))
+            .then_with(|| {
+                left.model
+                    .to_ascii_lowercase()
+                    .cmp(&right.model.to_ascii_lowercase())
+            })
     });
     options
 }
@@ -780,9 +854,9 @@ fn map_tui_run_result(
         })) => Err(LabeledError::new(format!(
             "TUI run failed and terminal restore failed: run={run_error}, restore={restore_error}"
         ))),
-        Err(RuntimeRunError::Run(RestoreRunError::Restore(err))) => Err(
-            LabeledError::new(format!("Failed to restore terminal after TUI run: {err}")),
-        ),
+        Err(RuntimeRunError::Run(RestoreRunError::Restore(err))) => Err(LabeledError::new(
+            format!("Failed to restore terminal after TUI run: {err}"),
+        )),
     }
 }
 
@@ -809,13 +883,13 @@ pub fn extract_flag_config(call: &EvaluatedCall) -> Config {
 ///    - Else if --small flag provided: use small_model from PluginConfig
 ///    - Else use config.model (default)
 /// 3. Call PluginConfig::resolve_model() to get base Config
-/// 4. Merge with flag overrides (temperature, max_tokens, etc.)
+/// 4. Merge with flag overrides (temperature, max-context/output-tokens, etc.)
 /// 5. Validate and return
 ///
 /// FALLBACK for backward compatibility:
 /// - If plugin config doesn't have new structure (no "providers" field)
 /// - Fall back to OLD Config::from_plugin_config() behavior
-/// - Support old --provider and --model flags (separate)
+/// - Model override remains authoritative via --model (provider/model format)
 ///
 /// # Arguments
 /// * `engine` - Engine interface for accessing plugin config

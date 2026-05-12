@@ -26,7 +26,11 @@ pub(crate) fn load_agents_chain_for_cwd_for_tests(
     load_agents_chain_internal(cwd, home, stop_at)
 }
 
-fn load_agents_chain_internal(cwd: &Path, home: Option<&Path>, stop_at: Option<&Path>) -> AgentsLoadResult {
+fn load_agents_chain_internal(
+    cwd: &Path,
+    home: Option<&Path>,
+    stop_at: Option<&Path>,
+) -> AgentsLoadResult {
     let mut warnings = Vec::new();
     let mut merged_segments = Vec::new();
     let mut seen = HashSet::new();
@@ -63,7 +67,11 @@ fn canonical_path_key(path: &Path) -> PathBuf {
     fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-fn discover_candidate_paths(cwd: &Path, home: Option<&Path>, stop_at: Option<&Path>) -> Vec<PathBuf> {
+fn discover_candidate_paths(
+    cwd: &Path,
+    home: Option<&Path>,
+    stop_at: Option<&Path>,
+) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
     if let Some(home_dir) = home {
@@ -78,9 +86,10 @@ fn discover_candidate_paths(cwd: &Path, home: Option<&Path>, stop_at: Option<&Pa
 
     if let Some(stop) = stop_at {
         let stop_canonical = canonical_path_key(stop);
-        if let Some(start_index) = ancestors.iter().position(|p| {
-            canonical_path_key(p) == stop_canonical
-        }) {
+        if let Some(start_index) = ancestors
+            .iter()
+            .position(|p| canonical_path_key(p) == stop_canonical)
+        {
             ancestors = ancestors[start_index..].to_vec();
         }
     }

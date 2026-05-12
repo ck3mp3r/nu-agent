@@ -22,8 +22,10 @@ pub(super) fn current_transcript_cursor_index(state: &AppState) -> Option<usize>
 }
 
 pub(super) fn transcript_viewport_model(state: &AppState) -> TranscriptViewport {
-    let mut model =
-        TranscriptViewport::new(state.transcript_preview.len(), state.transcript_viewport_lines.max(1));
+    let mut model = TranscriptViewport::new(
+        state.transcript_preview.len(),
+        state.transcript_viewport_lines.max(1),
+    );
     model.set_cursor_index(state.transcript_cursor);
     if state.transcript_follow_tail {
         model.jump_bottom();

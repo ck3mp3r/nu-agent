@@ -69,7 +69,8 @@ impl Projector {
             return;
         }
         self.ensure_prefix();
-        self.current_spans.push(Span::styled(text.to_string(), style));
+        self.current_spans
+            .push(Span::styled(text.to_string(), style));
     }
 
     fn ensure_prefix(&mut self) {
@@ -141,7 +142,9 @@ impl Projector {
             }
             Tag::List(start) => {
                 self.flush_line();
-                self.list_stack.push(ListState { ordered_next: start });
+                self.list_stack.push(ListState {
+                    ordered_next: start,
+                });
             }
             Tag::Item => {
                 self.flush_line();

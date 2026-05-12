@@ -7,7 +7,9 @@ mod test;
 
 use ratatui::text::{Line, Span};
 
-use self::{projector::project_markdown_to_lines_inner, sanitize::sanitize_assistant_visible_markdown};
+use self::{
+    projector::project_markdown_to_lines_inner, sanitize::sanitize_assistant_visible_markdown,
+};
 
 fn fallback_plain_text_lines(markdown: &str) -> Vec<Line<'static>> {
     markdown

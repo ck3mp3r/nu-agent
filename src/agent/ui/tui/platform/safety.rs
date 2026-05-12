@@ -1,12 +1,7 @@
-use std::panic::{
-    self,
-    AssertUnwindSafe,
-};
+use std::panic::{self, AssertUnwindSafe};
 
 use crate::agent::ui::tui::platform::terminal::{
-    TerminalBackend,
-    TerminalLifecycle,
-    TerminalLifecycleError,
+    TerminalBackend, TerminalLifecycle, TerminalLifecycleError,
 };
 
 pub trait TerminalRestorer {
@@ -44,7 +39,9 @@ where
 
     match run_result {
         Ok(Ok(value)) => {
-            restorer.restore_terminal().map_err(RestoreRunError::Restore)?;
+            restorer
+                .restore_terminal()
+                .map_err(RestoreRunError::Restore)?;
             Ok(value)
         }
         Ok(Err(run_error)) => match restorer.restore_terminal() {

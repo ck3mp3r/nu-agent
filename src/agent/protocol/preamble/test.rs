@@ -6,8 +6,7 @@ const ASSET_GITHUB_COPILOT_OPENAI_GPT5X: &str =
     include_str!("defaults/github_copilot_openai_gpt5x.md");
 const ASSET_GITHUB_COPILOT_OPENAI_GPT4X: &str =
     include_str!("defaults/github_copilot_openai_gpt4x.md");
-const ASSET_GITHUB_COPILOT_ANTHROPIC: &str =
-    include_str!("defaults/github_copilot_anthropic.md");
+const ASSET_GITHUB_COPILOT_ANTHROPIC: &str = include_str!("defaults/github_copilot_anthropic.md");
 const ASSET_OPENAI_GPT5X: &str = include_str!("defaults/openai_gpt5x.md");
 const ASSET_OPENAI_GPT4X: &str = include_str!("defaults/openai_gpt4x.md");
 const ASSET_ANTHROPIC: &str = include_str!("defaults/anthropic.md");
@@ -55,8 +54,14 @@ fn mk_input(
 
 #[test]
 fn classify_model_family_openai_and_anthropic() {
-    assert_eq!(classify_model_family("openai", "gpt-5-preview"), ModelFamily::Gpt5x);
-    assert_eq!(classify_model_family("openai", "gpt-4o"), ModelFamily::Gpt4x);
+    assert_eq!(
+        classify_model_family("openai", "gpt-5-preview"),
+        ModelFamily::Gpt5x
+    );
+    assert_eq!(
+        classify_model_family("openai", "gpt-4o"),
+        ModelFamily::Gpt4x
+    );
     assert_eq!(
         classify_model_family("anthropic", "claude-sonnet-4.5"),
         ModelFamily::Anthropic
@@ -85,9 +90,18 @@ fn classify_model_family_github_copilot_nested_backend_models() {
 
 #[test]
 fn classify_model_family_unknown_cases() {
-    assert_eq!(classify_model_family("openai", "omni-3"), ModelFamily::Unknown);
-    assert_eq!(classify_model_family("github-copilot", "openai"), ModelFamily::Unknown);
-    assert_eq!(classify_model_family("unknown", "x/y"), ModelFamily::Unknown);
+    assert_eq!(
+        classify_model_family("openai", "omni-3"),
+        ModelFamily::Unknown
+    );
+    assert_eq!(
+        classify_model_family("github-copilot", "openai"),
+        ModelFamily::Unknown
+    );
+    assert_eq!(
+        classify_model_family("unknown", "x/y"),
+        ModelFamily::Unknown
+    );
 }
 
 #[test]
@@ -118,7 +132,10 @@ fn resolve_preamble_falls_back_to_user_provider() {
 #[test]
 fn resolve_preamble_falls_back_to_builtin_provider_family() {
     let defaults = base_defaults();
-    let result = resolve_preamble(mk_input("openai", ModelFamily::Gpt5x, None, None), &defaults);
+    let result = resolve_preamble(
+        mk_input("openai", ModelFamily::Gpt5x, None, None),
+        &defaults,
+    );
     assert_eq!(result.as_deref(), Some("builtin_pf_openai_gpt5x"));
 }
 
@@ -210,7 +227,10 @@ fn resolve_preamble_catalog_includes_required_builtin_targets() {
         defaults.provider_preamble("anthropic"),
         Some(ASSET_ANTHROPIC.trim())
     );
-    assert_eq!(defaults.global_fallback(), Some(ASSET_GLOBAL_FALLBACK.trim()));
+    assert_eq!(
+        defaults.global_fallback(),
+        Some(ASSET_GLOBAL_FALLBACK.trim())
+    );
 }
 
 #[test]
@@ -224,7 +244,10 @@ fn builtin_assets_are_non_empty_after_trim() {
         ASSET_ANTHROPIC,
         ASSET_GLOBAL_FALLBACK,
     ] {
-        assert!(!asset.trim().is_empty(), "asset should not be empty after trim");
+        assert!(
+            !asset.trim().is_empty(),
+            "asset should not be empty after trim"
+        );
     }
 }
 

@@ -27,6 +27,32 @@ fn ui_event_contract_exposes_required_variants() {
             error_kind: None,
             message: None,
         },
+        UiEvent::PermissionRequested {
+            request_id: "ask-0000000000000001".to_string(),
+            context: crate::agent::protocol::event::PermissionRequestContext {
+                tool: "nu__run".to_string(),
+                source: "closure".to_string(),
+                mode: Some("apply".to_string()),
+                matched_rule_identity: "nested:nu__run.command:*".to_string(),
+                scope: "nested".to_string(),
+                target_field: Some("command".to_string()),
+                pattern: "*".to_string(),
+                summary: "tool[nu__run] args={\"command\":\"echo hi\"}".to_string(),
+                pre_authorize_display: None,
+            },
+        },
+        UiEvent::PermissionDecisionSubmitted {
+            request_id: "ask-0000000000000001".to_string(),
+            decision: crate::agent::protocol::event::PermissionDecision::AllowOnce,
+            matched_rule_identity: "nested:nu__run.command:*".to_string(),
+        },
+        UiEvent::PermissionDecisionTimedOut {
+            request_id: "ask-0000000000000002".to_string(),
+        },
+        UiEvent::PermissionDecisionIgnored {
+            request_id: "ask-0000000000000003".to_string(),
+            reason: "stale_or_unknown_request".to_string(),
+        },
         UiEvent::Warning {
             message: "compaction failed".to_string(),
         },
@@ -50,5 +76,81 @@ fn ui_event_contract_exposes_required_variants() {
         UiEvent::Completed { tool_calls: 1 },
     ];
 
-    assert_eq!(events.len(), 11);
+    assert_eq!(events.len(), 15);
+}
+
+#[test]
+fn permission_event_field_shape_is_explicit_and_stable() {
+    let requested = UiEvent::PermissionRequested {
+        request_id: "ask-0000000000000001".to_string(),
+        context: crate::agent::protocol::event::PermissionRequestContext {
+            tool: "nu__run".to_string(),
+            source: "closure".to_string(),
+            mode: Some("apply".to_string()),
+            matched_rule_identity: "nested:nu__run.command:*".to_string(),
+            scope: "nested".to_string(),
+            target_field: Some("command".to_string()),
+            pattern: "*".to_string(),
+            summary: "tool[nu__run] args={\"command\":\"echo hi\"}".to_string(),
+            pre_authorize_display: None,
+        },
+    };
+    match requested {
+        UiEvent::PermissionRequested {
+            request_id,
+            context,
+        } => {
+            assert_eq!(request_id, "ask-0000000000000001");
+            assert_eq!(context.tool, "nu__run");
+            assert_eq!(context.source, "closure");
+            assert_eq!(context.mode.as_deref(), Some("apply"));
+            assert_eq!(context.matched_rule_identity, "nested:nu__run.command:*");
+            assert_eq!(context.scope, "nested");
+            assert_eq!(context.target_field.as_deref(), Some("command"));
+            assert_eq!(context.pattern, "*");
+            assert!(context.summary.starts_with("tool[nu__run] args="));
+            assert!(context.pre_authorize_display.is_none());
+        }
+        other => panic!("unexpected variant: {other:?}"),
+    }
+
+    let submitted = UiEvent::PermissionDecisionSubmitted {
+        request_id: "ask-0000000000000001".to_string(),
+        decision: crate::agent::protocol::event::PermissionDecision::AllowAlways,
+        matched_rule_identity: "nested:nu__run.command:*".to_string(),
+    };
+    match submitted {
+        UiEvent::PermissionDecisionSubmitted {
+            request_id,
+            decision,
+            matched_rule_identity,
+        } => {
+            assert_eq!(request_id, "ask-0000000000000001");
+            assert_eq!(decision.as_str(), "allow_always");
+            assert_eq!(matched_rule_identity, "nested:nu__run.command:*");
+        }
+        other => panic!("unexpected variant: {other:?}"),
+    }
+
+    let timed_out = UiEvent::PermissionDecisionTimedOut {
+        request_id: "ask-0000000000000002".to_string(),
+    };
+    match timed_out {
+        UiEvent::PermissionDecisionTimedOut { request_id } => {
+            assert_eq!(request_id, "ask-0000000000000002");
+        }
+        other => panic!("unexpected variant: {other:?}"),
+    }
+
+    let ignored = UiEvent::PermissionDecisionIgnored {
+        request_id: "ask-0000000000000003".to_string(),
+        reason: "rule_identity_mismatch".to_string(),
+    };
+    match ignored {
+        UiEvent::PermissionDecisionIgnored { request_id, reason } => {
+            assert_eq!(request_id, "ask-0000000000000003");
+            assert_eq!(reason, "rule_identity_mismatch");
+        }
+        other => panic!("unexpected variant: {other:?}"),
+    }
 }

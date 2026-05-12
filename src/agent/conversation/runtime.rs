@@ -7,7 +7,9 @@ use crate::{
     config::Config,
     llm::LlmResponse,
     plugin::RuntimeCtx,
-    session::{CompactionInvocationMode, CompactionOutcome, Message, MessageUsage, Session, SessionStore},
+    session::{
+        CompactionInvocationMode, CompactionOutcome, Message, MessageUsage, Session, SessionStore,
+    },
     tools::{closure::ClosureRegistry, executor::ToolExecutor},
 };
 
@@ -22,7 +24,10 @@ use crate::agent::{
         event::UiEvent,
         tool_args::summarize_tool_arguments,
     },
-    tools::handler::{self, McpToolRegistry, ToolSource},
+    tools::{
+        authz::{AsyncAskHook, PermissionEventSink, PermissionsConfig, SessionGrantCache},
+        handler::{self, McpToolRegistry, ToolHandlerContext, ToolSource},
+    },
 };
 use crate::tools::mcp::{config::McpServerConfig, runtime::McpServerLifecycle};
 
@@ -71,8 +76,12 @@ impl HistoryEntry {
 fn is_edit_sanitizable_mode(arguments: &str) -> bool {
     match serde_json::from_str::<serde_json::Value>(arguments)
         .ok()
-        .and_then(|value| value.get("mode").and_then(serde_json::Value::as_str).map(str::to_string))
-    {
+        .and_then(|value| {
+            value
+                .get("mode")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        }) {
         Some(mode) => mode == "preview" || mode == "apply",
         None => true,
     }
@@ -129,9 +138,13 @@ fn sanitize_tool_result_for_history_prompt(result: &handler::ToolCallResult) -> 
     {
         compact.insert("stats".to_string(), compact_stats);
     }
-    compact.insert("diff_rendered_directly".to_string(), serde_json::Value::Bool(true));
+    compact.insert(
+        "diff_rendered_directly".to_string(),
+        serde_json::Value::Bool(true),
+    );
 
-    serde_json::to_string(&serde_json::Value::Object(compact)).unwrap_or_else(|_| result.content.clone())
+    serde_json::to_string(&serde_json::Value::Object(compact))
+        .unwrap_or_else(|_| result.content.clone())
 }
 
 fn call_llm_with_ui_ticks<U: ProgressUi>(
@@ -170,8 +183,10 @@ fn merge_runtime_prompt(
 ) -> String {
     let prompt_with_skills =
         crate::agent::protocol::prompt::merge_prompt_with_context(prompt, available_skills);
-    let prompt_with_agents =
-        crate::agent::protocol::prompt::merge_prompt_with_context(&prompt_with_skills, agents_chain);
+    let prompt_with_agents = crate::agent::protocol::prompt::merge_prompt_with_context(
+        &prompt_with_skills,
+        agents_chain,
+    );
     crate::agent::protocol::prompt::merge_preamble_with_prompt_and_context(
         &prompt_with_agents,
         context,
@@ -199,6 +214,34 @@ pub(crate) struct AgentConversationRuntime {
     pub auto_compaction_hysteresis_margin: usize,
     pub auto_compaction_state: CompactionTriggerState,
     pub startup_plugin_config: Option<crate::config::PluginConfig>,
+    pub permissions: PermissionsConfig,
+    pub permissions_startup_summary: String,
+    pub permissions_startup_emitted: bool,
+    pub session_grants: SessionGrantCache,
+    pub ask_hook: AsyncAskHook,
+}
+
+struct UiPermissionSink<'a, U: ProgressUi> {
+    ui: &'a mut U,
+}
+
+impl<U: ProgressUi> PermissionEventSink for UiPermissionSink<'_, U> {
+    fn emit(&mut self, event: UiEvent) {
+        self.ui.emit(&event);
+    }
+}
+
+fn emit_permissions_startup_summary_once<U: ProgressUi>(
+    ui: &mut U,
+    emitted: &mut bool,
+    summary: &str,
+) {
+    if !*emitted {
+        ui.emit(&UiEvent::Warning {
+            message: summary.to_string(),
+        });
+        *emitted = true;
+    }
 }
 
 fn apply_switched_config(current: &mut Config, switched: Config) {
@@ -206,7 +249,11 @@ fn apply_switched_config(current: &mut Config, switched: Config) {
 }
 
 impl ConversationRuntime for AgentConversationRuntime {
-    fn set_mcp_server_enabled(&mut self, server_name: &str, enabled: bool) -> Result<McpUsabilityState, String> {
+    fn set_mcp_server_enabled(
+        &mut self,
+        server_name: &str,
+        enabled: bool,
+    ) -> Result<McpUsabilityState, String> {
         if !enabled {
             self.mcp_registry.set_server_enabled(server_name, false)?;
             return Ok(McpUsabilityState::Disabled);
@@ -222,13 +269,15 @@ impl ConversationRuntime for AgentConversationRuntime {
             return Ok(McpUsabilityState::Failed);
         };
 
-        match self.runtime.block_on(crate::tools::mcp::runtime::connect_servers(
-            &[McpServerConfig {
-                enabled: true,
-                ..server_config
-            }],
-            self.mcp_caller_cwd.as_deref(),
-        )) {
+        match self
+            .runtime
+            .block_on(crate::tools::mcp::runtime::connect_servers(
+                &[McpServerConfig {
+                    enabled: true,
+                    ..server_config
+                }],
+                self.mcp_caller_cwd.as_deref(),
+            )) {
             Ok(runtime) if runtime.has_sessions() => {
                 self.mcp_registry.set_server_enabled(server_name, true)?;
                 Ok(McpUsabilityState::Enabled)
@@ -273,7 +322,10 @@ impl ConversationRuntime for AgentConversationRuntime {
             self.auto_compaction_tolerance,
             self.auto_compaction_hysteresis_margin,
         );
-        Some(policy.evaluate(Some(session.messages().len()), &mut self.auto_compaction_state))
+        Some(policy.evaluate(
+            Some(session.messages().len()),
+            &mut self.auto_compaction_state,
+        ))
     }
 
     fn execute_compaction_trigger<U: ProgressUi>(
@@ -291,6 +343,12 @@ impl ConversationRuntime for AgentConversationRuntime {
         context: Option<String>,
         span: Span,
     ) -> Result<Value, LabeledError> {
+        emit_permissions_startup_summary_once(
+            ui,
+            &mut self.permissions_startup_emitted,
+            &self.permissions_startup_summary,
+        );
+
         let loaded_agents = self
             .mcp_caller_cwd
             .as_deref()
@@ -319,7 +377,10 @@ impl ConversationRuntime for AgentConversationRuntime {
         if let Some(ref session) = self.session {
             let history = session.format_history();
             if !history.is_empty() {
-                merged_prompt = format!("Previous conversation:\n{}\n\n---\n\n{}", history, merged_prompt);
+                merged_prompt = format!(
+                    "Previous conversation:\n{}\n\n---\n\n{}",
+                    history, merged_prompt
+                );
             }
         }
 
@@ -342,10 +403,8 @@ impl ConversationRuntime for AgentConversationRuntime {
                 {
                     return Ok(value);
                 }
-                return Err(
-                    LabeledError::new(format!("LLM call failed: {}", e.msg))
-                        .with_label(e.msg, span),
-                );
+                return Err(LabeledError::new(format!("LLM call failed: {}", e.msg))
+                    .with_label(e.msg, span));
             }
         };
         ui.emit(&UiEvent::LlmEnd {
@@ -388,14 +447,24 @@ impl ConversationRuntime for AgentConversationRuntime {
 
             executed_tool_calls.extend(llm_response.tool_calls.clone());
 
+            let mut permission_sink = UiPermissionSink { ui };
+            let mut handler_context = ToolHandlerContext {
+                closure_registry: &self.closure_registry,
+                mcp_registry: &self.mcp_registry,
+                mcp_tool_server: self.mcp_tool_server_handle.as_ref(),
+                tool_executor: &self.tool_executor,
+                engine: &self.engine,
+                authorization: handler::ToolAuthorizationContext {
+                    permissions: &self.permissions,
+                    grant_cache: &mut self.session_grants,
+                    ask_hook: &mut self.ask_hook,
+                    event_sink: &mut permission_sink,
+                },
+                span,
+            };
             let tool_results = self.runtime.block_on(handler::handle_tool_calls(
                 llm_response.tool_calls.clone(),
-                &self.closure_registry,
-                &self.mcp_registry,
-                self.mcp_tool_server_handle.as_ref(),
-                &self.tool_executor,
-                &self.engine,
-                span,
+                &mut handler_context,
             ));
 
             for result in &tool_results {
@@ -416,7 +485,10 @@ impl ConversationRuntime for AgentConversationRuntime {
                         .failure
                         .as_ref()
                         .map(|failure| failure.error_kind.as_str().to_string()),
-                    message: result.failure.as_ref().map(|failure| failure.message.clone()),
+                    message: result
+                        .failure
+                        .as_ref()
+                        .map(|failure| failure.message.clone()),
                 });
 
                 tool_results_metadata.push(crate::llm::ToolCallMetadata {
@@ -428,7 +500,10 @@ impl ConversationRuntime for AgentConversationRuntime {
                         .failure
                         .as_ref()
                         .map(|failure| failure.error_kind.as_str().to_string()),
-                    message: result.failure.as_ref().map(|failure| failure.message.clone()),
+                    message: result
+                        .failure
+                        .as_ref()
+                        .map(|failure| failure.message.clone()),
                     details: result
                         .failure
                         .as_ref()
@@ -446,15 +521,13 @@ impl ConversationRuntime for AgentConversationRuntime {
 
             if let Some(ref mut session) = self.session {
                 for result in &tool_results {
-                    let tool_msg = Message::new(
-                        "tool".to_string(),
-                        persisted_tool_text_for(result),
-                    )
-                    .with_tool_details(
-                        result.arguments.clone(),
-                        result.content.clone(),
-                        result.failure.is_none(),
-                    );
+                    let tool_msg =
+                        Message::new("tool".to_string(), persisted_tool_text_for(result))
+                            .with_tool_details(
+                                result.arguments.clone(),
+                                result.content.clone(),
+                                result.failure.is_none(),
+                            );
                     session.add_message(&self.store, tool_msg).map_err(|e| {
                         LabeledError::new(format!("Failed to save tool message: {}", e))
                     })?;
@@ -497,10 +570,8 @@ impl ConversationRuntime for AgentConversationRuntime {
                     {
                         return Ok(value);
                     }
-                    return Err(
-                        LabeledError::new(format!("LLM call failed: {}", e.msg))
-                            .with_label(e.msg, span),
-                    );
+                    return Err(LabeledError::new(format!("LLM call failed: {}", e.msg))
+                        .with_label(e.msg, span));
                 }
             };
             ui.emit(&UiEvent::LlmEnd {
@@ -529,22 +600,23 @@ impl ConversationRuntime for AgentConversationRuntime {
 
         if self.session.is_some() {
             {
-                let session = self
-                    .session
-                    .as_mut()
-                    .expect("session checked as present");
+                let session = self.session.as_mut().expect("session checked as present");
                 let user_msg = Message::new("user".to_string(), prompt.clone());
                 session.add_message(&self.store, user_msg).map_err(|e| {
                     LabeledError::new(format!("Failed to save user message: {}", e))
                 })?;
 
-                let assistant_msg = persisted_assistant_message(&response_text, &llm_response.usage);
-                session.add_message(&self.store, assistant_msg).map_err(|e| {
-                    LabeledError::new(format!("Failed to save assistant message: {}", e))
-                })?;
+                let assistant_msg =
+                    persisted_assistant_message(&response_text, &llm_response.usage);
+                session
+                    .add_message(&self.store, assistant_msg)
+                    .map_err(|e| {
+                        LabeledError::new(format!("Failed to save assistant message: {}", e))
+                    })?;
             }
 
-            if let Some(CompactionTriggerDecision::Fire { source, .. }) = self.evaluate_auto_compaction()
+            if let Some(CompactionTriggerDecision::Fire { source, .. }) =
+                self.evaluate_auto_compaction()
                 && let Err(error) = self.execute_compaction_event(ui, source)
             {
                 ui.emit(&UiEvent::Warning { message: error });
@@ -622,9 +694,14 @@ impl AgentConversationRuntime {
                 CompactionTriggerSource::SlashCompact => CompactionInvocationMode::Force,
                 CompactionTriggerSource::AutoThreshold => CompactionInvocationMode::Threshold,
             };
-            execute_compaction_persisted(session, store, |old_messages| {
-                summarize_old_segment_with_llm(runtime, runtime_ctx, config, ui, old_messages)
-            }, mode)
+            execute_compaction_persisted(
+                session,
+                store,
+                |old_messages| {
+                    summarize_old_segment_with_llm(runtime, runtime_ctx, config, ui, old_messages)
+                },
+                mode,
+            )
         });
         match result {
             Ok(event) => {
@@ -719,7 +796,11 @@ fn persisted_tool_text_for(result: &handler::ToolCallResult) -> String {
         "tool[{}] args={} · {}",
         result.tool_name,
         summarized_args,
-        if result.failure.is_none() { "done" } else { "failed" }
+        if result.failure.is_none() {
+            "done"
+        } else {
+            "failed"
+        }
     )
 }
 
@@ -739,17 +820,16 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        execute_compaction_event_shared, execute_compaction_persisted, merge_runtime_prompt,
-        persisted_assistant_message, sanitize_tool_result_for_history_prompt, COMPACTION_FAILURE_WARNING,
+        COMPACTION_FAILURE_WARNING, execute_compaction_event_shared, execute_compaction_persisted,
+        emit_permissions_startup_summary_once, merge_runtime_prompt, persisted_assistant_message,
+        sanitize_tool_result_for_history_prompt,
     };
     use crate::{
         agent::protocol::{
-            compaction::CompactionTriggerSource,
-            contracts::ProgressUi,
-            event::UiEvent,
+            compaction::CompactionTriggerSource, contracts::ProgressUi, event::UiEvent,
         },
-        llm::LlmUsage,
         agent::tools::handler::{ToolCallResult, ToolSource},
+        llm::LlmUsage,
         session::{CompactionOutcome, Message, SessionConfig, SessionStore},
     };
 
@@ -840,7 +920,9 @@ mod tests {
         };
 
         let assistant = persisted_assistant_message("hello", &usage);
-        session.add_message(&store, assistant).expect("persist message");
+        session
+            .add_message(&store, assistant)
+            .expect("persist message");
 
         let loaded = store
             .load_session("assistant-usage-persist")
@@ -897,8 +979,14 @@ mod tests {
         let user_pos = merged.find("user prompt").expect("user prompt present");
 
         assert!(preamble_pos < agents_pos, "preamble should remain first");
-        assert!(agents_pos < skills_pos, "agents should appear before skills list");
-        assert!(skills_pos < user_pos, "skills should remain before user prompt");
+        assert!(
+            agents_pos < skills_pos,
+            "agents should appear before skills list"
+        );
+        assert!(
+            skills_pos < user_pos,
+            "skills should remain before user prompt"
+        );
     }
 
     #[test]
@@ -906,31 +994,25 @@ mod tests {
         let mut ui = TestProgressUi::default();
         let counter = Cell::new(0usize);
 
-        let manual = execute_compaction_event_shared(
-            CompactionTriggerSource::SlashCompact,
-            || {
-                counter.set(counter.get() + 1);
-                Ok(Some(CompactionOutcome {
-                    summarized_count: 1,
-                    kept_recent_count: 1,
-                    summary_text: "summary".to_string(),
-                }))
-            },
-        );
+        let manual = execute_compaction_event_shared(CompactionTriggerSource::SlashCompact, || {
+            counter.set(counter.get() + 1);
+            Ok(Some(CompactionOutcome {
+                summarized_count: 1,
+                kept_recent_count: 1,
+                summary_text: "summary".to_string(),
+            }))
+        });
         if let Ok(event) = &manual {
             ui.emit(event);
         }
-        let auto = execute_compaction_event_shared(
-            CompactionTriggerSource::AutoThreshold,
-            || {
-                counter.set(counter.get() + 1);
-                Ok(Some(CompactionOutcome {
-                    summarized_count: 1,
-                    kept_recent_count: 1,
-                    summary_text: "summary".to_string(),
-                }))
-            },
-        );
+        let auto = execute_compaction_event_shared(CompactionTriggerSource::AutoThreshold, || {
+            counter.set(counter.get() + 1);
+            Ok(Some(CompactionOutcome {
+                summarized_count: 1,
+                kept_recent_count: 1,
+                summary_text: "summary".to_string(),
+            }))
+        });
         if let Ok(event) = &auto {
             ui.emit(event);
         }
@@ -951,8 +1033,8 @@ mod tests {
                 summary_text: "auto summary body".to_string(),
             }))
         })
-            .map(|event| ui.emit(&event))
-            .expect("auto event");
+        .map(|event| ui.emit(&event))
+        .expect("auto event");
         execute_compaction_event_shared(CompactionTriggerSource::SlashCompact, || {
             Ok(Some(CompactionOutcome {
                 summarized_count: 4,
@@ -960,8 +1042,8 @@ mod tests {
                 summary_text: "manual summary body".to_string(),
             }))
         })
-            .map(|event| ui.emit(&event))
-            .expect("manual event");
+        .map(|event| ui.emit(&event))
+        .expect("manual event");
 
         assert!(ui.events.contains(&UiEvent::CompactionTriggered {
             source: "auto_threshold".to_string(),
@@ -1018,7 +1100,10 @@ mod tests {
             .add_message(&store, Message::new("user".to_string(), "a".to_string()))
             .expect("message");
         session
-            .add_message(&store, Message::new("assistant".to_string(), "b".to_string()))
+            .add_message(
+                &store,
+                Message::new("assistant".to_string(), "b".to_string()),
+            )
             .expect("message");
 
         let manual = execute_compaction_persisted(
@@ -1046,14 +1131,12 @@ mod tests {
 
     #[test]
     fn manual_and_auto_compaction_failure_surface_is_consistent() {
-        let manual = execute_compaction_event_shared(
-            CompactionTriggerSource::SlashCompact,
-            || Err("Session compaction failed: disk full".to_string()),
-        );
-        let auto = execute_compaction_event_shared(
-            CompactionTriggerSource::AutoThreshold,
-            || Err("Session compaction failed: disk full".to_string()),
-        );
+        let manual = execute_compaction_event_shared(CompactionTriggerSource::SlashCompact, || {
+            Err("Session compaction failed: disk full".to_string())
+        });
+        let auto = execute_compaction_event_shared(CompactionTriggerSource::AutoThreshold, || {
+            Err("Session compaction failed: disk full".to_string())
+        });
 
         assert_eq!(manual, auto);
     }
@@ -1075,7 +1158,10 @@ mod tests {
             .add_message(&store, Message::new("user".to_string(), "a".to_string()))
             .expect("message");
         session
-            .add_message(&store, Message::new("assistant".to_string(), "b".to_string()))
+            .add_message(
+                &store,
+                Message::new("assistant".to_string(), "b".to_string()),
+            )
             .expect("message");
         session
             .add_message(&store, Message::new("user".to_string(), "c".to_string()))
@@ -1116,7 +1202,10 @@ mod tests {
             .add_message(&store, Message::new("user".to_string(), "a".to_string()))
             .expect("message");
         session
-            .add_message(&store, Message::new("assistant".to_string(), "b".to_string()))
+            .add_message(
+                &store,
+                Message::new("assistant".to_string(), "b".to_string()),
+            )
             .expect("message");
         session
             .add_message(&store, Message::new("user".to_string(), "c".to_string()))
@@ -1166,6 +1255,34 @@ mod tests {
     }
 
     #[test]
+    fn permissions_startup_summary_emits_once_before_first_turn() {
+        let mut ui = TestProgressUi::default();
+        let mut emitted = false;
+        let summary =
+            "permissions policy: overlay_active=false global=ask tool_rules=5 nu__run.command_rules=1";
+
+        emit_permissions_startup_summary_once(&mut ui, &mut emitted, summary);
+        emit_permissions_startup_summary_once(&mut ui, &mut emitted, summary);
+
+        let warnings = ui
+            .events
+            .iter()
+            .filter(|e| matches!(e, UiEvent::Warning { .. }))
+            .count();
+        assert_eq!(warnings, 1);
+
+        let warning_message = ui
+            .events
+            .iter()
+            .find_map(|event| match event {
+                UiEvent::Warning { message } => Some(message.clone()),
+                _ => None,
+            })
+            .expect("warning event");
+        assert_eq!(warning_message, summary);
+    }
+
+    #[test]
     fn history_prompt_includes_compact_edit_preview_status_marker() {
         let result = preview_edit_result(serde_json::json!({
             "mode": "preview",
@@ -1188,12 +1305,18 @@ mod tests {
         let sanitized = sanitize_tool_result_for_history_prompt(&result);
         let payload: serde_json::Value = serde_json::from_str(&sanitized).expect("sanitized json");
 
-        assert_eq!(payload["diff_rendered_directly"], serde_json::Value::Bool(true));
+        assert_eq!(
+            payload["diff_rendered_directly"],
+            serde_json::Value::Bool(true)
+        );
         assert_eq!(payload["applied"], serde_json::Value::Bool(false));
         assert_eq!(payload["would_change"], serde_json::Value::Bool(true));
         assert_eq!(payload["noop"], serde_json::Value::Bool(false));
         assert_eq!(payload["conflict"], serde_json::Value::Bool(false));
-        assert_eq!(payload["stats"]["files_changed"], serde_json::Value::from(1));
+        assert_eq!(
+            payload["stats"]["files_changed"],
+            serde_json::Value::from(1)
+        );
     }
 
     #[test]
@@ -1251,9 +1374,18 @@ mod tests {
         assert!(!sanitized.contains("\"diff\""));
         assert!(!sanitized.contains("--- a/sample.txt"));
         assert!(payload.get("display").is_none());
-        assert_eq!(payload["mode"], serde_json::Value::String("apply".to_string()));
-        assert_eq!(payload["path"], serde_json::Value::String("sample.txt".to_string()));
-        assert_eq!(payload["diff_rendered_directly"], serde_json::Value::Bool(true));
+        assert_eq!(
+            payload["mode"],
+            serde_json::Value::String("apply".to_string())
+        );
+        assert_eq!(
+            payload["path"],
+            serde_json::Value::String("sample.txt".to_string())
+        );
+        assert_eq!(
+            payload["diff_rendered_directly"],
+            serde_json::Value::Bool(true)
+        );
     }
 
     #[test]
@@ -1272,7 +1404,10 @@ mod tests {
 
         let original_payload: serde_json::Value =
             serde_json::from_str(&result.content).expect("original json");
-        assert_eq!(original_payload["diff"], serde_json::Value::String(diff.to_string()));
+        assert_eq!(
+            original_payload["diff"],
+            serde_json::Value::String(diff.to_string())
+        );
     }
 
     #[test]
@@ -1301,10 +1436,19 @@ mod tests {
 
         assert!(!sanitized.contains("\"diff\""));
         assert!(!sanitized.contains("--- a/sample.txt"));
-        assert_eq!(payload["mode"], serde_json::Value::String("apply".to_string()));
-        assert_eq!(payload["path"], serde_json::Value::String("sample.txt".to_string()));
+        assert_eq!(
+            payload["mode"],
+            serde_json::Value::String("apply".to_string())
+        );
+        assert_eq!(
+            payload["path"],
+            serde_json::Value::String("sample.txt".to_string())
+        );
         assert_eq!(payload["applied"], serde_json::Value::Bool(true));
         assert_eq!(payload["would_change"], serde_json::Value::Bool(true));
-        assert_eq!(payload["diff_rendered_directly"], serde_json::Value::Bool(true));
+        assert_eq!(
+            payload["diff_rendered_directly"],
+            serde_json::Value::Bool(true)
+        );
     }
 }

@@ -15,7 +15,9 @@ pub fn merge_preamble_with_prompt_and_context(
     let merged_prompt = merge_prompt_with_context(prompt, context);
 
     match preamble {
-        Some(p) if !p.trim().is_empty() => merge_prompt_with_context(&merged_prompt, Some(p.trim())),
+        Some(p) if !p.trim().is_empty() => {
+            merge_prompt_with_context(&merged_prompt, Some(p.trim()))
+        }
         _ => merged_prompt,
     }
 }

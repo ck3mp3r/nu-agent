@@ -43,12 +43,8 @@ fn agent_from_config_uses_provided_api_key() {
 #[test]
 #[serial_test::serial]
 fn agent_from_config_fails_invalid_format() {
-    let result = Client::agent_from_config(
-        "github-copilot",
-        "model",
-        Some("key".to_string()),
-        None,
-    );
+    let result =
+        Client::agent_from_config("github-copilot", "model", Some("key".to_string()), None);
     assert!(result.is_err());
 }
 

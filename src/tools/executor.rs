@@ -150,5 +150,5 @@ impl ToolExecutor {
 }
 
 #[cfg(test)]
-#[path = "executor/test.rs"]
-mod executor_tests;
+#[path = "executor_test.rs"]
+mod executor_test;

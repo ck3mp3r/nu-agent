@@ -11,7 +11,11 @@ fn highlights_known_rust_language_with_keyword_style() {
 
     let rendered = lines
         .iter()
-        .map(|line| line.iter().map(|span| span.text.as_str()).collect::<String>())
+        .map(|line| {
+            line.iter()
+                .map(|span| span.text.as_str())
+                .collect::<String>()
+        })
         .collect::<Vec<_>>();
     assert_eq!(rendered, vec!["fn main() {}"]);
 
@@ -78,7 +82,11 @@ fn malformed_source_does_not_panic_and_remains_readable() {
     let lines = result.expect("catch_unwind should return highlighted lines");
     let joined = lines
         .iter()
-        .map(|line| line.iter().map(|span| span.text.as_str()).collect::<String>())
+        .map(|line| {
+            line.iter()
+                .map(|span| span.text.as_str())
+                .collect::<String>()
+        })
         .collect::<Vec<_>>()
         .join("\n");
     assert!(joined.contains("fn main() {"));
@@ -94,7 +102,11 @@ fn line_splitting_is_stable_for_crlf_input() {
 
     let rendered = lines
         .iter()
-        .map(|line| line.iter().map(|span| span.text.as_str()).collect::<String>())
+        .map(|line| {
+            line.iter()
+                .map(|span| span.text.as_str())
+                .collect::<String>()
+        })
         .collect::<Vec<_>>();
     assert_eq!(rendered, vec!["let x = 1;", "let y = 2;"]);
     assert_eq!(lines.len(), 2);
@@ -188,8 +200,10 @@ fn unsupported_language_fallback_is_plain_only() {
         source: "function brewStatus() { return \"ok\"; }",
     });
 
-    assert!(lines
-        .iter()
-        .flat_map(|line| line.iter())
-        .all(|span| span.channel == SyntaxTokenChannel::Plain));
+    assert!(
+        lines
+            .iter()
+            .flat_map(|line| line.iter())
+            .all(|span| span.channel == SyntaxTokenChannel::Plain)
+    );
 }

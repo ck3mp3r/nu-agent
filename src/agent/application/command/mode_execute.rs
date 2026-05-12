@@ -31,7 +31,8 @@ pub(crate) fn run_tui_mode(
     tui_should_hydrate_transcript: bool,
     tui_initial_messages: Vec<UiMessageSnapshot>,
 ) -> Result<Value, LabeledError> {
-    let mut terminal_lifecycle = TerminalLifecycle::new(AnsiTerminalBackend::new(std::io::stderr()));
+    let mut terminal_lifecycle =
+        TerminalLifecycle::new(AnsiTerminalBackend::new(std::io::stderr()));
 
     let (columns, rows) = crossterm::terminal::size().unwrap_or((120, 30));
     let fallback_events = open_tty_reader()
@@ -93,8 +94,9 @@ pub(crate) fn run_stderr_mode(
     ui_policy: UiPolicy,
     stderr_is_tty: bool,
 ) -> Result<Value, LabeledError> {
-    let mut stderr_ui =
-        StderrProgressUi::new(StderrUiFactory::new(std::io::stderr(), stderr_is_tty).create(ui_policy));
+    let mut stderr_ui = StderrProgressUi::new(
+        StderrUiFactory::new(std::io::stderr(), stderr_is_tty).create(ui_policy),
+    );
     let (prompt, context) = super::extract_prompt_and_context(input)?;
     run_single_turn(runtime_impl, &mut stderr_ui, prompt, context, span)
 }

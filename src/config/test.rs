@@ -976,7 +976,10 @@ fn test_plugin_config_provider_preamble_whitespace_normalized_to_none() {
     });
 
     let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
-    let openai = plugin_config.providers.get("openai").expect("openai provider");
+    let openai = plugin_config
+        .providers
+        .get("openai")
+        .expect("openai provider");
     assert_eq!(openai.preamble, None);
 }
 
@@ -996,7 +999,10 @@ fn test_plugin_config_model_preamble_whitespace_normalized_to_none() {
     });
 
     let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
-    let openai = plugin_config.providers.get("openai").expect("openai provider");
+    let openai = plugin_config
+        .providers
+        .get("openai")
+        .expect("openai provider");
     let gpt4 = openai.models.get("gpt-4").expect("gpt-4 model");
     assert_eq!(gpt4.preamble, None);
 }

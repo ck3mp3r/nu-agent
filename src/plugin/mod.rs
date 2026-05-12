@@ -76,4 +76,4 @@ impl Plugin for AgentPlugin {
 }
 
 #[cfg(test)]
-mod tests;
+mod test;

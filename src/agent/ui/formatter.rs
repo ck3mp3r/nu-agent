@@ -70,7 +70,10 @@ pub fn format_tool_end(view: ToolEndView<'_>) -> String {
             if result.is_empty() {
                 header
             } else {
-                format!("{header}\n{}", truncate_with_ellipsis(result, NORMAL_RESULT_LIMIT))
+                format!(
+                    "{header}\n{}",
+                    truncate_with_ellipsis(result, NORMAL_RESULT_LIMIT)
+                )
             }
         }
         Verbosity::Verbose => {

@@ -1,4 +1,7 @@
-use crate::agent::ui::tui::state::{ToolCallStatus, TranscriptLine, TranscriptLineStatus, TranscriptRole};
+use crate::agent::ui::tui::runtime::indicator_style_for_status_for_test;
+use crate::agent::ui::tui::state::{
+    ToolCallStatus, TranscriptLine, TranscriptLineStatus, TranscriptRole,
+};
 
 use super::{
     lane_prefix_spans_for_test, parse_persisted_tool_status_line_for_test,
@@ -43,8 +46,11 @@ fn tool_row_done_and_failed_indicators_remain_unchanged_after_label_cleanup() {
         text: "tool[nu__run] args={\"command\":\"version\"} · done".to_string(),
         rendered: None,
     };
-    let done_rendered =
-        render_transcript_lines_for_test(done_line, Some(TranscriptLineStatus::Tool(ToolCallStatus::Done)), 0);
+    let done_rendered = render_transcript_lines_for_test(
+        done_line,
+        Some(TranscriptLineStatus::Tool(ToolCallStatus::Done)),
+        0,
+    );
     let done_text = done_rendered[0]
         .spans
         .iter()
@@ -84,10 +90,7 @@ fn persisted_tool_line_hydration_still_parses_tool_name_and_metadata() {
         "tool[nu__run] args={\"command\":\"version\"} · done",
     );
 
-    assert_eq!(
-        parsed,
-        Some(("nu__run", "{\"command\":\"version\"}", true))
-    );
+    assert_eq!(parsed, Some(("nu__run", "{\"command\":\"version\"}", true)));
 }
 
 #[test]
@@ -98,18 +101,30 @@ fn tool_completion_renders_tick_without_done_text_token() {
         rendered: None,
     };
 
-    let rendered =
-        render_transcript_lines_for_test(line, Some(TranscriptLineStatus::Tool(ToolCallStatus::Done)), 0);
+    let rendered = render_transcript_lines_for_test(
+        line,
+        Some(TranscriptLineStatus::Tool(ToolCallStatus::Done)),
+        0,
+    );
 
-    assert!(rendered[0].spans.iter().any(|span| span.content.contains("✓")));
-    assert!(!rendered[0]
-        .spans
-        .iter()
-        .any(|span| span.content.contains("· done")));
-    assert!(rendered[0]
-        .spans
-        .iter()
-        .any(|span| span.content.contains("args={\"namespace\":\"prod\"}")));
+    assert!(
+        rendered[0]
+            .spans
+            .iter()
+            .any(|span| span.content.contains("✓"))
+    );
+    assert!(
+        !rendered[0]
+            .spans
+            .iter()
+            .any(|span| span.content.contains("· done"))
+    );
+    assert!(
+        rendered[0]
+            .spans
+            .iter()
+            .any(|span| span.content.contains("args={\"namespace\":\"prod\"}"))
+    );
 }
 
 #[test]
@@ -126,11 +141,18 @@ fn tool_failure_keeps_failed_text_token_and_failure_indicator() {
         0,
     );
 
-    assert!(rendered[0].spans.iter().any(|span| span.content.contains("✕")));
-    assert!(rendered[0]
-        .spans
-        .iter()
-        .any(|span| span.content.contains("· failed")));
+    assert!(
+        rendered[0]
+            .spans
+            .iter()
+            .any(|span| span.content.contains("✕"))
+    );
+    assert!(
+        rendered[0]
+            .spans
+            .iter()
+            .any(|span| span.content.contains("· failed"))
+    );
 }
 
 #[test]
@@ -150,4 +172,52 @@ fn non_display_tool_rows_keep_existing_prefix_behavior() {
 
     assert!(row_text.starts_with("  ⚙ "));
     assert!(row_text.contains("nu__run"));
+}
+
+#[test]
+fn tool_display_diff_rows_apply_semantic_styles_for_hunk_and_plus_minus_lines() {
+    let hunk_line = TranscriptLine {
+        role: TranscriptRole::ToolDisplay,
+        text: "@@ -3,2 +3,2 @@".to_string(),
+        rendered: Some(ratatui::text::Line::from("@@ -3,2 +3,2 @@")),
+    };
+    let plus_line = TranscriptLine {
+        role: TranscriptRole::ToolDisplay,
+        text: "+     3 │omega".to_string(),
+        rendered: Some(ratatui::text::Line::from("+     3 │omega")),
+    };
+    let minus_line = TranscriptLine {
+        role: TranscriptRole::ToolDisplay,
+        text: "-   3      │beta".to_string(),
+        rendered: Some(ratatui::text::Line::from("-   3      │beta")),
+    };
+
+    let hunk = render_transcript_lines_for_test(hunk_line, None, 0);
+    let plus = render_transcript_lines_for_test(plus_line, None, 0);
+    let minus = render_transcript_lines_for_test(minus_line, None, 0);
+
+    let plus_fg = plus[0]
+        .spans
+        .iter()
+        .find(|span| span.content.contains("omega"))
+        .and_then(|span| span.style.fg);
+    let minus_fg = minus[0]
+        .spans
+        .iter()
+        .find(|span| span.content.contains("beta"))
+        .and_then(|span| span.style.fg);
+    let hunk_modifier = hunk[0]
+        .spans
+        .iter()
+        .find(|span| span.content.contains("@@ -3,2 +3,2 @@"))
+        .map(|span| span.style.add_modifier)
+        .unwrap_or_default();
+
+    let expected_done =
+        indicator_style_for_status_for_test(TranscriptLineStatus::Tool(ToolCallStatus::Done));
+    let expected_failed =
+        indicator_style_for_status_for_test(TranscriptLineStatus::Tool(ToolCallStatus::Failed));
+    assert_eq!(plus_fg, expected_done.fg);
+    assert_eq!(minus_fg, expected_failed.fg);
+    assert!(hunk_modifier.contains(ratatui::style::Modifier::BOLD));
 }

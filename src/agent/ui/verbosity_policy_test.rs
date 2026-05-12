@@ -54,7 +54,11 @@ fn repeated_v_increases_verbosity_progressively() {
     let v2 = resolve_ui_policy(&call_with_flags(vec![("v", None), ("v", None)])).expect("v2");
     assert_eq!(v2.verbosity, Verbosity::VeryVerbose);
 
-    let v3 = resolve_ui_policy(&call_with_flags(vec![("v", None), ("v", None), ("v", None)]))
-        .expect("v3");
+    let v3 = resolve_ui_policy(&call_with_flags(vec![
+        ("v", None),
+        ("v", None),
+        ("v", None),
+    ]))
+    .expect("v3");
     assert_eq!(v3.verbosity, Verbosity::Trace);
 }

@@ -22,7 +22,12 @@ pub struct SessionStore {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CompactionStrategy {
     /// Summarize old messages and keep a recent verbatim window.
-    #[serde(rename = "sliding_summary", alias = "truncate", alias = "sliding", alias = "summarize")]
+    #[serde(
+        rename = "sliding_summary",
+        alias = "truncate",
+        alias = "sliding",
+        alias = "summarize"
+    )]
     SlidingSummary,
 }
 
@@ -61,9 +66,9 @@ pub struct SessionConfig {
 impl Default for SessionConfig {
     fn default() -> Self {
         Self {
-            compaction_threshold: 100,                         // Default threshold
+            compaction_threshold: 100, // Default threshold
             compaction_strategy: CompactionStrategy::SlidingSummary, // Canonical strategy
-            keep_recent: 10,                                   // Default keep last 10 messages
+            keep_recent: 10,           // Default keep last 10 messages
         }
     }
 }
@@ -234,7 +239,9 @@ impl Session {
         }
 
         let outcome = match self.config.compaction_strategy {
-            CompactionStrategy::SlidingSummary => self.compact_sliding_summary_with(store, summarizer)?,
+            CompactionStrategy::SlidingSummary => {
+                self.compact_sliding_summary_with(store, summarizer)?
+            }
         };
 
         if outcome.summarized_count == 0 {
@@ -917,4 +924,4 @@ impl Default for SessionStore {
 }
 
 #[cfg(test)]
-mod tests;
+mod test;

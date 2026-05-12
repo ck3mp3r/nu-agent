@@ -6,8 +6,7 @@ const GITHUB_COPILOT_OPENAI_GPT5X_DEFAULT: &str =
     include_str!("defaults/github_copilot_openai_gpt5x.md");
 const GITHUB_COPILOT_OPENAI_GPT4X_DEFAULT: &str =
     include_str!("defaults/github_copilot_openai_gpt4x.md");
-const GITHUB_COPILOT_ANTHROPIC_DEFAULT: &str =
-    include_str!("defaults/github_copilot_anthropic.md");
+const GITHUB_COPILOT_ANTHROPIC_DEFAULT: &str = include_str!("defaults/github_copilot_anthropic.md");
 const OPENAI_GPT5X_DEFAULT: &str = include_str!("defaults/openai_gpt5x.md");
 const OPENAI_GPT4X_DEFAULT: &str = include_str!("defaults/openai_gpt4x.md");
 const ANTHROPIC_DEFAULT: &str = include_str!("defaults/anthropic.md");

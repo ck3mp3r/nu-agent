@@ -115,5 +115,5 @@ impl AuditLogger {
 }
 
 #[cfg(test)]
-#[path = "audit/test.rs"]
-mod audit_tests;
+#[path = "audit_test.rs"]
+mod audit_test;

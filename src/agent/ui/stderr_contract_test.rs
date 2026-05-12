@@ -1,8 +1,9 @@
-use crate::agent::ui::{policy::{UiPolicy, Verbosity},
+use crate::agent::protocol::event::UiEvent;
+use crate::agent::ui::{
+    policy::{UiPolicy, Verbosity},
     renderer::UiRenderer,
     stderr::StderrUiRenderer,
 };
-use crate::agent::protocol::event::UiEvent;
 
 #[test]
 fn stderr_renderer_writes_only_to_stderr_sink() {

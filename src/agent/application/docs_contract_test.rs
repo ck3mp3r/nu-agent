@@ -2,13 +2,22 @@ use std::fs;
 use std::path::Path;
 
 fn read_help_markdown() -> String {
-    fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/agent/ui/tui/runtime/help/help.md"))
-        .expect("help markdown")
+    fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/agent/ui/tui/runtime/help/help.md"),
+    )
+    .expect("help markdown")
 }
 
 fn read_usage_docs() -> String {
     fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/usage.md"))
         .expect("usage docs")
+}
+
+fn read_contribution_guardrails_docs() -> String {
+    fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/contribution-guardrails.md"),
+    )
+    .expect("contribution guardrails docs")
 }
 
 #[test]
@@ -127,4 +136,80 @@ fn usage_docs_list_deterministic_edit_error_taxonomy_classes() {
     assert!(docs.contains("permission"));
     assert!(docs.contains("conflict"));
     assert!(docs.contains("internal"));
+}
+
+#[test]
+fn usage_docs_describe_permissions_dsl_canonical_shape_and_precedence() {
+    let docs = read_usage_docs();
+    assert!(docs.contains("Only CLI surface for policy override is `--permissions`"));
+    assert!(!docs.contains("--permission "));
+    assert!(docs.contains("map-style"));
+    assert!(docs.contains("permissions DSL"));
+    assert!(
+        docs.contains(
+            "\"nu__run\": { \"command\": { \"kubectl delete *\": \"deny\", \"*\": \"ask\" } }"
+        ) || docs.contains("\"nu__run\": {")
+            && docs.contains("\"command\": {")
+            && docs.contains("\"kubectl delete *\": \"deny\"")
+    );
+    assert!(docs.contains("global baseline"));
+    assert!(docs.contains("tool override"));
+    assert!(docs.contains("nested `nu__run.command` override"));
+}
+
+#[test]
+fn usage_docs_describe_permissions_overlay_startup_diagnostics() {
+    let docs = read_usage_docs();
+    assert!(docs.contains("overlay_active=true|false"));
+    assert!(docs.contains("permissions policy:"));
+}
+
+#[test]
+fn usage_docs_describe_permissions_ask_choices_and_session_grants() {
+    let docs = read_usage_docs();
+    assert!(docs.contains("allow_once"));
+    assert!(docs.contains("allow_always"));
+    assert!(docs.contains("session-only"));
+    assert!(docs.contains("reset on restart"));
+    assert!(docs.contains("not global across unrelated tools"));
+    assert!(docs.contains("same scoped tool context"));
+}
+
+#[test]
+fn usage_docs_describe_permission_modal_keybindings_and_lifecycle_events() {
+    let docs = read_usage_docs();
+    assert!(docs.contains("Interactive permission prompt behavior"));
+    assert!(docs.contains("`a` => `allow_once`"));
+    assert!(docs.contains("`A` => `allow_always`"));
+    assert!(docs.contains("`d` => `deny`"));
+    assert!(docs.contains("`Esc` => `deny`"));
+    assert!(docs.contains("PermissionRequested"));
+    assert!(docs.contains("PermissionDecisionSubmitted"));
+    assert!(docs.contains("PermissionDecisionTimedOut"));
+    assert!(docs.contains("PermissionDecisionIgnored"));
+}
+
+#[test]
+fn usage_docs_describe_non_interactive_ask_default_and_override() {
+    let docs = read_usage_docs();
+    assert!(docs.contains("Non-interactive ask fallback"));
+    assert!(docs.contains("non_interactive_ask"));
+    assert!(docs.contains("default (missing): `deny`"));
+    assert!(docs.contains("supported values: `deny`, `allow`"));
+}
+
+#[test]
+fn contribution_guardrails_doc_links_handler_contract_and_usage_sections() {
+    let docs = read_contribution_guardrails_docs();
+    assert!(docs.contains("./handler-decomposition-contract.md"));
+    assert!(docs.contains("./usage.md#interactive-permission-prompt-behavior-tui"));
+}
+
+#[test]
+fn contribution_guardrails_doc_references_key_runtime_and_handler_tests() {
+    let docs = read_contribution_guardrails_docs();
+    assert!(docs.contains("src/agent/ui/tui/runtime/mod.rs"));
+    assert!(docs.contains("src/agent/ui/tui/runtime/test.rs"));
+    assert!(docs.contains("src/agent/tools/handler/test.rs"));
+    assert!(docs.contains("src/agent/protocol/permission_test.rs"));
 }

@@ -8,3 +8,7 @@ pub mod tools;
 pub mod utils;
 
 pub use plugin::AgentPlugin;
+
+#[cfg(test)]
+#[path = "lib_test.rs"]
+mod lib_test;

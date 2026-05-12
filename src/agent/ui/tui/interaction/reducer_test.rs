@@ -1,14 +1,15 @@
-use crate::agent::ui::{tui::{
-        interaction::reducer::{
-            ESC_ABORT_CONFIRM_STATUS, ReducerInput, UserAction, reduce_with_cancel_controller,
-        },
-        state::{
-            AppState, CompactionStatus, InputMode, ToolCallStatus, TranscriptLineStatus,
-            TranscriptRole, UiPhase,
-        },
+use crate::agent::protocol::event::{
+    PermissionRequestContext, ToolDisplay, ToolDisplaySection, UiEvent,
+};
+use crate::agent::ui::tui::{
+    interaction::reducer::{
+        ESC_ABORT_CONFIRM_STATUS, ReducerInput, UserAction, reduce_with_cancel_controller,
+    },
+    state::{
+        AppState, CompactionStatus, InputMode, ToolCallStatus, TranscriptLineStatus,
+        TranscriptRole, UiPhase,
     },
 };
-use crate::agent::protocol::event::{ToolDisplay, ToolDisplaySection, UiEvent};
 
 fn assert_reducer_invariants(state: &AppState) {
     assert!(!state.input.locked);
@@ -23,7 +24,11 @@ fn assert_reducer_invariants(state: &AppState) {
 fn busy_state_with_clean_transcript() -> AppState {
     let mut state = AppState::new();
     for ch in "run".chars() {
-        reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::InsertChar(ch)), None);
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::InsertChar(ch)),
+            None,
+        );
     }
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
     let _ = state.activate_next_prompt();
@@ -40,7 +45,11 @@ fn submit_transition_is_deterministic_and_keeps_input_editable() {
         None,
     );
     for ch in "tatus pods".chars() {
-        reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::InsertChar(ch)), None);
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::InsertChar(ch)),
+            None,
+        );
     }
 
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
@@ -62,7 +71,11 @@ fn table_driven_ui_event_mapping_keeps_completed_as_finalize_boundary() {
         None,
     );
     for ch in "rompt".chars() {
-        reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::InsertChar(ch)), None);
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::InsertChar(ch)),
+            None,
+        );
     }
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
     let _ = state.activate_next_prompt();
@@ -123,7 +136,11 @@ fn esc_then_esc_confirm_moves_into_abort_requested_without_unlocking() {
         None,
     );
     for ch in "o work".chars() {
-        reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::InsertChar(ch)), None);
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::InsertChar(ch)),
+            None,
+        );
     }
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
     let _ = state.activate_next_prompt();
@@ -144,7 +161,10 @@ fn esc_then_esc_confirm_moves_into_abort_requested_without_unlocking() {
         Some(TranscriptRole::System)
     );
     assert_eq!(
-        state.transcript_preview.last().map(|line| line.text.as_str()),
+        state
+            .transcript_preview
+            .last()
+            .map(|line| line.text.as_str()),
         Some("[abort requested]")
     );
 }
@@ -158,7 +178,11 @@ fn completed_event_clears_pending_and_unlocks_input() {
         None,
     );
     for ch in "o work".chars() {
-        reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::InsertChar(ch)), None);
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::InsertChar(ch)),
+            None,
+        );
     }
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
     let _ = state.activate_next_prompt();
@@ -185,12 +209,20 @@ fn locked_input_prevents_typing_and_submission() {
         None,
     );
     for ch in "irst".chars() {
-        reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::InsertChar(ch)), None);
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::InsertChar(ch)),
+            None,
+        );
     }
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
 
     for ch in "second".chars() {
-        reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::InsertChar(ch)), None);
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::InsertChar(ch)),
+            None,
+        );
     }
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
 
@@ -206,7 +238,11 @@ fn locked_input_prevents_typing_and_submission() {
 fn submit_whitespace_only_prompt_is_noop() {
     let mut state = AppState::new();
     for ch in [' ', ' ', '\t', '\n', ' '] {
-        reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::InsertChar(ch)), None);
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::InsertChar(ch)),
+            None,
+        );
     }
 
     let before = state.clone();
@@ -227,7 +263,11 @@ fn race_completion_before_second_escape_prevents_reentry_into_abort_pending() {
         None,
     );
     for ch in "ace".chars() {
-        reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::InsertChar(ch)), None);
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::InsertChar(ch)),
+            None,
+        );
     }
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
     let _ = state.activate_next_prompt();
@@ -259,7 +299,11 @@ fn completed_event_unlocks_and_clears_abort_pending() {
         None,
     );
     for ch in "inalize".chars() {
-        reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::InsertChar(ch)), None);
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::InsertChar(ch)),
+            None,
+        );
     }
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
     let _ = state.activate_next_prompt();
@@ -281,7 +325,11 @@ fn completed_event_unlocks_and_clears_abort_pending() {
 fn reducer_supports_baseline_input_editing_with_cursor_controls() {
     let mut state = AppState::new();
     for ch in ['h', 'l', 'o'] {
-        reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::InsertChar(ch)), None);
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::InsertChar(ch)),
+            None,
+        );
     }
 
     reduce_with_cancel_controller(
@@ -302,11 +350,7 @@ fn reducer_supports_baseline_input_editing_with_cursor_controls() {
         ReducerInput::User(UserAction::MoveCursorHome),
         None,
     );
-    reduce_with_cancel_controller(
-        &mut state,
-        ReducerInput::User(UserAction::Delete),
-        None,
-    );
+    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Delete), None);
     assert_eq!(state.input.buffer, "llo");
 }
 
@@ -314,7 +358,11 @@ fn reducer_supports_baseline_input_editing_with_cursor_controls() {
 fn insert_newline_action_inserts_line_break_without_submit() {
     let mut state = AppState::new();
     for ch in "abc".chars() {
-        reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::InsertChar(ch)), None);
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::InsertChar(ch)),
+            None,
+        );
     }
 
     reduce_with_cancel_controller(
@@ -343,13 +391,16 @@ fn enter_insert_and_normal_mode_actions_toggle_mode_only_in_idle() {
         None,
     );
     assert_eq!(state.input_mode, InputMode::Insert);
-
 }
 
 #[test]
 fn enter_normal_mode_from_chord_removes_last_j_and_switches_mode() {
     let mut state = AppState::new();
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::InsertChar('j')), None);
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::User(UserAction::InsertChar('j')),
+        None,
+    );
     assert_eq!(state.input.buffer, "j");
 
     reduce_with_cancel_controller(
@@ -432,7 +483,11 @@ fn focus_and_jump_actions_mutate_focus_and_scroll_targets() {
 fn assistant_message_is_appended_to_transcript_before_completed_unlock() {
     let mut state = AppState::new();
     for ch in "ping".chars() {
-        reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::InsertChar(ch)), None);
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::InsertChar(ch)),
+            None,
+        );
     }
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
     let _ = state.activate_next_prompt();
@@ -477,7 +532,11 @@ fn scroll_events_pause_and_resume_transcript_follow_tail() {
         state.push_transcript_line(TranscriptRole::Assistant, format!("line {i}"));
     }
 
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::ScrollPageUp), None);
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::User(UserAction::ScrollPageUp),
+        None,
+    );
     assert!(!state.transcript_follow_tail);
     assert!(state.transcript_scroll_lines_from_bottom > 0);
 
@@ -805,7 +864,11 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
             "tool_end_updates_existing_tool_line_and_thinking" => {
                 assert_eq!(state.transcript_preview.len(), 1);
                 assert_eq!(state.transcript_preview[0].role, TranscriptRole::Tool);
-                assert!(state.transcript_preview[0].text.starts_with("tool[k8s__list_pods] args="));
+                assert!(
+                    state.transcript_preview[0]
+                        .text
+                        .starts_with("tool[k8s__list_pods] args=")
+                );
                 assert!(state.transcript_preview[0].text.contains("· done"));
                 assert_eq!(state.status_line, "Thinking...");
             }
@@ -872,6 +935,163 @@ fn compaction_summary_is_rendered_in_transcript() {
 }
 
 #[test]
+fn permission_request_attaches_prompt_to_active_tool_transcript_line() {
+    let mut state = AppState::new();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::ToolStart {
+            name: "nu__run".to_string(),
+            source: "closure".to_string(),
+            arguments: r#"{"command":"echo hi"}"#.to_string(),
+        }),
+        None,
+    );
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::PermissionRequested {
+            request_id: "ask-0000000000000001".to_string(),
+            context: PermissionRequestContext {
+                tool: "nu__run".to_string(),
+                source: "closure".to_string(),
+                mode: Some("apply".to_string()),
+                matched_rule_identity: "nested:nu__run.command:*".to_string(),
+                scope: "nested".to_string(),
+                target_field: Some("command".to_string()),
+                pattern: "*".to_string(),
+                summary: "tool[nu__run] args={\"command\":\"echo hi\"}".to_string(),
+                pre_authorize_display: None,
+            },
+        }),
+        None,
+    );
+
+    let prompt = state.permission_prompt.as_ref().expect("permission prompt");
+    assert_eq!(prompt.attached_tool_transcript_line_index, Some(0));
+}
+
+#[test]
+fn permission_request_preserves_pre_authorize_preview_on_prompt() {
+    let mut state = AppState::new();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::PermissionRequested {
+            request_id: "ask-0000000000000001".to_string(),
+            context: PermissionRequestContext {
+                tool: "edit".to_string(),
+                source: "closure".to_string(),
+                mode: Some("apply".to_string()),
+                matched_rule_identity: "tool:edit".to_string(),
+                scope: "tool".to_string(),
+                target_field: None,
+                pattern: "edit".to_string(),
+                summary: "tool[edit] args={...}".to_string(),
+                pre_authorize_display: Some(ToolDisplay {
+                    title: "edit file.txt".to_string(),
+                    sections: vec![ToolDisplaySection {
+                        label: "file.txt".to_string(),
+                        language: "diff".to_string(),
+                        content: "--- a/file.txt\n+++ b/file.txt\n".to_string(),
+                        stats: None,
+                    }],
+                }),
+            },
+        }),
+        None,
+    );
+
+    let prompt = state.permission_prompt.as_ref().expect("permission prompt");
+    let display = prompt
+        .pre_authorize_display
+        .as_ref()
+        .expect("display propagated to prompt");
+    assert_eq!(display.title, "edit file.txt");
+    assert_eq!(display.sections.len(), 1);
+    assert_eq!(display.sections[0].language, "diff");
+}
+
+#[test]
+fn permission_request_focuses_transcript_for_immediate_prompt_visibility() {
+    let mut state = AppState::new();
+    state.pane_focus = crate::agent::ui::tui::state::PaneFocus::Input;
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::PermissionRequested {
+            request_id: "ask-0000000000000001".to_string(),
+            context: PermissionRequestContext {
+                tool: "edit".to_string(),
+                source: "closure".to_string(),
+                mode: Some("apply".to_string()),
+                matched_rule_identity: "tool:edit".to_string(),
+                scope: "tool".to_string(),
+                target_field: None,
+                pattern: "edit".to_string(),
+                summary: "tool[edit] args={...}".to_string(),
+                pre_authorize_display: None,
+            },
+        }),
+        None,
+    );
+
+    assert_eq!(
+        state.pane_focus,
+        crate::agent::ui::tui::state::PaneFocus::Transcript
+    );
+    assert!(state.permission_prompt.is_some());
+}
+
+#[test]
+fn manual_scroll_after_permission_request_sets_jitter_override_guard() {
+    let mut state = AppState::new();
+    state.set_transcript_viewport_lines(3);
+    for idx in 0..12 {
+        state.push_transcript_line(TranscriptRole::Assistant, format!("line {idx}"));
+    }
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::PermissionRequested {
+            request_id: "ask-0000000000000001".to_string(),
+            context: PermissionRequestContext {
+                tool: "edit".to_string(),
+                source: "closure".to_string(),
+                mode: Some("apply".to_string()),
+                matched_rule_identity: "tool:edit".to_string(),
+                scope: "tool".to_string(),
+                target_field: None,
+                pattern: "edit".to_string(),
+                summary: "tool[edit] args={...}".to_string(),
+                pre_authorize_display: None,
+            },
+        }),
+        None,
+    );
+
+    assert!(state.should_preserve_permission_prompt_row());
+    assert!(state.should_auto_recenter_permission_prompt_row());
+    let before_offset = state.transcript_scroll_lines_from_bottom;
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::User(UserAction::ScrollPageUp),
+        None,
+    );
+
+    assert!(state.transcript_scroll_lines_from_bottom >= before_offset);
+    assert!(
+        state.should_preserve_permission_prompt_row(),
+        "manual scrolling must keep required controls-row preservation active"
+    );
+    assert!(
+        !state.should_auto_recenter_permission_prompt_row(),
+        "manual scrolling should disable repeated auto-recentering to avoid jitter"
+    );
+}
+
+#[test]
 fn compaction_artifact_renders_as_single_markdown_block() {
     let mut state = AppState::new();
 
@@ -894,9 +1114,11 @@ fn compaction_artifact_renders_as_single_markdown_block() {
         .collect::<Vec<_>>();
     assert!(lines.contains(&"Compaction"));
     assert!(lines.contains(&"Summary"));
-    assert!(!lines
-        .iter()
-        .any(|line| line.starts_with("[compaction source=")));
+    assert!(
+        !lines
+            .iter()
+            .any(|line| line.starts_with("[compaction source="))
+    );
 }
 
 #[test]
@@ -976,12 +1198,16 @@ fn compaction_block_completion_hides_source_and_explanatory_copy() {
     assert!(lines.contains(&"Summary"));
     assert!(lines.contains(&"content line"));
     assert!(!lines.iter().any(|line| line.contains("source=")));
-    assert!(!lines
-        .iter()
-        .any(|line| line.contains("metadata above is UI diagnostic only")));
-    assert!(!lines
-        .iter()
-        .any(|line| line.contains("persisted as system summary")));
+    assert!(
+        !lines
+            .iter()
+            .any(|line| line.contains("metadata above is UI diagnostic only"))
+    );
+    assert!(
+        !lines
+            .iter()
+            .any(|line| line.contains("persisted as system summary"))
+    );
 }
 
 #[test]
@@ -1024,7 +1250,9 @@ fn compaction_block_running_state_has_no_source_or_status_metadata_line() {
         .expect("compaction line");
     assert_eq!(
         state.transcript_line_status_for_index(idx),
-        Some(TranscriptLineStatus::Compaction(CompactionStatus::InProgress))
+        Some(TranscriptLineStatus::Compaction(
+            CompactionStatus::InProgress
+        ))
     );
 
     let lines = state
@@ -1099,10 +1327,12 @@ fn compaction_block_shows_failure_state_on_error() {
         state.transcript_line_status_for_index(idx),
         Some(TranscriptLineStatus::Compaction(CompactionStatus::Failed))
     );
-    assert!(state
-        .transcript_preview
-        .iter()
-        .any(|line| line.text.contains("Compaction failed deterministically")));
+    assert!(
+        state
+            .transcript_preview
+            .iter()
+            .any(|line| line.text.contains("Compaction failed deterministically"))
+    );
 }
 
 #[test]
@@ -1162,14 +1392,15 @@ fn compaction_metadata_not_included_in_future_prompt_history() {
     );
 
     assert_eq!(
-        state.transcript_preview[0].text,
-        "Compaction",
+        state.transcript_preview[0].text, "Compaction",
         "metadata is transcript UI chrome, not session system summary payload"
     );
-    assert!(state
-        .transcript_preview
-        .iter()
-        .any(|line| line.text == "persisted summary body"));
+    assert!(
+        state
+            .transcript_preview
+            .iter()
+            .any(|line| line.text == "persisted summary body")
+    );
 }
 
 #[test]
@@ -1203,12 +1434,12 @@ fn compaction_noop_does_not_claim_persisted_summary() {
 
     assert!(lines.contains(&"summarized=0 · kept=6"));
     assert!(!lines.iter().any(|line| line.contains("source=")));
-    assert!(!lines
-        .iter()
-        .any(|line| line.contains("metadata above is UI diagnostic only and NOT included in future LLM prompt history")));
-    assert!(!lines
-        .iter()
-        .any(|line| line.contains("Summary text below is persisted as system summary and IS included in future history")));
+    assert!(!lines.iter().any(|line| line.contains(
+        "metadata above is UI diagnostic only and NOT included in future LLM prompt history"
+    )));
+    assert!(!lines.iter().any(|line| line.contains(
+        "Summary text below is persisted as system summary and IS included in future history"
+    )));
 }
 
 #[test]
@@ -1260,7 +1491,11 @@ fn table_driven_user_action_noop_and_contract_matrix() {
     fn idle_with_text() -> AppState {
         let mut state = AppState::new();
         for ch in "draft".chars() {
-            reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::InsertChar(ch)), None);
+            reduce_with_cancel_controller(
+                &mut state,
+                ReducerInput::User(UserAction::InsertChar(ch)),
+                None,
+            );
         }
         state
     }
@@ -1386,10 +1621,7 @@ fn assistant_message_whitespace_only_is_noop() {
 #[test]
 fn tool_start_truncates_long_args_summary_with_ellipsis() {
     let mut state = AppState::new();
-    let long_args = format!(
-        "{{\"payload\":\"{}\"}}",
-        "x".repeat(300)
-    );
+    let long_args = format!("{{\"payload\":\"{}\"}}", "x".repeat(300));
 
     reduce_with_cancel_controller(
         &mut state,
@@ -1516,9 +1748,11 @@ fn tool_display_body_lines_are_unprefixed_while_tool_call_line_remains_prefixed(
         .collect::<Vec<_>>();
 
     assert!(!display_rows.is_empty());
-    assert!(display_rows
-        .iter()
-        .all(|line| line.role == TranscriptRole::ToolDisplay));
+    assert!(
+        display_rows
+            .iter()
+            .all(|line| line.role == TranscriptRole::ToolDisplay)
+    );
 }
 
 #[test]
@@ -1564,7 +1798,8 @@ fn tool_display_diff_block_highlighting_remains_after_prefix_hygiene_fix() {
         .iter()
         .filter(|line| {
             line.role == TranscriptRole::ToolDisplay
-                && (line.text.contains("--- a/sample.txt") || line.text.contains("+++ b/sample.txt"))
+                && (line.text.contains("--- a/sample.txt")
+                    || line.text.contains("+++ b/sample.txt"))
         })
         .collect::<Vec<_>>();
 
@@ -1738,10 +1973,12 @@ fn normal_assistant_response_remains_when_no_direct_display_is_present() {
     );
 
     assert!(!state.transcript_preview.is_empty());
-    assert!(state
-        .transcript_preview
-        .iter()
-        .any(|line| line.role == TranscriptRole::Assistant));
+    assert!(
+        state
+            .transcript_preview
+            .iter()
+            .any(|line| line.role == TranscriptRole::Assistant)
+    );
 }
 
 #[test]
@@ -1782,10 +2019,12 @@ fn diff_display_preserves_hunk_line_range_context() {
         None,
     );
 
-    assert!(state
-        .transcript_preview
-        .iter()
-        .any(|line| line.text.contains("@@ -10,3 +10,4 @@")));
+    assert!(
+        state
+            .transcript_preview
+            .iter()
+            .any(|line| line.text.contains("@@ -10,3 +10,4 @@"))
+    );
 }
 
 #[test]
@@ -1832,11 +2071,13 @@ fn diff_display_supports_line_number_readability_without_breaking_highlighting()
         .filter(|line| line.role == TranscriptRole::ToolDisplay)
         .collect::<Vec<_>>();
 
-    assert!(diff_rows
-        .iter()
-        .any(|line| line.text.contains("│alpha") || line.text.contains("│beta") || line.text.contains("│omega")));
-    assert!(diff_rows
-        .iter()
-        .filter(|line| line.text.contains("@@ -3,2 +3,2 @@"))
-        .all(|line| line.rendered.is_some()));
+    assert!(diff_rows.iter().any(|line| line.text.contains("│alpha")
+        || line.text.contains("│beta")
+        || line.text.contains("│omega")));
+    assert!(
+        diff_rows
+            .iter()
+            .filter(|line| line.text.contains("@@ -3,2 +3,2 @@"))
+            .all(|line| line.rendered.is_some())
+    );
 }

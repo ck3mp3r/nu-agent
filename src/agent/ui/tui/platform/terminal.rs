@@ -1,7 +1,4 @@
-use std::{
-    error::Error,
-    fmt,
-};
+use std::{error::Error, fmt};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TerminalAction {
@@ -32,7 +29,11 @@ impl TerminalLifecycleError {
 
 impl fmt::Display for TerminalLifecycleError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "terminal action {:?} failed: {}", self.action, self.message)
+        write!(
+            f,
+            "terminal action {:?} failed: {}",
+            self.action, self.message
+        )
     }
 }
 

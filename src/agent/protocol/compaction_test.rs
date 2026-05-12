@@ -1,6 +1,6 @@
 use super::compaction::{
-    CompactionTriggerDecision, CompactionTriggerPolicy, CompactionTriggerSource, CompactionTriggerState,
-    ThresholdCompactionPolicy,
+    CompactionTriggerDecision, CompactionTriggerPolicy, CompactionTriggerSource,
+    CompactionTriggerState, ThresholdCompactionPolicy,
 };
 
 #[test]

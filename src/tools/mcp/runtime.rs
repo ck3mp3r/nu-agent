@@ -2,9 +2,9 @@ use http::{HeaderName, HeaderValue};
 use rig::tool::server::ToolServer;
 
 use crate::tools::mcp::{
+    MCP_TOOL_NAMESPACE_DELIMITER,
     client::McpToolDefinition,
     config::{McpServerConfig, McpTransportType},
-    MCP_TOOL_NAMESPACE_DELIMITER,
 };
 
 pub struct McpRuntime {
@@ -234,7 +234,10 @@ impl McpRuntime {
         &self.discovered_tools
     }
 
-    pub fn lifecycle_projection(&self, configured_servers: &[McpServerConfig]) -> Vec<McpServerLifecycle> {
+    pub fn lifecycle_projection(
+        &self,
+        configured_servers: &[McpServerConfig],
+    ) -> Vec<McpServerLifecycle> {
         project_server_lifecycle(configured_servers, &self.connected_servers)
     }
 }
@@ -369,5 +372,5 @@ async fn discover_tools_for_server(
 }
 
 #[cfg(test)]
-#[path = "runtime/test.rs"]
-mod runtime_tests;
+#[path = "runtime_test.rs"]
+mod runtime_test;

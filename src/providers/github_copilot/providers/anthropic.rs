@@ -145,5 +145,5 @@ struct ErrorDetail {
 }
 
 #[cfg(test)]
-#[path = "anthropic/test.rs"]
-mod anthropic_tests;
+#[path = "anthropic_test.rs"]
+mod anthropic_test;

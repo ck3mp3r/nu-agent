@@ -5,8 +5,9 @@ mod viewport_state;
 #[cfg(test)]
 mod test;
 
-use crate::agent::ui::tui::markdown::{project_markdown_to_lines, rendered_line_to_plain_text};
+use crate::agent::protocol::event::{PermissionDecision, PermissionDecisionSubmission};
 use crate::agent::protocol::slash::{SlashCommand, filter_inline_slash_suggestions};
+use crate::agent::ui::tui::markdown::{project_markdown_to_lines, rendered_line_to_plain_text};
 use crate::agent::ui::tui::rendering::selection::TranscriptSelection;
 use ratatui::text::Line;
 use std::collections::HashMap;
@@ -147,6 +148,21 @@ pub struct ToolCallLine {
     pub key: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PermissionPrompt {
+    pub request_id: String,
+    pub matched_rule_identity: String,
+    pub tool: String,
+    pub source: String,
+    pub mode: Option<String>,
+    pub scope: String,
+    pub pattern: String,
+    pub target_field: Option<String>,
+    pub summary: String,
+    pub pre_authorize_display: Option<crate::agent::protocol::event::ToolDisplay>,
+    pub attached_tool_transcript_line_index: Option<usize>,
+}
+
 const TURN_SEPARATOR_LINE: &str = "────────────────";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -206,7 +222,10 @@ pub struct AppState {
     mcp_failure_reasons: HashMap<String, String>,
     pending_mcp_toggle_requests: VecDeque<McpToggleRequest>,
     pending_model_switch_requests: VecDeque<String>,
+    pending_permission_decisions: VecDeque<PermissionDecisionSubmission>,
     pending_model_picker_launch_requests: usize,
+    pub permission_prompt: Option<PermissionPrompt>,
+    permission_prompt_manual_recenter_override: bool,
     assistant_projection_cache: HashMap<String, Vec<Line<'static>>>,
     prompt_items: Vec<QueuedPrompt>,
     tool_call_items: Vec<ToolCallLine>,
@@ -266,7 +285,10 @@ impl Default for AppState {
             mcp_failure_reasons: HashMap::new(),
             pending_mcp_toggle_requests: VecDeque::new(),
             pending_model_switch_requests: VecDeque::new(),
+            pending_permission_decisions: VecDeque::new(),
             pending_model_picker_launch_requests: 0,
+            permission_prompt: None,
+            permission_prompt_manual_recenter_override: false,
             assistant_projection_cache: HashMap::new(),
             prompt_items: Vec::new(),
             tool_call_items: Vec::new(),
@@ -431,8 +453,16 @@ impl AppState {
         skills.sort_by(|left, right| {
             left.source_priority
                 .cmp(&right.source_priority)
-                .then_with(|| left.name.to_ascii_lowercase().cmp(&right.name.to_ascii_lowercase()))
-                .then_with(|| left.source.to_ascii_lowercase().cmp(&right.source.to_ascii_lowercase()))
+                .then_with(|| {
+                    left.name
+                        .to_ascii_lowercase()
+                        .cmp(&right.name.to_ascii_lowercase())
+                })
+                .then_with(|| {
+                    left.source
+                        .to_ascii_lowercase()
+                        .cmp(&right.source.to_ascii_lowercase())
+                })
         });
         self.discoverable_skills = skills;
         self.skills_discovery_failed = false;
@@ -448,8 +478,16 @@ impl AppState {
             left.provider
                 .to_ascii_lowercase()
                 .cmp(&right.provider.to_ascii_lowercase())
-                .then_with(|| left.model.to_ascii_lowercase().cmp(&right.model.to_ascii_lowercase()))
-                .then_with(|| left.identity.to_ascii_lowercase().cmp(&right.identity.to_ascii_lowercase()))
+                .then_with(|| {
+                    left.model
+                        .to_ascii_lowercase()
+                        .cmp(&right.model.to_ascii_lowercase())
+                })
+                .then_with(|| {
+                    left.identity
+                        .to_ascii_lowercase()
+                        .cmp(&right.identity.to_ascii_lowercase())
+                })
         });
         self.model_picker_options = options;
         self.ensure_invariants();
@@ -520,7 +558,10 @@ impl AppState {
         self.model_picker_options
             .iter()
             .filter(|option| {
-                option.identity.to_ascii_lowercase().contains(query.as_str())
+                option
+                    .identity
+                    .to_ascii_lowercase()
+                    .contains(query.as_str())
                     || option.display.to_ascii_lowercase().contains(query.as_str())
             })
             .cloned()
@@ -544,6 +585,75 @@ impl AppState {
 
     pub fn take_next_model_switch_request(&mut self) -> Option<String> {
         self.pending_model_switch_requests.pop_front()
+    }
+
+    pub fn open_permission_prompt(&mut self, prompt: PermissionPrompt) {
+        self.permission_prompt = Some(prompt);
+        self.permission_prompt_manual_recenter_override = false;
+        self.status_line = "Permission required".to_string();
+        self.ensure_invariants();
+    }
+
+    pub fn note_user_transcript_scroll_override(&mut self) {
+        if self.permission_prompt.is_some() {
+            self.permission_prompt_manual_recenter_override = true;
+        }
+    }
+
+    pub fn should_preserve_permission_prompt_row(&self) -> bool {
+        self.permission_prompt.is_some()
+    }
+
+    pub fn should_auto_recenter_permission_prompt_row(&self) -> bool {
+        self.permission_prompt.is_some() && !self.permission_prompt_manual_recenter_override
+    }
+
+    pub fn focus_transcript_pane(&mut self) {
+        self.pane_focus = PaneFocus::Transcript;
+    }
+
+    pub fn latest_in_progress_tool_transcript_line_for_tool(
+        &self,
+        tool_name: &str,
+    ) -> Option<usize> {
+        self.tool_call_items
+            .iter()
+            .rev()
+            .find(|item| {
+                item.status == ToolCallStatus::InProgress
+                    && item
+                        .key
+                        .split_once('\n')
+                        .map(|(name, _)| name == tool_name)
+                        .unwrap_or(false)
+            })
+            .map(|item| item.transcript_line_index)
+    }
+
+    pub fn has_permission_prompt(&self) -> bool {
+        self.permission_prompt.is_some()
+    }
+
+    pub fn submit_permission_decision(&mut self, decision: PermissionDecision) -> bool {
+        let Some(prompt) = self.permission_prompt.as_ref() else {
+            return false;
+        };
+        self.pending_permission_decisions
+            .push_back(PermissionDecisionSubmission {
+                request_id: prompt.request_id.clone(),
+                decision,
+                matched_rule_identity: prompt.matched_rule_identity.clone(),
+            });
+        self.permission_prompt = None;
+        self.permission_prompt_manual_recenter_override = false;
+        self.ensure_invariants();
+        true
+    }
+
+    pub fn take_next_permission_decision_submission(
+        &mut self,
+    ) -> Option<PermissionDecisionSubmission> {
+        self.pending_permission_decisions.pop_front()
     }
 
     pub fn queue_model_picker_launch_request(&mut self) {
@@ -612,7 +722,11 @@ impl AppState {
             .map(|server| server.state)
     }
 
-    pub fn set_mcp_server_state_by_name(&mut self, name: &str, state: McpServerUsabilityState) -> bool {
+    pub fn set_mcp_server_state_by_name(
+        &mut self,
+        name: &str,
+        state: McpServerUsabilityState,
+    ) -> bool {
         self.set_mcp_server_state_by_name_with_reason(name, state, None)
     }
 
@@ -622,7 +736,11 @@ impl AppState {
         state: McpServerUsabilityState,
         reason: Option<String>,
     ) -> bool {
-        if let Some(server) = self.mcp_servers.iter_mut().find(|server| server.name == name) {
+        if let Some(server) = self
+            .mcp_servers
+            .iter_mut()
+            .find(|server| server.name == name)
+        {
             server.state = state;
 
             match state {
@@ -673,10 +791,12 @@ impl AppState {
                     enable: false,
                 }
             }
-            McpServerUsabilityState::Disabled | McpServerUsabilityState::Failed => McpToggleRequest {
-                server_name: server.name.clone(),
-                enable: true,
-            },
+            McpServerUsabilityState::Disabled | McpServerUsabilityState::Failed => {
+                McpToggleRequest {
+                    server_name: server.name.clone(),
+                    enable: true,
+                }
+            }
         };
 
         self.pending_mcp_toggle_requests.push_back(request);
@@ -741,7 +861,10 @@ impl AppState {
         self.command_palette_selection = 0;
     }
 
-    pub fn prompt_status_for_transcript_line(&self, transcript_line_index: usize) -> Option<PromptStatus> {
+    pub fn prompt_status_for_transcript_line(
+        &self,
+        transcript_line_index: usize,
+    ) -> Option<PromptStatus> {
         self.prompt_items
             .iter()
             .rev()
@@ -914,11 +1037,15 @@ impl AppState {
     }
 
     pub fn visual_anchor_index(&self) -> Option<usize> {
-        self.visual_selection.as_ref().map(TranscriptSelection::anchor)
+        self.visual_selection
+            .as_ref()
+            .map(TranscriptSelection::anchor)
     }
 
     pub fn visual_cursor_index(&self) -> Option<usize> {
-        self.visual_selection.as_ref().map(TranscriptSelection::cursor)
+        self.visual_selection
+            .as_ref()
+            .map(TranscriptSelection::cursor)
     }
 
     pub fn transcript_cursor_index(&self) -> Option<usize> {
@@ -1214,7 +1341,9 @@ impl AppState {
     }
 
     pub fn request_abort_confirmation(&mut self) -> bool {
-        if !(self.active_prompt_id.is_some() || !self.pending_prompt_ids.is_empty() || self.active_cycle)
+        if !(self.active_prompt_id.is_some()
+            || !self.pending_prompt_ids.is_empty()
+            || self.active_cycle)
         {
             self.ensure_invariants();
             return false;
@@ -1267,7 +1396,10 @@ impl AppState {
         text: String,
         rendered: Option<Line<'static>>,
     ) {
-        if should_insert_turn_separator(self.transcript_preview.last().map(|entry| entry.role), role) {
+        if should_insert_turn_separator(
+            self.transcript_preview.last().map(|entry| entry.role),
+            role,
+        ) {
             self.transcript_preview.push(TranscriptLine {
                 role: TranscriptRole::Separator,
                 text: TURN_SEPARATOR_LINE.to_string(),
@@ -1396,6 +1528,10 @@ impl AppState {
             self.abort.pending = false;
         }
 
+        if self.permission_prompt.is_none() {
+            self.permission_prompt_manual_recenter_override = false;
+        }
+
         if self.phase != UiPhase::AbortPending {
             self.abort.pending = false;
         }
@@ -1458,7 +1594,9 @@ impl AppState {
         viewport_state::apply_transcript_viewport_model(self, &model);
 
         if let Some(selection) = self.visual_selection.as_ref()
-            && selection.bounded_range(self.transcript_preview.len()).is_none()
+            && selection
+                .bounded_range(self.transcript_preview.len())
+                .is_none()
         {
             self.visual_selection = None;
         }
@@ -1473,7 +1611,6 @@ impl AppState {
         )
         .enforce_single_active_invariant();
     }
-
 }
 
 pub fn info_panel_for_command_palette_action(action: CommandPaletteAction) -> Option<InfoPanel> {
@@ -1519,7 +1656,10 @@ fn should_insert_turn_separator(previous: Option<TranscriptRole>, next: Transcri
 }
 
 fn is_turn_role(role: TranscriptRole) -> bool {
-    matches!(role, TranscriptRole::User | TranscriptRole::Assistant | TranscriptRole::Tool)
+    matches!(
+        role,
+        TranscriptRole::User | TranscriptRole::Assistant | TranscriptRole::Tool
+    )
 }
 
 fn previous_char_start(buffer: &str, cursor: usize) -> Option<usize> {
@@ -1528,10 +1668,7 @@ fn previous_char_start(buffer: &str, cursor: usize) -> Option<usize> {
     }
 
     let cursor = cursor.min(buffer.len());
-    buffer[..cursor]
-        .char_indices()
-        .last()
-        .map(|(idx, _)| idx)
+    buffer[..cursor].char_indices().last().map(|(idx, _)| idx)
 }
 
 fn next_char_end(buffer: &str, cursor: usize) -> Option<usize> {

@@ -69,15 +69,13 @@ fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserAction, bool
                             return (UserAction::Noop, true);
                         }
                         UserAction::ScrollPageUp => {
-                            state.info_panel_scroll = state
-                                .info_panel_scroll
-                                .saturating_sub(PANEL_PAGE_LINES);
+                            state.info_panel_scroll =
+                                state.info_panel_scroll.saturating_sub(PANEL_PAGE_LINES);
                             return (UserAction::Noop, true);
                         }
                         UserAction::ScrollPageDown => {
-                            state.info_panel_scroll = state
-                                .info_panel_scroll
-                                .saturating_add(PANEL_PAGE_LINES);
+                            state.info_panel_scroll =
+                                state.info_panel_scroll.saturating_add(PANEL_PAGE_LINES);
                             return (UserAction::Noop, true);
                         }
                         _ => UserAction::Noop,
@@ -95,7 +93,9 @@ fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserAction, bool
                 UserAction::Esc => UserAction::CommandPaletteClose,
                 UserAction::EnterInsertMode => UserAction::Noop,
                 UserAction::Submit => UserAction::CommandPaletteSelect,
-                UserAction::ScrollLineUp | UserAction::HistoryUp => UserAction::CommandPaletteMoveUp,
+                UserAction::ScrollLineUp | UserAction::HistoryUp => {
+                    UserAction::CommandPaletteMoveUp
+                }
                 UserAction::ScrollLineDown | UserAction::HistoryDown => {
                     UserAction::CommandPaletteMoveDown
                 }
@@ -149,6 +149,27 @@ fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserAction, bool
                     state.append_model_picker_query_char(ch);
                     UserAction::Noop
                 }
+                _ => UserAction::Noop,
+            },
+            true,
+        );
+    }
+
+    if state.has_permission_prompt() {
+        return (
+            match action {
+                UserAction::InsertChar('a') => UserAction::PermissionAllowOnce,
+                UserAction::InsertChar('A') => UserAction::PermissionAllowAlways,
+                UserAction::InsertChar('d') => UserAction::PermissionDeny,
+                UserAction::Esc => UserAction::PermissionDeny,
+                UserAction::HistoryUp => UserAction::ScrollLineUp,
+                UserAction::HistoryDown => UserAction::ScrollLineDown,
+                UserAction::ScrollLineUp
+                | UserAction::ScrollLineDown
+                | UserAction::ScrollPageUp
+                | UserAction::ScrollPageDown
+                | UserAction::ScrollToTop
+                | UserAction::ScrollToBottom => action,
                 _ => UserAction::Noop,
             },
             true,
@@ -222,9 +243,7 @@ fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserAction, bool
                             state.clear_normal_pending_key();
                             UserAction::ScrollToBottom
                         }
-                        UserAction::ScrollPageUp
-                        | UserAction::ScrollPageDown
-                        | UserAction::Esc => {
+                        UserAction::ScrollPageUp | UserAction::ScrollPageDown | UserAction::Esc => {
                             state.clear_normal_pending_key();
                             action
                         }

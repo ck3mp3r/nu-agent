@@ -35,8 +35,10 @@ pub struct LayoutOutput {
 }
 
 pub fn recompute_layout(input: LayoutInput) -> LayoutOutput {
-    let (main_width, side_pane) = compute_columns(input.columns, input.rows, input.side_pane_visible);
-    let (transcript_height, status_height, input_height) = compute_rows(input.rows, input.input_height);
+    let (main_width, side_pane) =
+        compute_columns(input.columns, input.rows, input.side_pane_visible);
+    let (transcript_height, status_height, input_height) =
+        compute_rows(input.rows, input.input_height);
     let margin = side_margin_for_main_width(main_width);
     let inner_width = main_width.saturating_sub(margin.saturating_mul(2));
 
@@ -140,11 +142,7 @@ fn clip(geometry: PaneGeometry, columns: u16, rows: u16) -> PaneGeometry {
 }
 
 fn side_margin_for_main_width(main_width: u16) -> u16 {
-    if main_width < 8 {
-        0
-    } else {
-        MAIN_SIDE_MARGIN
-    }
+    if main_width < 8 { 0 } else { MAIN_SIDE_MARGIN }
 }
 
 pub fn wrapped_input_rows(input: &str, content_width: usize) -> Vec<String> {

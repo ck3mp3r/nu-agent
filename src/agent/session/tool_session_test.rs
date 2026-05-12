@@ -111,11 +111,8 @@ fn test_multi_turn_tool_context_preserved() {
     session
         .add_message(
             &store,
-            Message::new(
-                "tool".to_string(),
-                "tool[calc] args={} · done".to_string(),
-            )
-            .with_tool_details("{}", "4", true),
+            Message::new("tool".to_string(), "tool[calc] args={} · done".to_string())
+                .with_tool_details("{}", "4", true),
         )
         .unwrap();
     session

@@ -335,6 +335,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 
 [[package]]
+name = "bytesize"
+version = "2.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6bd91ee7b2422bcb158d90ef4d14f75ef67f340943fc4149891dcce8f8b972a3"
+
+[[package]]
 name = "byteyarn"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2053,6 +2059,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69f454999da57e72aad847db6caed952b1fba6f51e21b388a13da80ff2452ed0"
 
 [[package]]
+name = "nu-parser"
+version = "0.112.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "103267abd1a39418360ba067587877eceaab78960288da5b528f78b026469f21"
+dependencies = [
+ "bytesize",
+ "chrono",
+ "itertools 0.14.0",
+ "log",
+ "nu-engine",
+ "nu-experimental",
+ "nu-path",
+ "nu-protocol",
+ "nu-utils",
+ "serde_json",
+]
+
+[[package]]
 name = "nu-path"
 version = "0.112.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2209,6 +2233,7 @@ dependencies = [
  "http",
  "libc",
  "log",
+ "nu-parser",
  "nu-plugin",
  "nu-protocol",
  "pulldown-cmark",

@@ -3,13 +3,13 @@ pub mod inspect;
 pub mod list;
 
 #[cfg(test)]
-mod clear_tests;
+mod clear_test;
 
 #[cfg(test)]
-mod inspect_tests;
+mod inspect_test;
 
 #[cfg(test)]
-mod list_tests;
+mod list_test;
 
 pub use clear::AgentSessionClear;
 pub use inspect::AgentSessionInspect;

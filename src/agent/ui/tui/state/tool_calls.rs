@@ -20,7 +20,12 @@ impl<'a> ToolCallBookkeeping<'a> {
         }
     }
 
-    pub(super) fn start_tool_call(&mut self, transcript_line_index: usize, name: &str, arguments: &str) {
+    pub(super) fn start_tool_call(
+        &mut self,
+        transcript_line_index: usize,
+        name: &str,
+        arguments: &str,
+    ) {
         let id = *self.next_tool_call_id;
         *self.next_tool_call_id = self.next_tool_call_id.saturating_add(1);
         let key = tool_call_key(name, arguments);

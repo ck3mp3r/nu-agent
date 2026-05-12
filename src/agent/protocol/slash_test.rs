@@ -1,11 +1,6 @@
 use super::slash::{
-    SLASH_COMMAND_ORDER,
-    SlashCommand,
-    SlashParseResult,
-    filter_inline_slash_suggestions,
-    parse_slash_command,
-    slash_command_label,
-    slash_command_summary,
+    SLASH_COMMAND_ORDER, SlashCommand, SlashParseResult, filter_inline_slash_suggestions,
+    parse_slash_command, slash_command_label, slash_command_summary,
 };
 
 #[test]

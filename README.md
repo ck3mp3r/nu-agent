@@ -38,6 +38,14 @@ Use it:
 - `docs/mcp.md` - MCP servers, discovery, filtering
 - `docs/usage.md` - commands, examples, and TUI transcript rendering behavior
 - `docs/development.md` - build, test, lint
+- `docs/handler-decomposition-contract.md` - handler module boundaries and migration plan (R1)
+- `docs/contribution-guardrails.md` - R7/R8/R9 contributor guardrails for permission/TUI/tool-handler changes
+
+## Module/Test Layout Convention
+
+- Single-file module: `foo.rs` + `foo_test.rs`
+- Multi-file module: `foo/mod.rs` + `foo/test.rs`
+- Forbidden mixed pattern: `foo.rs` + `foo/test.rs`
 
 ## TUI transcript rendering
 

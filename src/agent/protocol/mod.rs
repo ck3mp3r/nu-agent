@@ -3,10 +3,11 @@ pub mod cancellation;
 pub mod compaction;
 pub mod contracts;
 pub mod event;
+pub mod permission;
 pub mod preamble;
 pub mod prompt;
-pub mod slash;
 pub mod skills;
+pub mod slash;
 pub mod tool_args;
 
 #[cfg(test)]
@@ -17,6 +18,9 @@ mod compaction_test;
 
 #[cfg(test)]
 mod event_contract_test;
+
+#[cfg(test)]
+mod permission_test;
 
 #[cfg(test)]
 mod slash_test;

@@ -104,5 +104,5 @@ impl ClientExt for Client {
 }
 
 #[cfg(test)]
-#[path = "client/test.rs"]
-mod client_tests;
+#[path = "client_test.rs"]
+mod client_test;

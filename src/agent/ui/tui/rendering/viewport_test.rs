@@ -172,7 +172,14 @@ fn empty_transcript_is_safe_and_has_no_cursor() {
 
     run_ops(
         &mut model,
-        &[Op::Top, Op::Bottom, Op::LineUp, Op::LineDown, Op::PageUp(3), Op::PageDown(3)],
+        &[
+            Op::Top,
+            Op::Bottom,
+            Op::LineUp,
+            Op::LineDown,
+            Op::PageUp(3),
+            Op::PageDown(3),
+        ],
     );
 
     assert_eq!(model.current_cursor_index(), None);

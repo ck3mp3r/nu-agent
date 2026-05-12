@@ -43,24 +43,22 @@ pub(crate) fn extract_flag_config(call: &EvaluatedCall) -> Config {
     }
 
     // Extract all flags
-    let provider = get_string_flag(call, "provider").unwrap_or_default();
     let model = get_string_flag(call, "model").unwrap_or_default();
     let api_key = get_string_flag(call, "api-key");
     let base_url = get_string_flag(call, "base-url");
     let temperature = get_float_flag(call, "temperature");
-    let max_tokens = get_u32_flag(call, "max-tokens");
     let max_context_tokens = get_u32_flag(call, "max-context-tokens");
     let max_output_tokens = get_u32_flag(call, "max-output-tokens");
     let max_tool_turns = get_u32_flag(call, "max-turns");
 
     Config {
-        provider,
+        provider: String::new(),
         provider_impl: None,
         model,
         api_key,
         base_url,
         temperature,
-        max_tokens,
+        max_tokens: None,
         max_context_tokens,
         max_output_tokens,
         max_tool_turns,
@@ -141,15 +139,6 @@ pub(crate) fn resolve_with_new_config(
     {
         config.temperature = Some(temperature);
     }
-    if let Some(max_tokens) = call
-        .get_flag::<Value>("max-tokens")
-        .ok()
-        .flatten()
-        .and_then(|v| v.as_int().ok())
-        .and_then(|i| if i >= 0 { Some(i as u32) } else { None })
-    {
-        config.max_tokens = Some(max_tokens);
-    }
     if let Some(max_context) = call
         .get_flag::<Value>("max-context-tokens")
         .ok()
@@ -193,6 +182,23 @@ pub(crate) fn resolve_with_old_config(
 ) -> Result<Config, LabeledError> {
     // Step 1: Extract flag config first
     let flag_config = extract_flag_config(call);
+    let model_override = if flag_config.model.is_empty() {
+        None
+    } else {
+        let (provider, model) = flag_config.model.split_once('/').ok_or_else(|| {
+            LabeledError::new("Invalid --model format").with_label(
+                "Expected provider/model (e.g. openai/gpt-4)",
+                call.head,
+            )
+        })?;
+
+        if provider.is_empty() || model.is_empty() {
+            return Err(LabeledError::new("Invalid --model format")
+                .with_label("Provider and model must both be non-empty", call.head));
+        }
+
+        Some((provider.to_string(), model.to_string()))
+    };
 
     // Step 2: Determine provider/model for env lookup
     // Use plugin config if available, then flags, then default
@@ -200,8 +206,8 @@ pub(crate) fn resolve_with_old_config(
         // Try to extract provider/model from plugin config for env lookup
         let plugin_parsed = Config::from_plugin_config(plugin_value)?;
         (plugin_parsed.provider.clone(), plugin_parsed.model.clone())
-    } else if !flag_config.provider.is_empty() && !flag_config.model.is_empty() {
-        (flag_config.provider.clone(), flag_config.model.clone())
+    } else if let Some((provider, model)) = model_override.as_ref() {
+        (provider.clone(), model.clone())
     } else {
         ("openai".to_string(), "gpt-4".to_string())
     };
@@ -218,11 +224,9 @@ pub(crate) fn resolve_with_old_config(
 
     // Step 5: Merge flag config (highest precedence) - only if values are non-empty
     // For required fields, only override if non-empty
-    if !flag_config.provider.is_empty() {
-        config.provider = flag_config.provider;
-    }
-    if !flag_config.model.is_empty() {
-        config.model = flag_config.model;
+    if let Some((provider, model)) = model_override {
+        config.provider = provider;
+        config.model = model;
     }
     // For optional fields, use standard merge
     config.api_key = flag_config.api_key.or(config.api_key);

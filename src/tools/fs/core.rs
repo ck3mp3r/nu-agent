@@ -394,7 +394,10 @@ pub fn plan_search_replace_edit(
     })
 }
 
-fn validate_patch_operations(operations: &[PatchOp], total_lines: usize) -> Result<(), MutateError> {
+fn validate_patch_operations(
+    operations: &[PatchOp],
+    total_lines: usize,
+) -> Result<(), MutateError> {
     for op in operations {
         if op.range.start == 0 || op.range.start > op.range.end {
             return Err(MutateError::InvalidPatchRangeShape {
@@ -438,7 +441,10 @@ fn compile_regex(pattern: &str) -> Result<Regex, MutateError> {
     })
 }
 
-fn compute_edit_result(content: &str, operation: &EditOperation) -> Result<(String, usize), MutateError> {
+fn compute_edit_result(
+    content: &str,
+    operation: &EditOperation,
+) -> Result<(String, usize), MutateError> {
     match (operation.match_mode, operation.occurrence) {
         (EditMatchMode::Literal, EditOccurrence::First) => {
             if let Some(start) = content.find(&operation.search) {
@@ -457,7 +463,10 @@ fn compute_edit_result(content: &str, operation: &EditOperation) -> Result<(Stri
             if replacements == 0 {
                 Ok((content.to_string(), 0))
             } else {
-                Ok((content.replace(&operation.search, &operation.replacement), replacements))
+                Ok((
+                    content.replace(&operation.search, &operation.replacement),
+                    replacements,
+                ))
             }
         }
         (EditMatchMode::Regex, EditOccurrence::First) => {
@@ -465,7 +474,12 @@ fn compute_edit_result(content: &str, operation: &EditOperation) -> Result<(Stri
             if !regex.is_match(content) {
                 Ok((content.to_string(), 0))
             } else {
-                Ok((regex.replacen(content, 1, &operation.replacement).into_owned(), 1))
+                Ok((
+                    regex
+                        .replacen(content, 1, &operation.replacement)
+                        .into_owned(),
+                    1,
+                ))
             }
         }
         (EditMatchMode::Regex, EditOccurrence::All) => {
@@ -474,7 +488,12 @@ fn compute_edit_result(content: &str, operation: &EditOperation) -> Result<(Stri
             if replacements == 0 {
                 Ok((content.to_string(), 0))
             } else {
-                Ok((regex.replace_all(content, &operation.replacement).into_owned(), replacements))
+                Ok((
+                    regex
+                        .replace_all(content, &operation.replacement)
+                        .into_owned(),
+                    replacements,
+                ))
             }
         }
     }
@@ -521,7 +540,10 @@ pub fn metadata_for_path(path: &Path) -> io::Result<FileMetadata> {
     })
 }
 
-pub fn check_conflict(expected_version: Option<&str>, current_version: &str) -> Result<(), ConflictError> {
+pub fn check_conflict(
+    expected_version: Option<&str>,
+    current_version: &str,
+) -> Result<(), ConflictError> {
     if let Some(expected) = expected_version
         && expected != current_version
     {

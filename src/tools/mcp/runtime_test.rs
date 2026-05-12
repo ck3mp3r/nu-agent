@@ -235,9 +235,12 @@ fn resolve_stdio_cwd_prefers_override_when_valid() {
     std::fs::create_dir_all(&caller).expect("create caller");
     std::fs::create_dir_all(&override_dir).expect("create override");
 
-    let resolved =
-        super::resolve_stdio_cwd(caller.as_path(), Some(override_dir.to_string_lossy().to_string()), "nu")
-            .expect("cwd resolve");
+    let resolved = super::resolve_stdio_cwd(
+        caller.as_path(),
+        Some(override_dir.to_string_lossy().to_string()),
+        "nu",
+    )
+    .expect("cwd resolve");
 
     let expected = std::fs::canonicalize(&override_dir).expect("canonical override");
     assert_eq!(resolved, expected);
@@ -260,9 +263,12 @@ fn resolve_stdio_cwd_rejects_invalid_override() {
     std::fs::create_dir_all(&caller).expect("create caller");
     let bad = caller.join("does-not-exist");
 
-    let err =
-        super::resolve_stdio_cwd(caller.as_path(), Some(bad.to_string_lossy().to_string()), "nu")
-            .expect_err("invalid override must fail");
+    let err = super::resolve_stdio_cwd(
+        caller.as_path(),
+        Some(bad.to_string_lossy().to_string()),
+        "nu",
+    )
+    .expect_err("invalid override must fail");
 
     assert!(
         err.contains("invalid stdio cwd override") || err.contains("not a directory"),
@@ -310,9 +316,12 @@ fn resolve_stdio_cwd_relative_override_resolves_from_caller_cwd() {
     let nested = caller.join("workspace").join("project");
     std::fs::create_dir_all(&nested).expect("create nested cwd");
 
-    let resolved =
-        super::resolve_stdio_cwd(caller.as_path(), Some("workspace/project".to_string()), "nu")
-            .expect("cwd resolve");
+    let resolved = super::resolve_stdio_cwd(
+        caller.as_path(),
+        Some("workspace/project".to_string()),
+        "nu",
+    )
+    .expect("cwd resolve");
 
     let expected = std::fs::canonicalize(&nested).expect("canonical nested");
     assert_eq!(resolved, expected);

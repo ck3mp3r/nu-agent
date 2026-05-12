@@ -43,6 +43,164 @@ let tools = {
 "what time is it" | agent --tools $tools
 ```
 
+## Tool authorization (permissions DSL)
+
+Authorization uses a **map-style** `permissions` DSL (not a rules array).
+
+Only CLI surface for policy override is `--permissions` (structured record/object).
+
+```nu
+# Build per-run overlay in Nu and pass as a record
+let permissions = {
+  "read": "deny"
+  "nu__run": {
+    "command": {
+      "kubectl delete *": "deny"
+      "*": "ask"
+    }
+  }
+}
+
+"review this command" | agent --permissions $permissions
+```
+
+Canonical shape:
+
+```nu
+$env.config.plugins.agent = {
+  # ...existing config...
+  permissions: {
+    "*": "ask"
+    "read": "allow"
+    "c5t_get*": "allow"
+    "nu__run": {
+      "command": {
+        "kubectl delete *": "deny"
+        "*": "ask"
+      }
+    }
+  }
+}
+```
+
+### Supported values
+
+- global baseline: `"*": "allow|ask|deny"`
+- tool pattern actions: `"read": "allow"`, `"c5t_get*": "allow"`
+- nested `nu__run` map with explicit `command` key only:
+  - `"nu__run": { "command": { "<pattern>": "allow|ask|deny" } }`
+
+Unknown nested fields under `nu__run` are rejected with deterministic diagnostics.
+
+### Deterministic precedence
+
+Decision order is fixed:
+
+1. global baseline
+2. tool override
+3. nested `nu__run.command` override
+
+For `nu__run.command` matching, runtime normalizes commands by:
+
+- trimming leading/trailing whitespace
+- collapsing internal whitespace runs to one space
+
+If `nu__run.command` is missing/unreadable, behavior deterministically falls back
+to inherited tool/global decision with diagnostic metadata.
+
+If nested `"*"` equals inherited decision, it is a valid no-op and reported via
+deterministic diagnostics metadata.
+
+### CLI overlay merge semantics
+
+Effective policy is built once at startup using additive overlay:
+
+1. base: `config.agent.permissions`
+2. overlay: CLI `--permissions`
+
+Merge rules:
+
+- overlapping leaf/action keys: CLI wins
+- non-overlapping config keys: retained
+- nested maps (for example `nu__run.command`): deterministic key merge
+
+Malformed CLI overlay fails fast with explicit key-path diagnostics.
+
+Startup emits a compact policy diagnostic summary:
+
+- `permissions policy: overlay_active=true|false global=<action> tool_rules=<n> nu__run.command_rules=<n>`
+
+### Ask flow and session grants
+
+Ask hook choices are:
+
+- `allow_once`
+- `allow_always` (session-only; reset on restart)
+- `deny`
+
+`allow_always` grants are **session-only** and scoped to the approving tool
+context (tool/source/mode scope), not global across unrelated tools.
+
+Within a running session, later calls in the same scoped tool context can reuse
+that grant. Restarting the plugin/session clears all `allow_always` grants.
+
+### Interactive permission prompt behavior (TUI)
+
+When a tool call resolves to `ask` in TUI mode, execution pauses at the
+authorization boundary until a decision is submitted. The tool handler is not
+invoked while waiting.
+
+The permission ask UI is rendered as a compact **inline permission card**
+attached to the active tool call display in transcript space (not a large
+blocking modal).
+
+The card includes request context (`tool`, `source`, optional `mode`), matched
+rule metadata, summary, and `request_id`.
+
+Exact keybindings:
+
+- `a` => `allow_once`
+- `A` => `allow_always` (session-only)
+- `d` => `deny`
+- `Esc` => `deny`
+
+Safety semantics:
+
+- Timeout while waiting => deterministic deny
+- Stale/unknown decision submissions => ignored
+- Rule-identity mismatch submissions => ignored
+- Prompt handling remains deterministic and non-blocking for overall UI loop
+
+TUI rendering guardrails:
+
+- Prompt content is rendered as an **inline transcript card** anchored to the related tool row (not a blocking modal).
+- Permission decision controls are rendered in a **sticky footer row** so controls remain visible independent of transcript window clipping.
+- Viewport fitting preserves a required permission-context row while ask is active; manual user scroll override disables auto-recentering jitter but keeps required-row preservation state.
+
+Lifecycle events emitted by runtime/UI path:
+
+- `PermissionRequested`
+- `PermissionDecisionSubmitted`
+- `PermissionDecisionTimedOut`
+- `PermissionDecisionIgnored`
+
+### Non-interactive ask fallback
+
+In non-interactive mode (`stderr` mode), `ask` defaults to secure deny.
+
+Optional override in plugin config:
+
+```nu
+$env.config.plugins.agent = {
+  # ...
+  non_interactive_ask: "allow"  # or "deny" (default)
+}
+```
+
+- default (missing): `deny`
+- supported values: `deny`, `allow`
+- invalid values fail fast with deterministic config error
+
 ## Built-in filesystem tools (CAS-safe)
 
 The agent exposes exactly three built-in filesystem tools:
@@ -270,12 +428,12 @@ built-ins.
 - `--api-key <string>`
 - `--base-url <string>`
 - `--temperature <number>`
-- `--max-tokens <int>`
 - `--max-context-tokens <int>`
 - `--max-output-tokens <int>`
 - `--max-turns <int>`
 - `--tools <record>`
 - `--mcp-tools <list<string>>`
+- `--permissions <record>`
 - `--tool-timeout <duration>`
 - `--session <id>`
 - `--new-session`
@@ -303,6 +461,8 @@ lines.
 
 The fallback behavior keeps transcript output predictable even when model output
 contains malformed markdown or uncommon language identifiers.
+
+See also: [Contribution guardrails](./contribution-guardrails.md) for contributor-facing invariants and test mapping.
 
 ### Examples
 

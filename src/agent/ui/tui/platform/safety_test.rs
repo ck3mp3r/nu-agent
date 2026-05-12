@@ -1,13 +1,7 @@
-use std::{
-    cell::RefCell,
-    panic,
-    rc::Rc,
-};
+use std::{cell::RefCell, panic, rc::Rc};
 
 use crate::agent::ui::tui::platform::safety::{
-    RestoreRunError,
-    TerminalRestorer,
-    run_with_restore,
+    RestoreRunError, TerminalRestorer, run_with_restore,
 };
 
 #[derive(Clone)]

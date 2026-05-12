@@ -10,11 +10,11 @@ use crate::agent::protocol::{
     cancellation::is_llm_call_cancelled,
     compaction::{CompactionTriggerDecision, CompactionTriggerSource},
     contracts::{
-        ConversationRuntime, InteractiveUi, McpToggleRequest, McpUsabilityState,
-        ProgressUi, UiMessageSnapshot,
-        SharedUiAction,
+        ConversationRuntime, InteractiveUi, McpToggleRequest, McpUsabilityState, ProgressUi,
+        SharedUiAction, UiMessageSnapshot,
     },
     event::UiEvent,
+    permission::submit_active_permission_decision,
     slash::{SlashCommand, SlashParseResult, parse_slash_command},
 };
 
@@ -29,7 +29,10 @@ type PendingAutoCompaction = mpsc::Receiver<Option<String>>;
 type PendingCompactionTrigger = mpsc::Receiver<Option<String>>;
 
 enum WorkerCommand {
-    ExecuteTurn { prompt: String, span: Span },
+    ExecuteTurn {
+        prompt: String,
+        span: Span,
+    },
     EvaluateAutoCompaction {
         response_tx: mpsc::Sender<Option<String>>,
     },
@@ -79,14 +82,13 @@ where
     R: ConversationRuntime + Send,
     U: InteractiveUi,
 {
-        let mut last_authoritative_visible_count = runtime.llm_visible_mcp_tool_count();
-        ui.set_active_model_identity(runtime.active_model_identity().as_str());
+    let mut last_authoritative_visible_count = runtime.llm_visible_mcp_tool_count();
+    ui.set_active_model_identity(runtime.active_model_identity().as_str());
 
     std::thread::scope(|scope| {
         let (worker_cmd_tx, worker_cmd_rx) = mpsc::channel::<WorkerCommand>();
         let (worker_event_tx, worker_event_rx) = mpsc::channel::<UiEvent>();
-        let (worker_result_tx, worker_result_rx) =
-            mpsc::channel::<Result<Value, LabeledError>>();
+        let (worker_result_tx, worker_result_rx) = mpsc::channel::<Result<Value, LabeledError>>();
         let cancel_requested = Arc::new(AtomicBool::new(false));
         let worker_cancel = Arc::clone(&cancel_requested);
 
@@ -152,7 +154,11 @@ where
         loop {
             ui.pump_once();
 
-            while let Some(McpToggleRequest { server_name, enable }) = ui.take_next_mcp_toggle_request() {
+            while let Some(McpToggleRequest {
+                server_name,
+                enable,
+            }) = ui.take_next_mcp_toggle_request()
+            {
                 let (response_tx, response_rx) = mpsc::channel();
                 let send_result = worker_cmd_tx.send(WorkerCommand::ToggleMcp {
                     server_name: server_name.clone(),
@@ -217,14 +223,12 @@ where
                         )
                     }
                     Err(mpsc::TryRecvError::Empty) => retained.push((server_name, response_rx)),
-                    Err(mpsc::TryRecvError::Disconnected) => {
-                        ui.set_mcp_server_state_with_details(
-                            &server_name,
-                            McpUsabilityState::Failed,
-                            Some("toggle worker disconnected".to_string()),
-                            last_authoritative_visible_count,
-                        )
-                    }
+                    Err(mpsc::TryRecvError::Disconnected) => ui.set_mcp_server_state_with_details(
+                        &server_name,
+                        McpUsabilityState::Failed,
+                        Some("toggle worker disconnected".to_string()),
+                        last_authoritative_visible_count,
+                    ),
                 }
             }
             pending_mcp_toggles = retained;
@@ -322,6 +326,22 @@ where
                     }
                 } else {
                     queued_model_switch = Some(model_spec);
+                }
+            }
+
+            while let Some(submission) = ui.take_next_permission_decision_submission() {
+                match submit_active_permission_decision(
+                    submission.request_id.clone(),
+                    submission.decision,
+                    submission.matched_rule_identity,
+                ) {
+                    crate::agent::protocol::permission::SubmitOutcome::Accepted => {}
+                    crate::agent::protocol::permission::SubmitOutcome::Ignored { reason } => {
+                        ui.emit(&UiEvent::PermissionDecisionIgnored {
+                            request_id: submission.request_id,
+                            reason: reason.to_string(),
+                        });
+                    }
                 }
             }
 

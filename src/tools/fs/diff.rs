@@ -159,9 +159,7 @@ fn count_hunks(lines: &[&str]) -> usize {
 }
 
 fn build_truncation_marker(omitted_lines: usize, omitted_hunks: usize) -> String {
-    format!(
-        "... diff truncated ... omitted_lines={omitted_lines} omitted_hunks={omitted_hunks}\n"
-    )
+    format!("... diff truncated ... omitted_lines={omitted_lines} omitted_hunks={omitted_hunks}\n")
 }
 
 fn build_truncation_marker_bounded(

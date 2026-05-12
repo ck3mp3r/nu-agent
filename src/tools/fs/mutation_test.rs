@@ -20,7 +20,8 @@ fn apply_full_content_mutation_matching_version_writes_and_reports_deterministic
     fs::write(&file, original).expect("seed file");
 
     let expected_version = version_token(original);
-    let summary = apply_full_content_mutation(&file, Some(&expected_version), updated).expect("apply");
+    let summary =
+        apply_full_content_mutation(&file, Some(&expected_version), updated).expect("apply");
 
     assert!(summary.wrote);
     assert!(summary.changed);

@@ -28,7 +28,10 @@ src/
 ```
 
 - All tests live in `src/` directory alongside the code they test
-- Use `*_test.rs` naming convention for test files
+- Use the module-aware naming convention:
+  - Single-file module: `foo.rs` with sibling `foo_test.rs`
+  - Multi-file module: `foo/mod.rs` with `foo/test.rs`
+  - Forbidden: mixed `foo.rs` + `foo/test.rs`
 - Keep test files focused and organized by module
 
 ### Mocking
@@ -99,3 +102,11 @@ mod tests {
     }
 }
 ```
+
+## Docs Guardrails (Tool/Authz/TUI changes)
+
+When changing tool handler modules, permission UX, or TUI transcript rendering:
+
+- Read `docs/handler-decomposition-contract.md` first (dependency direction + module ownership)
+- Follow `docs/contribution-guardrails.md` checklist (inline permission card, viewport invariants, sticky controls)
+- Keep `docs/usage.md` aligned with user-visible behavior changes

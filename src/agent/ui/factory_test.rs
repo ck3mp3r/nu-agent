@@ -1,8 +1,9 @@
-use crate::agent::ui::{factory::{StderrUiFactory, UiRendererFactory},
+use crate::agent::protocol::event::UiEvent;
+use crate::agent::ui::{
+    factory::{StderrUiFactory, UiRendererFactory},
     policy::{UiPolicy, Verbosity},
     renderer::UiRenderer,
 };
-use crate::agent::protocol::event::UiEvent;
 
 #[test]
 fn factory_creates_renderer_without_core_loop_changes() {

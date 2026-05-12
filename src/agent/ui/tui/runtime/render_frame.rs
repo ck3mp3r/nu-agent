@@ -33,11 +33,19 @@ pub(super) fn modal_rect_for_panel(area: Rect, panel: ModalPanelKind) -> Rect {
         }
     };
 
-    let popup_width = area.width.clamp(min_w.min(area.width), max_w.min(area.width));
-    let popup_height = area.height.clamp(min_h.min(area.height), max_h.min(area.height));
+    let popup_width = area
+        .width
+        .clamp(min_w.min(area.width), max_w.min(area.width));
+    let popup_height = area
+        .height
+        .clamp(min_h.min(area.height), max_h.min(area.height));
     Rect {
-        x: area.x.saturating_add(area.width.saturating_sub(popup_width) / 2),
-        y: area.y.saturating_add(area.height.saturating_sub(popup_height) / 2),
+        x: area
+            .x
+            .saturating_add(area.width.saturating_sub(popup_width) / 2),
+        y: area
+            .y
+            .saturating_add(area.height.saturating_sub(popup_height) / 2),
         width: popup_width,
         height: popup_height,
     }

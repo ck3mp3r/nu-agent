@@ -7,8 +7,13 @@ use crate::llm::runtime::LlmRuntime;
 use crate::plugin::RuntimeCtx;
 use crate::session::SessionStore;
 use crate::tools::mcp::client::McpToolDefinition;
+use nu_parser::parse;
 use nu_plugin::{EvaluatedCall, SimplePluginCommand};
-use nu_protocol::{LabeledError, Span, Spanned, SyntaxShape, Value, record};
+use nu_protocol::{
+    LabeledError, ParseError, PipelineData, ShellError, Span, Spanned, SyntaxShape, Value,
+    engine::{Call, Command, EngineState, Stack, StateWorkingSet},
+    record,
+};
 use serial_test::serial;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
@@ -19,6 +24,62 @@ fn create_test_agent() -> (Agent, TempDir) {
     let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
     let agent = Agent::new(store, RuntimeCtx::new(Arc::new(LlmRuntime::new())));
     (agent, temp_dir)
+}
+
+#[derive(Clone)]
+struct ParserHarnessCommand {
+    signature: nu_protocol::Signature,
+}
+
+impl Command for ParserHarnessCommand {
+    fn name(&self) -> &str {
+        "agent"
+    }
+
+    fn signature(&self) -> nu_protocol::Signature {
+        self.signature.clone()
+    }
+
+    fn description(&self) -> &str {
+        "parser harness command"
+    }
+
+    fn run(
+        &self,
+        _engine_state: &EngineState,
+        _stack: &mut Stack,
+        _call: &Call,
+        _input: PipelineData,
+    ) -> Result<PipelineData, ShellError> {
+        Ok(PipelineData::empty())
+    }
+}
+
+fn parse_agent_invocation_with_signature(
+    sig: nu_protocol::Signature,
+    invocation: &str,
+) -> Vec<ParseError> {
+    let mut engine_state = EngineState::new();
+    let mut working_set = StateWorkingSet::new(&engine_state);
+    let decl_id = working_set.add_decl(Box::new(ParserHarnessCommand { signature: sig }));
+    working_set.use_decls(vec![(b"agent".to_vec(), decl_id)]);
+
+    let _ = parse(&mut working_set, None, invocation.as_bytes(), false);
+    let parse_errors = working_set.parse_errors.clone();
+    let delta = working_set.render();
+    engine_state
+        .merge_delta(delta)
+        .expect("merge parser harness state");
+    parse_errors
+}
+
+fn first_unknown_flag_error(parse_errors: &[ParseError]) -> Option<(String, String, String)> {
+    parse_errors.iter().find_map(|err| match err {
+        ParseError::UnknownFlag(cmd, flag, _span, help) => {
+            Some((cmd.clone(), flag.clone(), help.clone()))
+        }
+        _ => None,
+    })
 }
 
 #[test]
@@ -46,6 +107,44 @@ fn resolve_agent_mode_uses_stderr_when_stderr_is_not_tty() {
 }
 
 #[test]
+fn resolve_non_interactive_ask_mode_defaults_to_deny_when_missing() {
+    let mode = super::resolve_non_interactive_ask_mode(None).expect("mode");
+    assert_eq!(
+        mode,
+        crate::agent::tools::authz::NonInteractiveAskMode::Deny
+    );
+}
+
+#[test]
+fn resolve_non_interactive_ask_mode_accepts_allow_and_deny_values() {
+    let allow = Value::test_record(record! {
+        "non_interactive_ask" => Value::test_string("allow")
+    });
+    let deny = Value::test_record(record! {
+        "non_interactive_ask" => Value::test_string("deny")
+    });
+
+    assert_eq!(
+        super::resolve_non_interactive_ask_mode(Some(&allow)).expect("allow"),
+        crate::agent::tools::authz::NonInteractiveAskMode::Allow
+    );
+    assert_eq!(
+        super::resolve_non_interactive_ask_mode(Some(&deny)).expect("deny"),
+        crate::agent::tools::authz::NonInteractiveAskMode::Deny
+    );
+}
+
+#[test]
+fn resolve_non_interactive_ask_mode_rejects_invalid_value() {
+    let invalid = Value::test_record(record! {
+        "non_interactive_ask" => Value::test_string("ask")
+    });
+    let error = super::resolve_non_interactive_ask_mode(Some(&invalid))
+        .expect_err("invalid value should fail");
+    assert!(error.msg.contains("Invalid non_interactive_ask value"));
+}
+
+#[test]
 fn agent_command_has_correct_name() {
     let (agent, _temp_dir) = create_test_agent();
     assert_eq!(SimplePluginCommand::name(&agent), "agent");
@@ -61,22 +160,15 @@ fn agent_command_signature_accepts_string() {
 }
 
 #[test]
-fn agent_command_signature_has_provider_flag() {
+fn agent_command_signature_does_not_expose_removed_provider_flag() {
     let (agent, _temp_dir) = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
 
-    // Find the --provider flag
     let provider_flag = sig.named.iter().find(|f| f.long == "provider");
-    assert!(provider_flag.is_some(), "Missing --provider flag");
-
-    let flag = provider_flag.unwrap();
-    assert_eq!(flag.short, Some('p'), "Missing -p short flag");
-    assert_eq!(
-        flag.arg,
-        Some(SyntaxShape::String),
-        "Wrong type for --provider"
+    assert!(
+        provider_flag.is_none(),
+        "Removed --provider flag must not be exposed"
     );
-    assert!(!flag.desc.is_empty(), "Missing description for --provider");
 }
 
 #[test]
@@ -140,16 +232,72 @@ fn agent_command_signature_has_temperature_flag() {
 }
 
 #[test]
-fn agent_command_signature_has_max_tokens_flag() {
+fn agent_command_signature_does_not_expose_removed_max_tokens_flag() {
     let (agent, _temp_dir) = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
 
     let flag = sig.named.iter().find(|f| f.long == "max-tokens");
-    assert!(flag.is_some(), "Missing --max-tokens flag");
-    assert_eq!(
-        flag.unwrap().arg,
-        Some(SyntaxShape::Int),
-        "Wrong type for --max-tokens"
+    assert!(
+        flag.is_none(),
+        "Removed --max-tokens flag must not be exposed"
+    );
+}
+
+#[test]
+fn agent_command_signature_help_text_excludes_removed_flags() {
+    let (agent, _temp_dir) = create_test_agent();
+    let sig = SimplePluginCommand::signature(&agent);
+    let rendered = format!("{sig:?}");
+
+    assert!(
+        !rendered.contains("long: \"provider\""),
+        "signature/help debug output should not contain removed provider long flag"
+    );
+    assert!(
+        !rendered.contains("long: \"max-tokens\""),
+        "signature/help debug output should not contain removed max-tokens long flag"
+    );
+}
+
+#[test]
+fn invocation_agent_provider_flag_is_rejected_with_unknown_option_and_help_guidance() {
+    let (agent, _temp_dir) = create_test_agent();
+    let sig = SimplePluginCommand::signature(&agent);
+    let parse_errors =
+        parse_agent_invocation_with_signature(sig.clone(), "agent --provider openai");
+
+    let (cmd, flag, help) = first_unknown_flag_error(&parse_errors)
+        .expect("expected parser-level unknown-flag rejection for --provider");
+    assert_eq!(cmd, "agent");
+    assert_eq!(flag, "provider");
+
+    let model_flag = sig
+        .named
+        .iter()
+        .find(|f| f.long == "model")
+        .expect("canonical --model flag must remain available");
+    assert!(
+        help.contains("--help") && model_flag.desc.contains("provider/model"),
+        "when unknown-flag help is generic, canonical guidance must still be present on --model; help={help}, model_desc={} ",
+        model_flag.desc
+    );
+}
+
+#[test]
+fn invocation_agent_max_tokens_flag_is_rejected_with_unknown_option_and_help_guidance() {
+    let (agent, _temp_dir) = create_test_agent();
+    let parse_errors = parse_agent_invocation_with_signature(
+        SimplePluginCommand::signature(&agent),
+        "agent --max-tokens 4096",
+    );
+
+    let (cmd, flag, help) = first_unknown_flag_error(&parse_errors)
+        .expect("expected parser-level unknown-flag rejection for --max-tokens");
+    assert_eq!(cmd, "agent");
+    assert_eq!(flag, "max-tokens");
+    assert!(
+        help.contains("--max-context-tokens") || help.contains("--max-output-tokens"),
+        "unknown --max-tokens guidance should point to explicit token knobs, got: {help}"
     );
 }
 
@@ -224,6 +372,102 @@ fn agent_command_signature_has_mcp_tools_flag() {
 }
 
 #[test]
+fn agent_command_signature_has_permissions_flag_as_record() {
+    let (agent, _temp_dir) = create_test_agent();
+    let sig = SimplePluginCommand::signature(&agent);
+
+    let flag = sig.named.iter().find(|f| f.long == "permissions");
+    assert!(flag.is_some(), "Missing --permissions flag");
+    assert_eq!(
+        flag.expect("permissions flag").arg,
+        Some(SyntaxShape::Record(vec![])),
+        "--permissions must accept record/object input"
+    );
+}
+
+#[test]
+fn agent_command_signature_does_not_expose_legacy_permission_flag() {
+    let (agent, _temp_dir) = create_test_agent();
+    let sig = SimplePluginCommand::signature(&agent);
+
+    let legacy = sig.named.iter().find(|f| f.long == "permission");
+    assert!(
+        legacy.is_none(),
+        "Legacy repeated --permission flag must not be exposed"
+    );
+}
+
+#[test]
+fn resolve_effective_permissions_merges_cli_overlay_additively() {
+    let plugin = Value::test_record(record! {
+        "permissions" => Value::test_record(record! {
+            "*" => Value::test_string("ask"),
+            "read" => Value::test_string("allow"),
+            "nu__run" => Value::test_record(record! {
+                "command" => Value::test_record(record! {
+                    "kubectl get *" => Value::test_string("allow"),
+                    "*" => Value::test_string("ask")
+                })
+            })
+        })
+    });
+    let call = create_test_call(vec![(
+        "permissions",
+        Value::test_record(record! {
+            "read" => Value::test_string("deny"),
+            "nu__run" => Value::test_record(record! {
+                "command" => Value::test_record(record! {
+                    "kubectl delete *" => Value::test_string("deny")
+                })
+            })
+        }),
+    )]);
+
+    let (effective, summary) =
+        super::resolve_effective_permissions_config(&call, Some(&plugin)).expect("merge");
+
+    assert_eq!(
+        effective.evaluate("read", &serde_json::json!({})).action,
+        crate::agent::tools::authz::PermissionAction::Deny
+    );
+    assert_eq!(
+        effective
+            .evaluate("nu__run", &serde_json::json!({"command": "kubectl get pods"}))
+            .action,
+        crate::agent::tools::authz::PermissionAction::Allow
+    );
+    assert_eq!(
+        effective
+            .evaluate(
+                "nu__run",
+                &serde_json::json!({"command": "kubectl delete pod x"})
+            )
+            .action,
+        crate::agent::tools::authz::PermissionAction::Deny
+    );
+    assert!(summary.contains("overlay_active=true"));
+}
+
+#[test]
+fn resolve_effective_permissions_rejects_malformed_cli_with_path_diagnostic() {
+    let call = create_test_call(vec![(
+        "permissions",
+        Value::test_record(record! {
+            "nu__run" => Value::test_record(record! {
+                "argv" => Value::test_record(record! {
+                    "*" => Value::test_string("deny")
+                })
+            })
+        }),
+    )]);
+
+    let err = super::resolve_effective_permissions_config(&call, None)
+        .expect_err("malformed cli permissions must fail fast");
+
+    assert!(err.msg.contains("Invalid --permissions value"));
+}
+
+#[test]
 fn cli_does_not_expose_unsupported_compaction_modes() {
     let (agent, _temp_dir) = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
@@ -290,7 +534,9 @@ fn agent_command_signature_quiet_and_verbose_help_text_describes_stderr_ux_behav
         .find(|f| f.long == "verbose")
         .expect("verbose flag");
     assert!(
-        verbose.desc.contains("-v") && verbose.desc.contains("-vv") && verbose.desc.contains("-vvv"),
+        verbose.desc.contains("-v")
+            && verbose.desc.contains("-vv")
+            && verbose.desc.contains("-vvv"),
         "verbose help text should describe progressive levels"
     );
 }
@@ -455,15 +701,12 @@ fn extract_mcp_patterns_rejects_non_string_entries() {
 
 #[test]
 fn extract_flag_config_with_provider_and_model() {
-    let call = create_test_call(vec![
-        ("provider", Value::test_string("openai")),
-        ("model", Value::test_string("gpt-4")),
-    ]);
+    let call = create_test_call(vec![("model", Value::test_string("openai/gpt-4"))]);
 
     let config = extract_flag_config(&call);
 
-    assert_eq!(config.provider, "openai");
-    assert_eq!(config.model, "gpt-4");
+    assert_eq!(config.provider, "");
+    assert_eq!(config.model, "openai/gpt-4");
     assert_eq!(config.api_key, None);
     assert_eq!(config.temperature, None);
 }
@@ -471,16 +714,15 @@ fn extract_flag_config_with_provider_and_model() {
 #[test]
 fn extract_flag_config_with_all_string_flags() {
     let call = create_test_call(vec![
-        ("provider", Value::test_string("anthropic")),
-        ("model", Value::test_string("claude-3-opus")),
+        ("model", Value::test_string("anthropic/claude-3-opus")),
         ("api-key", Value::test_string("test-key-123")),
         ("base-url", Value::test_string("https://custom.api.com")),
     ]);
 
     let config = extract_flag_config(&call);
 
-    assert_eq!(config.provider, "anthropic");
-    assert_eq!(config.model, "claude-3-opus");
+    assert_eq!(config.provider, "");
+    assert_eq!(config.model, "anthropic/claude-3-opus");
     assert_eq!(config.api_key, Some("test-key-123".to_string()));
     assert_eq!(config.base_url, Some("https://custom.api.com".to_string()));
 }
@@ -488,8 +730,7 @@ fn extract_flag_config_with_all_string_flags() {
 #[test]
 fn extract_flag_config_with_temperature() {
     let call = create_test_call(vec![
-        ("provider", Value::test_string("openai")),
-        ("model", Value::test_string("gpt-4")),
+        ("model", Value::test_string("openai/gpt-4")),
         ("temperature", Value::test_float(0.7)),
     ]);
 
@@ -501,9 +742,7 @@ fn extract_flag_config_with_temperature() {
 #[test]
 fn extract_flag_config_with_all_int_flags() {
     let call = create_test_call(vec![
-        ("provider", Value::test_string("openai")),
-        ("model", Value::test_string("gpt-4")),
-        ("max-tokens", Value::test_int(1000)),
+        ("model", Value::test_string("openai/gpt-4")),
         ("max-context-tokens", Value::test_int(8000)),
         ("max-output-tokens", Value::test_int(2000)),
         ("max-turns", Value::test_int(10)),
@@ -511,7 +750,7 @@ fn extract_flag_config_with_all_int_flags() {
 
     let config = extract_flag_config(&call);
 
-    assert_eq!(config.max_tokens, Some(1000));
+    assert_eq!(config.max_tokens, None);
     assert_eq!(config.max_context_tokens, Some(8000));
     assert_eq!(config.max_output_tokens, Some(2000));
     assert_eq!(config.max_tool_turns, Some(10));
@@ -520,19 +759,17 @@ fn extract_flag_config_with_all_int_flags() {
 #[test]
 fn extract_flag_config_with_mixed_flags() {
     let call = create_test_call(vec![
-        ("provider", Value::test_string("anthropic")),
-        ("model", Value::test_string("claude-3")),
+        ("model", Value::test_string("anthropic/claude-3")),
         ("temperature", Value::test_float(1.0)),
-        ("max-tokens", Value::test_int(2048)),
         ("base-url", Value::test_string("https://api.example.com")),
     ]);
 
     let config = extract_flag_config(&call);
 
-    assert_eq!(config.provider, "anthropic");
-    assert_eq!(config.model, "claude-3");
+    assert_eq!(config.provider, "");
+    assert_eq!(config.model, "anthropic/claude-3");
     assert_eq!(config.temperature, Some(1.0));
-    assert_eq!(config.max_tokens, Some(2048));
+    assert_eq!(config.max_tokens, None);
     assert_eq!(config.base_url, Some("https://api.example.com".to_string()));
     assert_eq!(config.api_key, None);
     assert_eq!(config.max_context_tokens, None);
@@ -541,15 +778,14 @@ fn extract_flag_config_with_mixed_flags() {
 #[test]
 fn extract_flag_config_handles_negative_ints_as_none() {
     let call = create_test_call(vec![
-        ("provider", Value::test_string("openai")),
-        ("model", Value::test_string("gpt-4")),
-        ("max-tokens", Value::test_int(-100)),
+        ("model", Value::test_string("openai/gpt-4")),
+        ("max-output-tokens", Value::test_int(-100)),
     ]);
 
     let config = extract_flag_config(&call);
 
     // Negative integers should be treated as None
-    assert_eq!(config.max_tokens, None);
+    assert_eq!(config.max_output_tokens, None);
 }
 
 // ============================================================================
@@ -714,7 +950,7 @@ fn config_merge_respects_precedence() {
     let flag_config = Config {
         provider: "from_flags".to_string(),
         model: "model_flags".to_string(),
-        max_tokens: Some(2000),
+        max_output_tokens: Some(2000),
         ..Default::default()
     };
 
@@ -731,7 +967,7 @@ fn config_merge_respects_precedence() {
     // Optional fields: last non-None value wins
     assert_eq!(result.api_key, Some("env_key".to_string())); // Only set in env
     assert_eq!(result.temperature, Some(0.8)); // Only set in plugin
-    assert_eq!(result.max_tokens, Some(2000)); // Only set in flags
+    assert_eq!(result.max_output_tokens, Some(2000)); // Only set in flags
     assert_eq!(result.max_tool_turns, Some(20)); // Default
 }
 
@@ -744,10 +980,7 @@ mod config_resolution_integration {
     #[test]
     fn resolve_config_with_no_plugin_config() {
         let mock = MockEngineInterface::new();
-        let call = create_test_call(vec![
-            ("provider", Value::test_string("openai")),
-            ("model", Value::test_string("gpt-4")),
-        ]);
+        let call = create_test_call(vec![("model", Value::test_string("openai/gpt-4"))]);
 
         let result = resolve_config(&mock, &call);
         assert!(result.is_ok());
@@ -811,7 +1044,7 @@ mod config_resolution_integration {
                 ("provider".to_string(), Value::test_string("anthropic")),
                 ("model".to_string(), Value::test_string("claude-3")),
                 ("temperature".to_string(), Value::test_float(0.8)),
-                ("max_tokens".to_string(), Value::test_int(1000)),
+                ("max_output_tokens".to_string(), Value::test_int(1000)),
             ]
             .into_iter()
             .collect(),
@@ -819,8 +1052,7 @@ mod config_resolution_integration {
 
         let mock = MockEngineInterface::with_config(plugin_config);
         let call = create_test_call(vec![
-            ("provider", Value::test_string("openai")), // Override provider
-            ("model", Value::test_string("gpt-4")),     // Override model
+            ("model", Value::test_string("openai/gpt-4")), // Canonical override
             ("temperature", Value::test_float(1.2)),    // Override temperature
         ]);
 
@@ -831,7 +1063,7 @@ mod config_resolution_integration {
         assert_eq!(config.provider, "openai"); // Flag wins
         assert_eq!(config.model, "gpt-4"); // Flag wins
         assert_eq!(config.temperature, Some(1.2)); // Flag wins
-        assert_eq!(config.max_tokens, Some(1000)); // Plugin value (no flag override)
+        assert_eq!(config.max_output_tokens, Some(1000)); // Plugin value (no flag override)
         assert_eq!(config.api_key, Some("env_key".to_string())); // Env provides
 
         // Cleanup
@@ -872,10 +1104,7 @@ mod config_resolution_integration {
         let invalid_config = Value::test_string("not a record");
         let mock = MockEngineInterface::with_config(invalid_config);
 
-        let call = create_test_call(vec![
-            ("provider", Value::test_string("openai")),
-            ("model", Value::test_string("gpt-4")),
-        ]);
+        let call = create_test_call(vec![("model", Value::test_string("openai/gpt-4"))]);
 
         let result = resolve_config(&mock, &call);
         assert!(result.is_err());
@@ -1422,14 +1651,10 @@ mod new_plugin_config_tests {
 
     #[test]
     #[serial]
-    fn resolve_config_old_provider_flag_still_works_for_backward_compat() {
+    fn resolve_config_old_flow_accepts_model_provider_format_without_provider_flag() {
         let mock = MockEngineInterface::new();
 
-        // Use old --provider and --model flags (separate, not provider/model format)
-        let call = create_test_call(vec![
-            ("provider", Value::test_string("openai")),
-            ("model", Value::test_string("gpt-4")),
-        ]);
+        let call = create_test_call(vec![("model", Value::test_string("openai/gpt-4"))]);
 
         let result = resolve_config(&mock, &call);
         assert!(result.is_ok(), "Failed to resolve config: {:?}", result);
@@ -1438,6 +1663,26 @@ mod new_plugin_config_tests {
         assert_eq!(config.provider, "openai");
         assert_eq!(config.model, "gpt-4");
     }
+}
+
+#[test]
+fn docs_usage_flag_reference_excludes_removed_flags() {
+    let usage_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/usage.md");
+    let usage = std::fs::read_to_string(&usage_path).expect("read docs/usage.md");
+
+    assert!(
+        !usage.contains("--provider"),
+        "docs/usage.md must not reference removed --provider flag"
+    );
+    assert!(
+        !usage.contains("--max-tokens"),
+        "docs/usage.md must not reference removed --max-tokens flag"
+    );
+    assert!(usage.contains("--model"), "docs should reference --model");
+    assert!(
+        usage.contains("--max-output-tokens") && usage.contains("--max-context-tokens"),
+        "docs should reference explicit token knobs"
+    );
 }
 
 #[test]
@@ -1497,10 +1742,11 @@ fn model_picker_catalog_projection_from_plugin_config_is_sorted_and_marks_active
         small_model: None,
         providers,
     };
-    let projected = crate::agent::application::command::build_model_picker_catalog_from_plugin_config(
-        &plugin_config,
-        "a-provider/a-model",
-    );
+    let projected =
+        crate::agent::application::command::build_model_picker_catalog_from_plugin_config(
+            &plugin_config,
+            "a-provider/a-model",
+        );
 
     assert_eq!(projected.len(), 2);
     assert_eq!(projected[0].identity, "a-provider/a-model");
@@ -1544,10 +1790,11 @@ fn tui_startup_hydrates_model_picker_catalog_from_cached_plugin_config() {
         providers,
     };
 
-    let catalog = crate::agent::application::command::model_picker_catalog_from_cached_startup_plugin_config(
-        Some(&plugin_config),
-        "openai/gpt-4o-mini",
-    );
+    let catalog =
+        crate::agent::application::command::model_picker_catalog_from_cached_startup_plugin_config(
+            Some(&plugin_config),
+            "openai/gpt-4o-mini",
+        );
 
     assert_eq!(catalog.len(), 1);
     assert_eq!(catalog[0].identity, "openai/gpt-4o-mini");
@@ -1820,9 +2067,7 @@ mod session_validation_tests {
 #[cfg(test)]
 mod tui_session_resolution_tests {
     use crate::agent::session::resolver::{
-        SessionRequest,
-        generate_session_id,
-        resolve_session_request,
+        SessionRequest, generate_session_id, resolve_session_request,
     };
     use nu_protocol::{Span, Value};
 
@@ -1839,9 +2084,9 @@ mod tui_session_resolution_tests {
             return Ok(());
         };
 
-        let session = store
-            .get_or_create(Some(session_id))
-            .map_err(|e| nu_protocol::LabeledError::new(format!("Failed to load/create session: {e}")))?;
+        let session = store.get_or_create(Some(session_id)).map_err(|e| {
+            nu_protocol::LabeledError::new(format!("Failed to load/create session: {e}"))
+        })?;
         *session_opt = Some(session);
         Ok(())
     }
@@ -1892,7 +2137,10 @@ mod tui_session_resolution_tests {
     #[test]
     fn interactive_tui_normal_quit_returns_nothing() {
         let value = Value::nothing(Span::test_data());
-        assert!(value.is_nothing(), "interactive TUI quit must return nothing");
+        assert!(
+            value.is_nothing(),
+            "interactive TUI quit must return nothing"
+        );
     }
 
     #[test]
@@ -1913,7 +2161,9 @@ mod tui_session_resolution_tests {
         .expect("materialize session");
 
         assert!(pending_tui_session_id.is_none());
-        let session = session_opt.as_mut().expect("session should be materialized");
+        let session = session_opt
+            .as_mut()
+            .expect("session should be materialized");
         session
             .add_message(
                 &store,

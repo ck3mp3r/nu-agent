@@ -2,7 +2,7 @@ use nu_protocol::{LabeledError, Span, Value};
 
 use crate::agent::protocol::{
     compaction::{CompactionTriggerDecision, CompactionTriggerSource},
-    event::UiEvent,
+    event::{PermissionDecisionSubmission, UiEvent},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,7 +72,10 @@ impl UiMessageSnapshot {
     }
 
     pub fn with_usage(mut self, usage: UiMessageUsageSnapshot) -> Self {
-        if usage.input_tokens.is_some() || usage.output_tokens.is_some() || usage.total_tokens.is_some() {
+        if usage.input_tokens.is_some()
+            || usage.output_tokens.is_some()
+            || usage.total_tokens.is_some()
+        {
             self.usage = Some(usage);
         }
         self
@@ -96,7 +99,11 @@ impl UiMessageSnapshot {
 }
 
 impl UiMessageUsageSnapshot {
-    pub fn new(input_tokens: Option<u64>, output_tokens: Option<u64>, total_tokens: Option<u64>) -> Self {
+    pub fn new(
+        input_tokens: Option<u64>,
+        output_tokens: Option<u64>,
+        total_tokens: Option<u64>,
+    ) -> Self {
         Self {
             input_tokens,
             output_tokens,
@@ -138,6 +145,9 @@ pub(crate) trait InteractiveUi: ProgressUi {
     fn take_next_model_switch_request(&mut self) -> Option<String> {
         None
     }
+    fn take_next_permission_decision_submission(&mut self) -> Option<PermissionDecisionSubmission> {
+        None
+    }
     fn set_mcp_server_state(&mut self, _server_name: &str, _state: McpUsabilityState) {}
     fn set_mcp_server_state_with_details(
         &mut self,
@@ -169,7 +179,11 @@ pub(crate) trait ConversationRuntime {
         span: Span,
     ) -> Result<Value, LabeledError>;
 
-    fn set_mcp_server_enabled(&mut self, _server_name: &str, _enabled: bool) -> Result<McpUsabilityState, String> {
+    fn set_mcp_server_enabled(
+        &mut self,
+        _server_name: &str,
+        _enabled: bool,
+    ) -> Result<McpUsabilityState, String> {
         Ok(McpUsabilityState::Disabled)
     }
 

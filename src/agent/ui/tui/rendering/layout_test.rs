@@ -1,12 +1,6 @@
 use crate::agent::ui::tui::rendering::layout::{
-    LayoutInput,
-    MAIN_SIDE_MARGIN,
-    SIDE_PANE_COLLAPSE_COLUMNS,
-    input_content_row_count,
-    input_cursor_row_col,
-    input_pane_height_for_content,
-    recompute_layout,
-    wrapped_input_rows,
+    LayoutInput, MAIN_SIDE_MARGIN, SIDE_PANE_COLLAPSE_COLUMNS, input_content_row_count,
+    input_cursor_row_col, input_pane_height_for_content, recompute_layout, wrapped_input_rows,
 };
 
 #[test]
@@ -55,7 +49,10 @@ fn wide_size_class_shows_side_pane_when_requested() {
         .expect("side pane should be visible in wide class when requested");
     assert!(side.width > 0);
     assert_eq!(layout.transcript.x, MAIN_SIDE_MARGIN);
-    assert_eq!(layout.transcript.width + side.width + (MAIN_SIDE_MARGIN * 2), 160);
+    assert_eq!(
+        layout.transcript.width + side.width + (MAIN_SIDE_MARGIN * 2),
+        160
+    );
     assert_eq!(side.height, 40);
 }
 
@@ -173,7 +170,10 @@ fn input_height_grows_with_newlines_and_wrap_and_is_clamped() {
 #[test]
 fn wrapped_rows_and_cursor_mapping_handle_mixed_newline_and_wrap() {
     let rows = wrapped_input_rows("ab\n12345", 3);
-    assert_eq!(rows, vec!["ab".to_string(), "123".to_string(), "45".to_string()]);
+    assert_eq!(
+        rows,
+        vec!["ab".to_string(), "123".to_string(), "45".to_string()]
+    );
     assert_eq!(input_content_row_count("ab\n12345", 3), 3);
 
     assert_eq!(input_cursor_row_col("ab\n12345", 0, 3), (0, 0));
@@ -194,5 +194,8 @@ fn layout_honors_requested_input_height_while_keeping_status_visible() {
 
     assert_eq!(layout.input.height, 6);
     assert_eq!(layout.status_event.height, 1);
-    assert_eq!(layout.transcript.height + layout.status_event.height + layout.input.height, 10);
+    assert_eq!(
+        layout.transcript.height + layout.status_event.height + layout.input.height,
+        10
+    );
 }

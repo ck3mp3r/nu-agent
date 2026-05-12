@@ -4,8 +4,7 @@ use tempfile::tempdir;
 
 use super::skills::{
     SkillResolveError, SkillSource, discover_skill_catalog_for_cwd_for_tests,
-    is_higher_precedence_for_tests,
-    render_available_skills_preamble_for_tests,
+    is_higher_precedence_for_tests, render_available_skills_preamble_for_tests,
     resolve_explicit_skill_request_for_cwd_for_tests,
 };
 
@@ -25,9 +24,11 @@ fn discovers_home_skills_in_catalog() {
 
     let catalog = discover_skill_catalog_for_cwd_for_tests(&cwd, Some(&home), Some(tmp.path()));
 
-    assert!(catalog.iter().any(|entry| {
-        entry.name == "nushell-shell" && entry.source == SkillSource::Home
-    }));
+    assert!(
+        catalog
+            .iter()
+            .any(|entry| { entry.name == "nushell-shell" && entry.source == SkillSource::Home })
+    );
 }
 
 #[test]

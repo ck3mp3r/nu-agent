@@ -1,15 +1,8 @@
+use crate::agent::protocol::event::PermissionDecision;
 use crate::agent::ui::tui::state::{
-    AppState,
-    CommandPaletteAction,
-    InputMode,
-    ModelPickerOption,
-    McpServerUsabilityState,
-    PaneFocus,
-    PromptStatus,
-    ToolCallStatus,
-    TranscriptLineStatus,
-    TranscriptRole,
-    UiPhase,
+    AppState, CommandPaletteAction, InputMode, McpServerUsabilityState, ModelPickerOption,
+    PaneFocus, PermissionPrompt, PromptStatus, ToolCallStatus, TranscriptLineStatus,
+    TranscriptRole, UiPhase,
 };
 
 #[test]
@@ -100,7 +93,14 @@ fn prompt_queue_lifecycle_is_fifo_and_single_in_progress() {
     state.enqueue_prompt("p2".to_string());
     state.enqueue_prompt("p3".to_string());
 
-    assert_eq!(state.pending_prompt_ids().iter().copied().collect::<Vec<_>>(), vec![1, 2, 3]);
+    assert_eq!(
+        state
+            .pending_prompt_ids()
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        vec![1, 2, 3]
+    );
 
     let first = state.activate_next_prompt();
     assert_eq!(first, Some(1));
@@ -259,7 +259,11 @@ fn tool_call_lifecycle_tracks_transcript_line_status_by_same_row() {
 
     assert_eq!(state.transcript_preview.len(), 1);
     assert_eq!(state.transcript_preview[0].role, TranscriptRole::Tool);
-    assert!(state.transcript_preview[0].text.contains("tool[k8s__list_pods] args="));
+    assert!(
+        state.transcript_preview[0]
+            .text
+            .contains("tool[k8s__list_pods] args=")
+    );
     assert_eq!(
         state.transcript_line_status_for_index(0),
         Some(TranscriptLineStatus::Tool(ToolCallStatus::InProgress))
@@ -319,6 +323,55 @@ fn line_up_from_bottom_detaches_follow_tail_and_moves_cursor_up() {
     assert!(!state.transcript_follow_tail);
     assert_eq!(state.transcript_cursor_index(), Some(8));
     assert_eq!(state.transcript_scroll_lines_from_bottom, 0);
+}
+
+#[test]
+fn permission_prompt_open_sets_required_status_and_presence() {
+    let mut state = AppState::new();
+    state.open_permission_prompt(PermissionPrompt {
+        request_id: "ask-0000000000000001".to_string(),
+        matched_rule_identity: "nested:nu__run.command:*".to_string(),
+        tool: "nu__run".to_string(),
+        source: "closure".to_string(),
+        mode: Some("apply".to_string()),
+        scope: "nested".to_string(),
+        pattern: "*".to_string(),
+        target_field: Some("command".to_string()),
+        summary: "tool[nu__run] args={\"command\":\"echo hi\"}".to_string(),
+        pre_authorize_display: None,
+        attached_tool_transcript_line_index: None,
+    });
+
+    assert!(state.has_permission_prompt());
+    assert_eq!(state.status_line, "Permission required");
+}
+
+#[test]
+fn submit_permission_decision_enqueues_submission_and_closes_prompt() {
+    let mut state = AppState::new();
+    state.open_permission_prompt(PermissionPrompt {
+        request_id: "ask-0000000000000002".to_string(),
+        matched_rule_identity: "nested:nu__run.command:*".to_string(),
+        tool: "nu__run".to_string(),
+        source: "closure".to_string(),
+        mode: None,
+        scope: "nested".to_string(),
+        pattern: "*".to_string(),
+        target_field: Some("command".to_string()),
+        summary: "summary".to_string(),
+        pre_authorize_display: None,
+        attached_tool_transcript_line_index: None,
+    });
+
+    assert!(state.submit_permission_decision(PermissionDecision::AllowAlways));
+    assert!(!state.has_permission_prompt());
+
+    let submission = state
+        .take_next_permission_decision_submission()
+        .expect("queued submission");
+    assert_eq!(submission.request_id, "ask-0000000000000002");
+    assert_eq!(submission.matched_rule_identity, "nested:nu__run.command:*");
+    assert_eq!(submission.decision, PermissionDecision::AllowAlways);
 }
 
 #[test]
@@ -509,7 +562,10 @@ fn command_palette_fuzzy_matching_is_case_insensitive_and_non_prefix() {
     for ch in "HP".chars() {
         state.append_command_palette_query_char(ch);
     }
-    assert_eq!(state.command_palette_actions(), vec![CommandPaletteAction::Help]);
+    assert_eq!(
+        state.command_palette_actions(),
+        vec![CommandPaletteAction::Help]
+    );
 
     state.command_palette_query.clear();
     for ch in "tS".chars() {
@@ -530,7 +586,10 @@ fn command_palette_fuzzy_query_matches_mcps_entry() {
         state.append_command_palette_query_char(ch);
     }
 
-    assert_eq!(state.command_palette_actions(), vec![CommandPaletteAction::Mcps]);
+    assert_eq!(
+        state.command_palette_actions(),
+        vec![CommandPaletteAction::Mcps]
+    );
 }
 
 #[test]
@@ -553,9 +612,11 @@ fn command_palette_includes_models_action() {
     let mut state = AppState::new();
     state.open_command_palette();
 
-    assert!(state
-        .command_palette_actions()
-        .contains(&CommandPaletteAction::Models));
+    assert!(
+        state
+            .command_palette_actions()
+            .contains(&CommandPaletteAction::Models)
+    );
 }
 
 #[test]
@@ -649,7 +710,9 @@ fn mcp_server_toggle_and_counts_follow_selected_row() {
         Some(McpServerUsabilityState::Disabled)
     );
 
-    let request = state.take_next_mcp_toggle_request().expect("toggle request");
+    let request = state
+        .take_next_mcp_toggle_request()
+        .expect("toggle request");
     assert_eq!(request.server_name, "k8s");
     assert!(request.enable);
 
@@ -689,7 +752,9 @@ fn disabling_enabled_server_applies_disabled_state_immediately_and_queues_disabl
         "disable must apply immediately in UI state"
     );
 
-    let request = state.take_next_mcp_toggle_request().expect("disable request");
+    let request = state
+        .take_next_mcp_toggle_request()
+        .expect("disable request");
     assert_eq!(request.server_name, "gh");
     assert!(!request.enable);
     assert_eq!(state.mcp_counts(), (1, 0, 1, 0));

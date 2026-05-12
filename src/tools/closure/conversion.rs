@@ -137,5 +137,5 @@ pub fn extract_parameter_names<E: EngineInterfaceLike>(
 }
 
 #[cfg(test)]
-#[path = "conversion/test.rs"]
-mod conversion_tests;
+#[path = "conversion_test.rs"]
+mod conversion_test;

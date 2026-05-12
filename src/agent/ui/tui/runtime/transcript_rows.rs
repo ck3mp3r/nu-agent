@@ -5,7 +5,10 @@ use ratatui::{
 
 use crate::agent::ui::tui::{
     rendering::theme::TuiTheme,
-    state::{CompactionStatus, PromptStatus, ToolCallStatus, TranscriptLine, TranscriptLineStatus, TranscriptRole},
+    state::{
+        CompactionStatus, PromptStatus, ToolCallStatus, TranscriptLine, TranscriptLineStatus,
+        TranscriptRole,
+    },
 };
 
 pub(super) fn transcript_role_style(role: TranscriptRole) -> Style {
@@ -95,12 +98,35 @@ fn suppress_redundant_done_metadata(
     }
 
     let trimmed = metadata.trim_end();
-    let without_done = trimmed.strip_suffix(" · done").unwrap_or(trimmed).trim_end();
+    let without_done = trimmed
+        .strip_suffix(" · done")
+        .unwrap_or(trimmed)
+        .trim_end();
     if without_done.is_empty() {
         None
     } else {
         Some(without_done.to_string())
     }
+}
+
+fn tool_display_diff_line_style(line_text: &str, theme: &TuiTheme) -> Option<Style> {
+    let lead = line_text.trim_start();
+    if lead.starts_with("@@ ") {
+        return Some(theme.role_system.add_modifier(Modifier::BOLD));
+    }
+    if lead.starts_with("--- ") || lead.starts_with("+++ ") {
+        return Some(theme.tool_meta);
+    }
+    if lead.starts_with('+') {
+        return Some(theme.status_done);
+    }
+    if lead.starts_with('-') {
+        return Some(theme.status_failed);
+    }
+    if lead.starts_with("\\ ") {
+        return Some(theme.subtle_meta);
+    }
+    None
 }
 
 pub(super) fn build_row_spans(
@@ -113,12 +139,12 @@ pub(super) fn build_row_spans(
     show_status_indicator: bool,
 ) -> Vec<Span<'static>> {
     let role_style = transcript_role_style(line.role);
-    let prompt_modifier = if line_status == Some(TranscriptLineStatus::Prompt(PromptStatus::Cancelled))
-    {
-        theme.cancelled_modifier
-    } else {
-        Modifier::empty()
-    };
+    let prompt_modifier =
+        if line_status == Some(TranscriptLineStatus::Prompt(PromptStatus::Cancelled)) {
+            theme.cancelled_modifier
+        } else {
+            Modifier::empty()
+        };
 
     let mut spans = lane_prefix_spans(line.role, cursor_line, theme)
         .into_iter()
@@ -136,15 +162,25 @@ pub(super) fn build_row_spans(
     }
 
     if let Some(rendered) = line.rendered.as_ref() {
+        let diff_style_override = if line.role == TranscriptRole::ToolDisplay {
+            tool_display_diff_line_style(&line.text, theme)
+        } else {
+            None
+        };
+
         spans.extend(rendered.spans.iter().map(|span| {
-            Span::styled(
-                span.content.as_ref().to_string(),
-                role_style.patch(span.style).add_modifier(prompt_modifier),
-            )
+            let mut style = role_style.patch(span.style).add_modifier(prompt_modifier);
+            if let Some(override_style) = diff_style_override {
+                style = style.patch(override_style);
+            }
+            Span::styled(span.content.as_ref().to_string(), style)
         }));
     } else if line.role == TranscriptRole::Tool {
         let parts = parse_tool_row_parts(&line.text);
-        spans.push(Span::styled(parts.label, role_style.add_modifier(prompt_modifier)));
+        spans.push(Span::styled(
+            parts.label,
+            role_style.add_modifier(prompt_modifier),
+        ));
         if let Some(metadata) = parts
             .metadata
             .and_then(|metadata| suppress_redundant_done_metadata(metadata, line_status))
@@ -249,7 +285,8 @@ pub(super) fn render_transcript_lines(
                 .map(|span| span.content.chars().count())
                 .sum::<usize>();
             if used_width < content_width {
-                let mut pad_style = transcript_row_style(line.role, theme).add_modifier(prompt_modifier);
+                let mut pad_style =
+                    transcript_row_style(line.role, theme).add_modifier(prompt_modifier);
                 if selected {
                     pad_style = pad_style.patch(theme.selection_bg);
                 }
@@ -304,7 +341,8 @@ pub(super) fn prompt_indicator_for_status(status: PromptStatus, now_millis: u128
     match status {
         PromptStatus::Queued => "•",
         PromptStatus::InProgress => {
-            let idx = ((now_millis / 100) % super::IN_PROGRESS_SPINNER_FRAMES.len() as u128) as usize;
+            let idx =
+                ((now_millis / 100) % super::IN_PROGRESS_SPINNER_FRAMES.len() as u128) as usize;
             super::IN_PROGRESS_SPINNER_FRAMES[idx]
         }
         PromptStatus::Done => "✓",
@@ -315,7 +353,8 @@ pub(super) fn prompt_indicator_for_status(status: PromptStatus, now_millis: u128
 pub(super) fn tool_indicator_for_status(status: ToolCallStatus, now_millis: u128) -> &'static str {
     match status {
         ToolCallStatus::InProgress => {
-            let idx = ((now_millis / 100) % super::IN_PROGRESS_SPINNER_FRAMES.len() as u128) as usize;
+            let idx =
+                ((now_millis / 100) % super::IN_PROGRESS_SPINNER_FRAMES.len() as u128) as usize;
             super::IN_PROGRESS_SPINNER_FRAMES[idx]
         }
         ToolCallStatus::Done => "✓",
@@ -323,13 +362,17 @@ pub(super) fn tool_indicator_for_status(status: ToolCallStatus, now_millis: u128
     }
 }
 
-pub(super) fn indicator_for_line_status(status: TranscriptLineStatus, now_millis: u128) -> &'static str {
+pub(super) fn indicator_for_line_status(
+    status: TranscriptLineStatus,
+    now_millis: u128,
+) -> &'static str {
     match status {
         TranscriptLineStatus::Prompt(prompt) => prompt_indicator_for_status(prompt, now_millis),
         TranscriptLineStatus::Tool(tool) => tool_indicator_for_status(tool, now_millis),
         TranscriptLineStatus::Compaction(compaction) => match compaction {
             CompactionStatus::InProgress => {
-                let idx = ((now_millis / 100) % super::IN_PROGRESS_SPINNER_FRAMES.len() as u128) as usize;
+                let idx =
+                    ((now_millis / 100) % super::IN_PROGRESS_SPINNER_FRAMES.len() as u128) as usize;
                 super::IN_PROGRESS_SPINNER_FRAMES[idx]
             }
             CompactionStatus::Done => "✓",

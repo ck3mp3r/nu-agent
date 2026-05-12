@@ -7,10 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::agent::ui::tui::{
-    rendering::selection::TranscriptSelection,
-    state::AppState,
-};
+use crate::agent::ui::tui::{rendering::selection::TranscriptSelection, state::AppState};
 
 pub(super) fn build_status_lines(
     state: &AppState,
@@ -121,7 +118,8 @@ impl RepoBranchTracker {
     pub(super) fn tick(&mut self) {
         let now = Instant::now();
         let watch_due = now.duration_since(self.last_watch_check) >= self.watch_check_interval;
-        let fallback_due = now.duration_since(self.last_fallback_probe) >= self.fallback_poll_interval;
+        let fallback_due =
+            now.duration_since(self.last_fallback_probe) >= self.fallback_poll_interval;
 
         if !watch_due && !fallback_due {
             return;
@@ -150,7 +148,10 @@ impl RepoBranchTracker {
         }
 
         if self.repo_context.is_none() {
-            self.repo_context = self.caller_cwd.as_deref().and_then(discover_git_repo_context);
+            self.repo_context = self
+                .caller_cwd
+                .as_deref()
+                .and_then(discover_git_repo_context);
         }
 
         let Some(context) = self.repo_context.as_ref() else {
@@ -181,7 +182,11 @@ impl RepoBranchTracker {
         watch_check_interval: Duration,
         fallback_poll_interval: Duration,
     ) -> Self {
-        Self::from_caller_cwd_with_intervals(caller_cwd, watch_check_interval, fallback_poll_interval)
+        Self::from_caller_cwd_with_intervals(
+            caller_cwd,
+            watch_check_interval,
+            fallback_poll_interval,
+        )
     }
 }
 
@@ -203,7 +208,10 @@ fn discover_git_repo_context(cwd: &Path) -> Option<GitRepoContext> {
     }
 
     let common_dir = resolve_common_dir(&git_dir);
-    Some(GitRepoContext { git_dir, common_dir })
+    Some(GitRepoContext {
+        git_dir,
+        common_dir,
+    })
 }
 
 fn resolve_common_dir(git_dir: &Path) -> PathBuf {
@@ -274,7 +282,10 @@ fn head_state_to_branch_label(head_state: &HeadState) -> Option<String> {
     }
 }
 
-fn watch_targets_for_context(context: &GitRepoContext, head_state: Option<&HeadState>) -> Vec<PathBuf> {
+fn watch_targets_for_context(
+    context: &GitRepoContext,
+    head_state: Option<&HeadState>,
+) -> Vec<PathBuf> {
     let mut targets = BTreeSet::new();
     targets.insert(context.git_dir.join("HEAD"));
     targets.insert(context.common_dir.join("packed-refs"));
@@ -428,7 +439,10 @@ fn format_lane_1_with_branch(model: &str, branch: &str, available_width: usize) 
         .saturating_sub(model_segment.chars().count() + branch_segment.chars().count())
         + gap_min;
 
-    format!("{model_segment}{model_padding}{branch_segment}", model_padding = " ".repeat(padding))
+    format!(
+        "{model_segment}{model_padding}{branch_segment}",
+        model_padding = " ".repeat(padding)
+    )
 }
 
 fn tail_ellipsize(input: &str, max_chars: usize) -> String {
@@ -536,7 +550,8 @@ pub(super) fn transcript_selection_range_for_render(
     state: &AppState,
     transcript_len: usize,
 ) -> Option<(usize, usize)> {
-    transcript_selection_for_render(state).and_then(|selection| selection.bounded_range(transcript_len))
+    transcript_selection_for_render(state)
+        .and_then(|selection| selection.bounded_range(transcript_len))
 }
 
 pub(super) fn transcript_title_for_render(state: &AppState, transcript_len: usize) -> String {

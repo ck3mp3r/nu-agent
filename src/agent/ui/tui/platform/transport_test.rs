@@ -1,11 +1,11 @@
-use crate::agent::ui::{tui::{
-        interaction::reducer::UserAction,
-        platform::transport::{TransportItem, TuiTransport},
-    },
-};
 use crate::agent::protocol::event::UiEvent;
+use crate::agent::ui::tui::{
+    interaction::reducer::UserAction,
+    platform::transport::{TransportItem, TuiTransport},
+};
 
 #[derive(Clone)]
+#[allow(clippy::large_enum_variant)]
 enum Enqueue {
     User(UserAction),
     Event(UiEvent),
@@ -114,7 +114,11 @@ fn table_driven_fifo_and_deterministic_merge_policy_round_robin_user_first() {
 
         let actual = drain(&mut transport);
         assert_eq!(actual, case.expected, "case failed: {}", case.name);
-        assert!(transport.is_empty(), "transport should be empty: {}", case.name);
+        assert!(
+            transport.is_empty(),
+            "transport should be empty: {}",
+            case.name
+        );
     }
 }
 
@@ -129,6 +133,12 @@ fn explicit_unbounded_policy_accepts_large_burst_without_drops() {
 
     let drained = drain(&mut transport);
     assert_eq!(drained.len(), total);
-    assert_eq!(drained.first(), Some(&TransportItem::User(UserAction::InsertChar('u'))));
-    assert_eq!(drained.last(), Some(&TransportItem::User(UserAction::InsertChar('u'))));
+    assert_eq!(
+        drained.first(),
+        Some(&TransportItem::User(UserAction::InsertChar('u')))
+    );
+    assert_eq!(
+        drained.last(),
+        Some(&TransportItem::User(UserAction::InsertChar('u')))
+    );
 }

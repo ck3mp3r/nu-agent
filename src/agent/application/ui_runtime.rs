@@ -1,19 +1,19 @@
 use nu_protocol::{Span, Value};
 
+use crate::agent::ui::tui::state::ModelPickerOption;
 use crate::agent::{
     protocol::{
         contracts::{
             InteractiveUi, McpToggleRequest, McpUsabilityState, ProgressUi, SharedUiAction,
             UiMessageSnapshot,
         },
-        event::UiEvent,
+        event::{PermissionDecisionSubmission, UiEvent},
     },
     ui::{
         renderer::UiRenderer,
         tui::runtime::{HybridTerminalEvents, TuiRuntimeRenderer},
     },
 };
-use crate::agent::ui::tui::state::ModelPickerOption;
 
 pub(crate) struct StderrProgressUi<R>
 where
@@ -141,21 +141,33 @@ where
     }
 
     fn take_next_mcp_toggle_request(&mut self) -> Option<McpToggleRequest> {
-        self.renderer.take_next_mcp_toggle_request().map(|request| McpToggleRequest {
-            server_name: request.server_name,
-            enable: request.enable,
-        })
+        self.renderer
+            .take_next_mcp_toggle_request()
+            .map(|request| McpToggleRequest {
+                server_name: request.server_name,
+                enable: request.enable,
+            })
     }
 
     fn take_next_model_switch_request(&mut self) -> Option<String> {
         self.renderer.take_next_model_switch_request()
     }
 
+    fn take_next_permission_decision_submission(&mut self) -> Option<PermissionDecisionSubmission> {
+        self.renderer.take_next_permission_decision_submission()
+    }
+
     fn set_mcp_server_state(&mut self, server_name: &str, state: McpUsabilityState) {
         let mapped = match state {
-            McpUsabilityState::Enabled => crate::agent::ui::tui::state::McpServerUsabilityState::Enabled,
-            McpUsabilityState::Disabled => crate::agent::ui::tui::state::McpServerUsabilityState::Disabled,
-            McpUsabilityState::Failed => crate::agent::ui::tui::state::McpServerUsabilityState::Failed,
+            McpUsabilityState::Enabled => {
+                crate::agent::ui::tui::state::McpServerUsabilityState::Enabled
+            }
+            McpUsabilityState::Disabled => {
+                crate::agent::ui::tui::state::McpServerUsabilityState::Disabled
+            }
+            McpUsabilityState::Failed => {
+                crate::agent::ui::tui::state::McpServerUsabilityState::Failed
+            }
         };
         let _ = self.renderer.set_mcp_server_state(server_name, mapped);
     }
@@ -168,9 +180,15 @@ where
         llm_visible_mcp_tool_count: usize,
     ) {
         let mapped = match state {
-            McpUsabilityState::Enabled => crate::agent::ui::tui::state::McpServerUsabilityState::Enabled,
-            McpUsabilityState::Disabled => crate::agent::ui::tui::state::McpServerUsabilityState::Disabled,
-            McpUsabilityState::Failed => crate::agent::ui::tui::state::McpServerUsabilityState::Failed,
+            McpUsabilityState::Enabled => {
+                crate::agent::ui::tui::state::McpServerUsabilityState::Enabled
+            }
+            McpUsabilityState::Disabled => {
+                crate::agent::ui::tui::state::McpServerUsabilityState::Disabled
+            }
+            McpUsabilityState::Failed => {
+                crate::agent::ui::tui::state::McpServerUsabilityState::Failed
+            }
         };
         let _ = self.renderer.set_mcp_server_state_with_details(
             server_name,

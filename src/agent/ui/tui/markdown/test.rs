@@ -4,8 +4,8 @@ use ratatui::{
 };
 
 use crate::agent::ui::tui::{
-    rendering::highlight::{HighlightRequest, SyntaxTokenChannel, highlight_source_tokens},
     markdown::project_markdown_to_lines,
+    rendering::highlight::{HighlightRequest, SyntaxTokenChannel, highlight_source_tokens},
     test_support::markdown_fixture,
 };
 
@@ -45,7 +45,10 @@ fn adapter_supports_colored_tokens(language: &str, source: &str) -> bool {
         source,
     })
     .iter()
-    .any(|line| line.iter().any(|span| span.channel != SyntaxTokenChannel::Plain))
+    .any(|line| {
+        line.iter()
+            .any(|span| span.channel != SyntaxTokenChannel::Plain)
+    })
 }
 
 #[test]
@@ -55,22 +58,25 @@ fn markdown_projection_fixture_supported_basics_renders_lines_and_inline_styles(
     let rendered = lines.iter().map(plain_line).collect::<Vec<_>>();
 
     assert_eq!(rendered, vec!["Title", "Paragraph with em strong code"]);
-    assert!(lines[0].spans.iter().all(|span| span.style.add_modifier.contains(Modifier::BOLD)));
+    assert!(
+        lines[0]
+            .spans
+            .iter()
+            .all(|span| span.style.add_modifier.contains(Modifier::BOLD))
+    );
 
     let body = &lines[1].spans;
-    assert!(body
-        .iter()
-        .any(|span| span.content.as_ref() == "em" && span.style.add_modifier.contains(Modifier::ITALIC)));
-    assert!(body
-        .iter()
-        .any(|span| span.content.as_ref() == "strong" && span.style.add_modifier.contains(Modifier::BOLD)));
-    assert!(body
-        .iter()
-        .any(|span| {
-            span.content.as_ref() == "code"
-                && span.style.fg == Some(CTP_MOCHA_YELLOW)
-                && span.style.add_modifier.contains(Modifier::DIM)
-        }));
+    assert!(
+        body.iter().any(|span| span.content.as_ref() == "em"
+            && span.style.add_modifier.contains(Modifier::ITALIC))
+    );
+    assert!(body.iter().any(|span| span.content.as_ref() == "strong"
+        && span.style.add_modifier.contains(Modifier::BOLD)));
+    assert!(body.iter().any(|span| {
+        span.content.as_ref() == "code"
+            && span.style.fg == Some(CTP_MOCHA_YELLOW)
+            && span.style.add_modifier.contains(Modifier::DIM)
+    }));
 }
 
 #[test]
@@ -80,7 +86,14 @@ fn markdown_projection_fixture_lists_and_blockquote_render_deterministically() {
 
     assert_eq!(
         rendered,
-        vec!["• one", "• two", "1. first", "2. second", "│ quoted", "│ second"]
+        vec![
+            "• one",
+            "• two",
+            "1. first",
+            "2. second",
+            "│ quoted",
+            "│ second"
+        ]
     );
 }
 
@@ -183,12 +196,16 @@ fn markdown_projection_fixture_unsupported_constructs_have_readable_fallback() {
     let markdown = markdown_fixture("unsupported_fallback.md");
     let rendered = plain_lines(&markdown);
 
-    assert!(rendered
-        .iter()
-        .any(|line| line.contains("<details><summary>Title</summary>Body</details>")));
-    assert!(rendered
-        .iter()
-        .any(|line| line.contains("alt (image: https://img.example/x.png)")));
+    assert!(
+        rendered
+            .iter()
+            .any(|line| line.contains("<details><summary>Title</summary>Body</details>"))
+    );
+    assert!(
+        rendered
+            .iter()
+            .any(|line| line.contains("alt (image: https://img.example/x.png)"))
+    );
     assert!(rendered.iter().any(|line| line.contains("| col | val |")));
     assert!(rendered.iter().any(|line| line.contains("| a | b |")));
 }
@@ -233,11 +250,15 @@ fn markdown_projection_sanitizes_system_reminder_control_blocks() {
     assert!(rendered.iter().any(|line| line == "Hello"));
     assert!(rendered.iter().any(|line| line == "World"));
     assert!(
-        !rendered.iter().any(|line| line.contains("<system-reminder>")),
+        !rendered
+            .iter()
+            .any(|line| line.contains("<system-reminder>")),
         "raw control tag must not appear in projected output"
     );
     assert!(
-        !rendered.iter().any(|line| line.contains("do not show this")),
+        !rendered
+            .iter()
+            .any(|line| line.contains("do not show this")),
         "control block content must be neutralized in projected output"
     );
 }
@@ -252,7 +273,9 @@ fn markdown_projection_preserves_valid_markdown_fences_while_sanitizing_control_
         "valid fenced markdown content must still render"
     );
     assert!(
-        !rendered.iter().any(|line| line.contains("<system-reminder>")),
+        !rendered
+            .iter()
+            .any(|line| line.contains("<system-reminder>")),
         "control markers should be removed without breaking fences"
     );
 }
