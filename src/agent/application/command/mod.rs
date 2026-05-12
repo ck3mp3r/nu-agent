@@ -702,12 +702,14 @@ impl SimplePluginCommand for Agent {
             tool_definitions,
             closure_registry,
             mcp_registry,
+            mcp_runtime,
             mcp_tool_server_handle,
             mcp_lifecycle_projection,
             mcp_server_configs: mcp_config
                 .as_ref()
                 .map(|cfg| cfg.mcp.clone())
                 .unwrap_or_default(),
+            mcp_cli_patterns: mcp_patterns,
             mcp_caller_cwd: engine.get_current_dir().ok().map(std::path::PathBuf::from),
             tool_executor,
             engine: engine.clone(),

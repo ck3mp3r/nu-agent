@@ -149,6 +149,13 @@ pub(crate) trait InteractiveUi: ProgressUi {
         None
     }
     fn set_mcp_server_state(&mut self, _server_name: &str, _state: McpUsabilityState) {}
+    fn set_mcp_visible_tool_count_by_server_name(&mut self, _server_name: &str, _count: usize) {}
+    fn set_mcp_visible_tool_names_by_server_name(
+        &mut self,
+        _server_name: &str,
+        _names: Vec<String>,
+    ) {
+    }
     fn set_mcp_server_state_with_details(
         &mut self,
         server_name: &str,
@@ -189,6 +196,14 @@ pub(crate) trait ConversationRuntime {
 
     fn llm_visible_mcp_tool_count(&self) -> usize {
         0
+    }
+
+    fn llm_visible_mcp_tool_count_for_server(&self, _server_name: &str) -> usize {
+        0
+    }
+
+    fn llm_visible_mcp_tool_names_by_server(&self) -> Vec<(String, Vec<String>)> {
+        Vec::new()
     }
 
     fn switch_model(&mut self, _model_spec: &str) -> Result<String, String> {

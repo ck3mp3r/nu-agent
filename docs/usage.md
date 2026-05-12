@@ -415,6 +415,19 @@ built-ins.
 - MCP/Skills/Models use balanced default modal layout.
 - Modal containers use rounded borders with dimmed backdrop while modal/picker is open.
 
+### MCP panel error presentation
+
+- MCP table stays compact: `Status`, `Name`, `Visible tools`.
+- `Status` is iconized with UTF-8 emoji for quick scan: `🟢` enabled, `⚪` disabled, `🔴` failed.
+- `Visible tools` is derived from live LLM-visible MCP tool mapping per server (not gated by row state text).
+- Full error text is shown below the table for the currently selected MCP row.
+- Selected-row details include compact `Tools: a, b, c` formatting with sorted visible tool names; fallback is `Tools: None`.
+- MCP layout keeps table as primary pane in typical modal heights; details stay compact.
+- When tool names exceed the details line budget, tools remain comma-separated and end with deterministic truncation cue: `+N more`.
+- If selected row has no error reason, details pane shows `Error: None`.
+- Keyboard selection behavior is unchanged; moving selection updates the details pane.
+- Top legend line is removed; controls remain compact (`Session-only toggles | Enter/Space toggle | Esc close`).
+
 ## MCP tool filtering
 
 ```nu

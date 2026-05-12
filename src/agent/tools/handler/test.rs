@@ -1894,6 +1894,66 @@ fn canonical_llm_tool_definition_path_has_no_stale_mcp_exposure_after_disable() 
 }
 
 #[test]
+fn mcp_registry_register_tools_materializes_newly_discovered_server_tools() {
+    let mut registry = McpToolRegistry::from_names(Vec::<String>::new());
+
+    registry
+        .register_tools(vec![crate::tools::mcp::client::McpToolDefinition {
+            server: "k8s".to_string(),
+            name: "k8s__list_pods".to_string(),
+            raw_name: "list_pods".to_string(),
+            description: None,
+            parameters: None,
+        }])
+        .expect("register tools");
+
+    assert!(registry.is_registered("k8s__list_pods"));
+    assert!(registry.contains("k8s__list_pods"));
+    assert_eq!(registry.raw_name_for("k8s__list_pods"), Some("list_pods"));
+}
+
+#[test]
+fn mcp_registry_register_tools_conflict_does_not_partially_commit() {
+    let mut registry = McpToolRegistry::from_tools(vec![crate::tools::mcp::client::McpToolDefinition {
+        server: "gh".to_string(),
+        name: "gh__list_prs".to_string(),
+        raw_name: "list_prs".to_string(),
+        description: None,
+        parameters: None,
+    }])
+    .expect("registry");
+
+    let result = registry.register_tools(vec![
+        crate::tools::mcp::client::McpToolDefinition {
+            server: "k8s".to_string(),
+            name: "k8s__list_pods".to_string(),
+            raw_name: "list_pods".to_string(),
+            description: None,
+            parameters: None,
+        },
+        crate::tools::mcp::client::McpToolDefinition {
+            server: "k8s".to_string(),
+            name: "gh__list_prs".to_string(),
+            raw_name: "list_pull_requests".to_string(),
+            description: None,
+            parameters: None,
+        },
+    ]);
+
+    assert!(result.is_err());
+    assert!(
+        result
+            .expect_err("must fail on conflicting mapping")
+            .contains("conflicting raw MCP tool mapping")
+    );
+
+    assert_eq!(registry.raw_name_for("gh__list_prs"), Some("list_prs"));
+    assert!(registry.is_registered("gh__list_prs"));
+    assert!(!registry.is_registered("k8s__list_pods"));
+    assert!(!registry.is_server_enabled("k8s"));
+}
+
+#[test]
 fn direct_tool_display_contract_accepts_minimal_sections_shape() {
     let payload = json!({
         "display": {

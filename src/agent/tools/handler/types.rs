@@ -243,6 +243,98 @@ impl McpToolRegistry {
         })
     }
 
+    pub fn register_tools<I>(&mut self, tools: I) -> Result<(), String>
+    where
+        I: IntoIterator<Item = crate::tools::mcp::client::McpToolDefinition>,
+    {
+        #[derive(Debug)]
+        struct PendingTool {
+            exposed_name: String,
+            raw_name: String,
+            server_name: String,
+            is_new_mapping: bool,
+        }
+
+        let mut enabled_servers = self
+            .enabled_servers
+            .write()
+            .map_err(|_| "MCP enabled-server state lock poisoned".to_string())?;
+
+        let mut pending_tools: Vec<PendingTool> = Vec::new();
+        let mut incoming_seen: std::collections::HashMap<String, (String, String)> =
+            std::collections::HashMap::new();
+        let mut pending_new_mappings: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+
+        for tool in tools {
+            let exposed_name = tool.name;
+            let raw_name = tool.raw_name;
+            let server_name = tool.server;
+            let is_new_mapping = !self.raw_name_by_exposed_name.contains_key(&exposed_name)
+                && pending_new_mappings.insert(exposed_name.clone());
+
+            if let Some((seen_raw, seen_server)) = incoming_seen.get(&exposed_name) {
+                if seen_raw != &raw_name {
+                    return Err(format!(
+                        "conflicting raw MCP tool mapping for '{}': existing='{}' new='{}'",
+                        exposed_name, seen_raw, raw_name
+                    ));
+                }
+
+                if seen_server != &server_name {
+                    return Err(format!(
+                        "conflicting MCP tool owner for '{}': existing='{}' new='{}'",
+                        exposed_name, seen_server, server_name
+                    ));
+                }
+            } else {
+                incoming_seen.insert(
+                    exposed_name.clone(),
+                    (raw_name.clone(), server_name.clone()),
+                );
+            }
+
+            if let Some(existing_raw) = self.raw_name_by_exposed_name.get(&exposed_name) {
+                if existing_raw != &raw_name {
+                    return Err(format!(
+                        "conflicting raw MCP tool mapping for '{}': existing='{}' new='{}'",
+                        exposed_name, existing_raw, raw_name
+                    ));
+                }
+
+                if let Some(existing_server) = self.server_by_exposed_name.get(&exposed_name)
+                    && existing_server != &server_name
+                {
+                    return Err(format!(
+                        "conflicting MCP tool owner for '{}': existing='{}' new='{}'",
+                        exposed_name, existing_server, server_name
+                    ));
+                }
+            }
+
+            pending_tools.push(PendingTool {
+                exposed_name,
+                raw_name,
+                server_name,
+                is_new_mapping,
+            });
+        }
+
+        for pending in pending_tools {
+            if pending.is_new_mapping {
+                self.names.insert(pending.exposed_name.clone());
+                self.raw_name_by_exposed_name
+                    .insert(pending.exposed_name.clone(), pending.raw_name);
+                self.server_by_exposed_name
+                    .insert(pending.exposed_name.clone(), pending.server_name.clone());
+            }
+
+            enabled_servers.insert(pending.server_name);
+        }
+
+        Ok(())
+    }
+
     pub fn contains(&self, name: &str) -> bool {
         self.names.contains(name) && self.is_tool_enabled(name)
     }
@@ -253,6 +345,12 @@ impl McpToolRegistry {
 
     pub fn raw_name_for(&self, exposed_name: &str) -> Option<&str> {
         self.raw_name_by_exposed_name
+            .get(exposed_name)
+            .map(String::as_str)
+    }
+
+    pub fn server_name_for(&self, exposed_name: &str) -> Option<&str> {
+        self.server_by_exposed_name
             .get(exposed_name)
             .map(String::as_str)
     }

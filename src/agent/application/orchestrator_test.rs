@@ -48,6 +48,7 @@ struct FakeInteractiveUi {
     mcp_toggle_requests: std::collections::VecDeque<McpToggleRequest>,
     mcp_states: Vec<(String, McpUsabilityState)>,
     mcp_details: Vec<(String, McpUsabilityState, Option<String>, usize)>,
+    mcp_visible_tool_count_updates: Vec<(String, usize)>,
     warnings: Vec<String>,
     expected_mcp_updates: usize,
     shared_actions: Vec<SharedUiAction>,
@@ -66,6 +67,7 @@ impl FakeInteractiveUi {
             mcp_toggle_requests: std::collections::VecDeque::new(),
             mcp_states: Vec::new(),
             mcp_details: Vec::new(),
+            mcp_visible_tool_count_updates: Vec::new(),
             warnings: Vec::new(),
             expected_mcp_updates: 0,
             shared_actions: Vec::new(),
@@ -137,6 +139,18 @@ impl InteractiveUi for FakeInteractiveUi {
             llm_visible_mcp_tool_count,
         ));
         self.set_mcp_server_state(server_name, state);
+    }
+
+    fn set_mcp_visible_tool_count_by_server_name(&mut self, server_name: &str, count: usize) {
+        self.mcp_visible_tool_count_updates
+            .push((server_name.to_string(), count));
+    }
+
+    fn set_mcp_visible_tool_names_by_server_name(
+        &mut self,
+        _server_name: &str,
+        _names: Vec<String>,
+    ) {
     }
 
     fn quit_requested(&self) -> bool {
@@ -1832,6 +1846,54 @@ struct McpToggleRuntime {
     toggles: Vec<(String, bool)>,
     next_state: McpUsabilityState,
     visible_count: usize,
+    visible_count_by_server: usize,
+}
+
+struct StartupHydrationRuntime {
+    names_by_server: Vec<(String, Vec<String>)>,
+}
+
+impl ConversationRuntime for StartupHydrationRuntime {
+    fn llm_visible_mcp_tool_count(&self) -> usize {
+        self.names_by_server.iter().map(|(_, names)| names.len()).sum()
+    }
+
+    fn llm_visible_mcp_tool_names_by_server(&self) -> Vec<(String, Vec<String>)> {
+        self.names_by_server.clone()
+    }
+
+    fn execute_turn<U: ProgressUi>(
+        &mut self,
+        _ui: &mut U,
+        _prompt: String,
+        _context: Option<String>,
+        span: Span,
+    ) -> Result<Value, LabeledError> {
+        Ok(Value::nothing(span))
+    }
+}
+
+#[test]
+fn interactive_loop_startup_hydration_initializes_per_server_visible_counts_before_toggles() {
+    let mut runtime = StartupHydrationRuntime {
+        names_by_server: vec![
+            (
+                "gh".to_string(),
+                vec!["gh__issues".to_string(), "gh__prs".to_string()],
+            ),
+            ("k8s".to_string(), vec!["k8s__pods".to_string()]),
+        ],
+    };
+    let mut ui = FakeInteractiveUi::with_prompts(&[]);
+
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(
+        ui.mcp_visible_tool_count_updates,
+        vec![("gh".to_string(), 2), ("k8s".to_string(), 1)]
+    );
 }
 
 impl ConversationRuntime for McpToggleRuntime {
@@ -1846,6 +1908,10 @@ impl ConversationRuntime for McpToggleRuntime {
 
     fn llm_visible_mcp_tool_count(&self) -> usize {
         self.visible_count
+    }
+
+    fn llm_visible_mcp_tool_count_for_server(&self, _server_name: &str) -> usize {
+        self.visible_count_by_server
     }
 
     fn execute_turn<U: ProgressUi>(
@@ -1865,6 +1931,7 @@ fn interactive_loop_processes_mcp_toggle_requests_and_updates_ui_state() {
         toggles: Vec::new(),
         next_state: McpUsabilityState::Disabled,
         visible_count: 3,
+        visible_count_by_server: 0,
     };
     let mut ui = FakeInteractiveUi::with_prompts(&[]).with_expected_mcp_updates(1);
     ui.mcp_toggle_requests.push_back(McpToggleRequest {
@@ -1885,6 +1952,7 @@ fn interactive_loop_processes_mcp_toggle_requests_and_updates_ui_state() {
         ui.mcp_details,
         vec![("gh".to_string(), McpUsabilityState::Disabled, None, 3)]
     );
+    assert_eq!(ui.mcp_visible_tool_count_updates, vec![("gh".to_string(), 0)]);
 }
 
 #[test]
@@ -1893,6 +1961,7 @@ fn interactive_loop_marks_enable_failure_as_failed_state() {
         toggles: Vec::new(),
         next_state: McpUsabilityState::Failed,
         visible_count: 2,
+        visible_count_by_server: 0,
     };
     let mut ui = FakeInteractiveUi::with_prompts(&[]).with_expected_mcp_updates(1);
     ui.mcp_toggle_requests.push_back(McpToggleRequest {
@@ -1913,6 +1982,7 @@ fn interactive_loop_marks_enable_failure_as_failed_state() {
         ui.mcp_details,
         vec![("gh".to_string(), McpUsabilityState::Failed, None, 2)]
     );
+    assert_eq!(ui.mcp_visible_tool_count_updates, vec![("gh".to_string(), 0)]);
 }
 
 #[test]
@@ -1921,6 +1991,7 @@ fn interactive_loop_marks_enable_success_as_enabled_state() {
         toggles: Vec::new(),
         next_state: McpUsabilityState::Enabled,
         visible_count: 7,
+        visible_count_by_server: 5,
     };
     let mut ui = FakeInteractiveUi::with_prompts(&[]).with_expected_mcp_updates(1);
     ui.mcp_toggle_requests.push_back(McpToggleRequest {
@@ -1941,6 +2012,7 @@ fn interactive_loop_marks_enable_success_as_enabled_state() {
         ui.mcp_details,
         vec![("gh".to_string(), McpUsabilityState::Enabled, None, 7)]
     );
+    assert_eq!(ui.mcp_visible_tool_count_updates, vec![("gh".to_string(), 5)]);
 }
 
 struct FailingMcpToggleRuntime {
@@ -1960,6 +2032,10 @@ impl ConversationRuntime for FailingMcpToggleRuntime {
 
     fn llm_visible_mcp_tool_count(&self) -> usize {
         self.visible_count
+    }
+
+    fn llm_visible_mcp_tool_count_for_server(&self, _server_name: &str) -> usize {
+        0
     }
 
     fn execute_turn<U: ProgressUi>(
@@ -2002,6 +2078,85 @@ fn interactive_loop_propagates_failure_reason_and_visible_tool_count_on_toggle_e
             Some("connect timeout".to_string()),
             4,
         )]
+    );
+    assert_eq!(ui.mcp_visible_tool_count_updates, vec![("gh".to_string(), 0)]);
+}
+
+struct SequencedMcpToggleRuntime {
+    toggles: Vec<(String, bool)>,
+    states: std::collections::VecDeque<McpUsabilityState>,
+    visible_counts: std::collections::VecDeque<usize>,
+    visible_counts_by_server: std::collections::VecDeque<usize>,
+    current_visible_count: usize,
+    current_visible_count_by_server: usize,
+}
+
+impl ConversationRuntime for SequencedMcpToggleRuntime {
+    fn set_mcp_server_enabled(
+        &mut self,
+        server_name: &str,
+        enabled: bool,
+    ) -> Result<McpUsabilityState, String> {
+        self.toggles.push((server_name.to_string(), enabled));
+        self.current_visible_count = self
+            .visible_counts
+            .pop_front()
+            .expect("global visible count entry");
+        self.current_visible_count_by_server = self
+            .visible_counts_by_server
+            .pop_front()
+            .expect("per-server visible count entry");
+        Ok(self.states.pop_front().expect("state sequence entry"))
+    }
+
+    fn llm_visible_mcp_tool_count(&self) -> usize {
+        self.current_visible_count
+    }
+
+    fn llm_visible_mcp_tool_count_for_server(&self, _server_name: &str) -> usize {
+        self.current_visible_count_by_server
+    }
+
+    fn execute_turn<U: ProgressUi>(
+        &mut self,
+        _ui: &mut U,
+        _prompt: String,
+        _context: Option<String>,
+        span: Span,
+    ) -> Result<Value, LabeledError> {
+        Ok(Value::nothing(span))
+    }
+}
+
+#[test]
+fn interactive_toggle_enable_disable_cycle_refreshes_per_server_visible_counts() {
+    let mut runtime = SequencedMcpToggleRuntime {
+        toggles: Vec::new(),
+        states: [McpUsabilityState::Disabled, McpUsabilityState::Enabled]
+            .into_iter()
+            .collect(),
+        visible_counts: [3usize, 7usize].into_iter().collect(),
+        visible_counts_by_server: [0usize, 5usize].into_iter().collect(),
+        current_visible_count: 0,
+        current_visible_count_by_server: 0,
+    };
+    let mut ui = StagedToggleUi::new();
+
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Span::test_data()).expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(runtime.toggles, vec![("gh".to_string(), false), ("gh".to_string(), true)]);
+    assert_eq!(
+        ui.mcp_details,
+        vec![
+            ("gh".to_string(), McpUsabilityState::Disabled, None, 3),
+            ("gh".to_string(), McpUsabilityState::Enabled, None, 7),
+        ]
+    );
+    assert_eq!(
+        ui.mcp_visible_tool_count_updates,
+        vec![("gh".to_string(), 0), ("gh".to_string(), 5)]
     );
 }
 
@@ -2064,6 +2219,7 @@ struct StagedToggleUi {
     second_sent: bool,
     mcp_states: Vec<(String, McpUsabilityState)>,
     mcp_details: Vec<(String, McpUsabilityState, Option<String>, usize)>,
+    mcp_visible_tool_count_updates: Vec<(String, usize)>,
 }
 
 impl StagedToggleUi {
@@ -2074,6 +2230,7 @@ impl StagedToggleUi {
             second_sent: false,
             mcp_states: Vec::new(),
             mcp_details: Vec::new(),
+            mcp_visible_tool_count_updates: Vec::new(),
         }
     }
 }
@@ -2139,6 +2296,18 @@ impl InteractiveUi for StagedToggleUi {
         self.set_mcp_server_state(server_name, state);
     }
 
+    fn set_mcp_visible_tool_count_by_server_name(&mut self, server_name: &str, count: usize) {
+        self.mcp_visible_tool_count_updates
+            .push((server_name.to_string(), count));
+    }
+
+    fn set_mcp_visible_tool_names_by_server_name(
+        &mut self,
+        _server_name: &str,
+        _names: Vec<String>,
+    ) {
+    }
+
     fn quit_requested(&self) -> bool {
         self.quit
     }
@@ -2185,4 +2354,5 @@ fn interactive_loop_worker_channel_closed_preserves_authoritative_visible_tool_c
             ),
         ]
     );
+    assert!(ui.mcp_visible_tool_count_updates.is_empty());
 }

@@ -20,6 +20,7 @@ pub struct McpServerLifecycle {
     pub configured: bool,
     pub enabled: bool,
     pub connected: bool,
+    pub visible_tool_count: usize,
 }
 
 fn resolve_stdio_cwd(
@@ -137,6 +138,7 @@ fn project_server_lifecycle(
             configured: true,
             enabled: server.enabled,
             connected: connected_servers.contains(&server.name),
+            visible_tool_count: 0,
         })
         .collect();
 

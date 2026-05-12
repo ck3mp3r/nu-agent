@@ -219,6 +219,8 @@ pub struct AppState {
     discoverable_skills: Vec<DiscoverableSkill>,
     skills_discovery_failed: bool,
     llm_visible_mcp_tool_count: usize,
+    mcp_visible_tool_count_by_server: HashMap<String, usize>,
+    mcp_visible_tool_names_by_server: HashMap<String, Vec<String>>,
     mcp_failure_reasons: HashMap<String, String>,
     pending_mcp_toggle_requests: VecDeque<McpToggleRequest>,
     pending_model_switch_requests: VecDeque<String>,
@@ -282,6 +284,8 @@ impl Default for AppState {
             discoverable_skills: Vec::new(),
             skills_discovery_failed: false,
             llm_visible_mcp_tool_count: 0,
+            mcp_visible_tool_count_by_server: HashMap::new(),
+            mcp_visible_tool_names_by_server: HashMap::new(),
             mcp_failure_reasons: HashMap::new(),
             pending_mcp_toggle_requests: VecDeque::new(),
             pending_model_switch_requests: VecDeque::new(),
@@ -433,6 +437,10 @@ impl AppState {
 
     pub fn set_mcp_servers(&mut self, servers: Vec<McpServerState>) {
         self.mcp_servers = servers;
+        self.mcp_visible_tool_count_by_server
+            .retain(|name, _| self.mcp_servers.iter().any(|server| server.name == *name));
+        self.mcp_visible_tool_names_by_server
+            .retain(|name, _| self.mcp_servers.iter().any(|server| server.name == *name));
         self.mcp_failure_reasons.retain(|name, _| {
             self.mcp_servers.iter().any(|server| {
                 server.name == *name && server.state == McpServerUsabilityState::Failed
@@ -447,6 +455,36 @@ impl AppState {
 
     pub fn set_llm_visible_mcp_tool_count(&mut self, count: usize) {
         self.llm_visible_mcp_tool_count = count;
+    }
+
+    pub fn set_mcp_visible_tool_count_by_server_name(&mut self, server_name: &str, count: usize) {
+        self.mcp_visible_tool_count_by_server
+            .insert(server_name.to_string(), count);
+    }
+
+    pub fn mcp_visible_tool_count_for_server_name(&self, server_name: &str) -> usize {
+        self.mcp_visible_tool_count_by_server
+            .get(server_name)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    pub fn set_mcp_visible_tool_names_by_server_name(
+        &mut self,
+        server_name: &str,
+        mut names: Vec<String>,
+    ) {
+        names.sort();
+        names.dedup();
+        self.mcp_visible_tool_names_by_server
+            .insert(server_name.to_string(), names);
+    }
+
+    pub fn mcp_visible_tool_names_for_server_name(&self, server_name: &str) -> Vec<String> {
+        self.mcp_visible_tool_names_by_server
+            .get(server_name)
+            .cloned()
+            .unwrap_or_default()
     }
 
     pub fn set_discoverable_skills(&mut self, mut skills: Vec<DiscoverableSkill>) {

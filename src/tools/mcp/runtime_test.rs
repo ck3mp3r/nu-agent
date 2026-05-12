@@ -68,6 +68,7 @@ fn connect_server_states_reports_all_configured_servers_with_deterministic_field
     assert!(enabled.configured);
     assert!(enabled.enabled);
     assert!(!enabled.connected);
+    assert_eq!(enabled.visible_tool_count, 0);
 
     let disabled = projection
         .iter()
@@ -76,6 +77,7 @@ fn connect_server_states_reports_all_configured_servers_with_deterministic_field
     assert!(disabled.configured);
     assert!(!disabled.enabled);
     assert!(!disabled.connected);
+    assert_eq!(disabled.visible_tool_count, 0);
 }
 
 #[test]
@@ -110,6 +112,7 @@ fn connect_server_states_marks_connected_when_runtime_session_exists_for_server(
     assert!(projection[0].configured);
     assert!(projection[0].enabled);
     assert!(projection[0].connected);
+    assert_eq!(projection[0].visible_tool_count, 0);
 }
 
 #[test]

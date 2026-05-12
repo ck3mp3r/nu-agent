@@ -172,6 +172,16 @@ where
         let _ = self.renderer.set_mcp_server_state(server_name, mapped);
     }
 
+    fn set_mcp_visible_tool_count_by_server_name(&mut self, server_name: &str, count: usize) {
+        self.renderer
+            .set_mcp_visible_tool_count_by_server_name(server_name, count);
+    }
+
+    fn set_mcp_visible_tool_names_by_server_name(&mut self, server_name: &str, names: Vec<String>) {
+        self.renderer
+            .set_mcp_visible_tool_names_by_server_name(server_name, names);
+    }
+
     fn set_mcp_server_state_with_details(
         &mut self,
         server_name: &str,

@@ -575,40 +575,236 @@ struct CommandPaletteTableModel {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct McpTableModel {
     columns: Vec<String>,
-    rows: Vec<[String; 4]>,
+    rows: Vec<[String; 3]>,
     selected: Option<usize>,
     overflow_cue: Option<String>,
 }
 
-fn mcp_table_model(state: &AppState, popup_height: u16) -> McpTableModel {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct McpSelectedDetails {
+    server_line: String,
+    error_line: String,
+    tools_line: String,
+    tool_names: Vec<String>,
+    compact_single_line: String,
+}
+
+fn mcp_state_label(state: McpServerUsabilityState) -> &'static str {
+    match state {
+        McpServerUsabilityState::Enabled => "enabled",
+        McpServerUsabilityState::Disabled => "disabled",
+        McpServerUsabilityState::Failed => "failed",
+    }
+}
+
+fn mcp_status_icon(state: McpServerUsabilityState) -> &'static str {
+    match state {
+        McpServerUsabilityState::Enabled => "🟢",
+        McpServerUsabilityState::Disabled => "⚪",
+        McpServerUsabilityState::Failed => "🔴",
+    }
+}
+
+const MCP_STATUS_COLUMN_WIDTH: u16 = 6;
+
+fn mcp_selected_details(state: &AppState) -> Option<McpSelectedDetails> {
+    let server = state.mcp_servers.get(state.mcp_panel_selection)?;
+    let reason = state
+        .failed_mcp_servers_with_reasons()
+        .into_iter()
+        .find(|(name, _)| *name == server.name.as_str())
+        .and_then(|(_, reason)| reason)
+        .map(str::trim)
+        .filter(|reason| !reason.is_empty());
+    let mut tool_names = state.mcp_visible_tool_names_for_server_name(server.name.as_str());
+    tool_names.sort();
+    tool_names.dedup();
+    let tools_line = if tool_names.is_empty() {
+        "Tools: None".to_string()
+    } else {
+        format!("Tools: {}", tool_names.join(", "))
+    };
+    let server_line = format!("Server: {} ({})", server.name, mcp_state_label(server.state));
+    Some(McpSelectedDetails {
+        compact_single_line: format!("{} · {server_line}", match reason {
+            Some(full) => format!("Error: {full}"),
+            None => "Error: None".to_string(),
+        }),
+        server_line,
+        tools_line,
+        tool_names,
+        error_line: match reason {
+            Some(full) => format!("Error: {full}"),
+            None => "Error: None".to_string(),
+        },
+    })
+}
+
+fn mcp_tool_lines_wrapped(
+    tool_names: &[String],
+    max_lines: usize,
+    width: usize,
+) -> Vec<String> {
+    const PREFIX: &str = "Tools: ";
+    let continuation_prefix = " ".repeat(PREFIX.chars().count());
+    let content_width = width.saturating_sub(PREFIX.chars().count());
+
+    if max_lines == 0 {
+        return Vec::new();
+    }
+
+    if tool_names.is_empty() {
+        return vec![format!("{PREFIX}None")];
+    }
+
+    let mut wrapped_groups: Vec<Vec<&str>> = Vec::new();
+    for tool_name in tool_names {
+        let tool_name = tool_name.as_str();
+        if let Some(last) = wrapped_groups.last_mut() {
+            let current_width = last.iter().map(|tool| tool.chars().count()).sum::<usize>()
+                + (last.len().saturating_sub(1) * 2);
+            let appended_width = current_width + 2 + tool_name.chars().count();
+            if appended_width <= content_width || last.is_empty() {
+                last.push(tool_name);
+                continue;
+            }
+        }
+        wrapped_groups.push(vec![tool_name]);
+    }
+
+    let mut lines: Vec<String> = Vec::new();
+    if wrapped_groups.len() <= max_lines {
+        for (idx, group) in wrapped_groups.into_iter().enumerate() {
+            let prefix = if idx == 0 {
+                PREFIX
+            } else {
+                continuation_prefix.as_str()
+            };
+            lines.push(format!("{prefix}{}", group.join(", ")));
+        }
+        return lines;
+    }
+
+    let leading_visible_lines = max_lines.saturating_sub(1);
+    let mut visible_tool_count = 0usize;
+    for (idx, group) in wrapped_groups
+        .iter()
+        .take(leading_visible_lines)
+        .enumerate()
+    {
+        let prefix = if idx == 0 {
+            PREFIX
+        } else {
+            continuation_prefix.as_str()
+        };
+        lines.push(format!("{prefix}{}", group.join(", ")));
+        visible_tool_count = visible_tool_count.saturating_add(group.len());
+    }
+
+    let remaining = &tool_names[visible_tool_count.min(tool_names.len())..];
+    let final_prefix = if lines.is_empty() {
+        PREFIX
+    } else {
+        continuation_prefix.as_str()
+    };
+
+    let mut final_line = format!("+{} more", remaining.len());
+    for visible in (0..remaining.len()).rev() {
+        let hidden = remaining.len().saturating_sub(visible);
+        if hidden == 0 {
+            continue;
+        }
+        let candidate = if visible == 0 {
+            format!("+{hidden} more")
+        } else {
+            format!("{}, +{hidden} more", remaining[..visible].join(", "))
+        };
+        if candidate.chars().count() <= content_width {
+            final_line = candidate;
+            break;
+        }
+    }
+
+    lines.push(format!("{final_prefix}{final_line}"));
+    lines.truncate(max_lines);
+    lines
+}
+
+fn mcp_selected_details_lines(state: &AppState, details_height: u16, details_width: u16) -> Vec<Line<'static>> {
+    let Some(details) = mcp_selected_details(state) else {
+        return Vec::new();
+    };
+
+    match details_height {
+        0 => Vec::new(),
+        1 => vec![Line::from(details.compact_single_line)],
+        2 => vec![Line::from(details.server_line), Line::from(details.error_line)],
+        _ => {
+            let mut lines = vec![Line::from(details.server_line), Line::from(details.error_line)];
+            if details.tool_names.is_empty() {
+                lines.push(Line::from("Tools: None"));
+                lines.truncate(details_height as usize);
+                return lines;
+            }
+
+            let tool_line_budget = details_height.saturating_sub(2) as usize;
+            if tool_line_budget == 0 {
+                return lines;
+            }
+
+            let wrapped_tools = mcp_tool_lines_wrapped(
+                &details.tool_names,
+                tool_line_budget,
+                details_width as usize,
+            );
+            lines.extend(wrapped_tools.into_iter().map(Line::from));
+
+            lines.truncate(details_height as usize);
+            lines
+        }
+    }
+}
+
+fn mcp_details_height_for_inner_height(inner_height: u16) -> u16 {
+    if inner_height >= 14 {
+        6
+    } else if inner_height >= 12 {
+        5
+    } else if inner_height >= 10 {
+        4
+    } else if inner_height >= 8 {
+        3
+    } else if inner_height >= 6 {
+        2
+    } else if inner_height >= 5 {
+        1
+    } else {
+        0
+    }
+}
+
+fn mcp_panel_controls_line() -> &'static str {
+    "Session-only toggles | Enter/Space toggle | Esc close"
+}
+
+fn mcp_table_model(state: &AppState, table_height: u16) -> McpTableModel {
     let columns = vec![
         "Name".to_string(),
-        "State".to_string(),
         "Visible tools".to_string(),
-        "Error".to_string(),
+        "Status".to_string(),
     ];
-    let failed_with_reasons = state.failed_mcp_servers_with_reasons();
     let all_rows = state
         .mcp_servers
         .iter()
         .map(|server| {
-            let state_label = match server.state {
-                McpServerUsabilityState::Enabled => "enabled",
-                McpServerUsabilityState::Disabled => "disabled",
-                McpServerUsabilityState::Failed => "failed",
-            }
-            .to_string();
-            let error = if server.state == McpServerUsabilityState::Failed {
-                failed_with_reasons
-                    .iter()
-                    .find(|(name, _)| *name == server.name.as_str())
-                    .and_then(|(_, reason)| *reason)
-                    .unwrap_or("-")
-                    .to_string()
-            } else {
-                "-".to_string()
-            };
-            [server.name.clone(), state_label, "-".to_string(), error]
+            let visible_tools = state
+                .mcp_visible_tool_count_for_server_name(server.name.as_str())
+                .to_string();
+            [
+                server.name.clone(),
+                visible_tools,
+                mcp_status_icon(server.state).to_string(),
+            ]
         })
         .collect::<Vec<_>>();
 
@@ -622,7 +818,7 @@ fn mcp_table_model(state: &AppState, popup_height: u16) -> McpTableModel {
         )
     };
 
-    let table_view_rows = popup_height.saturating_sub(3) as usize;
+    let table_view_rows = table_height.saturating_sub(1) as usize;
     let visible_body_rows = table_view_rows.saturating_sub(1);
     let (window_start, window_len) = if visible_body_rows == 0 || all_rows.is_empty() {
         (0, 0)
@@ -959,13 +1155,18 @@ impl RuntimeCoordinator {
     pub(crate) fn set_mcp_lifecycle_projection(&mut self, projection: Vec<McpServerLifecycle>) {
         let servers = projection
             .into_iter()
-            .map(|server| McpServerState {
-                name: server.name,
-                state: match (server.enabled, server.connected) {
-                    (true, true) => McpServerUsabilityState::Enabled,
-                    (true, false) => McpServerUsabilityState::Failed,
-                    (false, _) => McpServerUsabilityState::Disabled,
-                },
+            .map(|server| {
+                let name = server.name;
+                self.state
+                    .set_mcp_visible_tool_count_by_server_name(name.as_str(), server.visible_tool_count);
+                McpServerState {
+                    name,
+                    state: match (server.enabled, server.connected) {
+                        (true, true) => McpServerUsabilityState::Enabled,
+                        (true, false) => McpServerUsabilityState::Failed,
+                        (false, _) => McpServerUsabilityState::Disabled,
+                    },
+                }
             })
             .collect();
         self.state.set_mcp_servers(servers);
@@ -989,6 +1190,24 @@ impl RuntimeCoordinator {
 
     pub(crate) fn set_llm_visible_mcp_tool_count(&mut self, count: usize) {
         self.state.set_llm_visible_mcp_tool_count(count);
+    }
+
+    pub(crate) fn set_mcp_visible_tool_count_by_server_name(
+        &mut self,
+        server_name: &str,
+        count: usize,
+    ) {
+        self.state
+            .set_mcp_visible_tool_count_by_server_name(server_name, count);
+    }
+
+    pub(crate) fn set_mcp_visible_tool_names_by_server_name(
+        &mut self,
+        server_name: &str,
+        names: Vec<String>,
+    ) {
+        self.state
+            .set_mcp_visible_tool_names_by_server_name(server_name, names);
     }
 
     pub(crate) fn set_context_window_max_tokens(&mut self, max_tokens: Option<u64>) {
@@ -1558,9 +1777,23 @@ impl RuntimeCoordinator {
 
                     match panel {
                         InfoPanel::Mcps => {
-                            let popup_height = popup.height;
-                            let model = mcp_table_model(&self.state, popup_height);
                             frame.render_widget(Clear, popup);
+                            let inner = popup.inner(Margin {
+                                vertical: 1,
+                                horizontal: 1,
+                            });
+                            let details_height = mcp_details_height_for_inner_height(inner.height);
+
+                            let rows = Layout::default()
+                                .direction(Direction::Vertical)
+                                .constraints([
+                                    Constraint::Length(1),
+                                    Constraint::Min(1),
+                                    Constraint::Length(details_height),
+                                ])
+                                .split(inner);
+
+                            let model = mcp_table_model(&self.state, rows[1].height);
                             let title = if let Some(cue) = model.overflow_cue.as_deref() {
                                 format!("MCPs ({cue})")
                             } else {
@@ -1574,19 +1807,8 @@ impl RuntimeCoordinator {
                                 popup,
                             );
 
-                            let inner = popup.inner(Margin {
-                                vertical: 1,
-                                horizontal: 1,
-                            });
-                            let rows = Layout::default()
-                                .direction(Direction::Vertical)
-                                .constraints([Constraint::Length(1), Constraint::Min(0)])
-                                .split(inner);
-
                             frame.render_widget(
-                                Paragraph::new(Line::from(
-                                    "Session-only toggles | Enter/Space toggle | Esc close",
-                                )),
+                                Paragraph::new(Line::from(mcp_panel_controls_line())),
                                 rows[0],
                             );
 
@@ -1596,14 +1818,12 @@ impl RuntimeCoordinator {
                                     Cell::from(row[0].clone()),
                                     Cell::from(row[1].clone()),
                                     Cell::from(row[2].clone()),
-                                    Cell::from(row[3].clone()),
                                 ])
                             });
                             let widths = [
                                 Constraint::Length(18),
-                                Constraint::Length(9),
                                 Constraint::Length(14),
-                                Constraint::Min(12),
+                                Constraint::Length(MCP_STATUS_COLUMN_WIDTH),
                             ];
                             let table = Table::new(table_rows, widths)
                                 .header(header)
@@ -1612,6 +1832,18 @@ impl RuntimeCoordinator {
                             let mut table_state = TableState::default();
                             table_state.select(model.selected);
                             frame.render_stateful_widget(table, rows[1], &mut table_state);
+
+                            if details_height > 0 {
+                                let details_lines =
+                                    mcp_selected_details_lines(&self.state, details_height, rows[2].width);
+                                if !details_lines.is_empty() {
+                                    let details_widget =
+                                        Paragraph::new(Text::from(details_lines)).wrap(Wrap {
+                                            trim: false,
+                                        });
+                                    frame.render_widget(details_widget, rows[2]);
+                                }
+                            }
                         }
                         _ => {
                             let (title, lines) = match panel {
@@ -1901,9 +2133,53 @@ pub(super) fn skills_panel_lines_for_test(state: &AppState) -> (&'static str, Ve
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct McpTableModelForTest {
     pub columns: Vec<String>,
-    pub rows: Vec<[String; 4]>,
+    pub rows: Vec<[String; 3]>,
     pub selected: Option<usize>,
     pub overflow_cue: Option<String>,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct McpSelectedDetailsForTest {
+    pub server_line: String,
+    pub error_line: String,
+    pub tools_line: String,
+}
+
+#[cfg(test)]
+pub(super) fn mcp_selected_details_for_test(state: &AppState) -> Option<McpSelectedDetailsForTest> {
+    mcp_selected_details(state).map(|details| McpSelectedDetailsForTest {
+        server_line: details.server_line,
+        error_line: details.error_line,
+        tools_line: details.tools_line,
+    })
+}
+
+#[cfg(test)]
+pub(super) fn mcp_selected_details_lines_for_test(
+    state: &AppState,
+    details_height: u16,
+    details_width: u16,
+) -> Vec<String> {
+    mcp_selected_details_lines(state, details_height, details_width)
+        .into_iter()
+        .map(|line| line.to_string())
+        .collect()
+}
+
+#[cfg(test)]
+pub(super) fn mcp_details_height_for_inner_height_for_test(inner_height: u16) -> u16 {
+    mcp_details_height_for_inner_height(inner_height)
+}
+
+#[cfg(test)]
+pub(super) fn mcp_panel_controls_line_for_test() -> String {
+    mcp_panel_controls_line().to_string()
+}
+
+#[cfg(test)]
+pub(super) fn mcp_status_column_width_for_test() -> u16 {
+    MCP_STATUS_COLUMN_WIDTH
 }
 
 #[cfg(test)]
@@ -2324,6 +2600,24 @@ where
 
     pub(crate) fn set_llm_visible_mcp_tool_count(&mut self, count: usize) {
         self.coordinator.set_llm_visible_mcp_tool_count(count);
+    }
+
+    pub(crate) fn set_mcp_visible_tool_count_by_server_name(
+        &mut self,
+        server_name: &str,
+        count: usize,
+    ) {
+        self.coordinator
+            .set_mcp_visible_tool_count_by_server_name(server_name, count);
+    }
+
+    pub(crate) fn set_mcp_visible_tool_names_by_server_name(
+        &mut self,
+        server_name: &str,
+        names: Vec<String>,
+    ) {
+        self.coordinator
+            .set_mcp_visible_tool_names_by_server_name(server_name, names);
     }
 
     pub(crate) fn set_context_window_max_tokens(&mut self, max_tokens: Option<u64>) {

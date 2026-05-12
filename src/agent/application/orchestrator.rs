@@ -21,7 +21,12 @@ use crate::agent::protocol::{
 const COMPACTION_FAILURE_WARNING: &str =
     "Session compaction failed: sliding_summary summarization unavailable";
 
-type McpToggleResult = (Result<McpUsabilityState, String>, usize);
+type McpToggleResult = (
+    Result<McpUsabilityState, String>,
+    usize,
+    usize,
+    Vec<(String, Vec<String>)>,
+);
 type PendingMcpToggle = (String, mpsc::Receiver<McpToggleResult>);
 type ModelSwitchResult = Result<String, String>;
 type PendingModelSwitch = mpsc::Receiver<ModelSwitchResult>;
@@ -84,6 +89,10 @@ where
 {
     let mut last_authoritative_visible_count = runtime.llm_visible_mcp_tool_count();
     ui.set_active_model_identity(runtime.active_model_identity().as_str());
+    for (server_name, names) in runtime.llm_visible_mcp_tool_names_by_server() {
+        ui.set_mcp_visible_tool_count_by_server_name(&server_name, names.len());
+        ui.set_mcp_visible_tool_names_by_server_name(&server_name, names);
+    }
 
     std::thread::scope(|scope| {
         let (worker_cmd_tx, worker_cmd_rx) = mpsc::channel::<WorkerCommand>();
@@ -131,7 +140,15 @@ where
                     } => {
                         let result = runtime.set_mcp_server_enabled(&server_name, enable);
                         let visible_count = runtime.llm_visible_mcp_tool_count();
-                        let _ = response_tx.send((result, visible_count));
+                        let visible_count_for_server =
+                            runtime.llm_visible_mcp_tool_count_for_server(&server_name);
+                        let visible_names_by_server = runtime.llm_visible_mcp_tool_names_by_server();
+                        let _ = response_tx.send((
+                            result,
+                            visible_count,
+                            visible_count_for_server,
+                            visible_names_by_server,
+                        ));
                     }
                     WorkerCommand::SwitchModel {
                         model_spec,
@@ -204,8 +221,20 @@ where
             let mut retained = Vec::new();
             for (server_name, response_rx) in pending_mcp_toggles.drain(..) {
                 match response_rx.try_recv() {
-                    Ok((Ok(state), visible_count)) => {
+                    Ok((
+                        Ok(state),
+                        visible_count,
+                        visible_count_for_server,
+                        visible_names_by_server,
+                    )) => {
                         last_authoritative_visible_count = visible_count;
+                        ui.set_mcp_visible_tool_count_by_server_name(
+                            &server_name,
+                            visible_count_for_server,
+                        );
+                        for (server, names) in visible_names_by_server {
+                            ui.set_mcp_visible_tool_names_by_server_name(&server, names);
+                        }
                         ui.set_mcp_server_state_with_details(
                             &server_name,
                             state,
@@ -213,8 +242,20 @@ where
                             visible_count,
                         )
                     }
-                    Ok((Err(err), visible_count)) => {
+                    Ok((
+                        Err(err),
+                        visible_count,
+                        visible_count_for_server,
+                        visible_names_by_server,
+                    )) => {
                         last_authoritative_visible_count = visible_count;
+                        ui.set_mcp_visible_tool_count_by_server_name(
+                            &server_name,
+                            visible_count_for_server,
+                        );
+                        for (server, names) in visible_names_by_server {
+                            ui.set_mcp_visible_tool_names_by_server_name(&server, names);
+                        }
                         ui.set_mcp_server_state_with_details(
                             &server_name,
                             McpUsabilityState::Failed,

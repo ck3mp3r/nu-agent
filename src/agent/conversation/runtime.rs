@@ -29,7 +29,10 @@ use crate::agent::{
         handler::{self, McpToolRegistry, ToolHandlerContext, ToolSource},
     },
 };
-use crate::tools::mcp::{config::McpServerConfig, runtime::McpServerLifecycle};
+use crate::tools::mcp::{
+    config::McpServerConfig,
+    runtime::{McpRuntime, McpServerLifecycle},
+};
 
 const COMPACTION_FAILURE_WARNING: &str =
     "Session compaction failed: sliding_summary summarization unavailable";
@@ -201,9 +204,11 @@ pub(crate) struct AgentConversationRuntime {
     pub tool_definitions: Vec<rig::completion::ToolDefinition>,
     pub closure_registry: ClosureRegistry,
     pub mcp_registry: McpToolRegistry,
+    pub mcp_runtime: Option<McpRuntime>,
     pub mcp_tool_server_handle: Option<rig::tool::server::ToolServerHandle>,
     pub mcp_lifecycle_projection: Vec<McpServerLifecycle>,
     pub mcp_server_configs: Vec<McpServerConfig>,
+    pub mcp_cli_patterns: Vec<String>,
     pub mcp_caller_cwd: Option<std::path::PathBuf>,
     pub tool_executor: ToolExecutor,
     pub engine: EngineInterface,
@@ -248,6 +253,156 @@ fn apply_switched_config(current: &mut Config, switched: Config) {
     *current = switched;
 }
 
+fn mcp_tool_definition_from_discovered(
+    tool: &crate::tools::mcp::client::McpToolDefinition,
+) -> rig::completion::ToolDefinition {
+    rig::completion::ToolDefinition {
+        name: tool.name.clone(),
+        description: tool
+            .description
+            .clone()
+            .unwrap_or_else(|| format!("MCP tool from server '{}'", tool.server)),
+        parameters: tool.parameters.clone().unwrap_or_else(|| {
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "args": {
+                        "type": "array",
+                        "items": {}
+                    }
+                },
+                "required": ["args"]
+            })
+        }),
+    }
+}
+
+fn merge_new_mcp_tools_into_runtime(
+    tool_definitions: &mut Vec<rig::completion::ToolDefinition>,
+    mcp_registry: &mut McpToolRegistry,
+    discovered_tools: &[crate::tools::mcp::client::McpToolDefinition],
+    cli_patterns: &[String],
+) -> Result<(), String> {
+    let filtered = crate::tools::mcp::registration::registerable_tools(discovered_tools, cli_patterns);
+    if filtered.is_empty() {
+        return Ok(());
+    }
+
+    mcp_registry.register_tools(filtered.clone())?;
+
+    let known_names = tool_definitions
+        .iter()
+        .map(|tool| tool.name.clone())
+        .collect::<std::collections::HashSet<_>>();
+
+    for tool in filtered {
+        if !known_names.contains(tool.name.as_str()) {
+            tool_definitions.push(mcp_tool_definition_from_discovered(&tool));
+        }
+    }
+
+    Ok(())
+}
+
+fn stage_enabled_mcp_runtime_state(
+    current_tool_definitions: &[rig::completion::ToolDefinition],
+    current_registry: &McpToolRegistry,
+    server_name: &str,
+    discovered_tools: &[crate::tools::mcp::client::McpToolDefinition],
+    cli_patterns: &[String],
+) -> Result<(Vec<rig::completion::ToolDefinition>, McpToolRegistry), String> {
+    let mut staged_tool_definitions = current_tool_definitions.to_vec();
+    let mut staged_registry = current_registry.clone();
+
+    merge_new_mcp_tools_into_runtime(
+        &mut staged_tool_definitions,
+        &mut staged_registry,
+        discovered_tools,
+        cli_patterns,
+    )?;
+    staged_registry.set_server_enabled(server_name, true)?;
+
+    Ok((staged_tool_definitions, staged_registry))
+}
+
+fn mcp_enable_runtime_config(
+    mcp_server_configs: &[McpServerConfig],
+    mcp_registry: &McpToolRegistry,
+    server_to_enable: &str,
+) -> Vec<McpServerConfig> {
+    mcp_server_configs
+        .iter()
+        .map(|server| {
+            let enable = server.name == server_to_enable || mcp_registry.is_server_enabled(&server.name);
+            McpServerConfig {
+                enabled: enable,
+                ..server.clone()
+            }
+        })
+        .collect()
+}
+
+fn rebuild_mcp_lifecycle_projection(
+    mcp_runtime: Option<&McpRuntime>,
+    mcp_server_configs: &[McpServerConfig],
+    mcp_registry: &McpToolRegistry,
+    tool_definitions: &[rig::completion::ToolDefinition],
+) -> Vec<McpServerLifecycle> {
+    let visible_count_by_server = tool_definitions
+        .iter()
+        .filter(|tool| mcp_registry.contains(tool.name.as_str()))
+        .filter_map(|tool| {
+            mcp_registry
+                .server_name_for(tool.name.as_str())
+                .map(str::to_string)
+        })
+        .fold(
+            std::collections::HashMap::<String, usize>::new(),
+            |mut acc, server| {
+                *acc.entry(server).or_insert(0) += 1;
+                acc
+            },
+        );
+
+    let projected_runtime_config: Vec<McpServerConfig> = mcp_server_configs
+        .iter()
+        .map(|server| McpServerConfig {
+            enabled: mcp_registry.is_server_enabled(&server.name),
+            ..server.clone()
+        })
+        .collect();
+
+    if let Some(runtime) = mcp_runtime {
+        runtime
+            .lifecycle_projection(&projected_runtime_config)
+            .into_iter()
+            .map(|mut lifecycle| {
+                lifecycle.visible_tool_count = visible_count_by_server
+                    .get(lifecycle.name.as_str())
+                    .copied()
+                    .unwrap_or(0);
+                lifecycle
+            })
+            .collect()
+    } else {
+        let mut projection = projected_runtime_config
+            .iter()
+            .map(|server| McpServerLifecycle {
+                name: server.name.clone(),
+                configured: true,
+                enabled: server.enabled,
+                connected: false,
+                visible_tool_count: visible_count_by_server
+                    .get(server.name.as_str())
+                    .copied()
+                    .unwrap_or(0),
+            })
+            .collect::<Vec<_>>();
+        projection.sort_by(|a, b| a.name.cmp(&b.name));
+        projection
+    }
+}
+
 impl ConversationRuntime for AgentConversationRuntime {
     fn set_mcp_server_enabled(
         &mut self,
@@ -256,34 +411,72 @@ impl ConversationRuntime for AgentConversationRuntime {
     ) -> Result<McpUsabilityState, String> {
         if !enabled {
             self.mcp_registry.set_server_enabled(server_name, false)?;
+            self.mcp_lifecycle_projection = rebuild_mcp_lifecycle_projection(
+                self.mcp_runtime.as_ref(),
+                &self.mcp_server_configs,
+                &self.mcp_registry,
+                &self.tool_definitions,
+            );
             return Ok(McpUsabilityState::Disabled);
         }
 
-        let Some(server_config) = self
+        if !self
             .mcp_server_configs
             .iter()
-            .find(|server| server.name == server_name)
-            .cloned()
-        else {
+            .any(|server| server.name == server_name)
+        {
             self.mcp_registry.set_server_enabled(server_name, false)?;
+            self.mcp_lifecycle_projection = rebuild_mcp_lifecycle_projection(
+                self.mcp_runtime.as_ref(),
+                &self.mcp_server_configs,
+                &self.mcp_registry,
+                &self.tool_definitions,
+            );
             return Ok(McpUsabilityState::Failed);
-        };
+        }
+
+        let runtime_config =
+            mcp_enable_runtime_config(&self.mcp_server_configs, &self.mcp_registry, server_name);
 
         match self
             .runtime
             .block_on(crate::tools::mcp::runtime::connect_servers(
-                &[McpServerConfig {
-                    enabled: true,
-                    ..server_config
-                }],
+                &runtime_config,
                 self.mcp_caller_cwd.as_deref(),
             )) {
             Ok(runtime) if runtime.has_sessions() => {
-                self.mcp_registry.set_server_enabled(server_name, true)?;
+                let discovered = runtime.discovered_tools().to_vec();
+
+                let (staged_tool_definitions, staged_registry) = stage_enabled_mcp_runtime_state(
+                    &self.tool_definitions,
+                    &self.mcp_registry,
+                    server_name,
+                    &discovered,
+                    &self.mcp_cli_patterns,
+                )?;
+
+                self.tool_definitions = staged_tool_definitions;
+                self.mcp_registry = staged_registry;
+                self.mcp_runtime = Some(runtime);
+                self.mcp_tool_server_handle =
+                    self.mcp_runtime.as_ref().map(McpRuntime::tool_server_handle);
+                self.mcp_lifecycle_projection = rebuild_mcp_lifecycle_projection(
+                    self.mcp_runtime.as_ref(),
+                    &self.mcp_server_configs,
+                    &self.mcp_registry,
+                    &self.tool_definitions,
+                );
+
                 Ok(McpUsabilityState::Enabled)
             }
             Ok(_) | Err(_) => {
                 self.mcp_registry.set_server_enabled(server_name, false)?;
+                self.mcp_lifecycle_projection = rebuild_mcp_lifecycle_projection(
+                    self.mcp_runtime.as_ref(),
+                    &self.mcp_server_configs,
+                    &self.mcp_registry,
+                    &self.tool_definitions,
+                );
                 Ok(McpUsabilityState::Failed)
             }
         }
@@ -294,6 +487,42 @@ impl ConversationRuntime for AgentConversationRuntime {
             .iter()
             .filter(|tool| self.mcp_registry.is_registered(tool.name.as_str()))
             .count()
+    }
+
+    fn llm_visible_mcp_tool_count_for_server(&self, server_name: &str) -> usize {
+        self.active_tool_definitions()
+            .iter()
+            .filter(|tool| self.mcp_registry.is_registered(tool.name.as_str()))
+            .filter_map(|tool| self.mcp_registry.server_name_for(tool.name.as_str()))
+            .filter(|server| *server == server_name)
+            .count()
+    }
+
+    fn llm_visible_mcp_tool_names_by_server(&self) -> Vec<(String, Vec<String>)> {
+        let mut grouped = std::collections::BTreeMap::<String, Vec<String>>::new();
+
+        for tool in self
+            .active_tool_definitions()
+            .iter()
+            .filter(|tool| self.mcp_registry.is_registered(tool.name.as_str()))
+        {
+            let Some(server_name) = self.mcp_registry.server_name_for(tool.name.as_str()) else {
+                continue;
+            };
+            grouped
+                .entry(server_name.to_string())
+                .or_default()
+                .push(tool.name.clone());
+        }
+
+        grouped
+            .into_iter()
+            .map(|(server, mut names)| {
+                names.sort();
+                names.dedup();
+                (server, names)
+            })
+            .collect()
     }
 
     fn switch_model(&mut self, model_spec: &str) -> Result<String, String> {
@@ -822,16 +1051,52 @@ mod tests {
     use super::{
         COMPACTION_FAILURE_WARNING, execute_compaction_event_shared, execute_compaction_persisted,
         emit_permissions_startup_summary_once, merge_runtime_prompt, persisted_assistant_message,
-        sanitize_tool_result_for_history_prompt,
+        sanitize_tool_result_for_history_prompt, stage_enabled_mcp_runtime_state,
     };
     use crate::{
         agent::protocol::{
             compaction::CompactionTriggerSource, contracts::ProgressUi, event::UiEvent,
         },
-        agent::tools::handler::{ToolCallResult, ToolSource},
+        agent::tools::handler::{McpToolRegistry, ToolCallResult, ToolSource},
         llm::LlmUsage,
+        tools::mcp::{
+            client::McpToolDefinition,
+            config::{McpServerConfig, McpTransportType},
+        },
         session::{CompactionOutcome, Message, SessionConfig, SessionStore},
     };
+
+    fn mcp_tool(server: &str, name: &str, raw_name: &str) -> McpToolDefinition {
+        McpToolDefinition {
+            server: server.to_string(),
+            name: name.to_string(),
+            raw_name: raw_name.to_string(),
+            description: Some(format!("{server}:{raw_name}")),
+            parameters: Some(serde_json::json!({"type":"object"})),
+        }
+    }
+
+    fn tool_definition_named(name: &str) -> rig::completion::ToolDefinition {
+        rig::completion::ToolDefinition {
+            name: name.to_string(),
+            description: format!("tool {name}"),
+            parameters: serde_json::json!({"type":"object"}),
+        }
+    }
+
+    fn mcp_server_config(name: &str, enabled: bool) -> McpServerConfig {
+        McpServerConfig {
+            name: name.to_string(),
+            transport: McpTransportType::Http,
+            enabled,
+            url: Some("http://localhost:7777/mcp".to_string()),
+            headers: std::collections::HashMap::new(),
+            command: None,
+            cwd: None,
+            args: Vec::new(),
+            env: std::collections::HashMap::new(),
+        }
+    }
 
     fn preview_edit_result(content: serde_json::Value) -> ToolCallResult {
         ToolCallResult {
@@ -1450,5 +1715,143 @@ mod tests {
             payload["diff_rendered_directly"],
             serde_json::Value::Bool(true)
         );
+    }
+
+    #[test]
+    fn enabling_startup_disabled_server_materializes_filtered_mcp_tools_for_current_session() {
+        let mut tool_definitions = vec![tool_definition_named("read")];
+        let mut registry = McpToolRegistry::from_tools(vec![mcp_tool(
+            "gh",
+            "gh__list_prs",
+            "list_prs",
+        )])
+        .expect("startup registry");
+
+        let discovered_from_toggle = vec![
+            mcp_tool("k8s", "k8s__list_pods", "list_pods"),
+            mcp_tool("k8s", "k8s__delete_pod", "delete_pod"),
+        ];
+
+        super::merge_new_mcp_tools_into_runtime(
+            &mut tool_definitions,
+            &mut registry,
+            &discovered_from_toggle,
+            &["k8s__list_*".to_string()],
+        )
+        .expect("toggle merge should succeed");
+
+        let visible = crate::agent::tools::handler::llm_visible_tool_definitions(
+            &tool_definitions,
+            &registry,
+        );
+
+        assert!(visible.iter().any(|tool| tool.name == "k8s__list_pods"));
+        assert!(
+            visible
+                .iter()
+                .all(|tool| tool.name != "k8s__delete_pod"),
+            "cli MCP patterns must be applied consistently when enabling servers in-session"
+        );
+        assert_eq!(
+            visible
+                .iter()
+                .filter(|tool| tool.name.starts_with("k8s__"))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn enabling_startup_disabled_server_registers_dispatch_raw_name_mapping() {
+        let mut tool_definitions = vec![tool_definition_named("read")];
+        let mut registry = McpToolRegistry::from_names(Vec::<String>::new());
+
+        let discovered = vec![mcp_tool("k8s", "k8s__list_pods", "list_pods")];
+
+        super::merge_new_mcp_tools_into_runtime(&mut tool_definitions, &mut registry, &discovered, &[])
+            .expect("toggle merge should succeed");
+
+        assert_eq!(registry.raw_name_for("k8s__list_pods"), Some("list_pods"));
+        assert!(registry.contains("k8s__list_pods"));
+    }
+
+    #[test]
+    fn enabling_stage_conflict_is_transactional_and_keeps_original_runtime_state() {
+        let tool_definitions = vec![tool_definition_named("read")];
+        let registry = McpToolRegistry::from_tools(vec![mcp_tool(
+            "gh",
+            "k8s__list_pods",
+            "list_pods",
+        )])
+        .expect("startup registry");
+
+        let discovered_conflict = vec![mcp_tool("k8s", "k8s__list_pods", "list_all_pods")];
+
+        let result = stage_enabled_mcp_runtime_state(
+            &tool_definitions,
+            &registry,
+            "k8s",
+            &discovered_conflict,
+            &[],
+        );
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .expect_err("must fail on conflicting raw mapping")
+                .contains("conflicting raw MCP tool mapping")
+        );
+
+        assert_eq!(tool_definitions.len(), 1, "tool definitions must remain unchanged");
+        assert_eq!(tool_definitions[0].name, "read");
+
+        assert!(
+            registry.contains("k8s__list_pods"),
+            "existing registry mapping must remain visible"
+        );
+        assert_eq!(registry.raw_name_for("k8s__list_pods"), Some("list_pods"));
+        assert!(
+            !registry.is_server_enabled("k8s"),
+            "new server must not be enabled on conflict"
+        );
+    }
+
+    #[test]
+    fn lifecycle_projection_recomputes_from_registry_state_without_runtime() {
+        let registry = McpToolRegistry::from_tools(vec![
+            mcp_tool("gh", "gh__list_prs", "list_prs"),
+            mcp_tool("k8s", "k8s__list_pods", "list_pods"),
+        ])
+        .expect("registry");
+        registry
+            .set_server_enabled("k8s", false)
+            .expect("disable k8s");
+
+        let configs = vec![
+            mcp_server_config("k8s", true),
+            mcp_server_config("gh", true),
+        ];
+
+        let projection = super::rebuild_mcp_lifecycle_projection(
+            None,
+            &configs,
+            &registry,
+            &[
+                tool_definition_named("read"),
+                tool_definition_named("gh__list_prs"),
+                tool_definition_named("k8s__list_pods"),
+            ],
+        );
+
+        assert_eq!(projection.len(), 2);
+        assert_eq!(projection[0].name, "gh");
+        assert!(projection[0].enabled);
+        assert!(!projection[0].connected);
+        assert_eq!(projection[0].visible_tool_count, 1);
+
+        assert_eq!(projection[1].name, "k8s");
+        assert!(!projection[1].enabled);
+        assert!(!projection[1].connected);
+        assert_eq!(projection[1].visible_tool_count, 0);
     }
 }
