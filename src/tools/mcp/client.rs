@@ -11,6 +11,37 @@ pub struct McpToolDefinition {
     pub parameters: Option<serde_json::Value>,
 }
 
+impl McpToolDefinition {
+    /// Create a test-friendly McpToolDefinition with minimal fields
+    #[cfg(test)]
+    pub fn test_tool(server: impl Into<String>, name: impl Into<String>) -> Self {
+        let name = name.into();
+        Self {
+            server: server.into(),
+            name: name.clone(),
+            raw_name: name,
+            description: None,
+            parameters: None,
+        }
+    }
+
+    /// Create a test McpToolDefinition with custom raw_name
+    #[cfg(test)]
+    pub fn test_tool_with_raw(
+        server: impl Into<String>,
+        name: impl Into<String>,
+        raw_name: impl Into<String>,
+    ) -> Self {
+        Self {
+            server: server.into(),
+            name: name.into(),
+            raw_name: raw_name.into(),
+            description: None,
+            parameters: None,
+        }
+    }
+}
+
 pub fn filter_tools(tools: &[McpToolDefinition], patterns: &[String]) -> Vec<McpToolDefinition> {
     tools
         .iter()

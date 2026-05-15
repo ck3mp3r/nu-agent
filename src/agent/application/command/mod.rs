@@ -558,7 +558,13 @@ impl SimplePluginCommand for Agent {
 
         // Resolve configuration from all sources with proper precedence:
         // default < env < plugin < flags
-        let config = resolve_config(engine, call)?;
+        let mut config = resolve_config(engine, call)?;
+
+        // Apply mode-specific defaults for max_tool_turns if not explicitly configured
+        // User-specified value (via --max-turns or config file) always wins
+        if config.max_tool_turns.is_none() && !mode.is_tui() {
+            config.max_tool_turns = Some(20); // Pipeline mode gets 20, TUI stays unlimited (None)
+        }
 
         // Extract tool timeout for ToolExecutor
         let tool_timeout = extract_tool_timeout(call);
@@ -728,8 +734,9 @@ impl SimplePluginCommand for Agent {
             session_grants: SessionGrantCache::default(),
             ask_hook: AsyncAskHook::new(AskRuntimeConfig {
                 interactive: mode.is_tui(),
-                non_interactive_mode:
-                    resolve_non_interactive_ask_mode(plugin_config_value.as_ref())?,
+                non_interactive_mode: resolve_non_interactive_ask_mode(
+                    plugin_config_value.as_ref(),
+                )?,
                 ..AskRuntimeConfig::default()
             }),
         };

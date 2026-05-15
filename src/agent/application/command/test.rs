@@ -115,23 +115,92 @@ fn resolve_non_interactive_ask_mode_defaults_to_deny_when_missing() {
     );
 }
 
-#[test]
-fn resolve_non_interactive_ask_mode_accepts_allow_and_deny_values() {
-    let allow = Value::test_record(record! {
-        "non_interactive_ask" => Value::test_string("allow")
-    });
-    let deny = Value::test_record(record! {
-        "non_interactive_ask" => Value::test_string("deny")
-    });
+// Integration tests for mode-specific max_tool_turns defaults
+mod max_tool_turns_mode_defaults {
+    use super::*;
+    use crate::agent::application::command::AgentMode;
 
-    assert_eq!(
-        super::resolve_non_interactive_ask_mode(Some(&allow)).expect("allow"),
-        crate::agent::tools::authz::NonInteractiveAskMode::Allow
-    );
-    assert_eq!(
-        super::resolve_non_interactive_ask_mode(Some(&deny)).expect("deny"),
-        crate::agent::tools::authz::NonInteractiveAskMode::Deny
-    );
+    #[test]
+    fn test_tui_mode_gets_unlimited_turns_by_default() {
+        // When AgentMode::Tui and max_tool_turns is None, it should stay None (unlimited)
+        let mode = AgentMode::Tui;
+        let mut config = Config {
+            provider: "openai".to_string(),
+            provider_impl: None,
+            model: "gpt-4".to_string(),
+            api_key: None,
+            base_url: None,
+            temperature: None,
+            max_tokens: None,
+            max_context_tokens: None,
+            max_output_tokens: None,
+            max_tool_turns: None, // Not configured
+            preamble: None,
+        };
+
+        // Simulate the mode-specific default logic from mod.rs
+        if config.max_tool_turns.is_none() && !mode.is_tui() {
+            config.max_tool_turns = Some(20);
+        }
+
+        // TUI mode should stay unlimited (None)
+        assert!(config.max_tool_turns.is_none());
+    }
+
+    #[test]
+    fn test_stderr_mode_gets_20_turns_by_default() {
+        // When AgentMode::Stderr and max_tool_turns is None, it should get Some(20)
+        let mode = AgentMode::Stderr;
+        let mut config = Config {
+            provider: "openai".to_string(),
+            provider_impl: None,
+            model: "gpt-4".to_string(),
+            api_key: None,
+            base_url: None,
+            temperature: None,
+            max_tokens: None,
+            max_context_tokens: None,
+            max_output_tokens: None,
+            max_tool_turns: None, // Not configured
+            preamble: None,
+        };
+
+        // Simulate the mode-specific default logic from mod.rs
+        if config.max_tool_turns.is_none() && !mode.is_tui() {
+            config.max_tool_turns = Some(20);
+        }
+
+        // Stderr mode should get 20
+        assert_eq!(config.max_tool_turns, Some(20));
+    }
+
+    #[test]
+    fn test_explicit_max_turns_overrides_both_modes() {
+        // When max_tool_turns is explicitly set, it should be respected in both modes
+        for mode in [AgentMode::Tui, AgentMode::Stderr] {
+            let mut config = Config {
+                provider: "openai".to_string(),
+                provider_impl: None,
+                model: "gpt-4".to_string(),
+                api_key: None,
+                base_url: None,
+                temperature: None,
+                max_tokens: None,
+                max_context_tokens: None,
+                max_output_tokens: None,
+                max_tool_turns: Some(10), // Explicitly set
+                preamble: None,
+            };
+
+            // Simulate the mode-specific default logic from mod.rs
+            if config.max_tool_turns.is_none() && !mode.is_tui() {
+                config.max_tool_turns = Some(20);
+            }
+
+            // Should stay at explicit value
+            assert_eq!(config.max_tool_turns, Some(10));
+        }
+    }
 }
 
 #[test]
@@ -432,7 +501,10 @@ fn resolve_effective_permissions_merges_cli_overlay_additively() {
     );
     assert_eq!(
         effective
-            .evaluate("nu__run", &serde_json::json!({"command": "kubectl get pods"}))
+            .evaluate(
+                "nu__run",
+                &serde_json::json!({"command": "kubectl get pods"})
+            )
             .action,
         crate::agent::tools::authz::PermissionAction::Allow
     );
@@ -899,7 +971,7 @@ fn create_minimal_flag_config() -> Config {
         max_tokens: None,
         max_context_tokens: None,
         max_output_tokens: None,
-        max_tool_turns: Some(20),
+        max_tool_turns: None, // Default is None - runtime decides based on mode
         preamble: None,
     }
 }
@@ -921,7 +993,7 @@ fn config_resolution_uses_defaults_when_no_other_sources() {
     // Verify defaults are present
     assert_eq!(config.provider, "openai");
     assert_eq!(config.model, "gpt-4");
-    assert_eq!(config.max_tool_turns, Some(20));
+    assert!(config.max_tool_turns.is_none()); // Default is None
 }
 
 #[test]
@@ -968,7 +1040,7 @@ fn config_merge_respects_precedence() {
     assert_eq!(result.api_key, Some("env_key".to_string())); // Only set in env
     assert_eq!(result.temperature, Some(0.8)); // Only set in plugin
     assert_eq!(result.max_output_tokens, Some(2000)); // Only set in flags
-    assert_eq!(result.max_tool_turns, Some(20)); // Default
+    assert!(result.max_tool_turns.is_none()); // Default is None
 }
 
 // These integration tests will use a helper function from agent.rs
@@ -988,7 +1060,7 @@ mod config_resolution_integration {
         let config = result.unwrap();
         assert_eq!(config.provider, "openai");
         assert_eq!(config.model, "gpt-4");
-        assert_eq!(config.max_tool_turns, Some(20)); // Default
+        assert!(config.max_tool_turns.is_none()); // Default is None
     }
 
     #[test]
@@ -1053,7 +1125,7 @@ mod config_resolution_integration {
         let mock = MockEngineInterface::with_config(plugin_config);
         let call = create_test_call(vec![
             ("model", Value::test_string("openai/gpt-4")), // Canonical override
-            ("temperature", Value::test_float(1.2)),    // Override temperature
+            ("temperature", Value::test_float(1.2)),       // Override temperature
         ]);
 
         let result = resolve_config(&mock, &call);

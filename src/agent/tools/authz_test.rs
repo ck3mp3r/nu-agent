@@ -179,9 +179,7 @@ fn ask_choices_apply_once_always_and_deny() {
         &args,
     );
     assert_eq!(once.action, PermissionAction::Allow);
-    assert!(cache
-        .get(&base, "nu__run", "closure", &args)
-        .is_none());
+    assert!(cache.get(&base, "nu__run", "closure", &args).is_none());
 
     let always = apply_ask_choice(
         base.clone(),
@@ -192,7 +190,10 @@ fn ask_choices_apply_once_always_and_deny() {
         &args,
     );
     assert_eq!(always.action, PermissionAction::Allow);
-    assert_eq!(cache.get(&base, "nu__run", "closure", &args), Some(PermissionAction::Allow));
+    assert_eq!(
+        cache.get(&base, "nu__run", "closure", &args),
+        Some(PermissionAction::Allow)
+    );
 
     let denied = apply_ask_choice(
         base.clone(),
@@ -225,7 +226,8 @@ fn session_grants_are_keyed_by_scoped_request_context_not_call_arguments() {
         &first_args,
     );
 
-    let overridden = apply_session_grant_override(second, &cache, "nu__run", "closure", &second_args);
+    let overridden =
+        apply_session_grant_override(second, &cache, "nu__run", "closure", &second_args);
     assert_eq!(overridden.action, PermissionAction::Allow);
 }
 
@@ -367,7 +369,10 @@ fn same_tool_source_mode_different_rule_identity_does_not_share_session_grant() 
 
     let echo_args = serde_json::json!({"command": "echo one"});
     let echo_decision = parsed.evaluate("nu__run", &echo_args);
-    assert_eq!(echo_decision.matched_rule.identity, "nested:nu__run.command:echo *");
+    assert_eq!(
+        echo_decision.matched_rule.identity,
+        "nested:nu__run.command:echo *"
+    );
     let _ = apply_ask_choice(
         echo_decision,
         AskChoice::AllowAlways,
@@ -379,7 +384,10 @@ fn same_tool_source_mode_different_rule_identity_does_not_share_session_grant() 
 
     let ls_args = serde_json::json!({"command": "ls -la"});
     let ls_decision = parsed.evaluate("nu__run", &ls_args);
-    assert_eq!(ls_decision.matched_rule.identity, "nested:nu__run.command:ls *");
+    assert_eq!(
+        ls_decision.matched_rule.identity,
+        "nested:nu__run.command:ls *"
+    );
     let overridden =
         apply_session_grant_override(ls_decision, &cache, "nu__run", "closure", &ls_args);
     assert_eq!(overridden.action, PermissionAction::Ask);
@@ -645,15 +653,25 @@ fn allow_always_grant_is_session_only_and_resets_with_new_cache() {
         "closure",
         &first_args,
     );
-    let first_overridden =
-        apply_session_grant_override(first.clone(), &first_session_cache, "nu__run", "closure", &first_args);
+    let first_overridden = apply_session_grant_override(
+        first.clone(),
+        &first_session_cache,
+        "nu__run",
+        "closure",
+        &first_args,
+    );
     assert_eq!(first_overridden.action, PermissionAction::Allow);
 
     let fresh_session_cache = SessionGrantCache::default();
     let second_args = serde_json::json!({"command": "echo two"});
     let second = parsed.evaluate("nu__run", &second_args);
-    let second_overridden =
-        apply_session_grant_override(second, &fresh_session_cache, "nu__run", "closure", &second_args);
+    let second_overridden = apply_session_grant_override(
+        second,
+        &fresh_session_cache,
+        "nu__run",
+        "closure",
+        &second_args,
+    );
     assert_eq!(second_overridden.action, PermissionAction::Ask);
 }
 
@@ -750,7 +768,10 @@ fn additive_overlay_merges_nested_nu_run_command_deterministically() {
 
     assert_eq!(
         merged
-            .evaluate("nu__run", &serde_json::json!({"command": "kubectl get pods"}))
+            .evaluate(
+                "nu__run",
+                &serde_json::json!({"command": "kubectl get pods"})
+            )
             .action,
         PermissionAction::Allow
     );

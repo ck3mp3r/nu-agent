@@ -360,7 +360,7 @@ fn github_copilot_backend_types_exist() {
     assert_backend(AnthropicProvider);
     assert_backend(OpenAI4xProvider);
 
-    assert_eq!(AnthropicProvider::INTENT_HEADER, "conversation-panel");
+    assert_eq!(AnthropicProvider::INTENT_HEADER, "conversation-agent");
     assert_eq!(OpenAI4xProvider::INTENT_HEADER, "conversation-agent");
 
     assert_eq!(AnthropicProvider::NAME, "AnthropicProvider");

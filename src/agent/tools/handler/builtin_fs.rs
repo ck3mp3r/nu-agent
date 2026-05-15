@@ -386,7 +386,10 @@ fn map_mutate_error(error: crate::tools::fs::core::MutateError) -> BuiltinFsTool
     }
 }
 
-pub(crate) fn resolve_builtin_fs_path_for_cwd(path: &str, cwd: &std::path::Path) -> std::path::PathBuf {
+pub(crate) fn resolve_builtin_fs_path_for_cwd(
+    path: &str,
+    cwd: &std::path::Path,
+) -> std::path::PathBuf {
     let raw = std::path::Path::new(path);
     if raw.is_absolute() {
         raw.to_path_buf()
@@ -503,28 +506,31 @@ pub(crate) fn dispatch_builtin_fs_tool(
             };
 
             match mode {
-                EditToolMode::Preview => {
-                    Ok(Some(build_edit_contract_response(&args.path, mode, plan, false)))
-                }
+                EditToolMode::Preview => Ok(Some(build_edit_contract_response(
+                    &args.path, mode, plan, false,
+                ))),
                 EditToolMode::Apply => {
-                    let preview_display =
-                        super::pre_authorize::pre_authorize_builtin_fs_tool(tool_name, arguments, cwd)
-                            .and_then(|output| output.display)
-                            .unwrap_or_else(|| {
-                                build_edit_preview_display(build_edit_preview_display_payload(
-                                    &args.path, &plan,
-                                ))
-                            });
+                    let preview_display = super::pre_authorize::pre_authorize_builtin_fs_tool(
+                        tool_name, arguments, cwd,
+                    )
+                    .and_then(|output| output.display)
+                    .unwrap_or_else(|| {
+                        build_edit_preview_display(build_edit_preview_display_payload(
+                            &args.path, &plan,
+                        ))
+                    });
                     let decision = decide_edit_write(&resolved_path, &plan);
 
                     if plan.conflict || !plan.would_change {
-                        let mut response = build_edit_contract_response(&args.path, mode, plan, false);
+                        let mut response =
+                            build_edit_contract_response(&args.path, mode, plan, false);
                         attach_display_payload(&mut response, &preview_display);
                         return Ok(Some(response));
                     }
 
                     if let EditWriteDecision::Deny { message } = decision {
-                        let mut response = build_edit_contract_response(&args.path, mode, plan, false);
+                        let mut response =
+                            build_edit_contract_response(&args.path, mode, plan, false);
                         if let Some(obj) = response.as_object_mut()
                             && let Some(diagnostics) =
                                 obj.get_mut("diagnostics").and_then(JsonValue::as_array_mut)
@@ -561,8 +567,12 @@ pub(crate) fn dispatch_builtin_fs_tool(
                                         return Ok(Some(response));
                                     }
                                 };
-                            let mut response =
-                                build_edit_contract_response(&args.path, mode, refreshed_plan, false);
+                            let mut response = build_edit_contract_response(
+                                &args.path,
+                                mode,
+                                refreshed_plan,
+                                false,
+                            );
                             attach_display_payload(&mut response, &preview_display);
                             return Ok(Some(response));
                         }

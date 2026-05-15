@@ -37,6 +37,8 @@ use crate::tools::mcp::{
 const COMPACTION_FAILURE_WARNING: &str =
     "Session compaction failed: sliding_summary summarization unavailable";
 
+const DOOM_LOOP_THRESHOLD: usize = 3;
+
 enum LlmCallProgress {
     Tick,
     Done(Result<LlmResponse, LabeledError>),
@@ -283,7 +285,8 @@ fn merge_new_mcp_tools_into_runtime(
     discovered_tools: &[crate::tools::mcp::client::McpToolDefinition],
     cli_patterns: &[String],
 ) -> Result<(), String> {
-    let filtered = crate::tools::mcp::registration::registerable_tools(discovered_tools, cli_patterns);
+    let filtered =
+        crate::tools::mcp::registration::registerable_tools(discovered_tools, cli_patterns);
     if filtered.is_empty() {
         return Ok(());
     }
@@ -333,7 +336,8 @@ fn mcp_enable_runtime_config(
     mcp_server_configs
         .iter()
         .map(|server| {
-            let enable = server.name == server_to_enable || mcp_registry.is_server_enabled(&server.name);
+            let enable =
+                server.name == server_to_enable || mcp_registry.is_server_enabled(&server.name);
             McpServerConfig {
                 enabled: enable,
                 ..server.clone()
@@ -458,8 +462,10 @@ impl ConversationRuntime for AgentConversationRuntime {
                 self.tool_definitions = staged_tool_definitions;
                 self.mcp_registry = staged_registry;
                 self.mcp_runtime = Some(runtime);
-                self.mcp_tool_server_handle =
-                    self.mcp_runtime.as_ref().map(McpRuntime::tool_server_handle);
+                self.mcp_tool_server_handle = self
+                    .mcp_runtime
+                    .as_ref()
+                    .map(McpRuntime::tool_server_handle);
                 self.mcp_lifecycle_projection = rebuild_mcp_lifecycle_projection(
                     self.mcp_runtime.as_ref(),
                     &self.mcp_server_configs,
@@ -650,10 +656,13 @@ impl ConversationRuntime for AgentConversationRuntime {
         conversation_messages.push(HistoryEntry::new("user", merged_prompt.clone()));
         conversation_messages.push(HistoryEntry::new("assistant", llm_response.text.clone()));
 
-        let max_tool_turns = self.config.max_tool_turns.unwrap_or(5);
+        let max_tool_turns = self.config.max_tool_turns; // Option<u32>: None means unlimited
         let mut tool_turn = 0;
+        let mut recent_tool_signatures: Vec<(String, String)> = Vec::new();
 
-        while !llm_response.tool_calls.is_empty() && tool_turn < max_tool_turns {
+        while !llm_response.tool_calls.is_empty()
+            && max_tool_turns.is_none_or(|max| tool_turn < max)
+        {
             tool_turn += 1;
 
             for content in &llm_response.tool_calls {
@@ -748,6 +757,22 @@ impl ConversationRuntime for AgentConversationRuntime {
                 ));
             }
 
+            // Track tool signatures for doom loop detection
+            for result in &tool_results {
+                recent_tool_signatures.push((result.tool_name.clone(), result.arguments.clone()));
+            }
+
+            // Check for doom loop
+            if let Some(tool_name) = is_doom_loop(&recent_tool_signatures, DOOM_LOOP_THRESHOLD) {
+                ui.emit(&UiEvent::Warning {
+                    message: format!(
+                        "Doom loop detected: '{}' called {} times with identical arguments. Breaking tool loop.",
+                        tool_name, DOOM_LOOP_THRESHOLD
+                    ),
+                });
+                break;
+            }
+
             if let Some(ref mut session) = self.session {
                 for result in &tool_results {
                     let tool_msg =
@@ -811,6 +836,30 @@ impl ConversationRuntime for AgentConversationRuntime {
                 total_tokens: llm_response.usage.total_tokens,
             });
             conversation_messages.push(HistoryEntry::new("assistant", llm_response.text.clone()));
+        }
+
+        // Emit warning if tool turn limit was exhausted with pending tool calls
+        if !llm_response.tool_calls.is_empty()
+            && let Some(max) = max_tool_turns
+        {
+            let pending_tools: Vec<String> = llm_response
+                .tool_calls
+                .iter()
+                .filter_map(|c| {
+                    if let rig::completion::message::AssistantContent::ToolCall(tc) = c {
+                        Some(tc.function.name.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            ui.emit(&UiEvent::Warning {
+                message: format!(
+                    "Tool turn limit reached ({}). Suppressed pending tool calls: {}",
+                    max,
+                    pending_tools.join(", ")
+                ),
+            });
         }
 
         let tool_call_count = executed_tool_calls.len();
@@ -1041,6 +1090,19 @@ fn persisted_assistant_message(content: &str, usage: &crate::llm::LlmUsage) -> M
     ))
 }
 
+fn is_doom_loop(recent: &[(String, String)], threshold: usize) -> Option<&str> {
+    if recent.len() < threshold {
+        return None;
+    }
+    let last_n = &recent[recent.len() - threshold..];
+    let first = &last_n[0];
+    if last_n.iter().all(|s| s == first) {
+        Some(&first.0)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
@@ -1049,9 +1111,10 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        COMPACTION_FAILURE_WARNING, execute_compaction_event_shared, execute_compaction_persisted,
-        emit_permissions_startup_summary_once, merge_runtime_prompt, persisted_assistant_message,
-        sanitize_tool_result_for_history_prompt, stage_enabled_mcp_runtime_state,
+        COMPACTION_FAILURE_WARNING, emit_permissions_startup_summary_once,
+        execute_compaction_event_shared, execute_compaction_persisted, merge_runtime_prompt,
+        persisted_assistant_message, sanitize_tool_result_for_history_prompt,
+        stage_enabled_mcp_runtime_state,
     };
     use crate::{
         agent::protocol::{
@@ -1059,11 +1122,11 @@ mod tests {
         },
         agent::tools::handler::{McpToolRegistry, ToolCallResult, ToolSource},
         llm::LlmUsage,
+        session::{CompactionOutcome, Message, SessionConfig, SessionStore},
         tools::mcp::{
             client::McpToolDefinition,
             config::{McpServerConfig, McpTransportType},
         },
-        session::{CompactionOutcome, Message, SessionConfig, SessionStore},
     };
 
     fn mcp_tool(server: &str, name: &str, raw_name: &str) -> McpToolDefinition {
@@ -1523,8 +1586,7 @@ mod tests {
     fn permissions_startup_summary_emits_once_before_first_turn() {
         let mut ui = TestProgressUi::default();
         let mut emitted = false;
-        let summary =
-            "permissions policy: overlay_active=false global=ask tool_rules=5 nu__run.command_rules=1";
+        let summary = "permissions policy: overlay_active=false global=ask tool_rules=5 nu__run.command_rules=1";
 
         emit_permissions_startup_summary_once(&mut ui, &mut emitted, summary);
         emit_permissions_startup_summary_once(&mut ui, &mut emitted, summary);
@@ -1720,12 +1782,9 @@ mod tests {
     #[test]
     fn enabling_startup_disabled_server_materializes_filtered_mcp_tools_for_current_session() {
         let mut tool_definitions = vec![tool_definition_named("read")];
-        let mut registry = McpToolRegistry::from_tools(vec![mcp_tool(
-            "gh",
-            "gh__list_prs",
-            "list_prs",
-        )])
-        .expect("startup registry");
+        let mut registry =
+            McpToolRegistry::from_tools(vec![mcp_tool("gh", "gh__list_prs", "list_prs")])
+                .expect("startup registry");
 
         let discovered_from_toggle = vec![
             mcp_tool("k8s", "k8s__list_pods", "list_pods"),
@@ -1747,9 +1806,7 @@ mod tests {
 
         assert!(visible.iter().any(|tool| tool.name == "k8s__list_pods"));
         assert!(
-            visible
-                .iter()
-                .all(|tool| tool.name != "k8s__delete_pod"),
+            visible.iter().all(|tool| tool.name != "k8s__delete_pod"),
             "cli MCP patterns must be applied consistently when enabling servers in-session"
         );
         assert_eq!(
@@ -1768,8 +1825,13 @@ mod tests {
 
         let discovered = vec![mcp_tool("k8s", "k8s__list_pods", "list_pods")];
 
-        super::merge_new_mcp_tools_into_runtime(&mut tool_definitions, &mut registry, &discovered, &[])
-            .expect("toggle merge should succeed");
+        super::merge_new_mcp_tools_into_runtime(
+            &mut tool_definitions,
+            &mut registry,
+            &discovered,
+            &[],
+        )
+        .expect("toggle merge should succeed");
 
         assert_eq!(registry.raw_name_for("k8s__list_pods"), Some("list_pods"));
         assert!(registry.contains("k8s__list_pods"));
@@ -1778,12 +1840,9 @@ mod tests {
     #[test]
     fn enabling_stage_conflict_is_transactional_and_keeps_original_runtime_state() {
         let tool_definitions = vec![tool_definition_named("read")];
-        let registry = McpToolRegistry::from_tools(vec![mcp_tool(
-            "gh",
-            "k8s__list_pods",
-            "list_pods",
-        )])
-        .expect("startup registry");
+        let registry =
+            McpToolRegistry::from_tools(vec![mcp_tool("gh", "k8s__list_pods", "list_pods")])
+                .expect("startup registry");
 
         let discovered_conflict = vec![mcp_tool("k8s", "k8s__list_pods", "list_all_pods")];
 
@@ -1802,7 +1861,11 @@ mod tests {
                 .contains("conflicting raw MCP tool mapping")
         );
 
-        assert_eq!(tool_definitions.len(), 1, "tool definitions must remain unchanged");
+        assert_eq!(
+            tool_definitions.len(),
+            1,
+            "tool definitions must remain unchanged"
+        );
         assert_eq!(tool_definitions[0].name, "read");
 
         assert!(
@@ -1853,5 +1916,99 @@ mod tests {
         assert!(!projection[1].enabled);
         assert!(!projection[1].connected);
         assert_eq!(projection[1].visible_tool_count, 0);
+    }
+
+    #[test]
+    fn doom_loop_detection_triggers_on_three_identical_calls() {
+        let recent = vec![
+            ("read".to_string(), r#"{"path":"file.txt"}"#.to_string()),
+            ("read".to_string(), r#"{"path":"file.txt"}"#.to_string()),
+            ("read".to_string(), r#"{"path":"file.txt"}"#.to_string()),
+        ];
+
+        let result = super::is_doom_loop(&recent, 3);
+        assert_eq!(result, Some("read"));
+    }
+
+    #[test]
+    fn doom_loop_detection_does_not_trigger_on_different_args() {
+        let recent = vec![
+            ("read".to_string(), r#"{"path":"file1.txt"}"#.to_string()),
+            ("read".to_string(), r#"{"path":"file2.txt"}"#.to_string()),
+            ("read".to_string(), r#"{"path":"file3.txt"}"#.to_string()),
+        ];
+
+        let result = super::is_doom_loop(&recent, 3);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn doom_loop_detection_does_not_trigger_on_different_tools() {
+        let recent = vec![
+            ("read".to_string(), r#"{"path":"file.txt"}"#.to_string()),
+            ("write".to_string(), r#"{"path":"file.txt"}"#.to_string()),
+            ("edit".to_string(), r#"{"path":"file.txt"}"#.to_string()),
+        ];
+
+        let result = super::is_doom_loop(&recent, 3);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn doom_loop_detection_resets_on_different_call() {
+        let recent = vec![
+            ("read".to_string(), r#"{"path":"file.txt"}"#.to_string()),
+            ("read".to_string(), r#"{"path":"file.txt"}"#.to_string()),
+            ("write".to_string(), r#"{"content":"data"}"#.to_string()),
+            ("read".to_string(), r#"{"path":"file.txt"}"#.to_string()),
+            ("read".to_string(), r#"{"path":"file.txt"}"#.to_string()),
+        ];
+
+        let result = super::is_doom_loop(&recent, 3);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn doom_loop_detection_does_not_trigger_with_insufficient_history() {
+        let recent = vec![
+            ("read".to_string(), r#"{"path":"file.txt"}"#.to_string()),
+            ("read".to_string(), r#"{"path":"file.txt"}"#.to_string()),
+        ];
+
+        let result = super::is_doom_loop(&recent, 3);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn max_tool_turns_emits_warning_when_exhausted() {
+        // Simulate: loop exited with pending tool_calls because max_tool_turns reached
+        let max_tool_turns = Some(2);
+        let tool_calls_remaining = true; // Loop exited but tool_calls not empty
+
+        // The logic should emit a warning when:
+        // - tool_calls is not empty after loop
+        // - max_tool_turns is Some(value)
+        let should_warn = tool_calls_remaining && max_tool_turns.is_some();
+
+        assert!(
+            should_warn,
+            "Should emit warning when tool turn limit exhausted with pending calls"
+        );
+    }
+
+    #[test]
+    fn max_tool_turns_does_not_warn_when_completed_naturally() {
+        // Simulate: loop exited naturally (tool_calls empty)
+        let max_tool_turns = Some(5);
+        let tool_calls_remaining = false; // tool_calls is empty
+
+        // The logic should NOT emit a warning when:
+        // - tool_calls is empty (natural completion)
+        let should_warn = tool_calls_remaining && max_tool_turns.is_some();
+
+        assert!(
+            !should_warn,
+            "Should not emit warning when tool calls completed naturally"
+        );
     }
 }

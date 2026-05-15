@@ -85,7 +85,7 @@ fn test_config_default_trait() {
     assert_eq!(config.provider, "");
     assert_eq!(config.model, "");
 
-    // Optional fields should be None except max_tool_turns
+    // Optional fields should all be None now (including max_tool_turns)
     assert!(config.api_key.is_none());
     assert!(config.base_url.is_none());
     assert!(config.temperature.is_none());
@@ -93,8 +93,8 @@ fn test_config_default_trait() {
     assert!(config.max_context_tokens.is_none());
     assert!(config.max_output_tokens.is_none());
 
-    // max_tool_turns should default to Some(20)
-    assert_eq!(config.max_tool_turns, Some(20));
+    // max_tool_turns should now default to None (runtime decides based on mode)
+    assert!(config.max_tool_turns.is_none());
 }
 
 #[test]
@@ -107,7 +107,7 @@ fn test_from_env_with_provider_api_key() {
         assert_eq!(config.provider, "openai");
         assert_eq!(config.model, "gpt-4");
         assert_eq!(config.api_key, Some("sk-test123".to_string()));
-        assert_eq!(config.max_tool_turns, Some(20)); // Default
+        assert!(config.max_tool_turns.is_none()); // Default is now None
     });
 }
 
@@ -167,7 +167,7 @@ fn test_from_env_partial_overrides() {
             assert_eq!(config.temperature, Some(0.5));
             assert!(config.max_tokens.is_none());
             assert!(config.base_url.is_none());
-            assert_eq!(config.max_tool_turns, Some(20)); // Default not overridden
+            assert!(config.max_tool_turns.is_none()); // Default is None, not overridden
         },
     );
 }
@@ -188,7 +188,7 @@ fn test_from_env_invalid_numeric_values() {
             // Invalid values should be None, not panic
             assert!(config.temperature.is_none());
             assert!(config.max_tokens.is_none());
-            assert!(config.max_tool_turns.is_none() || config.max_tool_turns == Some(20));
+            assert!(config.max_tool_turns.is_none()); // Default is None
         },
     );
 }
@@ -258,7 +258,7 @@ fn test_from_plugin_config_minimal() {
     assert_eq!(config.model, "claude-3-opus");
     assert!(config.api_key.is_none());
     assert!(config.base_url.is_none());
-    assert_eq!(config.max_tool_turns, Some(20)); // Default
+    assert!(config.max_tool_turns.is_none()); // Default is None
 }
 
 #[test]
@@ -1474,4 +1474,55 @@ fn integration_github_copilot_with_backend_in_model() {
     assert_eq!(config.provider, "github-copilot");
     assert_eq!(config.model, "openai/gpt-4o-mini");
     assert_eq!(config.api_key, Some("test-key".to_string()));
+}
+
+// RED TEST: max_tool_turns defaults to None (not Some(20))
+#[test]
+fn test_from_env_max_tool_turns_defaults_to_none() {
+    // Default should be None (no default - runtime decides based on mode)
+    let config = Config::from_env("openai", "gpt-4");
+    assert_eq!(config.max_tool_turns, None);
+}
+
+// RED TEST: max_tool_turns None is valid in validation
+#[test]
+fn test_validate_none_max_tool_turns_is_valid() {
+    let config = Config {
+        provider: "openai".to_string(),
+        provider_impl: None,
+        model: "gpt-4".to_string(),
+        api_key: None,
+        base_url: None,
+        temperature: None,
+        max_tokens: None,
+        max_context_tokens: None,
+        max_output_tokens: None,
+        max_tool_turns: None, // Should be valid
+        preamble: None,
+    };
+
+    assert!(config.validate().is_ok());
+}
+
+// RED TEST: max_tool_turns Some(0) is still invalid
+#[test]
+fn test_validate_zero_max_tool_turns_still_invalid() {
+    let config = Config {
+        provider: "openai".to_string(),
+        provider_impl: None,
+        model: "gpt-4".to_string(),
+        api_key: None,
+        base_url: None,
+        temperature: None,
+        max_tokens: None,
+        max_context_tokens: None,
+        max_output_tokens: None,
+        max_tool_turns: Some(0), // Still invalid
+        preamble: None,
+    };
+
+    let result = config.validate();
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.contains("max_tool_turns"));
 }

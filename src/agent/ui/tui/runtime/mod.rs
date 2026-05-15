@@ -364,7 +364,11 @@ fn transcript_line_statuses_for_render(
     let prompt_lines_len = permission_prompt_transcript_lines(prompt).len();
     let insert_at = prompt
         .attached_tool_transcript_line_index
-        .map(|line_index| line_index.saturating_add(1).min(state.transcript_preview.len()))
+        .map(|line_index| {
+            line_index
+                .saturating_add(1)
+                .min(state.transcript_preview.len())
+        })
         .unwrap_or(state.transcript_preview.len());
 
     (0..transcript_len)
@@ -624,12 +628,19 @@ fn mcp_selected_details(state: &AppState) -> Option<McpSelectedDetails> {
     } else {
         format!("Tools: {}", tool_names.join(", "))
     };
-    let server_line = format!("Server: {} ({})", server.name, mcp_state_label(server.state));
+    let server_line = format!(
+        "Server: {} ({})",
+        server.name,
+        mcp_state_label(server.state)
+    );
     Some(McpSelectedDetails {
-        compact_single_line: format!("{} · {server_line}", match reason {
-            Some(full) => format!("Error: {full}"),
-            None => "Error: None".to_string(),
-        }),
+        compact_single_line: format!(
+            "{} · {server_line}",
+            match reason {
+                Some(full) => format!("Error: {full}"),
+                None => "Error: None".to_string(),
+            }
+        ),
         server_line,
         tools_line,
         tool_names,
@@ -640,11 +651,7 @@ fn mcp_selected_details(state: &AppState) -> Option<McpSelectedDetails> {
     })
 }
 
-fn mcp_tool_lines_wrapped(
-    tool_names: &[String],
-    max_lines: usize,
-    width: usize,
-) -> Vec<String> {
+fn mcp_tool_lines_wrapped(tool_names: &[String], max_lines: usize, width: usize) -> Vec<String> {
     const PREFIX: &str = "Tools: ";
     let continuation_prefix = " ".repeat(PREFIX.chars().count());
     let content_width = width.saturating_sub(PREFIX.chars().count());
@@ -730,7 +737,11 @@ fn mcp_tool_lines_wrapped(
     lines
 }
 
-fn mcp_selected_details_lines(state: &AppState, details_height: u16, details_width: u16) -> Vec<Line<'static>> {
+fn mcp_selected_details_lines(
+    state: &AppState,
+    details_height: u16,
+    details_width: u16,
+) -> Vec<Line<'static>> {
     let Some(details) = mcp_selected_details(state) else {
         return Vec::new();
     };
@@ -738,9 +749,15 @@ fn mcp_selected_details_lines(state: &AppState, details_height: u16, details_wid
     match details_height {
         0 => Vec::new(),
         1 => vec![Line::from(details.compact_single_line)],
-        2 => vec![Line::from(details.server_line), Line::from(details.error_line)],
+        2 => vec![
+            Line::from(details.server_line),
+            Line::from(details.error_line),
+        ],
         _ => {
-            let mut lines = vec![Line::from(details.server_line), Line::from(details.error_line)];
+            let mut lines = vec![
+                Line::from(details.server_line),
+                Line::from(details.error_line),
+            ];
             if details.tool_names.is_empty() {
                 lines.push(Line::from("Tools: None"));
                 lines.truncate(details_height as usize);
@@ -1157,8 +1174,10 @@ impl RuntimeCoordinator {
             .into_iter()
             .map(|server| {
                 let name = server.name;
-                self.state
-                    .set_mcp_visible_tool_count_by_server_name(name.as_str(), server.visible_tool_count);
+                self.state.set_mcp_visible_tool_count_by_server_name(
+                    name.as_str(),
+                    server.visible_tool_count,
+                );
                 McpServerState {
                     name,
                     state: match (server.enabled, server.connected) {
@@ -1834,13 +1853,14 @@ impl RuntimeCoordinator {
                             frame.render_stateful_widget(table, rows[1], &mut table_state);
 
                             if details_height > 0 {
-                                let details_lines =
-                                    mcp_selected_details_lines(&self.state, details_height, rows[2].width);
+                                let details_lines = mcp_selected_details_lines(
+                                    &self.state,
+                                    details_height,
+                                    rows[2].width,
+                                );
                                 if !details_lines.is_empty() {
-                                    let details_widget =
-                                        Paragraph::new(Text::from(details_lines)).wrap(Wrap {
-                                            trim: false,
-                                        });
+                                    let details_widget = Paragraph::new(Text::from(details_lines))
+                                        .wrap(Wrap { trim: false });
                                     frame.render_widget(details_widget, rows[2]);
                                 }
                             }

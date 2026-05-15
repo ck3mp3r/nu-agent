@@ -419,7 +419,7 @@ impl PluginConfig {
 }
 
 /// Runtime configuration for a specific invocation
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Config {
     /// LLM provider (e.g., "openai", "anthropic", "copilot")
     pub provider: String,
@@ -483,7 +483,7 @@ impl Config {
         let max_tokens = parse_env_var("AGENT_MAX_TOKENS");
         let max_context_tokens = parse_env_var("AGENT_MAX_CONTEXT_TOKENS");
         let max_output_tokens = parse_env_var("AGENT_MAX_OUTPUT_TOKENS");
-        let max_tool_turns = parse_env_var("AGENT_MAX_TOOL_TURNS").or(Some(20)); // Default to 20 if not overridden
+        let max_tool_turns = parse_env_var("AGENT_MAX_TOOL_TURNS"); // No default - runtime decides based on mode
 
         Self {
             provider: provider.to_string(),
@@ -576,7 +576,7 @@ impl Config {
         let max_tokens = get_optional_u32(record, "max_tokens");
         let max_context_tokens = get_optional_u32(record, "max_context_tokens");
         let max_output_tokens = get_optional_u32(record, "max_output_tokens");
-        let max_tool_turns = get_optional_u32(record, "max_tool_turns").or(Some(20)); // Default to 20 if not provided
+        let max_tool_turns = get_optional_u32(record, "max_tool_turns"); // No default - runtime decides based on mode
         let preamble = get_optional_string(record, "preamble").and_then(|s| {
             let trimmed = s.trim().to_string();
             if trimmed.is_empty() {
@@ -666,24 +666,6 @@ impl Config {
         }
 
         Ok(())
-    }
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            provider: String::new(),
-            provider_impl: None,
-            model: String::new(),
-            api_key: None,
-            base_url: None,
-            temperature: None,
-            max_tokens: None,
-            max_context_tokens: None,
-            max_output_tokens: None,
-            max_tool_turns: Some(20),
-            preamble: None,
-        }
     }
 }
 

@@ -4,6 +4,7 @@ use crate::providers::github_copilot::providers::contract::{
 use rig::completion::request::{CompletionError, CompletionRequest as CoreCompletionRequest};
 use rig::http_client::{self, HeaderValue, HttpClientExt};
 use serde::Deserialize;
+use serde_json::Value;
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct AnthropicProvider;
@@ -11,7 +12,7 @@ pub struct AnthropicProvider;
 impl GitHubCopilotProvider for AnthropicProvider {
     const NAME: &'static str = "AnthropicProvider";
     const ENDPOINT_PATH: &'static str = "/chat/completions";
-    const INTENT_HEADER: &'static str = "conversation-panel";
+    const INTENT_HEADER: &'static str = "conversation-agent";
 
     fn map_request(
         model: &str,
@@ -21,7 +22,7 @@ impl GitHubCopilotProvider for AnthropicProvider {
             rig::providers::openai::completion::OpenAIRequestParams {
                 model: model.to_owned(),
                 request: completion_request,
-                strict_tools: false,
+                strict_tools: true,
                 tool_result_array_content: false,
             },
         )?;
@@ -34,30 +35,8 @@ impl GitHubCopilotProvider for AnthropicProvider {
         Ok(response.into())
     }
 
-    fn map_error(status: reqwest::StatusCode, text: &str) -> CompletionError {
-        match serde_json::from_str::<GitHubCopilotError>(text) {
-            Ok(err_response) => {
-                let error_msg = err_response
-                    .error
-                    .map(|e| e.message)
-                    .or(err_response.message)
-                    .unwrap_or_else(|| text.to_string());
-                CompletionError::ProviderError(format!(
-                    "{} {} HTTP {}: {}",
-                    Self::NAME,
-                    Self::ENDPOINT_PATH,
-                    status,
-                    error_msg
-                ))
-            }
-            Err(_) => CompletionError::ProviderError(format!(
-                "{} {} HTTP {}: {}",
-                Self::NAME,
-                Self::ENDPOINT_PATH,
-                status,
-                text
-            )),
-        }
+    fn map_error(_status: reqwest::StatusCode, text: &str) -> CompletionError {
+        CompletionError::ProviderError(text.to_string())
     }
 
     #[allow(clippy::manual_async_fn)]
@@ -111,6 +90,7 @@ impl GitHubCopilotProvider for AnthropicProvider {
             let status = response.status();
             let text = http_client::text(response).await?;
 
+            // HTML guard (transport-only delta, allowed by task requirements)
             if text.trim_start().starts_with("<!DOCTYPE") || text.trim_start().starts_with("<html")
             {
                 return Err(CompletionError::ProviderError(format!(
@@ -122,26 +102,32 @@ impl GitHubCopilotProvider for AnthropicProvider {
             }
 
             if status.is_success() {
-                let parsed = Self::map_response(&text)?;
-                parsed.try_into()
+                match Self::map_response(&text) {
+                    Ok(parsed) => parsed.try_into(),
+                    Err(primary_error) => match serde_json::from_str::<ApiResponse<Value>>(&text) {
+                        Ok(ApiResponse::Error(ApiErrorResponse { message })) => {
+                            Err(CompletionError::ResponseError(message))
+                        }
+                        _ => Err(primary_error),
+                    },
+                }
             } else {
-                Err(Self::map_error(status, &text))
+                Err(CompletionError::ProviderError(text))
             }
         }
     }
 }
 
 #[derive(Debug, Deserialize)]
-struct GitHubCopilotError {
-    #[serde(default)]
-    error: Option<ErrorDetail>,
-    #[serde(default)]
-    message: Option<String>,
+struct ApiErrorResponse {
+    message: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct ErrorDetail {
-    message: String,
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ApiResponse<T> {
+    Message(T),
+    Error(ApiErrorResponse),
 }
 
 #[cfg(test)]

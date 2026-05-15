@@ -273,7 +273,8 @@ fn classify_source_identifies_mcp_membership() {
     let closure_registry = empty_closure_registry();
     let mcp_registry = McpToolRegistry::from_names(["k8s__list_pods"]);
 
-    let source = super::dispatch::classify_tool_source("k8s__list_pods", &closure_registry, &mcp_registry);
+    let source =
+        super::dispatch::classify_tool_source("k8s__list_pods", &closure_registry, &mcp_registry);
     assert_eq!(source, Some(ToolSource::Mcp));
 }
 
@@ -282,7 +283,8 @@ fn classify_source_returns_none_for_unknown_tool() {
     let closure_registry = empty_closure_registry();
     let mcp_registry = McpToolRegistry::from_names(Vec::<String>::new());
 
-    let source = super::dispatch::classify_tool_source("unknown/tool", &closure_registry, &mcp_registry);
+    let source =
+        super::dispatch::classify_tool_source("unknown/tool", &closure_registry, &mcp_registry);
     assert!(source.is_none());
 }
 
@@ -291,7 +293,8 @@ fn classify_source_requires_namespaced_mcp_tool_name() {
     let closure_registry = empty_closure_registry();
     let mcp_registry = McpToolRegistry::from_names(["gh__list_prs"]);
 
-    let namespaced = super::dispatch::classify_tool_source("gh__list_prs", &closure_registry, &mcp_registry);
+    let namespaced =
+        super::dispatch::classify_tool_source("gh__list_prs", &closure_registry, &mcp_registry);
     let raw = super::dispatch::classify_tool_source("list_prs", &closure_registry, &mcp_registry);
 
     assert_eq!(namespaced, Some(ToolSource::Mcp));
@@ -626,10 +629,13 @@ fn pre_authorize_runs_before_authorize_and_execute_for_edit_apply() {
     );
     assert!(denied.is_none(), "ask allow_once should permit execution");
 
-    let payload =
-        super::builtin_fs::dispatch_builtin_fs_tool("edit", &tool_call.function.arguments, dir.path())
-            .expect("dispatch")
-            .expect("payload");
+    let payload = super::builtin_fs::dispatch_builtin_fs_tool(
+        "edit",
+        &tool_call.function.arguments,
+        dir.path(),
+    )
+    .expect("dispatch")
+    .expect("payload");
     assert_eq!(payload["applied"], true);
     assert_eq!(fs::read_to_string(&file).expect("read"), "alpha gamma\n");
 
@@ -1663,21 +1669,30 @@ fn edit_contract_error_taxonomy_maps_permission_conflict_internal_classes_determ
         message: "opaque runtime error".to_string(),
         details: Some(json!({ "diagnostic_class": "permission" })),
     };
-    assert_eq!(super::builtin_fs::map_edit_contract_error(&permission), "permission");
+    assert_eq!(
+        super::builtin_fs::map_edit_contract_error(&permission),
+        "permission"
+    );
 
     let conflict = super::builtin_fs::BuiltinFsToolError {
         kind: ToolErrorKind::Validation,
         message: "version conflict: expected 'x', current 'y'".to_string(),
         details: Some(json!({ "diagnostic_class": "stale" })),
     };
-    assert_eq!(super::builtin_fs::map_edit_contract_error(&conflict), "stale");
+    assert_eq!(
+        super::builtin_fs::map_edit_contract_error(&conflict),
+        "stale"
+    );
 
     let internal = super::builtin_fs::BuiltinFsToolError {
         kind: ToolErrorKind::Runtime,
         message: "i/o failure".to_string(),
         details: None,
     };
-    assert_eq!(super::builtin_fs::map_edit_contract_error(&internal), "internal");
+    assert_eq!(
+        super::builtin_fs::map_edit_contract_error(&internal),
+        "internal"
+    );
 }
 
 #[test]
@@ -1782,8 +1797,10 @@ fn builtin_fs_path_resolution_joins_relative_path_with_cwd() {
     assert_eq!(resolved, cwd.join(relative_name));
 
     let absolute_input = cwd.join("already-absolute.txt");
-    let absolute =
-        super::builtin_fs::resolve_builtin_fs_path_for_cwd(absolute_input.to_string_lossy().as_ref(), cwd);
+    let absolute = super::builtin_fs::resolve_builtin_fs_path_for_cwd(
+        absolute_input.to_string_lossy().as_ref(),
+        cwd,
+    );
     assert_eq!(absolute, absolute_input);
 }
 
@@ -1914,14 +1931,15 @@ fn mcp_registry_register_tools_materializes_newly_discovered_server_tools() {
 
 #[test]
 fn mcp_registry_register_tools_conflict_does_not_partially_commit() {
-    let mut registry = McpToolRegistry::from_tools(vec![crate::tools::mcp::client::McpToolDefinition {
-        server: "gh".to_string(),
-        name: "gh__list_prs".to_string(),
-        raw_name: "list_prs".to_string(),
-        description: None,
-        parameters: None,
-    }])
-    .expect("registry");
+    let mut registry =
+        McpToolRegistry::from_tools(vec![crate::tools::mcp::client::McpToolDefinition {
+            server: "gh".to_string(),
+            name: "gh__list_prs".to_string(),
+            raw_name: "list_prs".to_string(),
+            description: None,
+            parameters: None,
+        }])
+        .expect("registry");
 
     let result = registry.register_tools(vec![
         crate::tools::mcp::client::McpToolDefinition {

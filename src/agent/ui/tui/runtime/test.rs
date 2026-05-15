@@ -43,8 +43,8 @@ use crate::agent::ui::{
             run_with_terminal_restore, status_panel_lines_for_test,
             transcript_pane_regions_for_test, transcript_title_for_test,
             transition_spacer_for_roles_for_test, visible_transcript_window,
-            visible_transcript_window_for_render_with_required_line_and_statuses_for_test,
             visible_transcript_window_for_render_for_test,
+            visible_transcript_window_for_render_with_required_line_and_statuses_for_test,
             visible_transcript_window_for_render_with_required_line_for_test,
             visual_indicator_line_for_test,
         },
@@ -1822,14 +1822,14 @@ fn scroll_end_window_accounts_for_status_indicator_wrapping_without_clipping_tai
 
             let (window_start, window_lines) =
                 visible_transcript_window_for_render_with_required_line_and_statuses_for_test(
-                &state.transcript_preview,
-                *row_budget,
-                state.transcript_scroll_lines_from_bottom,
-                state.transcript_follow_tail,
-                *content_width,
-                None,
-                &line_statuses,
-            );
+                    &state.transcript_preview,
+                    *row_budget,
+                    state.transcript_scroll_lines_from_bottom,
+                    state.transcript_follow_tail,
+                    *content_width,
+                    None,
+                    &line_statuses,
+                );
 
             !final_transcript_row_visible_for_window(
                 &state,
@@ -3473,10 +3473,7 @@ fn mcp_panel_renders_columns_selection_and_compact_table_contract() {
     state.set_mcp_visible_tool_count_by_server_name("k8s", 9);
 
     let model = mcp_table_model_for_test(&state, 80, 10);
-    assert_eq!(
-        model.columns,
-        vec!["Name", "Visible tools", "Status"]
-    );
+    assert_eq!(model.columns, vec!["Name", "Visible tools", "Status"]);
     assert_eq!(model.selected, Some(1));
     assert_eq!(model.rows.len(), 2);
     assert_eq!(model.rows[0][0], "gh");
@@ -3565,16 +3562,24 @@ fn mcp_panel_layout_keeps_table_primary_with_multiple_visible_rows_in_common_hei
 
     let inner_height = 8u16;
     let details_height = super::mcp_details_height_for_inner_height_for_test(inner_height);
-    let table_height = inner_height.saturating_sub(1).saturating_sub(details_height);
+    let table_height = inner_height
+        .saturating_sub(1)
+        .saturating_sub(details_height);
     let model = mcp_table_model_for_test(&state, 80, table_height);
 
-    assert!(model.rows.len() > 1, "table should show multiple rows at common modal height");
+    assert!(
+        model.rows.len() > 1,
+        "table should show multiple rows at common modal height"
+    );
 }
 
 #[test]
 fn mcp_panel_controls_line_removes_status_legend_and_keeps_toggle_hint_compact() {
     let line = super::mcp_panel_controls_line_for_test();
-    assert_eq!(line, "Session-only toggles | Enter/Space toggle | Esc close");
+    assert_eq!(
+        line,
+        "Session-only toggles | Enter/Space toggle | Esc close"
+    );
     assert!(!line.contains("enabled"));
     assert!(!line.contains("disabled"));
     assert!(!line.contains("failed"));
@@ -3716,7 +3721,8 @@ fn mcp_selected_details_normal_height_preserves_full_error_line() {
         name: "k8s".to_string(),
         state: McpServerUsabilityState::Failed,
     }]);
-    let reason = "connection timeout while dialing 10.0.0.1:443 after many retries and additional context";
+    let reason =
+        "connection timeout while dialing 10.0.0.1:443 after many retries and additional context";
     state.set_mcp_server_state_by_name_with_reason(
         "k8s",
         McpServerUsabilityState::Failed,
@@ -3777,14 +3783,17 @@ fn mcp_selected_details_clipped_tool_list_shows_deterministic_plus_n_more_cue() 
     );
 
     let details = super::mcp_selected_details_lines_for_test(&state, 6, 30);
-    assert_eq!(details, vec![
-        "Server: gh (enabled)",
-        "Error: None",
-        "Tools: gh__a_first",
-        "       gh__b_second",
-        "       gh__c_third",
-        "       gh__d_fourth, +1 more",
-    ]);
+    assert_eq!(
+        details,
+        vec![
+            "Server: gh (enabled)",
+            "Error: None",
+            "Tools: gh__a_first",
+            "       gh__b_second",
+            "       gh__c_third",
+            "       gh__d_fourth, +1 more",
+        ]
+    );
 }
 
 #[test]
@@ -3805,11 +3814,14 @@ fn mcp_selected_details_single_tool_row_budget_prefers_truncation_cue_visibility
 
     let details = super::mcp_selected_details_lines_for_test(&state, 3, 36);
     assert_eq!(details.len(), 3);
-    assert_eq!(details, vec![
-        "Server: gh (enabled)",
-        "Error: None",
-        "Tools: gh__a_first, +2 more",
-    ]);
+    assert_eq!(
+        details,
+        vec![
+            "Server: gh (enabled)",
+            "Error: None",
+            "Tools: gh__a_first, +2 more",
+        ]
+    );
 }
 
 #[test]

@@ -22,7 +22,8 @@ pub(crate) fn pre_authorize_builtin_fs_tool(
         return None;
     }
 
-    let args: super::builtin_fs::BuiltinEditArgs = serde_json::from_value(arguments.clone()).ok()?;
+    let args: super::builtin_fs::BuiltinEditArgs =
+        serde_json::from_value(arguments.clone()).ok()?;
     let mode = super::builtin_fs::parse_edit_mode(args.mode.as_deref()).ok()?;
     if mode != super::builtin_fs::EditToolMode::Apply {
         return None;

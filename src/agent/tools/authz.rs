@@ -571,9 +571,8 @@ impl PermissionsOverlay {
                 continue;
             }
 
-            let action = value_to_action(tool_value).map_err(|msg| {
-                format!("{msg} (path: permissions.{})", path_segment(tool_key))
-            })?;
+            let action = value_to_action(tool_value)
+                .map_err(|msg| format!("{msg} (path: permissions.{})", path_segment(tool_key)))?;
             overlay.tool_rules.insert(tool_key.to_string(), action);
         }
 

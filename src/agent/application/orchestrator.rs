@@ -142,7 +142,8 @@ where
                         let visible_count = runtime.llm_visible_mcp_tool_count();
                         let visible_count_for_server =
                             runtime.llm_visible_mcp_tool_count_for_server(&server_name);
-                        let visible_names_by_server = runtime.llm_visible_mcp_tool_names_by_server();
+                        let visible_names_by_server =
+                            runtime.llm_visible_mcp_tool_names_by_server();
                         let _ = response_tx.send((
                             result,
                             visible_count,

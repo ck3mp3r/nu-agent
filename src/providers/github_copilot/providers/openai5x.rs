@@ -36,6 +36,60 @@ impl GitHubCopilotProvider for OpenAI5xProvider {
     fn map_response(text: &str) -> Result<CopilotResponse, CompletionError> {
         let response = serde_json::from_str::<ResponsesApiResponse>(text)?;
 
+        // Status gate: mirror rig responses_api status gating semantics exactly
+        // Source: rig-core/src/providers/openai/responses_api/websocket.rs:617-640
+        match response.status {
+            ResponseStatus::Completed => {
+                // Proceed to conversion
+            }
+            ResponseStatus::Failed => {
+                let error_msg = if let Some(ref error) = response.error {
+                    if error.code.is_empty() {
+                        error.message.clone()
+                    } else {
+                        format!("{}: {}", error.code, error.message)
+                    }
+                } else {
+                    "OpenAI responses returned a failed response".to_string()
+                };
+                return Err(CompletionError::ProviderError(error_msg));
+            }
+            ResponseStatus::Incomplete => {
+                let reason = response
+                    .incomplete_details
+                    .as_ref()
+                    .map(|details| details.reason.as_str())
+                    .unwrap_or("unknown reason");
+                return Err(CompletionError::ProviderError(format!(
+                    "OpenAI responses response was incomplete: {reason}"
+                )));
+            }
+            status => {
+                return Err(CompletionError::ProviderError(format!(
+                    "OpenAI responses response ended with status {:?}",
+                    status
+                )));
+            }
+        }
+
+        // Check for error field even on completed status (rig semantics)
+        if let Some(ref error) = response.error {
+            let error_msg = if error.code.is_empty() {
+                error.message.clone()
+            } else {
+                format!("{}: {}", error.code, error.message)
+            };
+            return Err(CompletionError::ProviderError(error_msg));
+        }
+
+        // Empty output check: mirror rig TryFrom semantics
+        // Source: rig-core/src/providers/openai/responses_api/mod.rs:1448-1451
+        if response.output.is_empty() {
+            return Err(CompletionError::ResponseError(
+                "Response contained no parts".to_owned(),
+            ));
+        }
+
         let message_text = response
             .output
             .iter()
@@ -46,24 +100,81 @@ impl GitHubCopilotProvider for OpenAI5xProvider {
             .collect::<Vec<_>>()
             .join("\n");
 
+        // Function call conversion: mirror rig OutputFunctionCall semantics exactly
+        // Source: rig-core/src/providers/openai/responses_api/mod.rs:1247-1255, 1296-1303
+        //
+        // Rig branch behavior:
+        // 1. call_id is REQUIRED (String, not Option) - missing call_id = deserialization error
+        // 2. arguments uses stringified_json deserializer:
+        //    - empty string → {}
+        //    - malformed JSON → serde error (no drop)
+        // 3. No tool call drop on validation - all errors are deserialization failures
+        //
+        // Implementation: collect into Result to preserve error propagation semantics
         let tool_calls = response
             .output
             .iter()
             .filter(|item| item.kind == "function_call")
-            .filter_map(|item| {
-                let id = item.call_id.clone()?;
-                let name = item.name.clone()?;
-                let args = item.arguments.clone().unwrap_or_else(|| "{}".to_string());
-                Some(serde_json::json!({
-                    "id": id,
+            .map(|item| -> Result<serde_json::Value, CompletionError> {
+                // Branch 1: call_id requirement (rig line 1300: pub call_id: String)
+                let call_id = item.call_id.clone().ok_or_else(|| {
+                    CompletionError::ProviderError(
+                        "Function call missing required call_id field".to_string(),
+                    )
+                })?;
+
+                // Branch 2: id requirement (rig uses both id and call_id)
+                let _id = item.id.clone().ok_or_else(|| {
+                    CompletionError::ProviderError(
+                        "Function call missing required id field".to_string(),
+                    )
+                })?;
+
+                // Branch 3: name requirement
+                let name = item.name.clone().ok_or_else(|| {
+                    CompletionError::ProviderError(
+                        "Function call missing required name field".to_string(),
+                    )
+                })?;
+
+                // Branch 4: arguments handling (rig json_utils::stringified_json semantics)
+                // Source: rig-core/src/json_utils.rs:63-72
+                // - empty/whitespace string → {}
+                // - valid JSON string → parse
+                // - malformed JSON → error (rig returns serde error, we return ProviderError)
+                let arguments_str = item.arguments.clone().unwrap_or_default();
+                let arguments_value = if arguments_str.trim().is_empty() {
+                    serde_json::json!({})
+                } else {
+                    serde_json::from_str(&arguments_str).map_err(|e| {
+                        CompletionError::ProviderError(format!(
+                            "Malformed function call arguments JSON: {}",
+                            e
+                        ))
+                    })?
+                };
+
+                // Serialize arguments back to string for transport (OpenAI expects string)
+                let arguments_serialized = arguments_value.to_string();
+
+                Ok(serde_json::json!({
+                    "id": call_id,  // Use call_id as the tool call ID (rig convention)
                     "type": "function",
                     "function": {
                         "name": name,
-                        "arguments": args
+                        "arguments": arguments_serialized
                     }
                 }))
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, _>>()?;
+
+        // Empty content check: mirror rig TryFrom semantics
+        // Source: rig-core/src/providers/openai/responses_api/mod.rs:1467-1471
+        if message_text.trim().is_empty() && tool_calls.is_empty() {
+            return Err(CompletionError::ResponseError(
+                "Response contained no message or tool call (empty)".to_owned(),
+            ));
+        }
 
         let assistant_message = if message_text.trim().is_empty() {
             serde_json::json!({
@@ -254,15 +365,47 @@ struct ResponsesApiResponse {
     id: String,
     model: String,
     #[serde(default)]
+    status: ResponseStatus,
+    #[serde(default)]
+    error: Option<ResponseError>,
+    #[serde(default)]
+    incomplete_details: Option<IncompleteDetailsReason>,
+    #[serde(default)]
     output: Vec<ResponsesOutputItem>,
     #[serde(default)]
     usage: Option<ResponsesUsage>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+enum ResponseStatus {
+    #[default]
+    Completed,
+    Failed,
+    Incomplete,
+    InProgress,
+    Cancelled,
+    Queued,
+}
+
+#[derive(Debug, Deserialize)]
+struct ResponseError {
+    #[serde(default)]
+    code: String,
+    message: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct IncompleteDetailsReason {
+    reason: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct ResponsesOutputItem {
     #[serde(rename = "type")]
     kind: String,
+    #[serde(default)]
+    id: Option<String>,
     #[serde(default)]
     call_id: Option<String>,
     #[serde(default)]

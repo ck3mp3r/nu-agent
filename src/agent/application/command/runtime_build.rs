@@ -186,10 +186,8 @@ pub(crate) fn resolve_with_old_config(
         None
     } else {
         let (provider, model) = flag_config.model.split_once('/').ok_or_else(|| {
-            LabeledError::new("Invalid --model format").with_label(
-                "Expected provider/model (e.g. openai/gpt-4)",
-                call.head,
-            )
+            LabeledError::new("Invalid --model format")
+                .with_label("Expected provider/model (e.g. openai/gpt-4)", call.head)
         })?;
 
         if provider.is_empty() || model.is_empty() {

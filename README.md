@@ -37,7 +37,8 @@ Use it:
 - `docs/configuration.md` - config structure, env vars, precedence
 - `docs/mcp.md` - MCP servers, discovery, filtering
 - `docs/usage.md` - commands, examples, and TUI transcript rendering behavior
-- `docs/development.md` - build, test, lint
+- `docs/development.md` - build, test, lint, architecture references
+- `docs/event-architecture.md` - typed event-driven harness enforcement (checkpoints, subscribers, policy modes)
 - `docs/handler-decomposition-contract.md` - handler module boundaries and migration plan (R1)
 - `docs/contribution-guardrails.md` - R7/R8/R9 contributor guardrails for permission/TUI/tool-handler changes
 

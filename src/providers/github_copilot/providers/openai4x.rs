@@ -5,6 +5,24 @@ use rig::completion::request::{CompletionError, CompletionRequest as CoreComplet
 use rig::http_client::{self, HeaderValue, HttpClientExt};
 use serde::{Deserialize, Serialize};
 
+// Mirror rig's ApiResponse envelope structure for response parsing
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum ApiResponse<T> {
+    Ok(T),
+    Err(ErrorEnvelope),
+}
+
+#[derive(Debug, Deserialize)]
+struct ErrorEnvelope {
+    error: ApiErrorResponse,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiErrorResponse {
+    message: String,
+}
+
 #[derive(Debug, Default, Clone, Copy)]
 pub struct OpenAI4xProvider;
 
@@ -21,7 +39,7 @@ impl GitHubCopilotProvider for OpenAI4xProvider {
             rig::providers::openai::completion::OpenAIRequestParams {
                 model: model.to_owned(),
                 request: completion_request,
-                strict_tools: false,
+                strict_tools: true,
                 tool_result_array_content: false,
             },
         )?;
@@ -29,34 +47,14 @@ impl GitHubCopilotProvider for OpenAI4xProvider {
     }
 
     fn map_response(text: &str) -> Result<CopilotResponse, CompletionError> {
-        let response = serde_json::from_str::<GitHubCopilotCompletionResponse>(text)?;
-        Ok(response.into())
+        match serde_json::from_str::<ApiResponse<GitHubCopilotCompletionResponse>>(text)? {
+            ApiResponse::Ok(response) => Ok(response.into()),
+            ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.error.message)),
+        }
     }
 
-    fn map_error(status: reqwest::StatusCode, text: &str) -> CompletionError {
-        match serde_json::from_str::<GitHubCopilotError>(text) {
-            Ok(err_response) => {
-                let error_msg = err_response
-                    .error
-                    .map(|e| e.message)
-                    .or(err_response.message)
-                    .unwrap_or_else(|| text.to_string());
-                CompletionError::ProviderError(format!(
-                    "{} {} HTTP {}: {}",
-                    Self::NAME,
-                    Self::ENDPOINT_PATH,
-                    status,
-                    error_msg
-                ))
-            }
-            Err(_) => CompletionError::ProviderError(format!(
-                "{} {} HTTP {}: {}",
-                Self::NAME,
-                Self::ENDPOINT_PATH,
-                status,
-                text
-            )),
-        }
+    fn map_error(_status: reqwest::StatusCode, text: &str) -> CompletionError {
+        CompletionError::ProviderError(text.to_string())
     }
 
     #[allow(clippy::manual_async_fn)]
@@ -128,19 +126,6 @@ impl GitHubCopilotProvider for OpenAI4xProvider {
             }
         }
     }
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct GitHubCopilotError {
-    #[serde(default)]
-    error: Option<ErrorDetail>,
-    #[serde(default)]
-    message: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ErrorDetail {
-    message: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
