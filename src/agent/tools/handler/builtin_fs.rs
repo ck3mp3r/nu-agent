@@ -96,10 +96,12 @@ impl EditToolMode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 enum EditWriteDecision {
     Approve,
-    Deny { message: String },
+    #[allow(dead_code)] // Reserved for future write-safety checks
+    Deny {
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,4 +1,5 @@
 use super::AgentSessionClear;
+use crate::session::MessageRole;
 use crate::session::{Message, SessionStore};
 use nu_plugin::SimplePluginCommand;
 use tempfile::TempDir;
@@ -20,7 +21,7 @@ fn test_agent_session_clear_deletes_existing_session() {
         session
             .add_message(
                 &store,
-                Message::new("user".to_string(), format!("Message {}", i)),
+                Message::new(MessageRole::User, format!("Message {}", i)),
             )
             .unwrap();
     }

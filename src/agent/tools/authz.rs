@@ -118,7 +118,7 @@ impl AsyncAskHook {
 
         let request_id = next_request_id();
         let request_context = PermissionRequestContext {
-            tool: tool_name.to_string(),
+            tool: display_tool_name(tool_name, args),
             source: source.to_string(),
             mode: args
                 .get("mode")
@@ -190,6 +190,78 @@ fn summarize_ask_payload(tool_name: &str, args: &JsonValue) -> String {
         compact
     };
     format!("tool[{tool_name}] args={trimmed}")
+}
+
+/// Format tool name with arguments for display in permission prompts.
+/// Returns `tool_name(arg1=val1, arg2=val2)` or just `tool_name` if no args.
+/// Arguments are sorted alphabetically by key.
+/// String values longer than 60 chars are truncated with `…`.
+/// Null values are skipped.
+pub(crate) fn display_tool_name(tool_name: &str, args: &JsonValue) -> String {
+    // Only process object types
+    let obj = match args.as_object() {
+        Some(obj) => obj,
+        None => return tool_name.to_string(),
+    };
+
+    // Collect non-null entries
+    let mut entries: Vec<(String, String)> = Vec::new();
+    for (key, value) in obj {
+        if value.is_null() {
+            continue;
+        }
+
+        let formatted_value = format_arg_value(value);
+        entries.push((key.clone(), formatted_value));
+    }
+
+    // If no non-null entries, return just tool name
+    if entries.is_empty() {
+        return tool_name.to_string();
+    }
+
+    // Sort alphabetically by key
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+    // Format as tool_name(key1=val1, key2=val2)
+    let args_str = entries
+        .iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    format!("{tool_name}({args_str})")
+}
+
+/// Format a single argument value for display.
+fn format_arg_value(value: &JsonValue) -> String {
+    const MAX_LEN: usize = 60;
+
+    match value {
+        JsonValue::String(s) => {
+            if s.chars().count() > MAX_LEN {
+                let mut result = s.chars().take(MAX_LEN).collect::<String>();
+                result.push('…');
+                result
+            } else {
+                s.clone()
+            }
+        }
+        JsonValue::Bool(b) => b.to_string(),
+        JsonValue::Number(n) => n.to_string(),
+        JsonValue::Object(_) | JsonValue::Array(_) => {
+            // Convert to compact JSON
+            let json = serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string());
+            if json.chars().count() > MAX_LEN {
+                let mut result = json.chars().take(MAX_LEN).collect::<String>();
+                result.push('…');
+                result
+            } else {
+                json
+            }
+        }
+        JsonValue::Null => String::new(), // Should never reach here as nulls are filtered
+    }
 }
 
 pub trait AskApprovalHook {

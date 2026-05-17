@@ -30,6 +30,7 @@ impl SkillSource {
 pub(crate) struct DiscoverableSkill {
     pub name: String,
     pub source: SkillSource,
+    pub description: Option<String>,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -100,13 +101,16 @@ fn render_available_skills_preamble_from_catalog(
         "Skills provide specialized instructions and workflows for specific tasks.".to_string(),
     );
     lines.push(
-        "Use the skill tool to load a skill when a task matches its description.".to_string(),
+        "Use the skill tool to load a skill when a task matches its description. Do NOT reload a skill you have already loaded in this conversation.".to_string(),
     );
     lines.push("<available_skills>".to_string());
 
     for skill in catalog {
         lines.push("  <skill>".to_string());
         lines.push(format!("    <name>{}</name>", skill.name));
+        if let Some(desc) = &skill.description {
+            lines.push(format!("    <description>{desc}</description>"));
+        }
         lines.push(format!("    <source>{}</source>", skill.source.label()));
         lines.push("  </skill>".to_string());
     }
@@ -115,7 +119,40 @@ fn render_available_skills_preamble_from_catalog(
     Some(lines.join("\n"))
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
+pub(crate) fn extract_skill_description(content: &str) -> Option<String> {
+    extract_skill_description_internal(content)
+}
+
+fn extract_skill_description_internal(content: &str) -> Option<String> {
+    for line in content.lines() {
+        let trimmed = line.trim();
+
+        // Skip empty lines
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        // Skip heading lines (start with #)
+        if trimmed.starts_with('#') {
+            continue;
+        }
+
+        // Found first non-empty, non-heading line
+        if trimmed.len() <= 150 {
+            return Some(trimmed.to_string());
+        }
+
+        // Truncate to 150 chars with ellipsis
+        let mut truncated = String::with_capacity(151);
+        truncated.push_str(&trimmed[..150]);
+        truncated.push('…');
+        return Some(truncated);
+    }
+
+    None
+}
+
 pub(crate) fn resolve_explicit_skill_request_for_cwd(
     cwd: &Path,
     skill_name: &str,
@@ -151,10 +188,11 @@ fn discover_skill_catalog_internal(
     let mut selected: HashMap<String, ((u8, usize), DiscoverableSkill)> = HashMap::new();
 
     for (local_rank, root) in local_skill_roots(cwd, stop_at).into_iter().enumerate() {
-        for name in discover_skill_names_in_root(&root, None) {
+        for (name, description) in discover_skill_names_in_root(&root, None) {
             let entry = DiscoverableSkill {
                 name: name.clone(),
                 source: SkillSource::Local,
+                description,
             };
             upsert_skill_by_precedence(
                 &mut selected,
@@ -166,10 +204,11 @@ fn discover_skill_catalog_internal(
     }
 
     if let Some(home_root) = home_skills_root(home) {
-        for name in discover_skill_names_in_root(&home_root, Some(&home_root)) {
+        for (name, description) in discover_skill_names_in_root(&home_root, Some(&home_root)) {
             let entry = DiscoverableSkill {
                 name: name.clone(),
                 source: SkillSource::Home,
+                description,
             };
             upsert_skill_by_precedence(
                 &mut selected,
@@ -329,12 +368,15 @@ fn local_skill_roots(cwd: &Path, stop_at: Option<&Path>) -> Vec<PathBuf> {
     roots
 }
 
-fn discover_skill_names_in_root(root: &Path, canonical_guard_root: Option<&Path>) -> Vec<String> {
-    let mut names = Vec::new();
+fn discover_skill_names_in_root(
+    root: &Path,
+    canonical_guard_root: Option<&Path>,
+) -> Vec<(String, Option<String>)> {
+    let mut entries_with_desc = Vec::new();
     let mut dedup = std::collections::HashSet::new();
 
     let Ok(entries) = fs::read_dir(root) else {
-        return names;
+        return entries_with_desc;
     };
 
     let canonical_guard = canonical_guard_root.and_then(|path| fs::canonicalize(path).ok());
@@ -355,7 +397,8 @@ fn discover_skill_names_in_root(root: &Path, canonical_guard_root: Option<&Path>
                 continue;
             }
             if dedup.insert(name.to_string()) {
-                names.push(name.to_string());
+                let description = read_skill_description(&candidate);
+                entries_with_desc.push((name.to_string(), description));
             }
             continue;
         }
@@ -378,12 +421,25 @@ fn discover_skill_names_in_root(root: &Path, canonical_guard_root: Option<&Path>
                 continue;
             }
             if dedup.insert(name.to_string()) {
-                names.push(name.to_string());
+                let description = read_skill_description(&path);
+                entries_with_desc.push((name.to_string(), description));
             }
         }
     }
 
-    names
+    entries_with_desc
+}
+
+fn read_skill_description(skill_path: &Path) -> Option<String> {
+    // Read first 2KB - enough for a reasonable description
+    let content = fs::read(skill_path).ok()?;
+    let preview = if content.len() > 2048 {
+        &content[..2048]
+    } else {
+        &content
+    };
+    let text = String::from_utf8_lossy(preview);
+    extract_skill_description_internal(&text)
 }
 
 fn passes_canonical_guard(path: &Path, canonical_guard_root: Option<&PathBuf>) -> bool {

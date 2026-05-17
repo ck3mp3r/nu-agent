@@ -1,6 +1,5 @@
 use rig::completion::message::ToolCall;
 
-use crate::agent::protocol::event::ToolDisplay;
 use crate::agent::tools::authz::{
     AskApprovalHook, AskContext, PermissionAction, PermissionEventSink, PermissionsConfig,
     SessionGrantCache, apply_ask_choice, apply_session_grant_override,
@@ -11,7 +10,6 @@ use super::types::{AuthorizationDeniedDetails, AuthorizationDiagnostic, ToolSour
 #[derive(Debug, Clone)]
 pub(crate) struct AuthorizationFlowContext {
     pub(crate) ask_context: AskContext,
-    pub(crate) denied_display: Option<ToolDisplay>,
 }
 
 pub(crate) fn enforce_authorization_for_tool_call(

@@ -1,4 +1,4 @@
-use crate::session::SessionStore;
+use crate::session::{MessageRole, SessionStore};
 use std::fs;
 use std::os::unix::fs::MetadataExt;
 use tempfile::TempDir;
@@ -69,12 +69,12 @@ fn manual_compact_force_bypasses_threshold_gate() {
     });
 
     session
-        .add_message(&store, Message::new("user".to_string(), "msg0".to_string()))
+        .add_message(&store, Message::new(MessageRole::User, "msg0".to_string()))
         .expect("add");
     session
         .add_message(
             &store,
-            Message::new("assistant".to_string(), "msg1".to_string()),
+            Message::new(MessageRole::Assistant, "msg1".to_string()),
         )
         .expect("add");
 
@@ -85,7 +85,7 @@ fn manual_compact_force_bypasses_threshold_gate() {
         .expect("force compaction");
 
     assert!(outcome.is_some(), "force mode must bypass threshold gate");
-    assert_eq!(session.messages()[0].role(), "system");
+    assert_eq!(session.messages()[0].role(), MessageRole::System);
     assert_eq!(session.messages()[0].content(), "FORCED SUMMARY");
 }
 
@@ -106,7 +106,7 @@ fn auto_compaction_still_respects_threshold_gate() {
 
     for i in 0..3 {
         session
-            .add_message(&store, Message::new("user".to_string(), format!("msg{i}")))
+            .add_message(&store, Message::new(MessageRole::User, format!("msg{i}")))
             .expect("add");
     }
 
@@ -138,7 +138,7 @@ fn sliding_summary_compaction_replaces_old_segment_with_summary_message() {
 
     for i in 0..5 {
         session
-            .add_message(&store, Message::new("user".to_string(), format!("msg{i}")))
+            .add_message(&store, Message::new(MessageRole::User, format!("msg{i}")))
             .expect("add");
     }
 
@@ -147,7 +147,7 @@ fn sliding_summary_compaction_replaces_old_segment_with_summary_message() {
         .expect("compact")
         .is_some();
     assert!(did_compact);
-    assert_eq!(session.messages()[0].role(), "system");
+    assert_eq!(session.messages()[0].role(), MessageRole::System);
     assert_eq!(session.messages()[0].content(), "SUMMARY BODY");
 }
 
@@ -168,7 +168,7 @@ fn sliding_summary_compaction_preserves_recent_window_verbatim() {
 
     for i in 0..5 {
         session
-            .add_message(&store, Message::new("user".to_string(), format!("msg{i}")))
+            .add_message(&store, Message::new(MessageRole::User, format!("msg{i}")))
             .expect("add");
     }
 
@@ -197,7 +197,7 @@ fn sliding_summary_compaction_persists_jsonl_updates() {
 
     for i in 0..5 {
         session
-            .add_message(&store, Message::new("user".to_string(), format!("msg{i}")))
+            .add_message(&store, Message::new(MessageRole::User, format!("msg{i}")))
             .expect("add");
     }
 
@@ -228,7 +228,7 @@ fn sliding_summary_compaction_increments_compaction_count() {
 
     for i in 0..5 {
         session
-            .add_message(&store, Message::new("user".to_string(), format!("msg{i}")))
+            .add_message(&store, Message::new(MessageRole::User, format!("msg{i}")))
             .expect("add");
     }
 
@@ -256,7 +256,7 @@ fn sliding_summary_compaction_failure_is_deterministic() {
 
     for i in 0..5 {
         session
-            .add_message(&store, Message::new("user".to_string(), format!("msg{i}")))
+            .add_message(&store, Message::new(MessageRole::User, format!("msg{i}")))
             .expect("add");
     }
 
@@ -395,9 +395,9 @@ fn test_append_message_writes_jsonl() {
         .expect("Failed to create session");
 
     // Append 3 messages
-    let msg1 = Message::new("user".to_string(), "Hello".to_string());
-    let msg2 = Message::new("assistant".to_string(), "Hi there".to_string());
-    let msg3 = Message::new("user".to_string(), "How are you?".to_string());
+    let msg1 = Message::new(MessageRole::User, "Hello".to_string());
+    let msg2 = Message::new(MessageRole::Assistant, "Hi there".to_string());
+    let msg3 = Message::new(MessageRole::User, "How are you?".to_string());
 
     session
         .append_message(&store, msg1)
@@ -476,7 +476,7 @@ fn test_append_tool_message_writes_structured_tool_fields() {
         .expect("Failed to create session");
 
     let msg = Message::new(
-        "tool".to_string(),
+        MessageRole::Tool,
         "tool[nu__run] args={\"command\":\"ls\"} · done".to_string(),
     )
     .with_tool_details("{\"command\":\"ls\"}", "src\nCargo.toml", true);
@@ -519,12 +519,12 @@ fn test_list_sessions_returns_correct_metadata() {
         .expect("Failed to create session1");
 
     session1
-        .append_message(&store, Message::new("user".to_string(), "msg1".to_string()))
+        .append_message(&store, Message::new(MessageRole::User, "msg1".to_string()))
         .expect("Failed to append to session1");
     session1
         .append_message(
             &store,
-            Message::new("assistant".to_string(), "msg2".to_string()),
+            Message::new(MessageRole::Assistant, "msg2".to_string()),
         )
         .expect("Failed to append to session1");
 
@@ -534,7 +534,7 @@ fn test_list_sessions_returns_correct_metadata() {
         .expect("Failed to create session2");
 
     session2
-        .append_message(&store, Message::new("user".to_string(), "msg1".to_string()))
+        .append_message(&store, Message::new(MessageRole::User, "msg1".to_string()))
         .expect("Failed to append to session2");
 
     let session3_id = "test-session-3".to_string();
@@ -619,9 +619,9 @@ fn test_load_session_with_messages() {
         .expect("Failed to create session");
 
     // Append some messages
-    let msg1 = Message::new("user".to_string(), "Hello".to_string());
-    let msg2 = Message::new("assistant".to_string(), "Hi there".to_string());
-    let msg3 = Message::new("user".to_string(), "How are you?".to_string());
+    let msg1 = Message::new(MessageRole::User, "Hello".to_string());
+    let msg2 = Message::new(MessageRole::Assistant, "Hi there".to_string());
+    let msg3 = Message::new(MessageRole::User, "How are you?".to_string());
 
     session
         .append_message(&store, msg1)
@@ -646,13 +646,13 @@ fn test_load_session_with_messages() {
     assert_eq!(messages.len(), 3, "Should have loaded 3 messages");
 
     // Verify message content
-    assert_eq!(messages[0].role(), "user");
+    assert_eq!(messages[0].role(), MessageRole::User);
     assert_eq!(messages[0].content(), "Hello");
 
-    assert_eq!(messages[1].role(), "assistant");
+    assert_eq!(messages[1].role(), MessageRole::Assistant);
     assert_eq!(messages[1].content(), "Hi there");
 
-    assert_eq!(messages[2].role(), "user");
+    assert_eq!(messages[2].role(), MessageRole::User);
     assert_eq!(messages[2].content(), "How are you?");
 }
 
@@ -731,25 +731,25 @@ fn test_add_message_appends_and_updates_vector() {
     assert_eq!(session.messages().len(), 0);
 
     // Add first message
-    let msg1 = Message::new("user".to_string(), "First message".to_string());
+    let msg1 = Message::new(MessageRole::User, "First message".to_string());
     session
         .add_message(&store, msg1)
         .expect("Failed to add message 1");
 
     // Verify messages vector is updated
     assert_eq!(session.messages().len(), 1);
-    assert_eq!(session.messages()[0].role(), "user");
+    assert_eq!(session.messages()[0].role(), MessageRole::User);
     assert_eq!(session.messages()[0].content(), "First message");
 
     // Add second message
-    let msg2 = Message::new("assistant".to_string(), "Second message".to_string());
+    let msg2 = Message::new(MessageRole::Assistant, "Second message".to_string());
     session
         .add_message(&store, msg2)
         .expect("Failed to add message 2");
 
     // Verify messages vector is updated
     assert_eq!(session.messages().len(), 2);
-    assert_eq!(session.messages()[1].role(), "assistant");
+    assert_eq!(session.messages()[1].role(), MessageRole::Assistant);
     assert_eq!(session.messages()[1].content(), "Second message");
 }
 
@@ -775,16 +775,16 @@ fn test_add_message_triggers_compaction_on_threshold() {
 
     // Add messages up to threshold
     session
-        .add_message(&store, Message::new("user".to_string(), "msg1".to_string()))
+        .add_message(&store, Message::new(MessageRole::User, "msg1".to_string()))
         .expect("Failed to add message 1");
     session
         .add_message(
             &store,
-            Message::new("assistant".to_string(), "msg2".to_string()),
+            Message::new(MessageRole::Assistant, "msg2".to_string()),
         )
         .expect("Failed to add message 2");
     session
-        .add_message(&store, Message::new("user".to_string(), "msg3".to_string()))
+        .add_message(&store, Message::new(MessageRole::User, "msg3".to_string()))
         .expect("Failed to add message 3");
 
     // At threshold, should have 3 messages
@@ -794,7 +794,7 @@ fn test_add_message_triggers_compaction_on_threshold() {
     session
         .add_message(
             &store,
-            Message::new("assistant".to_string(), "msg4".to_string()),
+            Message::new(MessageRole::Assistant, "msg4".to_string()),
         )
         .expect("Failed to add message 4");
 
@@ -827,10 +827,7 @@ fn test_maybe_compact_triggers_on_threshold() {
     // Add 6 messages (1 over threshold)
     for i in 0..6 {
         session
-            .add_message(
-                &store,
-                Message::new("user".to_string(), format!("msg{}", i)),
-            )
+            .add_message(&store, Message::new(MessageRole::User, format!("msg{}", i)))
             .expect("Failed to add message");
     }
 
@@ -866,10 +863,7 @@ fn test_maybe_compact_does_not_trigger_under_threshold() {
     // Add only 5 messages (well under threshold)
     for i in 0..5 {
         session
-            .add_message(
-                &store,
-                Message::new("user".to_string(), format!("msg{}", i)),
-            )
+            .add_message(&store, Message::new(MessageRole::User, format!("msg{}", i)))
             .expect("Failed to add message");
     }
 
@@ -904,10 +898,7 @@ fn test_maybe_compact_summarize_strategy() {
     // Add 4 messages (over threshold)
     for i in 0..4 {
         session
-            .add_message(
-                &store,
-                Message::new("user".to_string(), format!("msg{}", i)),
-            )
+            .add_message(&store, Message::new(MessageRole::User, format!("msg{}", i)))
             .expect("Failed to add message");
     }
 
@@ -942,10 +933,7 @@ fn test_maybe_compact_sliding_strategy() {
     // Add 4 messages (over threshold)
     for i in 0..4 {
         session
-            .add_message(
-                &store,
-                Message::new("user".to_string(), format!("msg{}", i)),
-            )
+            .add_message(&store, Message::new(MessageRole::User, format!("msg{}", i)))
             .expect("Failed to add message");
     }
 
@@ -981,10 +969,7 @@ fn test_compact_truncate_keeps_recent_messages() {
     // Add 10 messages (well over threshold)
     for i in 0..10 {
         session
-            .add_message(
-                &store,
-                Message::new("user".to_string(), format!("msg{}", i)),
-            )
+            .add_message(&store, Message::new(MessageRole::User, format!("msg{}", i)))
             .expect("Failed to add message");
     }
 
@@ -1006,7 +991,7 @@ fn test_compact_truncate_keeps_recent_messages() {
     );
 
     // Verify summary marker + last 2 messages remain.
-    assert_eq!(session.messages()[0].role(), "system");
+    assert_eq!(session.messages()[0].role(), MessageRole::System);
     assert_eq!(session.messages()[1].content(), "msg8");
     assert_eq!(session.messages()[2].content(), "msg9");
 
@@ -1020,7 +1005,7 @@ fn test_compact_truncate_keeps_recent_messages() {
         3,
         "Reloaded session should have summary + 2 messages"
     );
-    assert_eq!(loaded_session.messages()[0].role(), "system");
+    assert_eq!(loaded_session.messages()[0].role(), MessageRole::System);
     assert_eq!(loaded_session.messages()[1].content(), "msg8");
     assert_eq!(loaded_session.messages()[2].content(), "msg9");
 }
@@ -1049,10 +1034,7 @@ fn test_compact_sliding_window_keeps_last_n_messages() {
     // Add 10 messages (well over threshold)
     for i in 0..10 {
         session
-            .add_message(
-                &store,
-                Message::new("user".to_string(), format!("msg{}", i)),
-            )
+            .add_message(&store, Message::new(MessageRole::User, format!("msg{}", i)))
             .expect("Failed to add message");
     }
 
@@ -1074,7 +1056,7 @@ fn test_compact_sliding_window_keeps_last_n_messages() {
     );
 
     // Verify summary marker + last 3 messages remain.
-    assert_eq!(session.messages()[0].role(), "system");
+    assert_eq!(session.messages()[0].role(), MessageRole::System);
     assert_eq!(session.messages()[1].content(), "msg7");
     assert_eq!(session.messages()[2].content(), "msg8");
     assert_eq!(session.messages()[3].content(), "msg9");
@@ -1089,7 +1071,7 @@ fn test_compact_sliding_window_keeps_last_n_messages() {
         4,
         "Reloaded session should have summary + 3 messages"
     );
-    assert_eq!(loaded_session.messages()[0].role(), "system");
+    assert_eq!(loaded_session.messages()[0].role(), MessageRole::System);
     assert_eq!(loaded_session.messages()[1].content(), "msg7");
     assert_eq!(loaded_session.messages()[2].content(), "msg8");
     assert_eq!(loaded_session.messages()[3].content(), "msg9");
@@ -1119,10 +1101,7 @@ fn test_compact_sliding_window_slides_correctly() {
     // Add 5 messages (over threshold)
     for i in 0..5 {
         session
-            .add_message(
-                &store,
-                Message::new("user".to_string(), format!("msg{}", i)),
-            )
+            .add_message(&store, Message::new(MessageRole::User, format!("msg{}", i)))
             .expect("Failed to add message");
     }
 
@@ -1135,7 +1114,7 @@ fn test_compact_sliding_window_slides_correctly() {
 
     // Should keep summary + last 3: msg2, msg3, msg4
     assert_eq!(session.messages().len(), 4);
-    assert_eq!(session.messages()[0].role(), "system");
+    assert_eq!(session.messages()[0].role(), MessageRole::System);
     assert_eq!(session.messages()[1].content(), "msg2");
     assert_eq!(session.messages()[2].content(), "msg3");
     assert_eq!(session.messages()[3].content(), "msg4");
@@ -1143,10 +1122,7 @@ fn test_compact_sliding_window_slides_correctly() {
     // Add 3 more messages (bringing total to 6, over threshold again)
     for i in 5..8 {
         session
-            .add_message(
-                &store,
-                Message::new("user".to_string(), format!("msg{}", i)),
-            )
+            .add_message(&store, Message::new(MessageRole::User, format!("msg{}", i)))
             .expect("Failed to add message");
     }
 
@@ -1166,7 +1142,7 @@ fn test_compact_sliding_window_slides_correctly() {
         4,
         "Window should slide to keep summary + last 3 messages"
     );
-    assert_eq!(session.messages()[0].role(), "system");
+    assert_eq!(session.messages()[0].role(), MessageRole::System);
     assert_eq!(session.messages()[1].content(), "msg5");
     assert_eq!(session.messages()[2].content(), "msg6");
     assert_eq!(session.messages()[3].content(), "msg7");
@@ -1210,10 +1186,7 @@ fn test_compact_summarize_calls_llm_with_old_messages() {
     // Add 20 messages (well over threshold)
     for i in 0..20 {
         session
-            .add_message(
-                &store,
-                Message::new("user".to_string(), format!("msg{}", i)),
-            )
+            .add_message(&store, Message::new(MessageRole::User, format!("msg{}", i)))
             .expect("Failed to add message");
     }
 
@@ -1272,10 +1245,7 @@ fn test_compact_summarize_replaces_old_with_summary() {
     // Add 15 messages (over threshold)
     for i in 0..15 {
         session
-            .add_message(
-                &store,
-                Message::new("user".to_string(), format!("msg{}", i)),
-            )
+            .add_message(&store, Message::new(MessageRole::User, format!("msg{}", i)))
             .expect("Failed to add message");
     }
 
@@ -1295,7 +1265,7 @@ fn test_compact_summarize_replaces_old_with_summary() {
     );
 
     // Verify first message is the summary
-    assert_eq!(session.messages()[0].role(), "system");
+    assert_eq!(session.messages()[0].role(), MessageRole::System);
     assert_eq!(
         session.messages()[0].content(),
         "SUMMARY: Previous conversation context"
@@ -1312,7 +1282,7 @@ fn test_compact_summarize_replaces_old_with_summary() {
         .expect("Failed to reload session");
 
     assert_eq!(loaded_session.messages().len(), 4);
-    assert_eq!(loaded_session.messages()[0].role(), "system");
+    assert_eq!(loaded_session.messages()[0].role(), MessageRole::System);
     assert_eq!(
         loaded_session.messages()[0].content(),
         "SUMMARY: Previous conversation context"
@@ -1349,7 +1319,7 @@ fn test_rewrite_jsonl_uses_atomic_writes() {
         session
             .add_message(
                 &store,
-                Message::new("user".to_string(), format!("message {}", i)),
+                Message::new(MessageRole::User, format!("message {}", i)),
             )
             .expect("Failed to add message");
     }
@@ -1460,7 +1430,7 @@ fn test_atomic_write_implementation() {
         session
             .add_message(
                 &store,
-                Message::new("user".to_string(), format!("message {}", i)),
+                Message::new(MessageRole::User, format!("message {}", i)),
             )
             .expect("Failed to add message");
     }
@@ -1505,7 +1475,7 @@ fn test_message_deserializes_old_record_without_usage_fields() {
     let message: Message = serde_json::from_str(old_record)
         .expect("Legacy message record without usage fields should deserialize");
 
-    assert_eq!(message.role(), "assistant");
+    assert_eq!(message.role(), MessageRole::Assistant);
     assert_eq!(message.content(), "Legacy record");
     assert!(message.usage().is_none());
 }
@@ -1514,7 +1484,7 @@ fn test_message_deserializes_old_record_without_usage_fields() {
 fn test_message_usage_roundtrip_serde_and_builder_setter_api() {
     use crate::session::{Message, MessageUsage};
 
-    let mut message = Message::new("assistant".to_string(), "Response with usage".to_string())
+    let mut message = Message::new(MessageRole::Assistant, "Response with usage".to_string())
         .with_usage(MessageUsage::new(11, 7, 18));
     message.set_usage(MessageUsage::new(12, 8, 20));
 
@@ -1537,4 +1507,236 @@ fn test_message_usage_roundtrip_serde_and_builder_setter_api() {
     assert_eq!(decoded_usage.input_tokens(), Some(12));
     assert_eq!(decoded_usage.output_tokens(), Some(8));
     assert_eq!(decoded_usage.total_tokens(), Some(20));
+}
+
+// ── as_chat_history tests ──
+
+#[test]
+fn as_chat_history_empty_session_returns_empty_vec() {
+    let tmp = TempDir::new().unwrap();
+    let store = SessionStore::new_with_cache_dir(tmp.path().to_path_buf());
+    let session = store.get_or_create(None).unwrap();
+    let history = session.as_chat_history();
+    assert!(history.is_empty());
+}
+
+#[test]
+fn as_chat_history_skips_system_messages() {
+    use crate::session::Message;
+    let tmp = TempDir::new().unwrap();
+    let store = SessionStore::new_with_cache_dir(tmp.path().to_path_buf());
+    let mut session = store.get_or_create(None).unwrap();
+    session
+        .add_message(
+            &store,
+            Message::new(MessageRole::System, "sys prompt".into()),
+        )
+        .unwrap();
+    let history = session.as_chat_history();
+    assert!(history.is_empty());
+}
+
+#[test]
+fn as_chat_history_converts_user_message() {
+    use crate::session::Message;
+    use rig::completion::message::{Text, UserContent};
+    let tmp = TempDir::new().unwrap();
+    let store = SessionStore::new_with_cache_dir(tmp.path().to_path_buf());
+    let mut session = store.get_or_create(None).unwrap();
+    session
+        .add_message(&store, Message::new(MessageRole::User, "hello".into()))
+        .unwrap();
+    let history = session.as_chat_history();
+    assert_eq!(history.len(), 1);
+    match &history[0] {
+        rig::completion::Message::User { content } => {
+            let first = content.first();
+            match first {
+                UserContent::Text(Text { text }) => assert_eq!(text, "hello"),
+                _ => panic!("expected Text content"),
+            }
+        }
+        _ => panic!("expected User message"),
+    }
+}
+
+#[test]
+fn as_chat_history_converts_assistant_message() {
+    use crate::session::Message;
+    use rig::completion::message::{AssistantContent, Text};
+    let tmp = TempDir::new().unwrap();
+    let store = SessionStore::new_with_cache_dir(tmp.path().to_path_buf());
+    let mut session = store.get_or_create(None).unwrap();
+    session
+        .add_message(
+            &store,
+            Message::new(MessageRole::Assistant, "hi there".into()),
+        )
+        .unwrap();
+    let history = session.as_chat_history();
+    assert_eq!(history.len(), 1);
+    match &history[0] {
+        rig::completion::Message::Assistant { id, content } => {
+            assert!(id.is_none());
+            let first = content.first();
+            match first {
+                AssistantContent::Text(Text { text }) => assert_eq!(text, "hi there"),
+                _ => panic!("expected Text content"),
+            }
+        }
+        _ => panic!("expected Assistant message"),
+    }
+}
+
+#[test]
+fn as_chat_history_converts_tool_message_to_text_summary() {
+    use crate::session::Message;
+    use rig::completion::message::{AssistantContent, Text};
+    let tmp = TempDir::new().unwrap();
+    let store = SessionStore::new_with_cache_dir(tmp.path().to_path_buf());
+    let mut session = store.get_or_create(None).unwrap();
+    let tool_msg = Message::new(MessageRole::Tool, "tool output".into())
+        .with_tool_call_id("call_123")
+        .with_tool_name("my_tool");
+    session.add_message(&store, tool_msg).unwrap();
+    let history = session.as_chat_history();
+    assert_eq!(history.len(), 1);
+    match &history[0] {
+        rig::completion::Message::Assistant { id, content } => {
+            assert!(id.is_none());
+            let first = content.first();
+            match first {
+                AssistantContent::Text(Text { text }) => {
+                    assert_eq!(text, "[Tool my_tool returned: tool output]");
+                }
+                _ => panic!("expected Text content"),
+            }
+        }
+        _ => panic!("expected Assistant message with text summary"),
+    }
+}
+
+#[test]
+fn as_chat_history_preserves_message_order() {
+    use crate::session::Message;
+    let tmp = TempDir::new().unwrap();
+    let store = SessionStore::new_with_cache_dir(tmp.path().to_path_buf());
+    let mut session = store.get_or_create(None).unwrap();
+    session
+        .add_message(&store, Message::new(MessageRole::User, "q1".into()))
+        .unwrap();
+    session
+        .add_message(&store, Message::new(MessageRole::Assistant, "a1".into()))
+        .unwrap();
+    session
+        .add_message(&store, Message::new(MessageRole::User, "q2".into()))
+        .unwrap();
+    let history = session.as_chat_history();
+    assert_eq!(history.len(), 3);
+    assert!(matches!(&history[0], rig::completion::Message::User { .. }));
+    assert!(matches!(
+        &history[1],
+        rig::completion::Message::Assistant { .. }
+    ));
+    assert!(matches!(&history[2], rig::completion::Message::User { .. }));
+}
+
+#[test]
+fn as_chat_history_converts_assistant_with_tool_calls() {
+    use crate::session::{Message, StoredToolCall};
+    use rig::completion::message::{AssistantContent, Text};
+    use serde_json::json;
+
+    let tmp = TempDir::new().unwrap();
+    let store = SessionStore::new_with_cache_dir(tmp.path().to_path_buf());
+    let mut session = store.get_or_create(None).unwrap();
+
+    // Create an assistant message with tool calls
+    let tool_calls = vec![
+        StoredToolCall {
+            id: "call_abc123".to_string(),
+            name: "test_tool".to_string(),
+            arguments: json!({"arg": "value"}).to_string(),
+        },
+        StoredToolCall {
+            id: "call_def456".to_string(),
+            name: "another_tool".to_string(),
+            arguments: json!({"key": "data"}).to_string(),
+        },
+    ];
+
+    let assistant_msg = Message::new(MessageRole::Assistant, "Let me use some tools".to_string())
+        .with_tool_calls(tool_calls);
+
+    session.add_message(&store, assistant_msg).unwrap();
+
+    // Convert to chat history
+    let history = session.as_chat_history();
+    assert_eq!(history.len(), 1);
+
+    // Verify the assistant message has text with tool call summaries
+    match &history[0] {
+        rig::completion::Message::Assistant { id, content } => {
+            assert!(id.is_none());
+            let first = content.first();
+            match first {
+                AssistantContent::Text(Text { text }) => {
+                    // Should contain original text + tool call summaries
+                    assert!(text.contains("Let me use some tools"));
+                    assert!(
+                        text.contains("[Called tool: test_tool with args: {\"arg\":\"value\"}]")
+                    );
+                    assert!(
+                        text.contains("[Called tool: another_tool with args: {\"key\":\"data\"}]")
+                    );
+                }
+                _ => panic!("expected Text content with tool call summaries"),
+            }
+        }
+        _ => panic!("Expected Assistant message"),
+    }
+}
+
+#[test]
+fn assistant_message_with_tool_calls_persists_and_reloads() {
+    use crate::session::{Message, StoredToolCall};
+    use serde_json::json;
+
+    let tmp = TempDir::new().unwrap();
+    let store = SessionStore::new_with_cache_dir(tmp.path().to_path_buf());
+    let session_id = "tool-call-persist-test";
+
+    // Create and persist a message with tool calls
+    {
+        let mut session = store.get_or_create(Some(session_id.to_string())).unwrap();
+
+        let tool_calls = vec![StoredToolCall {
+            id: "call_xyz789".to_string(),
+            name: "my_tool".to_string(),
+            arguments: json!({"param": 42}).to_string(),
+        }];
+
+        let assistant_msg = Message::new(MessageRole::Assistant, "Calling tool".to_string())
+            .with_tool_calls(tool_calls);
+
+        session.add_message(&store, assistant_msg).unwrap();
+    }
+
+    // Reload and verify
+    let loaded_session = store.load_session(session_id).unwrap();
+    let assistant = loaded_session
+        .messages()
+        .iter()
+        .find(|m| m.role() == MessageRole::Assistant)
+        .expect("Assistant message should be persisted");
+
+    let tool_calls = assistant
+        .tool_calls()
+        .expect("Tool calls should be persisted");
+
+    assert_eq!(tool_calls.len(), 1);
+    assert_eq!(tool_calls[0].id, "call_xyz789");
+    assert_eq!(tool_calls[0].name, "my_tool");
+    assert!(tool_calls[0].arguments.contains("\"param\""));
+    assert!(tool_calls[0].arguments.contains("42"));
 }

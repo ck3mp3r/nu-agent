@@ -82,7 +82,7 @@ fn openai5x_execute_posts_to_responses_with_valid_input_shape() {
         )
         .expect("create agent");
 
-        let crate::providers::github_copilot::Agent::OpenAI5x(agent) = agent else {
+        let crate::providers::github_copilot::Agent::OpenAI5x(agent, ..) = agent else {
             panic!("expected OpenAI5x agent")
         };
 
@@ -101,9 +101,11 @@ fn openai5x_execute_posts_to_responses_with_valid_input_shape() {
         assert!(request_line.contains("POST /responses "));
         let json: serde_json::Value = serde_json::from_str(&body).expect("json body");
         assert!(json.get("input").is_some(), "input field must exist");
+        // input can be either string OR structured array (multi-turn conversations)
         assert!(
-            json.get("input").and_then(|v| v.as_str()).is_some(),
-            "input must be a string for Copilot /responses compatibility"
+            json.get("input").and_then(|v| v.as_str()).is_some()
+                || json.get("input").and_then(|v| v.as_array()).is_some(),
+            "input must be string or array for Copilot /responses compatibility"
         );
     });
 }
@@ -155,7 +157,9 @@ fn map_response_supports_function_call_only_output() {
     let tool_calls = &value["choices"][0]["message"]["tool_calls"];
     assert!(tool_calls.is_array());
     assert_eq!(tool_calls.as_array().unwrap().len(), 1);
-    assert_eq!(tool_calls[0]["id"], "call_123");
+    // Bug fix: id should be the fc_-prefixed id (tool_123)
+    // The Responses API requires id to start with 'fc_', not 'call_'
+    assert_eq!(tool_calls[0]["id"], "tool_123");
     assert_eq!(tool_calls[0]["function"]["name"], "cmd");
 }
 
@@ -368,7 +372,9 @@ fn parity_with_rig_openai5x_function_call_conversion() {
 
     assert!(tool_calls.is_array());
     assert_eq!(tool_calls.as_array().unwrap().len(), 1);
-    assert_eq!(tool_calls[0]["id"], "call_abc123"); // Uses call_id as tool call ID
+    // Bug fix: id should be fc_-prefixed (tool_001)
+    // The Responses API requires id to start with 'fc_', not 'call_'
+    assert_eq!(tool_calls[0]["id"], "tool_001");
     assert_eq!(tool_calls[0]["function"]["name"], "get_weather");
     assert_eq!(
         tool_calls[0]["function"]["arguments"],
@@ -516,4 +522,69 @@ fn test_missing_call_linkage_returns_provider_error() {
             );
         }
     }
+}
+
+#[test]
+fn build_completion_constructs_completion_response_with_tool_call() {
+    // Construct a valid Responses API JSON with a function_call output
+    let json_str = r#"{
+        "id": "resp_123",
+        "model": "gpt-5.3-codex",
+        "status": "completed",
+        "output": [
+            {
+                "type": "function_call",
+                "id": "fc_abc123",
+                "call_id": "call_xyz789",
+                "name": "test_tool",
+                "arguments": "{\"key\":\"value\"}"
+            }
+        ],
+        "usage": {
+            "input_tokens": 10,
+            "output_tokens": 20,
+            "total_tokens": 30
+        }
+    }"#;
+
+    // Call the new build_completion function (this will fail to compile - RED phase)
+    let result = super::OpenAI5xProvider::build_completion(json_str);
+
+    // Assert the result is Ok
+    assert!(
+        result.is_ok(),
+        "build_completion should succeed with valid JSON"
+    );
+
+    let completion = result.unwrap();
+
+    // Extract the tool call from the choice field
+    // choice is OneOrMany<AssistantContent>, so we need to iterate
+    let mut found_tool_call = false;
+    for content in completion.choice.iter() {
+        if let rig::completion::message::AssistantContent::ToolCall(tool_call) = content {
+            // Assert the tool call fields match the input
+            assert_eq!(tool_call.id, "fc_abc123", "tool call id should match");
+            assert_eq!(
+                tool_call.call_id,
+                Some("call_xyz789".to_string()),
+                "tool call call_id should match"
+            );
+            assert_eq!(
+                tool_call.function.name, "test_tool",
+                "function name should match"
+            );
+            assert_eq!(
+                tool_call.function.arguments,
+                serde_json::json!({"key": "value"}),
+                "function arguments should match"
+            );
+            found_tool_call = true;
+        }
+    }
+
+    assert!(
+        found_tool_call,
+        "completion should contain at least one ToolCall variant"
+    );
 }

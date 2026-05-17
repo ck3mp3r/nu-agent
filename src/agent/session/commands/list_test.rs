@@ -1,4 +1,5 @@
 use super::AgentSessionList;
+use crate::session::MessageRole;
 use crate::session::{Message, SessionStore};
 use nu_plugin::SimplePluginCommand;
 use tempfile::TempDir;
@@ -15,7 +16,7 @@ fn test_agent_session_list_returns_table_with_session_stats() {
         session1
             .add_message(
                 &store,
-                Message::new("user".to_string(), format!("msg {}", i)),
+                Message::new(MessageRole::User, format!("msg {}", i)),
             )
             .unwrap();
     }
@@ -26,7 +27,7 @@ fn test_agent_session_list_returns_table_with_session_stats() {
         session2
             .add_message(
                 &store,
-                Message::new("user".to_string(), format!("msg {}", i)),
+                Message::new(MessageRole::User, format!("msg {}", i)),
             )
             .unwrap();
     }

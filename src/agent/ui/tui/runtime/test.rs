@@ -54,6 +54,7 @@ use crate::agent::ui::{
         },
     },
 };
+use crate::session::MessageRole;
 use crate::session::{Message, MessageUsage, SessionStore};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
@@ -1363,13 +1364,13 @@ fn coordinator_hydrates_transcript_from_existing_session_messages() {
     session
         .add_message(
             &store,
-            Message::new("user".to_string(), "hello from history".to_string()),
+            Message::new(MessageRole::User, "hello from history".to_string()),
         )
         .expect("user msg");
     session
         .add_message(
             &store,
-            Message::new("assistant".to_string(), "history reply".to_string()),
+            Message::new(MessageRole::Assistant, "history reply".to_string()),
         )
         .expect("assistant msg");
 
@@ -5303,16 +5304,13 @@ fn lane_2_restart_attach_rehydrates_from_structured_usage_fields() {
         .expect("session");
 
     session
-        .add_message(
-            &store,
-            Message::new("user".to_string(), "hello".to_string()),
-        )
+        .add_message(&store, Message::new(MessageRole::User, "hello".to_string()))
         .expect("user msg");
     session
         .add_message(
             &store,
             Message::new(
-                "assistant".to_string(),
+                MessageRole::Assistant,
                 "content with misleading \"total_tokens\": 9999 marker".to_string(),
             )
             .with_usage(MessageUsage::new(11, 22, 333)),
@@ -5332,7 +5330,7 @@ fn lane_2_restart_attach_rehydrates_from_structured_usage_fields() {
     let snapshots = resolved.tui_initial_messages;
     let assistant_snapshot = snapshots
         .iter()
-        .find(|snapshot| snapshot.role() == "assistant")
+        .find(|snapshot| snapshot.role() == MessageRole::Assistant.as_str())
         .expect("assistant snapshot");
     let usage = assistant_snapshot.usage().expect("structured usage");
     assert_eq!(usage.input_tokens(), Some(11));
@@ -5360,7 +5358,7 @@ fn lane_2_restart_attach_does_not_parse_usage_from_message_content() {
         .add_message(
             &store,
             Message::new(
-                "assistant".to_string(),
+                MessageRole::Assistant,
                 "legacy text {\"total_tokens\":777} should not hydrate usage".to_string(),
             ),
         )
@@ -5379,7 +5377,7 @@ fn lane_2_restart_attach_does_not_parse_usage_from_message_content() {
     let snapshots = resolved.tui_initial_messages;
     let assistant_snapshot = snapshots
         .iter()
-        .find(|snapshot| snapshot.role() == "assistant")
+        .find(|snapshot| snapshot.role() == MessageRole::Assistant.as_str())
         .expect("assistant snapshot");
     assert!(assistant_snapshot.usage().is_none());
 

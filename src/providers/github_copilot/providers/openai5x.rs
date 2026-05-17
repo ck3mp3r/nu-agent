@@ -1,10 +1,12 @@
 use crate::providers::github_copilot::providers::contract::{
     CopilotCompletion, CopilotResponse, GitHubCopilotProvider,
 };
+use rig::completion::Usage;
+use rig::completion::message::{AssistantContent, Text};
 use rig::completion::request::{CompletionError, CompletionRequest as CoreCompletionRequest};
 use rig::http_client::{self, HeaderValue, HttpClientExt};
+use rig::one_or_many::OneOrMany;
 use serde::Deserialize;
-use serde_json::Value;
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct OpenAI5xProvider;
@@ -22,200 +24,12 @@ impl GitHubCopilotProvider for OpenAI5xProvider {
             model.to_owned(),
             completion_request,
         ))?;
-        let mut value = serde_json::to_value(request)?;
-
-        if let Some(input_value) = value.get_mut("input")
-            && !input_value.is_string()
-        {
-            *input_value = Value::String(coerce_input_to_string(input_value));
-        }
-
-        serde_json::to_vec(&value).map_err(Into::into)
+        serde_json::to_vec(&request).map_err(Into::into)
     }
 
     fn map_response(text: &str) -> Result<CopilotResponse, CompletionError> {
-        let response = serde_json::from_str::<ResponsesApiResponse>(text)?;
-
-        // Status gate: mirror rig responses_api status gating semantics exactly
-        // Source: rig-core/src/providers/openai/responses_api/websocket.rs:617-640
-        match response.status {
-            ResponseStatus::Completed => {
-                // Proceed to conversion
-            }
-            ResponseStatus::Failed => {
-                let error_msg = if let Some(ref error) = response.error {
-                    if error.code.is_empty() {
-                        error.message.clone()
-                    } else {
-                        format!("{}: {}", error.code, error.message)
-                    }
-                } else {
-                    "OpenAI responses returned a failed response".to_string()
-                };
-                return Err(CompletionError::ProviderError(error_msg));
-            }
-            ResponseStatus::Incomplete => {
-                let reason = response
-                    .incomplete_details
-                    .as_ref()
-                    .map(|details| details.reason.as_str())
-                    .unwrap_or("unknown reason");
-                return Err(CompletionError::ProviderError(format!(
-                    "OpenAI responses response was incomplete: {reason}"
-                )));
-            }
-            status => {
-                return Err(CompletionError::ProviderError(format!(
-                    "OpenAI responses response ended with status {:?}",
-                    status
-                )));
-            }
-        }
-
-        // Check for error field even on completed status (rig semantics)
-        if let Some(ref error) = response.error {
-            let error_msg = if error.code.is_empty() {
-                error.message.clone()
-            } else {
-                format!("{}: {}", error.code, error.message)
-            };
-            return Err(CompletionError::ProviderError(error_msg));
-        }
-
-        // Empty output check: mirror rig TryFrom semantics
-        // Source: rig-core/src/providers/openai/responses_api/mod.rs:1448-1451
-        if response.output.is_empty() {
-            return Err(CompletionError::ResponseError(
-                "Response contained no parts".to_owned(),
-            ));
-        }
-
-        let message_text = response
-            .output
-            .iter()
-            .filter(|item| item.kind == "message")
-            .flat_map(|item| item.content.iter().flatten())
-            .filter(|content| content.kind == "output_text")
-            .filter_map(|content| content.text.clone())
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        // Function call conversion: mirror rig OutputFunctionCall semantics exactly
-        // Source: rig-core/src/providers/openai/responses_api/mod.rs:1247-1255, 1296-1303
-        //
-        // Rig branch behavior:
-        // 1. call_id is REQUIRED (String, not Option) - missing call_id = deserialization error
-        // 2. arguments uses stringified_json deserializer:
-        //    - empty string → {}
-        //    - malformed JSON → serde error (no drop)
-        // 3. No tool call drop on validation - all errors are deserialization failures
-        //
-        // Implementation: collect into Result to preserve error propagation semantics
-        let tool_calls = response
-            .output
-            .iter()
-            .filter(|item| item.kind == "function_call")
-            .map(|item| -> Result<serde_json::Value, CompletionError> {
-                // Branch 1: call_id requirement (rig line 1300: pub call_id: String)
-                let call_id = item.call_id.clone().ok_or_else(|| {
-                    CompletionError::ProviderError(
-                        "Function call missing required call_id field".to_string(),
-                    )
-                })?;
-
-                // Branch 2: id requirement (rig uses both id and call_id)
-                let _id = item.id.clone().ok_or_else(|| {
-                    CompletionError::ProviderError(
-                        "Function call missing required id field".to_string(),
-                    )
-                })?;
-
-                // Branch 3: name requirement
-                let name = item.name.clone().ok_or_else(|| {
-                    CompletionError::ProviderError(
-                        "Function call missing required name field".to_string(),
-                    )
-                })?;
-
-                // Branch 4: arguments handling (rig json_utils::stringified_json semantics)
-                // Source: rig-core/src/json_utils.rs:63-72
-                // - empty/whitespace string → {}
-                // - valid JSON string → parse
-                // - malformed JSON → error (rig returns serde error, we return ProviderError)
-                let arguments_str = item.arguments.clone().unwrap_or_default();
-                let arguments_value = if arguments_str.trim().is_empty() {
-                    serde_json::json!({})
-                } else {
-                    serde_json::from_str(&arguments_str).map_err(|e| {
-                        CompletionError::ProviderError(format!(
-                            "Malformed function call arguments JSON: {}",
-                            e
-                        ))
-                    })?
-                };
-
-                // Serialize arguments back to string for transport (OpenAI expects string)
-                let arguments_serialized = arguments_value.to_string();
-
-                Ok(serde_json::json!({
-                    "id": call_id,  // Use call_id as the tool call ID (rig convention)
-                    "type": "function",
-                    "function": {
-                        "name": name,
-                        "arguments": arguments_serialized
-                    }
-                }))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-
-        // Empty content check: mirror rig TryFrom semantics
-        // Source: rig-core/src/providers/openai/responses_api/mod.rs:1467-1471
-        if message_text.trim().is_empty() && tool_calls.is_empty() {
-            return Err(CompletionError::ResponseError(
-                "Response contained no message or tool call (empty)".to_owned(),
-            ));
-        }
-
-        let assistant_message = if message_text.trim().is_empty() {
-            serde_json::json!({
-                "role": "assistant",
-                "content": "",
-                "tool_calls": tool_calls
-            })
-        } else if tool_calls.is_empty() {
-            serde_json::json!({
-                "role": "assistant",
-                "content": message_text
-            })
-        } else {
-            serde_json::json!({
-                "role": "assistant",
-                "content": message_text,
-                "tool_calls": tool_calls
-            })
-        };
-
-        let usage = response.usage.unwrap_or_default();
-        let value = serde_json::json!({
-            "id": response.id,
-            "object": "chat.completion",
-            "created": 0,
-            "model": response.model,
-            "choices": [
-                {
-                    "index": 0,
-                    "message": assistant_message,
-                    "finish_reason": "stop"
-                }
-            ],
-            "usage": {
-                "prompt_tokens": usage.input_tokens.unwrap_or(0),
-                "completion_tokens": usage.output_tokens.unwrap_or(0),
-                "total_tokens": usage.total_tokens.unwrap_or(0)
-            }
-        });
-
-        serde_json::from_value(value).map_err(Into::into)
+        let response = Self::parse_and_validate(text)?;
+        Self::build_raw_response(&response)
     }
 
     fn map_error(status: reqwest::StatusCode, text: &str) -> CompletionError {
@@ -296,8 +110,7 @@ impl GitHubCopilotProvider for OpenAI5xProvider {
             let text = http_client::text(response).await?;
 
             if status.is_success() {
-                let parsed = Self::map_response(&text)?;
-                parsed.try_into()
+                Self::build_completion(&text)
             } else {
                 Err(Self::map_error(status, &text))
             }
@@ -305,46 +118,303 @@ impl GitHubCopilotProvider for OpenAI5xProvider {
     }
 }
 
-fn coerce_input_to_string(input: &Value) -> String {
-    if let Some(s) = input.as_str() {
-        return s.to_string();
-    }
-
-    if let Some(arr) = input.as_array() {
-        return arr
-            .iter()
-            .filter_map(extract_text_fragment)
-            .collect::<Vec<_>>()
-            .join("\n")
-            .trim()
-            .to_string();
-    }
-
-    extract_text_fragment(input).unwrap_or_default()
+/// Private struct to hold validated tool call data
+struct ValidatedToolCall {
+    id: String,      // fc_-prefixed
+    call_id: String, // call_-prefixed
+    name: String,
+    arguments: serde_json::Value,
 }
 
-fn extract_text_fragment(value: &Value) -> Option<String> {
-    if let Some(text) = value.get("text").and_then(Value::as_str) {
-        return Some(text.to_string());
-    }
+impl OpenAI5xProvider {
+    /// Parse and validate a ResponsesApiResponse from JSON text.
+    ///
+    /// This performs three validation steps mirroring rig's responses_api semantics:
+    /// 1. Status gate: Only `Completed` status proceeds, others error with descriptive messages
+    /// 2. Error field check: Even on `Completed` status, error field causes failure
+    /// 3. Empty output check: Response must contain at least one output item
+    ///
+    /// Source: rig-core/src/providers/openai/responses_api/websocket.rs:617-640
+    ///         rig-core/src/providers/openai/responses_api/mod.rs:1448-1451
+    fn parse_and_validate(text: &str) -> Result<ResponsesApiResponse, CompletionError> {
+        let response = serde_json::from_str::<ResponsesApiResponse>(text)?;
 
-    if let Some(content) = value.get("content") {
-        if let Some(text) = content.as_str() {
-            return Some(text.to_string());
-        }
-        if let Some(arr) = content.as_array() {
-            let merged = arr
-                .iter()
-                .filter_map(extract_text_fragment)
-                .collect::<Vec<_>>()
-                .join("\n");
-            if !merged.is_empty() {
-                return Some(merged);
+        // Status gate: mirror rig responses_api status gating semantics exactly
+        match response.status {
+            ResponseStatus::Completed => {
+                // Proceed to conversion
+            }
+            ResponseStatus::Failed => {
+                let error_msg = if let Some(ref error) = response.error {
+                    if error.code.is_empty() {
+                        error.message.clone()
+                    } else {
+                        format!("{}: {}", error.code, error.message)
+                    }
+                } else {
+                    "OpenAI responses returned a failed response".to_string()
+                };
+                return Err(CompletionError::ProviderError(error_msg));
+            }
+            ResponseStatus::Incomplete => {
+                let reason = response
+                    .incomplete_details
+                    .as_ref()
+                    .map(|details| details.reason.as_str())
+                    .unwrap_or("unknown reason");
+                return Err(CompletionError::ProviderError(format!(
+                    "OpenAI responses response was incomplete: {reason}"
+                )));
+            }
+            status => {
+                return Err(CompletionError::ProviderError(format!(
+                    "OpenAI responses response ended with status {:?}",
+                    status
+                )));
             }
         }
+
+        // Check for error field even on completed status (rig semantics)
+        if let Some(ref error) = response.error {
+            let error_msg = if error.code.is_empty() {
+                error.message.clone()
+            } else {
+                format!("{}: {}", error.code, error.message)
+            };
+            return Err(CompletionError::ProviderError(error_msg));
+        }
+
+        // Empty output check: mirror rig TryFrom semantics
+        if response.output.is_empty() {
+            return Err(CompletionError::ResponseError(
+                "Response contained no parts".to_owned(),
+            ));
+        }
+
+        Ok(response)
     }
 
-    None
+    /// Extract message text from a ResponsesApiResponse.
+    /// Combines all output_text content from message items.
+    fn extract_text(response: &ResponsesApiResponse) -> String {
+        let message_text_parts: Vec<String> = response
+            .output
+            .iter()
+            .filter(|item| item.kind == "message")
+            .flat_map(|item| item.content.iter().flatten())
+            .filter(|content| content.kind == "output_text")
+            .filter_map(|content| content.text.clone())
+            .collect();
+        message_text_parts.join("\n")
+    }
+
+    /// Extract and validate tool calls from a ResponsesApiResponse.
+    ///
+    /// Mirrors rig OutputFunctionCall semantics exactly:
+    /// - call_id is REQUIRED (String, not Option)
+    /// - arguments uses stringified_json deserializer (empty string → {})
+    /// - No tool call drop on validation - all errors are deserialization failures
+    ///
+    /// Source: rig-core/src/providers/openai/responses_api/mod.rs:1247-1255, 1296-1303
+    fn extract_tool_calls(
+        response: &ResponsesApiResponse,
+    ) -> Result<Vec<ValidatedToolCall>, CompletionError> {
+        response
+            .output
+            .iter()
+            .filter(|item| item.kind == "function_call")
+            .map(|item| {
+                // Validate call_id requirement (rig line 1300: pub call_id: String)
+                let call_id = item.call_id.clone().ok_or_else(|| {
+                    CompletionError::ProviderError(
+                        "Function call missing required call_id field".to_string(),
+                    )
+                })?;
+
+                // Validate id requirement (rig uses both id and call_id)
+                let id = item.id.clone().ok_or_else(|| {
+                    CompletionError::ProviderError(
+                        "Function call missing required id field".to_string(),
+                    )
+                })?;
+
+                // Validate name requirement
+                let name = item.name.clone().ok_or_else(|| {
+                    CompletionError::ProviderError(
+                        "Function call missing required name field".to_string(),
+                    )
+                })?;
+
+                // Handle arguments (rig json_utils::stringified_json semantics)
+                // Source: rig-core/src/json_utils.rs:63-72
+                // - empty/whitespace string → {}
+                // - valid JSON string → parse
+                // - malformed JSON → error
+                let arguments_str = item.arguments.clone().unwrap_or_default();
+                let arguments = if arguments_str.trim().is_empty() {
+                    serde_json::json!({})
+                } else {
+                    serde_json::from_str(&arguments_str).map_err(|e| {
+                        CompletionError::ProviderError(format!(
+                            "Malformed function call arguments JSON: {}",
+                            e
+                        ))
+                    })?
+                };
+
+                Ok(ValidatedToolCall {
+                    id,
+                    call_id,
+                    name,
+                    arguments,
+                })
+            })
+            .collect()
+    }
+
+    /// Build CopilotResponse (raw_response) from a parsed ResponsesApiResponse.
+    /// Constructs Chat Completions JSON format without re-parsing the input text.
+    fn build_raw_response(
+        response: &ResponsesApiResponse,
+    ) -> Result<CopilotResponse, CompletionError> {
+        let combined_text = Self::extract_text(response);
+        let tool_calls = Self::extract_tool_calls(response)?;
+
+        // Convert ValidatedToolCall to Chat Completions JSON format
+        let tool_calls_json: Vec<serde_json::Value> = tool_calls
+            .iter()
+            .map(|tc| {
+                serde_json::json!({
+                    "id": tc.id,
+                    "call_id": tc.call_id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.name,
+                        "arguments": tc.arguments.to_string()
+                    }
+                })
+            })
+            .collect();
+
+        // Empty content check: mirror rig TryFrom semantics
+        if combined_text.trim().is_empty() && tool_calls_json.is_empty() {
+            return Err(CompletionError::ResponseError(
+                "Response contained no message or tool call (empty)".to_owned(),
+            ));
+        }
+
+        // Build assistant message JSON
+        let assistant_message_json = if combined_text.trim().is_empty() {
+            serde_json::json!({
+                "role": "assistant",
+                "content": "",
+                "tool_calls": tool_calls_json
+            })
+        } else if tool_calls_json.is_empty() {
+            serde_json::json!({
+                "role": "assistant",
+                "content": combined_text
+            })
+        } else {
+            serde_json::json!({
+                "role": "assistant",
+                "content": combined_text,
+                "tool_calls": tool_calls_json
+            })
+        };
+
+        // Build usage
+        let default_usage = ResponsesUsage::default();
+        let usage_data = response.usage.as_ref().unwrap_or(&default_usage);
+        let usage_json = serde_json::json!({
+            "prompt_tokens": usage_data.input_tokens.unwrap_or(0),
+            "completion_tokens": usage_data.output_tokens.unwrap_or(0),
+            "total_tokens": usage_data.total_tokens.unwrap_or(0)
+        });
+
+        // Build the full response JSON
+        let response_json = serde_json::json!({
+            "id": response.id,
+            "object": "chat.completion",
+            "created": 0,
+            "model": response.model,
+            "choices": [{
+                "index": 0,
+                "message": assistant_message_json,
+                "finish_reason": "stop"
+            }],
+            "usage": usage_json
+        });
+
+        // Deserialize into rig's CompletionResponse
+        serde_json::from_value(response_json).map_err(Into::into)
+    }
+
+    pub fn build_completion(text: &str) -> Result<CopilotCompletion, CompletionError> {
+        let response = Self::parse_and_validate(text)?;
+
+        // Extract text and tool calls using shared helpers
+        let combined_text = Self::extract_text(&response);
+        let tool_calls = Self::extract_tool_calls(&response)?;
+
+        // Build AssistantContent from validated tool calls
+        let tool_call_contents: Vec<AssistantContent> = tool_calls
+            .into_iter()
+            .map(|tc| {
+                AssistantContent::tool_call_with_call_id(tc.id, tc.call_id, tc.name, tc.arguments)
+            })
+            .collect();
+
+        // Build content parts
+        let mut content_parts: Vec<AssistantContent> = Vec::new();
+
+        if !combined_text.trim().is_empty() {
+            content_parts.push(AssistantContent::Text(Text {
+                text: combined_text,
+            }));
+        }
+
+        content_parts.extend(tool_call_contents);
+
+        // Empty content check: mirror rig TryFrom semantics
+        if content_parts.is_empty() {
+            return Err(CompletionError::ResponseError(
+                "Response contained no message or tool call (empty)".to_owned(),
+            ));
+        }
+
+        // Build OneOrMany<AssistantContent>
+        let choice = if content_parts.len() == 1 {
+            OneOrMany::one(content_parts.into_iter().next().unwrap())
+        } else {
+            OneOrMany::many(content_parts).map_err(|_| {
+                CompletionError::ResponseError(
+                    "Failed to create OneOrMany from content parts".to_owned(),
+                )
+            })?
+        };
+
+        // Build Usage
+        let default_usage = ResponsesUsage::default();
+        let usage_data = response.usage.as_ref().unwrap_or(&default_usage);
+        let usage = Usage {
+            input_tokens: usage_data.input_tokens.unwrap_or(0),
+            output_tokens: usage_data.output_tokens.unwrap_or(0),
+            total_tokens: usage_data.total_tokens.unwrap_or(0),
+            cached_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+        };
+
+        // Get raw_response without double-parsing - reuse already-parsed response
+        let raw_response = Self::build_raw_response(&response)?;
+
+        Ok(CopilotCompletion {
+            choice,
+            usage,
+            raw_response,
+            message_id: None,
+        })
+    }
 }
 
 #[derive(Debug, Deserialize)]

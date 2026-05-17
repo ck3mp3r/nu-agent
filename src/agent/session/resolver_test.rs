@@ -4,6 +4,7 @@ use crate::agent::session::resolver::{
     DefaultSessionResolver, SessionRequest, SessionResolutionInput, SessionResolver,
     resolve_session_request,
 };
+use crate::session::MessageRole;
 use crate::session::SessionStore;
 
 #[test]
@@ -64,7 +65,7 @@ fn default_session_resolver_tui_explicit_loads_existing_else_creates_missing() {
     first_session
         .add_message(
             &store,
-            crate::session::Message::new("user".to_string(), "persist me".to_string()),
+            crate::session::Message::new(MessageRole::User, "persist me".to_string()),
         )
         .expect("persist history");
 

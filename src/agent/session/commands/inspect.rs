@@ -54,7 +54,7 @@ impl SimplePluginCommand for AgentSessionInspect {
             .iter()
             .map(|msg| {
                 let mut record = Record::new();
-                record.push("role", Value::string(msg.role(), call.head));
+                record.push("role", Value::string(msg.role().as_str(), call.head));
                 record.push("content", Value::string(msg.content(), call.head));
                 record.push(
                     "timestamp",

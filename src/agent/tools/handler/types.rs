@@ -1,9 +1,8 @@
 use nu_plugin::EngineInterface;
 use nu_protocol::Span;
-use rig::completion::message::ToolCall;
 use serde_json::Value as JsonValue;
 
-use crate::agent::protocol::event::{ToolDisplay, ToolDisplayStats};
+use crate::agent::protocol::event::ToolDisplayStats;
 use crate::agent::tools::authz::{
     AskApprovalHook, PermissionEventSink, PermissionsConfig, SessionGrantCache,
 };
@@ -13,6 +12,7 @@ use crate::tools::{closure::ClosureRegistry, executor::ToolExecutor};
 pub enum ToolSource {
     Closure,
     Mcp,
+    Builtin,
     Unknown,
 }
 
@@ -21,6 +21,7 @@ impl ToolSource {
         match self {
             Self::Closure => "closure",
             Self::Mcp => "mcp",
+            Self::Builtin => "builtin",
             Self::Unknown => "unknown",
         }
     }
@@ -59,65 +60,6 @@ pub struct ToolFailureOutcome {
     pub details: Option<JsonValue>,
 }
 
-impl ToolFailureOutcome {
-    pub fn to_json_value(&self) -> JsonValue {
-        let mut obj = serde_json::Map::new();
-        obj.insert(
-            "tool_name".to_string(),
-            JsonValue::String(self.tool_name.clone()),
-        );
-        obj.insert(
-            "tool_call_id".to_string(),
-            JsonValue::String(self.tool_call_id.clone()),
-        );
-        obj.insert(
-            "source".to_string(),
-            JsonValue::String(self.source.as_str().to_string()),
-        );
-        obj.insert(
-            "error_kind".to_string(),
-            JsonValue::String(self.error_kind.as_str().to_string()),
-        );
-        obj.insert(
-            "message".to_string(),
-            JsonValue::String(self.message.clone()),
-        );
-
-        if let Some(details) = &self.details {
-            obj.insert("details".to_string(), details.clone());
-        }
-
-        JsonValue::Object(obj)
-    }
-
-    pub(crate) fn to_json_string(&self) -> String {
-        serde_json::to_string(&self.to_json_value()).unwrap_or_else(|_| {
-            format!(
-                r#"{{"tool_name":"{}","tool_call_id":"{}","source":"{}","error_kind":"{}","message":"{}"}}"#,
-                self.tool_name,
-                self.tool_call_id,
-                self.source.as_str(),
-                self.error_kind.as_str(),
-                self.message
-            )
-        })
-    }
-}
-
-/// Result of executing a single tool call.
-///
-/// Contains the tool call ID and the serialized JSON result.
-#[derive(Debug, Clone)]
-pub struct ToolCallResult {
-    pub tool_call_id: String,
-    pub tool_name: String,
-    pub arguments: String,
-    pub source: ToolSource,
-    pub content: String,
-    pub display: Option<ToolDisplay>,
-    pub failure: Option<ToolFailureOutcome>,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthorizationDiagnostic {
     pub code: String,
@@ -133,49 +75,11 @@ pub struct AuthorizationDeniedDetails {
     pub diagnostics: Vec<AuthorizationDiagnostic>,
 }
 
-impl AuthorizationDeniedDetails {
-    pub fn to_json_value(&self) -> JsonValue {
-        let mut details = serde_json::Map::new();
-        details.insert(
-            "rule_identity".to_string(),
-            JsonValue::String(self.rule_identity.clone()),
-        );
-        details.insert("scope".to_string(), JsonValue::String(self.scope.clone()));
-        if let Some(field) = &self.target_field {
-            details.insert("target_field".to_string(), JsonValue::String(field.clone()));
-        }
-        details.insert(
-            "pattern".to_string(),
-            JsonValue::String(self.pattern.clone()),
-        );
-        details.insert(
-            "diagnostics".to_string(),
-            JsonValue::Array(
-                self.diagnostics
-                    .iter()
-                    .map(|diagnostic| {
-                        serde_json::json!({
-                            "code": diagnostic.code,
-                            "message": diagnostic.message,
-                        })
-                    })
-                    .collect::<Vec<_>>(),
-            ),
-        );
-
-        JsonValue::Object(details)
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct EditPreviewDisplayPayload {
     pub path: String,
     pub diff: String,
     pub stats: ToolDisplayStats,
-}
-
-pub(crate) fn serialized_tool_call_arguments(tool_call: &ToolCall) -> String {
-    serde_json::to_string(&tool_call.function.arguments).unwrap_or_else(|_| "{}".to_string())
 }
 
 #[derive(Debug, Clone)]
@@ -230,7 +134,7 @@ impl McpToolRegistry {
                     exposed_name
                 ));
             }
-            raw_name_by_exposed_name.insert(exposed_name.clone(), raw_name);
+            raw_name_by_exposed_name.insert(exposed_name.clone(), raw_name.clone());
             server_by_exposed_name.insert(exposed_name, server_name.clone());
             enabled_servers.insert(server_name);
         }
@@ -324,7 +228,7 @@ impl McpToolRegistry {
             if pending.is_new_mapping {
                 self.names.insert(pending.exposed_name.clone());
                 self.raw_name_by_exposed_name
-                    .insert(pending.exposed_name.clone(), pending.raw_name);
+                    .insert(pending.exposed_name.clone(), pending.raw_name.clone());
                 self.server_by_exposed_name
                     .insert(pending.exposed_name.clone(), pending.server_name.clone());
             }

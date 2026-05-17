@@ -1,5 +1,3 @@
-use nu_protocol::{Span, Value};
-
 use crate::agent::ui::tui::state::ModelPickerOption;
 use crate::agent::{
     protocol::{
@@ -117,10 +115,6 @@ where
 
     fn take_cancel_requested(&self) -> bool {
         self.renderer.take_cancel_requested()
-    }
-
-    fn cancellation_value(&self, span: Span) -> Option<Value> {
-        Some(Value::nothing(span))
     }
 }
 

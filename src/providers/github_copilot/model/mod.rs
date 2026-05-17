@@ -3,15 +3,28 @@ use crate::providers::github_copilot::providers::{
     AnthropicProvider, OpenAI4xProvider, OpenAI5xProvider,
 };
 use crate::providers::github_copilot::{Client, Error};
+use rig::completion::Completion;
 
 /// GitHub Copilot agent variants selected once from model family.
 pub enum Agent<H = reqwest::Client>
 where
     H: rig::http_client::HttpClientExt + Default + std::fmt::Debug + Clone + 'static,
 {
-    Anthropic(rig::agent::Agent<CompletionModel<AnthropicProvider, H>>),
-    OpenAI4x(rig::agent::Agent<CompletionModel<OpenAI4xProvider, H>>),
-    OpenAI5x(rig::agent::Agent<CompletionModel<OpenAI5xProvider, H>>),
+    Anthropic(
+        rig::agent::Agent<CompletionModel<AnthropicProvider, H>>,
+        Client<H>,
+        String,
+    ),
+    OpenAI4x(
+        rig::agent::Agent<CompletionModel<OpenAI4xProvider, H>>,
+        Client<H>,
+        String,
+    ),
+    OpenAI5x(
+        rig::agent::Agent<CompletionModel<OpenAI5xProvider, H>>,
+        Client<H>,
+        String,
+    ),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,20 +81,88 @@ pub fn agent_from_config(
 
     let agent = match variant {
         ProviderVariant::Anthropic => {
-            let model = CompletionModel::<AnthropicProvider, _>::new(client, model_name);
-            Agent::Anthropic(rig::agent::AgentBuilder::new(model).build())
+            let model = CompletionModel::<AnthropicProvider, _>::new(client.clone(), model_name);
+            Agent::Anthropic(
+                rig::agent::AgentBuilder::new(model).build(),
+                client,
+                model_name.to_string(),
+            )
         }
         ProviderVariant::OpenAI4x => {
-            let model = CompletionModel::<OpenAI4xProvider, _>::new(client, model_name);
-            Agent::OpenAI4x(rig::agent::AgentBuilder::new(model).build())
+            let model = CompletionModel::<OpenAI4xProvider, _>::new(client.clone(), model_name);
+            Agent::OpenAI4x(
+                rig::agent::AgentBuilder::new(model).build(),
+                client,
+                model_name.to_string(),
+            )
         }
         ProviderVariant::OpenAI5x => {
-            let model = CompletionModel::<OpenAI5xProvider, _>::new(client, model_name);
-            Agent::OpenAI5x(rig::agent::AgentBuilder::new(model).build())
+            let model = CompletionModel::<OpenAI5xProvider, _>::new(client.clone(), model_name);
+            Agent::OpenAI5x(
+                rig::agent::AgentBuilder::new(model).build(),
+                client,
+                model_name.to_string(),
+            )
         }
     };
 
     Ok(agent)
+}
+
+impl<H> Agent<H>
+where
+    H: rig::http_client::HttpClientExt + Default + std::fmt::Debug + Clone + 'static,
+{
+    /// Execute a single-turn completion with the given prompt text.
+    ///
+    /// This is a simpler interface than the full multi-turn agent.prompt() loop.
+    /// Use for one-off completions without tool calls or chat history.
+    pub async fn completion(
+        &self,
+        prompt_text: &str,
+    ) -> Result<String, rig::completion::CompletionError> {
+        use rig::completion::AssistantContent;
+
+        let extract_text = |response: rig::completion::CompletionResponse<_>| {
+            let mut text_parts = Vec::new();
+            for content in response.choice {
+                if let AssistantContent::Text(t) = content {
+                    text_parts.push(t.to_string());
+                }
+            }
+            text_parts.join("\n")
+        };
+
+        match self {
+            Agent::Anthropic(agent, ..) => {
+                let response = agent
+                    .completion(prompt_text, Vec::<rig::completion::Message>::new())
+                    .await?
+                    .tools(vec![])
+                    .send()
+                    .await?;
+                Ok(extract_text(response))
+            }
+            Agent::OpenAI4x(agent, ..) => {
+                let response = agent
+                    .completion(prompt_text, Vec::<rig::completion::Message>::new())
+                    .await?
+                    .tools(vec![])
+                    .send()
+                    .await?;
+                Ok(extract_text(response))
+            }
+            Agent::OpenAI5x(agent, ..) => {
+                let response = agent
+                    .completion(prompt_text, Vec::<rig::completion::Message>::new())
+                    .await?
+                    .tools(vec![])
+                    .send()
+                    .await?;
+                Ok(extract_text(response))
+            }
+        }
+    }
 }
 
 #[cfg(test)]

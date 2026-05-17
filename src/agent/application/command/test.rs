@@ -3,7 +3,6 @@ use crate::agent::application::command::{
     extract_tool_timeout, extract_tools_from_call, select_mcp_tools,
 };
 use crate::config::Config;
-use crate::llm::runtime::LlmRuntime;
 use crate::plugin::RuntimeCtx;
 use crate::session::SessionStore;
 use crate::tools::mcp::client::McpToolDefinition;
@@ -22,7 +21,7 @@ use tempfile::TempDir;
 fn create_test_agent() -> (Agent, TempDir) {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
-    let agent = Agent::new(store, RuntimeCtx::new(Arc::new(LlmRuntime::new())));
+    let agent = Agent::new(store, RuntimeCtx::new());
     (agent, temp_dir)
 }
 
@@ -2141,6 +2140,7 @@ mod tui_session_resolution_tests {
     use crate::agent::session::resolver::{
         SessionRequest, generate_session_id, resolve_session_request,
     };
+    use crate::session::MessageRole;
     use nu_protocol::{Span, Value};
 
     fn materialize_pending_tui_session_if_needed(
@@ -2239,20 +2239,20 @@ mod tui_session_resolution_tests {
         session
             .add_message(
                 &store,
-                crate::session::Message::new("user".to_string(), "hello".to_string()),
+                crate::session::Message::new(MessageRole::User, "hello".to_string()),
             )
             .expect("save user message");
         session
             .add_message(
                 &store,
-                crate::session::Message::new("assistant".to_string(), "hi".to_string()),
+                crate::session::Message::new(MessageRole::Assistant, "hi".to_string()),
             )
             .expect("save assistant message");
 
         let reloaded = store.load_session(&session_id).expect("reload session");
         assert_eq!(reloaded.messages().len(), 2);
-        assert_eq!(reloaded.messages()[0].role(), "user");
-        assert_eq!(reloaded.messages()[1].role(), "assistant");
+        assert_eq!(reloaded.messages()[0].role(), MessageRole::User);
+        assert_eq!(reloaded.messages()[1].role(), MessageRole::Assistant);
 
         let listed = store.list_sessions().expect("list sessions");
         let info = listed
@@ -2268,7 +2268,7 @@ mod tui_session_resolution_tests {
 mod session_integration_tests {
     use super::*;
     use crate::agent::application::command::extract_and_validate_session_flags;
-    use crate::session::{Message, SessionStore};
+    use crate::session::{Message, MessageRole, SessionStore};
     use tempfile::TempDir;
 
     #[test]
@@ -2276,7 +2276,7 @@ mod session_integration_tests {
         // Verify Agent has access to SessionStore
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
-        let _agent = Agent::new(store.clone(), RuntimeCtx::new(Arc::new(LlmRuntime::new())));
+        let _agent = Agent::new(store.clone(), RuntimeCtx::new());
 
         // Create a test session directly via store
         let session = store
@@ -2298,13 +2298,13 @@ mod session_integration_tests {
             .expect("Failed to create session");
 
         // Add user message
-        let user_msg = Message::new("user".to_string(), "Hello".to_string());
+        let user_msg = Message::new(MessageRole::User, "Hello".to_string());
         session
             .add_message(&store, user_msg)
             .expect("Failed to add message");
 
         // Add assistant message
-        let assistant_msg = Message::new("assistant".to_string(), "Hi there!".to_string());
+        let assistant_msg = Message::new(MessageRole::Assistant, "Hi there!".to_string());
         session
             .add_message(&store, assistant_msg)
             .expect("Failed to add message");
@@ -2314,9 +2314,9 @@ mod session_integration_tests {
             .load_session("chat-1")
             .expect("Failed to load session");
         assert_eq!(reloaded.messages().len(), 2);
-        assert_eq!(reloaded.messages()[0].role(), "user");
+        assert_eq!(reloaded.messages()[0].role(), MessageRole::User);
         assert_eq!(reloaded.messages()[0].content(), "Hello");
-        assert_eq!(reloaded.messages()[1].role(), "assistant");
+        assert_eq!(reloaded.messages()[1].role(), MessageRole::Assistant);
         assert_eq!(reloaded.messages()[1].content(), "Hi there!");
     }
 
@@ -2368,7 +2368,7 @@ mod session_integration_tests {
 
         // Add messages up to threshold
         for i in 0..3 {
-            let msg = Message::new("user".to_string(), format!("Message {}", i));
+            let msg = Message::new(MessageRole::User, format!("Message {}", i));
             session
                 .add_message(&store, msg)
                 .expect("Failed to add message");
@@ -2377,7 +2377,7 @@ mod session_integration_tests {
         assert_eq!(session.messages().len(), 3);
 
         // Add one more to trigger compaction
-        let msg = Message::new("user".to_string(), "Message 4".to_string());
+        let msg = Message::new(MessageRole::User, "Message 4".to_string());
         session
             .add_message(&store, msg)
             .expect("Failed to add message");

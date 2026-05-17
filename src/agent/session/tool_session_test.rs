@@ -1,3 +1,4 @@
+use crate::session::MessageRole;
 use crate::session::{Message, SessionStore};
 use tempfile::TempDir;
 
@@ -13,12 +14,12 @@ fn test_tool_results_saved_to_session() {
         .unwrap();
 
     // Add a user message
-    let user_msg = Message::new("user".to_string(), "Use the calculator tool".to_string());
+    let user_msg = Message::new(MessageRole::User, "Use the calculator tool".to_string());
     session.add_message(&store, user_msg).unwrap();
 
     // Add a tool result message (this is what we're testing)
     let tool_msg = Message::new(
-        "tool".to_string(),
+        MessageRole::Tool,
         "tool[calculator] args={} · done".to_string(),
     )
     .with_tool_details("{}", "42", true);
@@ -27,7 +28,7 @@ fn test_tool_results_saved_to_session() {
     // Verify: Check that tool message is in session
     let messages = session.messages();
     assert_eq!(messages.len(), 2);
-    assert_eq!(messages[1].role(), "tool");
+    assert_eq!(messages[1].role(), MessageRole::Tool);
     assert_eq!(messages[1].content(), "tool[calculator] args={} · done");
     assert_eq!(messages[1].tool_result(), Some("42"));
 
@@ -35,7 +36,7 @@ fn test_tool_results_saved_to_session() {
     let reloaded = store.load_session("test-tool-save").unwrap();
     let reloaded_messages = reloaded.messages();
     assert_eq!(reloaded_messages.len(), 2);
-    assert_eq!(reloaded_messages[1].role(), "tool");
+    assert_eq!(reloaded_messages[1].role(), MessageRole::Tool);
 }
 
 #[test]
@@ -50,21 +51,18 @@ fn test_session_format_history() {
         .unwrap();
 
     session
+        .add_message(&store, Message::new(MessageRole::User, "Hello".to_string()))
+        .unwrap();
+    session
         .add_message(
             &store,
-            Message::new("user".to_string(), "Hello".to_string()),
+            Message::new(MessageRole::Assistant, "Hi there".to_string()),
         )
         .unwrap();
     session
         .add_message(
             &store,
-            Message::new("assistant".to_string(), "Hi there".to_string()),
-        )
-        .unwrap();
-    session
-        .add_message(
-            &store,
-            Message::new("tool".to_string(), "Tool result: success".to_string()),
+            Message::new(MessageRole::Tool, "Tool result: success".to_string()),
         )
         .unwrap();
 
@@ -96,29 +94,26 @@ fn test_multi_turn_tool_context_preserved() {
     session
         .add_message(
             &store,
-            Message::new("user".to_string(), "What is 2+2?".to_string()),
+            Message::new(MessageRole::User, "What is 2+2?".to_string()),
         )
         .unwrap();
     session
         .add_message(
             &store,
-            Message::new(
-                "assistant".to_string(),
-                "Let me calculate that.".to_string(),
-            ),
+            Message::new(MessageRole::Assistant, "Let me calculate that.".to_string()),
         )
         .unwrap();
     session
         .add_message(
             &store,
-            Message::new("tool".to_string(), "tool[calc] args={} · done".to_string())
+            Message::new(MessageRole::Tool, "tool[calc] args={} · done".to_string())
                 .with_tool_details("{}", "4", true),
         )
         .unwrap();
     session
         .add_message(
             &store,
-            Message::new("assistant".to_string(), "The answer is 4.".to_string()),
+            Message::new(MessageRole::Assistant, "The answer is 4.".to_string()),
         )
         .unwrap();
 
@@ -127,7 +122,7 @@ fn test_multi_turn_tool_context_preserved() {
         .add_message(
             &store,
             Message::new(
-                "user".to_string(),
+                MessageRole::User,
                 "What was the previous result?".to_string(),
             ),
         )
@@ -140,7 +135,7 @@ fn test_multi_turn_tool_context_preserved() {
     // Verify: All messages are present in order
     let messages = session.messages();
     assert_eq!(messages.len(), 5);
-    assert_eq!(messages[2].role(), "tool");
+    assert_eq!(messages[2].role(), MessageRole::Tool);
     assert_eq!(messages[2].content(), "tool[calc] args={} · done");
     assert_eq!(messages[2].tool_result(), Some("4"));
 }
@@ -155,12 +150,12 @@ fn test_tool_result_persisted_to_jsonl() {
     let mut session = store.get_or_create(Some("test-jsonl".to_string())).unwrap();
 
     session
-        .add_message(&store, Message::new("user".to_string(), "Test".to_string()))
+        .add_message(&store, Message::new(MessageRole::User, "Test".to_string()))
         .unwrap();
     session
         .add_message(
             &store,
-            Message::new("tool".to_string(), "Tool result".to_string()),
+            Message::new(MessageRole::Tool, "Tool result".to_string()),
         )
         .unwrap();
 
@@ -172,7 +167,7 @@ fn test_tool_result_persisted_to_jsonl() {
     let messages = reloaded.messages();
 
     assert_eq!(messages.len(), 2);
-    assert_eq!(messages[1].role(), "tool");
+    assert_eq!(messages[1].role(), MessageRole::Tool);
     assert_eq!(messages[1].content(), "Tool result");
 }
 

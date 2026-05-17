@@ -5,6 +5,7 @@ use crate::tools::mcp::{
     MCP_TOOL_NAMESPACE_DELIMITER,
     client::McpToolDefinition,
     config::{McpServerConfig, McpTransportType},
+    namespaced::NamespacedClientHandler,
 };
 
 pub struct McpRuntime {
@@ -117,9 +118,9 @@ fn merged_stdio_env_with_pwd(
 }
 
 enum McpSessionHandle {
-    #[allow(dead_code)]
     Rmcp(
-        rmcp::service::RunningService<rmcp::service::RoleClient, rig::tool::rmcp::McpClientHandler>,
+        #[allow(dead_code)]
+        rmcp::service::RunningService<rmcp::service::RoleClient, NamespacedClientHandler>,
     ),
 }
 
@@ -282,7 +283,7 @@ async fn connect_server(
     caller_cwd: Option<&std::path::Path>,
 ) -> Result<
     (
-        rmcp::service::RunningService<rmcp::service::RoleClient, rig::tool::rmcp::McpClientHandler>,
+        rmcp::service::RunningService<rmcp::service::RoleClient, NamespacedClientHandler>,
         Vec<McpToolDefinition>,
     ),
     String,
@@ -292,7 +293,12 @@ async fn connect_server(
         rmcp::model::ClientCapabilities::default(),
         rmcp::model::Implementation::new("nu-agent", env!("CARGO_PKG_VERSION")),
     );
-    let handler = rig::tool::rmcp::McpClientHandler::new(client_info, tool_server_handle.clone());
+    let handler = NamespacedClientHandler::new(
+        client_info,
+        tool_server_handle.clone(),
+        server.name.clone(),
+        MCP_TOOL_NAMESPACE_DELIMITER.to_string(),
+    );
 
     match server.transport {
         McpTransportType::Stdio => {
@@ -321,56 +327,54 @@ async fn connect_server(
             let transport = rmcp::transport::TokioChildProcess::new(cmd)
                 .map_err(|e| format!("failed to build stdio transport: {e}"))?;
 
-            let service = handler
+            let (service, raw_tools) = handler
                 .connect(transport)
                 .await
                 .map_err(|e| format!("failed to connect stdio MCP server: {e}"))?;
 
-            let discovered_tools = discover_tools_for_server(&service, server_name).await?;
+            // Build McpToolDefinition from raw tools without a second round-trip
+            let mut discovered_tools = Vec::with_capacity(raw_tools.len());
+            for tool in raw_tools {
+                let raw_name = tool.name.to_string();
+                validate_raw_tool_name(server_name, &raw_name)?;
+
+                discovered_tools.push(McpToolDefinition {
+                    raw_name: raw_name.clone(),
+                    server: server_name.to_string(),
+                    name: compose_exposed_tool_name(server_name, &raw_name),
+                    description: tool.description.map(|d| d.to_string()),
+                    parameters: Some(serde_json::Value::Object((*tool.input_schema).clone())),
+                });
+            }
+
             Ok((service, discovered_tools))
         }
         McpTransportType::Sse | McpTransportType::Http => {
             let config = build_http_transport_config(server)?;
             let transport = rmcp::transport::StreamableHttpClientTransport::from_config(config);
-            let service = handler
+            let (service, raw_tools) = handler
                 .connect(transport)
                 .await
                 .map_err(|e| format!("failed to connect http MCP server: {e}"))?;
 
-            let discovered_tools = discover_tools_for_server(&service, server_name).await?;
+            // Build McpToolDefinition from raw tools without a second round-trip
+            let mut discovered_tools = Vec::with_capacity(raw_tools.len());
+            for tool in raw_tools {
+                let raw_name = tool.name.to_string();
+                validate_raw_tool_name(server_name, &raw_name)?;
+
+                discovered_tools.push(McpToolDefinition {
+                    raw_name: raw_name.clone(),
+                    server: server_name.to_string(),
+                    name: compose_exposed_tool_name(server_name, &raw_name),
+                    description: tool.description.map(|d| d.to_string()),
+                    parameters: Some(serde_json::Value::Object((*tool.input_schema).clone())),
+                });
+            }
+
             Ok((service, discovered_tools))
         }
     }
-}
-
-async fn discover_tools_for_server(
-    service: &rmcp::service::RunningService<
-        rmcp::service::RoleClient,
-        rig::tool::rmcp::McpClientHandler,
-    >,
-    server_name: &str,
-) -> Result<Vec<McpToolDefinition>, String> {
-    let tools = service
-        .peer()
-        .list_all_tools()
-        .await
-        .map_err(|e| format!("failed to list MCP tools for server '{server_name}': {e}"))?;
-
-    let mut discovered = Vec::with_capacity(tools.len());
-    for tool in tools {
-        let raw_name = tool.name.to_string();
-        validate_raw_tool_name(server_name, &raw_name)?;
-
-        discovered.push(McpToolDefinition {
-            raw_name: raw_name.clone(),
-            server: server_name.to_string(),
-            name: compose_exposed_tool_name(server_name, &raw_name),
-            description: tool.description.map(|d| d.to_string()),
-            parameters: Some(serde_json::Value::Object((*tool.input_schema).clone())),
-        });
-    }
-
-    Ok(discovered)
 }
 
 #[cfg(test)]

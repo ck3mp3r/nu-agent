@@ -128,9 +128,6 @@ pub(crate) trait ProgressUi {
     fn emit(&mut self, event: &UiEvent);
     fn flush(&mut self);
     fn take_cancel_requested(&self) -> bool;
-    fn cancellation_value(&self, _span: Span) -> Option<Value> {
-        None
-    }
 }
 
 pub(crate) trait InteractiveUi: ProgressUi {

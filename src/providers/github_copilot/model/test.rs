@@ -131,7 +131,7 @@ fn agent_from_config_parses_backend_from_model() {
     .unwrap();
 
     match agent {
-        Agent::Anthropic(_) => {}
+        Agent::Anthropic(..) => {}
         _ => panic!("Expected Anthropic agent"),
     }
 
@@ -144,7 +144,7 @@ fn agent_from_config_parses_backend_from_model() {
     .unwrap();
 
     match agent {
-        Agent::OpenAI4x(_) => {}
+        Agent::OpenAI4x(..) => {}
         _ => panic!("Expected OpenAI 4x agent"),
     }
 
@@ -157,7 +157,7 @@ fn agent_from_config_parses_backend_from_model() {
     .unwrap();
 
     match agent {
-        Agent::OpenAI5x(_) => {}
+        Agent::OpenAI5x(..) => {}
         _ => panic!("Expected OpenAI 5x agent"),
     }
 }

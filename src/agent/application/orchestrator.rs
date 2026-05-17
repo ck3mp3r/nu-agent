@@ -6,16 +6,18 @@ use std::sync::{
 
 use nu_protocol::{LabeledError, Span, Value};
 
-use crate::agent::protocol::{
-    cancellation::is_llm_call_cancelled,
-    compaction::{CompactionTriggerDecision, CompactionTriggerSource},
-    contracts::{
-        ConversationRuntime, InteractiveUi, McpToggleRequest, McpUsabilityState, ProgressUi,
-        SharedUiAction, UiMessageSnapshot,
+use crate::agent::{
+    application::turn_outcome::TurnOutcome,
+    protocol::{
+        compaction::{CompactionTriggerDecision, CompactionTriggerSource},
+        contracts::{
+            ConversationRuntime, InteractiveUi, McpToggleRequest, McpUsabilityState, ProgressUi,
+            SharedUiAction, UiMessageSnapshot,
+        },
+        event::UiEvent,
+        permission::submit_active_permission_decision,
+        slash::{SlashCommand, SlashParseResult, parse_slash_command},
     },
-    event::UiEvent,
-    permission::submit_active_permission_decision,
-    slash::{SlashCommand, SlashParseResult, parse_slash_command},
 };
 
 const COMPACTION_FAILURE_WARNING: &str =
@@ -72,10 +74,6 @@ impl ProgressUi for WorkerProgressUi {
     fn take_cancel_requested(&self) -> bool {
         self.cancel_requested.swap(false, Ordering::SeqCst)
     }
-
-    fn cancellation_value(&self, span: Span) -> Option<Value> {
-        Some(Value::nothing(span))
-    }
 }
 
 pub(crate) fn run_interactive_loop<R, U>(
@@ -97,7 +95,7 @@ where
     std::thread::scope(|scope| {
         let (worker_cmd_tx, worker_cmd_rx) = mpsc::channel::<WorkerCommand>();
         let (worker_event_tx, worker_event_rx) = mpsc::channel::<UiEvent>();
-        let (worker_result_tx, worker_result_rx) = mpsc::channel::<Result<Value, LabeledError>>();
+        let (worker_result_tx, worker_result_rx) = mpsc::channel::<TurnOutcome>();
         let cancel_requested = Arc::new(AtomicBool::new(false));
         let worker_cancel = Arc::clone(&cancel_requested);
 
@@ -111,7 +109,17 @@ where
                 match command {
                     WorkerCommand::ExecuteTurn { prompt, span } => {
                         let result = runtime.execute_turn(&mut worker_ui, prompt, None, span);
-                        let _ = worker_result_tx.send(result);
+                        // Convert Result<Value, LabeledError> to TurnOutcome
+                        // Detect cancellation by message content:
+                        // - v2 path: "Turn cancelled: ..."
+                        let outcome = match &result {
+                            Err(error) if error.msg.starts_with("Turn cancelled:") => {
+                                TurnOutcome::Cancelled
+                            }
+                            Ok(value) => TurnOutcome::Success(value.clone()),
+                            Err(error) => TurnOutcome::Error(error.clone()),
+                        };
+                        let _ = worker_result_tx.send(outcome);
                     }
                     WorkerCommand::EvaluateAutoCompaction { response_tx } => {
                         let warning = match runtime.evaluate_auto_compaction() {
@@ -324,14 +332,18 @@ where
                 ui.emit(&event);
             }
 
-            while let Ok(result) = worker_result_rx.try_recv() {
+            while let Ok(outcome) = worker_result_rx.try_recv() {
                 worker_active = false;
-                match result {
-                    Ok(_) => {}
-                    Err(error) if is_llm_call_cancelled(&error) => {}
-                    Err(error) => {
-                        let _ = worker_cmd_tx.send(WorkerCommand::Shutdown);
-                        return Err(error);
+                match outcome {
+                    TurnOutcome::Success(_) => {}
+                    TurnOutcome::Cancelled => {
+                        // Silently ignore cancellation
+                    }
+                    TurnOutcome::Error(error) => {
+                        // Display error inline as a warning instead of crashing
+                        ui.emit(&UiEvent::Warning {
+                            message: format!("Turn failed: {}", error.msg),
+                        });
                     }
                 }
             }

@@ -125,6 +125,66 @@ impl Session {
             .join("\n\n")
     }
 
+    /// Converts session history to structured chat messages for LLM API.
+    ///
+    /// System messages are skipped (handled via preamble). Tool messages become
+    /// `Message::User` with `ToolResult` content, matching rig's expected format.
+    ///
+    /// Tool call IDs are normalized to ensure provider-agnostic replay.
+    /// Assistant messages with tool calls include text content only (tool call details stripped).
+    /// Tool result messages are converted to assistant text summaries for context.
+    pub fn as_chat_history(&self) -> Vec<rig::completion::Message> {
+        use rig::completion::message::{AssistantContent, Text, UserContent};
+        use rig::one_or_many::OneOrMany;
+
+        self.messages
+            .iter()
+            .filter_map(|msg| match msg.role() {
+                MessageRole::System => None,
+                MessageRole::User => Some(rig::completion::Message::User {
+                    content: OneOrMany::one(UserContent::Text(Text {
+                        text: msg.content().to_string(),
+                    })),
+                }),
+                MessageRole::Assistant => {
+                    // For session history, include text content and summarize tool calls
+                    // Tool call structures are stripped to avoid provider-specific ID issues
+                    let mut text = msg.content().to_string();
+
+                    if let Some(tool_calls) = msg.tool_calls() {
+                        for tc in tool_calls {
+                            if !text.is_empty() {
+                                text.push('\n');
+                            }
+                            text.push_str(&format!(
+                                "[Called tool: {} with args: {}]",
+                                tc.name, tc.arguments
+                            ));
+                        }
+                    }
+
+                    if text.is_empty() {
+                        return None;
+                    }
+
+                    Some(rig::completion::Message::Assistant {
+                        id: None,
+                        content: OneOrMany::one(AssistantContent::Text(Text { text })),
+                    })
+                }
+                MessageRole::Tool => {
+                    // Convert tool results to assistant text for provider-agnostic context
+                    let tool_name = msg.tool_name().unwrap_or("tool");
+                    let text = format!("[Tool {} returned: {}]", tool_name, msg.content());
+                    Some(rig::completion::Message::Assistant {
+                        id: None,
+                        content: OneOrMany::one(AssistantContent::Text(Text { text })),
+                    })
+                }
+            })
+            .collect()
+    }
+
     /// Creates a new session with the given ID.
     fn new(id: String) -> Self {
         Self {
@@ -307,7 +367,7 @@ impl Session {
         let summary = summarizer(old_messages)?;
 
         // Create summary message with "system" role
-        let summary_message = Message::new("system".to_string(), summary);
+        let summary_message = Message::new(MessageRole::System, summary);
 
         // Replace messages: [summary] + recent messages
         let mut new_messages = vec![summary_message];
@@ -447,7 +507,7 @@ impl Session {
 
 fn format_message_for_history(msg: &Message) -> String {
     let mut rendered = format!("{}: {}", msg.role(), msg.content());
-    if msg.role() == "tool"
+    if msg.role() == MessageRole::Tool
         && let Some(result) = msg.tool_result()
     {
         rendered.push_str(" result=");
@@ -467,11 +527,54 @@ struct SessionMetadata {
     compaction_count: usize,
 }
 
+/// Message role in a conversation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MessageRole {
+    System,
+    User,
+    Assistant,
+    Tool,
+}
+
+impl MessageRole {
+    /// Returns the role as a string slice.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MessageRole::System => "system",
+            MessageRole::User => "user",
+            MessageRole::Assistant => "assistant",
+            MessageRole::Tool => "tool",
+        }
+    }
+}
+
+impl std::fmt::Display for MessageRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<MessageRole> for String {
+    fn from(role: MessageRole) -> Self {
+        role.as_str().to_string()
+    }
+}
+
+/// Represents a stored tool call for assistant messages.
+/// This is a serializable version of tool call data that can be persisted to JSONL.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: String,
+}
+
 /// Represents a message in a session.
 /// Messages are appended to the JSONL file after the metadata line.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
-    role: String,
+    role: MessageRole,
     content: String,
     timestamp: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -481,7 +584,13 @@ pub struct Message {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     tool_success: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    tool_call_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tool_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     usage: Option<MessageUsage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<Vec<StoredToolCall>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -497,7 +606,7 @@ pub struct MessageUsage {
 impl Message {
     /// Creates a new message with the given role and content.
     /// The timestamp is automatically set to the current time.
-    pub fn new(role: String, content: String) -> Self {
+    pub fn new(role: MessageRole, content: String) -> Self {
         Self {
             role,
             content,
@@ -505,7 +614,10 @@ impl Message {
             tool_arguments: None,
             tool_result: None,
             tool_success: None,
+            tool_call_id: None,
+            tool_name: None,
             usage: None,
+            tool_calls: None,
         }
     }
 
@@ -530,9 +642,24 @@ impl Message {
         self
     }
 
+    pub fn with_tool_call_id(mut self, id: impl Into<String>) -> Self {
+        self.tool_call_id = Some(id.into());
+        self
+    }
+
+    pub fn with_tool_name(mut self, name: impl Into<String>) -> Self {
+        self.tool_name = Some(name.into());
+        self
+    }
+
+    pub fn with_tool_calls(mut self, calls: Vec<StoredToolCall>) -> Self {
+        self.tool_calls = Some(calls);
+        self
+    }
+
     /// Returns the message role.
-    pub fn role(&self) -> &str {
-        &self.role
+    pub fn role(&self) -> MessageRole {
+        self.role
     }
 
     /// Returns the message content.
@@ -555,6 +682,18 @@ impl Message {
 
     pub fn tool_success(&self) -> Option<bool> {
         self.tool_success
+    }
+
+    pub fn tool_call_id(&self) -> Option<&str> {
+        self.tool_call_id.as_deref()
+    }
+
+    pub fn tool_name(&self) -> Option<&str> {
+        self.tool_name.as_deref()
+    }
+
+    pub fn tool_calls(&self) -> Option<&[StoredToolCall]> {
+        self.tool_calls.as_deref()
     }
 
     pub fn usage(&self) -> Option<&MessageUsage> {
@@ -923,5 +1062,7 @@ impl Default for SessionStore {
     }
 }
 
+#[cfg(test)]
+mod message_role_test;
 #[cfg(test)]
 mod test;

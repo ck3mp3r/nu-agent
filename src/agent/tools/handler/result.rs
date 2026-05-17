@@ -1,69 +1,7 @@
-use rig::completion::message::ToolCall;
 use serde_json::Value as JsonValue;
 
-use super::types::{
-    AuthorizationDeniedDetails, EditPreviewDisplayPayload, ToolCallResult, ToolErrorKind,
-    ToolFailureOutcome, ToolSource, serialized_tool_call_arguments,
-};
+use super::types::EditPreviewDisplayPayload;
 use crate::agent::protocol::event::{ToolDisplay, ToolDisplaySection, ToolDisplayStats};
-
-pub(crate) fn classify_validation_error_message(message: &str) -> bool {
-    let lower = message.to_ascii_lowercase();
-    lower.contains("invalid")
-        || lower.contains("must be")
-        || lower.contains("expected")
-        || lower.contains("missing")
-        || lower.contains("parse")
-}
-
-pub(crate) fn build_failure_result(
-    tool_call: &ToolCall,
-    source: ToolSource,
-    error_kind: ToolErrorKind,
-    message: String,
-    details: Option<JsonValue>,
-) -> ToolCallResult {
-    let serialized_arguments = serialized_tool_call_arguments(tool_call);
-
-    let failure = ToolFailureOutcome {
-        tool_name: tool_call.function.name.clone(),
-        tool_call_id: tool_call.id.clone(),
-        source: source.clone(),
-        error_kind,
-        message,
-        details,
-    };
-
-    ToolCallResult {
-        tool_call_id: tool_call.id.clone(),
-        tool_name: tool_call.function.name.clone(),
-        arguments: serialized_arguments,
-        source,
-        content: failure.to_json_string(),
-        display: None,
-        failure: Some(failure),
-    }
-}
-
-pub(crate) fn build_authorization_denied_result(
-    tool_call: &ToolCall,
-    source: ToolSource,
-    denied_details: AuthorizationDeniedDetails,
-    display: Option<ToolDisplay>,
-) -> ToolCallResult {
-    let mut denied = build_failure_result(
-        tool_call,
-        source,
-        ToolErrorKind::Authorization,
-        format!(
-            "Tool '{}' denied by permissions policy ({})",
-            tool_call.function.name, denied_details.rule_identity
-        ),
-        Some(denied_details.to_json_value()),
-    );
-    denied.display = display;
-    denied
-}
 
 pub(crate) fn build_edit_preview_display(preview: EditPreviewDisplayPayload) -> ToolDisplay {
     ToolDisplay {

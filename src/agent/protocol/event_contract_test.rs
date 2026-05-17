@@ -84,7 +84,7 @@ fn permission_event_field_shape_is_explicit_and_stable() {
     let requested = UiEvent::PermissionRequested {
         request_id: "ask-0000000000000001".to_string(),
         context: crate::agent::protocol::event::PermissionRequestContext {
-            tool: "nu__run".to_string(),
+            tool: "nu__run(command=echo hi)".to_string(),
             source: "closure".to_string(),
             mode: Some("apply".to_string()),
             matched_rule_identity: "nested:nu__run.command:*".to_string(),
@@ -101,7 +101,7 @@ fn permission_event_field_shape_is_explicit_and_stable() {
             context,
         } => {
             assert_eq!(request_id, "ask-0000000000000001");
-            assert_eq!(context.tool, "nu__run");
+            assert_eq!(context.tool, "nu__run(command=echo hi)");
             assert_eq!(context.source, "closure");
             assert_eq!(context.mode.as_deref(), Some("apply"));
             assert_eq!(context.matched_rule_identity, "nested:nu__run.command:*");

@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::time::timeout as tokio_timeout;
 
+#[derive(Clone)]
 pub struct ToolExecutor {
     engine: Arc<EngineInterface>,
     audit_logger: Arc<AuditLogger>,
@@ -146,6 +147,10 @@ impl ToolExecutor {
 
     pub fn timeout(&self) -> Duration {
         self.timeout
+    }
+
+    pub fn engine(&self) -> &EngineInterface {
+        &self.engine
     }
 }
 

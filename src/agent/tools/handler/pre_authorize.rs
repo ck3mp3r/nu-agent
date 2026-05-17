@@ -55,7 +55,7 @@ pub(crate) fn pre_authorize_tool_call(
     engine: &EngineInterface,
 ) -> PreAuthorizeOutput {
     match source {
-        ToolSource::Closure => {
+        ToolSource::Closure | ToolSource::Builtin => {
             let builtin_cwd = match super::builtin_fs::resolve_builtin_fs_path(".", engine) {
                 Ok(path) => path,
                 Err(_) => return PreAuthorizeOutput::default(),

@@ -990,6 +990,61 @@ fn interactive_loop_treats_llm_cancellation_as_non_fatal_and_continues() {
     );
 }
 
+#[derive(Default)]
+struct ErrorFirstRuntime {
+    prompts: Vec<String>,
+}
+
+impl ConversationRuntime for ErrorFirstRuntime {
+    fn set_mcp_server_enabled(
+        &mut self,
+        _server_name: &str,
+        enabled: bool,
+    ) -> Result<McpUsabilityState, String> {
+        Ok(if enabled {
+            McpUsabilityState::Enabled
+        } else {
+            McpUsabilityState::Disabled
+        })
+    }
+
+    fn execute_turn<U: ProgressUi>(
+        &mut self,
+        _ui: &mut U,
+        prompt: String,
+        _context: Option<String>,
+        _span: Span,
+    ) -> Result<Value, LabeledError> {
+        self.prompts.push(prompt);
+        if self.prompts.len() == 1 {
+            return Err(LabeledError::new("API rate limit exceeded"));
+        }
+
+        Ok(Value::nothing(Span::test_data()))
+    }
+}
+
+#[test]
+fn interactive_loop_treats_errors_as_non_fatal_and_displays_inline() {
+    let mut runtime = ErrorFirstRuntime::default();
+    let mut ui = FakeInteractiveUi::with_prompts(&["first", "second"]);
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data())
+        .expect("interactive loop should continue after error");
+
+    assert!(value.is_nothing());
+    assert_eq!(
+        runtime.prompts,
+        vec!["first".to_string(), "second".to_string()]
+    );
+    assert!(
+        ui.warnings
+            .iter()
+            .any(|w| w.contains("API rate limit exceeded")),
+        "error should be displayed as inline warning"
+    );
+}
+
 #[test]
 fn run_hydrated_interactive_loop_hydrates_before_first_pump() {
     let mut runtime = FakeRuntime::default();

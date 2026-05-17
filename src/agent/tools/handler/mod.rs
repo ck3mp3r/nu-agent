@@ -7,21 +7,17 @@ mod result;
 mod types;
 
 pub use conversion::{json_to_nu_value, nu_value_to_json};
-pub use dispatch::handle_tool_calls;
 pub(crate) use dispatch::llm_visible_tool_definitions;
 pub use pre_authorize::PreAuthorizeOutput;
-pub(crate) use result::{
-    build_authorization_denied_result, build_direct_tool_display, build_failure_result,
-    classify_validation_error_message,
-};
+pub(crate) use result::build_direct_tool_display;
 pub use types::{
-    McpToolRegistry, ToolAuthorizationContext, ToolCallResult, ToolErrorKind, ToolFailureOutcome,
+    McpToolRegistry, ToolAuthorizationContext, ToolErrorKind, ToolFailureOutcome,
     ToolHandlerContext, ToolSource,
 };
+
+// Export authz_gate types for permission_bridge
+pub(crate) use authz_gate::{AuthorizationFlowContext, enforce_authorization_for_tool_call};
 
 pub(crate) fn is_builtin_fs_tool_name(tool_name: &str) -> bool {
     matches!(tool_name, "read" | "edit" | "patch" | "skill")
 }
-
-#[cfg(test)]
-mod test;

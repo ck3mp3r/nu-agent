@@ -447,7 +447,7 @@ fn async_ask_waits_for_matching_decision_before_resolving() {
             request_id,
             context,
         } => {
-            assert_eq!(context.tool, "nu__run");
+            assert_eq!(context.tool, "nu__run(command=echo hi)");
             assert!(context.pre_authorize_display.is_none());
             (request_id, context.matched_rule_identity)
         }
@@ -849,4 +849,137 @@ fn permission_request_token_rejects_mismatched_rule_identity() {
             reason: "rule_identity_mismatch"
         }
     );
+}
+
+#[test]
+fn display_tool_name_with_no_args() {
+    let result = display_tool_name("skill", &serde_json::json!({}));
+    assert_eq!(result, "skill");
+}
+
+#[test]
+fn display_tool_name_with_single_arg() {
+    let result = display_tool_name("skill", &serde_json::json!({"name": "nushell-shell"}));
+    assert_eq!(result, "skill(name=nushell-shell)");
+}
+
+#[test]
+fn display_tool_name_with_multiple_args_sorted_alphabetically() {
+    let result = display_tool_name(
+        "edit",
+        &serde_json::json!({
+            "filePath": "src/foo.rs",
+            "oldString": "foo",
+            "newString": "bar"
+        }),
+    );
+    assert_eq!(
+        result,
+        "edit(filePath=src/foo.rs, newString=bar, oldString=foo)"
+    );
+}
+
+#[test]
+fn display_tool_name_truncates_long_string_values() {
+    let long_value = "a".repeat(70);
+    let result = display_tool_name("read", &serde_json::json!({"filePath": long_value}));
+    let expected = format!("read(filePath={}…)", "a".repeat(60));
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn display_tool_name_skips_null_values() {
+    let result = display_tool_name(
+        "edit",
+        &serde_json::json!({
+            "filePath": "test.rs",
+            "mode": null,
+            "content": "hello"
+        }),
+    );
+    assert_eq!(result, "edit(content=hello, filePath=test.rs)");
+}
+
+#[test]
+fn display_tool_name_all_null_args_returns_tool_name_only() {
+    let result = display_tool_name(
+        "test",
+        &serde_json::json!({
+            "arg1": null,
+            "arg2": null
+        }),
+    );
+    assert_eq!(result, "test");
+}
+
+#[test]
+fn display_tool_name_shows_nested_object_as_compact_json() {
+    let result = display_tool_name(
+        "complex",
+        &serde_json::json!({
+            "config": {"key": "value", "nested": {"deep": true}}
+        }),
+    );
+    assert!(result.starts_with("complex(config="));
+    assert!(result.contains(r#"{"key":"value""#));
+}
+
+#[test]
+fn display_tool_name_truncates_nested_object_json() {
+    let long_obj = serde_json::json!({
+        "key1": "value1",
+        "key2": "value2",
+        "key3": "value3",
+        "key4": "value4",
+        "key5": "value5",
+        "key6": "value6"
+    });
+    let result = display_tool_name("tool", &serde_json::json!({"data": long_obj}));
+    assert!(result.starts_with("tool(data="));
+    assert!(result.ends_with("…)"));
+    // Verify the truncation marker exists
+    assert!(result.contains("…"));
+}
+
+#[test]
+fn display_tool_name_shows_array_as_compact_json() {
+    let result = display_tool_name("list", &serde_json::json!({"items": [1, 2, 3]}));
+    assert_eq!(result, "list(items=[1,2,3])");
+}
+
+#[test]
+fn display_tool_name_truncates_long_array() {
+    let long_array: Vec<i32> = (0..100).collect();
+    let result = display_tool_name("batch", &serde_json::json!({"values": long_array}));
+    assert!(result.starts_with("batch(values="));
+    assert!(result.ends_with("…)"));
+    // Verify the truncation marker exists
+    assert!(result.contains("…"));
+}
+
+#[test]
+fn display_tool_name_shows_boolean_values() {
+    let result = display_tool_name(
+        "flag",
+        &serde_json::json!({"enabled": true, "verbose": false}),
+    );
+    assert_eq!(result, "flag(enabled=true, verbose=false)");
+}
+
+#[test]
+fn display_tool_name_shows_number_values() {
+    let result = display_tool_name("config", &serde_json::json!({"count": 42, "ratio": 3.14}));
+    assert_eq!(result, "config(count=42, ratio=3.14)");
+}
+
+#[test]
+fn display_tool_name_non_object_args_returns_tool_name_only() {
+    assert_eq!(
+        display_tool_name("test", &serde_json::json!("string")),
+        "test"
+    );
+    assert_eq!(display_tool_name("test", &serde_json::json!(123)), "test");
+    assert_eq!(display_tool_name("test", &serde_json::json!(true)), "test");
+    assert_eq!(display_tool_name("test", &serde_json::json!(null)), "test");
+    assert_eq!(display_tool_name("test", &serde_json::json!([])), "test");
 }

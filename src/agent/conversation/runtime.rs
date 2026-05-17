@@ -5,28 +5,23 @@ use nu_protocol::{LabeledError, Span, Value};
 
 use crate::{
     config::Config,
-    llm::LlmResponse,
     plugin::RuntimeCtx,
-    session::{
-        CompactionInvocationMode, CompactionOutcome, Message, MessageUsage, Session, SessionStore,
-    },
+    session::{CompactionInvocationMode, CompactionOutcome, Message, Session, SessionStore},
     tools::{closure::ClosureRegistry, executor::ToolExecutor},
 };
 
 use crate::agent::{
     protocol::{
-        cancellation::{is_llm_call_cancelled, llm_call_cancelled_error},
         compaction::{
             CompactionTriggerDecision, CompactionTriggerPolicy, CompactionTriggerSource,
             CompactionTriggerState, ThresholdCompactionPolicy,
         },
         contracts::{ConversationRuntime, McpUsabilityState, ProgressUi},
         event::UiEvent,
-        tool_args::summarize_tool_arguments,
     },
     tools::{
-        authz::{AsyncAskHook, PermissionEventSink, PermissionsConfig, SessionGrantCache},
-        handler::{self, McpToolRegistry, ToolHandlerContext, ToolSource},
+        authz::{AsyncAskHook, PermissionsConfig, SessionGrantCache},
+        handler::{self, McpToolRegistry},
     },
 };
 use crate::tools::mcp::{
@@ -37,170 +32,29 @@ use crate::tools::mcp::{
 const COMPACTION_FAILURE_WARNING: &str =
     "Session compaction failed: sliding_summary summarization unavailable";
 
-const DOOM_LOOP_THRESHOLD: usize = 3;
-
-enum LlmCallProgress {
-    Tick,
-    Done(Result<LlmResponse, LabeledError>),
-}
-
-#[derive(Debug, Clone)]
-struct HistoryEntry {
-    role: String,
-    content: String,
-    tool_result: Option<String>,
-}
-
-impl HistoryEntry {
-    fn new(role: impl Into<String>, content: impl Into<String>) -> Self {
-        Self {
-            role: role.into(),
-            content: content.into(),
-            tool_result: None,
-        }
-    }
-
-    fn tool(content: impl Into<String>, result: impl Into<String>) -> Self {
-        Self {
-            role: "tool".to_string(),
-            content: content.into(),
-            tool_result: Some(result.into()),
-        }
-    }
-
-    fn render_for_history_prompt(&self) -> String {
-        let mut line = format!("{}: {}", self.role, self.content);
-        if let Some(result) = &self.tool_result {
-            line.push_str(" result=");
-            line.push_str(result);
-        }
-        line
-    }
-}
-
-fn is_edit_sanitizable_mode(arguments: &str) -> bool {
-    match serde_json::from_str::<serde_json::Value>(arguments)
-        .ok()
-        .and_then(|value| {
-            value
-                .get("mode")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_string)
-        }) {
-        Some(mode) => mode == "preview" || mode == "apply",
-        None => true,
-    }
-}
-
-fn compact_edit_preview_stats(stats: &serde_json::Value) -> Option<serde_json::Value> {
-    let stats_obj = stats.as_object()?;
-    let mut compact = serde_json::Map::new();
-    for key in [
-        "files_changed",
-        "insertions",
-        "deletions",
-        "diff_truncated",
-        "omitted_files",
-        "omitted_hunks",
-    ] {
-        if let Some(value) = stats_obj.get(key) {
-            compact.insert(key.to_string(), value.clone());
-        }
-    }
-    if compact.is_empty() {
-        None
-    } else {
-        Some(serde_json::Value::Object(compact))
-    }
-}
-
-fn sanitize_tool_result_for_history_prompt(result: &handler::ToolCallResult) -> String {
-    if result.tool_name != "edit" || !is_edit_sanitizable_mode(&result.arguments) {
-        return result.content.clone();
-    }
-
-    let Ok(content) = serde_json::from_str::<serde_json::Value>(&result.content) else {
-        return result.content.clone();
-    };
-    let Some(content_obj) = content.as_object() else {
-        return result.content.clone();
-    };
-
-    let mut compact = serde_json::Map::new();
-    if let Some(mode) = content_obj.get("mode") {
-        compact.insert("mode".to_string(), mode.clone());
-    }
-    if let Some(path) = content_obj.get("path") {
-        compact.insert("path".to_string(), path.clone());
-    }
-    for key in ["applied", "would_change", "noop", "conflict"] {
-        if let Some(value) = content_obj.get(key) {
-            compact.insert(key.to_string(), value.clone());
-        }
-    }
-    if let Some(stats) = content_obj.get("stats")
-        && let Some(compact_stats) = compact_edit_preview_stats(stats)
-    {
-        compact.insert("stats".to_string(), compact_stats);
-    }
-    compact.insert(
-        "diff_rendered_directly".to_string(),
-        serde_json::Value::Bool(true),
-    );
-
-    serde_json::to_string(&serde_json::Value::Object(compact))
-        .unwrap_or_else(|_| result.content.clone())
-}
-
-fn call_llm_with_ui_ticks<U: ProgressUi>(
-    runtime: &tokio::runtime::Runtime,
-    runtime_ctx: &RuntimeCtx,
-    config: &Config,
-    prompt: &str,
-    tools: Vec<rig::completion::ToolDefinition>,
-    ui: &mut U,
-) -> Result<LlmResponse, LabeledError> {
-    let mut call_fut = std::pin::pin!(crate::llm::call_llm(runtime_ctx, config, prompt, tools));
-
-    loop {
-        if ui.take_cancel_requested() {
-            return Err(llm_call_cancelled_error());
-        }
-
-        match runtime.block_on(async {
-            tokio::select! {
-                response = &mut call_fut => LlmCallProgress::Done(response),
-                _ = tokio::time::sleep(Duration::from_millis(80)) => LlmCallProgress::Tick,
-            }
-        }) {
-            LlmCallProgress::Tick => ui.emit(&UiEvent::Tick),
-            LlmCallProgress::Done(result) => return result,
-        }
-    }
-}
-
-fn merge_runtime_prompt(
-    prompt: &str,
+/// Build system preamble from components.
+/// Joins non-empty parts with separators. Returns None if all empty.
+fn build_system_preamble(
+    config_preamble: Option<&str>,
     context: Option<&str>,
-    preamble: Option<&str>,
     agents_chain: Option<&str>,
     available_skills: Option<&str>,
-) -> String {
-    let prompt_with_skills =
-        crate::agent::protocol::prompt::merge_prompt_with_context(prompt, available_skills);
-    let prompt_with_agents = crate::agent::protocol::prompt::merge_prompt_with_context(
-        &prompt_with_skills,
-        agents_chain,
-    );
-    crate::agent::protocol::prompt::merge_preamble_with_prompt_and_context(
-        &prompt_with_agents,
-        context,
-        preamble,
-    )
+) -> Option<String> {
+    let parts: Vec<&str> = [config_preamble, context, agents_chain, available_skills]
+        .into_iter()
+        .flatten()
+        .collect();
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n\n---\n\n"))
+    }
 }
 
 pub(crate) struct AgentConversationRuntime {
     pub runtime: tokio::runtime::Runtime,
+    #[allow(dead_code)]
     pub runtime_ctx: RuntimeCtx,
     pub config: Config,
     pub tool_definitions: Vec<rig::completion::ToolDefinition>,
@@ -212,6 +66,7 @@ pub(crate) struct AgentConversationRuntime {
     pub mcp_server_configs: Vec<McpServerConfig>,
     pub mcp_cli_patterns: Vec<String>,
     pub mcp_caller_cwd: Option<std::path::PathBuf>,
+    #[allow(dead_code)]
     pub tool_executor: ToolExecutor,
     pub engine: EngineInterface,
     pub store: SessionStore,
@@ -226,16 +81,6 @@ pub(crate) struct AgentConversationRuntime {
     pub permissions_startup_emitted: bool,
     pub session_grants: SessionGrantCache,
     pub ask_hook: AsyncAskHook,
-}
-
-struct UiPermissionSink<'a, U: ProgressUi> {
-    ui: &'a mut U,
-}
-
-impl<U: ProgressUi> PermissionEventSink for UiPermissionSink<'_, U> {
-    fn emit(&mut self, event: UiEvent) {
-        self.ui.emit(&event);
-    }
 }
 
 fn emit_permissions_startup_summary_once<U: ProgressUi>(
@@ -578,6 +423,10 @@ impl ConversationRuntime for AgentConversationRuntime {
         context: Option<String>,
         span: Span,
     ) -> Result<Value, LabeledError> {
+        use crate::agent::conversation::turn::{TurnContext, TurnError, execute_turn};
+        use crate::agent::hook::AuthzPermissionResolver;
+        use crate::providers::github_copilot::model::agent_from_config;
+
         emit_permissions_startup_summary_once(
             ui,
             &mut self.permissions_startup_emitted,
@@ -601,298 +450,74 @@ impl ConversationRuntime for AgentConversationRuntime {
             .as_deref()
             .and_then(crate::agent::protocol::skills::render_available_skills_preamble);
 
-        let mut merged_prompt = merge_runtime_prompt(
-            &prompt,
-            context.as_deref(),
+        // Build system preamble from components
+        let preamble = build_system_preamble(
             self.config.preamble.as_deref(),
+            context.as_deref(),
             loaded_agents.merged_chain.as_deref(),
             available_skills.as_deref(),
         );
 
-        if let Some(ref session) = self.session {
-            let history = session.format_history();
-            if !history.is_empty() {
-                merged_prompt = format!(
-                    "Previous conversation:\n{}\n\n---\n\n{}",
-                    history, merged_prompt
-                );
-            }
-        }
-
-        ui.emit(&UiEvent::LlmStart);
-        let active_tool_definitions = self.active_tool_definitions();
-        let mut llm_response = match call_llm_with_ui_ticks(
-            &self.runtime,
-            &self.runtime_ctx,
-            &self.config,
-            &merged_prompt,
-            active_tool_definitions,
-            ui,
-        ) {
-            Ok(response) => response,
-            Err(e) => {
-                ui.emit(&UiEvent::Completed { tool_calls: 0 });
-                ui.flush();
-                if is_llm_call_cancelled(&e)
-                    && let Some(value) = ui.cancellation_value(span)
-                {
-                    return Ok(value);
-                }
-                return Err(LabeledError::new(format!("LLM call failed: {}", e.msg))
-                    .with_label(e.msg, span));
-            }
+        // Get session history as structured messages
+        let session_history = if let Some(ref session) = self.session {
+            session.as_chat_history()
+        } else {
+            Vec::new()
         };
-        ui.emit(&UiEvent::LlmEnd {
-            response_chars: llm_response.text.len(),
-            tool_calls: llm_response.tool_calls.len(),
-            input_tokens: llm_response.usage.input_tokens,
-            output_tokens: llm_response.usage.output_tokens,
-            total_tokens: llm_response.usage.total_tokens,
-        });
 
-        let mut executed_tool_calls: Vec<rig::completion::AssistantContent> = Vec::new();
-        let mut tool_results_metadata: Vec<crate::llm::ToolCallMetadata> = Vec::new();
-        let mut conversation_messages: Vec<HistoryEntry> = vec![];
-        conversation_messages.push(HistoryEntry::new("user", merged_prompt.clone()));
-        conversation_messages.push(HistoryEntry::new("assistant", llm_response.text.clone()));
+        // Create the GitHub Copilot agent from config
+        let agent = agent_from_config(
+            &self.config.provider,
+            &self.config.model,
+            self.config.api_key.clone(),
+            self.config.base_url.clone(),
+        )
+        .map_err(|e| {
+            LabeledError::new(format!("Failed to create agent: {}", e))
+                .with_label(format!("{}", e), span)
+        })?;
 
-        let max_tool_turns = self.config.max_tool_turns; // Option<u32>: None means unlimited
-        let mut tool_turn = 0;
-        let mut recent_tool_signatures: Vec<(String, String)> = Vec::new();
+        // Create the real permission resolver using the authorization context
+        let mut permission_resolver = AuthzPermissionResolver {
+            permissions: &self.permissions,
+            grant_cache: &mut self.session_grants,
+            ask_hook: &mut self.ask_hook,
+            engine: &self.engine,
+            closure_registry: &self.closure_registry,
+            mcp_registry: &self.mcp_registry,
+        };
 
-        while !llm_response.tool_calls.is_empty()
-            && max_tool_turns.is_none_or(|max| tool_turn < max)
-        {
-            tool_turn += 1;
-
-            for content in &llm_response.tool_calls {
-                if let rig::completion::message::AssistantContent::ToolCall(tc) = content {
-                    let source = if self.closure_registry.get(&tc.function.name).is_some() {
-                        "closure".to_string()
-                    } else if self.mcp_registry.contains(&tc.function.name) {
-                        "mcp".to_string()
-                    } else {
-                        "unknown".to_string()
-                    };
-                    ui.emit(&UiEvent::ToolStart {
-                        name: tc.function.name.clone(),
-                        source,
-                        arguments: serde_json::to_string(&tc.function.arguments)
-                            .unwrap_or_else(|_| "{}".to_string()),
-                    });
-                }
-            }
-
-            executed_tool_calls.extend(llm_response.tool_calls.clone());
-
-            let mut permission_sink = UiPermissionSink { ui };
-            let mut handler_context = ToolHandlerContext {
+        // Call the new execute_turn function
+        let turn_result = execute_turn(
+            TurnContext {
+                runtime: self.runtime.handle(),
+                agent: &agent,
+                prompt,
+                session_history,
+                preamble: preamble.as_deref(),
+                max_turns: self.config.max_tool_turns,
+                session: self.session.as_mut(),
+                store: Some(&self.store),
+                tool_server_handle: self.mcp_tool_server_handle.clone(),
                 closure_registry: &self.closure_registry,
                 mcp_registry: &self.mcp_registry,
-                mcp_tool_server: self.mcp_tool_server_handle.as_ref(),
-                tool_executor: &self.tool_executor,
-                engine: &self.engine,
-                authorization: handler::ToolAuthorizationContext {
-                    permissions: &self.permissions,
-                    grant_cache: &mut self.session_grants,
-                    ask_hook: &mut self.ask_hook,
-                    event_sink: &mut permission_sink,
-                },
-                span,
-            };
-            let tool_results = self.runtime.block_on(handler::handle_tool_calls(
-                llm_response.tool_calls.clone(),
-                &mut handler_context,
-            ));
-
-            for result in &tool_results {
-                let source = match result.source {
-                    ToolSource::Closure => "closure".to_string(),
-                    ToolSource::Mcp => "mcp".to_string(),
-                    ToolSource::Unknown => "unknown".to_string(),
-                };
-
-                ui.emit(&UiEvent::ToolEnd {
-                    name: result.tool_name.clone(),
-                    source: source.clone(),
-                    arguments: result.arguments.clone(),
-                    success: result.failure.is_none(),
-                    result: result.content.clone(),
-                    display: result.display.clone(),
-                    error_kind: result
-                        .failure
-                        .as_ref()
-                        .map(|failure| failure.error_kind.as_str().to_string()),
-                    message: result
-                        .failure
-                        .as_ref()
-                        .map(|failure| failure.message.clone()),
-                });
-
-                tool_results_metadata.push(crate::llm::ToolCallMetadata {
-                    id: result.tool_call_id.clone(),
-                    name: result.tool_name.clone(),
-                    arguments: result.arguments.clone(),
-                    source: Some(source),
-                    error_kind: result
-                        .failure
-                        .as_ref()
-                        .map(|failure| failure.error_kind.as_str().to_string()),
-                    message: result
-                        .failure
-                        .as_ref()
-                        .map(|failure| failure.message.clone()),
-                    details: result
-                        .failure
-                        .as_ref()
-                        .and_then(|failure| failure.details.as_ref())
-                        .and_then(|details| serde_json::to_string(details).ok()),
-                });
+            },
+            ui,
+            &mut permission_resolver,
+        )
+        .map_err(|e: TurnError| {
+            if e.cancelled {
+                LabeledError::new(format!("Turn cancelled: {}", e.msg)).with_label(e.msg, span)
+            } else {
+                LabeledError::new(format!("Turn failed: {}", e.msg)).with_label(e.msg, span)
             }
+        })?;
 
-            for result in &tool_results {
-                conversation_messages.push(HistoryEntry::tool(
-                    persisted_tool_text_for(result),
-                    sanitize_tool_result_for_history_prompt(result),
-                ));
-            }
-
-            // Track tool signatures for doom loop detection
-            for result in &tool_results {
-                recent_tool_signatures.push((result.tool_name.clone(), result.arguments.clone()));
-            }
-
-            // Check for doom loop
-            if let Some(tool_name) = is_doom_loop(&recent_tool_signatures, DOOM_LOOP_THRESHOLD) {
-                ui.emit(&UiEvent::Warning {
-                    message: format!(
-                        "Doom loop detected: '{}' called {} times with identical arguments. Breaking tool loop.",
-                        tool_name, DOOM_LOOP_THRESHOLD
-                    ),
-                });
-                break;
-            }
-
-            if let Some(ref mut session) = self.session {
-                for result in &tool_results {
-                    let tool_msg =
-                        Message::new("tool".to_string(), persisted_tool_text_for(result))
-                            .with_tool_details(
-                                result.arguments.clone(),
-                                result.content.clone(),
-                                result.failure.is_none(),
-                            );
-                    session.add_message(&self.store, tool_msg).map_err(|e| {
-                        LabeledError::new(format!("Failed to save tool message: {}", e))
-                    })?;
-                }
-            }
-
-            let history_prompt = {
-                let history = conversation_messages
-                    .iter()
-                    .map(HistoryEntry::render_for_history_prompt)
-                    .collect::<Vec<_>>()
-                    .join("\n\n");
-
-                if !history.is_empty() {
-                    format!(
-                        "Previous conversation:\n{}\n\n---\n\nContinue responding.",
-                        history
-                    )
-                } else {
-                    merged_prompt.clone()
-                }
-            };
-
-            ui.emit(&UiEvent::LlmStart);
-            let active_tool_definitions = self.active_tool_definitions();
-            llm_response = match call_llm_with_ui_ticks(
-                &self.runtime,
-                &self.runtime_ctx,
-                &self.config,
-                &history_prompt,
-                active_tool_definitions,
-                ui,
-            ) {
-                Ok(response) => response,
-                Err(e) => {
-                    ui.emit(&UiEvent::Completed { tool_calls: 0 });
-                    ui.flush();
-                    if is_llm_call_cancelled(&e)
-                        && let Some(value) = ui.cancellation_value(span)
-                    {
-                        return Ok(value);
-                    }
-                    return Err(LabeledError::new(format!("LLM call failed: {}", e.msg))
-                        .with_label(e.msg, span));
-                }
-            };
-            ui.emit(&UiEvent::LlmEnd {
-                response_chars: llm_response.text.len(),
-                tool_calls: llm_response.tool_calls.len(),
-                input_tokens: llm_response.usage.input_tokens,
-                output_tokens: llm_response.usage.output_tokens,
-                total_tokens: llm_response.usage.total_tokens,
-            });
-            conversation_messages.push(HistoryEntry::new("assistant", llm_response.text.clone()));
-        }
-
-        // Emit warning if tool turn limit was exhausted with pending tool calls
-        if !llm_response.tool_calls.is_empty()
-            && let Some(max) = max_tool_turns
-        {
-            let pending_tools: Vec<String> = llm_response
-                .tool_calls
-                .iter()
-                .filter_map(|c| {
-                    if let rig::completion::message::AssistantContent::ToolCall(tc) = c {
-                        Some(tc.function.name.clone())
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            ui.emit(&UiEvent::Warning {
-                message: format!(
-                    "Tool turn limit reached ({}). Suppressed pending tool calls: {}",
-                    max,
-                    pending_tools.join(", ")
-                ),
-            });
-        }
-
-        let tool_call_count = executed_tool_calls.len();
-
-        let final_response = LlmResponse {
-            text: llm_response.text.clone(),
-            usage: llm_response.usage.clone(),
-            tool_calls: executed_tool_calls,
-            tool_call_metadata: tool_results_metadata,
-        };
-
-        let response_text = final_response.text.clone();
-
+        // Format the response value
         let mut message_count = 0;
         let mut compaction_count = 0;
 
         if self.session.is_some() {
-            {
-                let session = self.session.as_mut().expect("session checked as present");
-                let user_msg = Message::new("user".to_string(), prompt.clone());
-                session.add_message(&self.store, user_msg).map_err(|e| {
-                    LabeledError::new(format!("Failed to save user message: {}", e))
-                })?;
-
-                let assistant_msg =
-                    persisted_assistant_message(&response_text, &llm_response.usage);
-                session
-                    .add_message(&self.store, assistant_msg)
-                    .map_err(|e| {
-                        LabeledError::new(format!("Failed to save assistant message: {}", e))
-                    })?;
-            }
-
             if let Some(CompactionTriggerDecision::Fire { source, .. }) =
                 self.evaluate_auto_compaction()
                 && let Err(error) = self.execute_compaction_event(ui, source)
@@ -907,15 +532,29 @@ impl ConversationRuntime for AgentConversationRuntime {
         }
 
         ui.emit(&UiEvent::AssistantMessage {
-            text: response_text,
+            text: turn_result.text.clone(),
         });
         ui.emit(&UiEvent::Completed {
-            tool_calls: tool_call_count,
+            tool_calls: turn_result.tool_call_count,
         });
         ui.flush();
 
+        // Build the response value with the same structure as the old path
+        let llm_response = crate::llm::LlmResponse {
+            text: turn_result.text,
+            usage: crate::llm::LlmUsage {
+                input_tokens: turn_result.usage.input_tokens,
+                output_tokens: turn_result.usage.output_tokens,
+                total_tokens: turn_result.usage.total_tokens,
+                cached_input_tokens: turn_result.usage.cached_input_tokens,
+                cache_creation_input_tokens: turn_result.usage.cache_creation_input_tokens,
+            },
+            tool_calls: Vec::new(), // TODO: track tool calls in TurnResult
+            tool_call_metadata: Vec::new(), // TODO: track tool metadata in TurnResult
+        };
+
         let response_value = crate::llm::format_response(
-            &final_response,
+            &llm_response,
             &self.config,
             self.final_session_id.as_deref(),
             compaction_count,
@@ -954,10 +593,19 @@ impl AgentConversationRuntime {
         ui: &mut U,
         source: CompactionTriggerSource,
     ) -> Result<(), String> {
+        use crate::providers::github_copilot::model::agent_from_config;
+
         let runtime = &self.runtime;
-        let runtime_ctx = &self.runtime_ctx;
-        let config = &self.config;
         let store = &self.store;
+
+        // Create the GitHub Copilot agent for compaction
+        let agent = agent_from_config(
+            &self.config.provider,
+            &self.config.model,
+            self.config.api_key.clone(),
+            self.config.base_url.clone(),
+        )
+        .map_err(|e| format!("Failed to create agent for compaction: {}", e))?;
 
         let source_label = source.as_str().to_string();
         ui.emit(&UiEvent::CompactionStarted {
@@ -975,9 +623,7 @@ impl AgentConversationRuntime {
             execute_compaction_persisted(
                 session,
                 store,
-                |old_messages| {
-                    summarize_old_segment_with_llm(runtime, runtime_ctx, config, ui, old_messages)
-                },
+                |old_messages| summarize_old_segment_with_llm(runtime, &agent, ui, old_messages),
                 mode,
             )
         });
@@ -1048,8 +694,7 @@ fn summary_preview_text(summary_body: &str) -> String {
 
 fn summarize_old_segment_with_llm<U: ProgressUi>(
     runtime: &tokio::runtime::Runtime,
-    runtime_ctx: &RuntimeCtx,
-    config: &Config,
+    agent: &crate::providers::github_copilot::model::Agent,
     ui: &mut U,
     old_messages: &[Message],
 ) -> std::io::Result<String> {
@@ -1058,48 +703,36 @@ fn summarize_old_segment_with_llm<U: ProgressUi>(
         .map(|message| format!("{}: {}", message.role(), message.content()))
         .collect::<Vec<_>>()
         .join("\n\n");
-    let prompt = format!(
+    let prompt_text = format!(
         "Summarize the following prior conversation segment concisely while preserving critical decisions, constraints, and open tasks.\n\n{}",
         history
     );
 
-    let response = call_llm_with_ui_ticks(runtime, runtime_ctx, config, &prompt, Vec::new(), ui)
-        .map_err(|_| std::io::Error::other(COMPACTION_FAILURE_WARNING))?;
-    Ok(response.text)
-}
+    // Create the completion future using agent.completion()
+    let mut call_fut = std::pin::pin!(agent.completion(&prompt_text));
 
-fn persisted_tool_text_for(result: &handler::ToolCallResult) -> String {
-    let summarized_args = summarize_tool_arguments(&result.arguments);
-    format!(
-        "tool[{}] args={} · {}",
-        result.tool_name,
-        summarized_args,
-        if result.failure.is_none() {
-            "done"
-        } else {
-            "failed"
+    // Cancellation loop - poll completion future with periodic UI ticks
+    loop {
+        if ui.take_cancel_requested() {
+            return Err(std::io::Error::other("Compaction cancelled by user"));
         }
-    )
-}
 
-fn persisted_assistant_message(content: &str, usage: &crate::llm::LlmUsage) -> Message {
-    Message::new("assistant".to_string(), content.to_string()).with_usage(MessageUsage::new(
-        usage.input_tokens,
-        usage.output_tokens,
-        usage.total_tokens,
-    ))
-}
+        enum CompletionProgress {
+            Tick,
+            Done(Result<String, rig::completion::CompletionError>),
+        }
 
-fn is_doom_loop(recent: &[(String, String)], threshold: usize) -> Option<&str> {
-    if recent.len() < threshold {
-        return None;
-    }
-    let last_n = &recent[recent.len() - threshold..];
-    let first = &last_n[0];
-    if last_n.iter().all(|s| s == first) {
-        Some(&first.0)
-    } else {
-        None
+        match runtime.block_on(async {
+            tokio::select! {
+                response = &mut call_fut => CompletionProgress::Done(response),
+                _ = tokio::time::sleep(Duration::from_millis(80)) => CompletionProgress::Tick,
+            }
+        }) {
+            CompletionProgress::Tick => ui.emit(&UiEvent::Tick),
+            CompletionProgress::Done(result) => {
+                return result.map_err(|_| std::io::Error::other(COMPACTION_FAILURE_WARNING));
+            }
+        }
     }
 }
 
@@ -1112,22 +745,60 @@ mod tests {
 
     use super::{
         COMPACTION_FAILURE_WARNING, emit_permissions_startup_summary_once,
-        execute_compaction_event_shared, execute_compaction_persisted, merge_runtime_prompt,
-        persisted_assistant_message, sanitize_tool_result_for_history_prompt,
+        execute_compaction_event_shared, execute_compaction_persisted,
         stage_enabled_mcp_runtime_state,
     };
     use crate::{
         agent::protocol::{
             compaction::CompactionTriggerSource, contracts::ProgressUi, event::UiEvent,
         },
-        agent::tools::handler::{McpToolRegistry, ToolCallResult, ToolSource},
+        agent::tools::handler::McpToolRegistry,
         llm::LlmUsage,
-        session::{CompactionOutcome, Message, SessionConfig, SessionStore},
+        session::{
+            CompactionOutcome, Message, MessageRole, MessageUsage, SessionConfig, SessionStore,
+            StoredToolCall,
+        },
         tools::mcp::{
             client::McpToolDefinition,
             config::{McpServerConfig, McpTransportType},
         },
     };
+    use rig::completion::message::AssistantContent;
+
+    fn persisted_assistant_message(response: &crate::llm::LlmResponse) -> Message {
+        let mut msg = Message::new(MessageRole::Assistant, response.text.clone()).with_usage(
+            MessageUsage::new(
+                response.usage.input_tokens,
+                response.usage.output_tokens,
+                response.usage.total_tokens,
+            ),
+        );
+
+        // Convert tool calls to StoredToolCall format if present
+        if !response.tool_calls.is_empty() {
+            let stored_calls: Vec<StoredToolCall> = response
+                .tool_calls
+                .iter()
+                .filter_map(|content| {
+                    if let AssistantContent::ToolCall(tc) = content {
+                        Some(StoredToolCall {
+                            id: tc.id.clone(),
+                            name: tc.function.name.clone(),
+                            arguments: tc.function.arguments.to_string(),
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            if !stored_calls.is_empty() {
+                msg = msg.with_tool_calls(stored_calls);
+            }
+        }
+
+        msg
+    }
 
     fn mcp_tool(server: &str, name: &str, raw_name: &str) -> McpToolDefinition {
         McpToolDefinition {
@@ -1158,59 +829,6 @@ mod tests {
             cwd: None,
             args: Vec::new(),
             env: std::collections::HashMap::new(),
-        }
-    }
-
-    fn preview_edit_result(content: serde_json::Value) -> ToolCallResult {
-        ToolCallResult {
-            tool_call_id: "tool-call-1".to_string(),
-            tool_name: "edit".to_string(),
-            arguments: serde_json::json!({
-                "path": "sample.txt",
-                "mode": "preview",
-                "search": "old",
-                "replacement": "new"
-            })
-            .to_string(),
-            source: ToolSource::Closure,
-            content: content.to_string(),
-            display: None,
-            failure: None,
-        }
-    }
-
-    fn apply_edit_result(content: serde_json::Value) -> ToolCallResult {
-        ToolCallResult {
-            tool_call_id: "tool-call-2".to_string(),
-            tool_name: "edit".to_string(),
-            arguments: serde_json::json!({
-                "path": "sample.txt",
-                "mode": "apply",
-                "search": "old",
-                "replacement": "new"
-            })
-            .to_string(),
-            source: ToolSource::Closure,
-            content: content.to_string(),
-            display: None,
-            failure: None,
-        }
-    }
-
-    fn apply_edit_result_with_omitted_mode(content: serde_json::Value) -> ToolCallResult {
-        ToolCallResult {
-            tool_call_id: "tool-call-3".to_string(),
-            tool_name: "edit".to_string(),
-            arguments: serde_json::json!({
-                "path": "sample.txt",
-                "search": "old",
-                "replacement": "new"
-            })
-            .to_string(),
-            source: ToolSource::Closure,
-            content: content.to_string(),
-            display: None,
-            failure: None,
         }
     }
 
@@ -1247,7 +865,14 @@ mod tests {
             cache_creation_input_tokens: 13,
         };
 
-        let assistant = persisted_assistant_message("hello", &usage);
+        let response = crate::llm::LlmResponse {
+            text: "hello".to_string(),
+            usage,
+            tool_calls: vec![],
+            tool_call_metadata: vec![],
+        };
+
+        let assistant = persisted_assistant_message(&response);
         session
             .add_message(&store, assistant)
             .expect("persist message");
@@ -1258,63 +883,13 @@ mod tests {
         let persisted = loaded
             .messages()
             .iter()
-            .find(|m| m.role() == "assistant")
+            .find(|m| m.role() == MessageRole::Assistant)
             .expect("assistant message persisted");
 
         let persisted_usage = persisted.usage().expect("assistant usage persisted");
         assert_eq!(persisted_usage.input_tokens(), Some(21));
         assert_eq!(persisted_usage.output_tokens(), Some(34));
         assert_eq!(persisted_usage.total_tokens(), Some(55));
-    }
-
-    #[test]
-    fn runtime_prompt_includes_merged_agents_chain_before_user_prompt() {
-        let merged = merge_runtime_prompt(
-            "user prompt",
-            Some("ctx"),
-            Some("preamble"),
-            Some("AGENT-HOME\n\nAGENT-CWD"),
-            Some("<available_skills>\n  <skill><name>context</name></skill>\n</available_skills>"),
-        );
-
-        let preamble_pos = merged.find("preamble").expect("preamble present");
-        let agents_pos = merged.find("AGENT-HOME").expect("agents present");
-        let user_pos = merged.find("user prompt").expect("user prompt present");
-
-        assert!(
-            preamble_pos < agents_pos,
-            "preamble should remain before injected agents chain"
-        );
-        assert!(
-            agents_pos < user_pos,
-            "agents chain must appear before user prompt in merged runtime prompt"
-        );
-    }
-
-    #[test]
-    fn runtime_prompt_includes_available_skills_after_agents_chain_and_before_user_prompt() {
-        let merged = merge_runtime_prompt(
-            "user prompt",
-            Some("ctx"),
-            Some("preamble"),
-            Some("AGENT-HOME\n\nAGENT-CWD"),
-            Some("<available_skills>\n  <skill><name>context</name></skill>\n</available_skills>"),
-        );
-
-        let preamble_pos = merged.find("preamble").expect("preamble present");
-        let skills_pos = merged.find("<available_skills>").expect("skills present");
-        let agents_pos = merged.find("AGENT-HOME").expect("agents present");
-        let user_pos = merged.find("user prompt").expect("user prompt present");
-
-        assert!(preamble_pos < agents_pos, "preamble should remain first");
-        assert!(
-            agents_pos < skills_pos,
-            "agents should appear before skills list"
-        );
-        assert!(
-            skills_pos < user_pos,
-            "skills should remain before user prompt"
-        );
     }
 
     #[test]
@@ -1425,12 +1000,12 @@ mod tests {
             ..SessionConfig::default()
         });
         session
-            .add_message(&store, Message::new("user".to_string(), "a".to_string()))
+            .add_message(&store, Message::new(MessageRole::User, "a".to_string()))
             .expect("message");
         session
             .add_message(
                 &store,
-                Message::new("assistant".to_string(), "b".to_string()),
+                Message::new(MessageRole::Assistant, "b".to_string()),
             )
             .expect("message");
 
@@ -1483,16 +1058,16 @@ mod tests {
         });
 
         session
-            .add_message(&store, Message::new("user".to_string(), "a".to_string()))
+            .add_message(&store, Message::new(MessageRole::User, "a".to_string()))
             .expect("message");
         session
             .add_message(
                 &store,
-                Message::new("assistant".to_string(), "b".to_string()),
+                Message::new(MessageRole::Assistant, "b".to_string()),
             )
             .expect("message");
         session
-            .add_message(&store, Message::new("user".to_string(), "c".to_string()))
+            .add_message(&store, Message::new(MessageRole::User, "c".to_string()))
             .expect("message");
 
         let mut ui = TestProgressUi::default();
@@ -1527,16 +1102,16 @@ mod tests {
         });
 
         session
-            .add_message(&store, Message::new("user".to_string(), "a".to_string()))
+            .add_message(&store, Message::new(MessageRole::User, "a".to_string()))
             .expect("message");
         session
             .add_message(
                 &store,
-                Message::new("assistant".to_string(), "b".to_string()),
+                Message::new(MessageRole::Assistant, "b".to_string()),
             )
             .expect("message");
         session
-            .add_message(&store, Message::new("user".to_string(), "c".to_string()))
+            .add_message(&store, Message::new(MessageRole::User, "c".to_string()))
             .expect("message");
 
         let mut ui = TestProgressUi::default();
@@ -1556,30 +1131,6 @@ mod tests {
             .expect("reload session");
         assert!(loaded.compaction_count() > 0);
         let _ = Span::test_data();
-    }
-
-    #[test]
-    fn history_prompt_omits_full_edit_preview_diff_payload() {
-        let result = preview_edit_result(serde_json::json!({
-            "mode": "preview",
-            "path": "sample.txt",
-            "diff": "--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n",
-            "applied": false,
-            "would_change": true,
-            "noop": false,
-            "conflict": false,
-            "stats": {
-                "files_changed": 1,
-                "insertions": 1,
-                "deletions": 1,
-                "diff_truncated": false
-            }
-        }));
-
-        let sanitized = sanitize_tool_result_for_history_prompt(&result);
-
-        assert!(!sanitized.contains("\"diff\""));
-        assert!(!sanitized.contains("--- a/sample.txt"));
     }
 
     #[test]
@@ -1607,176 +1158,6 @@ mod tests {
             })
             .expect("warning event");
         assert_eq!(warning_message, summary);
-    }
-
-    #[test]
-    fn history_prompt_includes_compact_edit_preview_status_marker() {
-        let result = preview_edit_result(serde_json::json!({
-            "mode": "preview",
-            "path": "sample.txt",
-            "diff": "--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n",
-            "applied": false,
-            "would_change": true,
-            "noop": false,
-            "conflict": false,
-            "stats": {
-                "files_changed": 1,
-                "insertions": 1,
-                "deletions": 1,
-                "diff_truncated": false,
-                "omitted_files": 0,
-                "omitted_hunks": 0
-            }
-        }));
-
-        let sanitized = sanitize_tool_result_for_history_prompt(&result);
-        let payload: serde_json::Value = serde_json::from_str(&sanitized).expect("sanitized json");
-
-        assert_eq!(
-            payload["diff_rendered_directly"],
-            serde_json::Value::Bool(true)
-        );
-        assert_eq!(payload["applied"], serde_json::Value::Bool(false));
-        assert_eq!(payload["would_change"], serde_json::Value::Bool(true));
-        assert_eq!(payload["noop"], serde_json::Value::Bool(false));
-        assert_eq!(payload["conflict"], serde_json::Value::Bool(false));
-        assert_eq!(
-            payload["stats"]["files_changed"],
-            serde_json::Value::from(1)
-        );
-    }
-
-    #[test]
-    fn non_preview_tool_history_payload_remains_unchanged() {
-        let content = serde_json::json!({
-            "ok": true,
-            "diff": "--- untouched"
-        });
-        let result = ToolCallResult {
-            tool_call_id: "tool-call-non-edit".to_string(),
-            tool_name: "read".to_string(),
-            arguments: serde_json::json!({ "path": "sample.txt" }).to_string(),
-            source: ToolSource::Closure,
-            content: content.to_string(),
-            display: None,
-            failure: None,
-        };
-
-        let sanitized = sanitize_tool_result_for_history_prompt(&result);
-        assert_eq!(sanitized, content.to_string());
-    }
-
-    #[test]
-    fn edit_apply_history_prompt_remains_compact_without_full_diff_payload() {
-        let content = serde_json::json!({
-            "mode": "apply",
-            "path": "sample.txt",
-            "diff": "--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n",
-            "applied": true,
-            "would_change": true,
-            "stats": {
-                "files_changed": 1,
-                "insertions": 1,
-                "deletions": 1,
-                "diff_truncated": false,
-                "omitted_files": 0,
-                "omitted_hunks": 0
-            },
-            "display": {
-                "title": "edit sample.txt",
-                "sections": [
-                    {
-                        "label": "sample.txt",
-                        "language": "diff",
-                        "content": "--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n"
-                    }
-                ]
-            }
-        });
-        let result = apply_edit_result(content.clone());
-
-        let sanitized = sanitize_tool_result_for_history_prompt(&result);
-        let payload: serde_json::Value = serde_json::from_str(&sanitized).expect("sanitized json");
-
-        assert!(!sanitized.contains("\"diff\""));
-        assert!(!sanitized.contains("--- a/sample.txt"));
-        assert!(payload.get("display").is_none());
-        assert_eq!(
-            payload["mode"],
-            serde_json::Value::String("apply".to_string())
-        );
-        assert_eq!(
-            payload["path"],
-            serde_json::Value::String("sample.txt".to_string())
-        );
-        assert_eq!(
-            payload["diff_rendered_directly"],
-            serde_json::Value::Bool(true)
-        );
-    }
-
-    #[test]
-    fn direct_tool_display_payload_still_contains_full_diff_for_ui() {
-        let diff = "--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n";
-        let content = serde_json::json!({
-            "mode": "preview",
-            "path": "sample.txt",
-            "diff": diff,
-            "applied": false,
-            "would_change": true
-        });
-        let result = preview_edit_result(content.clone());
-
-        let _sanitized = sanitize_tool_result_for_history_prompt(&result);
-
-        let original_payload: serde_json::Value =
-            serde_json::from_str(&result.content).expect("original json");
-        assert_eq!(
-            original_payload["diff"],
-            serde_json::Value::String(diff.to_string())
-        );
-    }
-
-    #[test]
-    fn history_prompt_omits_full_edit_apply_diff_payload_when_mode_is_omitted() {
-        let content = serde_json::json!({
-            "mode": "apply",
-            "path": "sample.txt",
-            "diff": "--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n",
-            "applied": true,
-            "would_change": true,
-            "noop": false,
-            "conflict": false,
-            "stats": {
-                "files_changed": 1,
-                "insertions": 1,
-                "deletions": 1,
-                "diff_truncated": false,
-                "omitted_files": 0,
-                "omitted_hunks": 0
-            }
-        });
-        let result = apply_edit_result_with_omitted_mode(content);
-
-        let sanitized = sanitize_tool_result_for_history_prompt(&result);
-        let payload: serde_json::Value = serde_json::from_str(&sanitized).expect("sanitized json");
-
-        assert!(!sanitized.contains("\"diff\""));
-        assert!(!sanitized.contains("--- a/sample.txt"));
-        assert_eq!(
-            payload["mode"],
-            serde_json::Value::String("apply".to_string())
-        );
-        assert_eq!(
-            payload["path"],
-            serde_json::Value::String("sample.txt".to_string())
-        );
-        assert_eq!(payload["applied"], serde_json::Value::Bool(true));
-        assert_eq!(payload["would_change"], serde_json::Value::Bool(true));
-        assert_eq!(
-            payload["diff_rendered_directly"],
-            serde_json::Value::Bool(true)
-        );
     }
 
     #[test]
@@ -1918,97 +1299,40 @@ mod tests {
         assert_eq!(projection[1].visible_tool_count, 0);
     }
 
-    #[test]
-    fn doom_loop_detection_triggers_on_three_identical_calls() {
-        let recent = vec![
-            ("read".to_string(), r#"{"path":"file.txt"}"#.to_string()),
-            ("read".to_string(), r#"{"path":"file.txt"}"#.to_string()),
-            ("read".to_string(), r#"{"path":"file.txt"}"#.to_string()),
-        ];
-
-        let result = super::is_doom_loop(&recent, 3);
-        assert_eq!(result, Some("read"));
-    }
+    // ========================================================================
+    // Structured messages tests
+    // ========================================================================
 
     #[test]
-    fn doom_loop_detection_does_not_trigger_on_different_args() {
-        let recent = vec![
-            ("read".to_string(), r#"{"path":"file1.txt"}"#.to_string()),
-            ("read".to_string(), r#"{"path":"file2.txt"}"#.to_string()),
-            ("read".to_string(), r#"{"path":"file3.txt"}"#.to_string()),
-        ];
-
-        let result = super::is_doom_loop(&recent, 3);
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn doom_loop_detection_does_not_trigger_on_different_tools() {
-        let recent = vec![
-            ("read".to_string(), r#"{"path":"file.txt"}"#.to_string()),
-            ("write".to_string(), r#"{"path":"file.txt"}"#.to_string()),
-            ("edit".to_string(), r#"{"path":"file.txt"}"#.to_string()),
-        ];
-
-        let result = super::is_doom_loop(&recent, 3);
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn doom_loop_detection_resets_on_different_call() {
-        let recent = vec![
-            ("read".to_string(), r#"{"path":"file.txt"}"#.to_string()),
-            ("read".to_string(), r#"{"path":"file.txt"}"#.to_string()),
-            ("write".to_string(), r#"{"content":"data"}"#.to_string()),
-            ("read".to_string(), r#"{"path":"file.txt"}"#.to_string()),
-            ("read".to_string(), r#"{"path":"file.txt"}"#.to_string()),
-        ];
-
-        let result = super::is_doom_loop(&recent, 3);
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn doom_loop_detection_does_not_trigger_with_insufficient_history() {
-        let recent = vec![
-            ("read".to_string(), r#"{"path":"file.txt"}"#.to_string()),
-            ("read".to_string(), r#"{"path":"file.txt"}"#.to_string()),
-        ];
-
-        let result = super::is_doom_loop(&recent, 3);
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn max_tool_turns_emits_warning_when_exhausted() {
-        // Simulate: loop exited with pending tool_calls because max_tool_turns reached
-        let max_tool_turns = Some(2);
-        let tool_calls_remaining = true; // Loop exited but tool_calls not empty
-
-        // The logic should emit a warning when:
-        // - tool_calls is not empty after loop
-        // - max_tool_turns is Some(value)
-        let should_warn = tool_calls_remaining && max_tool_turns.is_some();
-
-        assert!(
-            should_warn,
-            "Should emit warning when tool turn limit exhausted with pending calls"
+    fn build_system_preamble_joins_non_empty_parts() {
+        let result = super::build_system_preamble(
+            Some("preamble text"),
+            Some("context text"),
+            Some("agents chain"),
+            Some("available skills"),
         );
+
+        assert!(result.is_some());
+        let text = result.unwrap();
+        assert!(text.contains("preamble text"));
+        assert!(text.contains("context text"));
+        assert!(text.contains("agents chain"));
+        assert!(text.contains("available skills"));
     }
 
     #[test]
-    fn max_tool_turns_does_not_warn_when_completed_naturally() {
-        // Simulate: loop exited naturally (tool_calls empty)
-        let max_tool_turns = Some(5);
-        let tool_calls_remaining = false; // tool_calls is empty
+    fn build_system_preamble_returns_none_when_all_empty() {
+        let result = super::build_system_preamble(None, None, None, None);
+        assert!(result.is_none());
+    }
 
-        // The logic should NOT emit a warning when:
-        // - tool_calls is empty (natural completion)
-        let should_warn = tool_calls_remaining && max_tool_turns.is_some();
+    #[test]
+    fn build_system_preamble_handles_partial_inputs() {
+        let result = super::build_system_preamble(Some("preamble"), None, Some("agents"), None);
 
-        assert!(
-            !should_warn,
-            "Should not emit warning when tool calls completed naturally"
-        );
+        assert!(result.is_some());
+        let text = result.unwrap();
+        assert!(text.contains("preamble"));
+        assert!(text.contains("agents"));
     }
 }

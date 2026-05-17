@@ -1,4 +1,5 @@
 use super::AgentSessionInspect;
+use crate::session::MessageRole;
 use crate::session::{Message, SessionStore};
 use nu_plugin::SimplePluginCommand;
 use tempfile::TempDir;
@@ -20,7 +21,7 @@ fn test_agent_session_inspect_displays_full_session_details() {
         session
             .add_message(
                 &store,
-                Message::new("user".to_string(), format!("Message {}", i)),
+                Message::new(MessageRole::User, format!("Message {}", i)),
             )
             .unwrap();
     }
@@ -39,7 +40,7 @@ fn test_agent_session_inspect_displays_full_session_details() {
 
     // Verify all messages are present with correct data
     for (i, msg) in loaded_session.messages().iter().enumerate() {
-        assert_eq!(msg.role(), "user");
+        assert_eq!(msg.role(), MessageRole::User);
         assert_eq!(msg.content(), format!("Message {}", i));
     }
 

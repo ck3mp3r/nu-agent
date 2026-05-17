@@ -654,6 +654,9 @@ impl AppState {
         &self,
         tool_name: &str,
     ) -> Option<usize> {
+        // Extract base tool name from display format "tool_name(args...)" or "tool_name"
+        let base_tool_name = tool_name.split('(').next().unwrap_or(tool_name);
+
         self.tool_call_items
             .iter()
             .rev()
@@ -662,7 +665,7 @@ impl AppState {
                     && item
                         .key
                         .split_once('\n')
-                        .map(|(name, _)| name == tool_name)
+                        .map(|(name, _)| name == base_tool_name)
                         .unwrap_or(false)
             })
             .map(|item| item.transcript_line_index)

@@ -1,6 +1,7 @@
 pub mod client;
 pub mod config;
 pub mod filter;
+pub mod namespaced;
 pub mod registration;
 pub mod runtime;
 

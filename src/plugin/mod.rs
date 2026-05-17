@@ -2,27 +2,24 @@ use nu_plugin::{Plugin, PluginCommand};
 
 use crate::agent::application::command::Agent;
 use crate::agent::session::commands::{AgentSessionClear, AgentSessionInspect, AgentSessionList};
-use crate::llm::runtime::LlmRuntime;
 use crate::session::SessionStore;
-use std::sync::Arc;
 
 pub struct AgentPlugin {
     session_store: SessionStore,
-    llm_runtime: Arc<LlmRuntime>,
 }
 
 #[derive(Clone)]
-pub struct RuntimeCtx {
-    llm_runtime: Arc<LlmRuntime>,
-}
+pub struct RuntimeCtx {}
 
 impl RuntimeCtx {
-    pub fn new(llm_runtime: Arc<LlmRuntime>) -> Self {
-        Self { llm_runtime }
+    pub fn new() -> Self {
+        Self {}
     }
+}
 
-    pub fn llm_runtime(&self) -> &LlmRuntime {
-        self.llm_runtime.as_ref()
+impl Default for RuntimeCtx {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -31,26 +28,17 @@ impl AgentPlugin {
     pub fn new() -> Self {
         Self {
             session_store: SessionStore::new(),
-            llm_runtime: Arc::new(LlmRuntime::new()),
         }
     }
 
     /// Creates a new AgentPlugin with a custom SessionStore (for testing)
     #[cfg(test)]
-    pub fn new_with_store(session_store: SessionStore, llm_runtime: Arc<LlmRuntime>) -> Self {
-        Self {
-            session_store,
-            llm_runtime,
-        }
-    }
-
-    #[cfg(test)]
-    pub fn llm_runtime(&self) -> Arc<LlmRuntime> {
-        self.llm_runtime.clone()
+    pub fn new_with_store(session_store: SessionStore) -> Self {
+        Self { session_store }
     }
 
     pub fn runtime_ctx(&self) -> RuntimeCtx {
-        RuntimeCtx::new(self.llm_runtime.clone())
+        RuntimeCtx::new()
     }
 }
 
@@ -67,7 +55,7 @@ impl Plugin for AgentPlugin {
 
     fn commands(&self) -> Vec<Box<dyn PluginCommand<Plugin = Self>>> {
         vec![
-            Box::new(Agent::new(self.session_store.clone(), self.runtime_ctx())),
+            Box::new(Agent::new(self.session_store.clone(), RuntimeCtx::new())),
             Box::new(AgentSessionClear::new(self.session_store.clone())),
             Box::new(AgentSessionInspect::new(self.session_store.clone())),
             Box::new(AgentSessionList::new(self.session_store.clone())),

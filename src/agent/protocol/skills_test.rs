@@ -4,8 +4,8 @@ use tempfile::tempdir;
 
 use super::skills::{
     SkillResolveError, SkillSource, discover_skill_catalog_for_cwd_for_tests,
-    is_higher_precedence_for_tests, render_available_skills_preamble_for_tests,
-    resolve_explicit_skill_request_for_cwd_for_tests,
+    extract_skill_description, is_higher_precedence_for_tests,
+    render_available_skills_preamble_for_tests, resolve_explicit_skill_request_for_cwd_for_tests,
 };
 
 #[test]
@@ -194,4 +194,106 @@ fn available_skills_preamble_absent_when_catalog_empty() {
 
     let preamble = render_available_skills_preamble_for_tests(&repo, None, Some(tmp.path()));
     assert!(preamble.is_none());
+}
+
+#[test]
+fn skill_preamble_xml_structure_with_description() {
+    let tmp = tempdir().expect("tempdir");
+    let repo = tmp.path().join("repo");
+    fs::create_dir_all(repo.join(".agents/skills/example")).expect("local skills dir");
+    fs::write(
+        repo.join(".agents/skills/example/SKILL.md"),
+        "# Example Skill\n\nThis is an example description.\n",
+    )
+    .expect("skill file");
+
+    let preamble = render_available_skills_preamble_for_tests(&repo, None, Some(tmp.path()))
+        .expect("preamble should render");
+
+    // Verify the XML structure includes description between name and source
+    let expected_structure = r#"  <skill>
+    <name>example</name>
+    <description>This is an example description.</description>
+    <source>local</source>
+  </skill>"#;
+
+    assert!(preamble.contains(expected_structure));
+}
+
+#[test]
+fn extract_skill_description_from_first_non_heading_line() {
+    let content = r#"# Skill: nushell-shell
+
+# Nushell Shell Patterns
+
+This skill covers using Nushell as a shell, including redirection.
+
+More content here.
+"#;
+    let desc = extract_skill_description(content).expect("should extract description");
+    assert_eq!(
+        desc,
+        "This skill covers using Nushell as a shell, including redirection."
+    );
+}
+
+#[test]
+fn extract_skill_description_truncates_long_lines() {
+    let long_line = "a".repeat(200);
+    let content = format!("# Heading\n\n{long_line}\n");
+    let desc = extract_skill_description(&content).expect("should extract description");
+    assert_eq!(desc.len(), 153); // 150 + '…' (3 bytes in UTF-8)
+    assert!(desc.ends_with('…'));
+}
+
+#[test]
+fn extract_skill_description_returns_none_when_only_headings() {
+    let content = "# Heading 1\n## Heading 2\n### Heading 3\n";
+    let desc = extract_skill_description(content);
+    assert!(desc.is_none());
+}
+
+#[test]
+fn extract_skill_description_skips_empty_lines() {
+    let content = "# Heading\n\n\n\nActual description here.\n";
+    let desc = extract_skill_description(content).expect("should extract description");
+    assert_eq!(desc, "Actual description here.");
+}
+
+#[test]
+fn available_skills_preamble_includes_descriptions() {
+    let tmp = tempdir().expect("tempdir");
+    let repo = tmp.path().join("repo");
+    fs::create_dir_all(repo.join(".agents/skills/context")).expect("local skills dir");
+    fs::write(
+        repo.join(".agents/skills/context/SKILL.md"),
+        "# Context Skill\n\nManage context effectively.\n",
+    )
+    .expect("skill file");
+
+    let preamble = render_available_skills_preamble_for_tests(&repo, None, Some(tmp.path()))
+        .expect("preamble should render");
+
+    assert!(preamble.contains("<available_skills>"));
+    assert!(preamble.contains("<name>context</name>"));
+    assert!(preamble.contains("<description>Manage context effectively.</description>"));
+    assert!(preamble.contains("<source>local</source>"));
+}
+
+#[test]
+fn available_skills_preamble_works_without_descriptions() {
+    let tmp = tempdir().expect("tempdir");
+    let repo = tmp.path().join("repo");
+    fs::create_dir_all(repo.join(".agents/skills/empty")).expect("local skills dir");
+    fs::write(
+        repo.join(".agents/skills/empty/SKILL.md"),
+        "# Only heading\n",
+    )
+    .expect("skill file");
+
+    let preamble = render_available_skills_preamble_for_tests(&repo, None, Some(tmp.path()))
+        .expect("preamble should render");
+
+    assert!(preamble.contains("<name>empty</name>"));
+    assert!(!preamble.contains("<description>"));
 }
