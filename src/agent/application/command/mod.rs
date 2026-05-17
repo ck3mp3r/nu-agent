@@ -632,7 +632,10 @@ impl SimplePluginCommand for Agent {
             Vec::new()
         };
 
-        let mcp_tool_server_handle = mcp_runtime.as_ref().map(|r| r.tool_server_handle());
+        let tool_server_handle = mcp_runtime
+            .as_ref()
+            .map(|r| r.tool_server_handle())
+            .unwrap_or_else(|| rig::tool::server::ToolServer::new().run());
 
         let mcp_lifecycle_projection =
             if let (Some(runtime), Some(cfg)) = (mcp_runtime.as_ref(), mcp_config.as_ref()) {
@@ -701,45 +704,43 @@ impl SimplePluginCommand for Agent {
             tool_timeout,
         );
 
-        // Register closure tools with the ToolServer if handle exists
+        // Register closure tools with the ToolServer
         // This happens once at startup, not per-turn
-        if let Some(handle) = &mcp_tool_server_handle {
-            use crate::agent::hook::closure_adapter::adapt_closures;
+        use crate::agent::hook::closure_adapter::adapt_closures;
 
-            let closure_tools = adapt_closures(
-                &closure_registry,
-                std::sync::Arc::new(tool_executor.clone()),
-                call.head,
-            );
+        let closure_tools = adapt_closures(
+            &closure_registry,
+            std::sync::Arc::new(tool_executor.clone()),
+            call.head,
+        );
 
-            for tool in closure_tools {
-                runtime
-                    .block_on(async { handle.add_tool(tool).await })
-                    .map_err(|e| {
-                        LabeledError::new(format!("Failed to register closure tool: {}", e))
-                            .with_label(format!("{}", e), call.head)
-                    })?;
-            }
+        for tool in closure_tools {
+            runtime
+                .block_on(async { tool_server_handle.add_tool(tool).await })
+                .map_err(|e| {
+                    LabeledError::new(format!("Failed to register closure tool: {}", e))
+                        .with_label(format!("{}", e), call.head)
+                })?;
+        }
 
-            // Register builtin FS tools (read, edit, patch, skill) with ToolServer
-            use crate::agent::hook::builtin_adapter::adapt_builtins;
+        // Register builtin FS tools (read, edit, patch, skill) with ToolServer
+        use crate::agent::hook::builtin_adapter::adapt_builtins;
 
-            let cwd = engine.get_current_dir().map_err(|e| {
-                LabeledError::new(format!("Failed to get current directory: {}", e))
-                    .with_label(format!("{}", e), call.head)
-            })?;
-            let cwd_path = std::path::PathBuf::from(cwd);
+        let cwd = engine.get_current_dir().map_err(|e| {
+            LabeledError::new(format!("Failed to get current directory: {}", e))
+                .with_label(format!("{}", e), call.head)
+        })?;
+        let cwd_path = std::path::PathBuf::from(cwd);
 
-            let builtin_tools = adapt_builtins(builtin_fs_tool_definitions(), cwd_path);
+        let builtin_tools = adapt_builtins(builtin_fs_tool_definitions(), cwd_path);
 
-            for tool in builtin_tools {
-                runtime
-                    .block_on(async { handle.add_tool(tool).await })
-                    .map_err(|e| {
-                        LabeledError::new(format!("Failed to register builtin tool: {}", e))
-                            .with_label(format!("{}", e), call.head)
-                    })?;
-            }
+        for tool in builtin_tools {
+            runtime
+                .block_on(async { tool_server_handle.add_tool(tool).await })
+                .map_err(|e| {
+                    LabeledError::new(format!("Failed to register builtin tool: {}", e))
+                        .with_label(format!("{}", e), call.head)
+                })?;
         }
 
         let mut runtime_impl = AgentConversationRuntime {
@@ -750,7 +751,7 @@ impl SimplePluginCommand for Agent {
             closure_registry,
             mcp_registry,
             mcp_runtime,
-            mcp_tool_server_handle,
+            mcp_tool_server_handle: tool_server_handle,
             mcp_lifecycle_projection,
             mcp_server_configs: mcp_config
                 .as_ref()

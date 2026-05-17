@@ -85,7 +85,7 @@ pub(crate) struct TurnContext<'a> {
     pub max_turns: Option<u32>,
     pub session: Option<&'a mut Session>,
     pub store: Option<&'a SessionStore>,
-    pub tool_server_handle: Option<rig::tool::server::ToolServerHandle>,
+    pub tool_server_handle: rig::tool::server::ToolServerHandle,
     pub closure_registry: &'a ClosureRegistry,
     pub mcp_registry: &'a McpToolRegistry,
 }
@@ -250,7 +250,7 @@ async fn build_agent_and_prompt<M>(
     preamble: Option<String>,
     prompt: rig::completion::Message,
     history: Vec<rig::completion::Message>,
-    tool_server_handle: Option<rig::tool::server::ToolServerHandle>,
+    tool_server_handle: rig::tool::server::ToolServerHandle,
     max_turns: Option<u32>,
 ) -> Result<rig::agent::PromptResponse, rig::completion::PromptError>
 where
@@ -258,35 +258,20 @@ where
 {
     use rig::completion::Prompt;
 
-    if let Some(handle) = tool_server_handle {
-        let mut builder = rig::agent::AgentBuilder::new(model)
-            .hook(hook)
-            .tool_server_handle(handle);
-        if let Some(ref p) = preamble {
-            builder = builder.preamble(p);
-        }
-        let effective_max_turns = max_turns.unwrap_or(DEFAULT_MAX_TURNS);
-        builder = builder.default_max_turns(effective_max_turns as usize);
-        let agent = builder.build();
-        agent
-            .prompt(prompt)
-            .with_history(history)
-            .extended_details()
-            .await
-    } else {
-        let mut builder = rig::agent::AgentBuilder::new(model).hook(hook);
-        if let Some(ref p) = preamble {
-            builder = builder.preamble(p);
-        }
-        let effective_max_turns = max_turns.unwrap_or(DEFAULT_MAX_TURNS);
-        builder = builder.default_max_turns(effective_max_turns as usize);
-        let agent = builder.build();
-        agent
-            .prompt(prompt)
-            .with_history(history)
-            .extended_details()
-            .await
+    let mut builder = rig::agent::AgentBuilder::new(model)
+        .hook(hook)
+        .tool_server_handle(tool_server_handle);
+    if let Some(ref p) = preamble {
+        builder = builder.preamble(p);
     }
+    let effective_max_turns = max_turns.unwrap_or(DEFAULT_MAX_TURNS);
+    builder = builder.default_max_turns(effective_max_turns as usize);
+    let agent = builder.build();
+    agent
+        .prompt(prompt)
+        .with_history(history)
+        .extended_details()
+        .await
 }
 
 #[cfg(test)]

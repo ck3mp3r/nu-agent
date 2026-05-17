@@ -61,7 +61,7 @@ pub(crate) struct AgentConversationRuntime {
     pub closure_registry: ClosureRegistry,
     pub mcp_registry: McpToolRegistry,
     pub mcp_runtime: Option<McpRuntime>,
-    pub mcp_tool_server_handle: Option<rig::tool::server::ToolServerHandle>,
+    pub mcp_tool_server_handle: rig::tool::server::ToolServerHandle,
     pub mcp_lifecycle_projection: Vec<McpServerLifecycle>,
     pub mcp_server_configs: Vec<McpServerConfig>,
     pub mcp_cli_patterns: Vec<String>,
@@ -310,7 +310,8 @@ impl ConversationRuntime for AgentConversationRuntime {
                 self.mcp_tool_server_handle = self
                     .mcp_runtime
                     .as_ref()
-                    .map(McpRuntime::tool_server_handle);
+                    .map(McpRuntime::tool_server_handle)
+                    .unwrap_or_else(|| rig::tool::server::ToolServer::new().run());
                 self.mcp_lifecycle_projection = rebuild_mcp_lifecycle_projection(
                     self.mcp_runtime.as_ref(),
                     &self.mcp_server_configs,
