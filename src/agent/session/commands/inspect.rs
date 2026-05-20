@@ -63,22 +63,38 @@ impl SimplePluginCommand for AgentSessionInspect {
                     ("system".to_string(), content.clone())
                 }
                 rig::completion::Message::User { content } => {
-                    let text = content.iter().map(|c| match c {
-                        UserContent::Text(t) => t.text.clone(),
-                        UserContent::ToolResult(t) => format!("Tool result: {:?}", t),
-                        UserContent::Image(_) | UserContent::Audio(_) | UserContent::Video(_) | UserContent::Document(_) => {
-                            format!("[Media content]")
-                        }
-                    }).collect::<Vec<_>>().join("\n");
+                    let text = content
+                        .iter()
+                        .map(|c| match c {
+                            UserContent::Text(t) => t.text.clone(),
+                            UserContent::ToolResult(t) => format!("Tool result: {:?}", t),
+                            UserContent::Image(_)
+                            | UserContent::Audio(_)
+                            | UserContent::Video(_)
+                            | UserContent::Document(_) => {
+                                "[Media content]".to_string()
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
                     ("user".to_string(), text)
                 }
                 rig::completion::Message::Assistant { content, .. } => {
-                    let text = content.iter().map(|c| match c {
-                        AssistantContent::Text(t) => t.text.clone(),
-                        AssistantContent::ToolCall(tc) => format!("Tool call: {} - {}", tc.function.name, tc.function.arguments),
-                        AssistantContent::Reasoning(r) => format!("[Reasoning: {:?}]", r.content),
-                        AssistantContent::Image(_) => "[Image]".to_string(),
-                    }).collect::<Vec<_>>().join("\n");
+                    let text = content
+                        .iter()
+                        .map(|c| match c {
+                            AssistantContent::Text(t) => t.text.clone(),
+                            AssistantContent::ToolCall(tc) => format!(
+                                "Tool call: {} - {}",
+                                tc.function.name, tc.function.arguments
+                            ),
+                            AssistantContent::Reasoning(r) => {
+                                format!("[Reasoning: {:?}]", r.content)
+                            }
+                            AssistantContent::Image(_) => "[Image]".to_string(),
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
                     ("assistant".to_string(), text)
                 }
             }

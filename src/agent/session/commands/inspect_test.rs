@@ -35,10 +35,14 @@ fn test_agent_session_inspect_displays_full_session_details() {
         // rig Messages use content enum, extract text
         match msg {
             rig::completion::Message::User { content } => {
-                let text = content.iter().map(|c| match c {
-                    rig::completion::message::UserContent::Text(t) => t.text.clone(),
-                    _ => panic!("Expected text content"),
-                }).collect::<Vec<_>>().join("");
+                let text = content
+                    .iter()
+                    .map(|c| match c {
+                        rig::completion::message::UserContent::Text(t) => t.text.clone(),
+                        _ => panic!("Expected text content"),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("");
                 assert_eq!(text, format!("Message {}", i));
             }
             _ => panic!("Expected User message"),

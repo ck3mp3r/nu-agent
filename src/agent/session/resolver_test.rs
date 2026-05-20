@@ -1,6 +1,8 @@
 use crate::agent::protocol::contracts::UiMessageSnapshot;
-use rig::completion::message::{AssistantContent, Text, ToolCall, ToolFunction, UserContent, ToolResultContent};
 use rig::completion::Message;
+use rig::completion::message::{
+    AssistantContent, Text, ToolCall, ToolFunction, ToolResultContent, UserContent,
+};
 use rig::one_or_many::OneOrMany;
 use serde_json::json;
 
@@ -32,22 +34,29 @@ fn convert_rig_messages_to_snapshots(messages: &[Message]) -> Vec<UiMessageSnaps
                         match item {
                             AssistantContent::Text(text) => {
                                 if !text.text.is_empty() {
-                                    snapshots
-                                        .push(UiMessageSnapshot::new("assistant", text.text.clone()));
+                                    snapshots.push(UiMessageSnapshot::new(
+                                        "assistant",
+                                        text.text.clone(),
+                                    ));
                                 }
                             }
                             AssistantContent::ToolCall(tool_call) => {
                                 // Tool calls: hydrate as tool invocation with proper format
-                                let args_json = serde_json::to_string(&tool_call.function.arguments)
-                                    .unwrap_or_else(|_| "{}".to_string());
+                                let args_json =
+                                    serde_json::to_string(&tool_call.function.arguments)
+                                        .unwrap_or_else(|_| "{}".to_string());
 
                                 // Summarize arguments to match live rendering
                                 let args_summary =
-                                    crate::agent::protocol::tool_args::summarize_tool_arguments(&args_json);
+                                    crate::agent::protocol::tool_args::summarize_tool_arguments(
+                                        &args_json,
+                                    );
 
                                 // Format content to match what start_tool_call produces
-                                let display_content =
-                                    format!("tool[{}] args={}", tool_call.function.name, args_summary);
+                                let display_content = format!(
+                                    "tool[{}] args={}",
+                                    tool_call.function.name, args_summary
+                                );
 
                                 snapshots.push(
                                     UiMessageSnapshot::new("tool", display_content)
@@ -143,13 +152,15 @@ fn test_convert_system() {
 #[test]
 fn test_tool_result_not_shown_in_hydrated_transcript() {
     let messages = vec![Message::User {
-        content: OneOrMany::one(UserContent::ToolResult(rig::completion::message::ToolResult {
-            id: "call_123".to_string(),
-            call_id: None,
-            content: OneOrMany::one(ToolResultContent::Text(Text {
-                text: "File contents here".to_string(),
-            })),
-        })),
+        content: OneOrMany::one(UserContent::ToolResult(
+            rig::completion::message::ToolResult {
+                id: "call_123".to_string(),
+                call_id: None,
+                content: OneOrMany::one(ToolResultContent::Text(Text {
+                    text: "File contents here".to_string(),
+                })),
+            },
+        )),
     }];
 
     let snapshots = convert_rig_messages_to_snapshots(&messages);
@@ -187,7 +198,11 @@ fn test_convert_mixed_assistant_content() {
     assert_eq!(snapshots[0].role(), "assistant");
     assert_eq!(snapshots[0].content(), "Let me help you.");
     assert_eq!(snapshots[1].role(), "tool");
-    assert!(snapshots[1].content().starts_with("tool[get_weather] args="));
+    assert!(
+        snapshots[1]
+            .content()
+            .starts_with("tool[get_weather] args=")
+    );
 }
 
 #[test]
@@ -253,15 +268,19 @@ fn test_tool_call_format_matches_live_rendering() {
 
     assert_eq!(snapshots.len(), 1);
     assert_eq!(snapshots[0].role(), "tool");
-    
+
     // Content should be formatted as "tool[name] args={summary}"
-    assert!(snapshots[0].content().starts_with("tool[k8s__list_pods] args="));
-    
+    assert!(
+        snapshots[0]
+            .content()
+            .starts_with("tool[k8s__list_pods] args=")
+    );
+
     // Tool arguments should contain the raw JSON
     let args = snapshots[0].tool_arguments().unwrap();
     assert!(args.contains("namespace"));
     assert!(args.contains("prod"));
-    
+
     // Tool success should be set to true for reloaded sessions
     assert_eq!(snapshots[0].tool_success(), Some(true));
 }
@@ -287,14 +306,13 @@ fn test_tool_call_argument_summarization() {
     let snapshots = convert_rig_messages_to_snapshots(&messages);
 
     assert_eq!(snapshots.len(), 1);
-    
+
     // Content should be truncated with ellipsis
     let content = snapshots[0].content();
     assert!(content.starts_with("tool[write_file] args="));
     assert!(content.len() < 200); // Should be less than content length + overhead
-    
+
     // But raw arguments should contain full JSON
     let args = snapshots[0].tool_arguments().unwrap();
     assert!(args.contains(&long_content));
 }
-

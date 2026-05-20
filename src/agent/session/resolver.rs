@@ -2,8 +2,8 @@ use nu_protocol::LabeledError;
 
 use crate::agent::protocol::contracts::UiMessageSnapshot;
 use crate::session::{ConversationStore, JsonlConversationStore, Session, SessionStore};
-use rig::completion::message::{AssistantContent, UserContent};
 use rig::completion::Message;
+use rig::completion::message::{AssistantContent, UserContent};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SessionRequest {
@@ -59,9 +59,9 @@ impl SessionResolver for DefaultSessionResolver<'_> {
                         // Load rig messages from JSONL via ConversationStore
                         let conversation_store =
                             JsonlConversationStore::new(self.store.cache_dir().to_path_buf());
-                        let rig_messages = conversation_store
-                            .load(&id)
-                            .map_err(|e| LabeledError::new(format!("Failed to load messages: {e}")))?;
+                        let rig_messages = conversation_store.load(&id).map_err(|e| {
+                            LabeledError::new(format!("Failed to load messages: {e}"))
+                        })?;
 
                         // Convert to UiMessageSnapshots for transcript display
                         hydrate_transcript_from_rig_messages(&rig_messages).collect()
@@ -111,10 +111,7 @@ pub(crate) fn generate_session_id() -> String {
     )
 }
 
-pub(crate) fn resolve_session_request(
-    use_tui: bool,
-    session_id: Option<String>,
-) -> SessionRequest {
+pub(crate) fn resolve_session_request(use_tui: bool, session_id: Option<String>) -> SessionRequest {
     match (use_tui, session_id) {
         // TUI explicit session policy is centralized here:
         // always attempt to attach first (resolver handles load-then-create fallback).
@@ -165,10 +162,9 @@ fn hydrate_transcript_from_rig_messages(
                 // Process text and tool calls separately
                 for item in content.iter() {
                     match item {
-                        AssistantContent::Text(text) => {
-                            if !text.text.is_empty() {
-                                snapshots.push(UiMessageSnapshot::new("assistant", text.text.clone()));
-                            }
+                        AssistantContent::Text(text) if !text.text.is_empty() => {
+                            snapshots
+                                .push(UiMessageSnapshot::new("assistant", text.text.clone()));
                         }
                         AssistantContent::ToolCall(tool_call) => {
                             // Tool calls: hydrate as tool invocation with proper format
@@ -177,15 +173,20 @@ fn hydrate_transcript_from_rig_messages(
 
                             // Summarize arguments to match live rendering
                             let args_summary =
-                                crate::agent::protocol::tool_args::summarize_tool_arguments(&args_json);
+                                crate::agent::protocol::tool_args::summarize_tool_arguments(
+                                    &args_json,
+                                );
 
                             // Format content to match what start_tool_call produces
                             let display_content =
                                 format!("tool[{}] args={}", tool_call.function.name, args_summary);
 
                             snapshots.push(
-                                UiMessageSnapshot::new("tool", display_content)
-                                    .with_tool_details(Some(args_json), None, Some(true)),
+                                UiMessageSnapshot::new("tool", display_content).with_tool_details(
+                                    Some(args_json),
+                                    None,
+                                    Some(true),
+                                ),
                             );
                         }
                         _ => {} // Reasoning, Image, etc.

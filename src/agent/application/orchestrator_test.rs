@@ -1071,15 +1071,15 @@ fn run_hydrated_interactive_loop_hydrates_exactly_once() {
     let mut runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&[]);
 
-    let messages =
-        vec![
-            UiMessageSnapshot::new("user", "history"),
-            {
-                let mut s = UiMessageSnapshot::new("assistant", "response");
-                s.usage = Some(UiMessageUsageSnapshot { input_tokens: None, output_tokens: None, total_tokens: Some(321) });
-                s
-            },
-        ];
+    let messages = vec![UiMessageSnapshot::new("user", "history"), {
+        let mut s = UiMessageSnapshot::new("assistant", "response");
+        s.usage = Some(UiMessageUsageSnapshot {
+            input_tokens: None,
+            output_tokens: None,
+            total_tokens: Some(321),
+        });
+        s
+    }];
     run_hydrated_interactive_loop(&mut runtime, &mut ui, messages.clone(), Span::test_data())
         .expect("interactive loop with hydration");
 
@@ -2413,7 +2413,11 @@ fn interactive_loop_worker_channel_closed_preserves_authoritative_visible_tool_c
     }));
 
     assert!(panic.is_err(), "expected panic from toggle worker thread");
-    assert_eq!(ui.mcp_details.len(), 2, "expected exactly two toggle failure reports");
+    assert_eq!(
+        ui.mcp_details.len(),
+        2,
+        "expected exactly two toggle failure reports"
+    );
     // First toggle: worker panics, response channel disconnects
     assert_eq!(ui.mcp_details[0].0, "gh");
     assert_eq!(ui.mcp_details[0].1, McpUsabilityState::Failed);

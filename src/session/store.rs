@@ -106,7 +106,7 @@ impl JsonlConversationStore {
 impl ConversationStore for JsonlConversationStore {
     fn load(&self, session_id: &str) -> Result<Vec<Message>, Box<dyn Error>> {
         let path = self.session_path(session_id);
-        
+
         // Return empty vec if file doesn't exist (new session)
         if !path.exists() {
             return Ok(vec![]);
@@ -118,7 +118,7 @@ impl ConversationStore for JsonlConversationStore {
 
         for (line_num, line) in reader.lines().enumerate() {
             let line = line?;
-            
+
             // Skip empty lines
             if line.trim().is_empty() {
                 continue;
@@ -163,22 +163,20 @@ impl ConversationStore for JsonlConversationStore {
                 created_at: chrono::Utc::now(),
                 compaction_count: 0,
             };
-            
-            let mut file = OpenOptions::new()
-                .create(true)
-                .write(true)
-                .append(true)
-                .open(&path)?;
-            
-            writeln!(file, "{}", serde_json::to_string(&metadata)?)?;
-        }
 
-        // Append messages
         let mut file = OpenOptions::new()
             .create(true)
-            .write(true)
             .append(true)
             .open(&path)?;
+
+        writeln!(file, "{}", serde_json::to_string(&metadata)?)?;
+    }
+
+    // Append messages
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)?;
 
         for message in messages {
             writeln!(file, "{}", serde_json::to_string(message)?)?;
@@ -201,9 +199,8 @@ impl ConversationStore for JsonlConversationStore {
         }
 
         // Use atomic write: temp file + rename
-        let mut temp_file = NamedTempFile::new_in(
-            path.parent().unwrap_or_else(|| std::path::Path::new("."))
-        )?;
+        let mut temp_file =
+            NamedTempFile::new_in(path.parent().unwrap_or_else(|| std::path::Path::new(".")))?;
 
         // Write metadata as first line
         writeln!(temp_file, "{}", serde_json::to_string(metadata)?)?;

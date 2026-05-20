@@ -737,11 +737,15 @@ impl SimplePluginCommand for Agent {
         }
 
         // Extract session metadata before constructing runtime
-        let (compaction_threshold, compaction_count) = if let Some(ref session) = session_resolution.session {
-            (Some(session.config().compaction_threshold), session.compaction_count())
-        } else {
-            (None, 0)
-        };
+        let (compaction_threshold, compaction_count) =
+            if let Some(ref session) = session_resolution.session {
+                (
+                    Some(session.config().compaction_threshold),
+                    session.compaction_count(),
+                )
+            } else {
+                (None, 0)
+            };
 
         let mut runtime_impl = AgentConversationRuntime {
             runtime,

@@ -372,10 +372,10 @@ fn build_system_preamble_handles_partial_inputs() {
 fn runtime_struct_has_memory_field() {
     // GREEN: This test now compiles, proving the memory field exists
     use rig::memory::InMemoryConversationMemory;
-    
+
     // Compile-time check that the field exists with correct type
     fn _assert_field_exists(_memory: &InMemoryConversationMemory) {}
-    
+
     // We can't easily construct a runtime in tests, but we can verify
     // the type signature compiles
     let _type_check: fn(&AgentConversationRuntime) = |r| {
@@ -387,10 +387,10 @@ fn runtime_struct_has_memory_field() {
 fn runtime_struct_has_conversation_store_field() {
     // GREEN: This test now compiles, proving the conversation_store field exists
     use crate::session::JsonlConversationStore;
-    
+
     // Compile-time check that the field exists with correct type
     fn _assert_field_exists(_store: &JsonlConversationStore) {}
-    
+
     let _type_check: fn(&AgentConversationRuntime) = |r| {
         _assert_field_exists(&r.conversation_store);
     };
@@ -399,7 +399,7 @@ fn runtime_struct_has_conversation_store_field() {
 #[test]
 fn runtime_struct_has_memory_message_count_field() {
     // GREEN: This test now compiles, proving the memory_message_count field exists
-    
+
     // Compile-time check that the field exists with correct type
     let _type_check: fn(&AgentConversationRuntime) = |r| {
         let _count: usize = r.memory_message_count;
@@ -414,34 +414,38 @@ fn runtime_struct_has_memory_message_count_field() {
 fn evaluate_auto_compaction_uses_memory_message_count_not_session_messages() {
     // RED: This test verifies that evaluate_auto_compaction uses memory_message_count
     // instead of the stale session.messages().len()
-    
+
     // We can't easily construct a full runtime, but we can verify the logic
     // by checking that the ThresholdCompactionPolicy receives the correct count
-    
-    use crate::agent::protocol::compaction::{ThresholdCompactionPolicy, CompactionTriggerState};
-    
+
+    use crate::agent::protocol::compaction::{CompactionTriggerState, ThresholdCompactionPolicy};
+
     let policy = ThresholdCompactionPolicy::new(10, 2, 1);
     let mut state = CompactionTriggerState::default();
-    
+
     // Simulate memory_message_count = 12 (should trigger compaction)
     let decision = policy.evaluate(Some(12), &mut state);
-    
+
     match decision {
         crate::agent::protocol::compaction::CompactionTriggerDecision::Fire { .. } => {
             // Expected: should fire when count exceeds threshold
-        },
-        _ => panic!("Expected compaction to fire when memory_message_count (12) exceeds threshold (10)"),
+        }
+        _ => panic!(
+            "Expected compaction to fire when memory_message_count (12) exceeds threshold (10)"
+        ),
     }
-    
+
     // Simulate memory_message_count = 5 (should not trigger)
     let mut state2 = CompactionTriggerState::default();
     let decision2 = policy.evaluate(Some(5), &mut state2);
-    
+
     match decision2 {
         crate::agent::protocol::compaction::CompactionTriggerDecision::NoFire { .. } => {
             // Expected: should not fire when count is below threshold
-        },
-        _ => panic!("Expected compaction not to fire when memory_message_count (5) is below threshold (10)"),
+        }
+        _ => panic!(
+            "Expected compaction not to fire when memory_message_count (5) is below threshold (10)"
+        ),
     }
 }
 
@@ -449,17 +453,20 @@ fn evaluate_auto_compaction_uses_memory_message_count_not_session_messages() {
 fn response_metadata_uses_memory_message_count_not_session_messages() {
     // RED: This test verifies that response metadata includes the correct message count
     // from memory_message_count instead of stale session.messages().len()
-    
+
     // This is a compile-time verification that memory_message_count exists
     // and is used for building response metadata
-    
+
     let _verify_field_usage: fn(usize) -> usize = |memory_count| {
         // The actual response building uses memory_count, not session.messages().len()
         memory_count
     };
-    
+
     // Test the logic that would be used in the response
     let memory_message_count = 15;
     let result = _verify_field_usage(memory_message_count);
-    assert_eq!(result, 15, "Response metadata should use memory_message_count");
+    assert_eq!(
+        result, 15,
+        "Response metadata should use memory_message_count"
+    );
 }

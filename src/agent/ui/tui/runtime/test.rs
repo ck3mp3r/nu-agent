@@ -3098,14 +3098,15 @@ fn lane_2_context_line_truncation_removes_any_extra_labels_or_hints() {
 #[test]
 fn lane_2_rehydrates_used_tokens_from_hydrated_history_metadata() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    coordinator.hydrate_transcript_from_messages(vec![
-        UiMessageSnapshot::new("user", "hello"),
-        {
-            let mut s = UiMessageSnapshot::new("assistant", "history");
-            s.usage = Some(UiMessageUsageSnapshot { input_tokens: None, output_tokens: None, total_tokens: Some(444) });
-            s
-        },
-    ]);
+    coordinator.hydrate_transcript_from_messages(vec![UiMessageSnapshot::new("user", "hello"), {
+        let mut s = UiMessageSnapshot::new("assistant", "history");
+        s.usage = Some(UiMessageUsageSnapshot {
+            input_tokens: None,
+            output_tokens: None,
+            total_tokens: Some(444),
+        });
+        s
+    }]);
 
     let lane_2 =
         crate::agent::ui::tui::runtime::lane_2_status_line_for_test(coordinator.state(), 120);
@@ -3117,13 +3118,15 @@ fn lane_2_rehydrates_used_tokens_from_hydrated_history_metadata() {
 fn lane_2_rehydrate_with_known_max_shows_ratio_immediately() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
     coordinator.set_context_window_max_tokens(Some(1000));
-    coordinator.hydrate_transcript_from_messages(vec![
-        {
-            let mut s = UiMessageSnapshot::new("assistant", "history");
-            s.usage = Some(UiMessageUsageSnapshot { input_tokens: None, output_tokens: None, total_tokens: Some(250) });
-            s
-        },
-    ]);
+    coordinator.hydrate_transcript_from_messages(vec![{
+        let mut s = UiMessageSnapshot::new("assistant", "history");
+        s.usage = Some(UiMessageUsageSnapshot {
+            input_tokens: None,
+            output_tokens: None,
+            total_tokens: Some(250),
+        });
+        s
+    }]);
 
     let lane_2 =
         crate::agent::ui::tui::runtime::lane_2_status_line_for_test(coordinator.state(), 120);
@@ -3158,13 +3161,15 @@ fn lane_2_rehydrate_without_usage_metadata_with_known_max_shows_ratio_not_fallba
 fn lane_2_rehydrate_is_replaced_by_live_turn_usage() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
     coordinator.set_context_window_max_tokens(Some(100));
-    coordinator.hydrate_transcript_from_messages(vec![
-        {
-            let mut s = UiMessageSnapshot::new("assistant", "history");
-            s.usage = Some(UiMessageUsageSnapshot { input_tokens: None, output_tokens: None, total_tokens: Some(7) });
-            s
-        },
-    ]);
+    coordinator.hydrate_transcript_from_messages(vec![{
+        let mut s = UiMessageSnapshot::new("assistant", "history");
+        s.usage = Some(UiMessageUsageSnapshot {
+            input_tokens: None,
+            output_tokens: None,
+            total_tokens: Some(7),
+        });
+        s
+    }]);
 
     let hydrated =
         crate::agent::ui::tui::runtime::lane_2_status_line_for_test(coordinator.state(), 120);

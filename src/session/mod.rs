@@ -187,7 +187,7 @@ impl Session {
         let messages = memory
             .load(&self.id)
             .await
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| io::Error::other(e.to_string()))?;
 
         // If we have fewer messages than keep_recent, nothing to do
         if messages.len() <= keep_count {
@@ -219,12 +219,12 @@ impl Session {
         memory
             .clear(&self.id)
             .await
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| io::Error::other(e.to_string()))?;
 
         memory
             .append(&self.id, compacted.clone())
             .await
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| io::Error::other(e.to_string()))?;
 
         // Increment compaction count
         self.compaction_count += 1;
@@ -240,7 +240,7 @@ impl Session {
         // Rewrite to ConversationStore (atomic JSONL write)
         store
             .rewrite(&self.id, &metadata, &compacted)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| io::Error::other(e.to_string()))?;
 
         Ok(CompactionOutcome {
             summarized_count,

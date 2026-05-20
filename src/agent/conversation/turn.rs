@@ -138,6 +138,16 @@ pub(crate) fn execute_turn<U: ProgressUi, P: PermissionResolver>(
 
     // Build and execute agent with hook based on variant
     // Box the futures to make them the same type
+    let config = AgentPromptConfig {
+        hook,
+        preamble: preamble_owned,
+        prompt: user_message,
+        memory: ctx.memory,
+        conversation_id: ctx.conversation_id,
+        tool_server_handle: ctx.tool_server_handle,
+        max_turns: ctx.max_turns,
+    };
+
     let prompt_future: Pin<
         Box<
             dyn Future<Output = Result<rig::agent::PromptResponse, rig::completion::PromptError>>
@@ -149,48 +159,21 @@ pub(crate) fn execute_turn<U: ProgressUi, P: PermissionResolver>(
                 ctx.agent.client.clone(),
                 &ctx.agent.model_name,
             );
-            Box::pin(build_agent_and_prompt(
-                model,
-                hook,
-                preamble_owned,
-                user_message,
-                ctx.memory,
-                ctx.conversation_id,
-                ctx.tool_server_handle,
-                ctx.max_turns,
-            ))
+            Box::pin(build_agent_and_prompt(model, config))
         }
         ProviderVariant::OpenAI4x => {
             let model = CompletionModel::<OpenAI4xProvider, _>::new(
                 ctx.agent.client.clone(),
                 &ctx.agent.model_name,
             );
-            Box::pin(build_agent_and_prompt(
-                model,
-                hook,
-                preamble_owned,
-                user_message,
-                ctx.memory,
-                ctx.conversation_id,
-                ctx.tool_server_handle,
-                ctx.max_turns,
-            ))
+            Box::pin(build_agent_and_prompt(model, config))
         }
         ProviderVariant::OpenAI5x => {
             let model = CompletionModel::<OpenAI5xProvider, _>::new(
                 ctx.agent.client.clone(),
                 &ctx.agent.model_name,
             );
-            Box::pin(build_agent_and_prompt(
-                model,
-                hook,
-                preamble_owned,
-                user_message,
-                ctx.memory,
-                ctx.conversation_id,
-                ctx.tool_server_handle,
-                ctx.max_turns,
-            ))
+            Box::pin(build_agent_and_prompt(model, config))
         }
     };
 
@@ -226,9 +209,8 @@ pub(crate) fn execute_turn<U: ProgressUi, P: PermissionResolver>(
     })
 }
 
-/// Build an agent with a hook and execute a multi-turn prompt loop.
-async fn build_agent_and_prompt<M>(
-    model: M,
+/// Configuration for building and prompting an agent.
+struct AgentPromptConfig {
     hook: CopilotPromptHook,
     preamble: Option<String>,
     prompt: rig::completion::Message,
@@ -236,10 +218,25 @@ async fn build_agent_and_prompt<M>(
     conversation_id: String,
     tool_server_handle: rig::tool::server::ToolServerHandle,
     max_turns: Option<u32>,
+}
+
+/// Build an agent with a hook and execute a multi-turn prompt loop.
+async fn build_agent_and_prompt<M>(
+    model: M,
+    config: AgentPromptConfig,
 ) -> Result<rig::agent::PromptResponse, rig::completion::PromptError>
 where
     M: rig::completion::CompletionModel + Clone + 'static,
 {
+    let AgentPromptConfig {
+        hook,
+        preamble,
+        prompt,
+        memory,
+        conversation_id,
+        tool_server_handle,
+        max_turns,
+    } = config;
     use rig::completion::Prompt;
 
     let mut builder = rig::agent::AgentBuilder::new(model)

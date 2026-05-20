@@ -2033,9 +2033,7 @@ mod session_validation_tests {
     use crate::agent::application::command::extract_and_validate_session_flags;
 
     /// Helper to create a mock EvaluatedCall for testing
-    fn create_mock_call_with_session_flags(
-        session: Option<&str>,
-    ) -> EvaluatedCall {
+    fn create_mock_call_with_session_flags(session: Option<&str>) -> EvaluatedCall {
         let mut named = vec![];
 
         if let Some(id) = session {
@@ -2127,7 +2125,6 @@ mod tui_session_resolution_tests {
             "interactive TUI quit must return nothing"
         );
     }
-
 }
 
 // Integration tests for session functionality
@@ -2185,9 +2182,7 @@ mod session_integration_tests {
     }
 
     /// Helper to create a mock EvaluatedCall for testing (imported from session_validation_tests)
-    fn create_mock_call_with_session_flags(
-        session: Option<&str>,
-    ) -> EvaluatedCall {
+    fn create_mock_call_with_session_flags(session: Option<&str>) -> EvaluatedCall {
         let mut named = vec![];
 
         if let Some(id) = session {

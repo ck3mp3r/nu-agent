@@ -480,10 +480,12 @@ impl ConversationRuntime for AgentConversationRuntime {
                 });
 
             // Append loaded messages to memory (memory.append is async and takes a Vec)
-            if !messages.is_empty() {
-                if let Err(e) = self.runtime.block_on(self.memory.append(session_id, messages.clone())) {
-                    eprintln!("Failed to append messages to memory: {}", e);
-                }
+            if !messages.is_empty()
+                && let Err(e) = self
+                    .runtime
+                    .block_on(self.memory.append(session_id, messages.clone()))
+            {
+                eprintln!("Failed to append messages to memory: {}", e);
             }
 
             // Track message count
@@ -549,19 +551,19 @@ impl ConversationRuntime for AgentConversationRuntime {
         })?;
 
         // Persist new messages to conversation store if session exists
-        if let Some(ref session_id) = self.final_session_id {
-            if let Some(ref messages) = turn_result.messages {
-                // Persist the new messages from the turn result
-                if let Err(e) = self.conversation_store.append(session_id, messages) {
-                    eprintln!(
-                        "Warning: Failed to persist turn messages to conversation store: {}",
-                        e
-                    );
-                }
-
-                // Update memory message count
-                self.memory_message_count += messages.len();
+        if let Some(ref session_id) = self.final_session_id
+            && let Some(ref messages) = turn_result.messages
+        {
+            // Persist the new messages from the turn result
+            if let Err(e) = self.conversation_store.append(session_id, messages) {
+                eprintln!(
+                    "Warning: Failed to persist turn messages to conversation store: {}",
+                    e
+                );
             }
+
+            // Update memory message count
+            self.memory_message_count += messages.len();
         }
 
         // Format the response value
@@ -668,7 +670,7 @@ impl AgentConversationRuntime {
             .final_session_id
             .as_ref()
             .ok_or_else(|| "session_unavailable".to_string())?;
-        
+
         let mut session = store
             .load_session(session_id)
             .map_err(|e| format!("Failed to load session for compaction: {}", e))?;
@@ -694,15 +696,18 @@ impl AgentConversationRuntime {
         match result {
             Ok(event) => {
                 ui.emit(&event);
-                
+
                 // Update memory_message_count and compaction_count after successful compaction
-                if let UiEvent::CompactionTriggered { kept_recent_count, .. } = &event {
+                if let UiEvent::CompactionTriggered {
+                    kept_recent_count, ..
+                } = &event
+                {
                     // After compaction: summary + kept_recent_count messages
                     self.memory_message_count = kept_recent_count + 1;
                     // Increment compaction count
                     self.compaction_count = session.compaction_count();
                 }
-                
+
                 Ok(())
             }
             Err(error) => {
@@ -780,7 +785,7 @@ where
 
     // Load messages from memory to check threshold
     let messages = memory
-        .load(&session.id())
+        .load(session.id())
         .await
         .map_err(|e| format!("Failed to load messages from memory: {}", e))?;
 
@@ -801,7 +806,7 @@ where
         let messages = old_messages.to_vec();
         async move { summarize_messages(agent, ui, &messages).await }
     };
-    
+
     let outcome = session
         .compact(memory, store, summarizer)
         .await
