@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tempfile::TempDir;
 
 #[test]
-fn compact_with_rig_memory_splits_at_keep_recent() {
+fn compact_splits_at_keep_recent() {
     // RED: Test that compaction loads from memory, splits correctly, and stores back
     let temp_dir = TempDir::new().unwrap();
     let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
@@ -38,15 +38,16 @@ fn compact_with_rig_memory_splits_at_keep_recent() {
     };
     
     // Mock summarizer that formats old messages
-    let summarizer = |old_messages: &[Message]| -> io::Result<String> {
-        Ok(format!("Summary of {} messages", old_messages.len()))
+    let summarizer = |old_messages: &[Message]| {
+        let count = old_messages.len();
+        async move { Ok(format!("Summary of {} messages", count)) }
     };
     
     let outcome = tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(async {
             session
-                .compact_with_rig_memory(&memory, &store, summarizer)
+                .compact(&memory, &store, summarizer)
                 .await
         })
         .unwrap();
@@ -84,7 +85,7 @@ fn compact_with_rig_memory_splits_at_keep_recent() {
 }
 
 #[test]
-fn compact_with_rig_memory_persists_to_store() {
+fn compact_persists_to_store() {
     // RED: Test that compacted messages are persisted to ConversationStore
     let temp_dir = TempDir::new().unwrap();
     let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
@@ -115,13 +116,13 @@ fn compact_with_rig_memory_persists_to_store() {
         compaction_count: 0,
     };
     
-    let summarizer = |_: &[Message]| -> io::Result<String> { Ok("Summary".to_string()) };
+    let summarizer = |_: &[Message]| async move { Ok("Summary".to_string()) };
     
     tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(async {
             session
-                .compact_with_rig_memory(&memory, &store, summarizer)
+                .compact(&memory, &store, summarizer)
                 .await
         })
         .unwrap();
@@ -140,7 +141,7 @@ fn compact_with_rig_memory_persists_to_store() {
 }
 
 #[test]
-fn compact_with_rig_memory_increments_compaction_count() {
+fn compact_increments_compaction_count() {
     // RED: Test that compaction_count is incremented
     let temp_dir = TempDir::new().unwrap();
     let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
@@ -172,13 +173,13 @@ fn compact_with_rig_memory_increments_compaction_count() {
     
     assert_eq!(session.compaction_count, 0);
     
-    let summarizer = |_: &[Message]| -> io::Result<String> { Ok("S".to_string()) };
+    let summarizer = |_: &[Message]| async move { Ok("S".to_string()) };
     
     tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(async {
             session
-                .compact_with_rig_memory(&memory, &store, summarizer)
+                .compact(&memory, &store, summarizer)
                 .await
         })
         .unwrap();
@@ -187,7 +188,7 @@ fn compact_with_rig_memory_increments_compaction_count() {
 }
 
 #[test]
-fn compact_with_rig_memory_handles_insufficient_messages() {
+fn compact_handles_insufficient_messages() {
     // RED: Test no-op when messages <= keep_recent
     let temp_dir = TempDir::new().unwrap();
     let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
@@ -216,13 +217,13 @@ fn compact_with_rig_memory_handles_insufficient_messages() {
         compaction_count: 0,
     };
     
-    let summarizer = |_: &[Message]| -> io::Result<String> { Ok("Summary".to_string()) };
+    let summarizer = |_: &[Message]| async move { Ok("Summary".to_string()) };
     
     let outcome = tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(async {
             session
-                .compact_with_rig_memory(&memory, &store, summarizer)
+                .compact(&memory, &store, summarizer)
                 .await
         })
         .unwrap();
@@ -241,7 +242,7 @@ fn compact_with_rig_memory_handles_insufficient_messages() {
 }
 
 #[test]
-fn compact_with_rig_memory_clears_before_append() {
+fn compact_clears_before_append() {
     // RED: Test that memory is cleared before appending compacted messages
     let temp_dir = TempDir::new().unwrap();
     let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
@@ -271,15 +272,16 @@ fn compact_with_rig_memory_clears_before_append() {
         compaction_count: 0,
     };
     
-    let summarizer = |old: &[Message]| -> io::Result<String> {
-        Ok(format!("Summarized {}", old.len()))
+    let summarizer = |old: &[Message]| {
+        let count = old.len();
+        async move { Ok(format!("Summarized {}", count)) }
     };
     
     tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(async {
             session
-                .compact_with_rig_memory(&memory, &store, summarizer)
+                .compact(&memory, &store, summarizer)
                 .await
         })
         .unwrap();
@@ -290,4 +292,61 @@ fn compact_with_rig_memory_clears_before_append() {
         .block_on(async { memory.load(session_id).await.unwrap() });
     
     assert_eq!(final_messages.len(), 3);
+}
+
+#[test]
+fn compact_with_async_summarizer_does_not_panic() {
+    // This test mimics the production call chain where compact() is called
+    // inside a runtime.block_on(), and the summarizer itself is async.
+    // Before the async fix, this would panic with "Cannot start a runtime
+    // from within a runtime".
+    let temp_dir = TempDir::new().unwrap();
+    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
+    let memory = Arc::new(InMemoryConversationMemory::new());
+    let session_id = "test_async_no_panic";
+
+    let messages: Vec<Message> = (0..5)
+        .map(|i| Message::user(&format!("Msg {}", i)))
+        .collect();
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        memory.append(session_id, messages).await.unwrap();
+    });
+
+    let config = SessionConfig {
+        compaction_threshold: 100,
+        compaction_strategy: CompactionStrategy::SlidingSummary,
+        keep_recent: 2,
+    };
+
+    let mut session = Session {
+        id: session_id.to_string(),
+        created_at: Utc::now(),
+        config,
+        compaction_count: 0,
+    };
+
+    // Async summarizer that actually awaits something — this is the key.
+    // A sync closure wrapped in async wouldn't trigger the bug.
+    let summarizer = |old: &[Message]| {
+        let count = old.len();
+        async move {
+            // Yield to the runtime — this ensures we're truly async
+            tokio::task::yield_now().await;
+            Ok(format!("Summarized {} messages", count))
+        }
+    };
+
+    // This is the production pattern: block_on wrapping an async call
+    // that internally awaits the summarizer
+    let outcome = rt.block_on(async {
+        session
+            .compact(&memory, &store, summarizer)
+            .await
+    })
+    .unwrap();
+
+    assert_eq!(outcome.summarized_count, 3);
+    assert_eq!(outcome.kept_recent_count, 2);
 }

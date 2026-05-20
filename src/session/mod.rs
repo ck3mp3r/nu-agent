@@ -12,6 +12,7 @@ pub use store::{ConversationStore, JsonlConversationStore};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::future::Future;
 use std::io::{self, BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
@@ -167,14 +168,15 @@ impl Session {
     ///
     /// # Errors
     /// Returns an error if memory operations, summarizer, or store operations fail.
-    pub async fn compact_with_rig_memory<F, S>(
+    pub async fn compact<F, Fut, S>(
         &mut self,
         memory: &rig::memory::InMemoryConversationMemory,
         store: &S,
         summarizer: F,
     ) -> io::Result<CompactionOutcome>
     where
-        F: FnOnce(&[rig::completion::Message]) -> io::Result<String>,
+        F: FnOnce(&[rig::completion::Message]) -> Fut,
+        Fut: Future<Output = io::Result<String>>,
         S: ConversationStore,
     {
         use rig::memory::ConversationMemory;
@@ -204,7 +206,7 @@ impl Session {
         let kept_recent_count = recent_messages.len();
 
         // Call summarizer with old messages
-        let summary = summarizer(old_messages)?;
+        let summary = summarizer(old_messages).await?;
 
         // Create summary message with "system" role
         let summary_message = rig::completion::Message::system(&summary);

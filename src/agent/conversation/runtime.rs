@@ -681,12 +681,13 @@ impl AgentConversationRuntime {
             };
 
             // Run async compaction in the runtime
-            runtime.block_on(execute_compaction_with_rig_memory(
+            runtime.block_on(execute_compaction(
                 &mut session,
                 memory,
                 conversation_store,
-                |old_messages| summarize_rig_messages_with_llm(runtime, &agent, ui, old_messages),
+                &agent,
                 mode,
+                ui,
             ))
         });
 
@@ -750,7 +751,7 @@ where
 /// This async function:
 /// 1. Loads messages from InMemoryConversationMemory
 /// 2. Calls the summarizer with old rig messages
-/// 3. Compacts using `Session::compact_with_rig_memory`
+/// 3. Compacts using `Session::compact`
 /// 4. Updates memory and persists to store
 ///
 /// # Arguments
@@ -763,16 +764,17 @@ where
 ///
 /// # Returns
 /// Ok(Some(outcome)) on successful compaction, Ok(None) if no compaction needed
-async fn execute_compaction_with_rig_memory<F, S>(
+async fn execute_compaction<S, U>(
     session: &mut Session,
     memory: &rig::memory::InMemoryConversationMemory,
     store: &S,
-    summarizer: F,
+    agent: &crate::providers::github_copilot::model::Agent,
     mode: CompactionInvocationMode,
+    ui: &mut U,
 ) -> Result<Option<CompactionOutcome>, String>
 where
-    F: FnOnce(&[rig::completion::Message]) -> std::io::Result<String>,
     S: ConversationStore,
+    U: ProgressUi,
 {
     use rig::memory::ConversationMemory;
 
@@ -794,9 +796,14 @@ where
         return Ok(None);
     }
 
-    // Perform compaction
+    // Perform compaction with summarizer closure
+    let summarizer = |old_messages: &[rig::completion::Message]| {
+        let messages = old_messages.to_vec();
+        async move { summarize_messages(agent, ui, &messages).await }
+    };
+    
     let outcome = session
-        .compact_with_rig_memory(memory, store, summarizer)
+        .compact(memory, store, summarizer)
         .await
         .map_err(|_| COMPACTION_FAILURE_WARNING.to_string())?;
 
@@ -820,7 +827,7 @@ fn summary_preview_text(summary_body: &str) -> String {
 /// - Message::System { content } -> content string
 ///
 /// Returns formatted string with role: content pairs.
-fn format_rig_messages_for_summary(messages: &[rig::completion::Message]) -> String {
+fn format_messages_for_summary(messages: &[rig::completion::Message]) -> String {
     use rig::completion::message::{AssistantContent, UserContent};
 
     messages
@@ -869,13 +876,12 @@ fn format_rig_messages_for_summary(messages: &[rig::completion::Message]) -> Str
 /// Summarize old rig messages with LLM.
 ///
 /// Formats rig messages, creates summarization prompt, and calls agent.completion().
-fn summarize_rig_messages_with_llm<U: ProgressUi>(
-    runtime: &tokio::runtime::Runtime,
+async fn summarize_messages<U: ProgressUi>(
     agent: &crate::providers::github_copilot::model::Agent,
     ui: &mut U,
     old_messages: &[rig::completion::Message],
 ) -> std::io::Result<String> {
-    let history = format_rig_messages_for_summary(old_messages);
+    let history = format_messages_for_summary(old_messages);
     let prompt_text = format!(
         "Summarize the following prior conversation segment concisely while preserving critical decisions, constraints, and open tasks.\n\n{}",
         history
@@ -895,12 +901,10 @@ fn summarize_rig_messages_with_llm<U: ProgressUi>(
             Done(Result<String, rig::completion::CompletionError>),
         }
 
-        match runtime.block_on(async {
-            tokio::select! {
-                response = &mut call_fut => CompletionProgress::Done(response),
-                _ = tokio::time::sleep(Duration::from_millis(80)) => CompletionProgress::Tick,
-            }
-        }) {
+        match tokio::select! {
+            response = &mut call_fut => CompletionProgress::Done(response),
+            _ = tokio::time::sleep(Duration::from_millis(80)) => CompletionProgress::Tick,
+        } {
             CompletionProgress::Tick => ui.emit(&UiEvent::Tick),
             CompletionProgress::Done(result) => {
                 return result.map_err(|_| std::io::Error::other(COMPACTION_FAILURE_WARNING));
