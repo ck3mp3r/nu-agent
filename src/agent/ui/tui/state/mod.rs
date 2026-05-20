@@ -1,17 +1,22 @@
 mod prompt_queue;
 mod tool_calls;
-mod viewport_state;
 
 #[cfg(test)]
 mod test;
 
 use crate::agent::protocol::event::{PermissionDecision, PermissionDecisionSubmission};
 use crate::agent::protocol::slash::{SlashCommand, filter_inline_slash_suggestions};
+use crate::agent::ui::transcript::ir::{ContentLine, DisplayLine, Role, Span, StyleHint};
+use crate::agent::ui::transcript::items::{
+    AssistantChunk, Separator as TranscriptSeparator, SystemMessage, ToolInvocation,
+    ToolResult as TranscriptToolResult, TranscriptEntry, UserMessage, annotate_diff_hint,
+    parse_tool_text,
+};
 use crate::agent::ui::tui::markdown::{project_markdown_to_lines, rendered_line_to_plain_text};
-use crate::agent::ui::tui::rendering::selection::TranscriptSelection;
 use ratatui::text::Line;
 use std::collections::HashMap;
 use std::collections::VecDeque;
+use tui_widget_list::ListState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiPhase {
@@ -159,17 +164,6 @@ pub struct PermissionPrompt {
     pub pattern: String,
     pub target_field: Option<String>,
     pub summary: String,
-    pub pre_authorize_display: Option<crate::agent::protocol::event::ToolDisplay>,
-    pub attached_tool_transcript_line_index: Option<usize>,
-}
-
-const TURN_SEPARATOR_LINE: &str = "────────────────";
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TranscriptLine {
-    pub role: TranscriptRole,
-    pub text: String,
-    pub rendered: Option<Line<'static>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -185,15 +179,13 @@ pub struct AbortState {
     pub confirmation_marker: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct AppState {
     pub phase: UiPhase,
     pub input: InputState,
     pub abort: AbortState,
-    pub transcript_preview: Vec<TranscriptLine>,
-    pub transcript_follow_tail: bool,
-    pub transcript_scroll_lines_from_bottom: usize,
-    pub transcript_viewport_lines: usize,
+    pub transcript_preview: Vec<TranscriptEntry>,
+    pub transcript_list_state: ListState,
     pub status_line: String,
     pub input_mode: InputMode,
     pub pane_focus: PaneFocus,
@@ -227,7 +219,6 @@ pub struct AppState {
     pending_permission_decisions: VecDeque<PermissionDecisionSubmission>,
     pending_model_picker_launch_requests: usize,
     pub permission_prompt: Option<PermissionPrompt>,
-    permission_prompt_manual_recenter_override: bool,
     assistant_projection_cache: HashMap<String, Vec<Line<'static>>>,
     prompt_items: Vec<QueuedPrompt>,
     tool_call_items: Vec<ToolCallLine>,
@@ -242,11 +233,70 @@ pub struct AppState {
     insert_exit_pending_j: bool,
     normal_pending_key: Option<char>,
     inline_slash_commands: Vec<SlashCommand>,
-    transcript_cursor: Option<usize>,
-    visual_selection: Option<TranscriptSelection>,
     clipboard_request: Option<String>,
+    pub pre_displayed_tool_keys: std::collections::HashSet<String>,
     #[cfg(test)]
     assistant_projection_cache_misses: usize,
+}
+
+// Manual PartialEq implementation that skips transcript_list_state comparison
+// because tui_widget_list::ListState doesn't implement PartialEq
+impl PartialEq for AppState {
+    fn eq(&self, other: &Self) -> bool {
+        self.phase == other.phase
+            && self.input == other.input
+            && self.abort == other.abort
+            && self.transcript_preview == other.transcript_preview
+            // Skip transcript_list_state
+            && self.status_line == other.status_line
+            && self.input_mode == other.input_mode
+            && self.pane_focus == other.pane_focus
+            && self.latest_input_tokens == other.latest_input_tokens
+            && self.latest_output_tokens == other.latest_output_tokens
+            && self.latest_total_tokens == other.latest_total_tokens
+            && self.session_total_tokens == other.session_total_tokens
+            && self.context_window_max_tokens == other.context_window_max_tokens
+            && self.quit_requested == other.quit_requested
+            && self.command_palette_open == other.command_palette_open
+            && self.command_palette_query == other.command_palette_query
+            && self.command_palette_selection == other.command_palette_selection
+            && self.inline_slash_open == other.inline_slash_open
+            && self.inline_slash_selection == other.inline_slash_selection
+            && self.model_picker_open == other.model_picker_open
+            && self.model_picker_query == other.model_picker_query
+            && self.model_picker_selection == other.model_picker_selection
+            && self.model_picker_options == other.model_picker_options
+            && self.info_panel == other.info_panel
+            && self.info_panel_scroll == other.info_panel_scroll
+            && self.mcp_servers == other.mcp_servers
+            && self.mcp_panel_selection == other.mcp_panel_selection
+            && self.discoverable_skills == other.discoverable_skills
+            && self.skills_discovery_failed == other.skills_discovery_failed
+            && self.llm_visible_mcp_tool_count == other.llm_visible_mcp_tool_count
+            && self.mcp_visible_tool_count_by_server == other.mcp_visible_tool_count_by_server
+            && self.mcp_visible_tool_names_by_server == other.mcp_visible_tool_names_by_server
+            && self.mcp_failure_reasons == other.mcp_failure_reasons
+            && self.pending_mcp_toggle_requests == other.pending_mcp_toggle_requests
+            && self.pending_model_switch_requests == other.pending_model_switch_requests
+            && self.pending_permission_decisions == other.pending_permission_decisions
+            && self.pending_model_picker_launch_requests == other.pending_model_picker_launch_requests
+            && self.permission_prompt == other.permission_prompt
+            && self.assistant_projection_cache == other.assistant_projection_cache
+            && self.prompt_items == other.prompt_items
+            && self.tool_call_items == other.tool_call_items
+            && self.compaction_items == other.compaction_items
+            && self.active_tool_ids_by_key == other.active_tool_ids_by_key
+            && self.pending_prompt_ids == other.pending_prompt_ids
+            && self.pending_immediate_submissions == other.pending_immediate_submissions
+            && self.active_prompt_id == other.active_prompt_id
+            && self.next_prompt_id == other.next_prompt_id
+            && self.active_cycle == other.active_cycle
+            && self.insert_exit_pending_j == other.insert_exit_pending_j
+            && self.normal_pending_key == other.normal_pending_key
+            && self.inline_slash_commands == other.inline_slash_commands
+            && self.clipboard_request == other.clipboard_request
+            && self.pre_displayed_tool_keys == other.pre_displayed_tool_keys
+    }
 }
 
 impl Default for AppState {
@@ -256,9 +306,7 @@ impl Default for AppState {
             input: InputState::default(),
             abort: AbortState::default(),
             transcript_preview: Vec::new(),
-            transcript_follow_tail: true,
-            transcript_scroll_lines_from_bottom: 0,
-            transcript_viewport_lines: 1,
+            transcript_list_state: ListState::default(),
             status_line: String::new(),
             input_mode: InputMode::Insert,
             pane_focus: PaneFocus::Input,
@@ -292,7 +340,6 @@ impl Default for AppState {
             pending_permission_decisions: VecDeque::new(),
             pending_model_picker_launch_requests: 0,
             permission_prompt: None,
-            permission_prompt_manual_recenter_override: false,
             assistant_projection_cache: HashMap::new(),
             prompt_items: Vec::new(),
             tool_call_items: Vec::new(),
@@ -307,9 +354,8 @@ impl Default for AppState {
             insert_exit_pending_j: false,
             normal_pending_key: None,
             inline_slash_commands: Vec::new(),
-            transcript_cursor: None,
-            visual_selection: None,
             clipboard_request: None,
+            pre_displayed_tool_keys: std::collections::HashSet::new(),
             #[cfg(test)]
             assistant_projection_cache_misses: 0,
         }
@@ -627,23 +673,9 @@ impl AppState {
 
     pub fn open_permission_prompt(&mut self, prompt: PermissionPrompt) {
         self.permission_prompt = Some(prompt);
-        self.permission_prompt_manual_recenter_override = false;
         self.status_line = "Permission required".to_string();
+        self.scroll_transcript_to_bottom();
         self.ensure_invariants();
-    }
-
-    pub fn note_user_transcript_scroll_override(&mut self) {
-        if self.permission_prompt.is_some() {
-            self.permission_prompt_manual_recenter_override = true;
-        }
-    }
-
-    pub fn should_preserve_permission_prompt_row(&self) -> bool {
-        self.permission_prompt.is_some()
-    }
-
-    pub fn should_auto_recenter_permission_prompt_row(&self) -> bool {
-        self.permission_prompt.is_some() && !self.permission_prompt_manual_recenter_override
     }
 
     pub fn focus_transcript_pane(&mut self) {
@@ -671,6 +703,23 @@ impl AppState {
             .map(|item| item.transcript_line_index)
     }
 
+    pub fn latest_in_progress_tool_key_for_tool(&self, tool_name: &str) -> Option<String> {
+        let base_tool_name = tool_name.split('(').next().unwrap_or(tool_name);
+
+        self.tool_call_items
+            .iter()
+            .rev()
+            .find(|item| {
+                item.status == ToolCallStatus::InProgress
+                    && item
+                        .key
+                        .split_once('\n')
+                        .map(|(name, _)| name == base_tool_name)
+                        .unwrap_or(false)
+            })
+            .map(|item| item.key.clone())
+    }
+
     pub fn has_permission_prompt(&self) -> bool {
         self.permission_prompt.is_some()
     }
@@ -686,7 +735,6 @@ impl AppState {
                 matched_rule_identity: prompt.matched_rule_identity.clone(),
             });
         self.permission_prompt = None;
-        self.permission_prompt_manual_recenter_override = false;
         self.ensure_invariants();
         true
     }
@@ -996,7 +1044,7 @@ impl AppState {
             &mut self.active_tool_ids_by_key,
             &mut self.next_tool_call_id,
         )
-        .finish_tool_call(name, arguments, success, &mut self.transcript_preview);
+        .finish_tool_call(name, arguments, success);
     }
 
     pub fn append_input_char(&mut self, ch: char) {
@@ -1025,7 +1073,6 @@ impl AppState {
         self.insert_exit_pending_j = false;
         self.normal_pending_key = None;
         self.pane_focus = PaneFocus::Input;
-        self.visual_selection = None;
     }
 
     pub fn enter_normal_mode(&mut self) {
@@ -1033,17 +1080,6 @@ impl AppState {
         self.insert_exit_pending_j = false;
         self.normal_pending_key = None;
         self.pane_focus = PaneFocus::Transcript;
-        self.visual_selection = None;
-    }
-
-    pub fn enter_visual_mode(&mut self) {
-        self.input_mode = InputMode::Visual;
-        self.insert_exit_pending_j = false;
-        self.normal_pending_key = None;
-        self.pane_focus = PaneFocus::Transcript;
-        self.visual_selection = self
-            .current_transcript_cursor_index()
-            .map(TranscriptSelection::new);
     }
 
     pub fn set_insert_exit_pending_j(&mut self, pending: bool) {
@@ -1068,151 +1104,8 @@ impl AppState {
         matches
     }
 
-    pub fn selected_transcript_range(&self) -> Option<(usize, usize)> {
-        if self.input_mode != InputMode::Visual {
-            return None;
-        }
-        self.visual_selection
-            .as_ref()
-            .and_then(|selection| selection.bounded_range(self.transcript_preview.len()))
-    }
-
-    pub fn visual_anchor_index(&self) -> Option<usize> {
-        self.visual_selection
-            .as_ref()
-            .map(TranscriptSelection::anchor)
-    }
-
-    pub fn visual_cursor_index(&self) -> Option<usize> {
-        self.visual_selection
-            .as_ref()
-            .map(TranscriptSelection::cursor)
-    }
-
     pub fn transcript_cursor_index(&self) -> Option<usize> {
-        self.transcript_cursor
-    }
-
-    pub fn set_transcript_viewport_lines(&mut self, lines: usize) {
-        let mut model = viewport_state::transcript_viewport_model(self);
-        model.set_viewport_lines(lines.max(1));
-        viewport_state::apply_transcript_viewport_model(self, &model);
-    }
-
-    pub fn extend_visual_cursor_line_up(&mut self) {
-        if self.input_mode != InputMode::Visual {
-            return;
-        }
-        if self.visual_selection.is_none() {
-            return;
-        }
-        self.transcript_follow_tail = false;
-        let mut model = viewport_state::transcript_viewport_model(self);
-        model.line_up();
-        if let (Some(selection), Some(cursor)) =
-            (self.visual_selection.as_mut(), model.current_cursor_index())
-        {
-            selection.set_cursor(cursor);
-        }
-        viewport_state::apply_transcript_viewport_model(self, &model);
-    }
-
-    pub fn extend_visual_cursor_line_down(&mut self) {
-        if self.input_mode != InputMode::Visual {
-            return;
-        }
-        if self.visual_selection.is_none() {
-            return;
-        }
-        let mut model = viewport_state::transcript_viewport_model(self);
-        model.line_down();
-        if let (Some(selection), Some(cursor)) =
-            (self.visual_selection.as_mut(), model.current_cursor_index())
-        {
-            selection.set_cursor(cursor);
-        }
-        viewport_state::apply_transcript_viewport_model(self, &model);
-    }
-
-    pub fn extend_visual_cursor_page_up(&mut self, page_lines: usize) {
-        if self.input_mode != InputMode::Visual {
-            return;
-        }
-        if self.visual_selection.is_none() {
-            return;
-        }
-        self.transcript_follow_tail = false;
-        let mut model = viewport_state::transcript_viewport_model(self);
-        model.page_up(page_lines.max(1));
-        if let (Some(selection), Some(cursor)) =
-            (self.visual_selection.as_mut(), model.current_cursor_index())
-        {
-            selection.set_cursor(cursor);
-        }
-        viewport_state::apply_transcript_viewport_model(self, &model);
-    }
-
-    pub fn extend_visual_cursor_page_down(&mut self, page_lines: usize) {
-        if self.input_mode != InputMode::Visual {
-            return;
-        }
-        if self.visual_selection.is_none() {
-            return;
-        }
-        let mut model = viewport_state::transcript_viewport_model(self);
-        model.page_down(page_lines.max(1));
-        if let (Some(selection), Some(cursor)) =
-            (self.visual_selection.as_mut(), model.current_cursor_index())
-        {
-            selection.set_cursor(cursor);
-        }
-        viewport_state::apply_transcript_viewport_model(self, &model);
-    }
-
-    pub fn extend_visual_cursor_to_top(&mut self) {
-        if self.input_mode != InputMode::Visual {
-            return;
-        }
-        if self.visual_selection.is_none() {
-            return;
-        }
-        let mut model = viewport_state::transcript_viewport_model(self);
-        model.jump_top();
-        if let (Some(selection), Some(cursor)) =
-            (self.visual_selection.as_mut(), model.current_cursor_index())
-        {
-            selection.set_cursor(cursor);
-        }
-        viewport_state::apply_transcript_viewport_model(self, &model);
-    }
-
-    pub fn extend_visual_cursor_to_bottom(&mut self) {
-        if self.input_mode != InputMode::Visual {
-            return;
-        }
-        if self.visual_selection.is_none() {
-            return;
-        }
-        let mut model = viewport_state::transcript_viewport_model(self);
-        model.jump_bottom();
-        if let (Some(selection), Some(cursor)) =
-            (self.visual_selection.as_mut(), model.current_cursor_index())
-        {
-            selection.set_cursor(cursor);
-        }
-        viewport_state::apply_transcript_viewport_model(self, &model);
-    }
-
-    pub fn queue_visual_selection_to_clipboard(&mut self) {
-        let Some((start, end)) = self.selected_transcript_range() else {
-            return;
-        };
-        let text = self.transcript_preview[start..=end]
-            .iter()
-            .map(|line| line.text.as_str())
-            .collect::<Vec<_>>()
-            .join("\n");
-        self.clipboard_request = Some(text);
+        self.transcript_list_state.selected
     }
 
     pub fn take_clipboard_request(&mut self) -> Option<String> {
@@ -1402,12 +1295,45 @@ impl AppState {
     }
 
     pub fn push_transcript_line(&mut self, role: TranscriptRole, line: impl Into<String>) {
-        self.push_transcript_entry(role, line.into(), None);
+        let text = line.into();
+        let entry = match role {
+            TranscriptRole::User => TranscriptEntry::User(UserMessage { text }),
+            TranscriptRole::Assistant => TranscriptEntry::Assistant(AssistantChunk {
+                lines: vec![ContentLine::single(text, StyleHint::Normal)],
+            }),
+            TranscriptRole::Tool => {
+                let (name, args) = parse_tool_text(&text);
+                TranscriptEntry::Tool(ToolInvocation {
+                    name,
+                    source: String::new(),
+                    args,
+                })
+            }
+            TranscriptRole::ToolDisplay => TranscriptEntry::ToolResult(TranscriptToolResult {
+                name: String::new(),
+                success: true,
+                lines: vec![DisplayLine::new(text.clone(), annotate_diff_hint(&text))],
+            }),
+            TranscriptRole::System => TranscriptEntry::System(SystemMessage { text }),
+            TranscriptRole::Separator => TranscriptEntry::Separator(TranscriptSeparator),
+        };
+        self.push_transcript_item(entry);
     }
 
     pub fn push_transcript_rendered_line(&mut self, role: TranscriptRole, line: Line<'static>) {
-        let text = rendered_line_to_plain_text(&line);
-        self.push_transcript_entry(role, text, Some(line));
+        match role {
+            TranscriptRole::Assistant => {
+                let content_line = ratatui_line_to_content_line(&line);
+                let entry = TranscriptEntry::Assistant(AssistantChunk {
+                    lines: vec![content_line],
+                });
+                self.push_transcript_item(entry);
+            }
+            _ => {
+                let text = rendered_line_to_plain_text(&line);
+                self.push_transcript_line(role, text);
+            }
+        }
     }
 
     pub fn project_assistant_markdown_lines(&mut self, markdown: &str) -> Vec<Line<'static>> {
@@ -1431,77 +1357,63 @@ impl AppState {
         self.assistant_projection_cache_misses
     }
 
-    fn push_transcript_entry(
-        &mut self,
-        role: TranscriptRole,
-        text: String,
-        rendered: Option<Line<'static>>,
-    ) {
-        if should_insert_turn_separator(
-            self.transcript_preview.last().map(|entry| entry.role),
-            role,
-        ) {
-            self.transcript_preview.push(TranscriptLine {
-                role: TranscriptRole::Separator,
-                text: TURN_SEPARATOR_LINE.to_string(),
-                rendered: None,
-            });
-            if !self.transcript_follow_tail {
-                self.transcript_scroll_lines_from_bottom =
-                    self.transcript_scroll_lines_from_bottom.saturating_add(1);
-            }
-        }
+    fn push_transcript_item(&mut self, entry: TranscriptEntry) {
+        // Check if we should follow tail (user is at end, or nothing selected)
+        let was_at_end = match self.transcript_list_state.selected {
+            Some(idx) => idx + 1 >= self.transcript_preview.len(),
+            None => true,
+        };
 
-        self.transcript_preview.push(TranscriptLine {
-            role,
-            text,
-            rendered,
-        });
-        if self.transcript_follow_tail {
-            self.transcript_cursor = self.transcript_preview.len().checked_sub(1);
+        let entry_role = entry.role();
+        if should_insert_turn_separator(
+            self.transcript_preview.last().map(|e| e.role()).as_ref(),
+            &entry_role,
+        ) {
+            self.transcript_preview
+                .push(TranscriptEntry::Separator(TranscriptSeparator));
         }
-        if !self.transcript_follow_tail {
-            self.transcript_scroll_lines_from_bottom =
-                self.transcript_scroll_lines_from_bottom.saturating_add(1);
+        self.transcript_preview.push(entry);
+
+        // Only follow tail if user was already at the end
+        if was_at_end {
+            self.transcript_list_state
+                .select(Some(self.transcript_preview.len().saturating_sub(1)));
         }
     }
 
     pub fn scroll_transcript_page_up(&mut self, page_lines: usize) {
-        self.transcript_follow_tail = false;
-        let mut model = viewport_state::transcript_viewport_model(self);
-        model.page_up(page_lines.max(1));
-        viewport_state::apply_transcript_viewport_model(self, &model);
+        let current = self.transcript_list_state.selected.unwrap_or(0);
+        self.transcript_list_state
+            .select(Some(current.saturating_sub(page_lines.max(1))));
     }
 
     pub fn scroll_transcript_line_up(&mut self) {
-        self.transcript_follow_tail = false;
-        let mut model = viewport_state::transcript_viewport_model(self);
-        model.line_up();
-        viewport_state::apply_transcript_viewport_model(self, &model);
+        let current = self.transcript_list_state.selected.unwrap_or(0);
+        self.transcript_list_state
+            .select(Some(current.saturating_sub(1)));
     }
 
     pub fn scroll_transcript_page_down(&mut self, page_lines: usize) {
-        let mut model = viewport_state::transcript_viewport_model(self);
-        model.page_down(page_lines.max(1));
-        viewport_state::apply_transcript_viewport_model(self, &model);
+        let current = self.transcript_list_state.selected.unwrap_or(0);
+        let last = self.transcript_preview.len().saturating_sub(1);
+        self.transcript_list_state
+            .select(Some(current.saturating_add(page_lines.max(1)).min(last)));
     }
 
     pub fn scroll_transcript_line_down(&mut self) {
-        let mut model = viewport_state::transcript_viewport_model(self);
-        model.line_down();
-        viewport_state::apply_transcript_viewport_model(self, &model);
+        let current = self.transcript_list_state.selected.unwrap_or(0);
+        let last = self.transcript_preview.len().saturating_sub(1);
+        self.transcript_list_state
+            .select(Some(current.saturating_add(1).min(last)));
     }
 
     pub fn scroll_transcript_to_top(&mut self) {
-        let mut model = viewport_state::transcript_viewport_model(self);
-        model.jump_top();
-        viewport_state::apply_transcript_viewport_model(self, &model);
+        self.transcript_list_state.select(Some(0));
     }
 
     pub fn scroll_transcript_to_bottom(&mut self) {
-        let mut model = viewport_state::transcript_viewport_model(self);
-        model.jump_bottom();
-        viewport_state::apply_transcript_viewport_model(self, &model);
+        let last = self.transcript_preview.len().saturating_sub(1);
+        self.transcript_list_state.select(Some(last));
     }
 
     pub fn focus_prev_pane(&mut self) {
@@ -1569,10 +1481,6 @@ impl AppState {
             self.abort.pending = false;
         }
 
-        if self.permission_prompt.is_none() {
-            self.permission_prompt_manual_recenter_override = false;
-        }
-
         if self.phase != UiPhase::AbortPending {
             self.abort.pending = false;
         }
@@ -1625,22 +1533,11 @@ impl AppState {
             }
         }
 
-        viewport_state::clamp_scroll_from_bottom(self);
-
         while self.input.cursor > 0 && !self.input.buffer.is_char_boundary(self.input.cursor) {
             self.input.cursor -= 1;
         }
 
-        let model = viewport_state::transcript_viewport_model(self);
-        viewport_state::apply_transcript_viewport_model(self, &model);
-
-        if let Some(selection) = self.visual_selection.as_ref()
-            && selection
-                .bounded_range(self.transcript_preview.len())
-                .is_none()
-        {
-            self.visual_selection = None;
-        }
+        // With ListState, viewport invariants are managed by ratatui automatically
 
         self.input.locked = false;
 
@@ -1683,24 +1580,15 @@ fn fuzzy_matches(query: &str, candidate: &str) -> bool {
     false
 }
 
-impl AppState {
-    fn current_transcript_cursor_index(&self) -> Option<usize> {
-        viewport_state::current_transcript_cursor_index(self)
-    }
-}
-
-fn should_insert_turn_separator(previous: Option<TranscriptRole>, next: TranscriptRole) -> bool {
+fn should_insert_turn_separator(previous: Option<&Role>, next: &Role) -> bool {
     matches!(
         (previous, next),
         (Some(prev), next) if is_turn_role(prev) && is_turn_role(next) && prev != next
     )
 }
 
-fn is_turn_role(role: TranscriptRole) -> bool {
-    matches!(
-        role,
-        TranscriptRole::User | TranscriptRole::Assistant | TranscriptRole::Tool
-    )
+fn is_turn_role(role: &Role) -> bool {
+    matches!(role, Role::User | Role::Assistant | Role::Tool)
 }
 
 fn previous_char_start(buffer: &str, cursor: usize) -> Option<usize> {
@@ -1722,4 +1610,16 @@ fn next_char_end(buffer: &str, cursor: usize) -> Option<usize> {
         .chars()
         .next()
         .map(|ch| cursor + ch.len_utf8())
+}
+
+fn ratatui_line_to_content_line(line: &Line<'static>) -> ContentLine {
+    let spans = line
+        .spans
+        .iter()
+        .map(|span| Span {
+            text: span.content.to_string(),
+            hint: StyleHint::Rendered(span.style),
+        })
+        .collect();
+    ContentLine { spans }
 }

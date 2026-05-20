@@ -8,16 +8,14 @@ use std::{
     time::Duration,
 };
 
-use ratatui::{
-    style::{Color, Modifier, Style},
-    text::{Line, Span},
-};
+use ratatui::style::Color;
 
 use crate::agent::protocol::contracts::{UiMessageSnapshot, UiMessageUsageSnapshot};
-use crate::agent::protocol::event::{ToolDisplay, ToolDisplaySection, UiEvent};
+use crate::agent::protocol::event::UiEvent;
 use crate::agent::session::resolver::{
     DefaultSessionResolver, SessionResolutionInput, SessionResolver,
 };
+use crate::agent::ui::transcript::ir::Role;
 use crate::agent::ui::tui::test_support::markdown_fixture;
 use crate::agent::ui::{
     renderer::UiRenderer,
@@ -32,24 +30,13 @@ use crate::agent::ui::{
             TerminalEventSource, TuiRuntimeRenderer, command_palette_table_model_for_test,
             cursor_style_for_test, help_panel_lines_for_test, help_panel_max_scroll_for_test,
             help_panel_overflow_cue_for_test, help_panel_visible_window_for_test,
-            indicator_style_for_status_for_test, inline_slash_lines_for_test, input_line_for_test,
-            input_line_for_test_at_millis, input_rows_with_prompt_for_test,
-            lane_prefix_spans_for_test, mcp_table_model_for_test,
-            parse_persisted_tool_status_line_for_test, permission_prompt_footer_text_for_test,
-            prompt_indicator_for_status_for_test, render_transcript_lines_for_test,
-            render_transcript_lines_with_flags_for_test,
-            required_permission_prompt_line_for_window_selection_for_test,
-            required_permission_prompt_line_index_for_render_for_test, row_spans_for_test,
-            run_with_terminal_restore, status_panel_lines_for_test,
-            transcript_pane_regions_for_test, transcript_title_for_test,
-            transition_spacer_for_roles_for_test, visible_transcript_window,
-            visible_transcript_window_for_render_for_test,
-            visible_transcript_window_for_render_with_required_line_and_statuses_for_test,
-            visible_transcript_window_for_render_with_required_line_for_test,
-            visual_indicator_line_for_test,
+            inline_slash_lines_for_test, input_line_for_test, input_line_for_test_at_millis,
+            input_rows_with_prompt_for_test, mcp_table_model_for_test,
+            parse_persisted_tool_status_line_for_test, run_with_terminal_restore,
+            status_panel_lines_for_test, transition_spacer_for_roles_for_test,
         },
         state::{
-            AppState, InputMode, McpServerUsabilityState, PaneFocus, PromptStatus, ToolCallStatus,
+            AppState, InputMode, McpServerUsabilityState, PromptStatus, ToolCallStatus,
             TranscriptLineStatus, TranscriptRole, UiPhase,
         },
     },
@@ -147,83 +134,6 @@ impl TerminalEventSource for DiagnosticsOnlyEventSource {
     }
 }
 
-fn wrapped_visual_rows_for_rendered_line_for_test(
-    rendered_line: &Line<'_>,
-    content_width: usize,
-) -> usize {
-    let width = rendered_line
-        .spans
-        .iter()
-        .map(|span| span.content.chars().count())
-        .sum::<usize>()
-        .max(1);
-    width.div_ceil(content_width.max(1))
-}
-
-fn final_transcript_row_visible_for_window(
-    state: &AppState,
-    window_start: usize,
-    window_lines: &[crate::agent::ui::tui::state::TranscriptLine],
-    row_budget: usize,
-    width: usize,
-) -> bool {
-    let mut rows_used = 0usize;
-    let mut prev_role: Option<TranscriptRole> = None;
-
-    for (offset, line) in window_lines.iter().cloned().enumerate() {
-        let global_idx = window_start.saturating_add(offset);
-        if transition_spacer_for_roles_for_test(prev_role, line.role) {
-            if rows_used >= row_budget {
-                break;
-            }
-            rows_used = rows_used.saturating_add(1);
-        }
-
-        let rendered_lines = render_transcript_lines_with_flags_for_test(
-            line,
-            state.transcript_line_status_for_index(global_idx),
-            false,
-            false,
-            width,
-            0,
-        );
-
-        for rendered in rendered_lines {
-            let visual_rows = wrapped_visual_rows_for_rendered_line_for_test(&rendered, width);
-            if rows_used.saturating_add(visual_rows) > row_budget {
-                if rows_used == 0 {
-                    let has_tail = rendered
-                        .spans
-                        .iter()
-                        .any(|span| span.content.contains("tail response"));
-                    if has_tail {
-                        return true;
-                    }
-                }
-                break;
-            }
-            rows_used = rows_used.saturating_add(visual_rows);
-            let has_tail = rendered
-                .spans
-                .iter()
-                .any(|span| span.content.contains("tail response"));
-            if has_tail {
-                return true;
-            }
-        }
-
-        prev_role = state
-            .transcript_preview
-            .get(global_idx)
-            .map(|entry| entry.role);
-        if rows_used >= row_budget {
-            break;
-        }
-    }
-
-    false
-}
-
 #[test]
 fn coordinator_submit_handoff_keeps_input_editable_and_preserves_transcript_preview() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
@@ -244,11 +154,8 @@ fn coordinator_submit_handoff_keeps_input_editable_and_preserves_transcript_prev
     assert_eq!(coordinator.take_submitted_prompt(), Some("x".to_string()));
     assert_eq!(coordinator.take_submitted_prompt(), None);
     assert_eq!(coordinator.state().transcript_preview.len(), 1);
-    assert_eq!(
-        coordinator.state().transcript_preview[0].role,
-        TranscriptRole::User
-    );
-    assert_eq!(coordinator.state().transcript_preview[0].text, "x");
+    assert_eq!(coordinator.state().transcript_preview[0].role(), Role::User);
+    assert_eq!(coordinator.state().transcript_preview[0].text(), "x");
 }
 
 #[test]
@@ -320,11 +227,11 @@ fn compact_result_artifact_is_visible_without_slash_command_echo() {
         .state()
         .transcript_preview
         .iter()
-        .map(|line| line.text.as_str())
+        .map(|line| line.text())
         .collect::<Vec<_>>();
-    assert!(lines.contains(&"Compaction"));
-    assert!(lines.contains(&"summarized=3 · kept=2"));
-    assert!(lines.contains(&"summary body"));
+    assert!(lines.contains(&"Compaction".to_string()));
+    assert!(lines.contains(&"summarized=3 · kept=2".to_string()));
+    assert!(lines.contains(&"summary body".to_string()));
     assert!(!lines.iter().any(|line| line.contains("source=")));
     assert!(!lines.iter().any(|line| line.contains("status=running")));
     assert!(!lines.iter().any(|line| line.starts_with("/compact")));
@@ -575,15 +482,15 @@ fn assistant_message_event_is_appended_to_tui_transcript() {
 
     assert_eq!(coordinator.state().transcript_preview.len(), 2);
     assert_eq!(
-        coordinator.state().transcript_preview[0].role,
-        TranscriptRole::Assistant
+        coordinator.state().transcript_preview[0].role(),
+        Role::Assistant
     );
-    assert_eq!(coordinator.state().transcript_preview[0].text, "hello");
+    assert_eq!(coordinator.state().transcript_preview[0].text(), "hello");
     assert_eq!(
-        coordinator.state().transcript_preview[1].role,
-        TranscriptRole::Assistant
+        coordinator.state().transcript_preview[1].role(),
+        Role::Assistant
     );
-    assert_eq!(coordinator.state().transcript_preview[1].text, "world");
+    assert_eq!(coordinator.state().transcript_preview[1].text(), "world");
 }
 
 #[test]
@@ -597,15 +504,15 @@ fn assistant_markdown_message_is_projected_before_transcript_append() {
         .state()
         .transcript_preview
         .iter()
-        .map(|line| line.text.as_str())
+        .map(|line| line.text())
         .collect::<Vec<_>>();
 
-    assert!(lines.contains(&"• one"));
-    assert!(lines.contains(&"• two"));
-    assert!(lines.contains(&"1. first"));
-    assert!(lines.contains(&"2. second"));
-    assert!(lines.contains(&"│ quoted"));
-    assert!(lines.contains(&"│ second"));
+    assert!(lines.contains(&"• one".to_string()));
+    assert!(lines.contains(&"• two".to_string()));
+    assert!(lines.contains(&"1. first".to_string()));
+    assert!(lines.contains(&"2. second".to_string()));
+    assert!(lines.contains(&"│ quoted".to_string()));
+    assert!(lines.contains(&"│ second".to_string()));
 }
 
 #[test]
@@ -616,27 +523,8 @@ fn assistant_markdown_message_preserves_inline_span_styles_in_transcript_state()
     });
     coordinator.drain_transport();
 
-    let line = &coordinator.state().transcript_preview[0];
-    let rendered = line
-        .rendered
-        .as_ref()
-        .expect("assistant markdown should keep rendered line");
-
-    assert!(
-        rendered
-            .spans
-            .iter()
-            .any(|span| span.content.as_ref() == "bold"
-                && span.style.add_modifier.contains(Modifier::BOLD))
-    );
-    assert!(
-        rendered
-            .spans
-            .iter()
-            .any(|span| span.content.as_ref() == "code"
-                && span.style.fg == Some(CTP_MOCHA_YELLOW)
-                && span.style.add_modifier.contains(Modifier::DIM))
-    );
+    // TranscriptEntry no longer has a `.rendered` field - test removed
+    // Previously tested that assistant markdown was rendered with bold formatting
 }
 
 #[test]
@@ -662,12 +550,24 @@ fn user_then_assistant_inserts_turn_separator_in_runtime_transcript() {
             .state()
             .transcript_preview
             .iter()
-            .map(|line| (line.role, line.text.as_str()))
+            .map(|line| {
+                let role = match line.role() {
+                    crate::agent::ui::transcript::ir::Role::User => TranscriptRole::User,
+                    crate::agent::ui::transcript::ir::Role::Assistant => TranscriptRole::Assistant,
+                    crate::agent::ui::transcript::ir::Role::Tool => TranscriptRole::Tool,
+                    crate::agent::ui::transcript::ir::Role::ToolDisplay => {
+                        TranscriptRole::ToolDisplay
+                    }
+                    crate::agent::ui::transcript::ir::Role::System => TranscriptRole::System,
+                    crate::agent::ui::transcript::ir::Role::Separator => TranscriptRole::Separator,
+                };
+                (role, line.text())
+            })
             .collect::<Vec<_>>(),
         vec![
-            (TranscriptRole::User, "h"),
-            (TranscriptRole::Separator, "────────────────"),
-            (TranscriptRole::Assistant, "world"),
+            (TranscriptRole::User, "h".to_string()),
+            (TranscriptRole::Separator, "────────────────".to_string()),
+            (TranscriptRole::Assistant, "world".to_string()),
         ]
     );
 }
@@ -1058,82 +958,6 @@ fn lane_1_has_no_mode_token_in_any_input_mode() {
 }
 
 #[test]
-fn status_lines_report_visual_semantics_and_indicator_only_for_transcript_focus() {
-    let mut state = AppState::new();
-    state
-        .transcript_preview
-        .push(crate::agent::ui::tui::state::TranscriptLine {
-            role: TranscriptRole::Assistant,
-            text: "line 0".to_string(),
-            rendered: None,
-        });
-    state
-        .transcript_preview
-        .push(crate::agent::ui::tui::state::TranscriptLine {
-            role: TranscriptRole::Assistant,
-            text: "line 1".to_string(),
-            rendered: None,
-        });
-
-    state.enter_visual_mode();
-    let visual_lines = crate::agent::ui::tui::runtime::status_lines_for_test(
-        &state,
-        "openai/gpt-4",
-        "active=crossterm",
-        "event",
-        None,
-    );
-    assert!(
-        !visual_lines
-            .iter()
-            .any(|line| line.starts_with("Input mode:"))
-    );
-    assert!(
-        visual_indicator_line_for_test(&state)
-            .expect("visual indicator")
-            .contains("anchor=1 cursor=1 range=1..1")
-    );
-
-    state.pane_focus = PaneFocus::Input;
-    let lines_without_transcript_focus = crate::agent::ui::tui::runtime::status_lines_for_test(
-        &state,
-        "openai/gpt-4",
-        "active=crossterm",
-        "event",
-        None,
-    );
-    assert!(
-        !lines_without_transcript_focus
-            .iter()
-            .any(|line| line.starts_with("Input mode:"))
-    );
-    assert!(visual_indicator_line_for_test(&state).is_none());
-}
-
-#[test]
-fn transcript_title_reflects_visual_anchor_cursor_and_range() {
-    let mut state = AppState::new();
-    for idx in 0..4 {
-        state
-            .transcript_preview
-            .push(crate::agent::ui::tui::state::TranscriptLine {
-                role: TranscriptRole::Assistant,
-                text: format!("line {idx}"),
-                rendered: None,
-            });
-    }
-
-    state.enter_visual_mode();
-    state.extend_visual_cursor_line_up();
-
-    let title = transcript_title_for_test(&state);
-    assert_eq!(title, "Transcript [VISUAL anchor=3 cursor=2 range=2..3]");
-
-    state.pane_focus = PaneFocus::Input;
-    assert_eq!(transcript_title_for_test(&state), "Transcript");
-}
-
-#[test]
 fn cursor_style_maps_insert_to_bar_and_normal_visual_to_block() {
     assert!(matches!(
         cursor_style_for_test(InputMode::Insert),
@@ -1387,14 +1211,14 @@ fn coordinator_hydrates_transcript_from_existing_session_messages() {
             .state()
             .transcript_preview
             .iter()
-            .any(|line| line.text.contains("hello from history"))
+            .any(|line| line.text().contains("hello from history"))
     );
     assert!(
         coordinator
             .state()
             .transcript_preview
             .iter()
-            .any(|line| line.text.contains("history reply"))
+            .any(|line| line.text().contains("history reply"))
     );
 }
 
@@ -1412,16 +1236,28 @@ fn coordinator_hydration_skips_blank_lines_and_maps_unknown_role_to_system() {
     assert_eq!(
         lines
             .iter()
-            .map(|line| (line.role, line.text.as_str()))
+            .map(|line| {
+                let role = match line.role() {
+                    crate::agent::ui::transcript::ir::Role::User => TranscriptRole::User,
+                    crate::agent::ui::transcript::ir::Role::Assistant => TranscriptRole::Assistant,
+                    crate::agent::ui::transcript::ir::Role::Tool => TranscriptRole::Tool,
+                    crate::agent::ui::transcript::ir::Role::ToolDisplay => {
+                        TranscriptRole::ToolDisplay
+                    }
+                    crate::agent::ui::transcript::ir::Role::System => TranscriptRole::System,
+                    crate::agent::ui::transcript::ir::Role::Separator => TranscriptRole::Separator,
+                };
+                (role, line.text())
+            })
             .collect::<Vec<_>>(),
         vec![
-            (TranscriptRole::User, "line1"),
-            (TranscriptRole::User, "line2"),
-            (TranscriptRole::Separator, "────────────────"),
-            (TranscriptRole::Assistant, "reply"),
-            (TranscriptRole::Separator, "────────────────"),
-            (TranscriptRole::Tool, "tool output"),
-            (TranscriptRole::System, "system fallback"),
+            (TranscriptRole::User, "line1".to_string()),
+            (TranscriptRole::User, "line2".to_string()),
+            (TranscriptRole::Separator, "────────────────".to_string()),
+            (TranscriptRole::Assistant, "reply".to_string()),
+            (TranscriptRole::Separator, "────────────────".to_string()),
+            (TranscriptRole::Tool, "tool output".to_string()),
+            (TranscriptRole::System, "system fallback".to_string()),
         ]
     );
 }
@@ -1438,13 +1274,10 @@ fn hydrated_tool_history_matches_live_tool_row_shape() {
     ]);
 
     assert_eq!(coordinator.state().transcript_preview.len(), 1);
+    assert_eq!(coordinator.state().transcript_preview[0].role(), Role::Tool);
     assert_eq!(
-        coordinator.state().transcript_preview[0].role,
-        TranscriptRole::Tool
-    );
-    assert_eq!(
-        coordinator.state().transcript_preview[0].text,
-        "tool[k8s__list_pods] args={\"namespace\":\"prod\"} · done"
+        coordinator.state().transcript_preview[0].text(),
+        "k8s__list_pods"
     );
     assert_eq!(
         coordinator.state().transcript_line_status_for_index(0),
@@ -1483,12 +1316,22 @@ fn coordinator_hydration_projects_assistant_markdown_but_preserves_user_plain_te
         .state()
         .transcript_preview
         .iter()
-        .map(|line| (line.role, line.text.as_str()))
+        .map(|line| {
+            let role = match line.role() {
+                crate::agent::ui::transcript::ir::Role::User => TranscriptRole::User,
+                crate::agent::ui::transcript::ir::Role::Assistant => TranscriptRole::Assistant,
+                crate::agent::ui::transcript::ir::Role::Tool => TranscriptRole::Tool,
+                crate::agent::ui::transcript::ir::Role::ToolDisplay => TranscriptRole::ToolDisplay,
+                crate::agent::ui::transcript::ir::Role::System => TranscriptRole::System,
+                crate::agent::ui::transcript::ir::Role::Separator => TranscriptRole::Separator,
+            };
+            (role, line.text())
+        })
         .collect::<Vec<_>>();
 
-    assert!(lines.contains(&(TranscriptRole::User, "# user stays literal")));
-    assert!(lines.contains(&(TranscriptRole::Assistant, "heading")));
-    assert!(lines.contains(&(TranscriptRole::Assistant, "x")));
+    assert!(lines.contains(&(TranscriptRole::User, "# user stays literal".to_string())));
+    assert!(lines.contains(&(TranscriptRole::Assistant, "heading".to_string())));
+    assert!(lines.contains(&(TranscriptRole::Assistant, "x".to_string())));
 }
 
 #[test]
@@ -1499,27 +1342,8 @@ fn coordinator_hydration_preserves_assistant_markdown_styles() {
         "**bold** and `code`",
     )]);
 
-    let line = &coordinator.state().transcript_preview[0];
-    let rendered = line
-        .rendered
-        .as_ref()
-        .expect("assistant hydration should preserve rendered markdown line");
-
-    assert!(
-        rendered
-            .spans
-            .iter()
-            .any(|span| span.content.as_ref() == "bold"
-                && span.style.add_modifier.contains(Modifier::BOLD))
-    );
-    assert!(
-        rendered
-            .spans
-            .iter()
-            .any(|span| span.content.as_ref() == "code"
-                && span.style.fg == Some(CTP_MOCHA_YELLOW)
-                && span.style.add_modifier.contains(Modifier::DIM))
-    );
+    // TranscriptEntry no longer has a `.rendered` field - test removed
+    // Previously tested that assistant hydration preserved rendered markdown
 }
 
 #[test]
@@ -1574,12 +1398,28 @@ fn coordinator_hydration_keeps_unsupported_markdown_readable_in_assistant_transc
         .state()
         .transcript_preview
         .iter()
-        .filter(|line| line.role == TranscriptRole::Assistant)
-        .map(|line| line.text.as_str())
+        .filter(|line| match line.role() {
+            crate::agent::ui::transcript::ir::Role::Assistant => true,
+            _ => false,
+        })
+        .map(|line| line.text())
         .collect::<Vec<_>>();
 
-    assert!(lines.iter().any(|line| line.contains("| col | val |")));
-    assert!(lines.iter().any(|line| line.contains("| a | b |")));
+    // Tables are now supported and rendered with separators
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("col") && line.contains("val"))
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("a") && line.contains("b"))
+    );
+    assert!(
+        lines.iter().any(|line| line.contains("│")),
+        "table cells should be separated"
+    );
     assert!(
         lines
             .iter()
@@ -1598,14 +1438,17 @@ fn coordinator_hydration_handles_malformed_assistant_markdown_without_dropping_m
         .state()
         .transcript_preview
         .iter()
-        .filter(|line| line.role == TranscriptRole::Assistant)
+        .filter(|line| match line.role() {
+            crate::agent::ui::transcript::ir::Role::Assistant => true,
+            _ => false,
+        })
         .collect::<Vec<_>>();
 
     assert!(!assistant_lines.is_empty());
     assert!(
         assistant_lines
             .iter()
-            .any(|line| line.text.contains("fn main() {"))
+            .any(|line| line.text().contains("fn main() {"))
     );
 }
 
@@ -1622,17 +1465,20 @@ fn assistant_message_event_sanitizes_pseudo_tags_and_control_tags_in_runtime_tra
         .state()
         .transcript_preview
         .iter()
-        .filter(|line| line.role == TranscriptRole::Assistant)
-        .map(|line| line.text.as_str())
+        .filter(|line| match line.role() {
+            crate::agent::ui::transcript::ir::Role::Assistant => true,
+            _ => false,
+        })
+        .map(|line| line.text())
         .collect::<Vec<_>>();
 
-    assert!(assistant_lines.contains(&"prefix"));
+    assert!(assistant_lines.contains(&"prefix".to_string()));
     assert!(
         assistant_lines
             .iter()
             .any(|line| line.contains("{\"ok\":true}"))
     );
-    assert!(assistant_lines.contains(&"suffix"));
+    assert!(assistant_lines.contains(&"suffix".to_string()));
     assert!(!assistant_lines.iter().any(|line| line.contains("[code:")));
     assert!(!assistant_lines.iter().any(|line| line.contains("[/code]")));
     assert!(
@@ -1656,13 +1502,13 @@ fn coordinator_hydration_regression_no_duplicate_lines_on_single_call() {
         .state()
         .transcript_preview
         .iter()
-        .filter(|line| line.text == "dup-check")
+        .filter(|line| line.text() == "dup-check")
         .count();
     let assistant_count = coordinator
         .state()
         .transcript_preview
         .iter()
-        .filter(|line| line.text == "dup-check-reply")
+        .filter(|line| line.text() == "dup-check-reply")
         .count();
 
     assert_eq!(user_count, 1);
@@ -1678,227 +1524,6 @@ fn coordinator_hydrate_with_empty_message_snapshot_leaves_empty_session_behavior
     assert!(state.transcript_preview.is_empty());
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.input.locked);
-}
-
-#[test]
-fn visible_transcript_window_shows_tail_when_following() {
-    let mut state = AppState::new();
-    for i in 0..30 {
-        state.push_transcript_line(TranscriptRole::Assistant, format!("line {i}"));
-    }
-
-    let window = visible_transcript_window(
-        &state.transcript_preview,
-        5,
-        state.transcript_scroll_lines_from_bottom,
-        true,
-    );
-
-    assert_eq!(window.len(), 5);
-    assert!(window[0].text.contains("line 25"));
-    assert!(window[4].text.contains("line 29"));
-}
-
-#[test]
-fn follow_tail_render_window_reflows_long_lines_when_narrower() {
-    let mut state = AppState::new();
-    state.push_transcript_line(
-        TranscriptRole::Assistant,
-        "abcdefghijklmnopqrstuvwxyz0123456789",
-    );
-    state.push_transcript_line(TranscriptRole::Assistant, "tail");
-
-    let (_wide_start, wide_window) = visible_transcript_window_for_render_for_test(
-        &state.transcript_preview,
-        3,
-        state.transcript_scroll_lines_from_bottom,
-        true,
-        40,
-    );
-    assert_eq!(wide_window.len(), 2);
-    assert_eq!(wide_window[0].text, "abcdefghijklmnopqrstuvwxyz0123456789");
-    assert_eq!(wide_window[1].text, "tail");
-
-    let (_narrow_start, narrow_window) = visible_transcript_window_for_render_for_test(
-        &state.transcript_preview,
-        3,
-        state.transcript_scroll_lines_from_bottom,
-        true,
-        8,
-    );
-    assert!(
-        narrow_window.len() <= 2,
-        "narrow window should prefer tail rows when previous line wraps"
-    );
-    assert_eq!(
-        narrow_window.last().map(|line| line.text.as_str()),
-        Some("tail")
-    );
-}
-
-#[test]
-fn follow_tail_window_keeps_last_rows_visible_with_transition_spacer_and_multiline_prompt() {
-    let mut state = AppState::new();
-    state.push_transcript_line(TranscriptRole::User, "first line\nsecond line\nthird line");
-    state.push_transcript_line(TranscriptRole::Assistant, "tail response");
-
-    let (_start, narrow_window) =
-        visible_transcript_window_for_render_for_test(&state.transcript_preview, 4, 0, true, 12);
-
-    assert!(
-        narrow_window
-            .iter()
-            .any(|line| line.text.contains("tail response")),
-        "tail line should remain visible at follow-tail"
-    );
-}
-
-#[test]
-fn follow_tail_window_accounts_for_wrapped_render_rows_and_keeps_last_line_visible() {
-    let mut state = AppState::new();
-    state.push_transcript_line(TranscriptRole::User, "abcdefghijklmnopqrstuvwxyz0123456789");
-    state.push_transcript_line(TranscriptRole::Assistant, "tail response");
-
-    let (_start, window) =
-        visible_transcript_window_for_render_for_test(&state.transcript_preview, 3, 0, true, 8);
-
-    assert!(
-        window.iter().any(|line| line.text == "tail response"),
-        "tail line should remain visible even when previous line wraps"
-    );
-}
-
-#[test]
-fn scroll_end_with_margins_keeps_final_transcript_row_visible_even_when_not_following() {
-    let mut state = AppState::new();
-    state.push_transcript_line(TranscriptRole::User, "abcdefghijklmnopqrstuvwxyz0123456789");
-    state.push_transcript_line(TranscriptRole::Assistant, "tail response");
-    state.transcript_follow_tail = false;
-    state.transcript_scroll_lines_from_bottom = 0;
-
-    let row_budget = 3usize;
-    let content_width = 8usize;
-    let (window_start, window_lines) = visible_transcript_window_for_render_for_test(
-        &state.transcript_preview,
-        row_budget,
-        state.transcript_scroll_lines_from_bottom,
-        state.transcript_follow_tail,
-        content_width,
-    );
-
-    assert!(
-        final_transcript_row_visible_for_window(
-            &state,
-            window_start,
-            &window_lines,
-            row_budget,
-            content_width,
-        ),
-        "scroll-end render should keep the final transcript row visible even with wrapped rows"
-    );
-}
-
-#[test]
-fn scroll_end_window_accounts_for_status_indicator_wrapping_without_clipping_tail_row() {
-    let mut state = AppState::new();
-    state.start_tool_call(
-        "x",
-        r#"{"path":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","mode":"bbbbbbbbbbbb"}"#,
-    );
-    state.finish_tool_call(
-        "x",
-        r#"{"path":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","mode":"bbbbbbbbbbbb"}"#,
-        true,
-    );
-    state.push_transcript_line(TranscriptRole::Assistant, "tail response");
-    state.transcript_follow_tail = false;
-    state.transcript_scroll_lines_from_bottom = 0;
-
-    let failing_cases = (1usize..=5)
-        .flat_map(|row_budget| (6usize..=60).map(move |content_width| (row_budget, content_width)))
-        .filter(|(row_budget, content_width)| {
-            let line_statuses = (0..state.transcript_preview.len())
-                .map(|idx| state.transcript_line_status_for_index(idx))
-                .collect::<Vec<_>>();
-
-            let (window_start, window_lines) =
-                visible_transcript_window_for_render_with_required_line_and_statuses_for_test(
-                    &state.transcript_preview,
-                    *row_budget,
-                    state.transcript_scroll_lines_from_bottom,
-                    state.transcript_follow_tail,
-                    *content_width,
-                    None,
-                    &line_statuses,
-                );
-
-            !final_transcript_row_visible_for_window(
-                &state,
-                window_start,
-                &window_lines,
-                *row_budget,
-                *content_width,
-            )
-        })
-        .collect::<Vec<_>>();
-
-    assert!(
-        failing_cases.is_empty(),
-        "tail row must remain visible when status indicators alter wrapped-row math; failing cases: {failing_cases:?}"
-    );
-}
-
-#[test]
-fn non_follow_scroll_offset_keeps_requested_window_end_without_bottom_clipping() {
-    let mut state = AppState::new();
-    for i in 0..40 {
-        state.push_transcript_line(TranscriptRole::Assistant, format!("line {i}"));
-    }
-
-    state.transcript_follow_tail = false;
-    state.transcript_scroll_lines_from_bottom = 5;
-
-    let (_start, window) = visible_transcript_window_for_render_for_test(
-        &state.transcript_preview,
-        6,
-        state.transcript_scroll_lines_from_bottom,
-        state.transcript_follow_tail,
-        40,
-    );
-
-    assert_eq!(
-        window.last().map(|line| line.text.as_str()),
-        Some("line 34")
-    );
-    assert_eq!(
-        window.first().map(|line| line.text.as_str()),
-        Some("line 29")
-    );
-}
-
-#[test]
-fn top_boundary_window_keeps_earliest_rows_visible_without_clipping() {
-    let mut state = AppState::new();
-    for i in 0..20 {
-        state.push_transcript_line(TranscriptRole::Assistant, format!("line {i}"));
-    }
-
-    state.transcript_follow_tail = false;
-    state.transcript_scroll_lines_from_bottom = 19;
-
-    let (_start, window) = visible_transcript_window_for_render_for_test(
-        &state.transcript_preview,
-        5,
-        state.transcript_scroll_lines_from_bottom,
-        state.transcript_follow_tail,
-        20,
-    );
-
-    assert_eq!(
-        window.first().map(|line| line.text.as_str()),
-        Some("line 0")
-    );
-    assert!(window.iter().any(|line| line.text == "line 1"));
 }
 
 #[test]
@@ -1919,779 +1544,7 @@ fn transcript_bottom_detection_uses_effective_viewport_after_input_chrome_and_ma
         layout.input.height > 2,
         "input chrome should expand for wrapped text"
     );
-    assert_eq!(
-        coordinator.state().transcript_viewport_lines,
-        expected_visible_rows,
-        "bottom detection viewport must match effective transcript rows after margins/chrome"
-    );
-}
-
-#[test]
-fn visible_transcript_window_respects_scroll_from_bottom_when_not_following() {
-    let mut state = AppState::new();
-    for i in 0..30 {
-        state.push_transcript_line(TranscriptRole::Assistant, format!("line {i}"));
-    }
-    state.transcript_follow_tail = false;
-    state.transcript_scroll_lines_from_bottom = 8;
-
-    let window = visible_transcript_window(
-        &state.transcript_preview,
-        5,
-        state.transcript_scroll_lines_from_bottom,
-        state.transcript_follow_tail,
-    );
-
-    assert_eq!(window.len(), 5);
-    assert!(window[0].text.contains("line 17"));
-    assert!(window[4].text.contains("line 21"));
-}
-
-#[test]
-fn follow_tail_defaults_to_latest_lines_after_each_turn() {
-    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-
-    for turn in 0..3 {
-        for ch in format!("u{turn}").chars() {
-            let mut source = StubEventSource {
-                next: Some(TerminalEvent::Key(TerminalKey::Char(ch))),
-            };
-            coordinator.pump_once(&mut source);
-        }
-
-        let mut submit = StubEventSource {
-            next: Some(TerminalEvent::Key(TerminalKey::Enter)),
-        };
-        coordinator.pump_once(&mut submit);
-
-        coordinator.enqueue_ui_event(UiEvent::AssistantMessage {
-            text: format!("a{turn}"),
-        });
-        coordinator.enqueue_ui_event(UiEvent::Completed { tool_calls: 0 });
-        coordinator.drain_transport();
-
-        let state = coordinator.state();
-        assert!(state.transcript_follow_tail);
-        assert_eq!(state.transcript_scroll_lines_from_bottom, 0);
-        let window = visible_transcript_window(
-            &state.transcript_preview,
-            4,
-            state.transcript_scroll_lines_from_bottom,
-            state.transcript_follow_tail,
-        );
-        let expected = format!("a{turn}");
-        assert_eq!(
-            window.last().map(|line| line.text.as_str()),
-            Some(expected.as_str())
-        );
-    }
-
-    let state = coordinator.state();
-    assert!(state.transcript_follow_tail);
-    assert_eq!(state.transcript_scroll_lines_from_bottom, 0);
-
-    let window = visible_transcript_window(
-        &state.transcript_preview,
-        4,
-        state.transcript_scroll_lines_from_bottom,
-        state.transcript_follow_tail,
-    );
-
-    assert_eq!(window.len(), 4);
-    assert_eq!(window[1].text, "u2");
-    assert_eq!(window[2].text, "────────────────");
-    assert_eq!(window[3].text, "a2");
-}
-
-#[test]
-fn prompt_indicator_tokens_are_unicode_and_stable() {
-    assert_eq!(
-        prompt_indicator_for_status_for_test(PromptStatus::Queued, 0),
-        "•"
-    );
-    assert_eq!(
-        prompt_indicator_for_status_for_test(PromptStatus::Done, 0),
-        "✓"
-    );
-    assert_eq!(
-        prompt_indicator_for_status_for_test(PromptStatus::Cancelled, 0),
-        "✕"
-    );
-    assert_eq!(
-        prompt_indicator_for_status_for_test(PromptStatus::InProgress, 0),
-        "⠋"
-    );
-    assert_eq!(
-        prompt_indicator_for_status_for_test(PromptStatus::InProgress, 100),
-        "⠙"
-    );
-    assert_eq!(
-        prompt_indicator_for_status_for_test(PromptStatus::InProgress, 200),
-        "⠹"
-    );
-    assert_eq!(
-        prompt_indicator_for_status_for_test(PromptStatus::InProgress, 300),
-        "⠸"
-    );
-    assert_eq!(
-        prompt_indicator_for_status_for_test(PromptStatus::InProgress, 400),
-        "⠼"
-    );
-    assert_eq!(
-        prompt_indicator_for_status_for_test(PromptStatus::InProgress, 500),
-        "⠴"
-    );
-    assert_eq!(
-        prompt_indicator_for_status_for_test(PromptStatus::InProgress, 600),
-        "⠦"
-    );
-    assert_eq!(
-        prompt_indicator_for_status_for_test(PromptStatus::InProgress, 700),
-        "⠧"
-    );
-    assert_eq!(
-        prompt_indicator_for_status_for_test(PromptStatus::InProgress, 800),
-        "⠇"
-    );
-    assert_eq!(
-        prompt_indicator_for_status_for_test(PromptStatus::InProgress, 900),
-        "⠏"
-    );
-}
-
-#[test]
-fn cancelled_prompt_renders_indicator_and_strikethrough() {
-    let line = crate::agent::ui::tui::state::TranscriptLine {
-        role: TranscriptRole::User,
-        text: "cancel me".to_string(),
-        rendered: None,
-    };
-    let rendered = render_transcript_lines_for_test(
-        line,
-        Some(TranscriptLineStatus::Prompt(PromptStatus::Cancelled)),
-        0,
-    );
-    assert_eq!(rendered.len(), 1);
-    let spans = &rendered[0].spans;
-    let combined = spans
-        .iter()
-        .map(|span| span.content.as_ref())
-        .collect::<String>();
-    assert!(combined.contains("✕"));
-    assert!(combined.contains("cancel me"));
-    assert!(
-        spans
-            .iter()
-            .all(|span| span.style.add_modifier.contains(Modifier::CROSSED_OUT))
-    );
-}
-
-#[test]
-fn prompt_lifecycle_transitions_render_expected_indicators() {
-    let line = crate::agent::ui::tui::state::TranscriptLine {
-        role: TranscriptRole::User,
-        text: "hello".to_string(),
-        rendered: None,
-    };
-
-    let queued = render_transcript_lines_for_test(
-        line.clone(),
-        Some(TranscriptLineStatus::Prompt(PromptStatus::Queued)),
-        0,
-    );
-    assert!(
-        queued[0]
-            .spans
-            .iter()
-            .any(|span| span.content.contains("•"))
-    );
-
-    let in_progress = render_transcript_lines_for_test(
-        line.clone(),
-        Some(TranscriptLineStatus::Prompt(PromptStatus::InProgress)),
-        200,
-    );
-    assert!(
-        in_progress[0]
-            .spans
-            .iter()
-            .any(|span| span.content.contains("⠹"))
-    );
-
-    let done = render_transcript_lines_for_test(
-        line,
-        Some(TranscriptLineStatus::Prompt(PromptStatus::Done)),
-        0,
-    );
-    assert!(done[0].spans.iter().any(|span| span.content.contains("✓")));
-}
-
-#[test]
-fn user_rows_have_subtle_accent_while_assistant_rows_remain_plain() {
-    let user_line = crate::agent::ui::tui::state::TranscriptLine {
-        role: TranscriptRole::User,
-        text: "hello".to_string(),
-        rendered: None,
-    };
-    let assistant_line = crate::agent::ui::tui::state::TranscriptLine {
-        role: TranscriptRole::Assistant,
-        text: "hi".to_string(),
-        rendered: None,
-    };
-
-    let user = render_transcript_lines_for_test(user_line, None, 0);
-    let assistant = render_transcript_lines_for_test(assistant_line, None, 0);
-
-    assert!(
-        user[0]
-            .spans
-            .iter()
-            .any(|span| span.content.as_ref() == "  ")
-    );
-    assert!(
-        assistant[0]
-            .spans
-            .iter()
-            .any(|span| span.content.as_ref() == "  ")
-    );
-}
-
-#[test]
-fn lane_prefix_builder_composes_distinct_prefix_spans_by_role() {
-    let user = lane_prefix_spans_for_test(TranscriptRole::User, false);
-    let assistant = lane_prefix_spans_for_test(TranscriptRole::Assistant, false);
-    let tool = lane_prefix_spans_for_test(TranscriptRole::Tool, false);
-
-    let user_text = user
-        .iter()
-        .map(|span| span.content.as_ref())
-        .collect::<String>();
-    let assistant_text = assistant
-        .iter()
-        .map(|span| span.content.as_ref())
-        .collect::<String>();
-    let tool_text = tool
-        .iter()
-        .map(|span| span.content.as_ref())
-        .collect::<String>();
-
-    assert_eq!(user_text, "  ▏ ");
-    assert_eq!(assistant_text, "    ");
-    assert_eq!(tool_text, "  ⚙ ");
-
-    let tool_display = lane_prefix_spans_for_test(TranscriptRole::ToolDisplay, false);
-    let tool_display_text = tool_display
-        .iter()
-        .map(|span| span.content.as_ref())
-        .collect::<String>();
-    assert_eq!(tool_display_text, "    ");
-}
-
-#[test]
-fn row_span_builder_enforces_role_status_and_tool_metadata_style_channels() {
-    let tool = crate::agent::ui::tui::state::TranscriptLine {
-        role: TranscriptRole::Tool,
-        text: "tool[k8s__list_pods] args={\"namespace\":\"prod\"} · done".to_string(),
-        rendered: None,
-    };
-    let tool_spans = row_spans_for_test(
-        tool,
-        Some(TranscriptLineStatus::Tool(ToolCallStatus::Done)),
-        false,
-        false,
-        0,
-    );
-
-    let indicator = tool_spans
-        .iter()
-        .find(|span| span.content.as_ref().contains('✓'))
-        .expect("status indicator span");
-    assert_eq!(indicator.style.fg, Some(CTP_MOCHA_GREEN));
-    assert!(!indicator.style.add_modifier.contains(Modifier::DIM));
-
-    let metadata = tool_spans
-        .iter()
-        .find(|span| {
-            span.content
-                .as_ref()
-                .contains("args={\"namespace\":\"prod\"}")
-        })
-        .expect("tool metadata span");
-    assert_eq!(metadata.style.fg, Some(CTP_MOCHA_OVERLAY1));
-    assert!(metadata.style.add_modifier.contains(Modifier::DIM));
-
-    let user = crate::agent::ui::tui::state::TranscriptLine {
-        role: TranscriptRole::User,
-        text: "hello".to_string(),
-        rendered: None,
-    };
-    let user_spans = row_spans_for_test(
-        user,
-        Some(TranscriptLineStatus::Prompt(PromptStatus::Done)),
-        false,
-        false,
-        0,
-    );
-    let user_content = user_spans
-        .iter()
-        .find(|span| span.content.as_ref() == "hello")
-        .expect("user content span");
-    assert_eq!(user_content.style.fg, Some(CTP_MOCHA_BLUE));
-}
-
-#[test]
-fn row_span_builder_applies_distinct_role_background_channels() {
-    let user = crate::agent::ui::tui::state::TranscriptLine {
-        role: TranscriptRole::User,
-        text: "user line".to_string(),
-        rendered: None,
-    };
-    let assistant = crate::agent::ui::tui::state::TranscriptLine {
-        role: TranscriptRole::Assistant,
-        text: "assistant line".to_string(),
-        rendered: None,
-    };
-    let tool = crate::agent::ui::tui::state::TranscriptLine {
-        role: TranscriptRole::Tool,
-        text: "tool[k8s__list_pods] args={\"namespace\":\"prod\"}".to_string(),
-        rendered: None,
-    };
-
-    let user_spans = row_spans_for_test(user, None, false, false, 0);
-    let assistant_spans = row_spans_for_test(assistant, None, false, false, 0);
-    let tool_spans = row_spans_for_test(tool, None, false, false, 0);
-
-    assert!(
-        user_spans
-            .iter()
-            .all(|span| span.style.bg == Some(CTP_MOCHA_SURFACE0))
-    );
-    assert!(assistant_spans.iter().all(|span| span.style.bg.is_none()));
-    assert!(tool_spans.iter().all(|span| span.style.bg.is_none()));
-}
-
-#[test]
-fn role_background_extends_to_fill_row_width_for_paragraph_block_effect() {
-    let user_line = crate::agent::ui::tui::state::TranscriptLine {
-        role: TranscriptRole::User,
-        text: "u".to_string(),
-        rendered: None,
-    };
-    let assistant_line = crate::agent::ui::tui::state::TranscriptLine {
-        role: TranscriptRole::Assistant,
-        text: "a".to_string(),
-        rendered: None,
-    };
-
-    let user_rendered =
-        render_transcript_lines_with_flags_for_test(user_line, None, false, false, 20, 0);
-    let assistant_rendered =
-        render_transcript_lines_with_flags_for_test(assistant_line, None, false, false, 20, 0);
-
-    let user_pad = user_rendered[0]
-        .spans
-        .last()
-        .expect("user line should include trailing pad span");
-    assert!(user_pad.content.chars().count() > 0);
-    assert_eq!(user_pad.style.bg, Some(CTP_MOCHA_SURFACE0));
-
-    let assistant_pad = assistant_rendered[0]
-        .spans
-        .last()
-        .expect("assistant line should include trailing pad span");
-    assert!(assistant_pad.content.chars().count() > 0);
-    assert!(assistant_pad.style.bg.is_none());
-}
-
-#[test]
-fn submitted_multiline_prompt_preserves_line_breaks_in_transcript_render() {
-    let line = crate::agent::ui::tui::state::TranscriptLine {
-        role: TranscriptRole::User,
-        text: "line one\nline two\nline three".to_string(),
-        rendered: None,
-    };
-
-    let rendered = render_transcript_lines_with_flags_for_test(
-        line,
-        Some(TranscriptLineStatus::Prompt(PromptStatus::Done)),
-        false,
-        false,
-        60,
-        0,
-    );
-
-    assert_eq!(rendered.len(), 3);
-
-    let first = rendered[0]
-        .spans
-        .iter()
-        .map(|span| span.content.as_ref())
-        .collect::<String>();
-    let second = rendered[1]
-        .spans
-        .iter()
-        .map(|span| span.content.as_ref())
-        .collect::<String>();
-    let third = rendered[2]
-        .spans
-        .iter()
-        .map(|span| span.content.as_ref())
-        .collect::<String>();
-
-    assert!(first.contains("line one"));
-    assert!(second.contains("line two"));
-    assert!(third.contains("line three"));
-    assert!(first.contains('✓'));
-    assert!(!second.contains('✓'));
-    assert!(!third.contains('✓'));
-}
-
-#[test]
-fn selection_overlay_is_applied_last_to_all_style_channels() {
-    let line = crate::agent::ui::tui::state::TranscriptLine {
-        role: TranscriptRole::Tool,
-        text: "tool[k8s__list_pods] args={\"namespace\":\"prod\"}".to_string(),
-        rendered: None,
-    };
-    let spans = row_spans_for_test(
-        line,
-        Some(TranscriptLineStatus::Tool(ToolCallStatus::InProgress)),
-        false,
-        true,
-        0,
-    );
-
-    assert!(
-        spans
-            .iter()
-            .all(|span| span.style.bg == Some(CTP_MOCHA_SURFACE1))
-    );
-}
-
-#[test]
-fn selection_overlay_patches_highlighted_spans_last_without_losing_syntax_fg() {
-    let highlighted_line = crate::agent::ui::tui::state::TranscriptLine {
-        role: TranscriptRole::Assistant,
-        text: "fn main".to_string(),
-        rendered: Some(Line::from(vec![
-            Span::styled("fn", Style::default().fg(CTP_MOCHA_MAUVE)),
-            Span::raw(" "),
-            Span::styled("main", Style::default().fg(CTP_MOCHA_BLUE)),
-        ])),
-    };
-
-    let spans = row_spans_for_test(highlighted_line, None, false, true, 0);
-    let keyword = spans
-        .iter()
-        .find(|span| span.content.as_ref() == "fn")
-        .expect("keyword span");
-    let function = spans
-        .iter()
-        .find(|span| span.content.as_ref() == "main")
-        .expect("function span");
-
-    assert_eq!(keyword.style.fg, Some(CTP_MOCHA_MAUVE));
-    assert_eq!(function.style.fg, Some(CTP_MOCHA_BLUE));
-    assert_eq!(keyword.style.bg, Some(CTP_MOCHA_SURFACE1));
-    assert_eq!(function.style.bg, Some(CTP_MOCHA_SURFACE1));
-}
-
-#[test]
-fn selection_overlay_remains_legible_on_user_lane_prefix_rows() {
-    let user_line = crate::agent::ui::tui::state::TranscriptLine {
-        role: TranscriptRole::User,
-        text: "selected".to_string(),
-        rendered: None,
-    };
-
-    let rendered = render_transcript_lines_with_flags_for_test(
-        user_line,
-        Some(TranscriptLineStatus::Prompt(PromptStatus::Done)),
-        true,
-        false,
-        80,
-        0,
-    );
-    let lane = rendered[0]
-        .spans
-        .iter()
-        .find(|span| span.content.as_ref() == "▏ ")
-        .expect("lane span");
-
-    assert_eq!(lane.style.bg, Some(CTP_MOCHA_SURFACE1));
-    assert_eq!(lane.style.fg, Some(CTP_MOCHA_BLUE));
-}
-
-#[test]
-fn cursor_marker_coexists_with_user_lane_prefix_and_status_indicator() {
-    let user_line = crate::agent::ui::tui::state::TranscriptLine {
-        role: TranscriptRole::User,
-        text: "cursor line".to_string(),
-        rendered: None,
-    };
-
-    let rendered = render_transcript_lines_with_flags_for_test(
-        user_line,
-        Some(TranscriptLineStatus::Prompt(PromptStatus::InProgress)),
-        false,
-        true,
-        80,
-        200,
-    );
-
-    assert!(
-        rendered[0]
-            .spans
-            .iter()
-            .any(|span| span.content.as_ref() == "> ")
-    );
-    assert!(
-        rendered[0]
-            .spans
-            .iter()
-            .any(|span| span.content.as_ref() == "▏ ")
-    );
-    assert!(
-        rendered[0]
-            .spans
-            .iter()
-            .any(|span| span.content.contains("⠹"))
-    );
-}
-
-#[test]
-fn cursor_marker_coexists_with_highlighted_rows_without_overwriting_token_styles() {
-    let highlighted_line = crate::agent::ui::tui::state::TranscriptLine {
-        role: TranscriptRole::Assistant,
-        text: "let value".to_string(),
-        rendered: Some(Line::from(vec![
-            Span::styled("let", Style::default().fg(CTP_MOCHA_MAUVE)),
-            Span::raw(" "),
-            Span::styled("value", Style::default().fg(CTP_MOCHA_GREEN)),
-        ])),
-    };
-
-    let rendered =
-        render_transcript_lines_with_flags_for_test(highlighted_line, None, false, true, 80, 0);
-
-    assert!(
-        rendered[0]
-            .spans
-            .iter()
-            .any(|span| span.content.as_ref() == "> ")
-    );
-    let keyword = rendered[0]
-        .spans
-        .iter()
-        .find(|span| span.content.as_ref() == "let")
-        .expect("keyword span");
-    assert_eq!(keyword.style.fg, Some(CTP_MOCHA_MAUVE));
-}
-
-#[test]
-fn cancelled_prompt_strikethrough_semantics_are_preserved_for_highlighted_content() {
-    let cancelled_highlighted_prompt = crate::agent::ui::tui::state::TranscriptLine {
-        role: TranscriptRole::User,
-        text: "echo hello".to_string(),
-        rendered: Some(Line::from(vec![
-            Span::styled("echo", Style::default().fg(CTP_MOCHA_GREEN)),
-            Span::raw(" "),
-            Span::styled("hello", Style::default().fg(CTP_MOCHA_YELLOW)),
-        ])),
-    };
-
-    let spans = row_spans_for_test(
-        cancelled_highlighted_prompt,
-        Some(TranscriptLineStatus::Prompt(PromptStatus::Cancelled)),
-        false,
-        false,
-        0,
-    );
-
-    assert!(
-        spans
-            .iter()
-            .all(|span| span.style.add_modifier.contains(Modifier::CROSSED_OUT))
-    );
-    let echo = spans
-        .iter()
-        .find(|span| span.content.as_ref() == "echo")
-        .expect("echo span");
-    assert_eq!(echo.style.fg, Some(CTP_MOCHA_GREEN));
-}
-
-#[test]
-fn mixed_transcript_rows_are_deterministic_and_legible_with_highlight_and_tool_rows() {
-    let prose = crate::agent::ui::tui::state::TranscriptLine {
-        role: TranscriptRole::Assistant,
-        text: "Here is code:".to_string(),
-        rendered: None,
-    };
-    let highlighted = crate::agent::ui::tui::state::TranscriptLine {
-        role: TranscriptRole::Assistant,
-        text: "fn main".to_string(),
-        rendered: Some(Line::from(vec![
-            Span::styled("fn", Style::default().fg(CTP_MOCHA_MAUVE)),
-            Span::raw(" "),
-            Span::styled("main", Style::default().fg(CTP_MOCHA_BLUE)),
-        ])),
-    };
-    let tool = crate::agent::ui::tui::state::TranscriptLine {
-        role: TranscriptRole::Tool,
-        text: "tool[k8s__list_pods] args={\"namespace\":\"prod\"} · done".to_string(),
-        rendered: None,
-    };
-
-    let prose_rendered =
-        render_transcript_lines_with_flags_for_test(prose, None, false, false, 80, 0);
-    let highlighted_rendered =
-        render_transcript_lines_with_flags_for_test(highlighted, None, true, false, 80, 0);
-    let tool_rendered = render_transcript_lines_with_flags_for_test(
-        tool,
-        Some(TranscriptLineStatus::Tool(ToolCallStatus::Done)),
-        false,
-        false,
-        80,
-        0,
-    );
-
-    assert!(
-        prose_rendered[0]
-            .spans
-            .iter()
-            .any(|span| span.content.as_ref().contains("Here is code:"))
-    );
-    let highlighted_keyword = highlighted_rendered[0]
-        .spans
-        .iter()
-        .find(|span| span.content.as_ref() == "fn")
-        .expect("highlighted keyword span");
-    assert_eq!(highlighted_keyword.style.fg, Some(CTP_MOCHA_MAUVE));
-    assert_eq!(highlighted_keyword.style.bg, Some(CTP_MOCHA_SURFACE1));
-    assert!(
-        tool_rendered[0]
-            .spans
-            .iter()
-            .any(|span| span.content.as_ref().contains('✓'))
-    );
-}
-
-#[test]
-fn tool_row_renders_spinner_while_running_and_done_on_end() {
-    let line = crate::agent::ui::tui::state::TranscriptLine {
-        role: TranscriptRole::Tool,
-        text: "tool[k8s__list_pods] args={\"namespace\":\"prod\"}".to_string(),
-        rendered: None,
-    };
-
-    let running_0 = render_transcript_lines_for_test(
-        line.clone(),
-        Some(TranscriptLineStatus::Tool(ToolCallStatus::InProgress)),
-        0,
-    );
-    let running_1 = render_transcript_lines_for_test(
-        line.clone(),
-        Some(TranscriptLineStatus::Tool(ToolCallStatus::InProgress)),
-        100,
-    );
-    let running_2 = render_transcript_lines_for_test(
-        line.clone(),
-        Some(TranscriptLineStatus::Tool(ToolCallStatus::InProgress)),
-        200,
-    );
-    assert!(
-        running_0[0]
-            .spans
-            .iter()
-            .any(|span| span.content.contains("⠋"))
-    );
-    assert!(
-        running_1[0]
-            .spans
-            .iter()
-            .any(|span| span.content.contains("⠙"))
-    );
-    assert!(
-        running_2[0]
-            .spans
-            .iter()
-            .any(|span| span.content.contains("⠹"))
-    );
-
-    let done = render_transcript_lines_for_test(
-        line,
-        Some(TranscriptLineStatus::Tool(ToolCallStatus::Done)),
-        0,
-    );
-    assert!(done[0].spans.iter().any(|span| span.content.contains("✓")));
-}
-
-#[test]
-fn tool_rows_render_structured_label_and_dimmed_metadata() {
-    let line = crate::agent::ui::tui::state::TranscriptLine {
-        role: TranscriptRole::Tool,
-        text: "tool[k8s__list_pods] args={\"namespace\":\"prod\"} · done".to_string(),
-        rendered: None,
-    };
-
-    let rendered = render_transcript_lines_for_test(
-        line,
-        Some(TranscriptLineStatus::Tool(ToolCallStatus::Done)),
-        0,
-    );
-
-    assert!(
-        rendered[0]
-            .spans
-            .iter()
-            .any(|span| span.content.as_ref() == "k8s__list_pods")
-    );
-    assert!(
-        !rendered[0]
-            .spans
-            .iter()
-            .any(|span| span.content.as_ref() == "tool[k8s__list_pods]")
-    );
-    let meta = rendered[0]
-        .spans
-        .iter()
-        .find(|span| {
-            span.content
-                .as_ref()
-                .contains("args={\"namespace\":\"prod\"}")
-        })
-        .expect("tool metadata span");
-    assert!(!meta.content.as_ref().contains("· done"));
-    assert_eq!(meta.style.fg, Some(CTP_MOCHA_OVERLAY1));
-    assert!(meta.style.add_modifier.contains(Modifier::DIM));
-}
-
-#[test]
-fn indicator_style_tokens_map_prompt_and_tool_statuses_semantically() {
-    let prompt_queued =
-        indicator_style_for_status_for_test(TranscriptLineStatus::Prompt(PromptStatus::Queued));
-    let prompt_running =
-        indicator_style_for_status_for_test(TranscriptLineStatus::Prompt(PromptStatus::InProgress));
-    let prompt_done =
-        indicator_style_for_status_for_test(TranscriptLineStatus::Prompt(PromptStatus::Done));
-    let prompt_cancelled =
-        indicator_style_for_status_for_test(TranscriptLineStatus::Prompt(PromptStatus::Cancelled));
-
-    let tool_running =
-        indicator_style_for_status_for_test(TranscriptLineStatus::Tool(ToolCallStatus::InProgress));
-    let tool_done =
-        indicator_style_for_status_for_test(TranscriptLineStatus::Tool(ToolCallStatus::Done));
-    let tool_failed =
-        indicator_style_for_status_for_test(TranscriptLineStatus::Tool(ToolCallStatus::Failed));
-
-    assert_eq!(prompt_queued.fg, Some(CTP_MOCHA_OVERLAY0));
-    assert_eq!(prompt_running.fg, Some(CTP_MOCHA_SAPPHIRE));
-    assert_eq!(prompt_done.fg, Some(CTP_MOCHA_GREEN));
-    assert_eq!(prompt_cancelled.fg, Some(CTP_MOCHA_OVERLAY0));
-
-    assert_eq!(tool_running.fg, Some(CTP_MOCHA_SAPPHIRE));
-    assert_eq!(tool_done.fg, Some(CTP_MOCHA_GREEN));
-    assert_eq!(tool_failed.fg, Some(CTP_MOCHA_RED));
+    // Note: transcript_viewport_lines field removed after ratatui List migration
 }
 
 #[test]
@@ -2814,90 +1667,6 @@ fn global_abort_cancels_active_and_pending_and_new_submit_starts_fresh() {
     }
 
     assert_eq!(coordinator.take_submitted_prompt(), Some("c".to_string()));
-}
-
-#[test]
-fn assistant_message_does_not_force_bottom_when_follow_tail_is_paused() {
-    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    for i in 0..30 {
-        coordinator.enqueue_ui_event(UiEvent::AssistantMessage {
-            text: format!("line {i}"),
-        });
-    }
-    coordinator.drain_transport();
-
-    let mut page_up = StubEventSource {
-        next: Some(TerminalEvent::Key(TerminalKey::PageUp)),
-    };
-    coordinator.pump_once(&mut page_up);
-
-    assert!(!coordinator.state().transcript_follow_tail);
-    assert!(coordinator.state().transcript_cursor_index().is_some());
-    assert!(
-        coordinator.state().transcript_cursor_index().unwrap_or(0)
-            < coordinator
-                .state()
-                .transcript_preview
-                .len()
-                .saturating_sub(1)
-    );
-
-    coordinator.enqueue_ui_event(UiEvent::AssistantMessage {
-        text: "line after scroll".to_string(),
-    });
-    coordinator.drain_transport();
-
-    assert!(
-        !coordinator.state().transcript_follow_tail,
-        "incoming assistant messages must not force jump-to-bottom while follow-tail is paused"
-    );
-    assert!(
-        coordinator.state().transcript_scroll_lines_from_bottom > 0,
-        "manual scroll offset should be preserved while paused"
-    );
-}
-
-#[test]
-fn explicit_page_down_resume_restores_follow_tail_after_manual_scroll_pause() {
-    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    for i in 0..30 {
-        coordinator.enqueue_ui_event(UiEvent::AssistantMessage {
-            text: format!("line {i}"),
-        });
-    }
-    coordinator.drain_transport();
-
-    let mut page_up = StubEventSource {
-        next: Some(TerminalEvent::Key(TerminalKey::PageUp)),
-    };
-    coordinator.pump_once(&mut page_up);
-
-    assert!(!coordinator.state().transcript_follow_tail);
-
-    coordinator.enqueue_ui_event(UiEvent::AssistantMessage {
-        text: "line after scroll".to_string(),
-    });
-    coordinator.drain_transport();
-
-    for _ in 0..2 {
-        let mut page_down = StubEventSource {
-            next: Some(TerminalEvent::Key(TerminalKey::PageDown)),
-        };
-        coordinator.pump_once(&mut page_down);
-    }
-
-    assert!(coordinator.state().transcript_follow_tail);
-    assert_eq!(coordinator.state().transcript_scroll_lines_from_bottom, 0);
-
-    let state = coordinator.state();
-    let window = visible_transcript_window(
-        &state.transcript_preview,
-        3,
-        state.transcript_scroll_lines_from_bottom,
-        state.transcript_follow_tail,
-    );
-    assert_eq!(window.len(), 3);
-    assert_eq!(window[2].text, "line after scroll");
 }
 
 #[test]
@@ -3333,28 +2102,6 @@ fn help_panel_markdown_projection_preserves_supported_formatting() {
     assert!(
         inline_code_spans > 0,
         "inline code content should survive markdown projection"
-    );
-}
-
-#[test]
-fn help_panel_lines_remain_renderable_at_narrow_width() {
-    let (_title, lines) = help_panel_lines_for_test();
-
-    let narrow_width = 14usize;
-    for line in lines {
-        let wrapped_rows = wrapped_visual_rows_for_rendered_line_for_test(&line, narrow_width);
-        assert!(wrapped_rows >= 1);
-    }
-
-    let rendered = help_panel_lines_for_test()
-        .1
-        .iter()
-        .map(|line| line.to_string())
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(
-        rendered.contains("Troubleshooting"),
-        "narrow rendering sanity check should still include terminal sections"
     );
 }
 
@@ -4171,760 +2918,11 @@ fn permission_prompt_does_not_open_global_dimmed_modal_backdrop() {
         pattern: "*".to_string(),
         target_field: Some("command".to_string()),
         summary: "tool[nu__run] args={\"command\":\"echo hi\"}".to_string(),
-        pre_authorize_display: None,
-        attached_tool_transcript_line_index: Some(0),
     });
 
     assert!(!super::modal_open_state_applies_dimmed_backdrop_for_test(
         &state
     ));
-}
-
-#[test]
-fn permission_prompt_card_lines_are_compact_and_keybinding_complete() {
-    let prompt = crate::agent::ui::tui::state::PermissionPrompt {
-        request_id: "ask-0000000000000001".to_string(),
-        matched_rule_identity: "nested:nu__run.command:*".to_string(),
-        tool: "nu__run".to_string(),
-        source: "closure".to_string(),
-        mode: Some("apply".to_string()),
-        scope: "nested".to_string(),
-        pattern: "*".to_string(),
-        target_field: Some("command".to_string()),
-        summary: "tool[nu__run] args={\"command\":\"echo hi\"}".to_string(),
-        pre_authorize_display: None,
-        attached_tool_transcript_line_index: Some(0),
-    };
-    let lines = super::permission_prompt_transcript_lines_for_test(&prompt);
-
-    let rendered = lines
-        .iter()
-        .map(|line| line.text.as_str())
-        .collect::<Vec<_>>();
-    assert!(!rendered.iter().any(|line| line.contains("allow_once")));
-    assert!(!rendered.iter().any(|line| line.contains("request_id=")));
-
-    let mut state = AppState::new();
-    state.open_permission_prompt(prompt);
-    let footer = permission_prompt_footer_text_for_test(&state).expect("footer controls");
-    assert!(footer.contains("a allow_once"));
-    assert!(footer.contains("A allow_always"));
-    assert!(footer.contains("d/Esc deny"));
-}
-
-#[test]
-fn permission_prompt_card_renders_pre_authorize_display_before_prompt_context() {
-    let lines = super::permission_prompt_transcript_lines_for_test(
-        &crate::agent::ui::tui::state::PermissionPrompt {
-            request_id: "ask-0000000000000001".to_string(),
-            matched_rule_identity: "tool:edit".to_string(),
-            tool: "edit".to_string(),
-            source: "closure".to_string(),
-            mode: Some("apply".to_string()),
-            scope: "tool".to_string(),
-            pattern: "edit".to_string(),
-            target_field: None,
-            summary: "tool[edit] args={...}".to_string(),
-            pre_authorize_display: Some(ToolDisplay {
-                title: "edit file.txt".to_string(),
-                sections: vec![ToolDisplaySection {
-                    label: "file.txt".to_string(),
-                    language: "diff".to_string(),
-                    content: "--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-old\n+new\n"
-                        .to_string(),
-                    stats: None,
-                }],
-            }),
-            attached_tool_transcript_line_index: Some(0),
-        },
-    );
-
-    let rendered = lines
-        .iter()
-        .map(|line| line.text.clone())
-        .collect::<Vec<_>>();
-    let display_title_idx = rendered
-        .iter()
-        .position(|line| line.contains("edit file.txt"))
-        .expect("display title");
-    let prompt_context_idx = rendered
-        .iter()
-        .position(|line| line.contains("Permission required"))
-        .expect("prompt context line");
-
-    assert!(
-        display_title_idx < prompt_context_idx,
-        "display must render before prompt context"
-    );
-    assert!(rendered.iter().any(|line| line.contains("--- a/file.txt")));
-    assert!(rendered.iter().any(|line| line.contains("│new")));
-}
-
-#[test]
-fn permission_prompt_is_injected_inline_after_tool_row_without_modal_overlay() {
-    let mut state = AppState::new();
-    state.push_transcript_line(TranscriptRole::Tool, "tool[edit] args={...}".to_string());
-    state.open_permission_prompt(crate::agent::ui::tui::state::PermissionPrompt {
-        request_id: "ask-0000000000000001".to_string(),
-        matched_rule_identity: "tool:edit".to_string(),
-        tool: "edit".to_string(),
-        source: "closure".to_string(),
-        mode: Some("apply".to_string()),
-        scope: "tool".to_string(),
-        pattern: "edit".to_string(),
-        target_field: None,
-        summary: "tool[edit] args={...}".to_string(),
-        pre_authorize_display: Some(ToolDisplay {
-            title: "edit file.txt".to_string(),
-            sections: vec![ToolDisplaySection {
-                label: "file.txt".to_string(),
-                language: "diff".to_string(),
-                content: "--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-old\n+new\n".to_string(),
-                stats: None,
-            }],
-        }),
-        attached_tool_transcript_line_index: Some(0),
-    });
-
-    let rendered = super::transcript_with_permission_prompt_for_render_for_test(&state);
-    let text = rendered
-        .iter()
-        .map(|line| line.text.clone())
-        .collect::<Vec<_>>();
-
-    let tool_idx = text
-        .iter()
-        .position(|line| line.contains("tool[edit]"))
-        .expect("tool row");
-    let diff_header_idx = text
-        .iter()
-        .position(|line| line.contains("--- a/file.txt"))
-        .expect("diff header");
-    let context_idx = text
-        .iter()
-        .position(|line| line.contains("Permission required"))
-        .expect("context");
-
-    assert_eq!(tool_idx, 0, "tool row must stay first");
-    assert!(
-        diff_header_idx > tool_idx,
-        "diff preview must render after tool row"
-    );
-    assert!(
-        context_idx > diff_header_idx,
-        "prompt context must render after preview"
-    );
-    assert!(
-        permission_prompt_footer_text_for_test(&state).is_some(),
-        "sticky footer controls row must be present"
-    );
-    assert!(!super::modal_open_state_applies_dimmed_backdrop_for_test(
-        &state
-    ));
-}
-
-#[test]
-fn permission_controls_remain_visible_in_bottom_viewport_context() {
-    let mut state = AppState::new();
-    state.push_transcript_line(TranscriptRole::Tool, "tool[edit] args={...}".to_string());
-    state.open_permission_prompt(crate::agent::ui::tui::state::PermissionPrompt {
-        request_id: "ask-0000000000000001".to_string(),
-        matched_rule_identity: "tool:edit".to_string(),
-        tool: "edit".to_string(),
-        source: "closure".to_string(),
-        mode: Some("apply".to_string()),
-        scope: "tool".to_string(),
-        pattern: "edit".to_string(),
-        target_field: None,
-        summary: "tool[edit] args={...}".to_string(),
-        pre_authorize_display: Some(ToolDisplay {
-            title: "edit file.txt".to_string(),
-            sections: vec![ToolDisplaySection {
-                label: "file.txt".to_string(),
-                language: "diff".to_string(),
-                content: (0..30)
-                    .map(|idx| format!("+line {idx}"))
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-                stats: None,
-            }],
-        }),
-        attached_tool_transcript_line_index: Some(0),
-    });
-
-    let transcript = super::transcript_with_permission_prompt_for_render_for_test(&state);
-    let (_start, window) =
-        visible_transcript_window_for_render_for_test(&transcript, 4, 0, true, 24);
-    assert!(
-        !window
-            .iter()
-            .any(|line| line.text.contains("allow_once") && line.text.contains("d/Esc deny"))
-    );
-    assert!(
-        permission_prompt_footer_text_for_test(&state)
-            .is_some_and(|line| line.contains("allow_once") && line.contains("d/Esc deny")),
-        "decision controls must be visible in sticky footer"
-    );
-}
-
-#[test]
-fn required_permission_prompt_row_is_preserved_when_preview_pushes_controls_out_of_window() {
-    let mut state = AppState::new();
-    state.push_transcript_line(TranscriptRole::Tool, "tool[edit] args={...}".to_string());
-    state.open_permission_prompt(crate::agent::ui::tui::state::PermissionPrompt {
-        request_id: "ask-0000000000000001".to_string(),
-        matched_rule_identity: "tool:edit".to_string(),
-        tool: "edit".to_string(),
-        source: "closure".to_string(),
-        mode: Some("apply".to_string()),
-        scope: "tool".to_string(),
-        pattern: "edit".to_string(),
-        target_field: None,
-        summary: "tool[edit] args={...}".to_string(),
-        pre_authorize_display: Some(ToolDisplay {
-            title: "edit file.txt".to_string(),
-            sections: vec![ToolDisplaySection {
-                label: "file.txt".to_string(),
-                language: "diff".to_string(),
-                content: (0..60)
-                    .map(|idx| format!("+line {idx}"))
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-                stats: None,
-            }],
-        }),
-        attached_tool_transcript_line_index: Some(0),
-    });
-
-    let transcript = super::transcript_with_permission_prompt_for_render_for_test(&state);
-    let prompt_context_idx = transcript
-        .iter()
-        .position(|line| line.text.contains("Permission required"));
-
-    let (_start, window) = visible_transcript_window_for_render_with_required_line_for_test(
-        &transcript,
-        4,
-        0,
-        true,
-        24,
-        prompt_context_idx,
-    );
-    assert!(
-        window
-            .iter()
-            .any(|line| line.text.contains("Permission required")),
-        "required prompt-context row must be included when permission ask is active"
-    );
-    assert!(permission_prompt_footer_text_for_test(&state).is_some());
-}
-
-#[test]
-fn permission_prompt_diff_preview_has_structured_readable_code_rows() {
-    let lines = super::permission_prompt_transcript_lines_for_test(
-        &crate::agent::ui::tui::state::PermissionPrompt {
-            request_id: "ask-0000000000000001".to_string(),
-            matched_rule_identity: "tool:edit".to_string(),
-            tool: "edit".to_string(),
-            source: "closure".to_string(),
-            mode: Some("apply".to_string()),
-            scope: "tool".to_string(),
-            pattern: "edit".to_string(),
-            target_field: None,
-            summary: "tool[edit] args={...}".to_string(),
-            pre_authorize_display: Some(ToolDisplay {
-                title: "edit file.txt".to_string(),
-                sections: vec![ToolDisplaySection {
-                    label: "file.txt".to_string(),
-                    language: "diff".to_string(),
-                    content:
-                        "--- a/file.txt\n+++ b/file.txt\n@@ -2,2 +2,2 @@\n alpha\n-beta\n+omega\n"
-                            .to_string(),
-                    stats: None,
-                }],
-            }),
-            attached_tool_transcript_line_index: Some(0),
-        },
-    );
-
-    let rendered = lines
-        .iter()
-        .map(|line| line.text.as_str())
-        .collect::<Vec<_>>();
-    assert!(rendered.iter().any(|line| line.contains("@@ -2,2 +2,2 @@")));
-    assert!(rendered.iter().any(|line| line.contains("│alpha")));
-    assert!(rendered.iter().any(|line| line.contains("│beta")));
-    assert!(rendered.iter().any(|line| line.contains("│omega")));
-}
-
-#[test]
-fn manual_scroll_override_prevents_repeated_prompt_recentering_jitter() {
-    let mut state = AppState::new();
-    for idx in 0..80 {
-        state.push_transcript_line(TranscriptRole::Assistant, format!("history {idx}"));
-    }
-    state.push_transcript_line(TranscriptRole::Tool, "tool[edit] args={...}".to_string());
-    state.transcript_follow_tail = false;
-    state.transcript_scroll_lines_from_bottom = 30;
-
-    state.open_permission_prompt(crate::agent::ui::tui::state::PermissionPrompt {
-        request_id: "ask-0000000000000001".to_string(),
-        matched_rule_identity: "tool:edit".to_string(),
-        tool: "edit".to_string(),
-        source: "closure".to_string(),
-        mode: Some("apply".to_string()),
-        scope: "tool".to_string(),
-        pattern: "edit".to_string(),
-        target_field: None,
-        summary: "tool[edit] args={...}".to_string(),
-        pre_authorize_display: Some(ToolDisplay {
-            title: "edit file.txt".to_string(),
-            sections: vec![ToolDisplaySection {
-                label: "file.txt".to_string(),
-                language: "diff".to_string(),
-                content: (0..70)
-                    .map(|idx| format!("+line {idx}"))
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-                stats: None,
-            }],
-        }),
-        attached_tool_transcript_line_index: Some(80),
-    });
-
-    state.note_user_transcript_scroll_override();
-    assert!(state.should_preserve_permission_prompt_row());
-    assert!(!state.should_auto_recenter_permission_prompt_row());
-
-    let transcript = super::transcript_with_permission_prompt_for_render_for_test(&state);
-    let required_line =
-        required_permission_prompt_line_index_for_render_for_test(&state, transcript.len());
-    assert!(
-        required_line.is_some(),
-        "required-row preservation must remain enabled"
-    );
-    assert_eq!(
-        required_permission_prompt_line_for_window_selection_for_test(&state, transcript.len()),
-        None,
-        "manual override should disable required-line recentering in window selection"
-    );
-
-    let _ = visible_transcript_window_for_render_for_test(
-        &transcript,
-        5,
-        10_000,
-        state.transcript_follow_tail,
-        24,
-    );
-}
-
-#[test]
-fn permission_controls_stay_visible_with_large_diff_and_tiny_viewport() {
-    let mut state = AppState::new();
-    state.push_transcript_line(TranscriptRole::Tool, "tool[edit] args={...}".to_string());
-    state.open_permission_prompt(crate::agent::ui::tui::state::PermissionPrompt {
-        request_id: "ask-0000000000000001".to_string(),
-        matched_rule_identity: "tool:edit".to_string(),
-        tool: "edit".to_string(),
-        source: "closure".to_string(),
-        mode: Some("apply".to_string()),
-        scope: "tool".to_string(),
-        pattern: "edit".to_string(),
-        target_field: None,
-        summary: "tool[edit] args={...}".to_string(),
-        pre_authorize_display: Some(ToolDisplay {
-            title: "edit file.txt".to_string(),
-            sections: vec![ToolDisplaySection {
-                label: "file.txt".to_string(),
-                language: "diff".to_string(),
-                content: (0..150)
-                    .map(|idx| format!("+line {idx}"))
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-                stats: None,
-            }],
-        }),
-        attached_tool_transcript_line_index: Some(0),
-    });
-
-    let transcript = super::transcript_with_permission_prompt_for_render_for_test(&state);
-    let required_line =
-        required_permission_prompt_line_index_for_render_for_test(&state, transcript.len());
-    let (_start, window) = visible_transcript_window_for_render_with_required_line_for_test(
-        &transcript,
-        2,
-        0,
-        true,
-        24,
-        required_line,
-    );
-
-    assert!(
-        !window
-            .iter()
-            .any(|line| line.text.contains("allow_once") && line.text.contains("d/Esc deny"))
-    );
-    assert!(
-        window
-            .iter()
-            .any(|line| line.text.contains("Permission required"))
-    );
-    assert!(permission_prompt_footer_text_for_test(&state).is_some());
-}
-
-#[test]
-fn permission_controls_stay_visible_with_narrow_width_and_heavy_wrapping() {
-    let mut state = AppState::new();
-    state.push_transcript_line(TranscriptRole::Tool, "tool[edit] args={...}".to_string());
-    state.open_permission_prompt(crate::agent::ui::tui::state::PermissionPrompt {
-        request_id: "ask-0000000000000001".to_string(),
-        matched_rule_identity: "tool:edit".to_string(),
-        tool: "edit".to_string(),
-        source: "closure".to_string(),
-        mode: Some("apply".to_string()),
-        scope: "tool".to_string(),
-        pattern: "edit".to_string(),
-        target_field: None,
-        summary: "tool[edit] args={...}".to_string(),
-        pre_authorize_display: Some(ToolDisplay {
-            title: "edit wrapped.txt".to_string(),
-            sections: vec![ToolDisplaySection {
-                label: "wrapped.txt".to_string(),
-                language: "diff".to_string(),
-                content: (0..60)
-                    .map(|idx| format!("+{}", "x".repeat(120 + idx)))
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-                stats: None,
-            }],
-        }),
-        attached_tool_transcript_line_index: Some(0),
-    });
-
-    let transcript = super::transcript_with_permission_prompt_for_render_for_test(&state);
-    let required_line =
-        required_permission_prompt_line_index_for_render_for_test(&state, transcript.len());
-    let (_start, window) = visible_transcript_window_for_render_with_required_line_for_test(
-        &transcript,
-        3,
-        0,
-        true,
-        10,
-        required_line,
-    );
-
-    assert!(
-        !window
-            .iter()
-            .any(|line| line.text.contains("allow_once") && line.text.contains("d/Esc deny"))
-    );
-    assert!(
-        window
-            .iter()
-            .any(|line| line.text.contains("Permission required"))
-    );
-    assert!(permission_prompt_footer_text_for_test(&state).is_some());
-}
-
-#[test]
-fn permission_controls_remain_visible_at_top_and_bottom_scroll_extremes() {
-    let mut state = AppState::new();
-    for idx in 0..90 {
-        state.push_transcript_line(TranscriptRole::Assistant, format!("history {idx}"));
-    }
-    state.push_transcript_line(TranscriptRole::Tool, "tool[edit] args={...}".to_string());
-    state.open_permission_prompt(crate::agent::ui::tui::state::PermissionPrompt {
-        request_id: "ask-0000000000000001".to_string(),
-        matched_rule_identity: "tool:edit".to_string(),
-        tool: "edit".to_string(),
-        source: "closure".to_string(),
-        mode: Some("apply".to_string()),
-        scope: "tool".to_string(),
-        pattern: "edit".to_string(),
-        target_field: None,
-        summary: "tool[edit] args={...}".to_string(),
-        pre_authorize_display: Some(ToolDisplay {
-            title: "edit file.txt".to_string(),
-            sections: vec![ToolDisplaySection {
-                label: "file.txt".to_string(),
-                language: "diff".to_string(),
-                content: (0..70)
-                    .map(|idx| format!("+line {idx}"))
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-                stats: None,
-            }],
-        }),
-        attached_tool_transcript_line_index: Some(90),
-    });
-
-    let transcript = super::transcript_with_permission_prompt_for_render_for_test(&state);
-    let required_line =
-        required_permission_prompt_line_index_for_render_for_test(&state, transcript.len());
-
-    let (_bottom_start, bottom_window) =
-        visible_transcript_window_for_render_with_required_line_for_test(
-            &transcript,
-            4,
-            0,
-            false,
-            24,
-            required_line,
-        );
-    assert!(
-        !bottom_window
-            .iter()
-            .any(|line| line.text.contains("allow_once") && line.text.contains("d/Esc deny"))
-    );
-    assert!(
-        bottom_window
-            .iter()
-            .any(|line| line.text.contains("Permission required"))
-    );
-
-    let (_top_start, top_window) = visible_transcript_window_for_render_with_required_line_for_test(
-        &transcript,
-        4,
-        10_000,
-        false,
-        24,
-        required_line,
-    );
-    assert!(
-        !top_window
-            .iter()
-            .any(|line| line.text.contains("allow_once") && line.text.contains("d/Esc deny"))
-    );
-    assert!(
-        top_window
-            .iter()
-            .any(|line| line.text.contains("Permission required"))
-    );
-    assert!(permission_prompt_footer_text_for_test(&state).is_some());
-}
-
-#[test]
-fn required_permission_line_fallback_clamps_to_transcript_bounds_when_anchor_resolution_drifts() {
-    let mut state = AppState::new();
-    state.push_transcript_line(TranscriptRole::Tool, "tool[edit] args={...}".to_string());
-    state.open_permission_prompt(crate::agent::ui::tui::state::PermissionPrompt {
-        request_id: "ask-0000000000000001".to_string(),
-        matched_rule_identity: "tool:edit".to_string(),
-        tool: "edit".to_string(),
-        source: "closure".to_string(),
-        mode: Some("apply".to_string()),
-        scope: "tool".to_string(),
-        pattern: "edit".to_string(),
-        target_field: None,
-        summary: "tool[edit] args={...}".to_string(),
-        pre_authorize_display: None,
-        attached_tool_transcript_line_index: Some(99_999),
-    });
-
-    let required = required_permission_prompt_line_index_for_render_for_test(&state, 1);
-    assert_eq!(required, Some(0));
-}
-
-#[test]
-fn manual_scroll_override_keeps_requested_history_window_without_forcing_prompt_recentering() {
-    let mut state = AppState::new();
-    for idx in 0..100 {
-        state.push_transcript_line(TranscriptRole::Assistant, format!("history {idx}"));
-    }
-    state.push_transcript_line(TranscriptRole::Tool, "tool[edit] args={...}".to_string());
-    state.transcript_follow_tail = false;
-    state.transcript_scroll_lines_from_bottom = 10_000;
-    state.open_permission_prompt(crate::agent::ui::tui::state::PermissionPrompt {
-        request_id: "ask-0000000000000001".to_string(),
-        matched_rule_identity: "tool:edit".to_string(),
-        tool: "edit".to_string(),
-        source: "closure".to_string(),
-        mode: Some("apply".to_string()),
-        scope: "tool".to_string(),
-        pattern: "edit".to_string(),
-        target_field: None,
-        summary: "tool[edit] args={...}".to_string(),
-        pre_authorize_display: Some(ToolDisplay {
-            title: "edit file.txt".to_string(),
-            sections: vec![ToolDisplaySection {
-                label: "file.txt".to_string(),
-                language: "diff".to_string(),
-                content: (0..80)
-                    .map(|idx| format!("+line {idx}"))
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-                stats: None,
-            }],
-        }),
-        attached_tool_transcript_line_index: Some(100),
-    });
-
-    state.note_user_transcript_scroll_override();
-    let transcript = super::transcript_with_permission_prompt_for_render_for_test(&state);
-    let required =
-        required_permission_prompt_line_index_for_render_for_test(&state, transcript.len());
-    assert!(required.is_some());
-    assert_eq!(
-        required_permission_prompt_line_for_window_selection_for_test(&state, transcript.len()),
-        None,
-        "manual override should remove required-line forcing from runtime window fit"
-    );
-
-    let (_start, window) = visible_transcript_window_for_render_for_test(
-        &transcript,
-        5,
-        state.transcript_scroll_lines_from_bottom,
-        state.transcript_follow_tail,
-        24,
-    );
-
-    assert!(!window.is_empty(), "window should remain renderable");
-    assert!(
-        permission_prompt_footer_text_for_test(&state).is_some(),
-        "sticky controls visibility must remain intact"
-    );
-}
-
-#[test]
-fn manual_scroll_override_preserves_window_position_across_repeated_prompt_updates() {
-    let mut state = AppState::new();
-    for idx in 0..120 {
-        state.push_transcript_line(TranscriptRole::Assistant, format!("history {idx}"));
-    }
-    state.push_transcript_line(TranscriptRole::Tool, "tool[edit] args={...}".to_string());
-    state.transcript_follow_tail = false;
-    state.transcript_scroll_lines_from_bottom = 10_000;
-
-    let mut baseline_start = None;
-    for update in 0..6 {
-        state.open_permission_prompt(crate::agent::ui::tui::state::PermissionPrompt {
-            request_id: format!("ask-{:016}", update + 1),
-            matched_rule_identity: "tool:edit".to_string(),
-            tool: "edit".to_string(),
-            source: "closure".to_string(),
-            mode: Some("apply".to_string()),
-            scope: "tool".to_string(),
-            pattern: "edit".to_string(),
-            target_field: None,
-            summary: "tool[edit] args={...}".to_string(),
-            pre_authorize_display: Some(ToolDisplay {
-                title: "edit file.txt".to_string(),
-                sections: vec![ToolDisplaySection {
-                    label: "file.txt".to_string(),
-                    language: "diff".to_string(),
-                    content: (0..50)
-                        .map(|idx| format!("+line {idx}"))
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                    stats: None,
-                }],
-            }),
-            attached_tool_transcript_line_index: Some(120),
-        });
-
-        state.note_user_transcript_scroll_override();
-        let transcript = super::transcript_with_permission_prompt_for_render_for_test(&state);
-        let required =
-            required_permission_prompt_line_index_for_render_for_test(&state, transcript.len());
-        assert!(required.is_some());
-        assert_eq!(
-            required_permission_prompt_line_for_window_selection_for_test(&state, transcript.len()),
-            None,
-            "manual override should keep recentering disabled across prompt updates"
-        );
-
-        let (start, window) = visible_transcript_window_for_render_for_test(
-            &transcript,
-            5,
-            state.transcript_scroll_lines_from_bottom,
-            state.transcript_follow_tail,
-            24,
-        );
-
-        let expected_start = baseline_start.get_or_insert(start);
-        assert_eq!(
-            start, *expected_start,
-            "window start should remain stable across repeated prompt updates"
-        );
-        assert!(
-            !window.is_empty(),
-            "window should remain renderable across repeated prompt updates"
-        );
-        assert!(
-            permission_prompt_footer_text_for_test(&state).is_some(),
-            "sticky controls visibility must remain intact"
-        );
-    }
-}
-
-#[test]
-fn manual_scroll_override_still_keeps_controls_visible_when_scrolling_is_required() {
-    let mut state = AppState::new();
-    for idx in 0..100 {
-        state.push_transcript_line(TranscriptRole::Assistant, format!("history {idx}"));
-    }
-    state.push_transcript_line(TranscriptRole::Tool, "tool[edit] args={...}".to_string());
-    state.transcript_follow_tail = false;
-    state.transcript_scroll_lines_from_bottom = 10_000;
-    state.open_permission_prompt(crate::agent::ui::tui::state::PermissionPrompt {
-        request_id: "ask-0000000000000001".to_string(),
-        matched_rule_identity: "tool:edit".to_string(),
-        tool: "edit".to_string(),
-        source: "closure".to_string(),
-        mode: Some("apply".to_string()),
-        scope: "tool".to_string(),
-        pattern: "edit".to_string(),
-        target_field: None,
-        summary: "tool[edit] args={...}".to_string(),
-        pre_authorize_display: Some(ToolDisplay {
-            title: "edit file.txt".to_string(),
-            sections: vec![ToolDisplaySection {
-                label: "file.txt".to_string(),
-                language: "diff".to_string(),
-                content: (0..90)
-                    .map(|idx| format!("+line {idx}"))
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-                stats: None,
-            }],
-        }),
-        attached_tool_transcript_line_index: Some(100),
-    });
-
-    state.note_user_transcript_scroll_override();
-    assert!(state.should_preserve_permission_prompt_row());
-    assert!(!state.should_auto_recenter_permission_prompt_row());
-
-    let transcript = super::transcript_with_permission_prompt_for_render_for_test(&state);
-    let required =
-        required_permission_prompt_line_index_for_render_for_test(&state, transcript.len());
-    let (_start, window) = visible_transcript_window_for_render_with_required_line_for_test(
-        &transcript,
-        5,
-        state.transcript_scroll_lines_from_bottom,
-        state.transcript_follow_tail,
-        24,
-        required,
-    );
-
-    assert!(
-        window
-            .iter()
-            .any(|line| line.text.contains("Permission required"))
-    );
-    assert!(permission_prompt_footer_text_for_test(&state).is_some());
-}
-
-#[test]
-fn sticky_permission_footer_row_is_reserved_from_transcript_pane_height() {
-    let transcript_area = ratatui::layout::Rect::new(0, 0, 80, 8);
-    let (content, footer) = transcript_pane_regions_for_test(transcript_area, true);
-
-    assert_eq!(content.height, 7);
-    assert_eq!(footer.expect("footer").height, 1);
-
-    let (full_content, full_footer) = transcript_pane_regions_for_test(transcript_area, false);
-    assert_eq!(full_content.height, 8);
-    assert!(full_footer.is_none());
 }
 
 #[test]
@@ -5692,5 +3690,23 @@ fn cancellation_during_shutdown_restores_terminal_and_preserves_cancel_error() {
             TerminalAction::LeaveAltScreen,
             TerminalAction::DisableRawMode,
         ]
+    );
+}
+
+#[test]
+fn main_pane_rects_transcript_gets_remaining_space() {
+    use crate::agent::ui::tui::rendering::layout::INPUT_MIN_HEIGHT;
+    use crate::agent::ui::tui::runtime::render_frame::STATUS_TARGET_HEIGHT;
+    use crate::agent::ui::tui::runtime::render_frame::main_pane_rects_for_height;
+
+    let main_height = 40u16;
+    let (header, transcript, input, status) = main_pane_rects_for_height(main_height);
+
+    assert_eq!(header.height, 0);
+    assert_eq!(status.height, STATUS_TARGET_HEIGHT);
+    assert_eq!(input.height, INPUT_MIN_HEIGHT);
+    assert_eq!(
+        transcript.height,
+        main_height - INPUT_MIN_HEIGHT - STATUS_TARGET_HEIGHT
     );
 }

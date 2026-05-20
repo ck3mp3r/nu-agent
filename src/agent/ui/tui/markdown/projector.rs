@@ -8,6 +8,15 @@ use crate::agent::ui::tui::rendering::theme::TuiTheme;
 
 use super::code_blocks::{CodeBlockState, fence_language_hint, highlighted_code_lines};
 
+#[derive(Debug, Default)]
+struct TableBuffer {
+    header_row: Vec<String>,
+    data_rows: Vec<Vec<String>>,
+    current_cell: String,
+    current_row: Vec<String>,
+    is_header: bool,
+}
+
 #[derive(Debug, Clone, Default)]
 struct StyleState {
     emphasis_depth: usize,
@@ -45,6 +54,7 @@ struct Projector {
     code_block: Option<CodeBlockState>,
     pending_prefix: bool,
     theme: TuiTheme,
+    table: Option<TableBuffer>,
 }
 
 impl Projector {
@@ -123,6 +133,58 @@ impl Projector {
         }
     }
 
+    fn render_table(&mut self, table: TableBuffer) {
+        let all_rows = std::iter::once(&table.header_row).chain(table.data_rows.iter());
+        let col_count = table.header_row.len();
+
+        // Measure column widths
+        let mut widths = vec![0usize; col_count];
+        for row in all_rows.clone() {
+            for (i, cell) in row.iter().enumerate() {
+                if i < col_count {
+                    widths[i] = widths[i].max(cell.len());
+                }
+            }
+        }
+
+        // Render header row (bold)
+        let header_style = Style::default().add_modifier(Modifier::BOLD);
+        for (i, cell) in table.header_row.iter().enumerate() {
+            if i > 0 {
+                self.push_text(" │ ", Style::default());
+            }
+            let padded = format!(
+                " {:<width$} ",
+                cell,
+                width = widths.get(i).copied().unwrap_or(0)
+            );
+            self.push_text(&padded, header_style);
+        }
+        self.flush_line();
+
+        // Render separator
+        let sep_parts: Vec<String> = widths.iter().map(|w| "─".repeat(w + 2)).collect();
+        let sep = sep_parts.join("┼");
+        self.push_text(&sep, Style::default());
+        self.flush_line();
+
+        // Render data rows
+        for row in &table.data_rows {
+            for (i, cell) in row.iter().enumerate() {
+                if i > 0 {
+                    self.push_text(" │ ", Style::default());
+                }
+                let padded = format!(
+                    " {:<width$} ",
+                    cell,
+                    width = widths.get(i).copied().unwrap_or(0)
+                );
+                self.push_text(&padded, Style::default());
+            }
+            self.flush_line();
+        }
+    }
+
     fn on_start(&mut self, tag: Tag<'_>) {
         match tag {
             Tag::Paragraph => {}
@@ -174,6 +236,26 @@ impl Projector {
             Tag::Image { dest_url, .. } => {
                 self.image_destinations.push(dest_url.to_string());
             }
+            Tag::Table(_) => {
+                self.flush_line();
+                self.table = Some(TableBuffer::default());
+            }
+            Tag::TableHead => {
+                if let Some(t) = self.table.as_mut() {
+                    t.is_header = true;
+                    t.current_row.clear();
+                }
+            }
+            Tag::TableRow => {
+                if let Some(t) = self.table.as_mut() {
+                    t.current_row.clear();
+                }
+            }
+            Tag::TableCell => {
+                if let Some(t) = self.table.as_mut() {
+                    t.current_cell.clear();
+                }
+            }
             _ => {}
         }
     }
@@ -216,6 +298,29 @@ impl Projector {
             TagEnd::Image => {
                 self.emit_image_suffix();
             }
+            TagEnd::Table => {
+                if let Some(table) = self.table.take() {
+                    self.render_table(table);
+                }
+            }
+            TagEnd::TableHead => {
+                if let Some(t) = self.table.as_mut() {
+                    t.header_row = std::mem::take(&mut t.current_row);
+                    t.is_header = false;
+                }
+            }
+            TagEnd::TableRow => {
+                if let Some(t) = self.table.as_mut() {
+                    let row = std::mem::take(&mut t.current_row);
+                    t.data_rows.push(row);
+                }
+            }
+            TagEnd::TableCell => {
+                if let Some(t) = self.table.as_mut() {
+                    let cell = std::mem::take(&mut t.current_cell);
+                    t.current_row.push(cell);
+                }
+            }
             _ => {}
         }
     }
@@ -227,6 +332,11 @@ impl Projector {
             Event::Text(text) => {
                 if let Some(block) = self.code_block.as_mut() {
                     block.source.push_str(&text);
+                    return;
+                }
+
+                if let Some(t) = self.table.as_mut() {
+                    t.current_cell.push_str(&text);
                     return;
                 }
 
@@ -275,7 +385,8 @@ impl Projector {
 }
 
 pub(super) fn project_markdown_to_lines_inner(markdown: &str) -> Vec<Line<'static>> {
-    let options = Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
+    let options =
+        Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS | Options::ENABLE_TABLES;
     let parser = Parser::new_ext(markdown, options);
     let mut projector = Projector {
         pending_prefix: true,

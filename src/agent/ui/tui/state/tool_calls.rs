@@ -1,4 +1,4 @@
-use super::{ToolCallLine, ToolCallStatus, TranscriptLine};
+use super::{ToolCallLine, ToolCallStatus};
 use std::collections::{HashMap, VecDeque};
 
 pub(super) struct ToolCallBookkeeping<'a> {
@@ -42,13 +42,7 @@ impl<'a> ToolCallBookkeeping<'a> {
             .push_back(id);
     }
 
-    pub(super) fn finish_tool_call(
-        &mut self,
-        name: &str,
-        arguments: &str,
-        success: bool,
-        transcript_preview: &mut [TranscriptLine],
-    ) {
+    pub(super) fn finish_tool_call(&mut self, name: &str, arguments: &str, success: bool) {
         let key = tool_call_key(name, arguments);
         let maybe_id = self
             .active_tool_ids_by_key
@@ -70,14 +64,6 @@ impl<'a> ToolCallBookkeeping<'a> {
             } else {
                 ToolCallStatus::Failed
             };
-
-            if let Some(line) = transcript_preview.get_mut(tool.transcript_line_index) {
-                line.text = if success {
-                    format!("{} · done", line.text)
-                } else {
-                    format!("{} · failed", line.text)
-                };
-            }
         }
     }
 }

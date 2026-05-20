@@ -4,6 +4,7 @@ pub mod policy;
 pub mod renderer;
 pub mod spinner;
 pub mod stderr;
+pub mod transcript;
 pub mod tui;
 
 #[cfg(test)]

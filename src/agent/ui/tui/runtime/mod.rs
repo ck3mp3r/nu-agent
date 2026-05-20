@@ -19,8 +19,6 @@ mod status;
 mod terminal_events;
 mod terminal_io;
 mod tool_hydration;
-mod transcript_rows;
-mod transcript_window;
 
 #[cfg(test)]
 mod test;
@@ -29,15 +27,17 @@ mod test;
 mod hybrid_events_test;
 
 #[cfg(test)]
-mod transcript_rows_test;
+mod spacer_test;
 
 use crate::agent::protocol::contracts::{SharedUiAction, UiMessageSnapshot};
+use crate::agent::protocol::event::PermissionDecisionSubmission;
 use crate::agent::protocol::event::UiEvent;
-use crate::agent::protocol::event::{PermissionDecisionSubmission, ToolDisplay};
 use crate::agent::protocol::skills::DiscoverableSkill as ProtocolDiscoverableSkill;
 use crate::agent::protocol::slash::{slash_command_label, slash_command_summary};
-#[cfg(test)]
-use crate::agent::ui::tui::state::PromptStatus;
+use crate::agent::ui::transcript::ir::Role;
+use crate::agent::ui::transcript::items::{Renderable, TranscriptEntry};
+use crate::agent::ui::transcript::renderer::{BlockRenderer, RenderContext};
+use crate::agent::ui::transcript::tui_renderer::TuiRenderer;
 use crate::agent::ui::{
     renderer::UiRenderer,
     tui::{
@@ -67,334 +67,108 @@ use crate::agent::ui::{
 };
 use crate::tools::mcp::runtime::McpServerLifecycle;
 
-fn permission_prompt_summary_line(
-    prompt: &crate::agent::ui::tui::state::PermissionPrompt,
-) -> String {
-    let mode_suffix = prompt
-        .mode
-        .as_deref()
-        .map(|mode| format!(" · mode={mode}"))
-        .unwrap_or_default();
-    format!(
-        "Permission required · {} · {}{mode_suffix}",
-        prompt.tool, prompt.source
+fn transcript_line_status_to_item_status(
+    status: TranscriptLineStatus,
+) -> crate::agent::ui::transcript::renderer::ItemStatus {
+    use crate::agent::ui::transcript::renderer::ItemStatus;
+    use crate::agent::ui::tui::state::{CompactionStatus, PromptStatus, ToolCallStatus};
+    match status {
+        TranscriptLineStatus::Tool(ToolCallStatus::InProgress) => ItemStatus::InProgress,
+        TranscriptLineStatus::Tool(ToolCallStatus::Done) => ItemStatus::Done,
+        TranscriptLineStatus::Tool(ToolCallStatus::Failed) => ItemStatus::Failed,
+        TranscriptLineStatus::Prompt(PromptStatus::InProgress) => ItemStatus::InProgress,
+        TranscriptLineStatus::Prompt(PromptStatus::Done) => ItemStatus::Done,
+        TranscriptLineStatus::Prompt(PromptStatus::Cancelled) => ItemStatus::Cancelled,
+        TranscriptLineStatus::Prompt(PromptStatus::Queued) => ItemStatus::Queued,
+        TranscriptLineStatus::Compaction(CompactionStatus::InProgress) => ItemStatus::InProgress,
+        TranscriptLineStatus::Compaction(CompactionStatus::Done) => ItemStatus::Done,
+        TranscriptLineStatus::Compaction(CompactionStatus::Failed) => ItemStatus::Failed,
+    }
+}
+
+fn render_permission_controls(frame: &mut ratatui::Frame, area: Rect, theme: &TuiTheme) {
+    frame.render_widget(Clear, area);
+    let controls = Line::from(vec![
+        Span::styled("[a]", theme.status_running),
+        Span::raw(" allow once  "),
+        Span::styled("[A]", theme.status_running),
+        Span::raw(" allow always  "),
+        Span::styled("[d/Esc]", theme.status_running),
+        Span::raw(" deny"),
+    ]);
+    let widget = Paragraph::new(Text::from(vec![controls])).block(
+        Block::default()
+            .borders(Borders::TOP)
+            .border_style(theme.role_system),
+    );
+    frame.render_widget(widget, area);
+}
+
+fn insert_spacers(entries: Vec<TranscriptEntry>) -> Vec<TranscriptEntry> {
+    use crate::agent::ui::transcript::items::Spacer as SpacerItem;
+    let mut result = Vec::with_capacity(entries.len() * 2);
+    let mut prev_role: Option<Role> = None;
+    for entry in entries {
+        let role = entry.role();
+        if needs_spacer(prev_role.as_ref(), &role) {
+            result.push(TranscriptEntry::Spacer(SpacerItem));
+        }
+        prev_role = Some(role);
+        result.push(entry);
+    }
+    result
+}
+
+fn needs_spacer(previous: Option<&Role>, next: &Role) -> bool {
+    let Some(previous) = previous else {
+        return false;
+    };
+    if previous == next {
+        return false;
+    }
+    if *previous == Role::Separator || *next == Role::Separator {
+        return false;
+    }
+    !matches!(
+        (previous, next),
+        (Role::User, Role::Assistant)
+            | (Role::Assistant, Role::User)
+            | (Role::Tool, Role::ToolDisplay)
+            | (Role::ToolDisplay, Role::Tool)
     )
 }
 
-fn append_pre_authorize_display_lines(
-    lines: &mut Vec<crate::agent::ui::tui::state::TranscriptLine>,
-    display: &ToolDisplay,
-) {
-    lines.push(crate::agent::ui::tui::state::TranscriptLine {
-        role: TranscriptRole::ToolDisplay,
-        text: display.title.clone(),
-        rendered: None,
-    });
-
-    for section in &display.sections {
-        lines.push(crate::agent::ui::tui::state::TranscriptLine {
-            role: TranscriptRole::ToolDisplay,
-            text: format!("{} ({})", section.label, section.language),
-            rendered: None,
-        });
-
-        let section_content = if section.language == "diff" {
-            enrich_permission_diff_preview(&section.content)
-        } else {
-            section.content.clone()
-        };
-
-        let markdown = format!("```{}\n{}\n```", section.language, section_content);
-        for rendered_line in crate::agent::ui::tui::markdown::project_markdown_to_lines(&markdown) {
-            let text = crate::agent::ui::tui::markdown::rendered_line_to_plain_text(&rendered_line);
-            if text.trim().is_empty() {
-                continue;
-            }
-            lines.push(crate::agent::ui::tui::state::TranscriptLine {
-                role: TranscriptRole::ToolDisplay,
-                text,
-                rendered: Some(rendered_line),
-            });
-        }
-    }
-}
-
-fn enrich_permission_diff_preview(diff: &str) -> String {
-    let mut old_line: Option<usize> = None;
-    let mut new_line: Option<usize> = None;
-    let mut out = String::new();
-
-    for segment in diff.split_inclusive('\n') {
-        let (line, newline) = if let Some(stripped) = segment.strip_suffix('\n') {
-            (stripped, "\n")
-        } else {
-            (segment, "")
-        };
-
-        if line.starts_with("@@") {
-            old_line = parse_hunk_start(line, '-');
-            new_line = parse_hunk_start(line, '+');
-            out.push_str(line);
-            out.push_str(newline);
-            continue;
-        }
-
-        if line.starts_with("--- ") || line.starts_with("+++ ") || line.starts_with("\\ ") {
-            out.push_str(line);
-            out.push_str(newline);
-            continue;
-        }
-
-        let mut chars = line.chars();
-        let prefix = chars.next();
-        let body = chars.as_str();
-
-        match (prefix, old_line, new_line) {
-            (Some(' '), Some(old), Some(new)) => {
-                out.push_str(&format!(" {:>4} {:>4} │{}{}", old, new, body, newline));
-                old_line = Some(old.saturating_add(1));
-                new_line = Some(new.saturating_add(1));
-            }
-            (Some('-'), Some(old), _) => {
-                out.push_str(&format!("-{:>4}      │{}{}", old, body, newline));
-                old_line = Some(old.saturating_add(1));
-            }
-            (Some('+'), _, Some(new)) => {
-                out.push_str(&format!("+     {:>4} │{}{}", new, body, newline));
-                new_line = Some(new.saturating_add(1));
-            }
-            _ => {
-                out.push_str(line);
-                out.push_str(newline);
-            }
-        }
-    }
-
-    out
-}
-
-fn parse_hunk_start(line: &str, prefix: char) -> Option<usize> {
-    let mut chars = line.chars();
-    while let Some(ch) = chars.next() {
-        if ch == prefix {
-            let remainder = chars.as_str();
-            let digits: String = remainder
-                .chars()
-                .take_while(|ch| ch.is_ascii_digit())
-                .collect();
-            if digits.is_empty() {
-                return None;
-            }
-            return digits.parse::<usize>().ok();
-        }
-    }
-    None
-}
-
-fn permission_prompt_transcript_lines(
-    prompt: &crate::agent::ui::tui::state::PermissionPrompt,
-) -> Vec<crate::agent::ui::tui::state::TranscriptLine> {
-    let mut lines = Vec::new();
-
-    if let Some(display) = &prompt.pre_authorize_display {
-        append_pre_authorize_display_lines(&mut lines, display);
-    }
-
-    lines.push(crate::agent::ui::tui::state::TranscriptLine {
-        role: TranscriptRole::System,
-        text: permission_prompt_summary_line(prompt),
-        rendered: None,
-    });
-
-    if prompt.tool.contains("__") {
-        lines.push(crate::agent::ui::tui::state::TranscriptLine {
-            role: TranscriptRole::System,
-            text: prompt.summary.clone(),
-            rendered: None,
-        });
-    }
-
-    lines
-}
-
-fn permission_prompt_controls_text() -> String {
-    "a allow_once · A allow_always (session) · d/Esc deny".to_string()
-}
-
-fn transcript_pane_regions(
-    transcript_area: Rect,
-    reserve_footer_row: bool,
-) -> (Rect, Option<Rect>) {
-    if transcript_area.height == 0 {
-        return (transcript_area, None);
-    }
-
-    if !reserve_footer_row {
-        return (transcript_area, None);
-    }
-
-    let footer = Rect {
-        x: transcript_area.x,
-        y: transcript_area
-            .y
-            .saturating_add(transcript_area.height.saturating_sub(1)),
-        width: transcript_area.width,
-        height: 1,
-    };
-    let content = Rect {
-        x: transcript_area.x,
-        y: transcript_area.y,
-        width: transcript_area.width,
-        height: transcript_area.height.saturating_sub(1),
-    };
-
-    (content, Some(footer))
-}
-
-fn permission_prompt_footer_line(theme: &TuiTheme) -> Line<'static> {
-    Line::from(vec![Span::styled(
-        permission_prompt_controls_text(),
-        theme.role_system,
-    )])
-}
-
-fn permission_prompt_footer_line_for_state(
-    state: &AppState,
-    theme: &TuiTheme,
-) -> Option<Line<'static>> {
-    state
-        .permission_prompt
-        .as_ref()
-        .map(|_| permission_prompt_footer_line(theme))
-}
-
-#[cfg(test)]
-fn permission_prompt_footer_text_for_state(state: &AppState) -> Option<String> {
-    state
-        .permission_prompt
-        .as_ref()
-        .map(|_| permission_prompt_controls_text())
-}
-
-fn transcript_content_visible_lines_for_render(
-    transcript_area_height: u16,
-    has_prompt_footer: bool,
-) -> usize {
-    let reserved_footer_rows = usize::from(has_prompt_footer && transcript_area_height > 0);
-    transcript_area_height
-        .saturating_sub(1) // transcript top border
-        .saturating_sub(reserved_footer_rows as u16) as usize
-}
-
-fn transcript_row_budget_for_content_area(content_area_height: u16) -> usize {
-    content_area_height.saturating_sub(1) as usize
-}
-
-fn required_permission_prompt_line_index_for_render(
-    state: &AppState,
-    transcript_len: usize,
-) -> Option<usize> {
-    let prompt = state.permission_prompt.as_ref()?;
-    let prompt_lines = permission_prompt_transcript_lines(prompt);
-    if prompt_lines.is_empty() {
-        return None;
-    }
-
-    let required_offset = prompt_lines.len().saturating_sub(1);
-
-    let insert_at = prompt
-        .attached_tool_transcript_line_index
-        .map(|line_index| {
-            line_index
-                .saturating_add(1)
-                .min(state.transcript_preview.len())
-        })
-        .unwrap_or(state.transcript_preview.len());
-
-    if transcript_len == 0 {
-        return None;
-    }
-
-    let absolute = insert_at.saturating_add(required_offset);
-    Some(absolute.min(transcript_len.saturating_sub(1)))
-}
-
-fn required_permission_prompt_line_for_window_selection(
-    state: &AppState,
-    transcript_len: usize,
-) -> Option<usize> {
-    if !state.should_auto_recenter_permission_prompt_row() {
-        return None;
-    }
-
-    required_permission_prompt_line_index_for_render(state, transcript_len)
-}
-
-fn transcript_with_permission_prompt_for_render(
-    state: &AppState,
-) -> Vec<crate::agent::ui::tui::state::TranscriptLine> {
-    let mut transcript = state.transcript_preview.clone();
-    let Some(prompt) = state.permission_prompt.as_ref() else {
-        return transcript;
-    };
-
-    let prompt_lines = permission_prompt_transcript_lines(prompt);
-    if prompt_lines.is_empty() {
-        return transcript;
-    }
-
-    let insert_at = prompt
-        .attached_tool_transcript_line_index
-        .map(|line_index| line_index.saturating_add(1).min(transcript.len()))
-        .unwrap_or(transcript.len());
-    transcript.splice(insert_at..insert_at, prompt_lines);
-    transcript
+fn transcript_entries_for_render(state: &AppState) -> Vec<TranscriptEntry> {
+    insert_spacers(state.transcript_preview.clone())
 }
 
 fn transcript_line_statuses_for_render(
     state: &AppState,
-    transcript_len: usize,
+    entries: &[TranscriptEntry],
 ) -> Vec<Option<TranscriptLineStatus>> {
-    let Some(prompt) = state.permission_prompt.as_ref() else {
-        return (0..transcript_len)
-            .map(|idx| state.transcript_line_status_for_index(idx))
-            .collect();
-    };
-
-    let prompt_lines_len = permission_prompt_transcript_lines(prompt).len();
-    let insert_at = prompt
-        .attached_tool_transcript_line_index
-        .map(|line_index| {
-            line_index
-                .saturating_add(1)
-                .min(state.transcript_preview.len())
-        })
-        .unwrap_or(state.transcript_preview.len());
-
-    (0..transcript_len)
-        .map(|render_idx| {
-            if render_idx < insert_at {
-                return state.transcript_line_status_for_index(render_idx);
+    let mut source_idx = 0usize;
+    entries
+        .iter()
+        .map(|entry| {
+            if matches!(entry, TranscriptEntry::Spacer(_)) {
+                None
+            } else {
+                let status = state.transcript_line_status_for_index(source_idx);
+                source_idx += 1;
+                status
             }
-
-            if render_idx < insert_at.saturating_add(prompt_lines_len) {
-                return None;
-            }
-
-            let source_idx = render_idx.saturating_sub(prompt_lines_len);
-            state.transcript_line_status_for_index(source_idx)
         })
         .collect()
 }
 
 use render_frame::{
-    ModalPanelKind, current_time_millis, modal_rect_for_panel, vertical_heights_for_main_with_input,
+    ModalPanelKind, STATUS_TARGET_HEIGHT, current_time_millis, modal_rect_for_panel,
 };
 #[cfg(test)]
 use status::visual_indicator_line;
 use status::{
     availability_label, build_status_lines, compact_status_line, cursor_style_for_mode,
-    lane_2_status_line, transcript_selection_range_for_render, transcript_title_for_render,
+    lane_2_status_line,
 };
 #[cfg(test)]
 pub use terminal_events::ScriptedTerminalEvents;
@@ -406,14 +180,6 @@ pub use terminal_events::{
 };
 pub use terminal_io::{TtyTerminalEvents, open_tty_reader};
 use tool_hydration::{extract_tool_name, parse_persisted_tool_status_line};
-use transcript_rows::render_transcript_lines;
-#[cfg(test)]
-use transcript_rows::{
-    build_row_spans, indicator_style_for_status, lane_prefix_spans, prompt_indicator_for_status,
-};
-use transcript_window::{
-    should_insert_transition_spacer, visible_transcript_window_for_render_with_required_line,
-};
 
 fn wrapped_visual_rows_for_rendered_line(rendered_line: &Line<'_>, content_width: usize) -> usize {
     let width = rendered_line
@@ -1051,9 +817,7 @@ impl RuntimeCoordinator {
             }
             if role == TranscriptRole::Assistant {
                 for line in self.state.project_assistant_markdown_lines(message_content) {
-                    let plain_text =
-                        crate::agent::ui::tui::markdown::rendered_line_to_plain_text(&line);
-                    if !plain_text.trim().is_empty() {
+                    if line.width() > 0 {
                         self.state.push_transcript_rendered_line(role, line);
                     }
                 }
@@ -1359,9 +1123,8 @@ impl RuntimeCoordinator {
     }
 
     fn sync_transcript_viewport_lines_with_layout(&mut self) {
-        let visible_lines = self.layout.transcript.height.saturating_sub(1) as usize;
-        self.state
-            .set_transcript_viewport_lines(visible_lines.max(1));
+        // With ListState, viewport lines are managed by ratatui automatically
+        // No manual tracking needed
     }
 
     fn execute_shared_ui_action(&mut self, action: SharedUiAction) -> bool {
@@ -1504,105 +1267,70 @@ impl RuntimeCoordinator {
                     vertical: 0,
                     horizontal: side_margin,
                 });
-                let (header_h, transcript_h, status_h, input_h) =
-                    vertical_heights_for_main_with_input(
-                        content_main.height,
-                        self.layout.input.height,
-                    );
+                let input_h = self.layout.input.height;
                 let vertical = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
-                        Constraint::Length(header_h),
-                        Constraint::Length(transcript_h),
+                        Constraint::Length(0),
+                        Constraint::Min(1),
                         Constraint::Length(input_h),
-                        Constraint::Length(status_h),
+                        Constraint::Length(STATUS_TARGET_HEIGHT),
                     ])
                     .split(content_main);
 
-                let transcript_for_render =
-                    transcript_with_permission_prompt_for_render(&self.state);
+                let entries_for_render = transcript_entries_for_render(&self.state);
                 let transcript_line_statuses =
-                    transcript_line_statuses_for_render(&self.state, transcript_for_render.len());
-                let required_prompt_line = required_permission_prompt_line_for_window_selection(
-                    &self.state,
-                    transcript_for_render.len(),
-                );
-                let has_permission_footer = self.state.permission_prompt.is_some();
-                let visible_transcript_lines = transcript_content_visible_lines_for_render(
-                    vertical[1].height,
-                    has_permission_footer,
-                );
-                let (window_start, window_lines) =
-                    visible_transcript_window_for_render_with_required_line(
-                        &transcript_for_render,
-                        visible_transcript_lines,
-                        self.state.transcript_scroll_lines_from_bottom,
-                        self.state.transcript_follow_tail,
-                        vertical[1].width as usize,
-                        required_prompt_line,
-                        &transcript_line_statuses,
-                    );
-                let selected =
-                    transcript_selection_range_for_render(&self.state, transcript_for_render.len());
-                let mut transcript = Vec::new();
-                let mut prev_role: Option<TranscriptRole> = None;
-                let (transcript_content_area, transcript_footer_area) =
-                    transcript_pane_regions(vertical[1], has_permission_footer);
-                let transcript_row_budget =
-                    transcript_row_budget_for_content_area(transcript_content_area.height);
-                let mut transcript_rows_used = 0usize;
-                for (offset, line) in window_lines.into_iter().enumerate() {
-                    let global_idx = window_start.saturating_add(offset);
-                    if should_insert_transition_spacer(prev_role, line.role) {
-                        if transcript_rows_used >= transcript_row_budget {
-                            break;
-                        }
-                        transcript.push(Line::from(vec![Span::raw(" ")]));
-                        transcript_rows_used = transcript_rows_used.saturating_add(1);
-                    }
-                    let line_status = transcript_line_statuses.get(global_idx).copied().flatten();
-                    let is_cursor_line = self.state.transcript_cursor_index() == Some(global_idx)
-                        && self.state.input_mode != crate::agent::ui::tui::state::InputMode::Insert;
-                    let is_selected = selected
-                        .map(|(start, end)| global_idx >= start && global_idx <= end)
-                        .unwrap_or(false);
-                    let rendered_lines = render_transcript_lines(
-                        line,
-                        vertical[1].width as usize,
-                        is_selected,
-                        is_cursor_line,
-                        line_status,
-                        current_time_millis(),
-                        &self.theme,
-                    );
+                    transcript_line_statuses_for_render(&self.state, &entries_for_render);
+                let transcript_content_area = vertical[1];
 
-                    for rendered_line in rendered_lines {
-                        let visual_rows = wrapped_visual_rows_for_rendered_line(
-                            &rendered_line,
-                            vertical[1].width as usize,
-                        );
-                        if transcript_rows_used.saturating_add(visual_rows) > transcript_row_budget
-                        {
-                            if transcript_rows_used == 0 {
-                                transcript.push(rendered_line);
-                                transcript_rows_used = transcript_row_budget;
+                let now_millis = current_time_millis();
+                let renderer = TuiRenderer {
+                    theme: self.theme.clone(),
+                };
+
+                // Capture input_mode before the closure to avoid borrowing self
+                let input_mode = self.state.input_mode;
+
+                // Build ListView with tui-widget-list
+                let builder = tui_widget_list::ListBuilder::new(|context| {
+                    let entry = &entries_for_render[context.index];
+                    let block = entry.to_render_block();
+                    let item_status = transcript_line_statuses
+                        .get(context.index)
+                        .copied()
+                        .flatten()
+                        .map(transcript_line_status_to_item_status);
+                    let ctx = RenderContext {
+                        width: context.cross_axis_size as usize,
+                        cursor: false,
+                        selected: context.is_selected
+                            && input_mode == crate::agent::ui::tui::state::InputMode::Normal,
+                        status: item_status,
+                        now_millis,
+                    };
+                    let lines = renderer.render(&block, &ctx);
+                    let text = ratatui::text::Text::from(lines);
+
+                    // Calculate wrapped height: for each line, compute how many visual rows it takes
+                    let width = context.cross_axis_size as usize;
+                    let height: u16 = text
+                        .lines
+                        .iter()
+                        .map(|line| {
+                            let line_width = line.width();
+                            if line_width == 0 || width == 0 {
+                                1u16
+                            } else {
+                                line_width.div_ceil(width) as u16
                             }
-                            break;
-                        }
-                        transcript.push(rendered_line);
-                        transcript_rows_used = transcript_rows_used.saturating_add(visual_rows);
-                    }
-                    prev_role = transcript_for_render
-                        .get(global_idx)
-                        .map(|entry| entry.role);
+                        })
+                        .sum::<u16>()
+                        .max(1);
 
-                    if transcript_rows_used >= transcript_row_budget {
-                        break;
-                    }
-                }
-                let transcript_view_height = transcript_row_budget;
-                let _transcript_title =
-                    transcript_title_for_render(&self.state, transcript_for_render.len());
+                    let paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
+                    (paragraph, height)
+                });
+
                 let transcript_border_style = if self.state.pane_focus
                     == crate::agent::ui::tui::state::PaneFocus::Transcript
                 {
@@ -1610,35 +1338,30 @@ impl RuntimeCoordinator {
                 } else {
                     Style::default()
                 };
-                let transcript_widget = if transcript_view_height == 0 {
-                    Paragraph::new(Text::from(Vec::<Line>::new()))
-                        .block(
-                            Block::default()
-                                .borders(Borders::TOP)
-                                .border_style(transcript_border_style),
-                        )
-                        .wrap(Wrap { trim: false })
-                } else {
-                    Paragraph::new(Text::from(transcript))
-                        .block(
-                            Block::default()
-                                .borders(Borders::TOP)
-                                .border_style(transcript_border_style),
-                        )
-                        .wrap(Wrap { trim: false })
-                };
+
+                let list_view = tui_widget_list::ListView::new(builder, entries_for_render.len())
+                    .infinite_scrolling(false)
+                    .block(
+                        Block::default()
+                            .borders(Borders::TOP)
+                            .border_style(transcript_border_style),
+                    );
+
                 if vertical[1].height > 0 {
                     frame.render_widget(Clear, vertical[1]);
                     if transcript_content_area.height > 0 {
-                        frame.render_widget(transcript_widget, transcript_content_area);
-                    }
-                    if let (Some(footer_area), Some(footer_line)) = (
-                        transcript_footer_area,
-                        permission_prompt_footer_line_for_state(&self.state, &self.theme),
-                    ) {
-                        let footer_widget = Paragraph::new(Text::from(vec![footer_line]))
-                            .wrap(Wrap { trim: false });
-                        frame.render_widget(footer_widget, footer_area);
+                        let mut list_state_clone = self.state.transcript_list_state.clone();
+                        let rendered_len = entries_for_render.len();
+                        if let Some(sel) = list_state_clone.selected
+                            && sel + 1 >= self.state.transcript_preview.len()
+                        {
+                            list_state_clone.select(Some(rendered_len.saturating_sub(1)));
+                        }
+                        frame.render_stateful_widget(
+                            list_view,
+                            transcript_content_area,
+                            &mut list_state_clone,
+                        );
                     }
                 }
 
@@ -1670,65 +1393,71 @@ impl RuntimeCoordinator {
                     frame.render_widget(status_widget, vertical[3]);
                 }
 
-                let input_rows = wrapped_input_rows(
-                    &self.state.input.buffer,
-                    vertical[2].width.saturating_sub(2) as usize,
-                );
-                let input_border_style =
-                    if self.state.pane_focus == crate::agent::ui::tui::state::PaneFocus::Input {
+                if self.state.permission_prompt.is_some() {
+                    render_permission_controls(frame, vertical[2], &self.theme);
+                } else {
+                    let input_rows = wrapped_input_rows(
+                        &self.state.input.buffer,
+                        vertical[2].width.saturating_sub(2) as usize,
+                    );
+                    let input_border_style = if self.state.pane_focus
+                        == crate::agent::ui::tui::state::PaneFocus::Input
+                    {
                         self.theme.focus
                     } else {
                         Style::default()
                     };
-                let mut input_lines = Vec::new();
-                let prompt_prefix = input_prompt_prefix(self.state.input_mode);
-                if let Some((first, rest)) = input_rows.split_first() {
-                    input_lines.push(Line::from(vec![
-                        Span::styled(prompt_prefix, self.theme.input_prompt),
-                        Span::raw(first.clone()),
-                    ]));
-                    for row in rest {
-                        input_lines.push(Line::from(vec![Span::raw("  "), Span::raw(row.clone())]));
+                    let mut input_lines = Vec::new();
+                    let prompt_prefix = input_prompt_prefix(self.state.input_mode);
+                    if let Some((first, rest)) = input_rows.split_first() {
+                        input_lines.push(Line::from(vec![
+                            Span::styled(prompt_prefix, self.theme.input_prompt),
+                            Span::raw(first.clone()),
+                        ]));
+                        for row in rest {
+                            input_lines
+                                .push(Line::from(vec![Span::raw("  "), Span::raw(row.clone())]));
+                        }
                     }
-                }
-                input_lines.extend(inline_slash_lines_for_render(&self.state));
-                let input_widget = Paragraph::new(Text::from(input_lines))
-                    .block(
-                        Block::default()
-                            .borders(Borders::TOP)
-                            .border_style(input_border_style),
-                    )
-                    .wrap(Wrap { trim: false });
-                if vertical[2].height > 0 {
-                    frame.render_widget(Clear, vertical[2]);
-                    frame.render_widget(input_widget, vertical[2]);
-                }
+                    input_lines.extend(inline_slash_lines_for_render(&self.state));
+                    let input_widget = Paragraph::new(Text::from(input_lines))
+                        .block(
+                            Block::default()
+                                .borders(Borders::TOP)
+                                .border_style(input_border_style),
+                        )
+                        .wrap(Wrap { trim: false });
+                    if vertical[2].height > 0 {
+                        frame.render_widget(Clear, vertical[2]);
+                        frame.render_widget(input_widget, vertical[2]);
+                    }
 
-                if !self.state.input.locked
-                    && !self.state.command_palette_open
-                    && self.state.info_panel.is_none()
-                    && vertical[2].height >= 2
-                    && vertical[2].width >= 1
-                {
-                    let (cursor_row, cursor_col) = input_cursor_row_col(
-                        &self.state.input.buffer,
-                        self.state.input.cursor,
-                        vertical[2].width.saturating_sub(2) as usize,
-                    );
-                    let x = vertical[2].x.saturating_add(2).saturating_add(cursor_col);
-                    let max_x = vertical[2]
-                        .x
-                        .saturating_add(vertical[2].width.saturating_sub(1));
-                    let y = vertical[2]
-                        .y
-                        .saturating_add(1)
-                        .saturating_add(cursor_row)
-                        .min(
-                            vertical[2]
-                                .y
-                                .saturating_add(vertical[2].height.saturating_sub(1)),
+                    if !self.state.input.locked
+                        && !self.state.command_palette_open
+                        && self.state.info_panel.is_none()
+                        && vertical[2].height >= 2
+                        && vertical[2].width >= 1
+                    {
+                        let (cursor_row, cursor_col) = input_cursor_row_col(
+                            &self.state.input.buffer,
+                            self.state.input.cursor,
+                            vertical[2].width.saturating_sub(2) as usize,
                         );
-                    frame.set_cursor_position(Position { x: x.min(max_x), y });
+                        let x = vertical[2].x.saturating_add(2).saturating_add(cursor_col);
+                        let max_x = vertical[2]
+                            .x
+                            .saturating_add(vertical[2].width.saturating_sub(1));
+                        let y = vertical[2]
+                            .y
+                            .saturating_add(1)
+                            .saturating_add(cursor_row)
+                            .min(
+                                vertical[2]
+                                    .y
+                                    .saturating_add(vertical[2].height.saturating_sub(1)),
+                            );
+                        frame.set_cursor_position(Position { x: x.min(max_x), y });
+                    }
                 }
 
                 if has_side {
@@ -2025,49 +1754,6 @@ pub(super) fn model_picker_empty_state_message_for_test() -> &'static str {
     MODEL_PICKER_EMPTY_STATE_MESSAGE
 }
 
-#[cfg(test)]
-pub(super) fn permission_prompt_transcript_lines_for_test(
-    prompt: &crate::agent::ui::tui::state::PermissionPrompt,
-) -> Vec<crate::agent::ui::tui::state::TranscriptLine> {
-    permission_prompt_transcript_lines(prompt)
-}
-
-#[cfg(test)]
-pub(super) fn transcript_with_permission_prompt_for_render_for_test(
-    state: &AppState,
-) -> Vec<crate::agent::ui::tui::state::TranscriptLine> {
-    transcript_with_permission_prompt_for_render(state)
-}
-
-#[cfg(test)]
-pub(super) fn required_permission_prompt_line_index_for_render_for_test(
-    state: &AppState,
-    transcript_len: usize,
-) -> Option<usize> {
-    required_permission_prompt_line_index_for_render(state, transcript_len)
-}
-
-#[cfg(test)]
-pub(super) fn required_permission_prompt_line_for_window_selection_for_test(
-    state: &AppState,
-    transcript_len: usize,
-) -> Option<usize> {
-    required_permission_prompt_line_for_window_selection(state, transcript_len)
-}
-
-#[cfg(test)]
-pub(super) fn permission_prompt_footer_text_for_test(state: &AppState) -> Option<String> {
-    permission_prompt_footer_text_for_state(state)
-}
-
-#[cfg(test)]
-pub(super) fn transcript_pane_regions_for_test(
-    transcript_area: Rect,
-    reserve_footer_row: bool,
-) -> (Rect, Option<Rect>) {
-    transcript_pane_regions(transcript_area, reserve_footer_row)
-}
-
 fn help_panel_lines() -> (&'static str, Vec<Line<'static>>) {
     (
         "Help",
@@ -2294,13 +1980,15 @@ pub(super) fn status_lines_for_test(
 }
 
 #[cfg(test)]
+#[cfg(test)]
 pub(super) fn visual_indicator_line_for_test(state: &AppState) -> Option<String> {
     visual_indicator_line(state)
 }
 
 #[cfg(test)]
-pub(super) fn transcript_title_for_test(state: &AppState) -> String {
-    transcript_title_for_render(state, state.transcript_preview.len())
+pub(super) fn transcript_title_for_test(_state: &AppState) -> String {
+    // Visual mode removed - just return simple title
+    "Transcript".to_string()
 }
 
 #[cfg(test)]
@@ -2316,153 +2004,27 @@ pub(super) fn parse_persisted_tool_status_line_for_test(line: &str) -> Option<(&
 }
 
 #[cfg(test)]
-pub(super) use transcript_window::visible_transcript_window;
-
-#[cfg(test)]
-pub(super) fn visible_transcript_window_for_render_for_test(
-    transcript: &[crate::agent::ui::tui::state::TranscriptLine],
-    visible_lines: usize,
-    scroll_from_bottom: usize,
-    follow_tail: bool,
-    content_width: usize,
-) -> (usize, Vec<crate::agent::ui::tui::state::TranscriptLine>) {
-    transcript_window::visible_transcript_window_for_render_with_required_line(
-        transcript,
-        visible_lines,
-        scroll_from_bottom,
-        follow_tail,
-        content_width,
-        None,
-        &vec![None; transcript.len()],
-    )
-}
-
-#[cfg(test)]
-pub(super) fn visible_transcript_window_for_render_with_required_line_for_test(
-    transcript: &[crate::agent::ui::tui::state::TranscriptLine],
-    visible_lines: usize,
-    scroll_from_bottom: usize,
-    follow_tail: bool,
-    content_width: usize,
-    required_line_index: Option<usize>,
-) -> (usize, Vec<crate::agent::ui::tui::state::TranscriptLine>) {
-    transcript_window::visible_transcript_window_for_render_with_required_line(
-        transcript,
-        visible_lines,
-        scroll_from_bottom,
-        follow_tail,
-        content_width,
-        required_line_index,
-        &vec![None; transcript.len()],
-    )
-}
-
-#[cfg(test)]
-pub(super) fn visible_transcript_window_for_render_with_required_line_and_statuses_for_test(
-    transcript: &[crate::agent::ui::tui::state::TranscriptLine],
-    visible_lines: usize,
-    scroll_from_bottom: usize,
-    follow_tail: bool,
-    content_width: usize,
-    required_line_index: Option<usize>,
-    line_statuses: &[Option<TranscriptLineStatus>],
-) -> (usize, Vec<crate::agent::ui::tui::state::TranscriptLine>) {
-    transcript_window::visible_transcript_window_for_render_with_required_line(
-        transcript,
-        visible_lines,
-        scroll_from_bottom,
-        follow_tail,
-        content_width,
-        required_line_index,
-        line_statuses,
-    )
-}
-
-const IN_PROGRESS_SPINNER_FRAMES: [&str; 10] = render_frame::IN_PROGRESS_SPINNER_FRAMES;
-
-#[cfg(test)]
-pub(super) fn indicator_style_for_status_for_test(status: TranscriptLineStatus) -> Style {
-    indicator_style_for_status(status, &TuiTheme::default())
-}
-
-#[cfg(test)]
 pub(super) fn transition_spacer_for_roles_for_test(
     previous: Option<TranscriptRole>,
     next: TranscriptRole,
 ) -> bool {
-    should_insert_transition_spacer(previous, next)
-}
-
-#[cfg(test)]
-pub(super) fn prompt_indicator_for_status_for_test(
-    status: PromptStatus,
-    now_millis: u128,
-) -> &'static str {
-    prompt_indicator_for_status(status, now_millis)
-}
-
-#[cfg(test)]
-pub(super) fn render_transcript_lines_for_test(
-    line: crate::agent::ui::tui::state::TranscriptLine,
-    line_status: Option<TranscriptLineStatus>,
-    now_millis: u128,
-) -> Vec<Line<'static>> {
-    render_transcript_lines(
-        line,
-        80,
-        false,
-        false,
-        line_status,
-        now_millis,
-        &TuiTheme::default(),
-    )
-}
-
-#[cfg(test)]
-pub(super) fn render_transcript_lines_with_flags_for_test(
-    line: crate::agent::ui::tui::state::TranscriptLine,
-    line_status: Option<TranscriptLineStatus>,
-    selected: bool,
-    cursor_line: bool,
-    width: usize,
-    now_millis: u128,
-) -> Vec<Line<'static>> {
-    render_transcript_lines(
-        line,
-        width,
-        selected,
-        cursor_line,
-        line_status,
-        now_millis,
-        &TuiTheme::default(),
-    )
-}
-
-#[cfg(test)]
-pub(super) fn lane_prefix_spans_for_test(
-    role: TranscriptRole,
-    cursor_line: bool,
-) -> Vec<Span<'static>> {
-    lane_prefix_spans(role, cursor_line, &TuiTheme::default())
-}
-
-#[cfg(test)]
-pub(super) fn row_spans_for_test(
-    line: crate::agent::ui::tui::state::TranscriptLine,
-    line_status: Option<TranscriptLineStatus>,
-    cursor_line: bool,
-    selected: bool,
-    now_millis: u128,
-) -> Vec<Span<'static>> {
-    build_row_spans(
-        &line,
-        line_status,
-        cursor_line,
-        selected,
-        now_millis,
-        &TuiTheme::default(),
-        true,
-    )
+    let prev_role = previous.map(|r| match r {
+        TranscriptRole::User => Role::User,
+        TranscriptRole::Assistant => Role::Assistant,
+        TranscriptRole::System => Role::System,
+        TranscriptRole::Tool => Role::Tool,
+        TranscriptRole::ToolDisplay => Role::ToolDisplay,
+        TranscriptRole::Separator => Role::Separator,
+    });
+    let next_role = match next {
+        TranscriptRole::User => Role::User,
+        TranscriptRole::Assistant => Role::Assistant,
+        TranscriptRole::System => Role::System,
+        TranscriptRole::Tool => Role::Tool,
+        TranscriptRole::ToolDisplay => Role::ToolDisplay,
+        TranscriptRole::Separator => Role::Separator,
+    };
+    needs_spacer(prev_role.as_ref(), &next_role)
 }
 
 #[cfg(test)]

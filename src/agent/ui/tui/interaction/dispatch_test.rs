@@ -1,4 +1,5 @@
 use crate::agent::protocol::event::PermissionDecision;
+use crate::agent::ui::transcript::ir::Role;
 use crate::agent::ui::tui::{
     interaction::{
         cancel::CancelController,
@@ -8,7 +9,7 @@ use crate::agent::ui::tui::{
     },
     state::{
         AppState, CommandPaletteAction, InfoPanel, InputMode, McpServerState,
-        McpServerUsabilityState, ModelPickerOption, TranscriptRole, UiPhase,
+        McpServerUsabilityState, ModelPickerOption, UiPhase,
     },
 };
 
@@ -23,8 +24,6 @@ fn open_permission_prompt(state: &mut AppState) {
         pattern: "*".to_string(),
         target_field: Some("command".to_string()),
         summary: "tool[nu__run] args={\"command\":\"echo hi\"}".to_string(),
-        pre_authorize_display: None,
-        attached_tool_transcript_line_index: None,
     });
 }
 
@@ -134,8 +133,8 @@ fn typing_remains_available_while_prompt_is_active() {
     assert!(changed);
     assert_eq!(state.input.buffer, "s");
     assert_eq!(state.transcript_preview.len(), 1);
-    assert_eq!(state.transcript_preview[0].role, TranscriptRole::User);
-    assert_eq!(state.transcript_preview[0].text, "f");
+    assert_eq!(state.transcript_preview[0].role(), Role::User);
+    assert_eq!(state.transcript_preview[0].text(), "f");
 }
 
 #[test]
@@ -155,8 +154,8 @@ fn submit_path_appends_prompt_and_keeps_input_editable() {
     assert!(!state.input.locked);
     assert!(state.input.buffer.is_empty());
     assert_eq!(state.transcript_preview.len(), 1);
-    assert_eq!(state.transcript_preview[0].role, TranscriptRole::User);
-    assert_eq!(state.transcript_preview[0].text, "s");
+    assert_eq!(state.transcript_preview[0].role(), Role::User);
+    assert_eq!(state.transcript_preview[0].text(), "s");
 }
 
 #[test]
@@ -386,35 +385,6 @@ fn busy_normal_mode_after_jk_chord_requires_i_before_typing() {
 }
 
 #[test]
-fn normal_mode_jk_scroll_transcript_without_editing_input() {
-    let mut state = AppState::new();
-    state.enter_normal_mode();
-    state.set_transcript_viewport_lines(3);
-    for i in 0..10 {
-        state.push_transcript_line(TranscriptRole::Assistant, format!("line {i}"));
-    }
-    state.scroll_transcript_page_up(2);
-    let before = state.transcript_scroll_lines_from_bottom;
-
-    let changed_down = dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('j')),
-        None,
-    );
-    assert!(changed_down);
-    assert!(state.transcript_scroll_lines_from_bottom <= before);
-
-    let changed_up = dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('k')),
-        None,
-    );
-    assert!(changed_up);
-    assert!(!state.transcript_follow_tail);
-    assert!(state.input.buffer.is_empty());
-}
-
-#[test]
 fn normal_mode_blocks_plain_typing_and_keeps_input_unchanged() {
     let mut state = AppState::new();
     state.enter_normal_mode();
@@ -552,112 +522,6 @@ fn permission_prompt_esc_submits_deny() {
 }
 
 #[test]
-fn permission_prompt_page_scroll_sets_manual_override_without_submitting_decision() {
-    let mut state = AppState::new();
-    state.set_transcript_viewport_lines(3);
-    for i in 0..10 {
-        state.push_transcript_line(TranscriptRole::Assistant, format!("line {i}"));
-    }
-    open_permission_prompt(&mut state);
-    assert!(state.should_preserve_permission_prompt_row());
-    assert!(state.should_auto_recenter_permission_prompt_row());
-
-    let changed =
-        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::PageUp), None);
-
-    assert!(changed);
-    assert!(state.has_permission_prompt());
-    assert!(state.take_next_permission_decision_submission().is_none());
-    assert!(
-        state.should_preserve_permission_prompt_row(),
-        "scrolling must not disable controls visibility guarantee"
-    );
-    assert!(
-        !state.should_auto_recenter_permission_prompt_row(),
-        "scrolling during active prompt should disable aggressive auto-recentering"
-    );
-}
-
-#[test]
-fn permission_prompt_arrow_scroll_sets_manual_override_without_submitting_decision() {
-    let mut state = AppState::new();
-    state.set_transcript_viewport_lines(3);
-    for i in 0..10 {
-        state.push_transcript_line(TranscriptRole::Assistant, format!("line {i}"));
-    }
-    state.scroll_transcript_page_up(3);
-    open_permission_prompt(&mut state);
-    assert!(state.should_preserve_permission_prompt_row());
-    assert!(state.should_auto_recenter_permission_prompt_row());
-
-    let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
-
-    assert!(changed);
-    assert!(state.has_permission_prompt());
-    assert!(state.take_next_permission_decision_submission().is_none());
-    assert!(
-        state.should_preserve_permission_prompt_row(),
-        "arrow scrolling must not disable controls visibility guarantee"
-    );
-    assert!(
-        !state.should_auto_recenter_permission_prompt_row(),
-        "arrow scrolling during active prompt should disable aggressive auto-recentering"
-    );
-}
-
-#[test]
-fn normal_mode_gg_and_g_scroll_to_top_and_bottom() {
-    let mut state = AppState::new();
-    state.enter_normal_mode();
-    state.set_transcript_viewport_lines(3);
-    for i in 0..10 {
-        state.push_transcript_line(TranscriptRole::Assistant, format!("line {i}"));
-    }
-    state.scroll_transcript_page_up(5);
-
-    let g1 = dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('g')),
-        None,
-    );
-    assert!(!g1);
-
-    let g2 = dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('g')),
-        None,
-    );
-    assert!(g2);
-    assert!(!state.transcript_follow_tail);
-    assert_eq!(state.transcript_scroll_lines_from_bottom, 7);
-
-    let k = dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('k')),
-        None,
-    );
-    assert!(!k);
-    assert_eq!(state.transcript_scroll_lines_from_bottom, 7);
-
-    let j = dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('j')),
-        None,
-    );
-    assert!(j);
-    assert_eq!(state.transcript_scroll_lines_from_bottom, 7);
-
-    let g_cap = dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('G')),
-        None,
-    );
-    assert!(g_cap);
-    assert!(state.transcript_follow_tail);
-    assert_eq!(state.transcript_scroll_lines_from_bottom, 0);
-}
-
-#[test]
 fn insert_mode_jk_chord_enters_normal_and_removes_j() {
     let mut state = AppState::new();
     assert_eq!(state.input_mode, InputMode::Insert);
@@ -682,99 +546,6 @@ fn insert_mode_jk_chord_enters_normal_and_removes_j() {
 }
 
 #[test]
-fn normal_mode_v_enters_visual_and_yanks_selection_back_to_normal() {
-    let mut state = AppState::new();
-    state.push_transcript_line(TranscriptRole::Assistant, "l1");
-    state.push_transcript_line(TranscriptRole::Assistant, "l2");
-    state.enter_normal_mode();
-
-    let v = dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('v')),
-        None,
-    );
-    assert!(v);
-    assert_eq!(state.input_mode, InputMode::Visual);
-
-    let y = dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('y')),
-        None,
-    );
-    assert!(y);
-    assert_eq!(state.input_mode, InputMode::Normal);
-    assert!(state.take_clipboard_request().is_some());
-}
-
-#[test]
-fn v_from_input_focus_is_noop_with_feedback() {
-    let mut state = AppState::new();
-    state.enter_normal_mode();
-    state.focus_next_pane();
-    assert_eq!(
-        state.pane_focus,
-        crate::agent::ui::tui::state::PaneFocus::Input
-    );
-
-    let changed = dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('v')),
-        None,
-    );
-
-    assert!(changed);
-    assert_eq!(state.input_mode, InputMode::Normal);
-    assert_eq!(
-        state.status_line,
-        "Visual mode requires transcript focus (Tab/h/l)."
-    );
-}
-
-#[test]
-fn gg_then_v_and_g_then_v_anchor_from_current_transcript_cursor() {
-    let mut state = AppState::new();
-    state.set_transcript_viewport_lines(3);
-    for i in 0..10 {
-        state.push_transcript_line(TranscriptRole::Assistant, format!("line {i}"));
-    }
-    state.enter_normal_mode();
-
-    dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('g')),
-        None,
-    );
-    dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('g')),
-        None,
-    );
-    dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('v')),
-        None,
-    );
-    assert_eq!(state.visual_anchor_index(), Some(0));
-    assert_eq!(state.visual_cursor_index(), Some(0));
-    assert_eq!(state.selected_transcript_range(), Some((0, 0)));
-
-    dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Esc), None);
-    dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('G')),
-        None,
-    );
-    dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('v')),
-        None,
-    );
-    assert_eq!(state.visual_anchor_index(), Some(9));
-    assert_eq!(state.visual_cursor_index(), Some(9));
-    assert_eq!(state.selected_transcript_range(), Some((9, 9)));
-}
-
-#[test]
 fn normal_mode_z_is_noop() {
     let mut state = AppState::new();
     state.enter_normal_mode();
@@ -785,140 +556,6 @@ fn normal_mode_z_is_noop() {
         None,
     );
     assert!(!z);
-}
-
-#[test]
-fn g_then_k_detaches_follow_tail_immediately_in_normal_mode() {
-    let mut state = AppState::new();
-    state.set_transcript_viewport_lines(5);
-    for i in 0..20 {
-        state.push_transcript_line(TranscriptRole::Assistant, format!("line {i}"));
-    }
-    state.enter_normal_mode();
-    let _ = dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('G')),
-        None,
-    );
-    assert!(state.transcript_follow_tail);
-    assert_eq!(state.transcript_cursor_index(), Some(19));
-
-    let k = dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('k')),
-        None,
-    );
-    assert!(k);
-    assert!(!state.transcript_follow_tail);
-    assert_eq!(state.transcript_cursor_index(), Some(18));
-}
-
-#[test]
-fn g_then_ctrl_u_detaches_follow_tail_immediately_in_normal_mode() {
-    let mut state = AppState::new();
-    state.set_transcript_viewport_lines(5);
-    for i in 0..20 {
-        state.push_transcript_line(TranscriptRole::Assistant, format!("line {i}"));
-    }
-    state.enter_normal_mode();
-
-    let _ = dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('G')),
-        None,
-    );
-    assert!(state.transcript_follow_tail);
-    assert_eq!(state.transcript_cursor_index(), Some(19));
-
-    let ctrl_u = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlU), None);
-    assert!(ctrl_u);
-    assert!(!state.transcript_follow_tail);
-    assert_eq!(state.transcript_cursor_index(), Some(11));
-}
-
-#[test]
-fn g_then_page_up_detaches_follow_tail_immediately_in_normal_mode() {
-    let mut state = AppState::new();
-    state.set_transcript_viewport_lines(5);
-    for i in 0..20 {
-        state.push_transcript_line(TranscriptRole::Assistant, format!("line {i}"));
-    }
-    state.enter_normal_mode();
-
-    let _ = dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('G')),
-        None,
-    );
-    assert!(state.transcript_follow_tail);
-    assert_eq!(state.transcript_cursor_index(), Some(19));
-
-    let pgup = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::PageUp), None);
-    assert!(pgup);
-    assert!(!state.transcript_follow_tail);
-    assert_eq!(state.transcript_cursor_index(), Some(11));
-}
-
-#[test]
-fn g_then_k_detaches_follow_tail_immediately_in_visual_mode() {
-    let mut state = AppState::new();
-    state.set_transcript_viewport_lines(5);
-    for i in 0..20 {
-        state.push_transcript_line(TranscriptRole::Assistant, format!("line {i}"));
-    }
-    state.enter_normal_mode();
-
-    dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('G')),
-        None,
-    );
-    dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('v')),
-        None,
-    );
-    assert_eq!(state.input_mode, InputMode::Visual);
-    assert!(state.transcript_follow_tail);
-    assert_eq!(state.visual_cursor_index(), Some(19));
-
-    let k = dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('k')),
-        None,
-    );
-    assert!(k);
-    assert!(!state.transcript_follow_tail);
-    assert_eq!(state.visual_cursor_index(), Some(18));
-}
-
-#[test]
-fn g_then_ctrl_u_detaches_follow_tail_immediately_in_visual_mode() {
-    let mut state = AppState::new();
-    state.set_transcript_viewport_lines(5);
-    for i in 0..20 {
-        state.push_transcript_line(TranscriptRole::Assistant, format!("line {i}"));
-    }
-    state.enter_normal_mode();
-
-    dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('G')),
-        None,
-    );
-    dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('v')),
-        None,
-    );
-    assert_eq!(state.input_mode, InputMode::Visual);
-    assert!(state.transcript_follow_tail);
-    assert_eq!(state.visual_cursor_index(), Some(19));
-
-    let ctrl_u = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlU), None);
-    assert!(ctrl_u);
-    assert!(!state.transcript_follow_tail);
-    assert_eq!(state.visual_cursor_index(), Some(11));
 }
 
 #[test]
@@ -946,7 +583,7 @@ fn insert_mode_alt_and_shift_enter_insert_newline_while_enter_submits() {
     assert!(changed);
     assert_eq!(state.phase, UiPhase::Busy);
     assert_eq!(state.transcript_preview.len(), 1);
-    assert_eq!(state.transcript_preview[0].text, "h\n\n");
+    assert_eq!(state.transcript_preview[0].text(), "h\n\n");
 }
 
 #[test]

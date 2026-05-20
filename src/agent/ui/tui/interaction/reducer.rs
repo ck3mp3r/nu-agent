@@ -13,7 +13,6 @@ use crate::agent::ui::tui::{
 
 pub const ESC_ABORT_CONFIRM_STATUS: &str = "Hit escape again to abort.";
 const ABORT_REQUESTED_STATUS: &str = "Abort requested.";
-const ABORT_REQUESTED_MARKER: &str = "[abort requested]";
 const VISUAL_REQUIRES_TRANSCRIPT_FOCUS_STATUS: &str =
     "Visual mode requires transcript focus (Tab/h/l).";
 const TRANSCRIPT_PAGE_LINES: usize = 8;
@@ -118,7 +117,7 @@ fn reduce_user_action(
         UserAction::PermissionDeny => {
             let _ = state.submit_permission_decision(PermissionDecision::Deny);
         }
-        UserAction::Resize { rows, .. } => handle_resize(state, rows),
+        UserAction::Resize { .. } => {}
         UserAction::ToggleCommandPalette => handle_toggle_command_palette(state),
         UserAction::CommandPaletteMoveUp => state.command_palette_move_up(),
         UserAction::CommandPaletteMoveDown => state.command_palette_move_down(),
@@ -205,9 +204,11 @@ fn handle_enter_insert_mode(state: &mut AppState) {
 }
 
 fn handle_enter_visual_mode(state: &mut AppState) {
+    // Visual mode is not supported with ListState - make this a no-op
     if state.phase == UiPhase::Idle {
         if state.pane_focus == PaneFocus::Transcript {
-            state.enter_visual_mode();
+            // No-op: visual mode to be retrofitted later
+            state.status_line = "Visual mode not available".to_string();
         } else {
             state.status_line = VISUAL_REQUIRES_TRANSCRIPT_FOCUS_STATUS.to_string();
         }
@@ -222,39 +223,23 @@ fn handle_enter_normal_mode_from_chord(state: &mut AppState) {
 }
 
 fn handle_scroll_line_up(state: &mut AppState) {
-    state.note_user_transcript_scroll_override();
-    if state.input_mode == InputMode::Visual {
-        state.extend_visual_cursor_line_up();
-    } else {
-        state.scroll_transcript_line_up();
-    }
+    // Visual mode removed - just scroll
+    state.scroll_transcript_line_up();
 }
 
 fn handle_scroll_line_down(state: &mut AppState) {
-    state.note_user_transcript_scroll_override();
-    if state.input_mode == InputMode::Visual {
-        state.extend_visual_cursor_line_down();
-    } else {
-        state.scroll_transcript_line_down();
-    }
+    // Visual mode removed - just scroll
+    state.scroll_transcript_line_down();
 }
 
 fn handle_scroll_to_top(state: &mut AppState) {
-    state.note_user_transcript_scroll_override();
-    if state.input_mode == InputMode::Visual {
-        state.extend_visual_cursor_to_top();
-    } else {
-        state.scroll_transcript_to_top();
-    }
+    // Visual mode removed - just scroll
+    state.scroll_transcript_to_top();
 }
 
 fn handle_scroll_to_bottom(state: &mut AppState) {
-    state.note_user_transcript_scroll_override();
-    if state.input_mode == InputMode::Visual {
-        state.extend_visual_cursor_to_bottom();
-    } else {
-        state.scroll_transcript_to_bottom();
-    }
+    // Visual mode removed - just scroll
+    state.scroll_transcript_to_bottom();
 }
 
 fn handle_focus_pane_left(state: &mut AppState) {
@@ -266,24 +251,10 @@ fn handle_focus_pane_right(state: &mut AppState) {
 }
 
 fn handle_yank_selection(state: &mut AppState) {
+    // Visual mode removed - make this a no-op
     if state.input_mode == InputMode::Visual {
-        state.queue_visual_selection_to_clipboard();
         state.enter_normal_mode();
     }
-}
-
-fn handle_resize(state: &mut AppState, rows: u16) {
-    let header = 1usize;
-    let status = 6usize;
-    let input = 2usize;
-    let borders = 2usize;
-    let transcript_lines = usize::from(rows)
-        .saturating_sub(header)
-        .saturating_sub(status)
-        .saturating_sub(input)
-        .saturating_sub(borders)
-        .max(1);
-    state.set_transcript_viewport_lines(transcript_lines);
 }
 
 fn handle_toggle_command_palette(state: &mut AppState) {
@@ -322,21 +293,13 @@ fn handle_inline_slash_accept(state: &mut AppState) {
 }
 
 fn handle_scroll_page_up(state: &mut AppState) {
-    state.note_user_transcript_scroll_override();
-    if state.input_mode == InputMode::Visual {
-        state.extend_visual_cursor_page_up(TRANSCRIPT_PAGE_LINES);
-    } else {
-        state.scroll_transcript_page_up(TRANSCRIPT_PAGE_LINES);
-    }
+    // Visual mode removed - just scroll
+    state.scroll_transcript_page_up(TRANSCRIPT_PAGE_LINES);
 }
 
 fn handle_scroll_page_down(state: &mut AppState) {
-    state.note_user_transcript_scroll_override();
-    if state.input_mode == InputMode::Visual {
-        state.extend_visual_cursor_page_down(TRANSCRIPT_PAGE_LINES);
-    } else {
-        state.scroll_transcript_page_down(TRANSCRIPT_PAGE_LINES);
-    }
+    // Visual mode removed - just scroll
+    state.scroll_transcript_page_down(TRANSCRIPT_PAGE_LINES);
 }
 
 fn handle_quit(state: &mut AppState) {
@@ -374,7 +337,6 @@ fn handle_escape_confirm(state: &mut AppState, cancel_controller: Option<&Cancel
         }
         state.cancel_active_and_pending_prompts();
         state.status_line = ABORT_REQUESTED_STATUS.to_string();
-        state.push_transcript_line(TranscriptRole::System, ABORT_REQUESTED_MARKER.to_string());
     }
 }
 
@@ -480,8 +442,13 @@ fn handle_permission_requested(
     request_id: String,
     context: PermissionRequestContext,
 ) {
-    let attached_tool_transcript_line_index =
-        state.latest_in_progress_tool_transcript_line_for_tool(&context.tool);
+    if let Some(display) = &context.pre_authorize_display {
+        append_direct_tool_display(state, display.clone());
+
+        if let Some(tool_key) = state.latest_in_progress_tool_key_for_tool(&context.tool) {
+            state.pre_displayed_tool_keys.insert(tool_key);
+        }
+    }
 
     state.open_permission_prompt(crate::agent::ui::tui::state::PermissionPrompt {
         request_id,
@@ -493,10 +460,7 @@ fn handle_permission_requested(
         pattern: context.pattern,
         target_field: context.target_field,
         summary: context.summary,
-        pre_authorize_display: context.pre_authorize_display,
-        attached_tool_transcript_line_index,
     });
-    state.focus_transcript_pane();
 }
 
 fn append_direct_tool_display(state: &mut AppState, display: ToolDisplay) {
@@ -571,9 +535,14 @@ fn handle_tool_end(
     display: Option<ToolDisplay>,
 ) {
     state.finish_tool_call(name, arguments, success);
-    if let Some(display) = display {
+
+    let tool_key = format!("{name}\n{arguments}");
+    if state.pre_displayed_tool_keys.remove(&tool_key) {
+        // Display was already pushed during permission request - skip
+    } else if let Some(display) = display {
         append_direct_tool_display(state, display);
     }
+
     state.status_line = "Thinking...".to_string();
 }
 
@@ -672,9 +641,8 @@ fn handle_assistant_message(state: &mut AppState, text: String) {
             return;
         }
 
-        if state.transcript_follow_tail {
-            state.scroll_transcript_to_bottom();
-        }
+        // Always follow tail with ListState
+        state.scroll_transcript_to_bottom();
         for line in projected_lines {
             let text = markdown::rendered_line_to_plain_text(&line);
             if text.trim().is_empty() {
@@ -744,8 +712,8 @@ fn normalize_diff_line_for_comparison(line: &str) -> String {
 fn latest_tool_display_diff_lines(state: &AppState) -> Option<Vec<String>> {
     let mut lines = Vec::new();
     for entry in state.transcript_preview.iter().rev() {
-        if entry.role == TranscriptRole::ToolDisplay {
-            lines.push(entry.text.clone());
+        if entry.role() == crate::agent::ui::transcript::ir::Role::ToolDisplay {
+            lines.push(entry.text());
             continue;
         }
 

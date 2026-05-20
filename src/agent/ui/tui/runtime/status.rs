@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::agent::ui::tui::{rendering::selection::TranscriptSelection, state::AppState};
+use crate::agent::ui::tui::state::AppState;
 
 pub(super) fn build_status_lines(
     state: &AppState,
@@ -528,60 +528,10 @@ fn format_mcp_failure_line(
     format!("Failures: {}", ellipsize(&joined, max_line_chars))
 }
 
-pub(super) fn transcript_selection_for_render(state: &AppState) -> Option<TranscriptSelection> {
-    if state.input_mode != crate::agent::ui::tui::state::InputMode::Visual {
-        return None;
-    }
-    if state.pane_focus != crate::agent::ui::tui::state::PaneFocus::Transcript {
-        return None;
-    }
-
-    let (Some(anchor), Some(cursor)) = (state.visual_anchor_index(), state.visual_cursor_index())
-    else {
-        return None;
-    };
-
-    let mut selection = TranscriptSelection::new(anchor);
-    selection.set_cursor(cursor);
-    Some(selection)
-}
-
-pub(super) fn transcript_selection_range_for_render(
-    state: &AppState,
-    transcript_len: usize,
-) -> Option<(usize, usize)> {
-    transcript_selection_for_render(state)
-        .and_then(|selection| selection.bounded_range(transcript_len))
-}
-
-pub(super) fn transcript_title_for_render(state: &AppState, transcript_len: usize) -> String {
-    let Some(selection) = transcript_selection_for_render(state) else {
-        return "Transcript".to_string();
-    };
-
-    match selection.bounded_range(transcript_len) {
-        Some((start, end)) => format!(
-            "Transcript [VISUAL anchor={} cursor={} range={}..{}]",
-            selection.anchor(),
-            selection.cursor(),
-            start,
-            end
-        ),
-        None => "Transcript [VISUAL]".to_string(),
-    }
-}
-
 #[cfg(test)]
-pub(super) fn visual_indicator_line(state: &AppState) -> Option<String> {
-    let selection = transcript_selection_for_render(state)?;
-    let (start, end) = selection.normalized_range();
-    Some(format!(
-        "Visual: transcript anchor={} cursor={} range={}..{}",
-        selection.anchor(),
-        selection.cursor(),
-        start,
-        end
-    ))
+pub(super) fn visual_indicator_line(_state: &AppState) -> Option<String> {
+    // Visual mode removed - always return None
+    None
 }
 
 pub(super) fn cursor_style_for_mode(

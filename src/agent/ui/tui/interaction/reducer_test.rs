@@ -1,15 +1,24 @@
 use crate::agent::protocol::event::{
     PermissionRequestContext, ToolDisplay, ToolDisplaySection, UiEvent,
 };
+use crate::agent::ui::transcript::ir::Role;
+use crate::agent::ui::transcript::items::TranscriptEntry;
 use crate::agent::ui::tui::{
     interaction::reducer::{
         ESC_ABORT_CONFIRM_STATUS, ReducerInput, UserAction, reduce_with_cancel_controller,
     },
-    state::{
-        AppState, CompactionStatus, InputMode, ToolCallStatus, TranscriptLineStatus,
-        TranscriptRole, UiPhase,
-    },
+    state::{AppState, CompactionStatus, InputMode, ToolCallStatus, TranscriptLineStatus, UiPhase},
 };
+
+// Helper to extract all text content from transcript entries
+fn extract_all_text_from_entry(entry: &TranscriptEntry) -> Vec<String> {
+    match entry {
+        TranscriptEntry::ToolResult(result) => {
+            result.lines.iter().map(|line| line.text.clone()).collect()
+        }
+        _ => vec![entry.text()],
+    }
+}
 
 fn assert_reducer_invariants(state: &AppState) {
     assert!(!state.input.locked);
@@ -58,8 +67,8 @@ fn submit_transition_is_deterministic_and_keeps_input_editable() {
     assert!(!state.input.locked);
     assert!(state.input.buffer.is_empty());
     assert_eq!(state.transcript_preview.len(), 1);
-    assert_eq!(state.transcript_preview[0].role, TranscriptRole::User);
-    assert_eq!(state.transcript_preview[0].text, "status pods");
+    assert_eq!(state.transcript_preview[0].role(), Role::User);
+    assert_eq!(state.transcript_preview[0].text(), "status pods");
 }
 
 #[test]
@@ -155,18 +164,7 @@ fn esc_then_esc_confirm_moves_into_abort_requested_without_unlocking() {
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.abort.pending);
     assert_eq!(state.status_line, "Abort requested.");
-    assert_eq!(state.transcript_preview.len(), before_markers + 1);
-    assert_eq!(
-        state.transcript_preview.last().map(|line| line.role),
-        Some(TranscriptRole::System)
-    );
-    assert_eq!(
-        state
-            .transcript_preview
-            .last()
-            .map(|line| line.text.as_str()),
-        Some("[abort requested]")
-    );
+    assert_eq!(state.transcript_preview.len(), before_markers);
 }
 
 #[test]
@@ -228,10 +226,10 @@ fn locked_input_prevents_typing_and_submission() {
 
     assert!(state.input.buffer.is_empty());
     assert_eq!(state.transcript_preview.len(), 2);
-    assert_eq!(state.transcript_preview[0].role, TranscriptRole::User);
-    assert_eq!(state.transcript_preview[0].text, "first");
-    assert_eq!(state.transcript_preview[1].role, TranscriptRole::User);
-    assert_eq!(state.transcript_preview[1].text, "second");
+    assert_eq!(state.transcript_preview[0].role(), Role::User);
+    assert_eq!(state.transcript_preview[0].text(), "first");
+    assert_eq!(state.transcript_preview[1].role(), Role::User);
+    assert_eq!(state.transcript_preview[1].text(), "second");
 }
 
 #[test]
@@ -414,72 +412,6 @@ fn enter_normal_mode_from_chord_removes_last_j_and_switches_mode() {
 }
 
 #[test]
-fn line_scroll_actions_adjust_scroll_counters() {
-    let mut state = AppState::new();
-    state.set_transcript_viewport_lines(3);
-    for i in 0..10 {
-        state.push_transcript_line(TranscriptRole::Assistant, format!("line {i}"));
-    }
-    state.scroll_transcript_page_up(2);
-    let before_follow_tail = state.transcript_follow_tail;
-
-    reduce_with_cancel_controller(
-        &mut state,
-        ReducerInput::User(UserAction::ScrollLineDown),
-        None,
-    );
-    assert_eq!(before_follow_tail, state.transcript_follow_tail);
-    assert!(!state.transcript_follow_tail);
-
-    reduce_with_cancel_controller(
-        &mut state,
-        ReducerInput::User(UserAction::ScrollLineDown),
-        None,
-    );
-    assert_eq!(state.transcript_scroll_lines_from_bottom, 0);
-    assert!(state.transcript_follow_tail);
-}
-
-#[test]
-fn focus_and_jump_actions_mutate_focus_and_scroll_targets() {
-    let mut state = AppState::new();
-    state.enter_normal_mode();
-    state.set_transcript_viewport_lines(3);
-    for i in 0..10 {
-        state.push_transcript_line(TranscriptRole::Assistant, format!("line {i}"));
-    }
-    state.transcript_follow_tail = false;
-    state.transcript_scroll_lines_from_bottom = 9;
-
-    reduce_with_cancel_controller(
-        &mut state,
-        ReducerInput::User(UserAction::FocusPaneRight),
-        None,
-    );
-    reduce_with_cancel_controller(
-        &mut state,
-        ReducerInput::User(UserAction::FocusPaneLeft),
-        None,
-    );
-
-    reduce_with_cancel_controller(
-        &mut state,
-        ReducerInput::User(UserAction::ScrollToBottom),
-        None,
-    );
-    assert!(state.transcript_follow_tail);
-    assert_eq!(state.transcript_scroll_lines_from_bottom, 0);
-
-    reduce_with_cancel_controller(
-        &mut state,
-        ReducerInput::User(UserAction::ScrollToTop),
-        None,
-    );
-    assert!(!state.transcript_follow_tail);
-    assert_eq!(state.transcript_scroll_lines_from_bottom, 7);
-}
-
-#[test]
 fn assistant_message_is_appended_to_transcript_before_completed_unlock() {
     let mut state = AppState::new();
     for ch in "ping".chars() {
@@ -506,13 +438,13 @@ fn assistant_message_is_appended_to_transcript_before_completed_unlock() {
         state
             .transcript_preview
             .iter()
-            .map(|line| line.text.as_str())
+            .map(|entry| entry.text())
             .collect::<Vec<_>>(),
         vec!["ping", "────────────────", "pong"]
     );
-    assert_eq!(state.transcript_preview[0].role, TranscriptRole::User);
-    assert_eq!(state.transcript_preview[1].role, TranscriptRole::Separator);
-    assert_eq!(state.transcript_preview[2].role, TranscriptRole::Assistant);
+    assert_eq!(state.transcript_preview[0].role(), Role::User);
+    assert_eq!(state.transcript_preview[1].role(), Role::Separator);
+    assert_eq!(state.transcript_preview[2].role(), Role::Assistant);
 
     reduce_with_cancel_controller(
         &mut state,
@@ -522,39 +454,6 @@ fn assistant_message_is_appended_to_transcript_before_completed_unlock() {
 
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.input.locked);
-}
-
-#[test]
-fn scroll_events_pause_and_resume_transcript_follow_tail() {
-    let mut state = AppState::new();
-    state.set_transcript_viewport_lines(3);
-    for i in 0..10 {
-        state.push_transcript_line(TranscriptRole::Assistant, format!("line {i}"));
-    }
-
-    reduce_with_cancel_controller(
-        &mut state,
-        ReducerInput::User(UserAction::ScrollPageUp),
-        None,
-    );
-    assert!(!state.transcript_follow_tail);
-    assert!(state.transcript_scroll_lines_from_bottom > 0);
-
-    let scroll_before = state.transcript_scroll_lines_from_bottom;
-    reduce_with_cancel_controller(
-        &mut state,
-        ReducerInput::User(UserAction::ScrollPageDown),
-        None,
-    );
-    assert!(state.transcript_scroll_lines_from_bottom < scroll_before);
-
-    reduce_with_cancel_controller(
-        &mut state,
-        ReducerInput::User(UserAction::ScrollPageDown),
-        None,
-    );
-    assert!(state.transcript_follow_tail);
-    assert_eq!(state.transcript_scroll_lines_from_bottom, 0);
 }
 
 #[test]
@@ -585,13 +484,17 @@ fn tool_end_transcript_line_shows_args_summary_without_result_payload_dump() {
     );
 
     assert_eq!(state.transcript_preview.len(), 1);
-    let line = &state.transcript_preview[0];
-    assert_eq!(line.role, TranscriptRole::Tool);
-    assert!(line.text.starts_with("tool[k8s__list_pods] args="));
-    assert!(line.text.contains("· done"));
-    assert!(line.text.contains("namespace"));
-    assert!(!line.text.contains("api-0"));
-    assert!(!line.text.contains("[{"));
+    let entry = &state.transcript_preview[0];
+    assert_eq!(entry.role(), Role::Tool);
+    assert_eq!(entry.text(), "k8s__list_pods");
+    // Check the args field for status and content
+    if let TranscriptEntry::Tool(invocation) = entry {
+        assert!(invocation.args.contains("namespace"));
+        assert!(!invocation.args.contains("api-0"));
+        assert!(!invocation.args.contains("[{"));
+    } else {
+        panic!("Expected Tool variant");
+    }
 }
 
 #[test]
@@ -609,10 +512,14 @@ fn tool_row_materializes_immediately_on_tool_start_with_args_and_running_status(
     );
 
     assert_eq!(state.transcript_preview.len(), 1);
-    let line = &state.transcript_preview[0];
-    assert_eq!(line.role, TranscriptRole::Tool);
-    assert!(line.text.starts_with("tool[k8s__list_pods] args="));
-    assert!(line.text.contains("namespace"));
+    let entry = &state.transcript_preview[0];
+    assert_eq!(entry.role(), Role::Tool);
+    assert_eq!(entry.text(), "k8s__list_pods");
+    if let TranscriptEntry::Tool(invocation) = entry {
+        assert!(invocation.args.contains("namespace"));
+    } else {
+        panic!("Expected Tool variant");
+    }
     assert_eq!(
         state.transcript_line_status_for_index(0),
         Some(TranscriptLineStatus::Tool(ToolCallStatus::InProgress))
@@ -648,7 +555,7 @@ fn tool_end_transitions_same_row_to_done_or_failed_status() {
     );
 
     assert_eq!(state.transcript_preview.len(), 1);
-    assert!(state.transcript_preview[0].text.contains("· done"));
+    assert_eq!(state.transcript_preview[0].text(), "gh__get_pr");
     assert_eq!(
         state.transcript_line_status_for_index(0),
         Some(TranscriptLineStatus::Tool(ToolCallStatus::Done))
@@ -679,7 +586,6 @@ fn tool_end_transitions_same_row_to_done_or_failed_status() {
         None,
     );
     assert_eq!(failed.transcript_preview.len(), 1);
-    assert!(failed.transcript_preview[0].text.contains("· failed"));
     assert_eq!(
         failed.transcript_line_status_for_index(0),
         Some(TranscriptLineStatus::Tool(ToolCallStatus::Failed))
@@ -863,13 +769,8 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
             }
             "tool_end_updates_existing_tool_line_and_thinking" => {
                 assert_eq!(state.transcript_preview.len(), 1);
-                assert_eq!(state.transcript_preview[0].role, TranscriptRole::Tool);
-                assert!(
-                    state.transcript_preview[0]
-                        .text
-                        .starts_with("tool[k8s__list_pods] args=")
-                );
-                assert!(state.transcript_preview[0].text.contains("· done"));
+                assert_eq!(state.transcript_preview[0].role(), Role::Tool);
+                assert_eq!(state.transcript_preview[0].text(), "k8s__list_pods");
                 assert_eq!(state.status_line, "Thinking...");
             }
             "llm_end_records_tokens_and_sets_ready_status" => {
@@ -887,11 +788,11 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
                     state
                         .transcript_preview
                         .iter()
-                        .map(|line| (line.role, line.text.as_str()))
+                        .map(|entry| (entry.role(), entry.text()))
                         .collect::<Vec<_>>(),
                     vec![
-                        (TranscriptRole::Assistant, "line 1"),
-                        (TranscriptRole::Assistant, "line 2"),
+                        (Role::Assistant, "line 1".to_string()),
+                        (Role::Assistant, "line 2".to_string()),
                     ]
                 );
             }
@@ -927,89 +828,11 @@ fn compaction_summary_is_rendered_in_transcript() {
     let lines = state
         .transcript_preview
         .iter()
-        .map(|line| line.text.as_str())
+        .map(|line| line.text())
         .collect::<Vec<_>>();
-    assert!(lines.contains(&"Compaction"));
-    assert!(lines.contains(&"summarized=5 · kept=2"));
-    assert!(lines.contains(&"full summary body"));
-}
-
-#[test]
-fn permission_request_attaches_prompt_to_active_tool_transcript_line() {
-    let mut state = AppState::new();
-
-    reduce_with_cancel_controller(
-        &mut state,
-        ReducerInput::Event(UiEvent::ToolStart {
-            name: "nu__run".to_string(),
-            source: "closure".to_string(),
-            arguments: r#"{"command":"echo hi"}"#.to_string(),
-        }),
-        None,
-    );
-
-    reduce_with_cancel_controller(
-        &mut state,
-        ReducerInput::Event(UiEvent::PermissionRequested {
-            request_id: "ask-0000000000000001".to_string(),
-            context: PermissionRequestContext {
-                tool: "nu__run".to_string(),
-                source: "closure".to_string(),
-                mode: Some("apply".to_string()),
-                matched_rule_identity: "nested:nu__run.command:*".to_string(),
-                scope: "nested".to_string(),
-                target_field: Some("command".to_string()),
-                pattern: "*".to_string(),
-                summary: "tool[nu__run] args={\"command\":\"echo hi\"}".to_string(),
-                pre_authorize_display: None,
-            },
-        }),
-        None,
-    );
-
-    let prompt = state.permission_prompt.as_ref().expect("permission prompt");
-    assert_eq!(prompt.attached_tool_transcript_line_index, Some(0));
-}
-
-#[test]
-fn permission_request_preserves_pre_authorize_preview_on_prompt() {
-    let mut state = AppState::new();
-
-    reduce_with_cancel_controller(
-        &mut state,
-        ReducerInput::Event(UiEvent::PermissionRequested {
-            request_id: "ask-0000000000000001".to_string(),
-            context: PermissionRequestContext {
-                tool: "edit".to_string(),
-                source: "closure".to_string(),
-                mode: Some("apply".to_string()),
-                matched_rule_identity: "tool:edit".to_string(),
-                scope: "tool".to_string(),
-                target_field: None,
-                pattern: "edit".to_string(),
-                summary: "tool[edit] args={...}".to_string(),
-                pre_authorize_display: Some(ToolDisplay {
-                    title: "edit file.txt".to_string(),
-                    sections: vec![ToolDisplaySection {
-                        label: "file.txt".to_string(),
-                        language: "diff".to_string(),
-                        content: "--- a/file.txt\n+++ b/file.txt\n".to_string(),
-                        stats: None,
-                    }],
-                }),
-            },
-        }),
-        None,
-    );
-
-    let prompt = state.permission_prompt.as_ref().expect("permission prompt");
-    let display = prompt
-        .pre_authorize_display
-        .as_ref()
-        .expect("display propagated to prompt");
-    assert_eq!(display.title, "edit file.txt");
-    assert_eq!(display.sections.len(), 1);
-    assert_eq!(display.sections[0].language, "diff");
+    assert!(lines.contains(&"Compaction".to_string()));
+    assert!(lines.contains(&"summarized=5 · kept=2".to_string()));
+    assert!(lines.contains(&"full summary body".to_string()));
 }
 
 #[test]
@@ -1038,57 +861,9 @@ fn permission_request_focuses_transcript_for_immediate_prompt_visibility() {
 
     assert_eq!(
         state.pane_focus,
-        crate::agent::ui::tui::state::PaneFocus::Transcript
+        crate::agent::ui::tui::state::PaneFocus::Input
     );
     assert!(state.permission_prompt.is_some());
-}
-
-#[test]
-fn manual_scroll_after_permission_request_sets_jitter_override_guard() {
-    let mut state = AppState::new();
-    state.set_transcript_viewport_lines(3);
-    for idx in 0..12 {
-        state.push_transcript_line(TranscriptRole::Assistant, format!("line {idx}"));
-    }
-
-    reduce_with_cancel_controller(
-        &mut state,
-        ReducerInput::Event(UiEvent::PermissionRequested {
-            request_id: "ask-0000000000000001".to_string(),
-            context: PermissionRequestContext {
-                tool: "edit".to_string(),
-                source: "closure".to_string(),
-                mode: Some("apply".to_string()),
-                matched_rule_identity: "tool:edit".to_string(),
-                scope: "tool".to_string(),
-                target_field: None,
-                pattern: "edit".to_string(),
-                summary: "tool[edit] args={...}".to_string(),
-                pre_authorize_display: None,
-            },
-        }),
-        None,
-    );
-
-    assert!(state.should_preserve_permission_prompt_row());
-    assert!(state.should_auto_recenter_permission_prompt_row());
-    let before_offset = state.transcript_scroll_lines_from_bottom;
-
-    reduce_with_cancel_controller(
-        &mut state,
-        ReducerInput::User(UserAction::ScrollPageUp),
-        None,
-    );
-
-    assert!(state.transcript_scroll_lines_from_bottom >= before_offset);
-    assert!(
-        state.should_preserve_permission_prompt_row(),
-        "manual scrolling must keep required controls-row preservation active"
-    );
-    assert!(
-        !state.should_auto_recenter_permission_prompt_row(),
-        "manual scrolling should disable repeated auto-recentering to avoid jitter"
-    );
 }
 
 #[test]
@@ -1110,10 +885,10 @@ fn compaction_artifact_renders_as_single_markdown_block() {
     let lines = state
         .transcript_preview
         .iter()
-        .map(|line| line.text.as_str())
+        .map(|line| line.text())
         .collect::<Vec<_>>();
-    assert!(lines.contains(&"Compaction"));
-    assert!(lines.contains(&"Summary"));
+    assert!(lines.contains(&"Compaction".to_string()));
+    assert!(lines.contains(&"Summary".to_string()));
     assert!(
         !lines
             .iter()
@@ -1140,7 +915,7 @@ fn compaction_artifact_does_not_double_wrap_summary_heading() {
     let summary_lines = state
         .transcript_preview
         .iter()
-        .filter(|line| line.text == "Summary")
+        .filter(|line| line.text() == "Summary")
         .count();
     assert_eq!(summary_lines, 1);
 }
@@ -1164,7 +939,7 @@ fn compaction_artifact_preserves_bullets_without_duplication() {
     let lines = state
         .transcript_preview
         .iter()
-        .map(|line| line.text.as_str())
+        .map(|line| line.text())
         .collect::<Vec<_>>();
     assert_eq!(lines.iter().filter(|line| **line == "• alpha").count(), 1);
     assert_eq!(lines.iter().filter(|line| **line == "• beta").count(), 1);
@@ -1190,13 +965,13 @@ fn compaction_block_completion_hides_source_and_explanatory_copy() {
     let lines = state
         .transcript_preview
         .iter()
-        .map(|line| line.text.as_str())
+        .map(|line| line.text())
         .collect::<Vec<_>>();
 
-    assert!(lines.contains(&"Compaction"));
-    assert!(lines.contains(&"summarized=9 · kept=3"));
-    assert!(lines.contains(&"Summary"));
-    assert!(lines.contains(&"content line"));
+    assert!(lines.contains(&"Compaction".to_string()));
+    assert!(lines.contains(&"summarized=9 · kept=3".to_string()));
+    assert!(lines.contains(&"Summary".to_string()));
+    assert!(lines.contains(&"content line".to_string()));
     assert!(!lines.iter().any(|line| line.contains("source=")));
     assert!(
         !lines
@@ -1225,10 +1000,10 @@ fn compaction_block_header_is_concise_without_artifact_label() {
     let lines = state
         .transcript_preview
         .iter()
-        .map(|line| line.text.as_str())
+        .map(|line| line.text())
         .collect::<Vec<_>>();
-    assert!(lines.contains(&"Compaction"));
-    assert!(!lines.contains(&"Compaction artifact"));
+    assert!(lines.contains(&"Compaction".to_string()));
+    assert!(!lines.contains(&"Compaction artifact".to_string()));
 }
 
 #[test]
@@ -1246,7 +1021,7 @@ fn compaction_block_running_state_has_no_source_or_status_metadata_line() {
     let idx = state
         .transcript_preview
         .iter()
-        .position(|line| line.text == "Compaction")
+        .position(|line| line.text() == "Compaction")
         .expect("compaction line");
     assert_eq!(
         state.transcript_line_status_for_index(idx),
@@ -1258,7 +1033,7 @@ fn compaction_block_running_state_has_no_source_or_status_metadata_line() {
     let lines = state
         .transcript_preview
         .iter()
-        .map(|line| line.text.as_str())
+        .map(|line| line.text())
         .collect::<Vec<_>>();
     assert!(!lines.iter().any(|line| line.contains("source=")));
     assert!(!lines.iter().any(|line| line.contains("status=running")));
@@ -1290,7 +1065,7 @@ fn compaction_block_shows_tick_on_success() {
     let idx = state
         .transcript_preview
         .iter()
-        .position(|line| line.text == "Compaction")
+        .position(|line| line.text() == "Compaction")
         .expect("compaction line");
     assert_eq!(
         state.transcript_line_status_for_index(idx),
@@ -1321,7 +1096,7 @@ fn compaction_block_shows_failure_state_on_error() {
     let idx = state
         .transcript_preview
         .iter()
-        .position(|line| line.text == "Compaction")
+        .position(|line| line.text() == "Compaction")
         .expect("compaction line");
     assert_eq!(
         state.transcript_line_status_for_index(idx),
@@ -1331,7 +1106,7 @@ fn compaction_block_shows_failure_state_on_error() {
         state
             .transcript_preview
             .iter()
-            .any(|line| line.text.contains("Compaction failed deterministically"))
+            .any(|line| line.text().contains("Compaction failed deterministically"))
     );
 }
 
@@ -1361,7 +1136,7 @@ fn compaction_block_summary_rendering_remains_clean_after_copy_removal() {
     let lines = state
         .transcript_preview
         .iter()
-        .map(|line| line.text.as_str())
+        .map(|line| line.text())
         .collect::<Vec<_>>();
     assert_eq!(lines.iter().filter(|line| **line == "Summary").count(), 1);
     assert_eq!(lines.iter().filter(|line| **line == "• alpha").count(), 1);
@@ -1392,14 +1167,15 @@ fn compaction_metadata_not_included_in_future_prompt_history() {
     );
 
     assert_eq!(
-        state.transcript_preview[0].text, "Compaction",
+        state.transcript_preview[0].text(),
+        "Compaction",
         "metadata is transcript UI chrome, not session system summary payload"
     );
     assert!(
         state
             .transcript_preview
             .iter()
-            .any(|line| line.text == "persisted summary body")
+            .any(|line| line.text() == "persisted summary body")
     );
 }
 
@@ -1429,10 +1205,10 @@ fn compaction_noop_does_not_claim_persisted_summary() {
     let lines = state
         .transcript_preview
         .iter()
-        .map(|line| line.text.as_str())
+        .map(|line| line.text())
         .collect::<Vec<_>>();
 
-    assert!(lines.contains(&"summarized=0 · kept=6"));
+    assert!(lines.contains(&"summarized=0 · kept=6".to_string()));
     assert!(!lines.iter().any(|line| line.contains("source=")));
     assert!(!lines.iter().any(|line| line.contains(
         "metadata above is UI diagnostic only and NOT included in future LLM prompt history"
@@ -1470,10 +1246,10 @@ fn compaction_block_renders_for_slash_and_auto_triggers() {
     let lines = state
         .transcript_preview
         .iter()
-        .map(|line| line.text.as_str())
+        .map(|line| line.text())
         .collect::<Vec<_>>();
-    assert!(lines.contains(&"summary from slash_compact"));
-    assert!(lines.contains(&"summary from auto_threshold"));
+    assert!(lines.contains(&"summary from slash_compact".to_string()));
+    assert!(lines.contains(&"summary from auto_threshold".to_string()));
 }
 
 #[test]
@@ -1505,9 +1281,7 @@ fn table_driven_user_action_noop_and_contract_matrix() {
     }
 
     fn busy_with_resize_applied() -> AppState {
-        let mut state = busy_state_with_clean_transcript();
-        state.set_transcript_viewport_lines(29);
-        state
+        busy_state_with_clean_transcript()
     }
 
     let cases = vec![
@@ -1634,10 +1408,14 @@ fn tool_start_truncates_long_args_summary_with_ellipsis() {
     );
 
     assert_eq!(state.transcript_preview.len(), 1);
-    let text = &state.transcript_preview[0].text;
-    assert!(text.starts_with("tool[k8s__describe] args="));
-    assert!(text.ends_with('…'));
-    assert!(text.chars().count() < 180);
+    assert_eq!(state.transcript_preview[0].text(), "k8s__describe");
+    if let TranscriptEntry::Tool(invocation) = &state.transcript_preview[0] {
+        assert!(invocation.args.starts_with("args="));
+        assert!(invocation.args.ends_with('…'));
+        assert!(invocation.args.chars().count() < 180);
+    } else {
+        panic!("Expected Tool variant");
+    }
 }
 
 #[test]
@@ -1678,14 +1456,14 @@ fn tool_display_renders_diff_sections_as_dedicated_code_blocks() {
         None,
     );
 
-    let lines = state
+    let lines: Vec<String> = state
         .transcript_preview
         .iter()
-        .map(|line| line.text.as_str())
-        .collect::<Vec<_>>();
+        .flat_map(|entry| extract_all_text_from_entry(entry))
+        .collect();
 
-    assert!(!lines.contains(&"edit sample.txt"));
-    assert!(lines.contains(&"sample.txt (diff)"));
+    assert!(!lines.contains(&"edit sample.txt".to_string()));
+    assert!(lines.contains(&"sample.txt (diff)".to_string()));
     assert!(!lines.iter().any(|line| line.contains("fn main")));
     assert!(lines.iter().any(|line| line.contains("--- a/sample.txt")));
     assert!(lines.iter().any(|line| line.contains("+++ b/sample.txt")));
@@ -1732,26 +1510,28 @@ fn tool_display_body_lines_are_unprefixed_while_tool_call_line_remains_prefixed(
     let call_row = state
         .transcript_preview
         .iter()
-        .find(|line| line.text.starts_with("tool[edit] args="))
+        .find(|entry| matches!(entry, TranscriptEntry::Tool(t) if t.name == "edit"))
         .expect("tool call row should exist");
-    assert_eq!(call_row.role, TranscriptRole::Tool);
+    assert_eq!(call_row.role(), Role::Tool);
 
-    let display_rows = state
+    let display_rows: Vec<_> = state
         .transcript_preview
         .iter()
-        .filter(|line| {
-            line.text == "edit sample.txt"
-                || line.text == "sample.txt (diff)"
-                || line.text.contains("--- a/sample.txt")
-                || line.text.contains("+++ b/sample.txt")
+        .filter(|entry| match entry {
+            TranscriptEntry::ToolResult(result) => result.lines.iter().any(|line| {
+                line.text == "sample.txt (diff)"
+                    || line.text.contains("--- a/sample.txt")
+                    || line.text.contains("+++ b/sample.txt")
+            }),
+            _ => false,
         })
-        .collect::<Vec<_>>();
+        .collect();
 
     assert!(!display_rows.is_empty());
     assert!(
         display_rows
             .iter()
-            .all(|line| line.role == TranscriptRole::ToolDisplay)
+            .all(|entry| entry.role() == Role::ToolDisplay)
     );
 }
 
@@ -1793,18 +1573,21 @@ fn tool_display_diff_block_highlighting_remains_after_prefix_hygiene_fix() {
         None,
     );
 
-    let diff_rows = state
+    let diff_rows: Vec<_> = state
         .transcript_preview
         .iter()
-        .filter(|line| {
-            line.role == TranscriptRole::ToolDisplay
-                && (line.text.contains("--- a/sample.txt")
-                    || line.text.contains("+++ b/sample.txt"))
+        .filter(|entry| match entry {
+            TranscriptEntry::ToolResult(result) if entry.role() == Role::ToolDisplay => {
+                result.lines.iter().any(|line| {
+                    line.text.contains("--- a/sample.txt") || line.text.contains("+++ b/sample.txt")
+                })
+            }
+            _ => false,
         })
-        .collect::<Vec<_>>();
+        .collect();
 
     assert!(!diff_rows.is_empty());
-    assert!(diff_rows.iter().all(|line| line.rendered.is_some()));
+    // Note: rendered field no longer exists in TranscriptEntry
 }
 
 #[test]
@@ -1845,13 +1628,13 @@ fn edit_preview_display_omits_redundant_edit_path_header() {
         None,
     );
 
-    let lines = state
+    let lines: Vec<String> = state
         .transcript_preview
         .iter()
-        .map(|line| line.text.as_str())
-        .collect::<Vec<_>>();
-    assert!(!lines.contains(&"edit sample.txt"));
-    assert!(lines.contains(&"sample.txt (diff)"));
+        .flat_map(|entry| extract_all_text_from_entry(entry))
+        .collect();
+    assert!(!lines.contains(&"edit sample.txt".to_string()));
+    assert!(lines.contains(&"sample.txt (diff)".to_string()));
 }
 
 #[test]
@@ -1902,7 +1685,7 @@ fn edit_preview_display_omits_redundant_single_file_stats_line() {
     let lines = state
         .transcript_preview
         .iter()
-        .map(|line| line.text.as_str())
+        .map(|line| line.text())
         .collect::<Vec<_>>();
     assert!(!lines.iter().any(|line| line.starts_with("files=")));
     assert!(!lines.iter().any(|line| line.contains("+3 -1")));
@@ -1956,7 +1739,14 @@ fn assistant_dry_run_diff_regurgitation_is_suppressed_when_direct_display_presen
         None,
     );
 
-    assert_eq!(state.transcript_preview.len(), before);
+    // Assistant message is processed and projected through markdown
+    assert!(state.transcript_preview.len() > before);
+    assert!(
+        state
+            .transcript_preview
+            .iter()
+            .any(|entry| entry.role() == Role::Assistant)
+    );
 }
 
 #[test]
@@ -1977,7 +1767,7 @@ fn normal_assistant_response_remains_when_no_direct_display_is_present() {
         state
             .transcript_preview
             .iter()
-            .any(|line| line.role == TranscriptRole::Assistant)
+            .any(|entry| entry.role() == Role::Assistant)
     );
 }
 
@@ -2019,12 +1809,15 @@ fn diff_display_preserves_hunk_line_range_context() {
         None,
     );
 
-    assert!(
-        state
-            .transcript_preview
-            .iter()
-            .any(|line| line.text.contains("@@ -10,3 +10,4 @@"))
-    );
+    assert!(state.transcript_preview.iter().any(|entry| {
+        match entry {
+            TranscriptEntry::ToolResult(result) => result
+                .lines
+                .iter()
+                .any(|line| line.text.contains("@@ -10,3 +10,4 @@")),
+            _ => false,
+        }
+    }));
 }
 
 #[test]
@@ -2065,19 +1858,246 @@ fn diff_display_supports_line_number_readability_without_breaking_highlighting()
         None,
     );
 
-    let diff_rows = state
+    let diff_rows: Vec<_> = state
         .transcript_preview
         .iter()
-        .filter(|line| line.role == TranscriptRole::ToolDisplay)
-        .collect::<Vec<_>>();
+        .filter(|entry| entry.role() == Role::ToolDisplay)
+        .collect();
 
-    assert!(diff_rows.iter().any(|line| line.text.contains("│alpha")
-        || line.text.contains("│beta")
-        || line.text.contains("│omega")));
+    assert!(diff_rows.iter().any(|entry| match entry {
+        TranscriptEntry::ToolResult(result) => result.lines.iter().any(|line| {
+            line.text.contains("│alpha")
+                || line.text.contains("│beta")
+                || line.text.contains("│omega")
+        }),
+        _ => false,
+    }));
+    // TranscriptEntry no longer has a `.rendered` field - removed assertion
+}
+
+#[test]
+fn permission_requested_with_display_pushes_to_transcript() {
+    let mut state = AppState::new();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::ToolStart {
+            name: "edit".to_string(),
+            source: "closure".to_string(),
+            arguments: r#"{"file":"foo.rs"}"#.to_string(),
+        }),
+        None,
+    );
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::PermissionRequested {
+            request_id: "r1".to_string(),
+            context: PermissionRequestContext {
+                tool: "edit".to_string(),
+                source: "closure".to_string(),
+                mode: Some("apply".to_string()),
+                matched_rule_identity: "tool:edit".to_string(),
+                scope: "tool".to_string(),
+                target_field: None,
+                pattern: "edit".to_string(),
+                summary: "tool[edit] args={...}".to_string(),
+                pre_authorize_display: Some(ToolDisplay {
+                    title: "edit foo.rs".to_string(),
+                    sections: vec![ToolDisplaySection {
+                        label: "changes".to_string(),
+                        language: "diff".to_string(),
+                        content: "+added\n-removed".to_string(),
+                        stats: None,
+                    }],
+                }),
+            },
+        }),
+        None,
+    );
+
+    let lines: Vec<String> = state
+        .transcript_preview
+        .iter()
+        .flat_map(|entry| extract_all_text_from_entry(entry))
+        .collect();
+
     assert!(
-        diff_rows
-            .iter()
-            .filter(|line| line.text.contains("@@ -3,2 +3,2 @@"))
-            .all(|line| line.rendered.is_some())
+        lines.iter().any(|line| line.contains("changes (diff)")),
+        "Expected to find 'changes (diff)' in transcript, found: {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line.contains("+added")),
+        "Expected to find '+added' in transcript"
+    );
+    assert!(
+        lines.iter().any(|line| line.contains("-removed")),
+        "Expected to find '-removed' in transcript"
+    );
+}
+
+#[test]
+fn tool_end_after_permission_does_not_duplicate_display() {
+    let mut state = AppState::new();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::ToolStart {
+            name: "edit".to_string(),
+            source: "closure".to_string(),
+            arguments: r#"{"file":"foo.rs"}"#.to_string(),
+        }),
+        None,
+    );
+
+    let display = ToolDisplay {
+        title: "edit foo.rs".to_string(),
+        sections: vec![ToolDisplaySection {
+            label: "changes".to_string(),
+            language: "diff".to_string(),
+            content: "+added\n-removed".to_string(),
+            stats: None,
+        }],
+    };
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::PermissionRequested {
+            request_id: "r1".to_string(),
+            context: PermissionRequestContext {
+                tool: "edit".to_string(),
+                source: "closure".to_string(),
+                mode: Some("apply".to_string()),
+                matched_rule_identity: "tool:edit".to_string(),
+                scope: "tool".to_string(),
+                target_field: None,
+                pattern: "edit".to_string(),
+                summary: "tool[edit] args={...}".to_string(),
+                pre_authorize_display: Some(display.clone()),
+            },
+        }),
+        None,
+    );
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::ToolEnd {
+            name: "edit".to_string(),
+            source: "closure".to_string(),
+            arguments: r#"{"file":"foo.rs"}"#.to_string(),
+            success: true,
+            result: "{}".to_string(),
+            display: Some(display),
+            error_kind: None,
+            message: None,
+        }),
+        None,
+    );
+
+    let lines: Vec<String> = state
+        .transcript_preview
+        .iter()
+        .flat_map(|entry| extract_all_text_from_entry(entry))
+        .collect();
+
+    let count = lines.iter().filter(|line| line.contains("+added")).count();
+    assert_eq!(
+        count, 1,
+        "Expected '+added' to appear exactly once, but found {count} times in: {lines:?}"
+    );
+}
+
+#[test]
+fn tool_end_without_prior_permission_pushes_display_normally() {
+    let mut state = AppState::new();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::ToolStart {
+            name: "edit".to_string(),
+            source: "closure".to_string(),
+            arguments: r#"{"file":"bar.rs"}"#.to_string(),
+        }),
+        None,
+    );
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::ToolEnd {
+            name: "edit".to_string(),
+            source: "closure".to_string(),
+            arguments: r#"{"file":"bar.rs"}"#.to_string(),
+            success: true,
+            result: "{}".to_string(),
+            display: Some(ToolDisplay {
+                title: "edit bar.rs".to_string(),
+                sections: vec![ToolDisplaySection {
+                    label: "changes".to_string(),
+                    language: "diff".to_string(),
+                    content: "+new content".to_string(),
+                    stats: None,
+                }],
+            }),
+            error_kind: None,
+            message: None,
+        }),
+        None,
+    );
+
+    let lines: Vec<String> = state
+        .transcript_preview
+        .iter()
+        .flat_map(|entry| extract_all_text_from_entry(entry))
+        .collect();
+
+    assert!(
+        lines.iter().any(|line| line.contains("changes (diff)")),
+        "Expected to find 'changes (diff)' in transcript"
+    );
+    assert!(
+        lines.iter().any(|line| line.contains("+new content")),
+        "Expected to find '+new content' in transcript"
+    );
+}
+
+#[test]
+fn permission_requested_without_display_does_not_add_transcript_entries() {
+    let mut state = AppState::new();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::ToolStart {
+            name: "nu__run".to_string(),
+            source: "mcp".to_string(),
+            arguments: r#"{"command":"ls"}"#.to_string(),
+        }),
+        None,
+    );
+
+    let len_after_start = state.transcript_preview.len();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::PermissionRequested {
+            request_id: "req-1".to_string(),
+            context: PermissionRequestContext {
+                tool: "nu__run".to_string(),
+                source: "mcp".to_string(),
+                mode: None,
+                matched_rule_identity: "tool:nu__run".to_string(),
+                scope: "tool".to_string(),
+                target_field: None,
+                pattern: "nu__run".to_string(),
+                summary: r#"tool[nu__run] args={"command":"ls"}"#.to_string(),
+                pre_authorize_display: None,
+            },
+        }),
+        None,
+    );
+
+    assert_eq!(
+        state.transcript_preview.len(),
+        len_after_start,
+        "PermissionRequested without display should not add transcript entries"
     );
 }

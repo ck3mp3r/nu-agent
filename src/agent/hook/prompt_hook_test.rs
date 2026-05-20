@@ -73,11 +73,13 @@ async fn on_tool_call_allowed_returns_continue() {
 
     // Spawn a task to respond to the permission request
     tokio::spawn(async move {
+        // First event is ToolStart (before permission check)
+        let event = rx.recv().await.unwrap();
+        assert!(matches!(event, HookEvent::ToolStart { .. }));
+        // Second event is AskPermission
         if let Some(HookEvent::AskPermission { responder, .. }) = rx.recv().await {
             responder.send(PermissionDecision::Allow).unwrap();
         }
-        // Consume ToolStart event
-        rx.recv().await;
     });
 
     let result =
@@ -89,15 +91,29 @@ async fn on_tool_call_allowed_returns_continue() {
 async fn on_tool_call_denied_returns_skip() {
     let (hook, mut rx) = make_hook();
 
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
+        // First event is ToolStart
+        let event = rx.recv().await.unwrap();
+        assert!(matches!(event, HookEvent::ToolStart { .. }));
+        // Second event is AskPermission
         if let Some(HookEvent::AskPermission { responder, .. }) = rx.recv().await {
             responder.send(PermissionDecision::Deny).unwrap();
+        }
+        // Third event is ToolEnd with success=false
+        let end_event = rx.recv().await.unwrap();
+        match end_event {
+            HookEvent::ToolEnd { name, success, .. } => {
+                assert_eq!(name, "write_file");
+                assert!(!success);
+            }
+            _ => panic!("Expected ToolEnd event after deny"),
         }
     });
 
     let result =
         PromptHook::<DummyModel>::on_tool_call(&hook, "write_file", None, "id1", "{}").await;
     assert!(matches!(result, ToolCallHookAction::Skip { .. }));
+    handle.await.unwrap();
 }
 
 #[tokio::test]
@@ -231,20 +247,21 @@ async fn on_tool_call_includes_tool_call_id_in_ask_permission_event() {
 
     // Spawn a task to capture the AskPermission event and respond
     let handle = tokio::spawn(async move {
+        // First event is ToolStart
+        let event = rx.recv().await.unwrap();
+        assert!(matches!(event, HookEvent::ToolStart { .. }));
+        // Second event is AskPermission
         if let Some(HookEvent::AskPermission {
             tool_call_id,
             responder,
             ..
         }) = rx.recv().await
         {
-            // Verify the tool_call_id was passed through
             assert_eq!(tool_call_id, Some("call_xyz789".to_string()));
             responder.send(PermissionDecision::Allow).unwrap();
         } else {
             panic!("Expected AskPermission event");
         }
-        // Consume ToolStart event
-        rx.recv().await;
     });
 
     let result = PromptHook::<DummyModel>::on_tool_call(
@@ -266,20 +283,21 @@ async fn on_tool_call_passes_none_when_tool_call_id_not_provided() {
 
     // Spawn a task to capture the AskPermission event and respond
     let handle = tokio::spawn(async move {
+        // First event is ToolStart
+        let event = rx.recv().await.unwrap();
+        assert!(matches!(event, HookEvent::ToolStart { .. }));
+        // Second event is AskPermission
         if let Some(HookEvent::AskPermission {
             tool_call_id,
             responder,
             ..
         }) = rx.recv().await
         {
-            // Verify None was passed through
             assert_eq!(tool_call_id, None);
             responder.send(PermissionDecision::Allow).unwrap();
         } else {
             panic!("Expected AskPermission event");
         }
-        // Consume ToolStart event
-        rx.recv().await;
     });
 
     let result =

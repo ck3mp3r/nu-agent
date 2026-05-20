@@ -1,4 +1,6 @@
 use crate::agent::protocol::event::PermissionDecision;
+use crate::agent::ui::transcript::ir::Role;
+use crate::agent::ui::transcript::items::TranscriptEntry;
 use crate::agent::ui::tui::state::{
     AppState, CommandPaletteAction, InputMode, McpServerUsabilityState, ModelPickerOption,
     PaneFocus, PermissionPrompt, PromptStatus, ToolCallStatus, TranscriptLineStatus,
@@ -15,8 +17,6 @@ fn defaults_start_idle_with_unlocked_input_and_no_abort_pending() {
     assert!(!state.abort.pending);
     assert_eq!(state.abort.confirmation_marker, 0);
     assert!(state.transcript_preview.is_empty());
-    assert!(state.transcript_follow_tail);
-    assert_eq!(state.transcript_scroll_lines_from_bottom, 0);
     assert!(state.status_line.is_empty());
     assert_eq!(state.latest_input_tokens, None);
     assert_eq!(state.latest_output_tokens, None);
@@ -184,27 +184,6 @@ fn input_cursor_and_edit_operations_handle_middle_insert_delete_and_backspace() 
 }
 
 #[test]
-fn transcript_scroll_follow_tail_pause_and_resume_behaves_as_expected() {
-    let mut state = AppState::new();
-    state.set_transcript_viewport_lines(3);
-    for i in 0..10 {
-        state.push_transcript_line(TranscriptRole::Assistant, format!("line {i}"));
-    }
-
-    state.scroll_transcript_page_up(8);
-    assert!(!state.transcript_follow_tail);
-    assert_eq!(state.transcript_scroll_lines_from_bottom, 6);
-
-    state.scroll_transcript_page_down(4);
-    assert!(!state.transcript_follow_tail);
-    assert_eq!(state.transcript_scroll_lines_from_bottom, 4);
-
-    state.scroll_transcript_page_down(4);
-    assert!(state.transcript_follow_tail);
-    assert_eq!(state.transcript_scroll_lines_from_bottom, 0);
-}
-
-#[test]
 fn turn_separator_is_inserted_between_user_and_assistant_turns() {
     let mut state = AppState::new();
 
@@ -212,9 +191,9 @@ fn turn_separator_is_inserted_between_user_and_assistant_turns() {
     state.push_transcript_line(TranscriptRole::Assistant, "response one");
 
     assert_eq!(state.transcript_preview.len(), 3);
-    assert_eq!(state.transcript_preview[0].role, TranscriptRole::User);
-    assert_eq!(state.transcript_preview[1].role, TranscriptRole::Separator);
-    assert_eq!(state.transcript_preview[2].role, TranscriptRole::Assistant);
+    assert_eq!(state.transcript_preview[0].role(), Role::User);
+    assert_eq!(state.transcript_preview[1].role(), Role::Separator);
+    assert_eq!(state.transcript_preview[2].role(), Role::Assistant);
 }
 
 #[test]
@@ -228,7 +207,7 @@ fn turn_separator_is_not_repeated_for_same_role_sequences() {
         state
             .transcript_preview
             .iter()
-            .filter(|line| line.role == TranscriptRole::Separator)
+            .filter(|entry| entry.role() == Role::Separator)
             .count(),
         0
     );
@@ -258,19 +237,20 @@ fn tool_call_lifecycle_tracks_transcript_line_status_by_same_row() {
     state.start_tool_call("k8s__list_pods", r#"{"namespace":"prod"}"#);
 
     assert_eq!(state.transcript_preview.len(), 1);
-    assert_eq!(state.transcript_preview[0].role, TranscriptRole::Tool);
-    assert!(
-        state.transcript_preview[0]
-            .text
-            .contains("tool[k8s__list_pods] args=")
-    );
+    assert_eq!(state.transcript_preview[0].role(), Role::Tool);
+    assert_eq!(state.transcript_preview[0].text(), "k8s__list_pods");
+    if let TranscriptEntry::Tool(invocation) = &state.transcript_preview[0] {
+        assert!(invocation.args.contains("args="));
+        assert!(invocation.args.contains("namespace"));
+    } else {
+        panic!("Expected Tool variant");
+    }
     assert_eq!(
         state.transcript_line_status_for_index(0),
         Some(TranscriptLineStatus::Tool(ToolCallStatus::InProgress))
     );
 
     state.finish_tool_call("k8s__list_pods", r#"{"namespace":"prod"}"#, true);
-    assert!(state.transcript_preview[0].text.contains("· done"));
     assert_eq!(
         state.transcript_line_status_for_index(0),
         Some(TranscriptLineStatus::Tool(ToolCallStatus::Done))
@@ -290,42 +270,6 @@ fn mode_helpers_toggle_between_insert_and_normal() {
 }
 
 #[test]
-fn line_scroll_helpers_adjust_follow_tail_consistently() {
-    let mut state = AppState::new();
-    state.set_transcript_viewport_lines(3);
-    for i in 0..10 {
-        state.push_transcript_line(TranscriptRole::Assistant, format!("line {i}"));
-    }
-    assert!(state.transcript_follow_tail);
-    assert_eq!(state.transcript_scroll_lines_from_bottom, 0);
-
-    state.scroll_transcript_line_up();
-    assert!(!state.transcript_follow_tail);
-    assert_eq!(state.transcript_scroll_lines_from_bottom, 0);
-
-    state.scroll_transcript_line_down();
-    assert!(state.transcript_follow_tail);
-    assert_eq!(state.transcript_scroll_lines_from_bottom, 0);
-}
-
-#[test]
-fn line_up_from_bottom_detaches_follow_tail_and_moves_cursor_up() {
-    let mut state = AppState::new();
-    state.set_transcript_viewport_lines(3);
-    for i in 0..10 {
-        state.push_transcript_line(TranscriptRole::Assistant, format!("line {i}"));
-    }
-    assert!(state.transcript_follow_tail);
-    assert_eq!(state.transcript_cursor_index(), Some(9));
-
-    state.scroll_transcript_line_up();
-
-    assert!(!state.transcript_follow_tail);
-    assert_eq!(state.transcript_cursor_index(), Some(8));
-    assert_eq!(state.transcript_scroll_lines_from_bottom, 0);
-}
-
-#[test]
 fn permission_prompt_open_sets_required_status_and_presence() {
     let mut state = AppState::new();
     state.open_permission_prompt(PermissionPrompt {
@@ -338,12 +282,35 @@ fn permission_prompt_open_sets_required_status_and_presence() {
         pattern: "*".to_string(),
         target_field: Some("command".to_string()),
         summary: "tool[nu__run] args={\"command\":\"echo hi\"}".to_string(),
-        pre_authorize_display: None,
-        attached_tool_transcript_line_index: None,
     });
 
     assert!(state.has_permission_prompt());
     assert_eq!(state.status_line, "Permission required");
+}
+
+#[test]
+fn permission_prompt_open_scrolls_to_bottom() {
+    let mut state = AppState::new();
+    state.push_transcript_line(TranscriptRole::User, "msg1".to_string());
+    state.push_transcript_line(TranscriptRole::Assistant, "msg2".to_string());
+    state.push_transcript_line(TranscriptRole::Tool, "tool1".to_string());
+    state.scroll_transcript_to_top();
+    assert_eq!(state.transcript_list_state.selected, Some(0));
+
+    state.open_permission_prompt(PermissionPrompt {
+        request_id: "ask-001".to_string(),
+        matched_rule_identity: "rule".to_string(),
+        tool: "edit".to_string(),
+        source: "builtin".to_string(),
+        mode: None,
+        scope: "global".to_string(),
+        pattern: "*".to_string(),
+        target_field: None,
+        summary: "edit foo.rs".to_string(),
+    });
+
+    let last = state.transcript_preview.len().saturating_sub(1);
+    assert_eq!(state.transcript_list_state.selected, Some(last));
 }
 
 #[test]
@@ -359,8 +326,6 @@ fn submit_permission_decision_enqueues_submission_and_closes_prompt() {
         pattern: "*".to_string(),
         target_field: Some("command".to_string()),
         summary: "summary".to_string(),
-        pre_authorize_display: None,
-        attached_tool_transcript_line_index: None,
     });
 
     assert!(state.submit_permission_decision(PermissionDecision::AllowAlways));
@@ -372,31 +337,6 @@ fn submit_permission_decision_enqueues_submission_and_closes_prompt() {
     assert_eq!(submission.request_id, "ask-0000000000000002");
     assert_eq!(submission.matched_rule_identity, "nested:nu__run.command:*");
     assert_eq!(submission.decision, PermissionDecision::AllowAlways);
-}
-
-#[test]
-fn cursor_moves_within_viewport_before_scroll_when_moving_up_from_bottom() {
-    let mut state = AppState::new();
-    state.set_transcript_viewport_lines(3);
-    for i in 0..10 {
-        state.push_transcript_line(TranscriptRole::Assistant, format!("line {i}"));
-    }
-
-    assert!(state.transcript_follow_tail);
-    assert_eq!(state.transcript_cursor_index(), Some(9));
-    assert_eq!(state.transcript_scroll_lines_from_bottom, 0);
-
-    state.scroll_transcript_line_up();
-    assert_eq!(state.transcript_cursor_index(), Some(8));
-    assert_eq!(state.transcript_scroll_lines_from_bottom, 0);
-
-    state.scroll_transcript_line_up();
-    assert_eq!(state.transcript_cursor_index(), Some(7));
-    assert_eq!(state.transcript_scroll_lines_from_bottom, 0);
-
-    state.scroll_transcript_line_up();
-    assert_eq!(state.transcript_cursor_index(), Some(6));
-    assert_eq!(state.transcript_scroll_lines_from_bottom, 1);
 }
 
 #[test]
@@ -424,63 +364,6 @@ fn pane_focus_can_cycle_left_and_right() {
 
     state.focus_prev_pane();
     assert_eq!(state.pane_focus, PaneFocus::Input);
-}
-
-#[test]
-fn visual_mode_selects_range_and_queues_clipboard_text() {
-    let mut state = AppState::new();
-    state.push_transcript_line(TranscriptRole::User, "u1");
-    state.push_transcript_line(TranscriptRole::Assistant, "a1");
-    state.push_transcript_line(TranscriptRole::Assistant, "a2");
-
-    state.enter_visual_mode();
-    state.extend_visual_cursor_line_up();
-    let selected = state.selected_transcript_range().expect("selection");
-    assert!(selected.0 <= selected.1);
-
-    state.queue_visual_selection_to_clipboard();
-    let copied = state.take_clipboard_request().expect("clipboard payload");
-    assert!(copied.contains("a2") || copied.contains("a1"));
-}
-
-#[test]
-fn visual_mode_anchor_uses_current_viewport_cursor_for_gg_and_g_positions() {
-    let mut state = AppState::new();
-    state.set_transcript_viewport_lines(3);
-    for i in 0..10 {
-        state.push_transcript_line(TranscriptRole::Assistant, format!("line {i}"));
-    }
-    state.enter_normal_mode();
-
-    state.scroll_transcript_to_top();
-    state.enter_visual_mode();
-    assert_eq!(state.visual_anchor_index(), Some(0));
-    assert_eq!(state.visual_cursor_index(), Some(0));
-    assert_eq!(state.selected_transcript_range(), Some((0, 0)));
-
-    state.enter_normal_mode();
-    state.scroll_transcript_to_bottom();
-    state.enter_visual_mode();
-    assert_eq!(state.visual_anchor_index(), Some(9));
-    assert_eq!(state.visual_cursor_index(), Some(9));
-    assert_eq!(state.selected_transcript_range(), Some((9, 9)));
-}
-
-#[test]
-fn scroll_to_top_clamps_to_max_scroll_and_allows_line_scroll_down() {
-    let mut state = AppState::new();
-    state.set_transcript_viewport_lines(3);
-    for i in 0..10 {
-        state.push_transcript_line(TranscriptRole::Assistant, format!("line {i}"));
-    }
-
-    state.scroll_transcript_to_top();
-    assert_eq!(state.transcript_scroll_lines_from_bottom, 7);
-    assert!(!state.transcript_follow_tail);
-
-    state.scroll_transcript_line_down();
-    assert_eq!(state.transcript_scroll_lines_from_bottom, 7);
-    assert!(!state.transcript_follow_tail);
 }
 
 #[test]
@@ -952,4 +835,59 @@ fn model_picker_empty_catalog_shows_deterministic_empty_state() {
 
     assert!(state.model_picker_open);
     assert!(state.model_picker_filtered_options().is_empty());
+}
+
+#[test]
+fn push_transcript_item_follows_tail_when_at_last_item() {
+    let mut state = AppState::new();
+
+    // Push first item - should select it (None -> 0)
+    state.push_transcript_line(TranscriptRole::User, "first");
+    assert_eq!(state.transcript_cursor_index(), Some(0));
+
+    // Push second item - should follow (already at end)
+    state.push_transcript_line(TranscriptRole::Assistant, "second");
+    assert_eq!(state.transcript_cursor_index(), Some(2)); // 0=User, 1=Separator, 2=Assistant
+
+    // Push third item - should still follow
+    state.push_transcript_line(TranscriptRole::User, "third");
+    assert_eq!(state.transcript_cursor_index(), Some(4)); // 2=Assistant, 3=Separator, 4=User
+}
+
+#[test]
+fn push_transcript_item_stays_put_when_scrolled_up() {
+    let mut state = AppState::new();
+
+    // Push some items
+    state.push_transcript_line(TranscriptRole::User, "first");
+    state.push_transcript_line(TranscriptRole::Assistant, "second");
+    state.push_transcript_line(TranscriptRole::User, "third");
+
+    // Scroll to top (user has scrolled up)
+    state.scroll_transcript_to_top();
+    assert_eq!(state.transcript_cursor_index(), Some(0));
+
+    // Push new item - should NOT change selection
+    state.push_transcript_line(TranscriptRole::Assistant, "fourth");
+    assert_eq!(
+        state.transcript_cursor_index(),
+        Some(0),
+        "selection should stay at top when user has scrolled up"
+    );
+}
+
+#[test]
+fn push_transcript_item_follows_when_nothing_selected() {
+    let mut state = AppState::new();
+
+    // Initially nothing is selected
+    assert_eq!(state.transcript_cursor_index(), None);
+
+    // Push first item - should select it
+    state.push_transcript_line(TranscriptRole::User, "first");
+    assert_eq!(
+        state.transcript_cursor_index(),
+        Some(0),
+        "first push should select item 0 when nothing was selected"
+    );
 }

@@ -19,7 +19,7 @@ pub enum HookEvent {
         output_tokens: u64,
         total_tokens: u64,
     },
-    /// Tool execution starting (informational, after permission granted)
+    /// Tool call announced (before permission check)
     ToolStart { name: String, arguments: String },
     /// Tool execution finished
     ToolEnd {

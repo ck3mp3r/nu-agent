@@ -206,8 +206,21 @@ fn markdown_projection_fixture_unsupported_constructs_have_readable_fallback() {
             .iter()
             .any(|line| line.contains("alt (image: https://img.example/x.png)"))
     );
-    assert!(rendered.iter().any(|line| line.contains("| col | val |")));
-    assert!(rendered.iter().any(|line| line.contains("| a | b |")));
+    // Tables are now supported and rendered with separators
+    assert!(
+        rendered
+            .iter()
+            .any(|line| line.contains("col") && line.contains("val"))
+    );
+    assert!(
+        rendered
+            .iter()
+            .any(|line| line.contains("a") && line.contains("b"))
+    );
+    assert!(
+        rendered.iter().any(|line| line.contains("│")),
+        "table cells should be separated"
+    );
 }
 
 #[test]
@@ -277,5 +290,65 @@ fn markdown_projection_preserves_valid_markdown_fences_while_sanitizing_control_
             .iter()
             .any(|line| line.contains("<system-reminder>")),
         "control markers should be removed without breaking fences"
+    );
+}
+
+#[test]
+fn markdown_projection_renders_table_with_separator_and_bold_header() {
+    let markdown =
+        "| Commit | Message |\n|--------|--------|\n| abc123 | fix bug |\n| def456 | add feature |";
+    let lines = project_markdown_to_lines(markdown);
+    let plain: Vec<String> = lines.iter().map(|l| plain_line(l)).collect();
+
+    assert!(
+        plain
+            .iter()
+            .any(|l| l.contains("Commit") && l.contains("Message")),
+        "header row should contain column names, got: {plain:?}"
+    );
+    assert!(
+        plain.iter().any(|l| l.contains("─") && l.contains("┼")),
+        "separator row should contain horizontal lines with junction, got: {plain:?}"
+    );
+    assert!(
+        plain
+            .iter()
+            .any(|l| l.contains("abc123") && l.contains("fix bug")),
+        "data row should contain cell values, got: {plain:?}"
+    );
+
+    // Header text should be bold
+    let header_line = lines
+        .iter()
+        .find(|l| {
+            let text = plain_line(l);
+            text.contains("Commit")
+        })
+        .expect("header line exists");
+    let has_bold = header_line
+        .spans
+        .iter()
+        .any(|s| s.style.add_modifier.contains(Modifier::BOLD));
+    assert!(has_bold, "header cells should be bold");
+}
+
+#[test]
+fn markdown_projection_renders_table_with_aligned_columns() {
+    let markdown = "| A | Long Header |\n|---|---|\n| x | y |\n| longer text | z |";
+    let lines = project_markdown_to_lines(markdown);
+    let plain: Vec<String> = lines.iter().map(|l| plain_line(l)).collect();
+
+    // Find separator line
+    let sep = plain
+        .iter()
+        .find(|l| l.contains("┼"))
+        .expect("separator line exists");
+    // Separator parts should have different widths matching column content
+    let parts: Vec<&str> = sep.split('┼').collect();
+    assert_eq!(parts.len(), 2, "two columns = two separator parts");
+    assert!(
+        parts[0].len() >= " longer text ".len(),
+        "first separator should be at least as wide as longest cell: {:?}",
+        parts[0]
     );
 }

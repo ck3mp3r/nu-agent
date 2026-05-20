@@ -155,7 +155,13 @@ where
             }
         }
 
-        // 3. Ask permission via channel
+        // 3. Announce tool call (visible in transcript immediately)
+        self.send_event(HookEvent::ToolStart {
+            name: tool_name.to_string(),
+            arguments: args.to_string(),
+        });
+
+        // 4. Ask permission via channel
         let (tx, rx) = oneshot::channel();
         self.send_event(HookEvent::AskPermission {
             tool_name: tool_name.to_string(),
@@ -166,16 +172,20 @@ where
 
         // Block until driver responds
         match rx.await {
-            Ok(PermissionDecision::Allow) => {
-                self.send_event(HookEvent::ToolStart {
+            Ok(PermissionDecision::Allow) => ToolCallHookAction::Continue,
+            Ok(PermissionDecision::Deny) => {
+                self.send_event(HookEvent::ToolEnd {
                     name: tool_name.to_string(),
                     arguments: args.to_string(),
+                    success: false,
+                    result: String::new(),
+                    error_kind: None,
+                    message: Some("Permission denied".to_string()),
                 });
-                ToolCallHookAction::Continue
+                ToolCallHookAction::Skip {
+                    reason: "Permission denied".to_string(),
+                }
             }
-            Ok(PermissionDecision::Deny) => ToolCallHookAction::Skip {
-                reason: "Permission denied".to_string(),
-            },
             Err(_) => {
                 // Channel closed — driver dropped, terminate
                 ToolCallHookAction::Terminate {
