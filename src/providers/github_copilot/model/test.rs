@@ -1,4 +1,4 @@
-use super::{Agent, ProviderVariant, agent_from_config};
+use super::{ProviderVariant, agent_from_config};
 use crate::agent::protocol::preamble::{ModelFamily, classify_model_family};
 use crate::providers::github_copilot::Error;
 
@@ -130,10 +130,8 @@ fn agent_from_config_parses_backend_from_model() {
     )
     .unwrap();
 
-    match agent {
-        Agent::Anthropic(..) => {}
-        _ => panic!("Expected Anthropic agent"),
-    }
+    assert_eq!(agent.variant, ProviderVariant::Anthropic);
+    assert_eq!(agent.model_name, "claude-sonnet-4.5");
 
     let agent = agent_from_config(
         "github-copilot",
@@ -143,10 +141,8 @@ fn agent_from_config_parses_backend_from_model() {
     )
     .unwrap();
 
-    match agent {
-        Agent::OpenAI4x(..) => {}
-        _ => panic!("Expected OpenAI 4x agent"),
-    }
+    assert_eq!(agent.variant, ProviderVariant::OpenAI4x);
+    assert_eq!(agent.model_name, "gpt-4o");
 
     let agent = agent_from_config(
         "github-copilot",
@@ -156,10 +152,8 @@ fn agent_from_config_parses_backend_from_model() {
     )
     .unwrap();
 
-    match agent {
-        Agent::OpenAI5x(..) => {}
-        _ => panic!("Expected OpenAI 5x agent"),
-    }
+    assert_eq!(agent.variant, ProviderVariant::OpenAI5x);
+    assert_eq!(agent.model_name, "gpt-5.3-codex");
 }
 
 #[test]

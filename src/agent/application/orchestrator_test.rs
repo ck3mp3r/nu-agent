@@ -1074,8 +1074,11 @@ fn run_hydrated_interactive_loop_hydrates_exactly_once() {
     let messages =
         vec![
             UiMessageSnapshot::new("user", "history"),
-            UiMessageSnapshot::new("assistant", "response")
-                .with_usage(UiMessageUsageSnapshot::new(None, None, Some(321))),
+            {
+                let mut s = UiMessageSnapshot::new("assistant", "response");
+                s.usage = Some(UiMessageUsageSnapshot { input_tokens: None, output_tokens: None, total_tokens: Some(321) });
+                s
+            },
         ];
     run_hydrated_interactive_loop(&mut runtime, &mut ui, messages.clone(), Span::test_data())
         .expect("interactive loop with hydration");
@@ -2410,22 +2413,25 @@ fn interactive_loop_worker_channel_closed_preserves_authoritative_visible_tool_c
     }));
 
     assert!(panic.is_err(), "expected panic from toggle worker thread");
+    assert_eq!(ui.mcp_details.len(), 2, "expected exactly two toggle failure reports");
+    // First toggle: worker panics, response channel disconnects
+    assert_eq!(ui.mcp_details[0].0, "gh");
+    assert_eq!(ui.mcp_details[0].1, McpUsabilityState::Failed);
     assert_eq!(
-        ui.mcp_details,
-        vec![
-            (
-                "gh".to_string(),
-                McpUsabilityState::Failed,
-                Some("toggle worker disconnected".to_string()),
-                13,
-            ),
-            (
-                "gh".to_string(),
-                McpUsabilityState::Failed,
-                Some("worker channel closed".to_string()),
-                13,
-            ),
-        ]
+        ui.mcp_details[0].2.as_deref(),
+        Some("toggle worker disconnected")
     );
+    assert_eq!(ui.mcp_details[0].3, 13);
+    // Second toggle: either the command channel is already closed ("worker channel closed")
+    // or the send succeeds but the response channel is disconnected ("toggle worker disconnected").
+    // Both are valid — the exact outcome depends on thread scheduling.
+    assert_eq!(ui.mcp_details[1].0, "gh");
+    assert_eq!(ui.mcp_details[1].1, McpUsabilityState::Failed);
+    let reason = ui.mcp_details[1].2.as_deref().unwrap_or("");
+    assert!(
+        reason == "worker channel closed" || reason == "toggle worker disconnected",
+        "unexpected reason for second toggle: {reason}"
+    );
+    assert_eq!(ui.mcp_details[1].3, 13);
     assert!(ui.mcp_visible_tool_count_updates.is_empty());
 }

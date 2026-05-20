@@ -1,7 +1,9 @@
 use nu_protocol::LabeledError;
 
-use crate::agent::protocol::contracts::{UiMessageSnapshot, UiMessageUsageSnapshot};
-use crate::session::{Session, SessionStore};
+use crate::agent::protocol::contracts::UiMessageSnapshot;
+use crate::session::{ConversationStore, JsonlConversationStore, Session, SessionStore};
+use rig::completion::message::{AssistantContent, UserContent};
+use rig::completion::Message;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SessionRequest {
@@ -15,7 +17,6 @@ pub(crate) struct SessionResolutionInput {
     pub use_tui: bool,
     pub input_is_nothing: bool,
     pub session_id: Option<String>,
-    pub new_session: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -42,7 +43,7 @@ impl<'a> DefaultSessionResolver<'a> {
 
 impl SessionResolver for DefaultSessionResolver<'_> {
     fn resolve(&self, input: SessionResolutionInput) -> Result<SessionResolution, LabeledError> {
-        let request = resolve_session_request(input.use_tui, input.session_id, input.new_session);
+        let request = resolve_session_request(input.use_tui, input.session_id);
         match request {
             SessionRequest::None => Ok(SessionResolution {
                 final_session_id: None,
@@ -55,23 +56,15 @@ impl SessionResolver for DefaultSessionResolver<'_> {
                     let (session, existed_before_attach) =
                         load_or_create_tui_session(self.store, &id)?;
                     let messages = if input.input_is_nothing && existed_before_attach {
-                        session
-                            .messages()
-                            .iter()
-                            .map(|message| {
-                                UiMessageSnapshot::new(message.role(), message.content())
-                                    .with_tool_details(
-                                        message.tool_arguments().map(ToOwned::to_owned),
-                                        message.tool_result().map(ToOwned::to_owned),
-                                        message.tool_success(),
-                                    )
-                                    .with_usage(UiMessageUsageSnapshot::new(
-                                        message.usage().and_then(|usage| usage.input_tokens()),
-                                        message.usage().and_then(|usage| usage.output_tokens()),
-                                        message.usage().and_then(|usage| usage.total_tokens()),
-                                    ))
-                            })
-                            .collect()
+                        // Load rig messages from JSONL via ConversationStore
+                        let conversation_store =
+                            JsonlConversationStore::new(self.store.cache_dir().to_path_buf());
+                        let rig_messages = conversation_store
+                            .load(&id)
+                            .map_err(|e| LabeledError::new(format!("Failed to load messages: {e}")))?;
+
+                        // Convert to UiMessageSnapshots for transcript display
+                        hydrate_transcript_from_rig_messages(&rig_messages).collect()
                     } else {
                         Vec::new()
                     };
@@ -121,17 +114,91 @@ pub(crate) fn generate_session_id() -> String {
 pub(crate) fn resolve_session_request(
     use_tui: bool,
     session_id: Option<String>,
-    new_session: bool,
 ) -> SessionRequest {
-    match (use_tui, session_id, new_session) {
+    match (use_tui, session_id) {
         // TUI explicit session policy is centralized here:
         // always attempt to attach first (resolver handles load-then-create fallback).
-        (true, Some(id), _) => SessionRequest::Attach(id),
-        (_, Some(id), _) => SessionRequest::Create(id),
-        (true, None, _) => SessionRequest::Create(generate_session_id()),
-        (false, None, true) => SessionRequest::Create(generate_session_id()),
-        (false, None, false) => SessionRequest::None,
+        (true, Some(id)) => SessionRequest::Attach(id),
+        (_, Some(id)) => SessionRequest::Create(id),
+        (true, None) => SessionRequest::Create(generate_session_id()),
+        (false, None) => SessionRequest::None,
     }
+}
+
+/// Converts rig Messages loaded from JSONL into UiMessageSnapshots for TUI transcript hydration.
+///
+/// This function maps rig message types to transcript display items:
+/// - `Message::User { content }` with `UserContent::Text` → user transcript item
+/// - `Message::User { content }` with `UserContent::ToolResult` → tool result display
+/// - `Message::Assistant { content }` with `AssistantContent::Text` → assistant text
+/// - `Message::Assistant { content }` with `AssistantContent::ToolCall` → tool call display
+/// - `Message::System { content }` → system/compaction summary display
+///
+/// # Arguments
+/// * `messages` - Slice of rig::completion::Message from ConversationStore::load()
+///
+/// # Returns
+/// Iterator of UiMessageSnapshot ready for transcript hydration
+fn hydrate_transcript_from_rig_messages(
+    messages: &[Message],
+) -> impl Iterator<Item = UiMessageSnapshot> + '_ {
+    messages.iter().flat_map(|msg| {
+        let mut snapshots = Vec::new();
+
+        match msg {
+            Message::User { content } => {
+                for item in content.iter() {
+                    match item {
+                        UserContent::Text(text) => {
+                            snapshots.push(UiMessageSnapshot::new("user", text.text.clone()));
+                        }
+                        UserContent::ToolResult(_) => {
+                            // Tool results are kept in memory/JSONL for the LLM,
+                            // but not shown in the hydrated TUI transcript.
+                            // Only the tool invocation line (⚙) is displayed.
+                        }
+                        _ => {} // Image, etc. — skip
+                    }
+                }
+            }
+            Message::Assistant { content, .. } => {
+                // Process text and tool calls separately
+                for item in content.iter() {
+                    match item {
+                        AssistantContent::Text(text) => {
+                            if !text.text.is_empty() {
+                                snapshots.push(UiMessageSnapshot::new("assistant", text.text.clone()));
+                            }
+                        }
+                        AssistantContent::ToolCall(tool_call) => {
+                            // Tool calls: hydrate as tool invocation with proper format
+                            let args_json = serde_json::to_string(&tool_call.function.arguments)
+                                .unwrap_or_else(|_| "{}".to_string());
+
+                            // Summarize arguments to match live rendering
+                            let args_summary =
+                                crate::agent::protocol::tool_args::summarize_tool_arguments(&args_json);
+
+                            // Format content to match what start_tool_call produces
+                            let display_content =
+                                format!("tool[{}] args={}", tool_call.function.name, args_summary);
+
+                            snapshots.push(
+                                UiMessageSnapshot::new("tool", display_content)
+                                    .with_tool_details(Some(args_json), None, Some(true)),
+                            );
+                        }
+                        _ => {} // Reasoning, Image, etc.
+                    }
+                }
+            }
+            Message::System { content } => {
+                snapshots.push(UiMessageSnapshot::new("system", content.clone()));
+            }
+        }
+
+        snapshots
+    })
 }
 
 fn load_or_create_tui_session(
@@ -153,3 +220,7 @@ fn load_or_create_tui_session(
         ))),
     }
 }
+
+#[cfg(test)]
+#[path = "resolver_test.rs"]
+mod resolver_test;

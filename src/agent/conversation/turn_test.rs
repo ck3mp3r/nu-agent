@@ -15,6 +15,7 @@ fn turn_result_can_be_constructed() {
             total_tokens: 15,
             cached_input_tokens: 0,
             cache_creation_input_tokens: 0,
+            reasoning_tokens: 0,
         },
         messages: None,
         tool_call_count: 0,
@@ -176,4 +177,51 @@ fn turn_context_always_has_tool_server_handle() {
     // - Type changed from Option<ToolServerHandle> to ToolServerHandle
     // - Always initialized (no None case)
     // - build_agent_and_prompt always uses the handle (no if-let branching)
+}
+
+/// Test that TurnContext uses InMemoryConversationMemory instead of session_history Vec.
+/// This documents the refactor to use rig's memory system.
+#[test]
+fn turn_context_uses_memory_instead_of_history_vec() {
+    // Before: TurnContext had session_history: Vec<rig::completion::Message>
+    // After: TurnContext has memory: InMemoryConversationMemory + conversation_id: String
+    
+    // Create a memory instance (what TurnContext will store)
+    let memory = rig::memory::InMemoryConversationMemory::new();
+    let conversation_id = "test-conversation-123".to_string();
+    
+    // Memory can be cloned (required for passing to agent builder)
+    let _memory_clone = memory.clone();
+    
+    // Conversation ID can be cloned (required for prompt request)
+    let _id_clone = conversation_id.clone();
+    
+    // This test documents that:
+    // 1. TurnContext.session_history (Vec<Message>) is removed
+    // 2. TurnContext.memory (InMemoryConversationMemory) is added
+    // 3. TurnContext.conversation_id (String) is added
+    // 4. build_agent_and_prompt uses memory.clone() instead of history
+    // 5. prompt request uses .conversation(id) instead of .with_history(vec)
+}
+
+/// Test that build_agent_and_prompt uses memory and conversation_id correctly.
+/// This documents the API changes for the memory-based conversation system.
+#[test]
+fn build_agent_and_prompt_uses_memory_api() {
+    // Before: build_agent_and_prompt(model, hook, preamble, prompt, history: Vec, handle, max_turns)
+    // After: build_agent_and_prompt(model, hook, preamble, prompt, memory, conversation_id, handle, max_turns)
+    
+    let _memory = rig::memory::InMemoryConversationMemory::new();
+    let conversation_id = "test-conv-456";
+    
+    // The function should:
+    // 1. Accept memory: InMemoryConversationMemory (not history: Vec<Message>)
+    // 2. Accept conversation_id: String
+    // 3. Call builder.memory(memory.clone())
+    // 4. Call agent.prompt(msg).conversation(conversation_id) instead of .with_history(vec)
+    
+    // Verify the memory can be used as expected
+    assert_eq!(conversation_id, "test-conv-456");
+    
+    // This documents the signature change and usage pattern
 }

@@ -2,11 +2,15 @@ use std::time::Duration;
 
 use nu_plugin::EngineInterface;
 use nu_protocol::{LabeledError, Span, Value};
+use rig::memory::ConversationMemory;
 
 use crate::{
     config::Config,
     plugin::RuntimeCtx,
-    session::{CompactionInvocationMode, CompactionOutcome, Message, Session, SessionStore},
+    session::{
+        CompactionInvocationMode, CompactionOutcome, ConversationStore, JsonlConversationStore,
+        Session, SessionStore,
+    },
     tools::{closure::ClosureRegistry, executor::ToolExecutor},
 };
 
@@ -70,8 +74,9 @@ pub(crate) struct AgentConversationRuntime {
     pub tool_executor: ToolExecutor,
     pub engine: EngineInterface,
     pub store: SessionStore,
-    pub session: Option<Session>,
     pub final_session_id: Option<String>,
+    pub compaction_threshold: Option<usize>,
+    pub compaction_count: usize,
     pub auto_compaction_tolerance: usize,
     pub auto_compaction_hysteresis_margin: usize,
     pub auto_compaction_state: CompactionTriggerState,
@@ -81,6 +86,9 @@ pub(crate) struct AgentConversationRuntime {
     pub permissions_startup_emitted: bool,
     pub session_grants: SessionGrantCache,
     pub ask_hook: AsyncAskHook,
+    pub memory: rig::memory::InMemoryConversationMemory,
+    pub conversation_store: JsonlConversationStore,
+    pub memory_message_count: usize,
 }
 
 fn emit_permissions_startup_summary_once<U: ProgressUi>(
@@ -392,19 +400,19 @@ impl ConversationRuntime for AgentConversationRuntime {
     }
 
     fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
-        let Some(session) = self.session.as_ref() else {
+        let Some(threshold) = self.compaction_threshold else {
             return Some(CompactionTriggerDecision::NoFire {
                 reason: "signal_unavailable".to_string(),
             });
         };
 
         let policy = ThresholdCompactionPolicy::new(
-            session.config().compaction_threshold,
+            threshold,
             self.auto_compaction_tolerance,
             self.auto_compaction_hysteresis_margin,
         );
         Some(policy.evaluate(
-            Some(session.messages().len()),
+            Some(self.memory_message_count),
             &mut self.auto_compaction_state,
         ))
     }
@@ -459,11 +467,38 @@ impl ConversationRuntime for AgentConversationRuntime {
             available_skills.as_deref(),
         );
 
-        // Get session history as structured messages
-        let session_history = if let Some(ref session) = self.session {
-            session.as_chat_history()
+        // Hydrate memory from conversation store on session attach
+        let conversation_id = if let Some(ref session_id) = self.final_session_id {
+            // Session exists: load from conversation store and populate memory
+            let messages = self
+                .conversation_store
+                .load(session_id)
+                .unwrap_or_else(|e| {
+                    // Log error but continue with empty history
+                    eprintln!("Failed to load conversation history: {}", e);
+                    Vec::new()
+                });
+
+            // Append loaded messages to memory (memory.append is async and takes a Vec)
+            if !messages.is_empty() {
+                if let Err(e) = self.runtime.block_on(self.memory.append(session_id, messages.clone())) {
+                    eprintln!("Failed to append messages to memory: {}", e);
+                }
+            }
+
+            // Track message count
+            self.memory_message_count = messages.len();
+
+            session_id.to_string()
         } else {
-            Vec::new()
+            // No session: use transient ID based on timestamp
+            format!(
+                "transient-{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis()
+            )
         };
 
         // Create the GitHub Copilot agent from config
@@ -494,11 +529,10 @@ impl ConversationRuntime for AgentConversationRuntime {
                 runtime: self.runtime.handle(),
                 agent: &agent,
                 prompt,
-                session_history,
+                memory: self.memory.clone(),
+                conversation_id,
                 preamble: preamble.as_deref(),
                 max_turns: self.config.max_tool_turns,
-                session: self.session.as_mut(),
-                store: Some(&self.store),
                 tool_server_handle: self.mcp_tool_server_handle.clone(),
                 closure_registry: &self.closure_registry,
                 mcp_registry: &self.mcp_registry,
@@ -514,11 +548,27 @@ impl ConversationRuntime for AgentConversationRuntime {
             }
         })?;
 
+        // Persist new messages to conversation store if session exists
+        if let Some(ref session_id) = self.final_session_id {
+            if let Some(ref messages) = turn_result.messages {
+                // Persist the new messages from the turn result
+                if let Err(e) = self.conversation_store.append(session_id, messages) {
+                    eprintln!(
+                        "Warning: Failed to persist turn messages to conversation store: {}",
+                        e
+                    );
+                }
+
+                // Update memory message count
+                self.memory_message_count += messages.len();
+            }
+        }
+
         // Format the response value
         let mut message_count = 0;
         let mut compaction_count = 0;
 
-        if self.session.is_some() {
+        if self.final_session_id.is_some() {
             if let Some(CompactionTriggerDecision::Fire { source, .. }) =
                 self.evaluate_auto_compaction()
                 && let Err(error) = self.execute_compaction_event(ui, source)
@@ -526,10 +576,8 @@ impl ConversationRuntime for AgentConversationRuntime {
                 ui.emit(&UiEvent::Warning { message: error });
             }
 
-            if let Some(session) = self.session.as_ref() {
-                message_count = session.messages().len();
-                compaction_count = session.compaction_count();
-            }
+            message_count = self.memory_message_count;
+            compaction_count = self.compaction_count;
         }
 
         ui.emit(&UiEvent::AssistantMessage {
@@ -597,6 +645,8 @@ impl AgentConversationRuntime {
         use crate::providers::github_copilot::model::agent_from_config;
 
         let runtime = &self.runtime;
+        let memory = &self.memory;
+        let conversation_store = &self.conversation_store;
         let store = &self.store;
 
         // Create the GitHub Copilot agent for compaction
@@ -612,25 +662,46 @@ impl AgentConversationRuntime {
         ui.emit(&UiEvent::CompactionStarted {
             source: source_label.clone(),
         });
+
+        // Load session temporarily for compaction
+        let session_id = self
+            .final_session_id
+            .as_ref()
+            .ok_or_else(|| "session_unavailable".to_string())?;
+        
+        let mut session = store
+            .load_session(session_id)
+            .map_err(|e| format!("Failed to load session for compaction: {}", e))?;
+
+        // Execute compaction with rig memory (async)
         let result = execute_compaction_event_shared(source, || {
-            let session = self
-                .session
-                .as_mut()
-                .ok_or_else(|| "session_unavailable".to_string())?;
             let mode = match source {
                 CompactionTriggerSource::SlashCompact => CompactionInvocationMode::Force,
                 CompactionTriggerSource::AutoThreshold => CompactionInvocationMode::Threshold,
             };
-            execute_compaction_persisted(
-                session,
-                store,
-                |old_messages| summarize_old_segment_with_llm(runtime, &agent, ui, old_messages),
+
+            // Run async compaction in the runtime
+            runtime.block_on(execute_compaction_with_rig_memory(
+                &mut session,
+                memory,
+                conversation_store,
+                |old_messages| summarize_rig_messages_with_llm(runtime, &agent, ui, old_messages),
                 mode,
-            )
+            ))
         });
+
         match result {
             Ok(event) => {
                 ui.emit(&event);
+                
+                // Update memory_message_count and compaction_count after successful compaction
+                if let UiEvent::CompactionTriggered { kept_recent_count, .. } = &event {
+                    // After compaction: summary + kept_recent_count messages
+                    self.memory_message_count = kept_recent_count + 1;
+                    // Increment compaction count
+                    self.compaction_count = session.compaction_count();
+                }
+                
                 Ok(())
             }
             Err(error) => {
@@ -674,18 +745,66 @@ where
     })
 }
 
-fn execute_compaction_persisted<F>(
+/// Execute compaction using rig memory and ConversationStore.
+///
+/// This async function:
+/// 1. Loads messages from InMemoryConversationMemory
+/// 2. Calls the summarizer with old rig messages
+/// 3. Compacts using `Session::compact_with_rig_memory`
+/// 4. Updates memory and persists to store
+///
+/// # Arguments
+/// * `runtime` - Tokio runtime for async operations
+/// * `session` - Session to compact
+/// * `memory` - InMemoryConversationMemory containing messages
+/// * `store` - ConversationStore for persistence
+/// * `summarizer` - Function that takes rig messages and returns summary
+/// * `mode` - Compaction invocation mode (Threshold or Force)
+///
+/// # Returns
+/// Ok(Some(outcome)) on successful compaction, Ok(None) if no compaction needed
+async fn execute_compaction_with_rig_memory<F, S>(
     session: &mut Session,
-    store: &SessionStore,
+    memory: &rig::memory::InMemoryConversationMemory,
+    store: &S,
     summarizer: F,
     mode: CompactionInvocationMode,
 ) -> Result<Option<CompactionOutcome>, String>
 where
-    F: FnOnce(&[Message]) -> std::io::Result<String>,
+    F: FnOnce(&[rig::completion::Message]) -> std::io::Result<String>,
+    S: ConversationStore,
 {
-    session
-        .maybe_compact_with_mode(store, mode, summarizer)
-        .map_err(|_| COMPACTION_FAILURE_WARNING.to_string())
+    use rig::memory::ConversationMemory;
+
+    // Load messages from memory to check threshold
+    let messages = memory
+        .load(&session.id())
+        .await
+        .map_err(|e| format!("Failed to load messages from memory: {}", e))?;
+
+    // Determine if compaction should run
+    let should_compact = match mode {
+        CompactionInvocationMode::Threshold => {
+            messages.len() > session.config().compaction_threshold
+        }
+        CompactionInvocationMode::Force => true,
+    };
+
+    if !should_compact {
+        return Ok(None);
+    }
+
+    // Perform compaction
+    let outcome = session
+        .compact_with_rig_memory(memory, store, summarizer)
+        .await
+        .map_err(|_| COMPACTION_FAILURE_WARNING.to_string())?;
+
+    if outcome.summarized_count == 0 {
+        return Ok(None);
+    }
+
+    Ok(Some(outcome))
 }
 
 fn summary_preview_text(summary_body: &str) -> String {
@@ -693,17 +812,70 @@ fn summary_preview_text(summary_body: &str) -> String {
     one_line.chars().take(120).collect()
 }
 
-fn summarize_old_segment_with_llm<U: ProgressUi>(
+/// Format rig messages for summarization.
+///
+/// Extracts text content from rig::completion::Message variants:
+/// - Message::User { content } -> text from UserContent::Text
+/// - Message::Assistant { content } -> text from AssistantContent::Text  
+/// - Message::System { content } -> content string
+///
+/// Returns formatted string with role: content pairs.
+fn format_rig_messages_for_summary(messages: &[rig::completion::Message]) -> String {
+    use rig::completion::message::{AssistantContent, UserContent};
+
+    messages
+        .iter()
+        .map(|msg| {
+            let role = match msg {
+                rig::completion::Message::User { .. } => "user",
+                rig::completion::Message::Assistant { .. } => "assistant",
+                rig::completion::Message::System { .. } => "system",
+            };
+
+            let content = match msg {
+                rig::completion::Message::User { content } => {
+                    // Extract text from OneOrMany<UserContent>
+                    content
+                        .iter()
+                        .filter_map(|c| match c {
+                            UserContent::Text(t) => Some(t.text.as_str()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                }
+                rig::completion::Message::Assistant { content, .. } => {
+                    // Extract text from OneOrMany<AssistantContent>
+                    content
+                        .iter()
+                        .filter_map(|c| match c {
+                            AssistantContent::Text(text) => Some(text.text.as_str()),
+                            AssistantContent::ToolCall(_) => None,
+                            AssistantContent::Reasoning(_) => None,
+                            AssistantContent::Image(_) => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                }
+                rig::completion::Message::System { content } => content.clone(),
+            };
+
+            format!("{}: {}", role, content)
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+/// Summarize old rig messages with LLM.
+///
+/// Formats rig messages, creates summarization prompt, and calls agent.completion().
+fn summarize_rig_messages_with_llm<U: ProgressUi>(
     runtime: &tokio::runtime::Runtime,
     agent: &crate::providers::github_copilot::model::Agent,
     ui: &mut U,
-    old_messages: &[Message],
+    old_messages: &[rig::completion::Message],
 ) -> std::io::Result<String> {
-    let history = old_messages
-        .iter()
-        .map(|message| format!("{}: {}", message.role(), message.content()))
-        .collect::<Vec<_>>()
-        .join("\n\n");
+    let history = format_rig_messages_for_summary(old_messages);
     let prompt_text = format!(
         "Summarize the following prior conversation segment concisely while preserving critical decisions, constraints, and open tasks.\n\n{}",
         history

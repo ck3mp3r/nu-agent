@@ -82,11 +82,22 @@ fn openai5x_execute_posts_to_responses_with_valid_input_shape() {
         )
         .expect("create agent");
 
-        let crate::providers::github_copilot::Agent::OpenAI5x(agent, ..) = agent else {
-            panic!("expected OpenAI5x agent")
-        };
+        assert_eq!(
+            agent.variant,
+            crate::providers::github_copilot::model::ProviderVariant::OpenAI5x,
+            "expected OpenAI5x agent"
+        );
 
-        let _ = agent
+        // Build a one-shot rig agent from the Agent struct fields
+        use crate::providers::github_copilot::completion::CompletionModel;
+        use crate::providers::github_copilot::providers::OpenAI5xProvider;
+        let model = CompletionModel::<OpenAI5xProvider, _>::new(
+            agent.client.clone(),
+            &agent.model_name,
+        );
+        let rig_agent = rig::agent::AgentBuilder::new(model).build();
+
+        let _ = rig_agent
             .completion("hello from wire test", Vec::<rig::completion::Message>::new())
             .await
             .expect("build completion")

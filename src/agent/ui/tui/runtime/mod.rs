@@ -164,8 +164,6 @@ fn transcript_line_statuses_for_render(
 use render_frame::{
     ModalPanelKind, STATUS_TARGET_HEIGHT, current_time_millis, modal_rect_for_panel,
 };
-#[cfg(test)]
-use status::visual_indicator_line;
 use status::{
     availability_label, build_status_lines, compact_status_line, cursor_style_for_mode,
     lane_2_status_line,
@@ -841,6 +839,8 @@ impl RuntimeCoordinator {
                     self.state.finish_tool_call(name, arguments, success);
                     continue;
                 }
+                // Tool result without tool_arguments — skip (not displayed on reload)
+                continue;
             }
 
             for line in message_content.lines() {
@@ -1977,18 +1977,6 @@ pub(super) fn status_lines_for_test(
         last_input_poll_status,
         last_input_error,
     )
-}
-
-#[cfg(test)]
-#[cfg(test)]
-pub(super) fn visual_indicator_line_for_test(state: &AppState) -> Option<String> {
-    visual_indicator_line(state)
-}
-
-#[cfg(test)]
-pub(super) fn transcript_title_for_test(_state: &AppState) -> String {
-    // Visual mode removed - just return simple title
-    "Transcript".to_string()
 }
 
 #[cfg(test)]

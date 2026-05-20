@@ -14,7 +14,7 @@ strip = "symbols"
 [dependencies]
 nu-plugin = "0.112.2"
 nu-protocol = "0.112.2"
-rig = { package = "rig-core", version = "0.36.0", features = ["rmcp"] }
+rig = { package = "rig-core", version = "0.37.0", features = ["rmcp"] }
 tokio = { version = "1.52.3", features = ["full"] }
 tokio-util = "0.7"
 rmcp = { version = "1.5.0", features = [

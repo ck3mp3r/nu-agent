@@ -324,6 +324,7 @@ async fn on_completion_response_extracts_token_usage() {
         total_tokens: 225,
         cached_input_tokens: 0,
         cache_creation_input_tokens: 0,
+        reasoning_tokens: 0,
     };
 
     let response_text = "Here is my response with some text.";
@@ -410,6 +411,7 @@ async fn on_completion_response_handles_text_only_response() {
         total_tokens: 75,
         cached_input_tokens: 0,
         cache_creation_input_tokens: 0,
+        reasoning_tokens: 0,
     };
 
     let response_text = "Simple text response.";
@@ -465,6 +467,7 @@ async fn on_completion_response_handles_tool_only_response() {
         total_tokens: 150,
         cached_input_tokens: 0,
         cache_creation_input_tokens: 0,
+        reasoning_tokens: 0,
     };
 
     let response = CompletionResponse {

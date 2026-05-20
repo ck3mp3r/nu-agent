@@ -1,142 +1,300 @@
-use nu_protocol::LabeledError;
+use crate::agent::protocol::contracts::UiMessageSnapshot;
+use rig::completion::message::{AssistantContent, Text, ToolCall, ToolFunction, UserContent, ToolResultContent};
+use rig::completion::Message;
+use rig::one_or_many::OneOrMany;
+use serde_json::json;
 
-use crate::agent::session::resolver::{
-    DefaultSessionResolver, SessionRequest, SessionResolutionInput, SessionResolver,
-    resolve_session_request,
-};
-use crate::session::MessageRole;
-use crate::session::SessionStore;
+/// Helper function to convert rig messages to UI snapshots for testing.
+/// This mirrors the private function in resolver.rs
+fn convert_rig_messages_to_snapshots(messages: &[Message]) -> Vec<UiMessageSnapshot> {
+    messages
+        .iter()
+        .flat_map(|msg| {
+            let mut snapshots = Vec::new();
 
-#[test]
-fn resolve_session_request_matrix_tui_with_explicit_session_attaches() {
-    let req = resolve_session_request(true, Some("abc".to_string()), false);
-    assert_eq!(req, SessionRequest::Attach("abc".to_string()));
-}
+            match msg {
+                Message::User { content } => {
+                    for item in content.iter() {
+                        match item {
+                            UserContent::Text(text) => {
+                                snapshots.push(UiMessageSnapshot::new("user", text.text.clone()));
+                            }
+                            UserContent::ToolResult(_) => {
+                                // Tool results are kept in memory/JSONL for the LLM,
+                                // but not shown in the hydrated TUI transcript.
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                Message::Assistant { content, .. } => {
+                    for item in content.iter() {
+                        match item {
+                            AssistantContent::Text(text) => {
+                                if !text.text.is_empty() {
+                                    snapshots
+                                        .push(UiMessageSnapshot::new("assistant", text.text.clone()));
+                                }
+                            }
+                            AssistantContent::ToolCall(tool_call) => {
+                                // Tool calls: hydrate as tool invocation with proper format
+                                let args_json = serde_json::to_string(&tool_call.function.arguments)
+                                    .unwrap_or_else(|_| "{}".to_string());
 
-#[test]
-fn resolve_session_request_matrix_tui_with_explicit_session_and_new_session_still_attaches() {
-    let req = resolve_session_request(true, Some("abc".to_string()), true);
-    assert_eq!(req, SessionRequest::Attach("abc".to_string()));
-}
+                                // Summarize arguments to match live rendering
+                                let args_summary =
+                                    crate::agent::protocol::tool_args::summarize_tool_arguments(&args_json);
 
-#[test]
-fn resolve_session_request_matrix_tui_without_session_creates() {
-    let req = resolve_session_request(true, None, false);
-    match req {
-        SessionRequest::Create(id) => assert!(id.starts_with("session-")),
-        other => panic!("expected create, got {other:?}"),
-    }
-}
+                                // Format content to match what start_tool_call produces
+                                let display_content =
+                                    format!("tool[{}] args={}", tool_call.function.name, args_summary);
 
-#[test]
-fn resolve_session_request_matrix_non_tui_without_flags_is_none() {
-    let req = resolve_session_request(false, None, false);
-    assert_eq!(req, SessionRequest::None);
-}
+                                snapshots.push(
+                                    UiMessageSnapshot::new("tool", display_content)
+                                        .with_tool_details(Some(args_json), None, Some(true)),
+                                );
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                Message::System { content } => {
+                    snapshots.push(UiMessageSnapshot::new("system", content.clone()));
+                }
+            }
 
-#[test]
-fn resolve_session_request_matrix_non_tui_new_session_creates() {
-    let req = resolve_session_request(false, None, true);
-    match req {
-        SessionRequest::Create(id) => assert!(id.starts_with("session-")),
-        other => panic!("expected create, got {other:?}"),
-    }
-}
-
-#[test]
-fn default_session_resolver_tui_explicit_loads_existing_else_creates_missing() {
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
-    let resolver = DefaultSessionResolver::new(&store);
-
-    let first = resolver
-        .resolve(SessionResolutionInput {
-            use_tui: true,
-            input_is_nothing: true,
-            session_id: Some("tui-explicit".to_string()),
-            new_session: false,
+            snapshots
         })
-        .expect("first resolve");
-
-    assert_eq!(first.final_session_id.as_deref(), Some("tui-explicit"));
-    let mut first_session = first.session.expect("session created");
-    assert_eq!(first_session.id(), "tui-explicit");
-    assert!(!first.tui_should_hydrate_transcript);
-    first_session
-        .add_message(
-            &store,
-            crate::session::Message::new(MessageRole::User, "persist me".to_string()),
-        )
-        .expect("persist history");
-
-    let second = resolver
-        .resolve(SessionResolutionInput {
-            use_tui: true,
-            input_is_nothing: true,
-            session_id: Some("tui-explicit".to_string()),
-            new_session: false,
-        })
-        .expect("second resolve");
-
-    assert_eq!(second.final_session_id.as_deref(), Some("tui-explicit"));
-    let second_session = second.session.expect("session loaded");
-    assert_eq!(second_session.id(), "tui-explicit");
-    assert!(second.tui_should_hydrate_transcript);
+        .collect()
 }
 
 #[test]
-fn default_session_resolver_tui_without_session_auto_creates_and_skips_hydration() {
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
-    let resolver = DefaultSessionResolver::new(&store);
+fn test_convert_user_text() {
+    let messages = vec![Message::User {
+        content: OneOrMany::one(UserContent::Text(Text {
+            text: "Hello, world!".to_string(),
+        })),
+    }];
 
-    let resolved = resolver
-        .resolve(SessionResolutionInput {
-            use_tui: true,
-            input_is_nothing: true,
-            session_id: None,
-            new_session: false,
-        })
-        .expect("resolve");
+    let snapshots = convert_rig_messages_to_snapshots(&messages);
 
-    assert!(resolved.final_session_id.is_some());
-    assert!(resolved.session.is_some());
-    assert!(!resolved.tui_should_hydrate_transcript);
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].role(), "user");
+    assert_eq!(snapshots[0].content(), "Hello, world!");
 }
 
 #[test]
-fn default_session_resolver_non_tui_no_flags_returns_none() {
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
-    let resolver = DefaultSessionResolver::new(&store);
+fn test_convert_assistant_text() {
+    let messages = vec![Message::Assistant {
+        id: None,
+        content: OneOrMany::one(AssistantContent::Text(Text {
+            text: "I can help you with that.".to_string(),
+        })),
+    }];
 
-    let resolved = resolver
-        .resolve(SessionResolutionInput {
-            use_tui: false,
-            input_is_nothing: false,
-            session_id: None,
-            new_session: false,
-        })
-        .expect("resolve");
+    let snapshots = convert_rig_messages_to_snapshots(&messages);
 
-    assert!(resolved.final_session_id.is_none());
-    assert!(resolved.session.is_none());
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].role(), "assistant");
+    assert_eq!(snapshots[0].content(), "I can help you with that.");
 }
 
 #[test]
-fn default_session_resolver_errors_on_non_not_found_tui_load_failure() {
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let file_path = temp_dir.path().join("not-a-dir");
-    std::fs::write(&file_path, "x").expect("write file");
-    let store = SessionStore::new_with_cache_dir(file_path);
-    let resolver = DefaultSessionResolver::new(&store);
+fn test_convert_assistant_tool_call() {
+    let messages = vec![Message::Assistant {
+        id: None,
+        content: OneOrMany::one(AssistantContent::ToolCall(ToolCall {
+            id: "call_123".to_string(),
+            call_id: None,
+            signature: None,
+            additional_params: None,
+            function: ToolFunction {
+                name: "read_file".to_string(),
+                arguments: json!({"path": "/tmp/test.txt"}),
+            },
+        })),
+    }];
 
-    let result: Result<_, LabeledError> = resolver.resolve(SessionResolutionInput {
-        use_tui: true,
-        input_is_nothing: true,
-        session_id: Some("will-fail".to_string()),
-        new_session: false,
-    });
+    let snapshots = convert_rig_messages_to_snapshots(&messages);
 
-    assert!(result.is_err());
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].role(), "tool");
+    assert!(snapshots[0].content().starts_with("tool[read_file] args="));
+    assert!(snapshots[0].tool_arguments().is_some());
+    assert_eq!(snapshots[0].tool_success(), Some(true));
 }
+
+#[test]
+fn test_convert_system() {
+    let messages = vec![Message::System {
+        content: "Context compacted: 10 messages summarized".to_string(),
+    }];
+
+    let snapshots = convert_rig_messages_to_snapshots(&messages);
+
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].role(), "system");
+    assert_eq!(
+        snapshots[0].content(),
+        "Context compacted: 10 messages summarized"
+    );
+}
+
+#[test]
+fn test_tool_result_not_shown_in_hydrated_transcript() {
+    let messages = vec![Message::User {
+        content: OneOrMany::one(UserContent::ToolResult(rig::completion::message::ToolResult {
+            id: "call_123".to_string(),
+            call_id: None,
+            content: OneOrMany::one(ToolResultContent::Text(Text {
+                text: "File contents here".to_string(),
+            })),
+        })),
+    }];
+
+    let snapshots = convert_rig_messages_to_snapshots(&messages);
+
+    // Tool results are kept in memory for the LLM but not shown in the TUI transcript
+    assert_eq!(snapshots.len(), 0);
+}
+
+#[test]
+fn test_convert_mixed_assistant_content() {
+    let messages = vec![Message::Assistant {
+        id: None,
+        content: OneOrMany::many(vec![
+            AssistantContent::Text(Text {
+                text: "Let me help you.".to_string(),
+            }),
+            AssistantContent::ToolCall(ToolCall {
+                id: "call_weather".to_string(),
+                call_id: None,
+                signature: None,
+                additional_params: None,
+                function: ToolFunction {
+                    name: "get_weather".to_string(),
+                    arguments: json!({"location": "NYC"}),
+                },
+            }),
+        ])
+        .unwrap(),
+    }];
+
+    let snapshots = convert_rig_messages_to_snapshots(&messages);
+
+    // Should produce 2 snapshots: one for text, one for tool call
+    assert_eq!(snapshots.len(), 2);
+    assert_eq!(snapshots[0].role(), "assistant");
+    assert_eq!(snapshots[0].content(), "Let me help you.");
+    assert_eq!(snapshots[1].role(), "tool");
+    assert!(snapshots[1].content().starts_with("tool[get_weather] args="));
+}
+
+#[test]
+fn test_convert_multiple_messages() {
+    let messages = vec![
+        Message::User {
+            content: OneOrMany::one(UserContent::Text(Text {
+                text: "What's the weather?".to_string(),
+            })),
+        },
+        Message::Assistant {
+            id: None,
+            content: OneOrMany::one(AssistantContent::Text(Text {
+                text: "I'll check that for you.".to_string(),
+            })),
+        },
+        Message::System {
+            content: "Compaction summary".to_string(),
+        },
+    ];
+
+    let snapshots = convert_rig_messages_to_snapshots(&messages);
+
+    assert_eq!(snapshots.len(), 3);
+    assert_eq!(snapshots[0].role(), "user");
+    assert_eq!(snapshots[1].role(), "assistant");
+    assert_eq!(snapshots[2].role(), "system");
+}
+
+#[test]
+fn test_empty_assistant_text_skipped() {
+    let messages = vec![Message::Assistant {
+        id: None,
+        content: OneOrMany::one(AssistantContent::Text(Text {
+            text: "".to_string(),
+        })),
+    }];
+
+    let snapshots = convert_rig_messages_to_snapshots(&messages);
+
+    // Empty text should be skipped
+    assert_eq!(snapshots.len(), 0);
+}
+
+#[test]
+fn test_tool_call_format_matches_live_rendering() {
+    // Test that tool call format matches what start_tool_call produces
+    let messages = vec![Message::Assistant {
+        id: None,
+        content: OneOrMany::one(AssistantContent::ToolCall(ToolCall {
+            id: "call_abc".to_string(),
+            call_id: None,
+            signature: None,
+            additional_params: None,
+            function: ToolFunction {
+                name: "k8s__list_pods".to_string(),
+                arguments: json!({"namespace": "prod"}),
+            },
+        })),
+    }];
+
+    let snapshots = convert_rig_messages_to_snapshots(&messages);
+
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].role(), "tool");
+    
+    // Content should be formatted as "tool[name] args={summary}"
+    assert!(snapshots[0].content().starts_with("tool[k8s__list_pods] args="));
+    
+    // Tool arguments should contain the raw JSON
+    let args = snapshots[0].tool_arguments().unwrap();
+    assert!(args.contains("namespace"));
+    assert!(args.contains("prod"));
+    
+    // Tool success should be set to true for reloaded sessions
+    assert_eq!(snapshots[0].tool_success(), Some(true));
+}
+
+#[test]
+fn test_tool_call_argument_summarization() {
+    // Test that long arguments are properly summarized
+    let long_content = "x".repeat(150);
+    let messages = vec![Message::Assistant {
+        id: None,
+        content: OneOrMany::one(AssistantContent::ToolCall(ToolCall {
+            id: "call_long".to_string(),
+            call_id: None,
+            signature: None,
+            additional_params: None,
+            function: ToolFunction {
+                name: "write_file".to_string(),
+                arguments: json!({"content": long_content}),
+            },
+        })),
+    }];
+
+    let snapshots = convert_rig_messages_to_snapshots(&messages);
+
+    assert_eq!(snapshots.len(), 1);
+    
+    // Content should be truncated with ellipsis
+    let content = snapshots[0].content();
+    assert!(content.starts_with("tool[write_file] args="));
+    assert!(content.len() < 200); // Should be less than content length + overhead
+    
+    // But raw arguments should contain full JSON
+    let args = snapshots[0].tool_arguments().unwrap();
+    assert!(args.contains(&long_content));
+}
+

@@ -1,9 +1,19 @@
+mod store;
+#[cfg(test)]
+#[path = "store_test.rs"]
+mod store_test;
+
+#[cfg(test)]
+#[path = "compaction_test.rs"]
+mod compaction_test;
+
+pub use store::{ConversationStore, JsonlConversationStore};
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::fs::{self, OpenOptions};
-use std::io::{self, BufRead, BufReader, Write};
+use std::fs;
+use std::io::{self, BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use tempfile::NamedTempFile;
 
 /// SessionStore manages session storage using XDG Base Directory specification.
 /// Sessions are stored in JSONL format in the cache directory.
@@ -79,7 +89,6 @@ impl Default for SessionConfig {
 pub struct Session {
     id: String,
     created_at: DateTime<Utc>,
-    messages: Vec<Message>,
     #[serde(default)]
     config: SessionConfig,
     #[serde(default)]
@@ -106,91 +115,11 @@ impl Session {
         &self.id
     }
 
-    /// Returns a reference to the messages in this session.
-    pub fn messages(&self) -> &[Message] {
-        &self.messages
-    }
-
-    /// Formats the session history as a string.
-    ///
-    /// Each message is formatted as "role: content" with double newlines between messages.
-    ///
-    /// # Returns
-    /// A formatted string containing all messages in the session, or empty string if no messages.
-    pub fn format_history(&self) -> String {
-        self.messages
-            .iter()
-            .map(format_message_for_history)
-            .collect::<Vec<_>>()
-            .join("\n\n")
-    }
-
-    /// Converts session history to structured chat messages for LLM API.
-    ///
-    /// System messages are skipped (handled via preamble). Tool messages become
-    /// `Message::User` with `ToolResult` content, matching rig's expected format.
-    ///
-    /// Tool call IDs are normalized to ensure provider-agnostic replay.
-    /// Assistant messages with tool calls include text content only (tool call details stripped).
-    /// Tool result messages are converted to assistant text summaries for context.
-    pub fn as_chat_history(&self) -> Vec<rig::completion::Message> {
-        use rig::completion::message::{AssistantContent, Text, UserContent};
-        use rig::one_or_many::OneOrMany;
-
-        self.messages
-            .iter()
-            .filter_map(|msg| match msg.role() {
-                MessageRole::System => None,
-                MessageRole::User => Some(rig::completion::Message::User {
-                    content: OneOrMany::one(UserContent::Text(Text {
-                        text: msg.content().to_string(),
-                    })),
-                }),
-                MessageRole::Assistant => {
-                    // For session history, include text content and summarize tool calls
-                    // Tool call structures are stripped to avoid provider-specific ID issues
-                    let mut text = msg.content().to_string();
-
-                    if let Some(tool_calls) = msg.tool_calls() {
-                        for tc in tool_calls {
-                            if !text.is_empty() {
-                                text.push('\n');
-                            }
-                            text.push_str(&format!(
-                                "[Called tool: {} with args: {}]",
-                                tc.name, tc.arguments
-                            ));
-                        }
-                    }
-
-                    if text.is_empty() {
-                        return None;
-                    }
-
-                    Some(rig::completion::Message::Assistant {
-                        id: None,
-                        content: OneOrMany::one(AssistantContent::Text(Text { text })),
-                    })
-                }
-                MessageRole::Tool => {
-                    // Convert tool results to assistant text for provider-agnostic context
-                    let tool_name = msg.tool_name().unwrap_or("tool");
-                    let text = format!("[Tool {} returned: {}]", tool_name, msg.content());
-                    Some(rig::completion::Message::Assistant {
-                        id: None,
-                        content: OneOrMany::one(AssistantContent::Text(Text { text })),
-                    })
-                }
-            })
-            .collect()
-    }
-
     /// Creates a new session with the given ID.
     fn new(id: String) -> Self {
         Self {
             id,
             created_at: Utc::now(),
-            messages: Vec::new(),
             config: SessionConfig::default(),
             compaction_count: 0,
         }
@@ -216,150 +145,61 @@ impl Session {
         self.compaction_count
     }
 
-    /// Adds a message to the session.
+    /// Compacts messages using rig memory and ConversationStore.
     ///
-    /// This method appends the message to the session's messages vector and
-    /// persists it to the JSONL file.
-    ///
-    /// Compaction is evaluated by callers via `maybe_compact` so strategy-specific
-    /// behavior is explicit at call sites.
-    ///
-    /// # Arguments
-    /// * `store` - The SessionStore used to resolve the file path
-    /// * `message` - The message to add
-    ///
-    /// # Returns
-    /// Ok(()) if the message was successfully added, Err otherwise.
-    ///
-    /// # Errors
-    /// Returns an error if:
-    /// - The message cannot be serialized to JSON
-    /// - The file cannot be opened or written to
-    pub fn add_message(&mut self, store: &SessionStore, message: Message) -> io::Result<()> {
-        // Append message to the JSONL file
-        self.append_message(store, message.clone())?;
-
-        // Add to in-memory vector
-        self.messages.push(message);
-
-        Ok(())
-    }
-
-    /// Checks if compaction is needed and performs it using the configured strategy.
-    ///
-    /// Compaction is triggered when the number of messages exceeds the configured
-    /// `compaction_threshold`. The specific compaction strategy is determined by
-    /// `config.compaction_strategy`.
+    /// This method:
+    /// 1. Loads messages from InMemoryConversationMemory
+    /// 2. Splits at `len - keep_recent`
+    /// 3. Formats old messages for summarization
+    /// 4. Calls summarizer with old messages
+    /// 5. Builds compacted list: [Message::system(summary)] + recent
+    /// 6. Clears memory and appends compacted messages
+    /// 7. Atomically rewrites to ConversationStore
+    /// 8. Updates compaction_count
     ///
     /// # Arguments
-    /// * `store` - The SessionStore used to resolve file paths
+    /// * `memory` - InMemoryConversationMemory containing session messages
+    /// * `store` - ConversationStore for persistent JSONL storage
+    /// * `summarizer` - Function that takes rig messages and returns a summary string
     ///
     /// # Returns
-    /// Ok(true) if compaction was triggered and performed, Ok(false) if no compaction
-    /// was needed, or Err if compaction failed.
+    /// CompactionOutcome with counts and summary text
     ///
     /// # Errors
-    /// Returns an error if the chosen compaction strategy fails.
-    pub fn maybe_compact(&mut self, store: &SessionStore) -> io::Result<bool> {
-        self.maybe_compact_with(store, |old_messages| {
-            Ok(Self::fallback_summary_text(old_messages))
-        })
-        .map(|outcome| outcome.is_some())
-    }
-
-    pub fn maybe_compact_with<F>(
+    /// Returns an error if memory operations, summarizer, or store operations fail.
+    pub async fn compact_with_rig_memory<F, S>(
         &mut self,
-        store: &SessionStore,
-        summarizer: F,
-    ) -> io::Result<Option<CompactionOutcome>>
-    where
-        F: FnOnce(&[Message]) -> io::Result<String>,
-    {
-        self.maybe_compact_with_mode(store, CompactionInvocationMode::Threshold, summarizer)
-    }
-
-    pub fn maybe_compact_with_mode<F>(
-        &mut self,
-        store: &SessionStore,
-        mode: CompactionInvocationMode,
-        summarizer: F,
-    ) -> io::Result<Option<CompactionOutcome>>
-    where
-        F: FnOnce(&[Message]) -> io::Result<String>,
-    {
-        let should_compact = match mode {
-            CompactionInvocationMode::Threshold => {
-                self.messages.len() > self.config.compaction_threshold
-            }
-            CompactionInvocationMode::Force => true,
-        };
-
-        if !should_compact {
-            return Ok(None);
-        }
-
-        let outcome = match self.config.compaction_strategy {
-            CompactionStrategy::SlidingSummary => {
-                self.compact_sliding_summary_with(store, summarizer)?
-            }
-        };
-
-        if outcome.summarized_count == 0 {
-            return Ok(None);
-        }
-
-        Ok(Some(outcome))
-    }
-
-    /// Compacts messages using summarization strategy with a custom summarizer function.
-    ///
-    /// Splits messages into "old" (to be summarized) and "recent" (to keep at full fidelity).
-    /// The summarizer function is called with old messages and returns a summary string.
-    /// The summary replaces all old messages as a single "system" role message.
-    ///
-    /// # Arguments
-    /// * `store` - The SessionStore used for file operations
-    /// * `summarizer` - Function that takes messages and returns a summary string
-    ///
-    /// # Returns
-    /// Ok(()) when summarization succeeds.
-    ///
-    /// # Errors
-    /// Returns an error if the summarizer fails or file operations fail.
-    pub fn compact_summarize_with<F>(
-        &mut self,
-        store: &SessionStore,
+        memory: &rig::memory::InMemoryConversationMemory,
+        store: &S,
         summarizer: F,
     ) -> io::Result<CompactionOutcome>
     where
-        F: FnOnce(&[Message]) -> io::Result<String>,
+        F: FnOnce(&[rig::completion::Message]) -> io::Result<String>,
+        S: ConversationStore,
     {
-        self.compact_sliding_summary_with(store, summarizer)
-    }
+        use rig::memory::ConversationMemory;
 
-    pub fn compact_sliding_summary_with<F>(
-        &mut self,
-        store: &SessionStore,
-        summarizer: F,
-    ) -> io::Result<CompactionOutcome>
-    where
-        F: FnOnce(&[Message]) -> io::Result<String>,
-    {
         let keep_count = self.config.keep_recent;
 
+        // Load messages from memory
+        let messages = memory
+            .load(&self.id)
+            .await
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+
         // If we have fewer messages than keep_recent, nothing to do
-        if self.messages.len() <= keep_count {
+        if messages.len() <= keep_count {
             return Ok(CompactionOutcome {
                 summarized_count: 0,
-                kept_recent_count: self.messages.len(),
+                kept_recent_count: messages.len(),
                 summary_text: String::new(),
             });
         }
 
         // Split messages into old (to summarize) and recent (to keep)
-        let split_index = self.messages.len() - keep_count;
-        let old_messages = &self.messages[..split_index];
-        let recent_messages = &self.messages[split_index..];
+        let split_index = messages.len() - keep_count;
+        let old_messages = &messages[..split_index];
+        let recent_messages = &messages[split_index..];
         let summarized_count = old_messages.len();
         let kept_recent_count = recent_messages.len();
 
@@ -367,41 +207,27 @@ impl Session {
         let summary = summarizer(old_messages)?;
 
         // Create summary message with "system" role
-        let summary_message = Message::new(MessageRole::System, summary);
+        let summary_message = rig::completion::Message::system(&summary);
 
-        // Replace messages: [summary] + recent messages
-        let mut new_messages = vec![summary_message];
-        new_messages.extend_from_slice(recent_messages);
-        self.messages = new_messages;
+        // Build compacted messages: [summary] + recent messages
+        let mut compacted = vec![summary_message];
+        compacted.extend_from_slice(recent_messages);
+
+        // Clear memory and append compacted messages
+        memory
+            .clear(&self.id)
+            .await
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+
+        memory
+            .append(&self.id, compacted.clone())
+            .await
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
 
         // Increment compaction count
         self.compaction_count += 1;
 
-        // Rewrite the JSONL file with updated metadata and compacted messages
-        self.rewrite_jsonl(store)?;
-
-        Ok(CompactionOutcome {
-            summarized_count,
-            kept_recent_count,
-            summary_text: self.messages[0].content().to_string(),
-        })
-    }
-
-    /// Rewrites the entire JSONL file with current metadata and messages.
-    ///
-    /// This is used after compaction to persist the new message list.
-    ///
-    /// # Arguments
-    /// * `store` - The SessionStore used to resolve the file path
-    ///
-    /// # Returns
-    /// Ok(()) if the file was successfully rewritten.
-    ///
-    /// # Errors
-    /// Returns an error if file operations or JSON serialization fail.
-    fn rewrite_jsonl(&self, store: &SessionStore) -> io::Result<()> {
-        let path = store.session_path(&self.id);
-
+        // Build metadata for rewrite
         let metadata = SessionMetadata {
             metadata_type: "meta".to_string(),
             session_id: self.id.clone(),
@@ -409,318 +235,28 @@ impl Session {
             compaction_count: self.compaction_count,
         };
 
-        let metadata_json = serde_json::to_string(&metadata).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Failed to serialize metadata: {}", e),
-            )
-        })?;
+        // Rewrite to ConversationStore (atomic JSONL write)
+        store
+            .rewrite(&self.id, &metadata, &compacted)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
 
-        let mut content = metadata_json;
-        content.push('\n');
-
-        // Append all messages
-        for message in &self.messages {
-            let message_json = serde_json::to_string(message).map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("Failed to serialize message: {}", e),
-                )
-            })?;
-            content.push_str(&message_json);
-            content.push('\n');
-        }
-
-        // Atomic write pattern: write to temp file in same directory, then rename
-        // This ensures crash-safety - if we crash during write, original file is intact
-        let parent_dir = path
-            .parent()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Invalid path"))?;
-
-        // Create temp file in the same directory as target (required for atomic rename)
-        let mut temp_file = NamedTempFile::new_in(parent_dir)?;
-
-        // Write all content to temp file
-        temp_file.write_all(content.as_bytes())?;
-
-        // Sync to disk before rename to ensure data is persisted
-        temp_file.flush()?;
-        temp_file.as_file().sync_all()?;
-
-        // Atomic rename: this is crash-safe - either succeeds completely or fails completely
-        // If we crash here, temp file exists but original is intact
-        // If rename succeeds, temp file becomes the new file atomically
-        temp_file.persist(&path)?;
-
-        Ok(())
+        Ok(CompactionOutcome {
+            summarized_count,
+            kept_recent_count,
+            summary_text: summary,
+        })
     }
-
-    fn fallback_summary_text(messages: &[Message]) -> String {
-        let preview = messages
-            .iter()
-            .take(8)
-            .map(|m| format!("{}: {}", m.role(), m.content()))
-            .collect::<Vec<_>>()
-            .join("\n");
-        if preview.is_empty() {
-            "Session summary: (no prior messages)".to_string()
-        } else {
-            format!("Session summary:\n{preview}")
-        }
-    }
-
-    /// Appends a message to the session's JSONL file.
-    ///
-    /// The message is serialized as JSON and appended as a new line to the file.
-    /// The metadata line (first line) is not modified.
-    ///
-    /// # Arguments
-    /// * `store` - The SessionStore used to resolve the file path
-    /// * `message` - The message to append
-    ///
-    /// # Returns
-    /// Ok(()) if the message was successfully appended, Err otherwise.
-    ///
-    /// # Errors
-    /// Returns an error if:
-    /// - The message cannot be serialized to JSON
-    /// - The file cannot be opened or written to
-    pub fn append_message(&mut self, store: &SessionStore, message: Message) -> io::Result<()> {
-        let path = store.session_path(&self.id);
-
-        // Serialize message to JSON
-        let message_json = serde_json::to_string(&message).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Failed to serialize message: {}", e),
-            )
-        })?;
-
-        // Open file in append mode and write the message line
-        let mut file = OpenOptions::new().append(true).open(&path)?;
-
-        writeln!(file, "{}", message_json)?;
-
-        Ok(())
-    }
-}
-
-fn format_message_for_history(msg: &Message) -> String {
-    let mut rendered = format!("{}: {}", msg.role(), msg.content());
-    if msg.role() == MessageRole::Tool
-        && let Some(result) = msg.tool_result()
-    {
-        rendered.push_str(" result=");
-        rendered.push_str(result);
-    }
-    rendered
 }
 
 /// Metadata stored as the first line of a JSONL file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct SessionMetadata {
+pub struct SessionMetadata {
     #[serde(rename = "type")]
-    metadata_type: String,
-    session_id: String,
-    created_at: DateTime<Utc>,
+    pub metadata_type: String,
+    pub session_id: String,
+    pub created_at: DateTime<Utc>,
     #[serde(default)]
-    compaction_count: usize,
-}
-
-/// Message role in a conversation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum MessageRole {
-    System,
-    User,
-    Assistant,
-    Tool,
-}
-
-impl MessageRole {
-    /// Returns the role as a string slice.
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            MessageRole::System => "system",
-            MessageRole::User => "user",
-            MessageRole::Assistant => "assistant",
-            MessageRole::Tool => "tool",
-        }
-    }
-}
-
-impl std::fmt::Display for MessageRole {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl From<MessageRole> for String {
-    fn from(role: MessageRole) -> Self {
-        role.as_str().to_string()
-    }
-}
-
-/// Represents a stored tool call for assistant messages.
-/// This is a serializable version of tool call data that can be persisted to JSONL.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StoredToolCall {
-    pub id: String,
-    pub name: String,
-    pub arguments: String,
-}
-
-/// Represents a message in a session.
-/// Messages are appended to the JSONL file after the metadata line.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Message {
-    role: MessageRole,
-    content: String,
-    timestamp: DateTime<Utc>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    tool_arguments: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    tool_result: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    tool_success: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    tool_call_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    tool_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    usage: Option<MessageUsage>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    tool_calls: Option<Vec<StoredToolCall>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MessageUsage {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    input_tokens: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    output_tokens: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    total_tokens: Option<u64>,
-}
-
-impl Message {
-    /// Creates a new message with the given role and content.
-    /// The timestamp is automatically set to the current time.
-    pub fn new(role: MessageRole, content: String) -> Self {
-        Self {
-            role,
-            content,
-            timestamp: Utc::now(),
-            tool_arguments: None,
-            tool_result: None,
-            tool_success: None,
-            tool_call_id: None,
-            tool_name: None,
-            usage: None,
-            tool_calls: None,
-        }
-    }
-
-    pub fn with_usage(mut self, usage: MessageUsage) -> Self {
-        self.usage = Some(usage);
-        self
-    }
-
-    pub fn set_usage(&mut self, usage: MessageUsage) {
-        self.usage = Some(usage);
-    }
-
-    pub fn with_tool_details(
-        mut self,
-        arguments: impl Into<String>,
-        result: impl Into<String>,
-        success: bool,
-    ) -> Self {
-        self.tool_arguments = Some(arguments.into());
-        self.tool_result = Some(result.into());
-        self.tool_success = Some(success);
-        self
-    }
-
-    pub fn with_tool_call_id(mut self, id: impl Into<String>) -> Self {
-        self.tool_call_id = Some(id.into());
-        self
-    }
-
-    pub fn with_tool_name(mut self, name: impl Into<String>) -> Self {
-        self.tool_name = Some(name.into());
-        self
-    }
-
-    pub fn with_tool_calls(mut self, calls: Vec<StoredToolCall>) -> Self {
-        self.tool_calls = Some(calls);
-        self
-    }
-
-    /// Returns the message role.
-    pub fn role(&self) -> MessageRole {
-        self.role
-    }
-
-    /// Returns the message content.
-    pub fn content(&self) -> &str {
-        &self.content
-    }
-
-    /// Returns the message timestamp.
-    pub fn timestamp(&self) -> &DateTime<Utc> {
-        &self.timestamp
-    }
-
-    pub fn tool_arguments(&self) -> Option<&str> {
-        self.tool_arguments.as_deref()
-    }
-
-    pub fn tool_result(&self) -> Option<&str> {
-        self.tool_result.as_deref()
-    }
-
-    pub fn tool_success(&self) -> Option<bool> {
-        self.tool_success
-    }
-
-    pub fn tool_call_id(&self) -> Option<&str> {
-        self.tool_call_id.as_deref()
-    }
-
-    pub fn tool_name(&self) -> Option<&str> {
-        self.tool_name.as_deref()
-    }
-
-    pub fn tool_calls(&self) -> Option<&[StoredToolCall]> {
-        self.tool_calls.as_deref()
-    }
-
-    pub fn usage(&self) -> Option<&MessageUsage> {
-        self.usage.as_ref()
-    }
-}
-
-impl MessageUsage {
-    pub fn new(input_tokens: u64, output_tokens: u64, total_tokens: u64) -> Self {
-        Self {
-            input_tokens: Some(input_tokens),
-            output_tokens: Some(output_tokens),
-            total_tokens: Some(total_tokens),
-        }
-    }
-
-    pub fn input_tokens(&self) -> Option<u64> {
-        self.input_tokens
-    }
-
-    pub fn output_tokens(&self) -> Option<u64> {
-        self.output_tokens
-    }
-
-    pub fn total_tokens(&self) -> Option<u64> {
-        self.total_tokens
-    }
+    pub compaction_count: usize,
 }
 
 impl SessionStore {
@@ -814,20 +350,20 @@ impl SessionStore {
 
     /// Loads a session from its JSONL file.
     ///
-    /// The first line contains metadata, subsequent lines contain messages.
+    /// The first line contains metadata. This method only loads metadata,
+    /// not the message history. To load messages, use ConversationStore.
     ///
     /// # Arguments
     /// * `session_id` - The ID of the session to load
     ///
     /// # Returns
-    /// A Session with its metadata and messages loaded from the JSONL file.
+    /// A Session with its metadata loaded from the JSONL file.
     ///
     /// # Errors
     /// Returns an error if:
     /// - The file cannot be read
     /// - The file is empty (no metadata line)
     /// - The metadata line cannot be parsed as JSON
-    /// - Any message line cannot be parsed as JSON
     pub fn load_session(&self, session_id: &str) -> io::Result<Session> {
         let path = self.session_path(session_id);
         let content = fs::read_to_string(&path)?;
@@ -844,28 +380,9 @@ impl SessionStore {
             )
         })?;
 
-        // Parse all remaining lines as messages
-        let mut messages = Vec::new();
-        for (line_num, line) in lines.enumerate() {
-            // Skip empty lines
-            if line.trim().is_empty() {
-                continue;
-            }
-
-            let message: Message = serde_json::from_str(line).map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("Failed to parse message on line {}: {}", line_num + 2, e),
-                )
-            })?;
-
-            messages.push(message);
-        }
-
         Ok(Session {
             id: metadata.session_id,
             created_at: metadata.created_at,
-            messages,
             config: SessionConfig::default(), // Use default config for loaded sessions
             compaction_count: metadata.compaction_count,
         })
@@ -1062,7 +579,5 @@ impl Default for SessionStore {
     }
 }
 
-#[cfg(test)]
-mod message_role_test;
 #[cfg(test)]
 mod test;

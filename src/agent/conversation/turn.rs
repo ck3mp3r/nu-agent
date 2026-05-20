@@ -15,11 +15,10 @@ use crate::agent::hook::{
 use crate::agent::protocol::contracts::ProgressUi;
 use crate::agent::tools::handler::McpToolRegistry;
 use crate::providers::github_copilot::completion::CompletionModel;
-use crate::providers::github_copilot::model::Agent;
+use crate::providers::github_copilot::model::{Agent, ProviderVariant};
 use crate::providers::github_copilot::providers::{
     AnthropicProvider, OpenAI4xProvider, OpenAI5xProvider,
 };
-use crate::session::{Session, SessionStore};
 use crate::tools::closure::ClosureRegistry;
 
 /// Default max tool turns when config doesn't specify a limit.
@@ -80,11 +79,10 @@ pub(crate) struct TurnContext<'a> {
     pub runtime: &'a tokio::runtime::Handle,
     pub agent: &'a Agent,
     pub prompt: String,
-    pub session_history: Vec<rig::completion::Message>,
+    pub memory: rig::memory::InMemoryConversationMemory,
+    pub conversation_id: String,
     pub preamble: Option<&'a str>,
     pub max_turns: Option<u32>,
-    pub session: Option<&'a mut Session>,
-    pub store: Option<&'a SessionStore>,
     pub tool_server_handle: rig::tool::server::ToolServerHandle,
     pub closure_registry: &'a ClosureRegistry,
     pub mcp_registry: &'a McpToolRegistry,
@@ -119,7 +117,6 @@ pub(crate) struct TurnContext<'a> {
 /// - The agent completion fails (LLM error, network, etc.)
 /// - User cancels via UI
 /// - Hook driver encounters an error
-/// - Session persistence fails (logged but doesn't fail the turn)
 pub(crate) fn execute_turn<U: ProgressUi, P: PermissionResolver>(
     ctx: TurnContext<'_>,
     ui: &mut U,
@@ -128,9 +125,6 @@ pub(crate) fn execute_turn<U: ProgressUi, P: PermissionResolver>(
     // Create cancel token and hook+driver pair
     let cancel_token = CancellationToken::new();
     let (hook, mut driver) = HookDriver::new(cancel_token.clone());
-
-    // Clone prompt for persistence before moving it
-    let prompt_text = ctx.prompt.clone();
 
     // Build the prompt message
     let user_message = rig::completion::Message::User {
@@ -149,39 +143,51 @@ pub(crate) fn execute_turn<U: ProgressUi, P: PermissionResolver>(
             dyn Future<Output = Result<rig::agent::PromptResponse, rig::completion::PromptError>>
                 + Send,
         >,
-    > = match ctx.agent {
-        Agent::Anthropic(_inner, client, model_name) => {
-            let model = CompletionModel::<AnthropicProvider, _>::new(client.clone(), model_name);
+    > = match ctx.agent.variant {
+        ProviderVariant::Anthropic => {
+            let model = CompletionModel::<AnthropicProvider, _>::new(
+                ctx.agent.client.clone(),
+                &ctx.agent.model_name,
+            );
             Box::pin(build_agent_and_prompt(
                 model,
                 hook,
                 preamble_owned,
                 user_message,
-                ctx.session_history,
+                ctx.memory,
+                ctx.conversation_id,
                 ctx.tool_server_handle,
                 ctx.max_turns,
             ))
         }
-        Agent::OpenAI4x(_inner, client, model_name) => {
-            let model = CompletionModel::<OpenAI4xProvider, _>::new(client.clone(), model_name);
+        ProviderVariant::OpenAI4x => {
+            let model = CompletionModel::<OpenAI4xProvider, _>::new(
+                ctx.agent.client.clone(),
+                &ctx.agent.model_name,
+            );
             Box::pin(build_agent_and_prompt(
                 model,
                 hook,
                 preamble_owned,
                 user_message,
-                ctx.session_history,
+                ctx.memory,
+                ctx.conversation_id,
                 ctx.tool_server_handle,
                 ctx.max_turns,
             ))
         }
-        Agent::OpenAI5x(_inner, client, model_name) => {
-            let model = CompletionModel::<OpenAI5xProvider, _>::new(client.clone(), model_name);
+        ProviderVariant::OpenAI5x => {
+            let model = CompletionModel::<OpenAI5xProvider, _>::new(
+                ctx.agent.client.clone(),
+                &ctx.agent.model_name,
+            );
             Box::pin(build_agent_and_prompt(
                 model,
                 hook,
                 preamble_owned,
                 user_message,
-                ctx.session_history,
+                ctx.memory,
+                ctx.conversation_id,
                 ctx.tool_server_handle,
                 ctx.max_turns,
             ))
@@ -212,29 +218,6 @@ pub(crate) fn execute_turn<U: ProgressUi, P: PermissionResolver>(
 
     let response = join_result.map_err(TurnError::from)?;
 
-    // Persist messages to session if provided
-    if let (Some(session), Some(store)) = (ctx.session, ctx.store) {
-        use crate::session::{Message, MessageRole};
-
-        // Save user message (the prompt)
-        let user_msg = Message::new(MessageRole::User, prompt_text);
-        if let Err(e) = session.add_message(store, user_msg) {
-            eprintln!("Warning: Failed to persist user message: {}", e);
-        }
-
-        // Save assistant response with usage
-        let mut assistant_msg = Message::new(MessageRole::Assistant, response.output.clone());
-        assistant_msg.set_usage(crate::session::MessageUsage::new(
-            response.usage.input_tokens,
-            response.usage.output_tokens,
-            response.usage.total_tokens,
-        ));
-
-        if let Err(e) = session.add_message(store, assistant_msg) {
-            eprintln!("Warning: Failed to persist assistant message: {}", e);
-        }
-    }
-
     Ok(TurnResult {
         text: response.output,
         usage: response.usage,
@@ -249,7 +232,8 @@ async fn build_agent_and_prompt<M>(
     hook: CopilotPromptHook,
     preamble: Option<String>,
     prompt: rig::completion::Message,
-    history: Vec<rig::completion::Message>,
+    memory: rig::memory::InMemoryConversationMemory,
+    conversation_id: String,
     tool_server_handle: rig::tool::server::ToolServerHandle,
     max_turns: Option<u32>,
 ) -> Result<rig::agent::PromptResponse, rig::completion::PromptError>
@@ -260,6 +244,7 @@ where
 
     let mut builder = rig::agent::AgentBuilder::new(model)
         .hook(hook)
+        .memory(memory.clone())
         .tool_server_handle(tool_server_handle);
     if let Some(ref p) = preamble {
         builder = builder.preamble(p);
@@ -269,7 +254,7 @@ where
     let agent = builder.build();
     agent
         .prompt(prompt)
-        .with_history(history)
+        .conversation(&conversation_id)
         .extended_details()
         .await
 }

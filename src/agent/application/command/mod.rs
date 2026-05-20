@@ -242,21 +242,20 @@ pub fn merge_prompt_with_context(prompt: &str, context: Option<&str>) -> String 
 
 /// Extracts and validates session flags from the evaluated call.
 ///
-/// Returns a tuple of (session_id, new_session, no_session).
-/// Validates that flags are mutually exclusive.
+/// Returns the session_id as Option<String>.
+/// Validates that flags are valid.
 ///
 /// # Arguments
 /// * `call` - The EvaluatedCall containing session flags
 ///
 /// # Returns
-/// A tuple of (`Option<String>`, bool, bool) representing the session flags.
+/// An `Option<String>` representing the session ID.
 ///
 /// # Errors
-/// Returns an error if:
-/// - Multiple session flags are provided together
+/// Returns an error if flags are invalid.
 pub fn extract_and_validate_session_flags(
     call: &EvaluatedCall,
-) -> Result<(Option<String>, bool), LabeledError> {
+) -> Result<Option<String>, LabeledError> {
     args::extract_and_validate_session_flags(call)
 }
 
@@ -513,11 +512,6 @@ impl SimplePluginCommand for Agent {
                 None,
             )
             .switch(
-                "new-session",
-                "Create new session with auto-generated ID",
-                None,
-            )
-            .switch(
                 "verbose",
                 "Increase UX detail; repeat for more detail (-v, -vv, -vvv)",
                 Some('v'),
@@ -554,7 +548,7 @@ impl SimplePluginCommand for Agent {
         };
 
         // Validate session flags
-        let (session_id, new_session) = extract_and_validate_session_flags(call)?;
+        let session_id = extract_and_validate_session_flags(call)?;
 
         // Resolve configuration from all sources with proper precedence:
         // default < env < plugin < flags
@@ -685,7 +679,6 @@ impl SimplePluginCommand for Agent {
             use_tui: mode.is_tui(),
             input_is_nothing,
             session_id,
-            new_session,
         })?;
 
         // Create audit log directory ONCE before prompt loop
@@ -743,6 +736,13 @@ impl SimplePluginCommand for Agent {
                 })?;
         }
 
+        // Extract session metadata before constructing runtime
+        let (compaction_threshold, compaction_count) = if let Some(ref session) = session_resolution.session {
+            (Some(session.config().compaction_threshold), session.compaction_count())
+        } else {
+            (None, 0)
+        };
+
         let mut runtime_impl = AgentConversationRuntime {
             runtime,
             runtime_ctx: self.runtime_ctx.clone(),
@@ -762,8 +762,9 @@ impl SimplePluginCommand for Agent {
             tool_executor,
             engine: engine.clone(),
             store: self.store.clone(),
-            session: session_resolution.session,
             final_session_id: session_resolution.final_session_id,
+            compaction_threshold,
+            compaction_count,
             auto_compaction_tolerance: 0,
             auto_compaction_hysteresis_margin: 0,
             auto_compaction_state: CompactionTriggerState::default(),
@@ -781,6 +782,11 @@ impl SimplePluginCommand for Agent {
                 )?,
                 ..AskRuntimeConfig::default()
             }),
+            memory: rig::memory::InMemoryConversationMemory::new(),
+            conversation_store: crate::session::JsonlConversationStore::new(
+                self.store.cache_dir().to_path_buf(),
+            ),
+            memory_message_count: 0,
         };
         match mode {
             AgentMode::Tui => run_tui_mode(

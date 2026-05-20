@@ -5,26 +5,15 @@ use crate::providers::github_copilot::providers::{
 use crate::providers::github_copilot::{Client, Error};
 use rig::completion::Completion;
 
-/// GitHub Copilot agent variants selected once from model family.
-pub enum Agent<H = reqwest::Client>
+/// GitHub Copilot agent that stores client, model name, and provider variant.
+/// The agent is built on-demand when needed for completions.
+pub struct Agent<H = reqwest::Client>
 where
     H: rig::http_client::HttpClientExt + Default + std::fmt::Debug + Clone + 'static,
 {
-    Anthropic(
-        rig::agent::Agent<CompletionModel<AnthropicProvider, H>>,
-        Client<H>,
-        String,
-    ),
-    OpenAI4x(
-        rig::agent::Agent<CompletionModel<OpenAI4xProvider, H>>,
-        Client<H>,
-        String,
-    ),
-    OpenAI5x(
-        rig::agent::Agent<CompletionModel<OpenAI5xProvider, H>>,
-        Client<H>,
-        String,
-    ),
+    pub client: Client<H>,
+    pub model_name: String,
+    pub variant: ProviderVariant,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,34 +68,11 @@ pub fn agent_from_config(
         Client::builder().api_key(key).build()?
     };
 
-    let agent = match variant {
-        ProviderVariant::Anthropic => {
-            let model = CompletionModel::<AnthropicProvider, _>::new(client.clone(), model_name);
-            Agent::Anthropic(
-                rig::agent::AgentBuilder::new(model).build(),
-                client,
-                model_name.to_string(),
-            )
-        }
-        ProviderVariant::OpenAI4x => {
-            let model = CompletionModel::<OpenAI4xProvider, _>::new(client.clone(), model_name);
-            Agent::OpenAI4x(
-                rig::agent::AgentBuilder::new(model).build(),
-                client,
-                model_name.to_string(),
-            )
-        }
-        ProviderVariant::OpenAI5x => {
-            let model = CompletionModel::<OpenAI5xProvider, _>::new(client.clone(), model_name);
-            Agent::OpenAI5x(
-                rig::agent::AgentBuilder::new(model).build(),
-                client,
-                model_name.to_string(),
-            )
-        }
-    };
-
-    Ok(agent)
+    Ok(Agent {
+        client,
+        model_name: model_name.to_string(),
+        variant,
+    })
 }
 
 impl<H> Agent<H>
@@ -133,8 +99,13 @@ where
             text_parts.join("\n")
         };
 
-        match self {
-            Agent::Anthropic(agent, ..) => {
+        match self.variant {
+            ProviderVariant::Anthropic => {
+                let model = CompletionModel::<AnthropicProvider, _>::new(
+                    self.client.clone(),
+                    &self.model_name,
+                );
+                let agent = rig::agent::AgentBuilder::new(model).build();
                 let response = agent
                     .completion(prompt_text, Vec::<rig::completion::Message>::new())
                     .await?
@@ -143,7 +114,12 @@ where
                     .await?;
                 Ok(extract_text(response))
             }
-            Agent::OpenAI4x(agent, ..) => {
+            ProviderVariant::OpenAI4x => {
+                let model = CompletionModel::<OpenAI4xProvider, _>::new(
+                    self.client.clone(),
+                    &self.model_name,
+                );
+                let agent = rig::agent::AgentBuilder::new(model).build();
                 let response = agent
                     .completion(prompt_text, Vec::<rig::completion::Message>::new())
                     .await?
@@ -152,7 +128,12 @@ where
                     .await?;
                 Ok(extract_text(response))
             }
-            Agent::OpenAI5x(agent, ..) => {
+            ProviderVariant::OpenAI5x => {
+                let model = CompletionModel::<OpenAI5xProvider, _>::new(
+                    self.client.clone(),
+                    &self.model_name,
+                );
+                let agent = rig::agent::AgentBuilder::new(model).build();
                 let response = agent
                     .completion(prompt_text, Vec::<rig::completion::Message>::new())
                     .await?

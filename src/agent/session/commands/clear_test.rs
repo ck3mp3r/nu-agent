@@ -1,7 +1,7 @@
 use super::AgentSessionClear;
-use crate::session::MessageRole;
-use crate::session::{Message, SessionStore};
+use crate::session::{ConversationStore, JsonlConversationStore, SessionStore};
 use nu_plugin::SimplePluginCommand;
+use rig::completion::Message;
 use tempfile::TempDir;
 
 #[test]
@@ -13,18 +13,17 @@ fn test_agent_session_clear_deletes_existing_session() {
     let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
 
     // Create a session with a few messages
-    let mut session = store
+    let _session = store
         .get_or_create(Some("test-session".to_string()))
         .unwrap();
 
-    for i in 0..5 {
-        session
-            .add_message(
-                &store,
-                Message::new(MessageRole::User, format!("Message {}", i)),
-            )
-            .unwrap();
-    }
+    let conversation_store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
+    let messages: Vec<Message> = (0..5)
+        .map(|i| Message::user(&format!("Message {}", i)))
+        .collect();
+    conversation_store
+        .append("test-session", &messages)
+        .unwrap();
 
     // Verify session file exists
     let session_path = store.cache_dir().join("test-session.jsonl");

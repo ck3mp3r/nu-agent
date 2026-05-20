@@ -3,34 +3,23 @@ use nu_protocol::{LabeledError, Value};
 
 /// Extracts and validates session flags from the evaluated call.
 ///
-/// Returns a tuple of (session_id, new_session, no_session).
-/// Validates that flags are mutually exclusive.
+/// Returns the session_id as Option<String>.
 ///
 /// # Arguments
 /// * `call` - The EvaluatedCall containing session flags
 ///
 /// # Returns
-/// A tuple of (`Option<String>`, bool, bool) representing the session flags.
+/// An `Option<String>` representing the session ID.
 ///
 /// # Errors
-/// Returns an error if:
-/// - Multiple session flags are provided together
+/// Returns an error if flags are invalid.
 pub(crate) fn extract_and_validate_session_flags(
     call: &EvaluatedCall,
-) -> Result<(Option<String>, bool), LabeledError> {
+) -> Result<Option<String>, LabeledError> {
     // Extract flags
     let session_id = call.get_flag::<String>("session").ok().flatten();
-    let new_session = call.has_flag("new-session")?;
 
-    // Validate mutual exclusion: can't use both --session and --new-session
-    if session_id.is_some() && new_session {
-        return Err(LabeledError::new("Conflicting session flags").with_label(
-            "Cannot use both --session and --new-session together",
-            call.head,
-        ));
-    }
-
-    Ok((session_id, new_session))
+    Ok(session_id)
 }
 
 /// Extract and parse closures from --tools flag.

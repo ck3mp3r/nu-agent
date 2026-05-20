@@ -528,12 +528,6 @@ fn format_mcp_failure_line(
     format!("Failures: {}", ellipsize(&joined, max_line_chars))
 }
 
-#[cfg(test)]
-pub(super) fn visual_indicator_line(_state: &AppState) -> Option<String> {
-    // Visual mode removed - always return None
-    None
-}
-
 pub(super) fn cursor_style_for_mode(
     mode: crate::agent::ui::tui::state::InputMode,
 ) -> SetCursorStyle {

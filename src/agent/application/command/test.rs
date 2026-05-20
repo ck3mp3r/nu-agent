@@ -2024,24 +2024,6 @@ mod session_flags_tests {
         );
         assert!(!flag.desc.is_empty(), "Missing description for --session");
     }
-
-    #[test]
-    fn agent_command_signature_has_new_session_flag() {
-        // RED: Test that --new-session flag exists
-        let (agent, _temp_dir) = create_test_agent();
-        let sig = SimplePluginCommand::signature(&agent);
-
-        let new_session_flag = sig.named.iter().find(|f| f.long == "new-session");
-        assert!(new_session_flag.is_some(), "Missing --new-session flag");
-
-        let flag = new_session_flag.unwrap();
-        // Should be a switch (no argument)
-        assert_eq!(flag.arg, None, "--new-session should be a switch");
-        assert!(
-            !flag.desc.is_empty(),
-            "Missing description for --new-session"
-        );
-    }
 }
 
 // Tests for session flag validation
@@ -2053,7 +2035,6 @@ mod session_validation_tests {
     /// Helper to create a mock EvaluatedCall for testing
     fn create_mock_call_with_session_flags(
         session: Option<&str>,
-        new_session: bool,
     ) -> EvaluatedCall {
         let mut named = vec![];
 
@@ -2067,16 +2048,6 @@ mod session_validation_tests {
             ));
         }
 
-        if new_session {
-            named.push((
-                Spanned {
-                    item: "new-session".to_string(),
-                    span: Span::test_data(),
-                },
-                Some(Value::test_bool(true)),
-            ));
-        }
-
         EvaluatedCall {
             head: Span::test_data(),
             positional: vec![],
@@ -2087,51 +2058,23 @@ mod session_validation_tests {
     #[test]
     fn validate_session_flags_accepts_session_id_only() {
         // RED: Test that --session <id> alone is valid
-        let call = create_mock_call_with_session_flags(Some("my-session"), false);
+        let call = create_mock_call_with_session_flags(Some("my-session"));
         let result = extract_and_validate_session_flags(&call);
 
         assert!(result.is_ok(), "Should accept --session alone");
-        let (session_id, new_session) = result.unwrap();
+        let session_id = result.unwrap();
         assert_eq!(session_id, Some("my-session".to_string()));
-        assert!(!new_session);
-    }
-
-    #[test]
-    fn validate_session_flags_accepts_new_session_only() {
-        // RED: Test that --new-session alone is valid
-        let call = create_mock_call_with_session_flags(None, true);
-        let result = extract_and_validate_session_flags(&call);
-
-        assert!(result.is_ok(), "Should accept --new-session alone");
-        let (session_id, new_session) = result.unwrap();
-        assert!(session_id.is_none());
-        assert!(new_session);
     }
 
     #[test]
     fn validate_session_flags_accepts_no_flags() {
         // RED: Test that no session flags is valid (default behavior)
-        let call = create_mock_call_with_session_flags(None, false);
+        let call = create_mock_call_with_session_flags(None);
         let result = extract_and_validate_session_flags(&call);
 
         assert!(result.is_ok(), "Should accept no session flags");
-        let (session_id, new_session) = result.unwrap();
+        let session_id = result.unwrap();
         assert!(session_id.is_none());
-        assert!(!new_session);
-    }
-
-    #[test]
-    fn validate_session_flags_rejects_session_and_new_session() {
-        // RED: Test that --session and --new-session together is invalid
-        let call = create_mock_call_with_session_flags(Some("my-session"), true);
-        let result = extract_and_validate_session_flags(&call);
-
-        assert!(
-            result.is_err(),
-            "Should reject --session and --new-session together"
-        );
-        let err = result.unwrap_err();
-        assert!(err.msg.contains("Conflicting") || err.msg.contains("exclusive"));
     }
 }
 
@@ -2140,32 +2083,11 @@ mod tui_session_resolution_tests {
     use crate::agent::session::resolver::{
         SessionRequest, generate_session_id, resolve_session_request,
     };
-    use crate::session::MessageRole;
     use nu_protocol::{Span, Value};
-
-    fn materialize_pending_tui_session_if_needed(
-        store: &crate::session::SessionStore,
-        session_opt: &mut Option<crate::session::Session>,
-        pending_tui_session_id: &mut Option<String>,
-    ) -> Result<(), nu_protocol::LabeledError> {
-        if session_opt.is_some() {
-            return Ok(());
-        }
-
-        let Some(session_id) = pending_tui_session_id.take() else {
-            return Ok(());
-        };
-
-        let session = store.get_or_create(Some(session_id)).map_err(|e| {
-            nu_protocol::LabeledError::new(format!("Failed to load/create session: {e}"))
-        })?;
-        *session_opt = Some(session);
-        Ok(())
-    }
 
     #[test]
     fn interactive_tui_without_session_auto_creates() {
-        let request = resolve_session_request(true, None, false);
+        let request = resolve_session_request(true, None);
         match request {
             SessionRequest::Create(id) => assert!(id.starts_with("session-")),
             other => panic!("expected Create request, got: {other:?}"),
@@ -2174,29 +2096,20 @@ mod tui_session_resolution_tests {
 
     #[test]
     fn interactive_tui_with_session_attaches_existing() {
-        let request = resolve_session_request(true, Some("chat-123".to_string()), false);
-        assert_eq!(request, SessionRequest::Attach("chat-123".to_string()));
-    }
-
-    #[test]
-    fn interactive_tui_with_session_and_new_session_still_attaches_existing() {
-        let request = resolve_session_request(true, Some("chat-123".to_string()), true);
+        let request = resolve_session_request(true, Some("chat-123".to_string()));
         assert_eq!(request, SessionRequest::Attach("chat-123".to_string()));
     }
 
     #[test]
     fn non_tui_with_session_keeps_legacy_get_or_create_behavior() {
-        let request = resolve_session_request(false, Some("chat-legacy".to_string()), false);
+        let request = resolve_session_request(false, Some("chat-legacy".to_string()));
         assert_eq!(request, SessionRequest::Create("chat-legacy".to_string()));
     }
 
     #[test]
-    fn explicit_new_session_creates_for_non_tui() {
-        let request = resolve_session_request(false, None, true);
-        match request {
-            SessionRequest::Create(id) => assert!(id.starts_with("session-")),
-            other => panic!("expected Create request, got: {other:?}"),
-        }
+    fn non_tui_without_session_returns_none() {
+        let request = resolve_session_request(false, None);
+        assert_eq!(request, SessionRequest::None);
     }
 
     #[test]
@@ -2215,52 +2128,6 @@ mod tui_session_resolution_tests {
         );
     }
 
-    #[test]
-    fn interactive_tui_turn_materializes_deferred_session_and_persists_non_empty_history() {
-        let temp_dir = tempfile::TempDir::new().expect("temp dir");
-        let store = crate::session::SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
-
-        let session_id = "tui-regression-session".to_string();
-        let mut session_opt: Option<crate::session::Session> = None;
-        let mut pending_tui_session_id = Some(session_id.clone());
-
-        // Simulate first successful interactive turn entering persistence path.
-        materialize_pending_tui_session_if_needed(
-            &store,
-            &mut session_opt,
-            &mut pending_tui_session_id,
-        )
-        .expect("materialize session");
-
-        assert!(pending_tui_session_id.is_none());
-        let session = session_opt
-            .as_mut()
-            .expect("session should be materialized");
-        session
-            .add_message(
-                &store,
-                crate::session::Message::new(MessageRole::User, "hello".to_string()),
-            )
-            .expect("save user message");
-        session
-            .add_message(
-                &store,
-                crate::session::Message::new(MessageRole::Assistant, "hi".to_string()),
-            )
-            .expect("save assistant message");
-
-        let reloaded = store.load_session(&session_id).expect("reload session");
-        assert_eq!(reloaded.messages().len(), 2);
-        assert_eq!(reloaded.messages()[0].role(), MessageRole::User);
-        assert_eq!(reloaded.messages()[1].role(), MessageRole::Assistant);
-
-        let listed = store.list_sessions().expect("list sessions");
-        let info = listed
-            .iter()
-            .find(|entry| entry.id == session_id)
-            .expect("session present in list");
-        assert_eq!(info.message_count, 2);
-    }
 }
 
 // Integration tests for session functionality
@@ -2268,57 +2135,6 @@ mod tui_session_resolution_tests {
 mod session_integration_tests {
     use super::*;
     use crate::agent::application::command::extract_and_validate_session_flags;
-    use crate::session::{Message, MessageRole, SessionStore};
-    use tempfile::TempDir;
-
-    #[test]
-    fn session_store_accessible_in_agent() {
-        // Verify Agent has access to SessionStore
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
-        let _agent = Agent::new(store.clone(), RuntimeCtx::new());
-
-        // Create a test session directly via store
-        let session = store
-            .get_or_create(Some("test-session".to_string()))
-            .expect("Failed to create session");
-
-        assert_eq!(session.id(), "test-session");
-        assert_eq!(session.messages().len(), 0);
-    }
-
-    #[test]
-    fn session_can_store_and_retrieve_messages() {
-        // Test that we can add messages to a session
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
-
-        let mut session = store
-            .get_or_create(Some("chat-1".to_string()))
-            .expect("Failed to create session");
-
-        // Add user message
-        let user_msg = Message::new(MessageRole::User, "Hello".to_string());
-        session
-            .add_message(&store, user_msg)
-            .expect("Failed to add message");
-
-        // Add assistant message
-        let assistant_msg = Message::new(MessageRole::Assistant, "Hi there!".to_string());
-        session
-            .add_message(&store, assistant_msg)
-            .expect("Failed to add message");
-
-        // Reload session and verify messages persist
-        let reloaded = store
-            .load_session("chat-1")
-            .expect("Failed to load session");
-        assert_eq!(reloaded.messages().len(), 2);
-        assert_eq!(reloaded.messages()[0].role(), MessageRole::User);
-        assert_eq!(reloaded.messages()[0].content(), "Hello");
-        assert_eq!(reloaded.messages()[1].role(), MessageRole::Assistant);
-        assert_eq!(reloaded.messages()[1].content(), "Hi there!");
-    }
 
     #[test]
     fn auto_generated_session_id_format() {
@@ -2347,89 +2163,30 @@ mod session_integration_tests {
     }
 
     #[test]
-    fn session_compaction_threshold() {
-        // Test that compaction is triggered at threshold
-        use crate::session::{CompactionStrategy, SessionConfig};
-
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
-
-        let mut session = store
-            .get_or_create(Some("test-compact".to_string()))
-            .expect("Failed to create session");
-
-        // Set low threshold for testing
-        let config = SessionConfig {
-            compaction_threshold: 3,
-            compaction_strategy: CompactionStrategy::SlidingSummary,
-            keep_recent: 2,
-        };
-        session.set_config(config);
-
-        // Add messages up to threshold
-        for i in 0..3 {
-            let msg = Message::new(MessageRole::User, format!("Message {}", i));
-            session
-                .add_message(&store, msg)
-                .expect("Failed to add message");
-        }
-
-        assert_eq!(session.messages().len(), 3);
-
-        // Add one more to trigger compaction
-        let msg = Message::new(MessageRole::User, "Message 4".to_string());
-        session
-            .add_message(&store, msg)
-            .expect("Failed to add message");
-
-        // Compaction is invoked explicitly via maybe_compact at call sites.
-        // For this test, we just verify the session can handle the threshold
-        assert!(
-            session.messages().len() >= 2,
-            "Session should maintain messages"
-        );
-    }
-
-    #[test]
     fn extract_session_flags_with_session_id() {
         // Test extracting --session flag
-        let call = create_mock_call_with_session_flags(Some("my-session"), false);
+        let call = create_mock_call_with_session_flags(Some("my-session"));
         let result = extract_and_validate_session_flags(&call);
 
         assert!(result.is_ok());
-        let (session_id, new_session) = result.unwrap();
+        let session_id = result.unwrap();
         assert_eq!(session_id, Some("my-session".to_string()));
-        assert!(!new_session);
-    }
-
-    #[test]
-    fn extract_session_flags_with_new_session() {
-        // Test extracting --new-session flag
-        let call = create_mock_call_with_session_flags(None, true);
-        let result = extract_and_validate_session_flags(&call);
-
-        assert!(result.is_ok());
-        let (session_id, new_session) = result.unwrap();
-        assert!(session_id.is_none());
-        assert!(new_session);
     }
 
     #[test]
     fn extract_session_flags_default_no_flags() {
         // Test default behavior (no session flags)
-        let call = create_mock_call_with_session_flags(None, false);
+        let call = create_mock_call_with_session_flags(None);
         let result = extract_and_validate_session_flags(&call);
 
         assert!(result.is_ok());
-        let (session_id, new_session) = result.unwrap();
+        let session_id = result.unwrap();
         assert!(session_id.is_none());
-        assert!(!new_session);
     }
 
     /// Helper to create a mock EvaluatedCall for testing (imported from session_validation_tests)
     fn create_mock_call_with_session_flags(
         session: Option<&str>,
-        new_session: bool,
     ) -> EvaluatedCall {
         let mut named = vec![];
 
@@ -2440,16 +2197,6 @@ mod session_integration_tests {
                     span: Span::test_data(),
                 },
                 Some(Value::test_string(id)),
-            ));
-        }
-
-        if new_session {
-            named.push((
-                Spanned {
-                    item: "new-session".to_string(),
-                    span: Span::test_data(),
-                },
-                Some(Value::test_bool(true)),
             ));
         }
 

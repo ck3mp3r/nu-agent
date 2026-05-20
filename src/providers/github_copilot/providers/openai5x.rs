@@ -403,6 +403,7 @@ impl OpenAI5xProvider {
             total_tokens: usage_data.total_tokens.unwrap_or(0),
             cached_input_tokens: 0,
             cache_creation_input_tokens: 0,
+            reasoning_tokens: 0,
         };
 
         // Get raw_response without double-parsing - reuse already-parsed response

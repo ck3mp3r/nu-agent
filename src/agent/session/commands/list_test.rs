@@ -1,7 +1,7 @@
 use super::AgentSessionList;
-use crate::session::MessageRole;
-use crate::session::{Message, SessionStore};
+use crate::session::{ConversationStore, JsonlConversationStore, SessionStore};
 use nu_plugin::SimplePluginCommand;
+use rig::completion::Message;
 use tempfile::TempDir;
 
 #[test]
@@ -11,26 +11,23 @@ fn test_agent_session_list_returns_table_with_session_stats() {
     let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
 
     // Create session 1 with 5 messages
-    let mut session1 = store.get_or_create(Some("session1".to_string())).unwrap();
-    for i in 0..5 {
-        session1
-            .add_message(
-                &store,
-                Message::new(MessageRole::User, format!("msg {}", i)),
-            )
-            .unwrap();
-    }
+    let _session1 = store.get_or_create(Some("session1".to_string())).unwrap();
+    let conversation_store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
+    let messages: Vec<Message> = (0..5)
+        .map(|i| Message::user(&format!("msg {}", i)))
+        .collect();
+    conversation_store
+        .append("session1", &messages)
+        .unwrap();
 
     // Create session 2 with 10 messages
-    let mut session2 = store.get_or_create(Some("session2".to_string())).unwrap();
-    for i in 0..10 {
-        session2
-            .add_message(
-                &store,
-                Message::new(MessageRole::User, format!("msg {}", i)),
-            )
-            .unwrap();
-    }
+    let _session2 = store.get_or_create(Some("session2".to_string())).unwrap();
+    let messages: Vec<Message> = (0..10)
+        .map(|i| Message::user(&format!("msg {}", i)))
+        .collect();
+    conversation_store
+        .append("session2", &messages)
+        .unwrap();
 
     // Execute command - test the underlying list_sessions() directly
     let command = AgentSessionList::new(store);

@@ -352,9 +352,6 @@ built-ins.
 ## Sessions
 
 ```nu
-# New session
-"start" | agent --new-session
-
 # Continue session
 "continue" | agent --session "session-id"
 ```
@@ -449,7 +446,6 @@ built-ins.
 - `--permissions <record>`
 - `--tool-timeout <duration>`
 - `--session <id>`
-- `--new-session`
 - `--quiet` / `-q`
 - `--verbose` / `-v` (progressive: `-v`, `-vv`, `-vvv+`)
 
