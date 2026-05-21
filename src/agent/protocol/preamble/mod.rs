@@ -11,6 +11,7 @@ pub enum ModelFamily {
     Gpt5x,
     Gpt4x,
     Anthropic,
+    AnthropicSonnet,
     Unknown,
 }
 

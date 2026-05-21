@@ -5,6 +5,9 @@ pub fn classify_model_family(provider: &str, model: &str) -> ModelFamily {
     let model = model.trim().to_lowercase();
 
     if provider == "anthropic" {
+        if model.contains("sonnet") {
+            return ModelFamily::AnthropicSonnet;
+        }
         return ModelFamily::Anthropic;
     }
 
@@ -24,6 +27,9 @@ pub fn classify_model_family(provider: &str, model: &str) -> ModelFamily {
         };
 
         if backend == "anthropic" {
+            if backend_model.contains("sonnet") {
+                return ModelFamily::AnthropicSonnet;
+            }
             return ModelFamily::Anthropic;
         }
 

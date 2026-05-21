@@ -47,7 +47,7 @@ fn preamble_classifier_aligns_with_provider_variant_for_copilot_models() {
         (
             "anthropic/claude-sonnet-4.5",
             ProviderVariant::Anthropic,
-            ModelFamily::Anthropic,
+            ModelFamily::AnthropicSonnet,
         ),
         (
             "openai/gpt-4o",

@@ -7,6 +7,8 @@ const ASSET_GITHUB_COPILOT_OPENAI_GPT5X: &str =
 const ASSET_GITHUB_COPILOT_OPENAI_GPT4X: &str =
     include_str!("defaults/github_copilot_openai_gpt4x.md");
 const ASSET_GITHUB_COPILOT_ANTHROPIC: &str = include_str!("defaults/github_copilot_anthropic.md");
+const ASSET_GITHUB_COPILOT_ANTHROPIC_SONNET: &str =
+    include_str!("defaults/github_copilot_anthropic_sonnet.md");
 const ASSET_OPENAI_GPT5X: &str = include_str!("defaults/openai_gpt5x.md");
 const ASSET_OPENAI_GPT4X: &str = include_str!("defaults/openai_gpt4x.md");
 const ASSET_ANTHROPIC: &str = include_str!("defaults/anthropic.md");
@@ -33,6 +35,11 @@ fn base_defaults() -> PreambleDefaults {
         "github-copilot",
         ModelFamily::Anthropic,
         "builtin_pf_copilot_anthropic",
+    );
+    defaults.set_provider_family_preamble(
+        "github-copilot",
+        ModelFamily::AnthropicSonnet,
+        "builtin_pf_copilot_anthropic_sonnet",
     );
     defaults.set_global_fallback(Some("builtin_global_fallback".to_string()));
     defaults
@@ -64,7 +71,7 @@ fn classify_model_family_openai_and_anthropic() {
     );
     assert_eq!(
         classify_model_family("anthropic", "claude-sonnet-4.5"),
-        ModelFamily::Anthropic
+        ModelFamily::AnthropicSonnet
     );
 }
 
@@ -84,6 +91,60 @@ fn classify_model_family_github_copilot_nested_backend_models() {
     );
     assert_eq!(
         classify_model_family("github-copilot", "anthropic/claude-sonnet-4.5"),
+        ModelFamily::AnthropicSonnet
+    );
+}
+
+#[test]
+fn classify_model_family_anthropic_sonnet_vs_opus() {
+    // Sonnet models should be classified as AnthropicSonnet
+    assert_eq!(
+        classify_model_family("anthropic", "claude-sonnet-4-20250514"),
+        ModelFamily::AnthropicSonnet
+    );
+    assert_eq!(
+        classify_model_family("anthropic", "claude-3-5-sonnet-20241022"),
+        ModelFamily::AnthropicSonnet
+    );
+    assert_eq!(
+        classify_model_family("anthropic", "CLAUDE-SONNET-4.5"),
+        ModelFamily::AnthropicSonnet
+    );
+
+    // Opus and other models should be classified as Anthropic
+    assert_eq!(
+        classify_model_family("anthropic", "claude-opus-4-20250514"),
+        ModelFamily::Anthropic
+    );
+    assert_eq!(
+        classify_model_family("anthropic", "claude-3-opus-20240229"),
+        ModelFamily::Anthropic
+    );
+    assert_eq!(
+        classify_model_family("anthropic", "claude-haiku-4"),
+        ModelFamily::Anthropic
+    );
+}
+
+#[test]
+fn classify_model_family_github_copilot_anthropic_sonnet_vs_opus() {
+    // Sonnet models via GitHub Copilot should be AnthropicSonnet
+    assert_eq!(
+        classify_model_family("github-copilot", "anthropic/claude-sonnet-4-20250514"),
+        ModelFamily::AnthropicSonnet
+    );
+    assert_eq!(
+        classify_model_family("github-copilot", "anthropic/claude-3-5-sonnet-20241022"),
+        ModelFamily::AnthropicSonnet
+    );
+
+    // Opus models via GitHub Copilot should be Anthropic
+    assert_eq!(
+        classify_model_family("github-copilot", "anthropic/claude-opus-4-20250514"),
+        ModelFamily::Anthropic
+    );
+    assert_eq!(
+        classify_model_family("github-copilot", "anthropic/claude-3-opus-20240229"),
         ModelFamily::Anthropic
     );
 }
@@ -185,6 +246,26 @@ fn resolve_preamble_ignores_unknown_family_and_uses_provider() {
 }
 
 #[test]
+fn resolve_preamble_github_copilot_anthropic_sonnet() {
+    let defaults = base_defaults();
+    let result = resolve_preamble(
+        mk_input("github-copilot", ModelFamily::AnthropicSonnet, None, None),
+        &defaults,
+    );
+    assert_eq!(result.as_deref(), Some("builtin_pf_copilot_anthropic_sonnet"));
+}
+
+#[test]
+fn resolve_preamble_github_copilot_anthropic_opus() {
+    let defaults = base_defaults();
+    let result = resolve_preamble(
+        mk_input("github-copilot", ModelFamily::Anthropic, None, None),
+        &defaults,
+    );
+    assert_eq!(result.as_deref(), Some("builtin_pf_copilot_anthropic"));
+}
+
+#[test]
 fn resolve_preamble_trims_and_normalizes_user_values() {
     let defaults = base_defaults();
     let result = resolve_preamble(
@@ -216,6 +297,10 @@ fn resolve_preamble_catalog_includes_required_builtin_targets() {
         Some(ASSET_GITHUB_COPILOT_ANTHROPIC.trim())
     );
     assert_eq!(
+        defaults.provider_family_preamble("github-copilot", ModelFamily::AnthropicSonnet),
+        Some(ASSET_GITHUB_COPILOT_ANTHROPIC_SONNET.trim())
+    );
+    assert_eq!(
         defaults.provider_family_preamble("openai", ModelFamily::Gpt5x),
         Some(ASSET_OPENAI_GPT5X.trim())
     );
@@ -239,6 +324,7 @@ fn builtin_assets_are_non_empty_after_trim() {
         ASSET_GITHUB_COPILOT_OPENAI_GPT5X,
         ASSET_GITHUB_COPILOT_OPENAI_GPT4X,
         ASSET_GITHUB_COPILOT_ANTHROPIC,
+        ASSET_GITHUB_COPILOT_ANTHROPIC_SONNET,
         ASSET_OPENAI_GPT5X,
         ASSET_OPENAI_GPT4X,
         ASSET_ANTHROPIC,
@@ -268,6 +354,11 @@ fn builtin_required_slots_are_mapped() {
     assert!(
         defaults
             .provider_family_preamble("github-copilot", ModelFamily::Anthropic)
+            .is_some()
+    );
+    assert!(
+        defaults
+            .provider_family_preamble("github-copilot", ModelFamily::AnthropicSonnet)
             .is_some()
     );
     assert!(

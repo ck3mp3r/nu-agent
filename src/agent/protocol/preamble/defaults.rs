@@ -7,6 +7,8 @@ const GITHUB_COPILOT_OPENAI_GPT5X_DEFAULT: &str =
 const GITHUB_COPILOT_OPENAI_GPT4X_DEFAULT: &str =
     include_str!("defaults/github_copilot_openai_gpt4x.md");
 const GITHUB_COPILOT_ANTHROPIC_DEFAULT: &str = include_str!("defaults/github_copilot_anthropic.md");
+const GITHUB_COPILOT_ANTHROPIC_SONNET_DEFAULT: &str =
+    include_str!("defaults/github_copilot_anthropic_sonnet.md");
 const OPENAI_GPT5X_DEFAULT: &str = include_str!("defaults/openai_gpt5x.md");
 const OPENAI_GPT4X_DEFAULT: &str = include_str!("defaults/openai_gpt4x.md");
 const ANTHROPIC_DEFAULT: &str = include_str!("defaults/anthropic.md");
@@ -56,6 +58,10 @@ impl PreambleDefaults {
         provider_family.insert(
             (ProviderKey::GitHubCopilot, ModelFamily::Anthropic),
             GITHUB_COPILOT_ANTHROPIC_DEFAULT.trim().to_string(),
+        );
+        provider_family.insert(
+            (ProviderKey::GitHubCopilot, ModelFamily::AnthropicSonnet),
+            GITHUB_COPILOT_ANTHROPIC_SONNET_DEFAULT.trim().to_string(),
         );
         provider_family.insert(
             (ProviderKey::OpenAi, ModelFamily::Gpt5x),
