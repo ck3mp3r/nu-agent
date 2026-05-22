@@ -44,7 +44,7 @@
     src = ../.;
     packageName = "nu-agent";
     archiveAndHash = false;
-    nativeBuildInputs = [pkgs.pkg-config];
+    nativeBuildInputs = [pkgs.pkg-config pkgs.gitMinimal];
   };
 
   # Build archive packages (creates archive with system name)

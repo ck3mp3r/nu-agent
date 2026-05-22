@@ -1126,6 +1126,9 @@ fn immediate_poll_error_fails_fast_with_actionable_message_when_no_backends_avai
 
 #[test]
 fn crossterm_event_source_with_zero_timeout_returns_none_when_idle() {
+    if unsafe { libc::isatty(libc::STDIN_FILENO) } == 0 {
+        return; // no TTY available (e.g. Nix sandbox)
+    }
     let mut source = crate::agent::ui::tui::runtime::CrosstermTerminalEvents::new(
         std::time::Duration::from_millis(0),
     );
