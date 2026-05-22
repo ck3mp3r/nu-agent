@@ -44,7 +44,11 @@
     src = ../.;
     packageName = "nu-agent";
     archiveAndHash = false;
-    nativeBuildInputs = [pkgs.pkg-config];
+    nativeBuildInputs = [pkgs.pkg-config pkgs.clang];
+    buildInputs = [pkgs.llvmPackages.libclang.lib];
+    preBuild = ''
+      export LIBCLANG_PATH="${pkgs.llvmPackages.libclang.lib}/lib"
+    '';
   };
 
   # Build archive packages (creates archive with system name)
@@ -63,7 +67,11 @@
     src = ../.;
     packageName = "archive";
     archiveAndHash = true;
-    nativeBuildInputs = [pkgs.pkg-config];
+    nativeBuildInputs = [pkgs.pkg-config pkgs.clang];
+    buildInputs = [pkgs.llvmPackages.libclang.lib];
+    preBuild = ''
+      export LIBCLANG_PATH="${pkgs.llvmPackages.libclang.lib}/lib"
+    '';
   };
 in {
   # Export all package outputs
