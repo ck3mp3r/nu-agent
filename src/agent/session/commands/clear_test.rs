@@ -19,7 +19,7 @@ fn test_agent_session_clear_deletes_existing_session() {
 
     let conversation_store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
     let messages: Vec<Message> = (0..5)
-        .map(|i| Message::user(&format!("Message {}", i)))
+        .map(|i| Message::user(format!("Message {}", i)))
         .collect();
     conversation_store
         .append("test-session", &messages)

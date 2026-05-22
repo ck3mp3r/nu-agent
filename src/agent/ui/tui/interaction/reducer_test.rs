@@ -1459,7 +1459,7 @@ fn tool_display_renders_diff_sections_as_dedicated_code_blocks() {
     let lines: Vec<String> = state
         .transcript_preview
         .iter()
-        .flat_map(|entry| extract_all_text_from_entry(entry))
+        .flat_map(extract_all_text_from_entry)
         .collect();
 
     assert!(!lines.contains(&"edit sample.txt".to_string()));
@@ -1631,7 +1631,7 @@ fn edit_preview_display_omits_redundant_edit_path_header() {
     let lines: Vec<String> = state
         .transcript_preview
         .iter()
-        .flat_map(|entry| extract_all_text_from_entry(entry))
+        .flat_map(extract_all_text_from_entry)
         .collect();
     assert!(!lines.contains(&"edit sample.txt".to_string()));
     assert!(lines.contains(&"sample.txt (diff)".to_string()));
@@ -1919,7 +1919,7 @@ fn permission_requested_with_display_pushes_to_transcript() {
     let lines: Vec<String> = state
         .transcript_preview
         .iter()
-        .flat_map(|entry| extract_all_text_from_entry(entry))
+        .flat_map(extract_all_text_from_entry)
         .collect();
 
     assert!(
@@ -1997,7 +1997,7 @@ fn tool_end_after_permission_does_not_duplicate_display() {
     let lines: Vec<String> = state
         .transcript_preview
         .iter()
-        .flat_map(|entry| extract_all_text_from_entry(entry))
+        .flat_map(extract_all_text_from_entry)
         .collect();
 
     let count = lines.iter().filter(|line| line.contains("+added")).count();
@@ -2047,7 +2047,7 @@ fn tool_end_without_prior_permission_pushes_display_normally() {
     let lines: Vec<String> = state
         .transcript_preview
         .iter()
-        .flat_map(|entry| extract_all_text_from_entry(entry))
+        .flat_map(extract_all_text_from_entry)
         .collect();
 
     assert!(

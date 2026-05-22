@@ -17,7 +17,7 @@ fn test_agent_session_inspect_displays_full_session_details() {
 
     let conversation_store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
     let messages: Vec<Message> = (0..10)
-        .map(|i| Message::user(&format!("Message {}", i)))
+        .map(|i| Message::user(format!("Message {}", i)))
         .collect();
     conversation_store
         .append("test-session", &messages)

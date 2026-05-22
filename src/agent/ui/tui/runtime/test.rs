@@ -1336,10 +1336,7 @@ fn coordinator_hydration_keeps_unsupported_markdown_readable_in_assistant_transc
         .state()
         .transcript_preview
         .iter()
-        .filter(|line| match line.role() {
-            crate::agent::ui::transcript::ir::Role::Assistant => true,
-            _ => false,
-        })
+        .filter(|line| matches!(line.role(), crate::agent::ui::transcript::ir::Role::Assistant))
         .map(|line| line.text())
         .collect::<Vec<_>>();
 
@@ -1376,10 +1373,7 @@ fn coordinator_hydration_handles_malformed_assistant_markdown_without_dropping_m
         .state()
         .transcript_preview
         .iter()
-        .filter(|line| match line.role() {
-            crate::agent::ui::transcript::ir::Role::Assistant => true,
-            _ => false,
-        })
+        .filter(|line| matches!(line.role(), crate::agent::ui::transcript::ir::Role::Assistant))
         .collect::<Vec<_>>();
 
     assert!(!assistant_lines.is_empty());
@@ -1403,10 +1397,7 @@ fn assistant_message_event_sanitizes_pseudo_tags_and_control_tags_in_runtime_tra
         .state()
         .transcript_preview
         .iter()
-        .filter(|line| match line.role() {
-            crate::agent::ui::transcript::ir::Role::Assistant => true,
-            _ => false,
-        })
+        .filter(|line| matches!(line.role(), crate::agent::ui::transcript::ir::Role::Assistant))
         .map(|line| line.text())
         .collect::<Vec<_>>();
 

@@ -14,7 +14,7 @@ fn compact_splits_at_keep_recent() {
 
     // Setup: 10 messages in memory
     let messages: Vec<Message> = (0..10)
-        .map(|i| Message::user(&format!("Message {}", i)))
+        .map(|i| Message::user(format!("Message {}", i)))
         .collect();
 
     tokio::runtime::Runtime::new().unwrap().block_on(async {
@@ -88,7 +88,7 @@ fn compact_persists_to_store() {
 
     // Setup: 5 messages
     let messages: Vec<Message> = (0..5)
-        .map(|i| Message::user(&format!("Msg {}", i)))
+        .map(|i| Message::user(format!("Msg {}", i)))
         .collect();
 
     tokio::runtime::Runtime::new().unwrap().block_on(async {
@@ -136,7 +136,7 @@ fn compact_increments_compaction_count() {
     let memory = Arc::new(InMemoryConversationMemory::new());
     let session_id = "test_count";
 
-    let messages: Vec<Message> = (0..5).map(|i| Message::user(&format!("M{}", i))).collect();
+    let messages: Vec<Message> = (0..5).map(|i| Message::user(format!("M{}", i))).collect();
 
     tokio::runtime::Runtime::new().unwrap().block_on(async {
         memory.append(session_id, messages.clone()).await.unwrap();
@@ -223,7 +223,7 @@ fn compact_clears_before_append() {
     let memory = Arc::new(InMemoryConversationMemory::new());
     let session_id = "test_clear";
 
-    let messages: Vec<Message> = (0..5).map(|i| Message::user(&format!("X{}", i))).collect();
+    let messages: Vec<Message> = (0..5).map(|i| Message::user(format!("X{}", i))).collect();
 
     tokio::runtime::Runtime::new().unwrap().block_on(async {
         memory.append(session_id, messages.clone()).await.unwrap();
@@ -272,7 +272,7 @@ fn compact_with_async_summarizer_does_not_panic() {
     let session_id = "test_async_no_panic";
 
     let messages: Vec<Message> = (0..5)
-        .map(|i| Message::user(&format!("Msg {}", i)))
+        .map(|i| Message::user(format!("Msg {}", i)))
         .collect();
 
     let rt = tokio::runtime::Runtime::new().unwrap();

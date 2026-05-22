@@ -968,8 +968,8 @@ fn display_tool_name_shows_boolean_values() {
 
 #[test]
 fn display_tool_name_shows_number_values() {
-    let result = display_tool_name("config", &serde_json::json!({"count": 42, "ratio": 3.14}));
-    assert_eq!(result, "config(count=42, ratio=3.14)");
+    let result = display_tool_name("config", &serde_json::json!({"count": 42, "ratio": 2.72}));
+    assert_eq!(result, "config(count=42, ratio=2.72)");
 }
 
 #[test]

@@ -32,13 +32,12 @@ fn convert_rig_messages_to_snapshots(messages: &[Message]) -> Vec<UiMessageSnaps
                 Message::Assistant { content, .. } => {
                     for item in content.iter() {
                         match item {
-                            AssistantContent::Text(text) => {
-                                if !text.text.is_empty() {
+                            AssistantContent::Text(text)
+                                if !text.text.is_empty() => {
                                     snapshots.push(UiMessageSnapshot::new(
                                         "assistant",
                                         text.text.clone(),
                                     ));
-                                }
                             }
                             AssistantContent::ToolCall(tool_call) => {
                                 // Tool calls: hydrate as tool invocation with proper format
