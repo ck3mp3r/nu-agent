@@ -5,8 +5,6 @@
 //! the final response. Uses `CopilotPromptHook` + `HookDriver` to bridge async
 //! events to the sync UI.
 
-use std::future::Future;
-use std::pin::Pin;
 use tokio_util::sync::CancellationToken;
 
 use crate::agent::hook::{
@@ -14,12 +12,8 @@ use crate::agent::hook::{
 };
 use crate::agent::protocol::contracts::ProgressUi;
 use crate::agent::tools::handler::McpToolRegistry;
-use crate::providers::github_copilot::completion::CompletionModel;
-use crate::providers::github_copilot::model::{Agent, ProviderVariant};
-use crate::providers::github_copilot::providers::{
-    AnthropicProvider, OpenAI4xProvider, OpenAI5xProvider,
-};
 use crate::tools::closure::ClosureRegistry;
+use rig::client::CompletionClient;
 
 /// Default max tool turns when config doesn't specify a limit.
 /// Matches v1 "unlimited" semantics with a practical upper bound.
@@ -77,7 +71,8 @@ impl From<rig::completion::PromptError> for TurnError {
 /// Context for executing a conversation turn.
 pub(crate) struct TurnContext<'a> {
     pub runtime: &'a tokio::runtime::Handle,
-    pub agent: &'a Agent,
+    pub client: &'a rig::providers::copilot::Client,
+    pub model_name: &'a str,
     pub prompt: String,
     pub memory: rig::memory::InMemoryConversationMemory,
     pub conversation_id: String,
@@ -136,8 +131,7 @@ pub(crate) fn execute_turn<U: ProgressUi, P: PermissionResolver>(
     // Clone preamble for the 'static future
     let preamble_owned = ctx.preamble.map(|s| s.to_string());
 
-    // Build and execute agent with hook based on variant
-    // Box the futures to make them the same type
+    // Build and execute agent with hook
     let config = AgentPromptConfig {
         hook,
         preamble: preamble_owned,
@@ -148,34 +142,8 @@ pub(crate) fn execute_turn<U: ProgressUi, P: PermissionResolver>(
         max_turns: ctx.max_turns,
     };
 
-    let prompt_future: Pin<
-        Box<
-            dyn Future<Output = Result<rig::agent::PromptResponse, rig::completion::PromptError>>
-                + Send,
-        >,
-    > = match ctx.agent.variant {
-        ProviderVariant::Anthropic => {
-            let model = CompletionModel::<AnthropicProvider, _>::new(
-                ctx.agent.client.clone(),
-                &ctx.agent.model_name,
-            );
-            Box::pin(build_agent_and_prompt(model, config))
-        }
-        ProviderVariant::OpenAI4x => {
-            let model = CompletionModel::<OpenAI4xProvider, _>::new(
-                ctx.agent.client.clone(),
-                &ctx.agent.model_name,
-            );
-            Box::pin(build_agent_and_prompt(model, config))
-        }
-        ProviderVariant::OpenAI5x => {
-            let model = CompletionModel::<OpenAI5xProvider, _>::new(
-                ctx.agent.client.clone(),
-                &ctx.agent.model_name,
-            );
-            Box::pin(build_agent_and_prompt(model, config))
-        }
-    };
+    let model = ctx.client.completion_model(ctx.model_name);
+    let prompt_future = Box::pin(build_agent_and_prompt(model, config));
 
     // Spawn the completion on the tokio runtime
     let prompt_handle = ctx.runtime.spawn(prompt_future);

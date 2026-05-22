@@ -1,2 +1,2 @@
-// GitHub Copilot provider (rig.rs-based)
-pub mod github_copilot;
+// Copilot adapter module (new implementation)
+pub mod copilot;

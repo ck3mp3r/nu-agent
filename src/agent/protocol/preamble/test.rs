@@ -166,6 +166,58 @@ fn classify_model_family_unknown_cases() {
 }
 
 #[test]
+fn classify_model_family_github_copilot_new_format_without_backend_prefix() {
+    // Test new format: model names without "backend/" prefix
+    // These are the formats after resolve_model_name() strips the prefix
+    
+    // Anthropic Sonnet models
+    assert_eq!(
+        classify_model_family("github-copilot", "claude-sonnet-4.5"),
+        ModelFamily::AnthropicSonnet
+    );
+    assert_eq!(
+        classify_model_family("github-copilot", "claude-3-5-sonnet-20241022"),
+        ModelFamily::AnthropicSonnet
+    );
+    
+    // Other Anthropic models (opus, haiku, etc.)
+    assert_eq!(
+        classify_model_family("github-copilot", "claude-opus-4-20250514"),
+        ModelFamily::Anthropic
+    );
+    assert_eq!(
+        classify_model_family("github-copilot", "claude-haiku-4"),
+        ModelFamily::Anthropic
+    );
+    
+    // OpenAI GPT-5 models
+    assert_eq!(
+        classify_model_family("github-copilot", "gpt-5-mini"),
+        ModelFamily::Gpt5x
+    );
+    assert_eq!(
+        classify_model_family("github-copilot", "gpt-5.3-codex"),
+        ModelFamily::Gpt5x
+    );
+    
+    // OpenAI GPT-4 models
+    assert_eq!(
+        classify_model_family("github-copilot", "gpt-4o"),
+        ModelFamily::Gpt4x
+    );
+    assert_eq!(
+        classify_model_family("github-copilot", "gpt-4-turbo"),
+        ModelFamily::Gpt4x
+    );
+    
+    // Unknown model
+    assert_eq!(
+        classify_model_family("github-copilot", "unknown-model"),
+        ModelFamily::Unknown
+    );
+}
+
+#[test]
 fn resolve_preamble_uses_user_provider_family_first() {
     let defaults = base_defaults();
     let result = resolve_preamble(
