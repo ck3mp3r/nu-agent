@@ -434,7 +434,6 @@ impl ConversationRuntime for AgentConversationRuntime {
     ) -> Result<Value, LabeledError> {
         use crate::agent::conversation::turn::{TurnContext, TurnError, execute_turn};
         use crate::agent::hook::AuthzPermissionResolver;
-        use crate::providers::copilot::create_client;
 
         emit_permissions_startup_summary_once(
             ui,
@@ -503,12 +502,26 @@ impl ConversationRuntime for AgentConversationRuntime {
             )
         };
 
-        // Create the GitHub Copilot client
-        let client = create_client(
-            self.config.api_key.clone(),
-            self.config.base_url.clone(),
-        )
-        .map_err(|e| {
+        // Create the GitHub Copilot client with inline rig builder
+        // Use turbofish syntax for api_key (required by CopilotAuth trait)
+        let key = self.config.api_key.clone().ok_or_else(|| {
+            LabeledError::new("Missing API key")
+                .with_label(
+                    "Set GITHUB_COPILOT_API_KEY or GITHUB_TOKEN, or provide api_key in config",
+                    span,
+                )
+        })?;
+        
+        let builder = rig::providers::copilot::Client::builder()
+            .api_key::<rig::providers::copilot::CopilotAuth>(key);
+        
+        let builder = if let Some(url) = &self.config.base_url {
+            builder.base_url(url.clone())
+        } else {
+            builder
+        };
+        
+        let client = builder.build().map_err(|e| {
             LabeledError::new(format!("Failed to create client: {}", e))
                 .with_label(format!("{}", e), span)
         })?;
@@ -643,15 +656,28 @@ impl AgentConversationRuntime {
         ui: &mut U,
         source: CompactionTriggerSource,
     ) -> Result<(), String> {
-        use crate::providers::copilot::create_client;
-
         let runtime = &self.runtime;
         let memory = &self.memory;
         let conversation_store = &self.conversation_store;
         let store = &self.store;
 
-        // Create the GitHub Copilot client for compaction
-        let client = create_client(self.config.api_key.clone(), self.config.base_url.clone())
+        // Create the GitHub Copilot client with inline rig builder
+        // Use turbofish syntax for api_key (required by CopilotAuth trait)
+        let key = self.config.api_key.clone().ok_or_else(|| {
+            "Missing API key - set GITHUB_COPILOT_API_KEY or GITHUB_TOKEN, or provide api_key in config".to_string()
+        })?;
+        
+        let builder = rig::providers::copilot::Client::builder()
+            .api_key::<rig::providers::copilot::CopilotAuth>(key);
+        
+        let builder = if let Some(url) = &self.config.base_url {
+            builder.base_url(url.clone())
+        } else {
+            builder
+        };
+        
+        let client = builder
+            .build()
             .map_err(|e| format!("Failed to create client for compaction: {}", e))?;
 
         let source_label = source.as_str().to_string();
