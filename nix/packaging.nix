@@ -46,9 +46,11 @@
     archiveAndHash = false;
     nativeBuildInputs = [pkgs.pkg-config pkgs.clang];
     buildInputs = [pkgs.llvmPackages.libclang.lib];
-    preBuild = ''
-      export LIBCLANG_PATH="${pkgs.llvmPackages.libclang.lib}/lib"
-    '';
+    extraArgs = {
+      preBuild = ''
+        export LIBCLANG_PATH="${pkgs.llvmPackages.libclang.lib}/lib"
+      '';
+    };
   };
 
   # Build archive packages (creates archive with system name)
@@ -69,9 +71,11 @@
     archiveAndHash = true;
     nativeBuildInputs = [pkgs.pkg-config pkgs.clang];
     buildInputs = [pkgs.llvmPackages.libclang.lib];
-    preBuild = ''
-      export LIBCLANG_PATH="${pkgs.llvmPackages.libclang.lib}/lib"
-    '';
+    extraArgs = {
+      preBuild = ''
+        export LIBCLANG_PATH="${pkgs.llvmPackages.libclang.lib}/lib"
+      '';
+    };
   };
 in {
   # Export all package outputs
