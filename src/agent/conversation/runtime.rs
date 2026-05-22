@@ -434,7 +434,6 @@ impl ConversationRuntime for AgentConversationRuntime {
     ) -> Result<Value, LabeledError> {
         use crate::agent::conversation::turn::{TurnContext, TurnError, execute_turn};
         use crate::agent::hook::AuthzPermissionResolver;
-        use crate::providers::github_copilot::model::agent_from_config;
 
         emit_permissions_startup_summary_once(
             ui,
@@ -503,15 +502,27 @@ impl ConversationRuntime for AgentConversationRuntime {
             )
         };
 
-        // Create the GitHub Copilot agent from config
-        let agent = agent_from_config(
-            &self.config.provider,
-            &self.config.model,
-            self.config.api_key.clone(),
-            self.config.base_url.clone(),
-        )
-        .map_err(|e| {
-            LabeledError::new(format!("Failed to create agent: {}", e))
+        // Create the GitHub Copilot client with inline rig builder
+        // Use turbofish syntax for api_key (required by CopilotAuth trait)
+        let key = self.config.api_key.clone().ok_or_else(|| {
+            LabeledError::new("Missing API key")
+                .with_label(
+                    "Set GITHUB_COPILOT_API_KEY or GITHUB_TOKEN, or provide api_key in config",
+                    span,
+                )
+        })?;
+        
+        let builder = rig::providers::copilot::Client::builder()
+            .api_key::<rig::providers::copilot::CopilotAuth>(key);
+        
+        let builder = if let Some(url) = &self.config.base_url {
+            builder.base_url(url.clone())
+        } else {
+            builder
+        };
+        
+        let client = builder.build().map_err(|e| {
+            LabeledError::new(format!("Failed to create client: {}", e))
                 .with_label(format!("{}", e), span)
         })?;
 
@@ -529,7 +540,8 @@ impl ConversationRuntime for AgentConversationRuntime {
         let turn_result = execute_turn(
             TurnContext {
                 runtime: self.runtime.handle(),
-                agent: &agent,
+                client: &client,
+                model_name: &self.config.model,
                 prompt,
                 memory: self.memory.clone(),
                 conversation_id,
@@ -644,21 +656,29 @@ impl AgentConversationRuntime {
         ui: &mut U,
         source: CompactionTriggerSource,
     ) -> Result<(), String> {
-        use crate::providers::github_copilot::model::agent_from_config;
-
         let runtime = &self.runtime;
         let memory = &self.memory;
         let conversation_store = &self.conversation_store;
         let store = &self.store;
 
-        // Create the GitHub Copilot agent for compaction
-        let agent = agent_from_config(
-            &self.config.provider,
-            &self.config.model,
-            self.config.api_key.clone(),
-            self.config.base_url.clone(),
-        )
-        .map_err(|e| format!("Failed to create agent for compaction: {}", e))?;
+        // Create the GitHub Copilot client with inline rig builder
+        // Use turbofish syntax for api_key (required by CopilotAuth trait)
+        let key = self.config.api_key.clone().ok_or_else(|| {
+            "Missing API key - set GITHUB_COPILOT_API_KEY or GITHUB_TOKEN, or provide api_key in config".to_string()
+        })?;
+        
+        let builder = rig::providers::copilot::Client::builder()
+            .api_key::<rig::providers::copilot::CopilotAuth>(key);
+        
+        let builder = if let Some(url) = &self.config.base_url {
+            builder.base_url(url.clone())
+        } else {
+            builder
+        };
+        
+        let client = builder
+            .build()
+            .map_err(|e| format!("Failed to create client for compaction: {}", e))?;
 
         let source_label = source.as_str().to_string();
         ui.emit(&UiEvent::CompactionStarted {
@@ -687,7 +707,8 @@ impl AgentConversationRuntime {
                 &mut session,
                 memory,
                 conversation_store,
-                &agent,
+                &client,
+                &self.config.model,
                 mode,
                 ui,
             ))
@@ -773,7 +794,8 @@ async fn execute_compaction<S, U>(
     session: &mut Session,
     memory: &rig::memory::InMemoryConversationMemory,
     store: &S,
-    agent: &crate::providers::github_copilot::model::Agent,
+    client: &rig::providers::copilot::Client,
+    model_name: &str,
     mode: CompactionInvocationMode,
     ui: &mut U,
 ) -> Result<Option<CompactionOutcome>, String>
@@ -804,7 +826,7 @@ where
     // Perform compaction with summarizer closure
     let summarizer = |old_messages: &[rig::completion::Message]| {
         let messages = old_messages.to_vec();
-        async move { summarize_messages(agent, ui, &messages).await }
+        async move { summarize_messages(client, model_name, ui, &messages).await }
     };
 
     let outcome = session
@@ -880,20 +902,35 @@ fn format_messages_for_summary(messages: &[rig::completion::Message]) -> String 
 
 /// Summarize old rig messages with LLM.
 ///
-/// Formats rig messages, creates summarization prompt, and calls agent.completion().
+/// Formats rig messages, creates summarization prompt, and calls rig agent completion.
 async fn summarize_messages<U: ProgressUi>(
-    agent: &crate::providers::github_copilot::model::Agent,
+    client: &rig::providers::copilot::Client,
+    model_name: &str,
     ui: &mut U,
     old_messages: &[rig::completion::Message],
 ) -> std::io::Result<String> {
+    use rig::client::CompletionClient;
+    use rig::completion::Completion;
+
     let history = format_messages_for_summary(old_messages);
     let prompt_text = format!(
         "Summarize the following prior conversation segment concisely while preserving critical decisions, constraints, and open tasks.\n\n{}",
         history
     );
 
-    // Create the completion future using agent.completion()
-    let mut call_fut = std::pin::pin!(agent.completion(&prompt_text));
+    // Build rig agent from client and model
+    let model = client.completion_model(model_name);
+    let agent = rig::agent::AgentBuilder::new(model).build();
+
+    // Create the completion future
+    let call_result = agent
+        .completion(&prompt_text, Vec::<rig::completion::Message>::new())
+        .await
+        .map_err(|e| std::io::Error::other(format!("{}", e)))?
+        .tools(vec![])
+        .send();
+
+    let mut call_fut = std::pin::pin!(call_result);
 
     // Cancellation loop - poll completion future with periodic UI ticks
     loop {
@@ -901,18 +938,33 @@ async fn summarize_messages<U: ProgressUi>(
             return Err(std::io::Error::other("Compaction cancelled by user"));
         }
 
-        enum CompletionProgress {
+        enum CompletionProgress<R> {
             Tick,
-            Done(Result<String, rig::completion::CompletionError>),
+            Done(
+                Box<Result<rig::completion::CompletionResponse<R>, rig::completion::CompletionError>>,
+            ),
         }
 
         match tokio::select! {
-            response = &mut call_fut => CompletionProgress::Done(response),
+            response = &mut call_fut => CompletionProgress::Done(Box::new(response)),
             _ = tokio::time::sleep(Duration::from_millis(80)) => CompletionProgress::Tick,
         } {
             CompletionProgress::Tick => ui.emit(&UiEvent::Tick),
-            CompletionProgress::Done(result) => {
-                return result.map_err(|_| std::io::Error::other(COMPACTION_FAILURE_WARNING));
+            CompletionProgress::Done(boxed_result) => {
+                let result = *boxed_result;
+                // Extract text from CompletionResponse
+                return result
+                    .map(|response| {
+                        use rig::completion::message::AssistantContent;
+                        let mut text_parts = Vec::new();
+                        for content in response.choice {
+                            if let AssistantContent::Text(t) = content {
+                                text_parts.push(t.to_string());
+                            }
+                        }
+                        text_parts.join("\n")
+                    })
+                    .map_err(|_| std::io::Error::other(COMPACTION_FAILURE_WARNING));
             }
         }
     }

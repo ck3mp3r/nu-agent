@@ -17,6 +17,7 @@ nu-protocol = "0.112.2"
 rig = { package = "rig-core", version = "0.37.0", features = ["rmcp"] }
 tokio = { version = "1.52.3", features = ["full"] }
 tokio-util = "0.7"
+futures = "0.3"
 rmcp = { version = "1.5.0", features = [
   "client",
   "transport-child-process",

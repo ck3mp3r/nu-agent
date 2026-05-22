@@ -461,6 +461,7 @@ impl Config {
     ///
     /// Looks for:
     /// - `{PROVIDER}_API_KEY` (e.g., `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`)
+    /// - Special fallback for "copilot" provider: `GITHUB_COPILOT_API_KEY` → `GITHUB_TOKEN`
     /// - `AGENT_TEMPERATURE`, `AGENT_MAX_TOKENS`, etc. for overrides
     ///
     /// Invalid values are gracefully ignored (set to None).
@@ -472,10 +473,20 @@ impl Config {
             env::var(key).ok().and_then(|val| val.parse().ok())
         }
 
-        // Provider-specific API key (e.g., OPENAI_API_KEY)
-        let provider_upper = provider.to_uppercase();
-        let api_key_var = format!("{}_API_KEY", provider_upper);
-        let api_key = env::var(&api_key_var).ok();
+        // Provider-specific API key with special handling for copilot
+        let api_key = if provider.eq_ignore_ascii_case("copilot") 
+            || provider.eq_ignore_ascii_case("github-copilot") 
+        {
+            // Copilot fallback chain: explicit → GITHUB_COPILOT_API_KEY → GITHUB_TOKEN
+            env::var("GITHUB_COPILOT_API_KEY")
+                .ok()
+                .or_else(|| env::var("GITHUB_TOKEN").ok())
+        } else {
+            // Standard provider-specific API key (e.g., OPENAI_API_KEY)
+            let provider_upper = provider.to_uppercase();
+            let api_key_var = format!("{}_API_KEY", provider_upper);
+            env::var(&api_key_var).ok()
+        };
 
         // AGENT_* overrides
         let base_url = env::var("AGENT_BASE_URL").ok();

@@ -1526,3 +1526,104 @@ fn test_validate_zero_max_tool_turns_still_invalid() {
     let err = result.unwrap_err();
     assert!(err.contains("max_tool_turns"));
 }
+
+// ============================================================================
+// Copilot API Key Fallback Tests
+// ============================================================================
+
+#[test]
+#[serial]
+fn test_from_env_copilot_with_github_copilot_api_key() {
+    // Test copilot provider with GITHUB_COPILOT_API_KEY
+    with_env_vars(vec![("GITHUB_COPILOT_API_KEY", "copilot_key")], || {
+        let config = Config::from_env("copilot", "claude");
+        
+        assert_eq!(config.provider, "copilot");
+        assert_eq!(config.model, "claude");
+        assert_eq!(config.api_key, Some("copilot_key".to_string()));
+    });
+}
+
+#[test]
+#[serial]
+fn test_from_env_copilot_fallback_to_github_token() {
+    // Test copilot provider falls back to GITHUB_TOKEN if GITHUB_COPILOT_API_KEY not set
+    with_env_vars(vec![("GITHUB_TOKEN", "github_token")], || {
+        let config = Config::from_env("copilot", "claude");
+        
+        assert_eq!(config.provider, "copilot");
+        assert_eq!(config.model, "claude");
+        assert_eq!(config.api_key, Some("github_token".to_string()));
+    });
+}
+
+#[test]
+#[serial]
+fn test_from_env_copilot_precedence_github_copilot_api_key_over_github_token() {
+    // Test that GITHUB_COPILOT_API_KEY takes precedence over GITHUB_TOKEN
+    with_env_vars(
+        vec![
+            ("GITHUB_COPILOT_API_KEY", "copilot_key"),
+            ("GITHUB_TOKEN", "github_token"),
+        ],
+        || {
+            let config = Config::from_env("copilot", "claude");
+            
+            assert_eq!(config.provider, "copilot");
+            assert_eq!(config.model, "claude");
+            assert_eq!(config.api_key, Some("copilot_key".to_string()));
+        },
+    );
+}
+
+#[test]
+#[serial]
+fn test_from_env_github_copilot_with_github_copilot_api_key() {
+    // Test "github-copilot" provider variant
+    with_env_vars(vec![("GITHUB_COPILOT_API_KEY", "copilot_key")], || {
+        let config = Config::from_env("github-copilot", "claude");
+        
+        assert_eq!(config.provider, "github-copilot");
+        assert_eq!(config.model, "claude");
+        assert_eq!(config.api_key, Some("copilot_key".to_string()));
+    });
+}
+
+#[test]
+#[serial]
+fn test_from_env_copilot_missing_all_keys() {
+    // Test copilot provider without any API keys
+    unsafe {
+        std::env::remove_var("GITHUB_COPILOT_API_KEY");
+        std::env::remove_var("GITHUB_TOKEN");
+    }
+    
+    let config = Config::from_env("copilot", "claude");
+    
+    assert_eq!(config.provider, "copilot");
+    assert_eq!(config.model, "claude");
+    assert!(config.api_key.is_none());
+}
+
+#[test]
+#[serial]
+fn test_from_env_copilot_case_insensitive() {
+    // Test that copilot provider name is case-insensitive
+    with_env_vars(vec![("GITHUB_COPILOT_API_KEY", "copilot_key")], || {
+        // Lowercase
+        let config1 = Config::from_env("copilot", "claude");
+        assert_eq!(config1.api_key, Some("copilot_key".to_string()));
+        
+        // Mixed case
+        let config2 = Config::from_env("Copilot", "claude");
+        assert_eq!(config2.api_key, Some("copilot_key".to_string()));
+        
+        // github-copilot variant
+        let config3 = Config::from_env("github-copilot", "claude");
+        assert_eq!(config3.api_key, Some("copilot_key".to_string()));
+        
+        // Mixed case variant
+        let config4 = Config::from_env("GitHub-Copilot", "claude");
+        assert_eq!(config4.api_key, Some("copilot_key".to_string()));
+    });
+}

@@ -166,6 +166,49 @@ fn classify_model_family_unknown_cases() {
 }
 
 #[test]
+fn classify_model_family_openai_reasoning_models() {
+    // OpenAI reasoning models (o3, o4) should be explicitly classified as Gpt4x
+    // NOTE: These are reasoning models with distinct capabilities (reasoning tokens,
+    // limited system prompt support), but we map them to Gpt4x for now as we don't
+    // have a separate ModelFamily::Reasoning variant yet.
+    
+    // Direct OpenAI provider
+    assert_eq!(
+        classify_model_family("openai", "o3-mini"),
+        ModelFamily::Gpt4x
+    );
+    assert_eq!(
+        classify_model_family("openai", "o4-mini"),
+        ModelFamily::Gpt4x
+    );
+    assert_eq!(
+        classify_model_family("openai", "o3"),
+        ModelFamily::Gpt4x
+    );
+    assert_eq!(
+        classify_model_family("openai", "o4"),
+        ModelFamily::Gpt4x
+    );
+}
+
+#[test]
+fn classify_model_family_github_copilot_openai_reasoning_models_legacy_format() {
+    // Legacy format: "backend/model" for reasoning models
+    assert_eq!(
+        classify_model_family("github-copilot", "openai/o3-mini"),
+        ModelFamily::Gpt4x
+    );
+    assert_eq!(
+        classify_model_family("github-copilot", "openai/o4-mini"),
+        ModelFamily::Gpt4x
+    );
+    assert_eq!(
+        classify_model_family("github-copilot", "openai/o3"),
+        ModelFamily::Gpt4x
+    );
+}
+
+#[test]
 fn resolve_preamble_uses_user_provider_family_first() {
     let defaults = base_defaults();
     let result = resolve_preamble(
