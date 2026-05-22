@@ -90,6 +90,7 @@ fn driver_receives_llm_start_event() {
     let mut driver = HookDriver {
         event_rx: rx,
         tool_call_count: 0,
+        deltas_emitted: false,
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -116,6 +117,7 @@ fn driver_receives_llm_end_event() {
     let mut driver = HookDriver {
         event_rx: rx,
         tool_call_count: 0,
+        deltas_emitted: false,
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -153,6 +155,7 @@ fn driver_receives_tool_start_event() {
     let mut driver = HookDriver {
         event_rx: rx,
         tool_call_count: 0,
+        deltas_emitted: false,
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -187,6 +190,7 @@ fn driver_receives_tool_end_event() {
     let mut driver = HookDriver {
         event_rx: rx,
         tool_call_count: 0,
+        deltas_emitted: false,
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -225,6 +229,7 @@ fn driver_resolves_permission_allow() {
     let mut driver = HookDriver {
         event_rx: rx,
         tool_call_count: 0,
+        deltas_emitted: false,
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -261,6 +266,7 @@ fn driver_resolves_permission_deny() {
     let mut driver = HookDriver {
         event_rx: rx,
         tool_call_count: 0,
+        deltas_emitted: false,
     };
     let mut ui = MockUi::new();
     let mut perms = DenyAll;
@@ -296,6 +302,7 @@ fn driver_stops_on_channel_close() {
     let mut driver = HookDriver {
         event_rx: rx,
         tool_call_count: 0,
+        deltas_emitted: false,
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -320,6 +327,7 @@ fn driver_emits_doom_loop_warning() {
     let mut driver = HookDriver {
         event_rx: rx,
         tool_call_count: 0,
+        deltas_emitted: false,
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -356,6 +364,7 @@ fn driver_handles_multiple_events_in_sequence() {
     let mut driver = HookDriver {
         event_rx: rx,
         tool_call_count: 0,
+        deltas_emitted: false,
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -410,6 +419,7 @@ fn driver_fills_tool_source_on_tool_start() {
     let mut driver = HookDriver {
         event_rx: rx,
         tool_call_count: 0,
+        deltas_emitted: false,
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -454,6 +464,7 @@ fn driver_fills_tool_source_on_tool_end() {
     let mut driver = HookDriver {
         event_rx: rx,
         tool_call_count: 0,
+        deltas_emitted: false,
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -501,6 +512,7 @@ fn driver_fills_unknown_source_for_unregistered_tool() {
     let mut driver = HookDriver {
         event_rx: rx,
         tool_call_count: 0,
+        deltas_emitted: false,
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -544,6 +556,7 @@ fn driver_counts_tool_calls() {
     let mut driver = HookDriver {
         event_rx: rx,
         tool_call_count: 0,
+        deltas_emitted: false,
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -602,6 +615,7 @@ fn driver_counts_zero_when_no_tools_called() {
     let mut driver = HookDriver {
         event_rx: rx,
         tool_call_count: 0,
+        deltas_emitted: false,
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -657,6 +671,7 @@ fn driver_passes_tool_call_id_to_permission_resolver() {
     let mut driver = HookDriver {
         event_rx: rx,
         tool_call_count: 0,
+        deltas_emitted: false,
     };
     let mut ui = MockUi::new();
     let mut perms = CaptureToolCallId { captured_id: None };
@@ -696,6 +711,7 @@ fn driver_passes_none_tool_call_id_when_not_provided() {
     let mut driver = HookDriver {
         event_rx: rx,
         tool_call_count: 0,
+        deltas_emitted: false,
     };
     let mut ui = MockUi::new();
     let mut perms = CaptureToolCallId {
@@ -737,6 +753,7 @@ fn driver_extracts_display_from_edit_tool_result() {
     let mut driver = HookDriver {
         event_rx: rx,
         tool_call_count: 0,
+        deltas_emitted: false,
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -803,6 +820,7 @@ fn driver_extracts_explicit_display_field() {
     let mut driver = HookDriver {
         event_rx: rx,
         tool_call_count: 0,
+        deltas_emitted: false,
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -867,6 +885,7 @@ fn driver_leaves_display_none_for_non_displayable_result() {
     let mut driver = HookDriver {
         event_rx: rx,
         tool_call_count: 0,
+        deltas_emitted: false,
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -919,6 +938,7 @@ fn driver_leaves_display_none_for_invalid_json_result() {
     let mut driver = HookDriver {
         event_rx: rx,
         tool_call_count: 0,
+        deltas_emitted: false,
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -958,3 +978,159 @@ fn driver_leaves_display_none_for_invalid_json_result() {
         panic!("Expected ToolEnd event");
     }
 }
+
+#[test]
+fn text_delta_emits_aggregated_not_delta() {
+    let (tx, rx) = mpsc::unbounded_channel();
+    let mut driver = HookDriver {
+        event_rx: rx,
+        tool_call_count: 0,
+        deltas_emitted: false,
+    };
+    let mut ui = MockUi::new();
+    let mut perms = AllowAll;
+    let closure_registry = ClosureRegistry::new();
+    let mcp_registry = McpToolRegistry::from_names::<[&str; 0], &str>([]);
+    let cancel_token = CancellationToken::new();
+
+    // Send TextDelta with different delta and aggregated values
+    tx.send(HookEvent::TextDelta {
+        delta: "world".to_string(),
+        aggregated: "hello world".to_string(),
+    })
+    .unwrap();
+    drop(tx);
+
+    driver.run_until_complete(
+        &mut ui,
+        &mut perms,
+        &closure_registry,
+        &mcp_registry,
+        &cancel_token,
+    );
+
+    // Verify AssistantMessage contains aggregated text, not delta
+    let has_aggregated = ui
+        .events
+        .iter()
+        .any(|e| matches!(e, UiEvent::AssistantMessage { text } if text == "hello world"));
+    assert!(
+        has_aggregated,
+        "Expected AssistantMessage with aggregated text 'hello world'"
+    );
+
+    // Verify delta text is NOT emitted
+    let has_delta = ui
+        .events
+        .iter()
+        .any(|e| matches!(e, UiEvent::AssistantMessage { text } if text == "world"));
+    assert!(!has_delta, "Expected delta text 'world' NOT to be emitted");
+}
+
+#[test]
+fn text_delta_sets_deltas_emitted() {
+    let (tx, rx) = mpsc::unbounded_channel();
+    let mut driver = HookDriver {
+        event_rx: rx,
+        tool_call_count: 0,
+        deltas_emitted: false,
+    };
+    let mut ui = MockUi::new();
+    let mut perms = AllowAll;
+    let closure_registry = ClosureRegistry::new();
+    let mcp_registry = McpToolRegistry::from_names::<[&str; 0], &str>([]);
+    let cancel_token = CancellationToken::new();
+
+    // Verify flag starts as false
+    assert!(!driver.deltas_emitted());
+
+    // Send TextDelta event
+    tx.send(HookEvent::TextDelta {
+        delta: "text".to_string(),
+        aggregated: "text".to_string(),
+    })
+    .unwrap();
+    drop(tx);
+
+    driver.run_until_complete(
+        &mut ui,
+        &mut perms,
+        &closure_registry,
+        &mcp_registry,
+        &cancel_token,
+    );
+
+    // Verify flag is now true after processing TextDelta
+    assert!(
+        driver.deltas_emitted(),
+        "Expected deltas_emitted to be true after TextDelta event"
+    );
+}
+
+#[test]
+fn multiple_deltas_all_forwarded() {
+    let (tx, rx) = mpsc::unbounded_channel();
+    let mut driver = HookDriver {
+        event_rx: rx,
+        tool_call_count: 0,
+        deltas_emitted: false,
+    };
+    let mut ui = MockUi::new();
+    let mut perms = AllowAll;
+    let closure_registry = ClosureRegistry::new();
+    let mcp_registry = McpToolRegistry::from_names::<[&str; 0], &str>([]);
+    let cancel_token = CancellationToken::new();
+
+    // Send multiple TextDelta events with increasing aggregated text
+    tx.send(HookEvent::TextDelta {
+        delta: "Hello".to_string(),
+        aggregated: "Hello".to_string(),
+    })
+    .unwrap();
+
+    tx.send(HookEvent::TextDelta {
+        delta: " ".to_string(),
+        aggregated: "Hello ".to_string(),
+    })
+    .unwrap();
+
+    tx.send(HookEvent::TextDelta {
+        delta: "world".to_string(),
+        aggregated: "Hello world".to_string(),
+    })
+    .unwrap();
+
+    tx.send(HookEvent::TextDelta {
+        delta: "!".to_string(),
+        aggregated: "Hello world!".to_string(),
+    })
+    .unwrap();
+
+    drop(tx);
+
+    driver.run_until_complete(
+        &mut ui,
+        &mut perms,
+        &closure_registry,
+        &mcp_registry,
+        &cancel_token,
+    );
+
+    // Collect all AssistantMessage events
+    let messages: Vec<String> = ui
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            UiEvent::AssistantMessage { text } => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+
+    // Verify we got all 4 messages with correct aggregated text
+    assert_eq!(messages.len(), 4, "Expected 4 AssistantMessage events");
+    assert_eq!(messages[0], "Hello");
+    assert_eq!(messages[1], "Hello ");
+    assert_eq!(messages[2], "Hello world");
+    assert_eq!(messages[3], "Hello world!");
+}
+

@@ -424,6 +424,8 @@ fn handle_llm_start(state: &mut AppState) {
         state.phase = UiPhase::Busy;
         state.ensure_invariants();
     }
+    // Reset streaming state at the start of a new LLM response
+    state.streaming_message_start = None;
 }
 
 fn handle_tick(state: &mut AppState) {
@@ -635,21 +637,34 @@ fn handle_warning(state: &mut AppState, message: String) {
 
 fn handle_assistant_message(state: &mut AppState, text: String) {
     let trimmed = text.trim();
-    if !trimmed.is_empty() {
-        let projected_lines = state.project_assistant_markdown_lines(trimmed);
-        if assistant_diff_regurgitation_is_redundant(state, &projected_lines) {
-            return;
-        }
+    if trimmed.is_empty() {
+        return;
+    }
 
-        // Always follow tail with ListState
-        state.scroll_transcript_to_bottom();
-        for line in projected_lines {
-            let text = markdown::rendered_line_to_plain_text(&line);
-            if text.trim().is_empty() {
-                continue;
-            }
-            state.push_transcript_rendered_line(TranscriptRole::Assistant, line);
+    // If this is the first delta, record where the message starts in transcript
+    if state.streaming_message_start.is_none() {
+        state.streaming_message_start = Some(state.transcript_preview.len());
+    }
+
+    // Remove previous rendering of this message
+    if let Some(start) = state.streaming_message_start {
+        state.transcript_preview.truncate(start);
+    }
+
+    // Project the full accumulated text through markdown
+    let projected_lines = state.project_assistant_markdown_lines(trimmed);
+    if assistant_diff_regurgitation_is_redundant(state, &projected_lines) {
+        return;
+    }
+
+    // Always follow tail with ListState
+    state.scroll_transcript_to_bottom();
+    for line in projected_lines {
+        let text = markdown::rendered_line_to_plain_text(&line);
+        if text.trim().is_empty() {
+            continue;
         }
+        state.push_transcript_rendered_line(TranscriptRole::Assistant, line);
     }
 }
 
@@ -746,4 +761,6 @@ fn latest_tool_display_diff_lines(state: &AppState) -> Option<Vec<String>> {
 fn finalize(state: &mut AppState) {
     state.finalize_cycle();
     state.status_line.clear();
+    // Reset streaming state when the LLM response is complete
+    state.streaming_message_start = None;
 }

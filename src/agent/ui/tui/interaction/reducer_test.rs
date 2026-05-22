@@ -2101,3 +2101,140 @@ fn permission_requested_without_display_does_not_add_transcript_entries() {
         "PermissionRequested without display should not add transcript entries"
     );
 }
+
+#[test]
+fn streaming_replaces_not_appends() {
+    let mut state = busy_state_with_clean_transcript();
+
+    // Emit first AssistantMessage delta
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::AssistantMessage {
+            text: "hello".to_string(),
+        }),
+        None,
+    );
+
+    // First message should set streaming_message_start
+    assert!(state.streaming_message_start.is_some());
+    let first_start = state.streaming_message_start.unwrap();
+
+    // Emit second AssistantMessage delta (accumulated text)
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::AssistantMessage {
+            text: "hello world".to_string(),
+        }),
+        None,
+    );
+
+    // Should still have same streaming_message_start
+    assert_eq!(state.streaming_message_start, Some(first_start));
+
+    // Verify transcript has ONE message block with "hello world", not two separate entries
+    let assistant_entries: Vec<_> = state
+        .transcript_preview
+        .iter()
+        .filter(|entry| entry.role() == Role::Assistant)
+        .collect();
+
+    // Should have exactly one "hello world" message, not "hello" and "hello world"
+    assert_eq!(
+        assistant_entries.len(),
+        1,
+        "Expected exactly one assistant message block (replaced, not appended)"
+    );
+    assert_eq!(assistant_entries[0].text(), "hello world");
+
+    // Verify no "hello" without "world" exists
+    assert!(
+        !state
+            .transcript_preview
+            .iter()
+            .any(|entry| entry.text() == "hello"),
+        "Should not have standalone 'hello' entry - it should be replaced"
+    );
+}
+
+#[test]
+fn streaming_message_start_reset_on_llm_start() {
+    let mut state = busy_state_with_clean_transcript();
+
+    // Emit streaming sequence
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::AssistantMessage {
+            text: "first message".to_string(),
+        }),
+        None,
+    );
+
+    // Should have streaming_message_start set
+    assert!(state.streaming_message_start.is_some());
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::AssistantMessage {
+            text: "first message continues".to_string(),
+        }),
+        None,
+    );
+
+    // Still should be set
+    assert!(state.streaming_message_start.is_some());
+
+    // Emit LlmStart (new LLM response begins)
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::LlmStart),
+        None,
+    );
+
+    // Verify streaming_message_start is reset to None
+    assert!(
+        state.streaming_message_start.is_none(),
+        "LlmStart should reset streaming_message_start to None"
+    );
+}
+
+#[test]
+fn streaming_message_start_reset_on_finalize() {
+    let mut state = busy_state_with_clean_transcript();
+
+    // Emit streaming sequence
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::AssistantMessage {
+            text: "streaming response".to_string(),
+        }),
+        None,
+    );
+
+    // Should have streaming_message_start set
+    assert!(state.streaming_message_start.is_some());
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::AssistantMessage {
+            text: "streaming response with more".to_string(),
+        }),
+        None,
+    );
+
+    // Still should be set
+    assert!(state.streaming_message_start.is_some());
+
+    // Emit Completed event (calls finalize)
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::Completed { tool_calls: 0 }),
+        None,
+    );
+
+    // Verify streaming_message_start is reset to None
+    assert!(
+        state.streaming_message_start.is_none(),
+        "finalize (via Completed) should reset streaming_message_start to None"
+    );
+    assert_eq!(state.phase, UiPhase::Idle);
+}

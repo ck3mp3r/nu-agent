@@ -235,6 +235,7 @@ pub struct AppState {
     inline_slash_commands: Vec<SlashCommand>,
     clipboard_request: Option<String>,
     pub pre_displayed_tool_keys: std::collections::HashSet<String>,
+    pub(crate) streaming_message_start: Option<usize>,
     #[cfg(test)]
     assistant_projection_cache_misses: usize,
 }
@@ -296,6 +297,7 @@ impl PartialEq for AppState {
             && self.inline_slash_commands == other.inline_slash_commands
             && self.clipboard_request == other.clipboard_request
             && self.pre_displayed_tool_keys == other.pre_displayed_tool_keys
+            && self.streaming_message_start == other.streaming_message_start
     }
 }
 
@@ -356,6 +358,7 @@ impl Default for AppState {
             inline_slash_commands: Vec::new(),
             clipboard_request: None,
             pre_displayed_tool_keys: std::collections::HashSet::new(),
+            streaming_message_start: None,
             #[cfg(test)]
             assistant_projection_cache_misses: 0,
         }

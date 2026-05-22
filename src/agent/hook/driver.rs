@@ -55,6 +55,7 @@ fn extract_display_from_result(
 pub struct HookDriver {
     event_rx: mpsc::UnboundedReceiver<HookEvent>,
     tool_call_count: usize,
+    deltas_emitted: bool,
 }
 
 impl HookDriver {
@@ -65,6 +66,7 @@ impl HookDriver {
         let driver = Self {
             event_rx: rx,
             tool_call_count: 0,
+            deltas_emitted: false,
         };
         (hook, driver)
     }
@@ -73,6 +75,12 @@ impl HookDriver {
     /// This count is incremented each time a ToolEnd event is processed.
     pub fn tool_call_count(&self) -> usize {
         self.tool_call_count
+    }
+
+    /// Check if any text deltas were emitted during this turn.
+    /// This is used to determine if the full response needs to be emitted after streaming.
+    pub fn deltas_emitted(&self) -> bool {
+        self.deltas_emitted
     }
 
     /// Run the driver loop, blocking until the hook's channel closes
@@ -102,7 +110,9 @@ impl HookDriver {
                     self.handle_event(event, ui, permissions, closure_registry, mcp_registry)
                 }
                 Err(mpsc::error::TryRecvError::Empty) => {
-                    // No events yet — brief sleep to avoid busy-spin
+                    // No events yet — emit tick for spinner animation
+                    ui.emit(&UiEvent::Tick);
+                    // Brief sleep to avoid busy-spin
                     std::thread::sleep(std::time::Duration::from_millis(1));
                 }
                 Err(mpsc::error::TryRecvError::Disconnected) => {
@@ -184,10 +194,11 @@ impl HookDriver {
                 });
             }
             HookEvent::TextDelta {
-                delta,
-                aggregated: _,
+                delta: _,
+                aggregated,
             } => {
-                ui.emit(&UiEvent::AssistantMessage { text: delta });
+                self.deltas_emitted = true;
+                ui.emit(&UiEvent::AssistantMessage { text: aggregated });
             }
             HookEvent::AskPermission {
                 tool_name,

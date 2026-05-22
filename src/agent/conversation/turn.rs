@@ -5,6 +5,7 @@
 //! the final response. Uses `CopilotPromptHook` + `HookDriver` to bridge async
 //! events to the sync UI.
 
+use futures::StreamExt;
 use tokio_util::sync::CancellationToken;
 
 use crate::agent::hook::{
@@ -14,6 +15,7 @@ use crate::agent::protocol::contracts::ProgressUi;
 use crate::agent::tools::handler::McpToolRegistry;
 use crate::tools::closure::ClosureRegistry;
 use rig::client::CompletionClient;
+use rig::streaming::StreamingPrompt;
 
 /// Default max tool turns when config doesn't specify a limit.
 /// Matches v1 "unlimited" semantics with a practical upper bound.
@@ -30,6 +32,8 @@ pub struct TurnResult {
     pub messages: Option<Vec<rig::completion::Message>>,
     /// Number of tool calls executed during this turn
     pub tool_call_count: usize,
+    /// Whether text deltas were emitted during streaming
+    pub deltas_emitted: bool,
 }
 
 /// Error from a conversation turn
@@ -64,6 +68,15 @@ impl From<rig::completion::PromptError> for TurnError {
                 msg: other.to_string(),
                 cancelled: false,
             },
+        }
+    }
+}
+
+impl From<rig::agent::StreamingError> for TurnError {
+    fn from(e: rig::agent::StreamingError) -> Self {
+        TurnError {
+            msg: e.to_string(),
+            cancelled: false,
         }
     }
 }
@@ -143,7 +156,7 @@ pub(crate) fn execute_turn<U: ProgressUi, P: PermissionResolver>(
     };
 
     let model = ctx.client.completion_model(ctx.model_name);
-    let prompt_future = Box::pin(build_agent_and_prompt(model, config));
+    let prompt_future = Box::pin(build_agent_and_stream(model, config));
 
     // Spawn the completion on the tokio runtime
     let prompt_handle = ctx.runtime.spawn(prompt_future);
@@ -158,8 +171,9 @@ pub(crate) fn execute_turn<U: ProgressUi, P: PermissionResolver>(
         &cancel_token,
     );
 
-    // Capture tool call count from the driver
+    // Capture tool call count and deltas flag from the driver
     let tool_call_count = driver.tool_call_count();
+    let deltas_emitted = driver.deltas_emitted();
 
     // Collect the result from the spawned task
     let join_result = ctx.runtime.block_on(prompt_handle).map_err(|e| TurnError {
@@ -170,10 +184,11 @@ pub(crate) fn execute_turn<U: ProgressUi, P: PermissionResolver>(
     let response = join_result.map_err(TurnError::from)?;
 
     Ok(TurnResult {
-        text: response.output,
+        text: response.text,
         usage: response.usage,
         messages: response.messages,
         tool_call_count,
+        deltas_emitted,
     })
 }
 
@@ -188,13 +203,21 @@ struct AgentPromptConfig {
     max_turns: Option<u32>,
 }
 
-/// Build an agent with a hook and execute a multi-turn prompt loop.
-async fn build_agent_and_prompt<M>(
+/// Result from streaming agent execution
+struct StreamingTurnResult {
+    text: String,
+    usage: rig::completion::request::Usage,
+    messages: Option<Vec<rig::completion::Message>>,
+}
+
+/// Build an agent with a hook and execute a multi-turn streaming prompt loop.
+async fn build_agent_and_stream<M>(
     model: M,
     config: AgentPromptConfig,
-) -> Result<rig::agent::PromptResponse, rig::completion::PromptError>
+) -> Result<StreamingTurnResult, rig::agent::StreamingError>
 where
     M: rig::completion::CompletionModel + Clone + 'static,
+    M::StreamingResponse: rig::completion::request::GetTokenUsage,
 {
     let AgentPromptConfig {
         hook,
@@ -205,7 +228,6 @@ where
         tool_server_handle,
         max_turns,
     } = config;
-    use rig::completion::Prompt;
 
     let mut builder = rig::agent::AgentBuilder::new(model)
         .hook(hook)
@@ -217,11 +239,47 @@ where
     let effective_max_turns = max_turns.unwrap_or(DEFAULT_MAX_TURNS);
     builder = builder.default_max_turns(effective_max_turns as usize);
     let agent = builder.build();
-    agent
-        .prompt(prompt)
+
+    let mut stream = agent
+        .stream_prompt(prompt)
         .conversation(&conversation_id)
-        .extended_details()
-        .await
+        .with_history(Vec::<rig::completion::Message>::new())
+        .multi_turn(effective_max_turns as usize)
+        .await;
+
+    let mut text = String::new();
+    let mut usage = rig::completion::request::Usage::default();
+    let mut messages: Option<Vec<rig::completion::Message>> = None;
+
+    while let Some(item) = stream.next().await {
+        match item? {
+            rig::agent::MultiTurnStreamItem::StreamAssistantItem(content) => {
+                match content {
+                    rig::streaming::StreamedAssistantContent::Text(delta) => {
+                        text.push_str(&delta.text);
+                    }
+                    rig::streaming::StreamedAssistantContent::ToolCall { .. } => {}
+                    rig::streaming::StreamedAssistantContent::ToolCallDelta { .. } => {}
+                    rig::streaming::StreamedAssistantContent::ReasoningDelta { .. } => {}
+                    rig::streaming::StreamedAssistantContent::Final(_) => {}
+                    rig::streaming::StreamedAssistantContent::Reasoning(_) => {}
+                }
+            }
+            rig::agent::MultiTurnStreamItem::StreamUserItem(_) => {}
+            rig::agent::MultiTurnStreamItem::FinalResponse(fin) => {
+                text = fin.response().to_string();
+                usage = fin.usage();
+                messages = fin.history().map(|h| h.to_vec());
+            }
+            _ => {}
+        }
+    }
+
+    Ok(StreamingTurnResult {
+        text,
+        usage,
+        messages,
+    })
 }
 
 #[cfg(test)]

@@ -16,6 +16,8 @@ pub struct StderrUiRenderer<W: Write> {
     tick_gate: SystemTickGate,
     active_tool_name: Option<String>,
     active_tool_args: Option<String>,
+    streaming_started: bool,
+    streaming_printed_len: usize,
 }
 
 trait TickGate {
@@ -64,6 +66,8 @@ impl<W: Write> StderrUiRenderer<W> {
             tick_gate: SystemTickGate::new(Duration::from_millis(80)),
             active_tool_name: None,
             active_tool_args: None,
+            streaming_started: false,
+            streaming_printed_len: 0,
         }
     }
 
@@ -205,7 +209,14 @@ impl<W: Write> StderrUiRenderer<W> {
                     ))
                 }
             }
-            UiEvent::Warning { message } => Some(format!("warning: {message}")),
+            UiEvent::Warning { message } => {
+                use super::policy::Verbosity;
+                if self.policy.verbosity >= Verbosity::VeryVerbose {
+                    Some(format!("warning: {message}"))
+                } else {
+                    None
+                }
+            }
             UiEvent::CompactionStarted { source } => {
                 if self.policy.quiet {
                     None
@@ -274,6 +285,8 @@ impl<W: Write> UiRenderer for StderrUiRenderer<W> {
         match event {
             UiEvent::LlmStart if self.spinner.is_enabled() => {
                 self.active_tool_name = None;
+                self.streaming_started = false;
+                self.streaming_printed_len = 0;
                 self.spinner.start();
                 self.draw_spinner();
             }
@@ -285,18 +298,55 @@ impl<W: Write> UiRenderer for StderrUiRenderer<W> {
                 self.spinner.start();
                 self.draw_spinner();
             }
+            UiEvent::AssistantMessage { text } => {
+                // Only stream output in verbose mode (-v or higher)
+                use super::policy::Verbosity;
+                if self.policy.verbosity >= Verbosity::Verbose {
+                    if !self.streaming_started {
+                        self.streaming_started = true;
+                        // Stop the spinner when streaming starts
+                        if self.spinner.is_active() {
+                            self.clear_spinner_line();
+                            self.spinner.stop();
+                        }
+                    }
+                    // Only print the new portion (text is accumulated, not delta)
+                    if text.len() > self.streaming_printed_len {
+                        let _ = self
+                            .writer
+                            .write_all(&text.as_bytes()[self.streaming_printed_len..]);
+                        self.streaming_printed_len = text.len();
+                    }
+                }
+            }
             UiEvent::Tick if self.spinner.is_active() && self.tick_gate.allow_tick() => {
                 self.spinner.tick();
                 self.draw_spinner();
                 return;
             }
-            UiEvent::LlmEnd { .. } | UiEvent::ToolEnd { .. } | UiEvent::Completed { .. }
+            UiEvent::LlmEnd { .. } | UiEvent::ToolEnd { .. }
                 if self.spinner.is_active() =>
             {
                 self.clear_spinner_line();
                 self.spinner.stop();
                 self.active_tool_name = None;
                 self.active_tool_args = None;
+            }
+            UiEvent::Completed { .. } if self.spinner.is_active() => {
+                self.clear_spinner_line();
+                self.spinner.stop();
+                self.active_tool_name = None;
+                self.active_tool_args = None;
+                if self.streaming_started {
+                    let _ = self.writer.write_all(b"\n");
+                    self.streaming_started = false;
+                    self.streaming_printed_len = 0;
+                }
+            }
+            UiEvent::Completed { .. } if self.streaming_started => {
+                let _ = self.writer.write_all(b"\n");
+                self.streaming_started = false;
+                self.streaming_printed_len = 0;
             }
             _ => {}
         }

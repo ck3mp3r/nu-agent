@@ -594,9 +594,12 @@ impl ConversationRuntime for AgentConversationRuntime {
             compaction_count = self.compaction_count;
         }
 
-        ui.emit(&UiEvent::AssistantMessage {
-            text: turn_result.text.clone(),
-        });
+        // Only emit the full response if deltas weren't already emitted during streaming
+        if !turn_result.deltas_emitted {
+            ui.emit(&UiEvent::AssistantMessage {
+                text: turn_result.text.clone(),
+            });
+        }
         ui.emit(&UiEvent::Completed {
             tool_calls: turn_result.tool_call_count,
         });

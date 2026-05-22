@@ -23,4 +23,7 @@ mod renderer_contract_test;
 mod stderr_contract_test;
 
 #[cfg(test)]
+mod stderr_streaming_test;
+
+#[cfg(test)]
 mod factory_test;

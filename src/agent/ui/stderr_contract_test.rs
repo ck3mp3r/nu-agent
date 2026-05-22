@@ -33,7 +33,7 @@ fn stderr_renderer_writes_only_to_stderr_sink() {
 }
 
 #[test]
-fn quiet_mode_suppresses_non_essential_progress_but_keeps_warnings() {
+fn quiet_mode_suppresses_non_essential_progress_and_warnings() {
     let mut stderr_bytes = Vec::<u8>::new();
     let mut renderer = StderrUiRenderer::new(
         &mut stderr_bytes,
@@ -55,7 +55,28 @@ fn quiet_mode_suppresses_non_essential_progress_but_keeps_warnings() {
     let stderr_out = String::from_utf8(stderr_bytes).expect("utf8");
     assert!(!stderr_out.contains("thinking"));
     assert!(!stderr_out.contains("completed"));
-    assert!(stderr_out.contains("essential warning"));
+    assert!(!stderr_out.contains("essential warning"));
+}
+
+#[test]
+fn verbose_mode_shows_warnings() {
+    let mut stderr_bytes = Vec::<u8>::new();
+    let mut renderer = StderrUiRenderer::new(
+        &mut stderr_bytes,
+        UiPolicy {
+            quiet: false,
+            verbosity: Verbosity::VeryVerbose,
+        },
+        true,
+    );
+
+    renderer.emit(&UiEvent::Warning {
+        message: "important warning".to_string(),
+    });
+    renderer.flush();
+
+    let stderr_out = String::from_utf8(stderr_bytes).expect("utf8");
+    assert!(stderr_out.contains("important warning"));
 }
 
 #[test]
