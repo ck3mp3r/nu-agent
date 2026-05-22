@@ -2,38 +2,6 @@ use super::*;
 use serial_test::serial;
 
 #[test]
-fn test_resolve_model_name_with_backend_prefix() {
-    // Legacy format with backend prefix
-    let input = "anthropic/claude-sonnet-4.5";
-    let expected = "claude-sonnet-4.5";
-    assert_eq!(resolve_model_name(input), expected);
-}
-
-#[test]
-fn test_resolve_model_name_without_prefix() {
-    // New format without prefix
-    let input = "claude-sonnet-4.5";
-    let expected = "claude-sonnet-4.5";
-    assert_eq!(resolve_model_name(input), expected);
-}
-
-#[test]
-fn test_resolve_model_name_openai_prefix() {
-    // OpenAI backend prefix
-    let input = "openai/gpt-4o";
-    let expected = "gpt-4o";
-    assert_eq!(resolve_model_name(input), expected);
-}
-
-#[test]
-fn test_resolve_model_name_codex() {
-    // OpenAI codex model
-    let input = "openai/gpt-5.3-codex";
-    let expected = "gpt-5.3-codex";
-    assert_eq!(resolve_model_name(input), expected);
-}
-
-#[test]
 #[serial]
 fn test_resolve_api_key_explicit() {
     // Explicit key takes precedence

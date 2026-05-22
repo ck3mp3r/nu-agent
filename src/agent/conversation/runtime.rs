@@ -434,7 +434,7 @@ impl ConversationRuntime for AgentConversationRuntime {
     ) -> Result<Value, LabeledError> {
         use crate::agent::conversation::turn::{TurnContext, TurnError, execute_turn};
         use crate::agent::hook::AuthzPermissionResolver;
-        use crate::providers::copilot::{create_client, resolve_model_name};
+        use crate::providers::copilot::create_client;
 
         emit_permissions_startup_summary_once(
             ui,
@@ -503,7 +503,7 @@ impl ConversationRuntime for AgentConversationRuntime {
             )
         };
 
-        // Create the GitHub Copilot client and resolve model name
+        // Create the GitHub Copilot client
         let client = create_client(
             self.config.api_key.clone(),
             self.config.base_url.clone(),
@@ -512,7 +512,6 @@ impl ConversationRuntime for AgentConversationRuntime {
             LabeledError::new(format!("Failed to create client: {}", e))
                 .with_label(format!("{}", e), span)
         })?;
-        let model_name = resolve_model_name(&self.config.model);
 
         // Create the real permission resolver using the authorization context
         let mut permission_resolver = AuthzPermissionResolver {
@@ -529,7 +528,7 @@ impl ConversationRuntime for AgentConversationRuntime {
             TurnContext {
                 runtime: self.runtime.handle(),
                 client: &client,
-                model_name: &model_name,
+                model_name: &self.config.model,
                 prompt,
                 memory: self.memory.clone(),
                 conversation_id,
@@ -644,7 +643,7 @@ impl AgentConversationRuntime {
         ui: &mut U,
         source: CompactionTriggerSource,
     ) -> Result<(), String> {
-        use crate::providers::copilot::{create_client, resolve_model_name};
+        use crate::providers::copilot::create_client;
 
         let runtime = &self.runtime;
         let memory = &self.memory;
@@ -654,7 +653,6 @@ impl AgentConversationRuntime {
         // Create the GitHub Copilot client for compaction
         let client = create_client(self.config.api_key.clone(), self.config.base_url.clone())
             .map_err(|e| format!("Failed to create client for compaction: {}", e))?;
-        let model_name = resolve_model_name(&self.config.model);
 
         let source_label = source.as_str().to_string();
         ui.emit(&UiEvent::CompactionStarted {
@@ -684,7 +682,7 @@ impl AgentConversationRuntime {
                 memory,
                 conversation_store,
                 &client,
-                &model_name,
+                &self.config.model,
                 mode,
                 ui,
             ))

@@ -8,25 +8,6 @@ pub enum CopilotError {
     ClientError(String),
 }
 
-/// Strip legacy `backend/model_name` prefix if present.
-/// 
-/// Examples:
-/// - "anthropic/claude-sonnet-4.5" → "claude-sonnet-4.5"
-/// - "claude-sonnet-4.5" → "claude-sonnet-4.5" (no-op)
-/// - "openai/gpt-4o" → "gpt-4o"
-pub fn resolve_model_name(model_ref: &str) -> String {
-    if let Some((_backend, model_name)) = model_ref.split_once('/') {
-        log::info!(
-            "Stripping legacy backend prefix from model name: {} → {}",
-            model_ref,
-            model_name
-        );
-        model_name.to_string()
-    } else {
-        model_ref.to_string()
-    }
-}
-
 /// Resolve API key with fallback chain.
 /// 
 /// Priority order:
