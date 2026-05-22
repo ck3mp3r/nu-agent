@@ -145,3 +145,26 @@ fn test_create_client_missing_key() {
         _ => panic!("Expected MissingApiKey error"),
     }
 }
+
+#[test]
+#[serial]
+fn test_create_client_with_custom_base_url() {
+    // Should create client successfully with custom base URL
+    let api_key = Some("test_key".to_string());
+    let base_url = Some("https://custom.api.example.com".to_string());
+    
+    let result = create_client(api_key, base_url);
+    
+    assert!(result.is_ok());
+}
+
+#[test]
+#[serial]
+fn test_create_client_without_base_url() {
+    // Should create client successfully without base URL (uses default)
+    let api_key = Some("test_key".to_string());
+    
+    let result = create_client(api_key, None);
+    
+    assert!(result.is_ok());
+}

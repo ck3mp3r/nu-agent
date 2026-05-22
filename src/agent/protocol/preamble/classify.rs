@@ -18,6 +18,13 @@ pub fn classify_model_family(provider: &str, model: &str) -> ModelFamily {
         if model.starts_with("gpt-4") {
             return ModelFamily::Gpt4x;
         }
+        // OpenAI reasoning models (o3, o4) are mapped to Gpt4x for now.
+        // These models have distinct capabilities (reasoning tokens, limited system prompt)
+        // but we don't have a separate ModelFamily::Reasoning variant yet.
+        // This is an explicit mapping, not a silent fallthrough.
+        if model.starts_with("o3") || model.starts_with("o4") {
+            return ModelFamily::Gpt4x;
+        }
         return ModelFamily::Unknown;
     }
 
@@ -48,6 +55,12 @@ fn classify_from_backend_parts(backend: &str, model: &str) -> ModelFamily {
         if model.starts_with("gpt-5") {
             return ModelFamily::Gpt5x;
         }
+        // OpenAI reasoning models (o3, o4) are explicitly mapped to Gpt4x.
+        // This prevents silent misclassification while we don't have a dedicated variant.
+        if model.starts_with("o3") || model.starts_with("o4") {
+            return ModelFamily::Gpt4x;
+        }
+        // Default for other OpenAI models (gpt-4*, gpt-3.5*, etc.)
         return ModelFamily::Gpt4x;
     }
 
@@ -69,6 +82,11 @@ fn classify_by_model_name(model: &str) -> ModelFamily {
         return ModelFamily::Gpt5x;
     }
     if model.starts_with("gpt-4") {
+        return ModelFamily::Gpt4x;
+    }
+    // OpenAI reasoning models (o3, o4) are explicitly mapped to Gpt4x.
+    // These have distinct capabilities but no dedicated ModelFamily variant yet.
+    if model.starts_with("o3") || model.starts_with("o4") {
         return ModelFamily::Gpt4x;
     }
 
