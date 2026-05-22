@@ -473,14 +473,14 @@ impl Config {
             env::var(key).ok().and_then(|val| val.parse().ok())
         }
 
-        // Provider-specific API key with special handling for copilot
-        let api_key = if provider.eq_ignore_ascii_case("copilot") 
-            || provider.eq_ignore_ascii_case("github-copilot") 
+        // Provider-specific API key
+        // For copilot, let rig's from_env() handle environment variable resolution
+        let api_key = if provider.eq_ignore_ascii_case("copilot")
+            || provider.eq_ignore_ascii_case("github-copilot")
         {
-            // Copilot fallback chain: explicit → GITHUB_COPILOT_API_KEY → GITHUB_TOKEN
-            env::var("GITHUB_COPILOT_API_KEY")
-                .ok()
-                .or_else(|| env::var("GITHUB_TOKEN").ok())
+            // For copilot providers, don't resolve env vars here
+            // rig's from_env() handles GITHUB_COPILOT_API_KEY → GITHUB_TOKEN → OAuth
+            None
         } else {
             // Standard provider-specific API key (e.g., OPENAI_API_KEY)
             let provider_upper = provider.to_uppercase();

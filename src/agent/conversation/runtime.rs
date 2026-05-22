@@ -56,6 +56,42 @@ fn build_system_preamble(
     }
 }
 
+/// Build a GitHub Copilot client using rig's from_env() or explicit config.
+///
+/// If config has an explicit `api_key`, uses the builder pattern with optional `base_url`.
+/// Otherwise, delegates to `rig::providers::copilot::Client::from_env()` which handles
+/// environment variable resolution (GITHUB_COPILOT_API_KEY → GITHUB_TOKEN → OAuth).
+fn build_copilot_client(
+    config: &Config,
+) -> Result<rig::providers::copilot::Client, LabeledError> {
+    use rig::client::ProviderClient;
+
+    if let Some(key) = &config.api_key {
+        // Explicit API key provided - use builder
+        let mut builder = rig::providers::copilot::Client::builder()
+            .api_key::<rig::providers::copilot::CopilotAuth>(key.clone());
+        
+        if let Some(url) = &config.base_url {
+            builder = builder.base_url(url.clone());
+        }
+        
+        builder.build().map_err(|e| {
+            LabeledError::new(format!(
+                "Copilot auth failed: {}. Run `agent auth login` to authenticate.",
+                e
+            ))
+        })
+    } else {
+        // No explicit key - use from_env() for environment-based auth
+        rig::providers::copilot::Client::from_env().map_err(|e| {
+            LabeledError::new(format!(
+                "Copilot auth failed: {}. Run `agent auth login` to authenticate.",
+                e
+            ))
+        })
+    }
+}
+
 pub(crate) struct AgentConversationRuntime {
     pub runtime: tokio::runtime::Runtime,
     #[allow(dead_code)]
@@ -502,29 +538,8 @@ impl ConversationRuntime for AgentConversationRuntime {
             )
         };
 
-        // Create the GitHub Copilot client with inline rig builder
-        // Use turbofish syntax for api_key (required by CopilotAuth trait)
-        let key = self.config.api_key.clone().ok_or_else(|| {
-            LabeledError::new("Missing API key")
-                .with_label(
-                    "Set GITHUB_COPILOT_API_KEY or GITHUB_TOKEN, or provide api_key in config",
-                    span,
-                )
-        })?;
-        
-        let builder = rig::providers::copilot::Client::builder()
-            .api_key::<rig::providers::copilot::CopilotAuth>(key);
-        
-        let builder = if let Some(url) = &self.config.base_url {
-            builder.base_url(url.clone())
-        } else {
-            builder
-        };
-        
-        let client = builder.build().map_err(|e| {
-            LabeledError::new(format!("Failed to create client: {}", e))
-                .with_label(format!("{}", e), span)
-        })?;
+        // Create the GitHub Copilot client using the new helper
+        let client = build_copilot_client(&self.config)?;
 
         // Create the real permission resolver using the authorization context
         let mut permission_resolver = AuthzPermissionResolver {
@@ -664,24 +679,8 @@ impl AgentConversationRuntime {
         let conversation_store = &self.conversation_store;
         let store = &self.store;
 
-        // Create the GitHub Copilot client with inline rig builder
-        // Use turbofish syntax for api_key (required by CopilotAuth trait)
-        let key = self.config.api_key.clone().ok_or_else(|| {
-            "Missing API key - set GITHUB_COPILOT_API_KEY or GITHUB_TOKEN, or provide api_key in config".to_string()
-        })?;
-        
-        let builder = rig::providers::copilot::Client::builder()
-            .api_key::<rig::providers::copilot::CopilotAuth>(key);
-        
-        let builder = if let Some(url) = &self.config.base_url {
-            builder.base_url(url.clone())
-        } else {
-            builder
-        };
-        
-        let client = builder
-            .build()
-            .map_err(|e| format!("Failed to create client for compaction: {}", e))?;
+        // Create the GitHub Copilot client using the new helper
+        let client = build_copilot_client(&self.config).map_err(|e| e.msg)?;
 
         let source_label = source.as_str().to_string();
         ui.emit(&UiEvent::CompactionStarted {
