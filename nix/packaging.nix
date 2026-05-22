@@ -44,6 +44,7 @@
     src = ../.;
     packageName = "nu-agent";
     archiveAndHash = false;
+    linuxVariant = "gnu";
     nativeBuildInputs = [pkgs.pkg-config pkgs.clang];
     buildInputs = [pkgs.llvmPackages.libclang.lib];
     extraArgs = {
@@ -69,6 +70,7 @@
     src = ../.;
     packageName = "archive";
     archiveAndHash = true;
+    linuxVariant = "gnu";
     nativeBuildInputs = [pkgs.pkg-config pkgs.clang];
     buildInputs = [pkgs.llvmPackages.libclang.lib];
     extraArgs = {
