@@ -352,3 +352,81 @@ fn markdown_projection_renders_table_with_aligned_columns() {
         parts[0]
     );
 }
+
+#[test]
+fn markdown_projection_renders_table_with_code_in_cells_correctly() {
+    let markdown = r#"This is the **nu-agent** project directory. Here's a summary of its contents:
+
+| Name | Type | Description |
+|------|------|-------------|
+| `AGENTS.md` | file | Agent documentation |
+| `Cargo.lock` / `Cargo.toml` | files | Rust project manifest and lockfile |
+| `Formula/` | dir | Likely Homebrew formula for distribution |
+| `README.md` | file | Project readme |
+
+It's a **Rust project** using **Nix flakes** for development/build environment management."#;
+    let lines = project_markdown_to_lines(markdown);
+    let plain: Vec<String> = lines.iter().map(|l| plain_line(l)).collect();
+
+    // First column values should NOT appear as a concatenated line before the table
+    let first_col_values = ["AGENTS.md", "Cargo.lock", "Formula/", "README.md"];
+    for line in &plain {
+        // Check if this line contains multiple first-column values concatenated
+        let matches: Vec<_> = first_col_values
+            .iter()
+            .filter(|val| line.contains(*val))
+            .collect();
+        assert!(
+            matches.len() <= 1,
+            "Line should not contain multiple first-column values concatenated: {:?}\nLine: {}",
+            matches,
+            line
+        );
+    }
+
+    // Each data row should contain its Name, Type, and Description separated by │
+    let data_rows = [
+        ("AGENTS.md", "file", "Agent documentation"),
+        ("Cargo.lock", "files", "Rust project manifest"),
+        ("Formula/", "dir", "Homebrew formula"),
+        ("README.md", "file", "Project readme"),
+    ];
+
+    for (name, typ, desc_part) in &data_rows {
+        let matching_line = plain.iter().find(|line| {
+            line.contains(name) && line.contains("│")
+        });
+        
+        assert!(
+            matching_line.is_some(),
+            "Should find a table row containing '{}' with cell separator │",
+            name
+        );
+
+        let line = matching_line.unwrap();
+        assert!(
+            line.contains(typ),
+            "Row with '{}' should also contain type '{}'\nGot: {}",
+            name,
+            typ,
+            line
+        );
+        assert!(
+            line.contains(desc_part),
+            "Row with '{}' should also contain description part '{}'\nGot: {}",
+            name,
+            desc_part,
+            line
+        );
+    }
+
+    // Table should have header, separator, and data rows
+    assert!(
+        plain.iter().any(|l| l.contains("Name") && l.contains("│") && l.contains("Type") && l.contains("Description")),
+        "Should have header row with Name, Type, Description"
+    );
+    assert!(
+        plain.iter().any(|l| l.contains("─") && l.contains("┼")),
+        "Should have separator row"
+    );
+}

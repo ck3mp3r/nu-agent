@@ -347,6 +347,11 @@ impl Projector {
                 self.push_wrapped_text(&text, style);
             }
             Event::Code(text) => {
+                if let Some(t) = self.table.as_mut() {
+                    t.current_cell.push_str(&text);
+                    return;
+                }
+
                 self.push_text(&text, self.theme.inline_code);
             }
             Event::Html(html) => {
