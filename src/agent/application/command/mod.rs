@@ -1,5 +1,5 @@
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
-use nu_protocol::{Category, LabeledError, Signature, Type, Value};
+use nu_protocol::{Category, Example, LabeledError, Signature, Type, Value};
 use std::io::IsTerminal;
 
 mod args;
@@ -423,6 +423,60 @@ impl SimplePluginCommand for Agent {
 
     fn description(&self) -> &str {
         "Send a prompt to an AI agent and get a structured response"
+    }
+
+    fn extra_description(&self) -> &str {
+        "Pipe a prompt string to agent, or run interactively (no input = TUI mode).
+
+Provider/model selection via --model provider/model or plugin config.
+Supported providers: github-copilot, openai, anthropic, ollama
+
+Session persistence via --session allows resuming conversations across invocations.
+
+Tool closures via --tools enable custom Nushell functions as LLM tools.
+
+MCP tool filtering via --mcp-tools restricts MCP tools to specific glob patterns.
+
+Permissions overlay via --permissions controls authorization for tool calls."
+    }
+
+    fn search_terms(&self) -> Vec<&str> {
+        vec!["ai", "llm", "chat", "copilot", "openai", "anthropic", "ollama", "prompt"]
+    }
+
+    fn examples(&self) -> Vec<Example<'_>> {
+        vec![
+            Example {
+                description: "Send a prompt via pipe",
+                example: r#""explain this error" | agent"#,
+                result: None,
+            },
+            Example {
+                description: "Interactive TUI mode",
+                example: "agent",
+                result: None,
+            },
+            Example {
+                description: "Use a specific model",
+                example: r#""summarize" | agent --model openai/gpt-4o"#,
+                result: None,
+            },
+            Example {
+                description: "Resume a named session",
+                example: "agent --session my-project",
+                result: None,
+            },
+            Example {
+                description: "Pass custom tool closures",
+                example: r#""list files" | agent --tools { list_files: {|| ls | get name} }"#,
+                result: None,
+            },
+            Example {
+                description: "Auto-approve all tool calls",
+                example: r#""fix the tests" | agent --permissions { default: allow }"#,
+                result: None,
+            },
+        ]
     }
 
     fn signature(&self) -> Signature {

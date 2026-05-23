@@ -1,7 +1,7 @@
 use crate::AgentPlugin;
 use crate::session::{ConversationStore, JsonlConversationStore, SessionStore};
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
-use nu_protocol::{Category, LabeledError, Record, Signature, SyntaxShape, Value};
+use nu_protocol::{Category, Example, LabeledError, Record, Signature, SyntaxShape, Value};
 use rig::completion::message::{AssistantContent, UserContent};
 
 /// The `agent session inspect` command displays full details of a specific session.
@@ -25,6 +25,24 @@ impl SimplePluginCommand for AgentSessionInspect {
 
     fn description(&self) -> &str {
         "Display full details of a specific session"
+    }
+
+    fn extra_description(&self) -> &str {
+        "Shows full session details including config, message history, and compaction count."
+    }
+
+    fn search_terms(&self) -> Vec<&str> {
+        vec!["session", "inspect", "view", "history", "messages"]
+    }
+
+    fn examples(&self) -> Vec<Example<'_>> {
+        vec![
+            Example {
+                description: "Inspect a session by ID",
+                example: "agent session inspect my-project",
+                result: None,
+            },
+        ]
     }
 
     fn signature(&self) -> Signature {

@@ -1,6 +1,6 @@
 use crate::AgentPlugin;
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
-use nu_protocol::{Category, LabeledError, Signature, SyntaxShape, Value};
+use nu_protocol::{Category, Example, LabeledError, Signature, SyntaxShape, Value};
 
 pub struct AgentAuthLogin;
 
@@ -25,6 +25,30 @@ impl SimplePluginCommand for AgentAuthLogin {
 
     fn description(&self) -> &str {
         "Authenticate with a provider"
+    }
+
+    fn extra_description(&self) -> &str {
+        "Runs the OAuth device-code flow. Opens a browser to authenticate with the provider.
+Currently supports: github-copilot (default)."
+    }
+
+    fn search_terms(&self) -> Vec<&str> {
+        vec!["auth", "login", "oauth", "copilot", "token"]
+    }
+
+    fn examples(&self) -> Vec<Example<'_>> {
+        vec![
+            Example {
+                description: "Authenticate with GitHub Copilot (default)",
+                example: "agent auth login",
+                result: None,
+            },
+            Example {
+                description: "Authenticate with a specific provider",
+                example: "agent auth login --provider github-copilot",
+                result: None,
+            },
+        ]
     }
 
     fn signature(&self) -> Signature {

@@ -1,7 +1,7 @@
 use crate::AgentPlugin;
 use crate::session::SessionStore;
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
-use nu_protocol::{Category, LabeledError, Record, Signature, Value};
+use nu_protocol::{Category, Example, LabeledError, Record, Signature, Value};
 
 /// The `agent session list` command lists all sessions with their statistics.
 pub struct AgentSessionList {
@@ -24,6 +24,24 @@ impl SimplePluginCommand for AgentSessionList {
 
     fn description(&self) -> &str {
         "List all sessions with their statistics"
+    }
+
+    fn extra_description(&self) -> &str {
+        "Lists all cached sessions with message counts and last activity timestamps."
+    }
+
+    fn search_terms(&self) -> Vec<&str> {
+        vec!["session", "list", "history", "chat"]
+    }
+
+    fn examples(&self) -> Vec<Example<'_>> {
+        vec![
+            Example {
+                description: "List all sessions",
+                example: "agent session list",
+                result: None,
+            },
+        ]
     }
 
     fn signature(&self) -> Signature {

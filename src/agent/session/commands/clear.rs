@@ -1,7 +1,7 @@
 use crate::AgentPlugin;
 use crate::session::SessionStore;
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
-use nu_protocol::{Category, LabeledError, Signature, SyntaxShape, Value};
+use nu_protocol::{Category, Example, LabeledError, Signature, SyntaxShape, Value};
 
 /// The `agent session clear` command deletes a session by removing its JSONL file.
 pub struct AgentSessionClear {
@@ -24,6 +24,24 @@ impl SimplePluginCommand for AgentSessionClear {
 
     fn description(&self) -> &str {
         "Delete a session by removing its JSONL file from cache"
+    }
+
+    fn extra_description(&self) -> &str {
+        "Permanently deletes the session's JSONL file from the cache directory."
+    }
+
+    fn search_terms(&self) -> Vec<&str> {
+        vec!["session", "clear", "delete", "remove"]
+    }
+
+    fn examples(&self) -> Vec<Example<'_>> {
+        vec![
+            Example {
+                description: "Delete a session",
+                example: "agent session clear my-project",
+                result: None,
+            },
+        ]
     }
 
     fn signature(&self) -> Signature {
