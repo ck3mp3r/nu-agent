@@ -562,6 +562,19 @@ fn agent_command_signature_has_quiet_flag() {
 }
 
 #[test]
+fn agent_command_signature_has_log_level_flag() {
+    let (agent, _temp_dir) = create_test_agent();
+    let sig = SimplePluginCommand::signature(&agent);
+    let flag = sig.named.iter().find(|f| f.long == "log-level");
+    assert!(flag.is_some(), "Missing --log-level flag");
+    assert_eq!(
+        flag.unwrap().arg,
+        Some(SyntaxShape::String),
+        "Wrong type for --log-level"
+    );
+}
+
+#[test]
 fn agent_command_signature_does_not_expose_tui_switch() {
     let (agent, _temp_dir) = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);

@@ -521,6 +521,12 @@ impl SimplePluginCommand for Agent {
                 "Suppress non-essential UX progress output",
                 Some('q'),
             )
+            .named(
+                "log-level",
+                nu_protocol::SyntaxShape::String,
+                "Log level for file logging: off, error, warn, info, debug, trace (default: off)",
+                None,
+            )
     }
 
     fn run(
@@ -532,6 +538,52 @@ impl SimplePluginCommand for Agent {
     ) -> Result<Value, LabeledError> {
         let ui_policy = resolve_ui_policy(call)
             .map_err(|e| LabeledError::new(format!("Failed to resolve UI policy: {e}")))?;
+
+        // Initialize file logging if --log-level is provided
+        if let Some(log_level_str) = call.get_flag::<String>("log-level")? {
+            let log_level_str = log_level_str.to_lowercase();
+            if log_level_str != "off" {
+                // Parse log level
+                let log_level = match log_level_str.as_str() {
+                    "error" => log::LevelFilter::Error,
+                    "warn" => log::LevelFilter::Warn,
+                    "info" => log::LevelFilter::Info,
+                    "debug" => log::LevelFilter::Debug,
+                    "trace" => log::LevelFilter::Trace,
+                    _ => {
+                        return Err(LabeledError::new(format!(
+                            "Invalid log level '{}'. Valid values: off, error, warn, info, debug, trace",
+                            log_level_str
+                        )));
+                    }
+                };
+
+                // Resolve log directory: $XDG_STATE_HOME/nu-agent/logs
+                let log_dir = crate::utils::xdg::state_dir()
+                    .map_err(|e| LabeledError::new(format!("Failed to resolve XDG state directory: {e}")))?
+                    .join("nu-agent")
+                    .join("logs");
+
+                // Create log directory
+                std::fs::create_dir_all(&log_dir)
+                    .map_err(|e| LabeledError::new(format!("Failed to create log directory {}: {}", log_dir.display(), e)))?;
+
+                // Open log file in append mode
+                let log_file = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(log_dir.join("agent.log"))
+                    .map_err(|e| LabeledError::new(format!("Failed to open log file: {e}")))?;
+
+                // Initialize env_logger with file target
+                let _ = env_logger::Builder::new()
+                    .filter_level(log_level)
+                    .target(env_logger::Target::Pipe(Box::new(log_file)))
+                    .format_timestamp_millis()
+                    .try_init(); // Ignore error if already initialized
+            }
+        }
+
         let stdin_is_tty = std::io::stdin().is_terminal();
         let stderr_is_tty = std::io::stderr().is_terminal();
         let input_is_nothing = matches!(input, Value::Nothing { .. });
@@ -791,6 +843,8 @@ impl SimplePluginCommand for Agent {
                 self.store.cache_dir().to_path_buf(),
             ),
             memory_message_count: 0,
+            cached_client: None,
+            cached_client_key: None,
         };
         match mode {
             AgentMode::Tui => run_tui_mode(

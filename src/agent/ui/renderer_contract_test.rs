@@ -36,6 +36,7 @@ impl UiRenderer for FakeRenderer {
             UiEvent::PermissionDecisionTimedOut { .. } => "permission_decision_timed_out",
             UiEvent::PermissionDecisionIgnored { .. } => "permission_decision_ignored",
             UiEvent::Warning { .. } => "warning",
+            UiEvent::TurnError { .. } => "turn_error",
             UiEvent::CompactionStarted { .. } => "compaction_started",
             UiEvent::CompactionTriggered { .. } => "compaction_triggered",
             UiEvent::CompactionFailed { .. } => "compaction_failed",

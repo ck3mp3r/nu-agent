@@ -2238,3 +2238,34 @@ fn streaming_message_start_reset_on_finalize() {
     );
     assert_eq!(state.phase, UiPhase::Idle);
 }
+
+#[test]
+fn turn_error_stops_spinner_and_adds_transcript_entry() {
+    let mut state = busy_state_with_clean_transcript();
+    
+    // Emit TurnError event
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::TurnError {
+            message: "Turn failed: Not authenticated. Run `agent auth login`.".to_string(),
+        }),
+        None,
+    );
+    
+    // Verify phase is Idle (spinner stopped)
+    assert_eq!(state.phase, UiPhase::Idle);
+    
+    // Verify error message is in status_line
+    assert!(state.status_line.contains("Not authenticated"));
+    
+    // Verify error is in transcript
+    let has_error_in_transcript = state
+        .transcript_preview
+        .iter()
+        .any(|line| line.text().contains("Not authenticated"));
+    assert!(
+        has_error_in_transcript,
+        "Expected error message in transcript"
+    );
+}
+

@@ -1053,6 +1053,10 @@ impl RuntimeCoordinator {
     }
 
     pub fn enqueue_ui_event(&mut self, event: UiEvent) {
+        log::trace!(
+            "tui: enqueue_ui_event {:?}",
+            std::mem::discriminant(&event)
+        );
         self.transport.enqueue_ui_event(event);
     }
 
@@ -2218,6 +2222,25 @@ where
         self.coordinator.drain_transport();
         if let Err(error) = self.coordinator.render_frame(&mut self.live_terminal) {
             self.mark_render_failure(error);
+        }
+    }
+
+    pub fn emit_batch(&mut self, events: &[UiEvent]) {
+        // Enqueue all events first
+        for event in events {
+            self.coordinator.enqueue_ui_event(event.clone());
+        }
+        // Then do ONE poll + drain + render cycle
+        self.coordinator.poll_terminal_event(&mut self.event_source);
+        self.coordinator.drain_transport();
+        if let Err(error) = self.coordinator.render_frame(&mut self.live_terminal) {
+            self.mark_render_failure(error);
+        }
+        // If TUI is not active, forward to inner renderer
+        if !self.tui_active {
+            for event in events {
+                self.inner.emit(event);
+            }
         }
     }
 

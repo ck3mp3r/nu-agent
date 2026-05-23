@@ -1,3 +1,5 @@
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use nu_protocol::{LabeledError, Value};
@@ -94,8 +96,21 @@ pub(crate) fn run_stderr_mode(
     ui_policy: UiPolicy,
     stderr_is_tty: bool,
 ) -> Result<Value, LabeledError> {
+    let cancel_flag = Arc::new(AtomicBool::new(false));
+
+    // Spawn a tokio task that awaits SIGINT and sets the cancel flag
+    let signal_flag = Arc::clone(&cancel_flag);
+    runtime_impl.runtime.spawn(async move {
+        loop {
+            if tokio::signal::ctrl_c().await.is_ok() {
+                signal_flag.store(true, Ordering::SeqCst);
+            }
+        }
+    });
+
     let mut stderr_ui = StderrProgressUi::new(
         StderrUiFactory::new(std::io::stderr(), stderr_is_tty).create(ui_policy),
+        cancel_flag,
     );
     let (prompt, context) = super::extract_prompt_and_context(input)?;
     run_single_turn(runtime_impl, &mut stderr_ui, prompt, context, span)

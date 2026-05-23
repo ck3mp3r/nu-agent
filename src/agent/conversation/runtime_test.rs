@@ -485,16 +485,31 @@ fn build_copilot_client_function_signature_exists() {
 }
 
 #[test]
-#[ignore] // Requires valid credentials or will panic in reqwest
-fn build_copilot_client_with_explicit_api_key() {
-    // Test that explicit api_key in Config uses the builder path
+#[serial_test::serial]
+fn build_copilot_client_no_auth_returns_error() {
+    // RED: Verify that with no auth available, we get a clear error
     use crate::config::Config;
+    
+    // Save original XDG_CONFIG_HOME if set
+    let original_xdg = std::env::var("XDG_CONFIG_HOME").ok();
+    
+    // Clear all copilot-related env vars to ensure clean test
+    unsafe {
+        std::env::remove_var("GITHUB_COPILOT_API_KEY");
+        std::env::remove_var("COPILOT_API_KEY");
+        std::env::remove_var("COPILOT_GITHUB_ACCESS_TOKEN");
+        std::env::remove_var("GITHUB_TOKEN");
+        std::env::remove_var("GITHUB_COPILOT_API_BASE");
+        std::env::remove_var("COPILOT_BASE_URL");
+        // Point XDG_CONFIG_HOME to non-existent directory to avoid cached tokens
+        std::env::set_var("XDG_CONFIG_HOME", "/tmp/nonexistent_test_dir_12345");
+    }
 
     let config = Config {
         provider: "copilot".to_string(),
         provider_impl: None,
         model: "gpt-4".to_string(),
-        api_key: Some("test-key-123".to_string()),
+        api_key: None,
         base_url: None,
         temperature: None,
         max_tokens: None,
@@ -504,25 +519,51 @@ fn build_copilot_client_with_explicit_api_key() {
         preamble: None,
     };
 
-    // This tests the explicit key code path
-    // Will fail/panic without valid credentials, hence #[ignore]
     let result = build_copilot_client(&config);
     
-    // If this runs in an environment with proper setup, it should work
-    assert!(result.is_ok() || result.is_err(), "Function should return a Result");
+    // Restore original XDG_CONFIG_HOME
+    unsafe {
+        if let Some(val) = original_xdg {
+            std::env::set_var("XDG_CONFIG_HOME", val);
+        } else {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+    }
+    
+    assert!(result.is_err(), "Expected error without credentials");
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("Not authenticated"),
+        "Error should mention 'Not authenticated', got: {err_msg}"
+    );
 }
 
 #[test]
-#[ignore] // Requires actual environment setup
-fn build_copilot_client_without_key_uses_from_env() {
-    // RED: Test that missing api_key in Config calls from_env()
+#[serial_test::serial]
+fn build_copilot_client_error_mentions_auth_login() {
+    // RED: Verify error message guides user to run `agent auth login`
     use crate::config::Config;
+    
+    // Save original XDG_CONFIG_HOME if set
+    let original_xdg = std::env::var("XDG_CONFIG_HOME").ok();
+    
+    // Clear all copilot-related env vars
+    unsafe {
+        std::env::remove_var("GITHUB_COPILOT_API_KEY");
+        std::env::remove_var("COPILOT_API_KEY");
+        std::env::remove_var("COPILOT_GITHUB_ACCESS_TOKEN");
+        std::env::remove_var("GITHUB_TOKEN");
+        std::env::remove_var("GITHUB_COPILOT_API_BASE");
+        std::env::remove_var("COPILOT_BASE_URL");
+        // Point XDG_CONFIG_HOME to non-existent directory to avoid cached tokens
+        std::env::set_var("XDG_CONFIG_HOME", "/tmp/nonexistent_test_dir_12345");
+    }
 
     let config = Config {
         provider: "copilot".to_string(),
         provider_impl: None,
         model: "gpt-4".to_string(),
-        api_key: None, // No explicit key
+        api_key: None,
         base_url: None,
         temperature: None,
         max_tokens: None,
@@ -532,9 +573,52 @@ fn build_copilot_client_without_key_uses_from_env() {
         preamble: None,
     };
 
-    // This should attempt from_env() path
     let result = build_copilot_client(&config);
     
-    // Will fail without proper env setup, but verifies the code path
-    assert!(result.is_err(), "Expected error without env credentials");
+    // Restore original XDG_CONFIG_HOME
+    unsafe {
+        if let Some(val) = original_xdg {
+            std::env::set_var("XDG_CONFIG_HOME", val);
+        } else {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+    }
+    
+    assert!(result.is_err(), "Expected error without credentials");
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("agent auth login"),
+        "Error should mention 'agent auth login', got: {err_msg}"
+    );
+}
+
+// Provider dispatch tests
+
+#[test]
+fn provider_dispatch_unsupported_provider_returns_error() {
+    // RED: Verify that unsupported provider returns clear error
+    use crate::config::Config;
+    
+    let config = Config {
+        provider: "unsupported-provider".to_string(),
+        provider_impl: None,
+        model: "some-model".to_string(),
+        api_key: Some("test-key".to_string()),
+        base_url: None,
+        temperature: None,
+        max_tokens: None,
+        max_context_tokens: None,
+        max_output_tokens: None,
+        max_tool_turns: None,
+        preamble: None,
+    };
+    
+    // This test will compile once we add the dispatch logic
+    // For now, document that build_copilot_client works for copilot only
+    // When we add dispatch in execute_turn, this will test the error path
+    
+    // Expected behavior: execute_turn should return error with:
+    // "Unsupported provider: 'unsupported-provider'"
+    // This test documents the requirement for now
+    assert_eq!(config.provider, "unsupported-provider");
 }

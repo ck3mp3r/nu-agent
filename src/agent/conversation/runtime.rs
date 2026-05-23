@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use nu_plugin::EngineInterface;
 use nu_protocol::{LabeledError, Span, Value};
+use rig::client::CompletionClient;
 use rig::memory::ConversationMemory;
 
 use crate::{
@@ -64,33 +65,169 @@ fn build_system_preamble(
 fn build_copilot_client(
     config: &Config,
 ) -> Result<rig::providers::copilot::Client, LabeledError> {
+    let auth_err = |e: rig::http_client::Error| {
+        LabeledError::new(format!(
+            "Copilot auth failed: {e}. Run `agent auth login` to authenticate."
+        ))
+    };
+
+    // Base URL: config takes precedence, then env vars (same as rig's from_env)
+    let base_url = config.base_url.clone()
+        .or_else(|| std::env::var("GITHUB_COPILOT_API_BASE").ok().filter(|s| !s.trim().is_empty()))
+        .or_else(|| std::env::var("COPILOT_BASE_URL").ok().filter(|s| !s.trim().is_empty()));
+
+    // 1. Explicit api_key from --api-key flag or plugin config
+    if let Some(key) = &config.api_key {
+        let mut b = rig::providers::copilot::Client::builder();
+        if let Some(url) = &base_url { b = b.base_url(url.clone()); }
+        return b.api_key::<rig::providers::copilot::CopilotAuth>(key.clone())
+            .build().map_err(auth_err);
+    }
+
+    // 2. GITHUB_COPILOT_API_KEY / COPILOT_API_KEY env var
+    if let Ok(key) = std::env::var("GITHUB_COPILOT_API_KEY")
+        .or_else(|_| std::env::var("COPILOT_API_KEY"))
+        && !key.trim().is_empty()
+    {
+        let mut b = rig::providers::copilot::Client::builder();
+        if let Some(url) = &base_url { b = b.base_url(url.clone()); }
+        return b.api_key::<rig::providers::copilot::CopilotAuth>(key)
+            .build().map_err(auth_err);
+    }
+
+    // 3. COPILOT_GITHUB_ACCESS_TOKEN / GITHUB_TOKEN env var
+    if let Ok(token) = std::env::var("COPILOT_GITHUB_ACCESS_TOKEN")
+        .or_else(|_| std::env::var("GITHUB_TOKEN"))
+        && !token.trim().is_empty()
+    {
+        let mut b = rig::providers::copilot::Client::builder();
+        if let Some(url) = &base_url { b = b.base_url(url.clone()); }
+        return b.github_access_token(token)
+            .build().map_err(auth_err);
+    }
+
+    // 4. Cached OAuth access token from prior `agent auth login`
+    //    rig caches at: <config_dir>/github_copilot/access-token (plain text)
+    let token_path = crate::utils::xdg::config_dir()
+        .ok()
+        .map(|d| d.join("github_copilot").join("access-token"));
+
+    if let Some(path) = &token_path
+        && let Ok(token) = std::fs::read_to_string(path)
+        && !token.trim().is_empty()
+    {
+        let mut b = rig::providers::copilot::Client::builder();
+        if let Some(url) = &base_url { b = b.base_url(url.clone()); }
+        return b.github_access_token(token.trim())
+            .build().map_err(auth_err);
+    }
+
+    // 5. No auth available
+    Err(LabeledError::new(
+        "Not authenticated. Run `agent auth login` or set GITHUB_COPILOT_API_KEY / GITHUB_TOKEN environment variable.".to_string()
+    ))
+}
+
+/// Build an OpenAI client using rig's builder pattern or from_env().
+///
+/// If config has an explicit `api_key`, uses the builder with optional `base_url`.
+/// Otherwise, delegates to `rig::providers::openai::Client::from_env()` which reads
+/// OPENAI_API_KEY environment variable.
+fn build_openai_client(
+    config: &Config,
+) -> Result<rig::providers::openai::Client, LabeledError> {
     use rig::client::ProviderClient;
+    
+    let map_build_err = |e: rig::http_client::Error| {
+        LabeledError::new(format!(
+            "OpenAI client initialization failed: {e}. Ensure OPENAI_API_KEY is set."
+        ))
+    };
+    
+    let map_env_err = |e: rig::client::ProviderClientError| {
+        LabeledError::new(format!(
+            "OpenAI client initialization failed: {e}. Ensure OPENAI_API_KEY is set."
+        ))
+    };
 
     if let Some(key) = &config.api_key {
-        // Explicit API key provided - use builder
-        let mut builder = rig::providers::copilot::Client::builder()
-            .api_key::<rig::providers::copilot::CopilotAuth>(key.clone());
-        
+        let mut builder = rig::providers::openai::Client::builder();
         if let Some(url) = &config.base_url {
             builder = builder.base_url(url.clone());
         }
-        
-        builder.build().map_err(|e| {
-            LabeledError::new(format!(
-                "Copilot auth failed: {}. Run `agent auth login` to authenticate.",
-                e
-            ))
-        })
+        builder.api_key(key.clone()).build().map_err(map_build_err)
     } else {
-        // No explicit key - use from_env() for environment-based auth
-        rig::providers::copilot::Client::from_env().map_err(|e| {
-            LabeledError::new(format!(
-                "Copilot auth failed: {}. Run `agent auth login` to authenticate.",
-                e
-            ))
-        })
+        rig::providers::openai::Client::from_env().map_err(map_env_err)
     }
 }
+
+/// Build an Anthropic client using rig's builder pattern or from_env().
+///
+/// If config has an explicit `api_key`, uses the builder with optional `base_url`.
+/// Otherwise, delegates to `rig::providers::anthropic::Client::from_env()` which reads
+/// ANTHROPIC_API_KEY environment variable.
+fn build_anthropic_client(
+    config: &Config,
+) -> Result<rig::providers::anthropic::Client, LabeledError> {
+    use rig::client::ProviderClient;
+    
+    let map_build_err = |e: rig::http_client::Error| {
+        LabeledError::new(format!(
+            "Anthropic client initialization failed: {e}. Ensure ANTHROPIC_API_KEY is set."
+        ))
+    };
+    
+    let map_env_err = |e: rig::client::ProviderClientError| {
+        LabeledError::new(format!(
+            "Anthropic client initialization failed: {e}. Ensure ANTHROPIC_API_KEY is set."
+        ))
+    };
+
+    if let Some(key) = &config.api_key {
+        let mut builder = rig::providers::anthropic::Client::builder();
+        if let Some(url) = &config.base_url {
+            builder = builder.base_url(url.clone());
+        }
+        builder.api_key(key.clone()).build().map_err(map_build_err)
+    } else {
+        rig::providers::anthropic::Client::from_env().map_err(map_env_err)
+    }
+}
+
+/// Build an Ollama client using rig's from_env().
+///
+/// Ollama doesn't require an API key. Reads OLLAMA_HOST environment variable
+/// (defaults to http://localhost:11434).
+///
+/// TODO: Support explicit base_url from config once rig's ollama builder API is clarified.
+fn build_ollama_client(
+    config: &Config,
+) -> Result<rig::providers::ollama::Client, LabeledError> {
+    use rig::client::ProviderClient;
+    
+    let map_err = |e: rig::client::ProviderClientError| {
+        LabeledError::new(format!(
+            "Ollama client initialization failed: {e}. Ensure Ollama is running and OLLAMA_HOST is set if not using default."
+        ))
+    };
+
+    // Warn if base_url is set but we can't use it yet
+    if config.base_url.is_some() {
+        eprintln!("Warning: Ollama base_url override not yet supported. Using OLLAMA_HOST env var or default (http://localhost:11434).");
+    }
+
+    rig::providers::ollama::Client::from_env().map_err(map_err)
+}
+
+
+pub(crate) enum CachedProviderClient {
+    Copilot(rig::providers::copilot::Client),
+    OpenAi(rig::providers::openai::Client),
+    Anthropic(rig::providers::anthropic::Client),
+    Ollama(rig::providers::ollama::Client),
+}
+
+type ClientCacheKey = (String, Option<String>, Option<String>);
 
 pub(crate) struct AgentConversationRuntime {
     pub runtime: tokio::runtime::Runtime,
@@ -125,6 +262,8 @@ pub(crate) struct AgentConversationRuntime {
     pub memory: rig::memory::InMemoryConversationMemory,
     pub conversation_store: JsonlConversationStore,
     pub memory_message_count: usize,
+    pub cached_client: Option<CachedProviderClient>,
+    pub cached_client_key: Option<ClientCacheKey>,
 }
 
 fn emit_permissions_startup_summary_once<U: ProgressUi>(
@@ -428,6 +567,8 @@ impl ConversationRuntime for AgentConversationRuntime {
 
         let resolved = plugin_config.resolve_model(model_spec)?;
         apply_switched_config(&mut self.config, resolved);
+        self.cached_client = None;
+        self.cached_client_key = None;
         Ok(format!("{}/{}", self.config.provider, self.config.model))
     }
 
@@ -538,37 +679,51 @@ impl ConversationRuntime for AgentConversationRuntime {
             )
         };
 
-        // Create the GitHub Copilot client using the new helper
-        let client = build_copilot_client(&self.config)?;
+        // Provider dispatch - build model from cached client
+        self.ensure_client_cached()?;
 
-        // Create the real permission resolver using the authorization context
-        let mut permission_resolver = AuthzPermissionResolver {
-            permissions: &self.permissions,
-            grant_cache: &mut self.session_grants,
-            ask_hook: &mut self.ask_hook,
-            engine: &self.engine,
-            closure_registry: &self.closure_registry,
-            mcp_registry: &self.mcp_registry,
-        };
+        // Macro to reduce TurnContext boilerplate
+        macro_rules! run_with_model {
+            ($model:expr) => {{
+                let mut permission_resolver = AuthzPermissionResolver {
+                    permissions: &self.permissions,
+                    grant_cache: &mut self.session_grants,
+                    ask_hook: &mut self.ask_hook,
+                    engine: &self.engine,
+                    closure_registry: &self.closure_registry,
+                    mcp_registry: &self.mcp_registry,
+                };
+                execute_turn(
+                    TurnContext {
+                        runtime: self.runtime.handle(),
+                        model: $model,
+                        prompt,
+                        memory: self.memory.clone(),
+                        conversation_id,
+                        preamble: preamble.as_deref(),
+                        max_turns: self.config.max_tool_turns,
+                        tool_server_handle: self.mcp_tool_server_handle.clone(),
+                        closure_registry: &self.closure_registry,
+                        mcp_registry: &self.mcp_registry,
+                    },
+                    ui,
+                    &mut permission_resolver,
+                )
+            }};
+        }
 
-        // Call the new execute_turn function
-        let turn_result = execute_turn(
-            TurnContext {
-                runtime: self.runtime.handle(),
-                client: &client,
-                model_name: &self.config.model,
-                prompt,
-                memory: self.memory.clone(),
-                conversation_id,
-                preamble: preamble.as_deref(),
-                max_turns: self.config.max_tool_turns,
-                tool_server_handle: self.mcp_tool_server_handle.clone(),
-                closure_registry: &self.closure_registry,
-                mcp_registry: &self.mcp_registry,
-            },
-            ui,
-            &mut permission_resolver,
-        )
+        macro_rules! with_cached_model {
+            ($model_var:ident, $body:expr) => {
+                match self.cached_client.as_ref().unwrap() {
+                    CachedProviderClient::Copilot(c) => { let $model_var = c.completion_model(&self.config.model); $body }
+                    CachedProviderClient::OpenAi(c) => { let $model_var = c.completion_model(&self.config.model); $body }
+                    CachedProviderClient::Anthropic(c) => { let $model_var = c.completion_model(&self.config.model); $body }
+                    CachedProviderClient::Ollama(c) => { let $model_var = c.completion_model(&self.config.model); $body }
+                }
+            };
+        }
+
+        let turn_result = with_cached_model!(model, run_with_model!(model))
         .map_err(|e: TurnError| {
             if e.cancelled {
                 LabeledError::new(format!("Turn cancelled: {}", e.msg)).with_label(e.msg, span)
@@ -665,6 +820,42 @@ impl ConversationRuntime for AgentConversationRuntime {
 }
 
 impl AgentConversationRuntime {
+    fn client_cache_key(&self) -> ClientCacheKey {
+        (
+            self.config.provider.clone(),
+            self.config.api_key.clone(),
+            self.config.base_url.clone(),
+        )
+    }
+
+    fn ensure_client_cached(&mut self) -> Result<(), LabeledError> {
+        let key = self.client_cache_key();
+        if self.cached_client_key.as_ref() == Some(&key) {
+            return Ok(());
+        }
+        let provider_name = self.config.provider.as_str();
+        log::info!(
+            "creating {} client for model={}",
+            provider_name,
+            self.config.model
+        );
+        let client = match provider_name {
+            "copilot" | "github-copilot" | "github_copilot" => {
+                CachedProviderClient::Copilot(build_copilot_client(&self.config)?)
+            }
+            "openai" => CachedProviderClient::OpenAi(build_openai_client(&self.config)?),
+            "anthropic" => CachedProviderClient::Anthropic(build_anthropic_client(&self.config)?),
+            "ollama" => CachedProviderClient::Ollama(build_ollama_client(&self.config)?),
+            other => {
+                return Err(LabeledError::new(format!("Unsupported provider: '{}'", other))
+                    .with_help("Supported: copilot, openai, anthropic, ollama"));
+            }
+        };
+        self.cached_client = Some(client);
+        self.cached_client_key = Some(key);
+        Ok(())
+    }
+
     fn active_tool_definitions(&self) -> Vec<rig::completion::ToolDefinition> {
         handler::llm_visible_tool_definitions(&self.tool_definitions, &self.mcp_registry)
     }
@@ -674,13 +865,13 @@ impl AgentConversationRuntime {
         ui: &mut U,
         source: CompactionTriggerSource,
     ) -> Result<(), String> {
+        self.ensure_client_cached()
+            .map_err(|e| e.to_string())?;
+
         let runtime = &self.runtime;
         let memory = &self.memory;
         let conversation_store = &self.conversation_store;
         let store = &self.store;
-
-        // Create the GitHub Copilot client using the new helper
-        let client = build_copilot_client(&self.config).map_err(|e| e.msg)?;
 
         let source_label = source.as_str().to_string();
         ui.emit(&UiEvent::CompactionStarted {
@@ -697,24 +888,38 @@ impl AgentConversationRuntime {
             .load_session(session_id)
             .map_err(|e| format!("Failed to load session for compaction: {}", e))?;
 
-        // Execute compaction with rig memory (async)
-        let result = execute_compaction_event_shared(source, || {
-            let mode = match source {
-                CompactionTriggerSource::SlashCompact => CompactionInvocationMode::Force,
-                CompactionTriggerSource::AutoThreshold => CompactionInvocationMode::Threshold,
-            };
+        // Macro to reduce boilerplate for compaction
+        macro_rules! compact_with_model {
+            ($model:expr) => {{
+                execute_compaction_event_shared(source, || {
+                    let mode = match source {
+                        CompactionTriggerSource::SlashCompact => CompactionInvocationMode::Force,
+                        CompactionTriggerSource::AutoThreshold => CompactionInvocationMode::Threshold,
+                    };
+                    runtime.block_on(execute_compaction(
+                        &mut session,
+                        memory,
+                        conversation_store,
+                        $model.clone(),
+                        mode,
+                        ui,
+                    ))
+                })
+            }};
+        }
 
-            // Run async compaction in the runtime
-            runtime.block_on(execute_compaction(
-                &mut session,
-                memory,
-                conversation_store,
-                &client,
-                &self.config.model,
-                mode,
-                ui,
-            ))
-        });
+        macro_rules! with_cached_model {
+            ($model_var:ident, $body:expr) => {
+                match self.cached_client.as_ref().unwrap() {
+                    CachedProviderClient::Copilot(c) => { let $model_var = c.completion_model(&self.config.model); $body }
+                    CachedProviderClient::OpenAi(c) => { let $model_var = c.completion_model(&self.config.model); $body }
+                    CachedProviderClient::Anthropic(c) => { let $model_var = c.completion_model(&self.config.model); $body }
+                    CachedProviderClient::Ollama(c) => { let $model_var = c.completion_model(&self.config.model); $body }
+                }
+            };
+        }
+
+        let result = with_cached_model!(model, compact_with_model!(model));
 
         match result {
             Ok(event) => {
@@ -792,16 +997,16 @@ where
 ///
 /// # Returns
 /// Ok(Some(outcome)) on successful compaction, Ok(None) if no compaction needed
-async fn execute_compaction<S, U>(
+async fn execute_compaction<M, S, U>(
     session: &mut Session,
     memory: &rig::memory::InMemoryConversationMemory,
     store: &S,
-    client: &rig::providers::copilot::Client,
-    model_name: &str,
+    model: M,
     mode: CompactionInvocationMode,
     ui: &mut U,
 ) -> Result<Option<CompactionOutcome>, String>
 where
+    M: rig::completion::CompletionModel + Clone + 'static,
     S: ConversationStore,
     U: ProgressUi,
 {
@@ -828,7 +1033,8 @@ where
     // Perform compaction with summarizer closure
     let summarizer = |old_messages: &[rig::completion::Message]| {
         let messages = old_messages.to_vec();
-        async move { summarize_messages(client, model_name, ui, &messages).await }
+        let model_clone = model.clone();
+        async move { summarize_messages(model_clone, ui, &messages).await }
     };
 
     let outcome = session
@@ -905,13 +1111,15 @@ fn format_messages_for_summary(messages: &[rig::completion::Message]) -> String 
 /// Summarize old rig messages with LLM.
 ///
 /// Formats rig messages, creates summarization prompt, and calls rig agent completion.
-async fn summarize_messages<U: ProgressUi>(
-    client: &rig::providers::copilot::Client,
-    model_name: &str,
+async fn summarize_messages<M, U>(
+    model: M,
     ui: &mut U,
     old_messages: &[rig::completion::Message],
-) -> std::io::Result<String> {
-    use rig::client::CompletionClient;
+) -> std::io::Result<String>
+where
+    M: rig::completion::CompletionModel + Clone + 'static,
+    U: ProgressUi,
+{
     use rig::completion::Completion;
 
     let history = format_messages_for_summary(old_messages);
@@ -920,8 +1128,7 @@ async fn summarize_messages<U: ProgressUi>(
         history
     );
 
-    // Build rig agent from client and model
-    let model = client.completion_model(model_name);
+    // Build rig agent from model
     let agent = rig::agent::AgentBuilder::new(model).build();
 
     // Create the completion future

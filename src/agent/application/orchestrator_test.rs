@@ -87,6 +87,9 @@ impl ProgressUi for FakeInteractiveUi {
         if let UiEvent::Warning { message } = event {
             self.warnings.push(message.clone());
         }
+        if let UiEvent::TurnError { message } = event {
+            self.warnings.push(message.clone());
+        }
     }
 
     fn flush(&mut self) {}
@@ -2438,4 +2441,83 @@ fn interactive_loop_worker_channel_closed_preserves_authoritative_visible_tool_c
     );
     assert_eq!(ui.mcp_details[1].3, 13);
     assert!(ui.mcp_visible_tool_count_updates.is_empty());
+}
+
+#[test]
+fn emit_batch_delivers_all_events() {
+    // RED phase: write test that verifies emit_batch delivers all events
+    #[derive(Default)]
+    struct BatchTestUi {
+        events: Vec<UiEvent>,
+        emit_calls: usize,
+        emit_batch_calls: usize,
+    }
+
+    impl ProgressUi for BatchTestUi {
+        fn emit(&mut self, event: &UiEvent) {
+            self.events.push(event.clone());
+            self.emit_calls += 1;
+        }
+
+        fn flush(&mut self) {}
+
+        fn take_cancel_requested(&self) -> bool {
+            false
+        }
+    }
+
+    impl InteractiveUi for BatchTestUi {
+        fn emit_batch(&mut self, events: &[UiEvent]) {
+            self.emit_batch_calls += 1;
+            for event in events {
+                self.events.push(event.clone());
+            }
+        }
+
+        fn pump_once(&mut self) {}
+
+        fn take_submitted_prompt(&mut self) -> Option<String> {
+            None
+        }
+
+        fn quit_requested(&self) -> bool {
+            false
+        }
+
+        fn fatal_error(&self) -> Option<&str> {
+            None
+        }
+
+        fn hydrate_transcript_from_messages(
+            &mut self,
+            _messages: impl IntoIterator<Item = UiMessageSnapshot>,
+        ) {
+        }
+    }
+
+    let mut ui = BatchTestUi::default();
+
+    // Create 5 test events
+    let events = vec![
+        UiEvent::Tick,
+        UiEvent::LlmStart,
+        UiEvent::AssistantMessage {
+            text: "hello".to_string(),
+        },
+        UiEvent::AssistantMessage {
+            text: "world".to_string(),
+        },
+        UiEvent::Completed { tool_calls: 0 },
+    ];
+
+    // Call emit_batch
+    ui.emit_batch(&events);
+
+    // Verify all events were delivered
+    assert_eq!(ui.events.len(), 5, "all 5 events should be delivered");
+    assert_eq!(ui.emit_batch_calls, 1, "emit_batch should be called once");
+    assert_eq!(
+        ui.emit_calls, 0,
+        "emit should not be called when using emit_batch"
+    );
 }

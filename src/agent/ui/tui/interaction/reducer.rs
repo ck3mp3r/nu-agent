@@ -375,6 +375,11 @@ fn reduce_ui_event(state: &mut AppState, event: UiEvent) {
             total_tokens,
         ),
         UiEvent::Warning { message } => handle_warning(state, message),
+        UiEvent::TurnError { message } => {
+            state.push_transcript_line(TranscriptRole::System, format!("Error: {}", message));
+            state.status_line = message.clone();
+            state.phase = UiPhase::Idle;
+        }
         UiEvent::CompactionStarted { source } => {
             state.start_compaction_block(&source);
         }
@@ -414,7 +419,10 @@ fn reduce_ui_event(state: &mut AppState, event: UiEvent) {
                 format!("Compaction failed deterministically: {message}"),
             );
         }
-        UiEvent::AssistantMessage { text } => handle_assistant_message(state, text),
+        UiEvent::AssistantMessage { text } => {
+            log::trace!("reducer: AssistantMessage text_len={}", text.len());
+            handle_assistant_message(state, text);
+        }
         UiEvent::Completed { .. } => finalize(state),
     }
 }

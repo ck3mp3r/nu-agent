@@ -220,6 +220,11 @@ where
                 reason: CANCELLATION_REASON.to_string(),
             };
         }
+        log::trace!(
+            "hook: TextDelta delta_len={} aggregated_len={}",
+            delta.len(),
+            aggregated.len()
+        );
         self.send_event(HookEvent::TextDelta {
             delta: delta.to_string(),
             aggregated: aggregated.to_string(),

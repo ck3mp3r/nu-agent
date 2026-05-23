@@ -14,7 +14,6 @@ use crate::agent::hook::{
 use crate::agent::protocol::contracts::ProgressUi;
 use crate::agent::tools::handler::McpToolRegistry;
 use crate::tools::closure::ClosureRegistry;
-use rig::client::CompletionClient;
 use rig::streaming::StreamingPrompt;
 
 /// Default max tool turns when config doesn't specify a limit.
@@ -74,18 +73,33 @@ impl From<rig::completion::PromptError> for TurnError {
 
 impl From<rig::agent::StreamingError> for TurnError {
     fn from(e: rig::agent::StreamingError) -> Self {
-        TurnError {
-            msg: e.to_string(),
-            cancelled: false,
+        match e {
+            rig::agent::StreamingError::Prompt(boxed) => match *boxed {
+                rig::completion::PromptError::PromptCancelled { reason, .. } => TurnError {
+                    msg: reason,
+                    cancelled: true,
+                },
+                other => TurnError {
+                    msg: other.to_string(),
+                    cancelled: false,
+                },
+            },
+            other => TurnError {
+                msg: other.to_string(),
+                cancelled: false,
+            },
         }
     }
 }
 
 /// Context for executing a conversation turn.
-pub(crate) struct TurnContext<'a> {
+pub(crate) struct TurnContext<'a, M>
+where
+    M: rig::completion::CompletionModel + Clone + 'static,
+    M::StreamingResponse: rig::completion::request::GetTokenUsage,
+{
     pub runtime: &'a tokio::runtime::Handle,
-    pub client: &'a rig::providers::copilot::Client,
-    pub model_name: &'a str,
+    pub model: M,
     pub prompt: String,
     pub memory: rig::memory::InMemoryConversationMemory,
     pub conversation_id: String,
@@ -125,11 +139,19 @@ pub(crate) struct TurnContext<'a> {
 /// - The agent completion fails (LLM error, network, etc.)
 /// - User cancels via UI
 /// - Hook driver encounters an error
-pub(crate) fn execute_turn<U: ProgressUi, P: PermissionResolver>(
-    ctx: TurnContext<'_>,
+pub(crate) fn execute_turn<M, U, P>(
+    ctx: TurnContext<'_, M>,
     ui: &mut U,
     permissions: &mut P,
-) -> Result<TurnResult, TurnError> {
+) -> Result<TurnResult, TurnError>
+where
+    M: rig::completion::CompletionModel + Clone + 'static,
+    M::StreamingResponse: rig::completion::request::GetTokenUsage,
+    U: ProgressUi,
+    P: PermissionResolver,
+{
+    log::info!("execute_turn: starting turn");
+
     // Create cancel token and hook+driver pair
     let cancel_token = CancellationToken::new();
     let (hook, mut driver) = HookDriver::new(cancel_token.clone());
@@ -147,6 +169,7 @@ pub(crate) fn execute_turn<U: ProgressUi, P: PermissionResolver>(
     // Build and execute agent with hook
     let config = AgentPromptConfig {
         hook,
+        cancel_token: cancel_token.clone(),
         preamble: preamble_owned,
         prompt: user_message,
         memory: ctx.memory,
@@ -155,7 +178,7 @@ pub(crate) fn execute_turn<U: ProgressUi, P: PermissionResolver>(
         max_turns: ctx.max_turns,
     };
 
-    let model = ctx.client.completion_model(ctx.model_name);
+    let model = ctx.model.clone();
     let prompt_future = Box::pin(build_agent_and_stream(model, config));
 
     // Spawn the completion on the tokio runtime
@@ -174,6 +197,12 @@ pub(crate) fn execute_turn<U: ProgressUi, P: PermissionResolver>(
     // Capture tool call count and deltas flag from the driver
     let tool_call_count = driver.tool_call_count();
     let deltas_emitted = driver.deltas_emitted();
+
+    log::info!(
+        "execute_turn: complete, tool_calls={} deltas_emitted={}",
+        tool_call_count,
+        deltas_emitted
+    );
 
     // Collect the result from the spawned task
     let join_result = ctx.runtime.block_on(prompt_handle).map_err(|e| TurnError {
@@ -195,6 +224,7 @@ pub(crate) fn execute_turn<U: ProgressUi, P: PermissionResolver>(
 /// Configuration for building and prompting an agent.
 struct AgentPromptConfig {
     hook: CopilotPromptHook,
+    cancel_token: CancellationToken,
     preamble: Option<String>,
     prompt: rig::completion::Message,
     memory: rig::memory::InMemoryConversationMemory,
@@ -221,6 +251,7 @@ where
 {
     let AgentPromptConfig {
         hook,
+        cancel_token,
         preamble,
         prompt,
         memory,
@@ -240,38 +271,43 @@ where
     builder = builder.default_max_turns(effective_max_turns as usize);
     let agent = builder.build();
 
-    let mut stream = agent
+    let stream = agent
         .stream_prompt(prompt)
         .conversation(&conversation_id)
         .with_history(Vec::<rig::completion::Message>::new())
         .multi_turn(effective_max_turns as usize)
         .await;
 
+    tokio::pin!(stream);
+
     let mut text = String::new();
     let mut usage = rig::completion::request::Usage::default();
     let mut messages: Option<Vec<rig::completion::Message>> = None;
 
-    while let Some(item) = stream.next().await {
-        match item? {
-            rig::agent::MultiTurnStreamItem::StreamAssistantItem(content) => {
-                match content {
-                    rig::streaming::StreamedAssistantContent::Text(delta) => {
-                        text.push_str(&delta.text);
-                    }
-                    rig::streaming::StreamedAssistantContent::ToolCall { .. } => {}
-                    rig::streaming::StreamedAssistantContent::ToolCallDelta { .. } => {}
-                    rig::streaming::StreamedAssistantContent::ReasoningDelta { .. } => {}
-                    rig::streaming::StreamedAssistantContent::Final(_) => {}
-                    rig::streaming::StreamedAssistantContent::Reasoning(_) => {}
+    loop {
+        tokio::select! {
+            item = stream.next() => {
+                match item {
+                    Some(Ok(event)) => match event {
+                        rig::agent::MultiTurnStreamItem::StreamAssistantItem(
+                            rig::streaming::StreamedAssistantContent::Text(delta)
+                        ) => {
+                            text.push_str(&delta.text);
+                        }
+                        rig::agent::MultiTurnStreamItem::FinalResponse(fin) => {
+                            text = fin.response().to_string();
+                            usage = fin.usage();
+                            messages = fin.history().map(|h| h.to_vec());
+                        }
+                        _ => {}
+                    },
+                    Some(Err(e)) => return Err(e),
+                    None => break,
                 }
             }
-            rig::agent::MultiTurnStreamItem::StreamUserItem(_) => {}
-            rig::agent::MultiTurnStreamItem::FinalResponse(fin) => {
-                text = fin.response().to_string();
-                usage = fin.usage();
-                messages = fin.history().map(|h| h.to_vec());
+            _ = cancel_token.cancelled() => {
+                break;
             }
-            _ => {}
         }
     }
 

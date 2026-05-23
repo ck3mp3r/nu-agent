@@ -217,6 +217,7 @@ impl<W: Write> StderrUiRenderer<W> {
                     None
                 }
             }
+            UiEvent::TurnError { message } => Some(format!("Error: {}", message)),
             UiEvent::CompactionStarted { source } => {
                 if self.policy.quiet {
                     None
@@ -342,6 +343,11 @@ impl<W: Write> UiRenderer for StderrUiRenderer<W> {
                     self.streaming_started = false;
                     self.streaming_printed_len = 0;
                 }
+            }
+            UiEvent::TurnError { .. } if self.spinner.is_active() => {
+                self.clear_spinner_line();
+                self.spinner.stop();
+                self.active_tool_name = None;
             }
             UiEvent::Completed { .. } if self.streaming_started => {
                 let _ = self.writer.write_all(b"\n");

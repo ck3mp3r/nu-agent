@@ -104,6 +104,10 @@ pub enum UiEvent {
     Warning {
         message: String,
     },
+    /// A turn-level error that should be prominently displayed
+    TurnError {
+        message: String,
+    },
     CompactionStarted {
         source: String,
     },

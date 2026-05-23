@@ -197,6 +197,7 @@ impl HookDriver {
                 delta: _,
                 aggregated,
             } => {
+                log::trace!("driver: TextDelta aggregated_len={}", aggregated.len());
                 self.deltas_emitted = true;
                 ui.emit(&UiEvent::AssistantMessage { text: aggregated });
             }

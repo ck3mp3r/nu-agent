@@ -328,8 +328,18 @@ where
                 cancel_requested.store(true, Ordering::SeqCst);
             }
 
-            while let Ok(event) = worker_event_rx.try_recv() {
-                ui.emit(&event);
+            {
+                let mut batch = Vec::new();
+                while let Ok(event) = worker_event_rx.try_recv() {
+                    batch.push(event);
+                }
+                if !batch.is_empty() {
+                    log::debug!(
+                        "orchestrator: forwarding {} worker events to UI",
+                        batch.len()
+                    );
+                    ui.emit_batch(&batch);
+                }
             }
 
             while let Ok(outcome) = worker_result_rx.try_recv() {
@@ -340,8 +350,8 @@ where
                         // Silently ignore cancellation
                     }
                     TurnOutcome::Error(error) => {
-                        // Display error inline as a warning instead of crashing
-                        ui.emit(&UiEvent::Warning {
+                        // Display error inline as a turn error
+                        ui.emit(&UiEvent::TurnError {
                             message: format!("Turn failed: {}", error.msg),
                         });
                     }

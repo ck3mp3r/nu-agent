@@ -140,6 +140,11 @@ pub(crate) trait InteractiveUi: ProgressUi {
     ) {
         self.set_mcp_server_state(server_name, state);
     }
+    fn emit_batch(&mut self, events: &[UiEvent]) {
+        for event in events {
+            self.emit(event);
+        }
+    }
     fn quit_requested(&self) -> bool;
     fn execute_shared_ui_action(&mut self, _action: SharedUiAction) -> bool {
         false

@@ -275,3 +275,36 @@ fn spinner_tick_advances_frame_on_tty_only() {
     non_tty_renderer.emit(&UiEvent::Tick);
     assert!(!non_tty_renderer.spinner_active_for_test());
 }
+
+#[test]
+fn turn_error_visible_at_default_verbosity_and_stops_spinner() {
+    let mut stderr_bytes = Vec::<u8>::new();
+    let mut renderer = StderrUiRenderer::new(
+        &mut stderr_bytes,
+        UiPolicy {
+            quiet: false,
+            verbosity: Verbosity::Normal,
+        },
+        true,
+    );
+
+    // Start spinner
+    renderer.emit(&UiEvent::LlmStart);
+    renderer.emit(&UiEvent::Tick);
+    
+    // Emit TurnError
+    renderer.emit(&UiEvent::TurnError {
+        message: "Turn failed: Not authenticated. Run `agent auth login`.".to_string(),
+    });
+    renderer.flush();
+
+    // Verify spinner is stopped first (before consuming stderr_bytes)
+    assert!(!renderer.spinner_active_for_test());
+    
+    let stderr_out = String::from_utf8(stderr_bytes).expect("utf8");
+    
+    // Verify error is visible (not gated behind verbose flags)
+    assert!(stderr_out.contains("Not authenticated"));
+    assert!(stderr_out.contains("Error:"));
+}
+
