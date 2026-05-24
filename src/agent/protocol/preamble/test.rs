@@ -70,7 +70,7 @@ fn classify_model_family_openai_and_anthropic() {
         ModelFamily::Gpt4x
     );
     assert_eq!(
-        classify_model_family("anthropic", "claude-sonnet-4.5"),
+        classify_model_family("anthropic", "claude-sonnet-4-20250514"),
         ModelFamily::AnthropicSonnet
     );
 }
@@ -90,7 +90,7 @@ fn classify_model_family_github_copilot_nested_backend_models() {
         ModelFamily::Gpt4x
     );
     assert_eq!(
-        classify_model_family("github-copilot", "anthropic/claude-sonnet-4.5"),
+        classify_model_family("github-copilot", "anthropic/claude-sonnet-4-20250514"),
         ModelFamily::AnthropicSonnet
     );
 }

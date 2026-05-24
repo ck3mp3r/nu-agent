@@ -85,21 +85,28 @@ fn resolve_non_interactive_ask_mode(
 fn resolve_effective_permissions_config(
     call: &EvaluatedCall,
     plugin_config: Option<&Value>,
+    agent_overlay: Option<&PermissionsOverlay>,
 ) -> Result<(PermissionsConfig, String), LabeledError> {
     let base = PermissionsConfig::parse_from_plugin_config(plugin_config);
     let cli_permissions: Option<Value> = call.get_flag("permissions").ok().flatten();
 
-    let effective = if let Some(value) = cli_permissions.as_ref() {
+    // Build permission chain: base → agent_overlay → CLI
+    // CLI always wins (highest precedence)
+    let mut effective = base;
+    
+    if let Some(overlay) = agent_overlay {
+        effective = effective.with_overlay(overlay);
+    }
+    
+    if let Some(value) = cli_permissions.as_ref() {
         let overlay = PermissionsOverlay::parse_from_cli_value(value).map_err(|msg| {
             LabeledError::new("Invalid --permissions value").with_label(msg, value.span())
         })?;
-        base.with_overlay(&overlay)
-    } else {
-        base
-    };
+        effective = effective.with_overlay(&overlay);
+    }
 
     let summary = effective.summary();
-    let overlay_active = cli_permissions.is_some();
+    let overlay_active = agent_overlay.is_some() || cli_permissions.is_some();
     let startup_message = format!(
         "permissions policy: overlay_active={} global={} tool_rules={} nu__run.command_rules={}",
         overlay_active,
@@ -292,14 +299,14 @@ pub fn extract_tool_timeout(call: &EvaluatedCall) -> std::time::Duration {
     args::extract_tool_timeout(call)
 }
 
-/// Extract MCP tool name patterns from --mcp-tools flag.
+/// Extract tool name patterns from --tool-filter flag.
 ///
 /// Expected input is a list of strings, e.g. ["k8s__*", "gh__list_*"]
 ///
 /// Returns an empty vector when the flag is not provided.
-/// Empty vector means "no filtering" (match all MCP tools).
-pub fn extract_mcp_patterns_from_call(call: &EvaluatedCall) -> Result<Vec<String>, LabeledError> {
-    args::extract_mcp_patterns_from_call(call)
+/// Empty vector means "no filtering" (match all tools).
+pub fn extract_tool_filter_from_call(call: &EvaluatedCall) -> Result<Vec<String>, LabeledError> {
+    args::extract_tool_filter_from_call(call)
 }
 
 /// Select MCP tools from config, optionally intersected by CLI allowlist patterns.
@@ -435,13 +442,28 @@ Session persistence via --session allows resuming conversations across invocatio
 
 Tool closures via --tools enable custom Nushell functions as LLM tools.
 
-MCP tool filtering via --mcp-tools restricts MCP tools to specific glob patterns.
+Tool filtering via --tool-filter restricts exposed tools (builtin, MCP, closure) to glob patterns.
+Applies to ALL tool types. Omit to expose all tools.
 
-Permissions overlay via --permissions controls authorization for tool calls."
+Permissions overlay via --permissions controls authorization for tool calls.
+
+Agent personas via --agent loads instructions from:
+  - .agents/<name>.md (project-local)
+  - $XDG_CONFIG_HOME/nu-agent/agents/<name>.md (global, usually ~/.config/nu-agent/agents/)
+Use --name to set multi-agent identity (defaults to persona name).
+
+Persona file front matter (optional YAML):
+  name: <string>                # Agent identity (overridden by --name)
+  description: <string>         # Persona summary
+  model: <provider/model>       # Default model (overridden by --model)
+  tool_filter: [<globs>]        # Tool filtering (overridden by --tool-filter)
+  permissions: <record>         # Authorization overlay (overridden by --permissions)
+
+CLI flags override front matter values. Front matter overrides plugin config."
     }
 
     fn search_terms(&self) -> Vec<&str> {
-        vec!["ai", "llm", "chat", "copilot", "openai", "anthropic", "ollama", "prompt"]
+        vec!["ai", "llm", "chat", "copilot", "openai", "anthropic", "ollama", "prompt", "agent", "persona", "filter", "tools"]
     }
 
     fn examples(&self) -> Vec<Example<'_>> {
@@ -474,6 +496,21 @@ Permissions overlay via --permissions controls authorization for tool calls."
             Example {
                 description: "Auto-approve all tool calls",
                 example: r#""fix the tests" | agent --permissions { default: allow }"#,
+                result: None,
+            },
+            Example {
+                description: "Use an agent persona",
+                example: r#""implement the feature" | agent --agent coder"#,
+                result: None,
+            },
+            Example {
+                description: "Use persona with model override",
+                example: r#""research this topic" | agent --agent researcher --model anthropic/claude-sonnet-4-20250514"#,
+                result: None,
+            },
+            Example {
+                description: "Filter tools to specific patterns",
+                example: r#""analyze code" | agent --tool-filter ['read' 'grep' 'glob']"#,
                 result: None,
             },
         ]
@@ -542,9 +579,9 @@ Permissions overlay via --permissions controls authorization for tool calls."
                 None,
             )
             .named(
-                "mcp-tools",
+                "tool-filter",
                 nu_protocol::SyntaxShape::List(Box::new(nu_protocol::SyntaxShape::String)),
-                "List of MCP tool name glob patterns, e.g. ['k8s__*', 'gh__list_*']",
+                "List of tool name glob patterns, e.g. ['k8s__*', 'gh__list_*']",
                 None,
             )
             .named(
@@ -579,6 +616,18 @@ Permissions overlay via --permissions controls authorization for tool calls."
                 "log-level",
                 nu_protocol::SyntaxShape::String,
                 "Log level for file logging: off, error, warn, info, debug, trace (default: off)",
+                None,
+            )
+            .named(
+                "agent",
+                nu_protocol::SyntaxShape::String,
+                "Agent persona name (loads .agents/<name>.md)",
+                None,
+            )
+            .named(
+                "name",
+                nu_protocol::SyntaxShape::String,
+                "Agent instance identity for multi-agent messaging",
                 None,
             )
     }
@@ -676,9 +725,10 @@ Permissions overlay via --permissions controls authorization for tool calls."
             closure_registry.register(name.clone(), closure.clone());
         }
 
-        // Extract optional MCP tool name patterns.
-        // Empty patterns means "no filtering" (match all MCP tools).
-        let mcp_patterns = extract_mcp_patterns_from_call(call)?;
+        // Extract optional tool name patterns.
+        // Empty patterns means "no filtering" (match all tools).
+        // This is extracted early because persona hasn't been loaded yet - we'll merge it later
+        let cli_tool_filter_patterns = extract_tool_filter_from_call(call)?;
 
         let plugin_config_value = engine.get_plugin_config()?;
 
@@ -691,8 +741,77 @@ Permissions overlay via --permissions controls authorization for tool calls."
                     .with_label(err.to_string(), call.head)
             })?;
 
+        // Load agent persona and extract permissions overlay before resolving effective permissions
+        let (agent_name, cli_name) = args::extract_agent_flags(call);
+        log::debug!("agent flags: agent_name={agent_name:?}, cli_name={cli_name:?}");
+        
+        let persona = if let Some(ref name) = agent_name {
+            let cwd = engine.get_current_dir()
+                .map_err(|e| LabeledError::new("Failed to get current directory")
+                    .with_label(format!("{}", e), call.head))?;
+            let cwd = std::path::PathBuf::from(cwd);
+            let config_dir = crate::utils::xdg::config_dir()
+                .map(|base| base.join("nu-agent"))
+                .map_err(|e| LabeledError::new("Cannot determine config directory")
+                    .with_label(e.to_string(), call.head))?;
+            
+            use crate::agent::protocol::persona::{FsPersonaResolver, PersonaFileResolver, PulldownCmarkFrontMatterParser, FrontMatterParser, interpret_front_matter};
+            
+            let resolver = FsPersonaResolver::new(cwd, config_dir);
+            let (_path, contents) = resolver.resolve(name).map_err(|e| 
+                LabeledError::new("Agent persona not found").with_label(e.to_string(), call.head))?;
+            
+            let parser = PulldownCmarkFrontMatterParser;
+            let raw = parser.parse(&contents).map_err(|e| 
+                LabeledError::new("Invalid agent persona front matter").with_label(e.to_string(), call.head))?;
+            
+            // Interpret front matter into typed fields
+            Some(interpret_front_matter(raw.front_matter.as_ref(), raw.body).map_err(|e|
+                LabeledError::new("Invalid agent persona front matter").with_label(e.to_string(), call.head))?)
+        } else {
+            None
+        };
+        log::debug!("persona loaded: name={:?}, model={:?}, tool_filter={:?}, has_permissions={}, body_len={}", 
+            persona.as_ref().and_then(|p| p.name.as_ref()), 
+            persona.as_ref().and_then(|p| p.model.as_ref()), 
+            persona.as_ref().and_then(|p| p.tool_filter.as_ref()), 
+            persona.as_ref().is_some_and(|p| p.permissions.is_some()), 
+            persona.as_ref().map_or(0, |p| p.body.len()));
+
+        // Wire name field with precedence: CLI --name > front matter name > --agent
+        let agent_identity = cli_name
+            .or_else(|| persona.as_ref().and_then(|p| p.name.clone()))
+            .or_else(|| agent_name.clone());
+        log::debug!("resolved agent_identity={agent_identity:?}");
+
+        // Wire permissions field
+        let agent_permissions_overlay = persona.as_ref()
+            .and_then(|p| p.permissions.as_ref())
+            .map(PermissionsOverlay::parse_from_yaml)
+            .transpose()
+            .map_err(|msg| LabeledError::new("Invalid agent permissions").with_label(msg, call.head))?;
+        log::debug!("agent_permissions_overlay present={}", agent_permissions_overlay.is_some());
+
+        // Wire tool_filter with precedence: CLI --tool-filter > front matter tool_filter
+        let tool_filter_patterns = if cli_tool_filter_patterns.is_empty() {
+            persona.as_ref().and_then(|p| p.tool_filter.clone()).unwrap_or_default()
+        } else {
+            cli_tool_filter_patterns
+        };
+        log::debug!("effective tool_filter_patterns={tool_filter_patterns:?}");
+
+        // Wire model with precedence: CLI --model > front matter model > plugin config
+        // Config already has plugin/env/default merged, we just need to inject persona model if CLI didn't provide one
+        let cli_model_provided = call.get_flag::<Value>("model").ok().flatten().is_some();
+        runtime_build::apply_persona_model(
+            &mut config,
+            persona.as_ref().and_then(|p| p.model.as_deref()),
+            cli_model_provided,
+        );
+        log::debug!("effective model after persona merge: provider={}, model={}", config.provider, config.model);
+
         let (effective_permissions, permissions_startup_summary) =
-            resolve_effective_permissions_config(call, plugin_config_value.as_ref())?;
+            resolve_effective_permissions_config(call, plugin_config_value.as_ref(), agent_permissions_overlay.as_ref())?;
 
         // Create async runtime for LLM and MCP tool execution
         let runtime = tokio::runtime::Runtime::new()
@@ -727,7 +846,7 @@ Permissions overlay via --permissions controls authorization for tool calls."
         };
 
         let discovered_mcp_tools = if let Some(mcp_runtime) = mcp_runtime.as_ref() {
-            select_mcp_tools(mcp_runtime.discovered_tools(), &mcp_patterns)
+            select_mcp_tools(mcp_runtime.discovered_tools(), &tool_filter_patterns)
         } else {
             Vec::new()
         };
@@ -779,6 +898,15 @@ Permissions overlay via --permissions controls authorization for tool calls."
                 }),
             }
         }));
+
+        // Apply tool filter patterns to ALL tools (builtin + closure + MCP) if provided
+        if !tool_filter_patterns.is_empty() {
+            log::debug!("tool filter: patterns={tool_filter_patterns:?}, pre_filter_count={}", tool_definitions.len());
+            tool_definitions.retain(|td| {
+                crate::tools::mcp::filter::matches_patterns(&td.name, &tool_filter_patterns)
+            });
+            log::debug!("tool filter: post_filter_count={}", tool_definitions.len());
+        }
 
         let resolver = DefaultSessionResolver::new(&self.store);
         let session_resolution = resolver.resolve(SessionResolutionInput {
@@ -867,7 +995,7 @@ Permissions overlay via --permissions controls authorization for tool calls."
                 .as_ref()
                 .map(|cfg| cfg.mcp.clone())
                 .unwrap_or_default(),
-            mcp_cli_patterns: mcp_patterns,
+            tool_filter_patterns,
             mcp_caller_cwd: engine.get_current_dir().ok().map(std::path::PathBuf::from),
             tool_executor,
             engine: engine.clone(),
@@ -899,7 +1027,14 @@ Permissions overlay via --permissions controls authorization for tool calls."
             memory_message_count: 0,
             cached_client: None,
             cached_client_key: None,
+            agent_persona_body: persona.as_ref().map(|p| p.body.clone()),
+            agent_identity,
+            agent_description: persona.as_ref().and_then(|p| p.description.clone()),
         };
+        log::debug!("runtime: agent_persona_body_len={:?}, agent_identity={:?}, agent_description={:?}", 
+            runtime_impl.agent_persona_body.as_ref().map(|b| b.len()),
+            runtime_impl.agent_identity,
+            runtime_impl.agent_description);
         match mode {
             AgentMode::Tui => run_tui_mode(
                 &mut runtime_impl,
@@ -1108,3 +1243,6 @@ mod test;
 
 #[cfg(test)]
 mod prompt_test;
+
+#[cfg(test)]
+mod args_test;

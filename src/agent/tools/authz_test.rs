@@ -983,3 +983,142 @@ fn display_tool_name_non_object_args_returns_tool_name_only() {
     assert_eq!(display_tool_name("test", &serde_json::json!(null)), "test");
     assert_eq!(display_tool_name("test", &serde_json::json!([])), "test");
 }
+
+#[test]
+fn parse_from_yaml_global_allow() {
+    let yaml = serde_yml::from_str::<serde_yml::Mapping>(
+        r#"
+        "*": "allow"
+        "#,
+    )
+    .expect("valid YAML");
+
+    let overlay = PermissionsOverlay::parse_from_yaml(&yaml).expect("parse");
+    assert_eq!(overlay.global, Some(PermissionAction::Allow));
+    assert!(overlay.tool_rules.is_empty());
+    assert!(overlay.nu_run_command_rules.is_empty());
+}
+
+#[test]
+fn parse_from_yaml_tool_rules() {
+    let yaml = serde_yml::from_str::<serde_yml::Mapping>(
+        r#"
+        read: "allow"
+        nu__run: "deny"
+        "#,
+    )
+    .expect("valid YAML");
+
+    let overlay = PermissionsOverlay::parse_from_yaml(&yaml).expect("parse");
+    assert_eq!(overlay.global, None);
+    assert_eq!(overlay.tool_rules.len(), 2);
+    assert_eq!(
+        overlay.tool_rules.get("read"),
+        Some(&PermissionAction::Allow)
+    );
+    assert_eq!(
+        overlay.tool_rules.get("nu__run"),
+        Some(&PermissionAction::Deny)
+    );
+    assert!(overlay.nu_run_command_rules.is_empty());
+}
+
+#[test]
+fn parse_from_yaml_nu_run_commands() {
+    let yaml = serde_yml::from_str::<serde_yml::Mapping>(
+        r#"
+        nu__run:
+          command:
+            "cargo*": "allow"
+            "rm*": "deny"
+        "#,
+    )
+    .expect("valid YAML");
+
+    let overlay = PermissionsOverlay::parse_from_yaml(&yaml).expect("parse");
+    assert_eq!(overlay.global, None);
+    assert!(overlay.tool_rules.is_empty());
+    assert_eq!(overlay.nu_run_command_rules.len(), 2);
+    assert_eq!(
+        overlay.nu_run_command_rules.get("cargo*"),
+        Some(&PermissionAction::Allow)
+    );
+    assert_eq!(
+        overlay.nu_run_command_rules.get("rm*"),
+        Some(&PermissionAction::Deny)
+    );
+}
+
+#[test]
+fn parse_from_yaml_invalid_action() {
+    let yaml = serde_yml::from_str::<serde_yml::Mapping>(
+        r#"
+        "*": "yolo"
+        "#,
+    )
+    .expect("valid YAML");
+
+    let err = PermissionsOverlay::parse_from_yaml(&yaml).expect_err("invalid action should fail");
+    assert!(err.contains("permissions.*"));
+    assert!(err.contains("invalid permission action"));
+}
+
+#[test]
+fn parse_from_yaml_invalid_structure() {
+    let yaml = serde_yml::from_str::<serde_yml::Mapping>(
+        r#"
+        nu__run: 42
+        "#,
+    )
+    .expect("valid YAML");
+
+    let err = PermissionsOverlay::parse_from_yaml(&yaml).expect_err("invalid structure should fail");
+    assert!(err.contains("permissions.nu__run"));
+}
+
+#[test]
+fn parse_from_yaml_empty_mapping() {
+    let yaml = serde_yml::Mapping::new();
+
+    let overlay = PermissionsOverlay::parse_from_yaml(&yaml).expect("parse");
+    assert_eq!(overlay.global, None);
+    assert!(overlay.tool_rules.is_empty());
+    assert!(overlay.nu_run_command_rules.is_empty());
+}
+
+#[test]
+fn parse_from_yaml_mixed() {
+    let yaml = serde_yml::from_str::<serde_yml::Mapping>(
+        r#"
+        "*": "ask"
+        read: "allow"
+        write: "deny"
+        nu__run:
+          command:
+            "kubectl*": "deny"
+            "*": "ask"
+        "#,
+    )
+    .expect("valid YAML");
+
+    let overlay = PermissionsOverlay::parse_from_yaml(&yaml).expect("parse");
+    assert_eq!(overlay.global, Some(PermissionAction::Ask));
+    assert_eq!(overlay.tool_rules.len(), 2);
+    assert_eq!(
+        overlay.tool_rules.get("read"),
+        Some(&PermissionAction::Allow)
+    );
+    assert_eq!(
+        overlay.tool_rules.get("write"),
+        Some(&PermissionAction::Deny)
+    );
+    assert_eq!(overlay.nu_run_command_rules.len(), 2);
+    assert_eq!(
+        overlay.nu_run_command_rules.get("kubectl*"),
+        Some(&PermissionAction::Deny)
+    );
+    assert_eq!(
+        overlay.nu_run_command_rules.get("*"),
+        Some(&PermissionAction::Ask)
+    );
+}

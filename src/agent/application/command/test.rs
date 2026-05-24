@@ -1,6 +1,6 @@
 use crate::agent::application::command::{
-    Agent, EngineConfigInterface, extract_flag_config, extract_mcp_patterns_from_call,
-    extract_tool_timeout, extract_tools_from_call, select_mcp_tools,
+    Agent, EngineConfigInterface, extract_flag_config, extract_tool_filter_from_call,
+    extract_tool_timeout, extract_tools_from_call, runtime_build, select_mcp_tools,
 };
 use crate::config::Config;
 use crate::plugin::RuntimeCtx;
@@ -426,16 +426,16 @@ fn agent_command_signature_has_tools_flag() {
 }
 
 #[test]
-fn agent_command_signature_has_mcp_tools_flag() {
+fn agent_command_signature_has_tool_filter_flag() {
     let (agent, _temp_dir) = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
 
-    let flag = sig.named.iter().find(|f| f.long == "mcp-tools");
-    assert!(flag.is_some(), "Missing --mcp-tools flag");
+    let flag = sig.named.iter().find(|f| f.long == "tool-filter");
+    assert!(flag.is_some(), "Missing --tool-filter flag");
     assert_eq!(
         flag.unwrap().arg,
         Some(SyntaxShape::List(Box::new(SyntaxShape::String))),
-        "Wrong type for --mcp-tools (should be list<string>)"
+        "Wrong type for --tool-filter (should be list<string>)"
     );
 }
 
@@ -492,7 +492,7 @@ fn resolve_effective_permissions_merges_cli_overlay_additively() {
     )]);
 
     let (effective, summary) =
-        super::resolve_effective_permissions_config(&call, Some(&plugin)).expect("merge");
+        super::resolve_effective_permissions_config(&call, Some(&plugin), None).expect("merge");
 
     assert_eq!(
         effective.evaluate("read", &serde_json::json!({})).action,
@@ -532,7 +532,7 @@ fn resolve_effective_permissions_rejects_malformed_cli_with_path_diagnostic() {
         }),
     )]);
 
-    let err = super::resolve_effective_permissions_config(&call, None)
+    let err = super::resolve_effective_permissions_config(&call, None, None)
         .expect_err("malformed cli permissions must fail fast");
 
     assert!(err.msg.contains("Invalid --permissions value"));
@@ -748,39 +748,71 @@ fn extract_flag_config_with_no_flags() {
 }
 
 #[test]
-fn extract_mcp_patterns_defaults_empty_when_flag_missing() {
+fn extract_tool_filter_defaults_empty_when_flag_missing() {
     let call = create_test_call(vec![]);
-    let patterns = extract_mcp_patterns_from_call(&call).expect("expected success");
+    let patterns = extract_tool_filter_from_call(&call).expect("expected success");
     assert!(patterns.is_empty());
 }
 
 #[test]
-fn extract_mcp_patterns_reads_list_of_strings() {
+fn extract_tool_filter_reads_list_of_strings() {
     let call = create_test_call(vec![(
-        "mcp-tools",
+        "tool-filter",
         Value::test_list(vec![
             Value::test_string("k8s__*"),
             Value::test_string("gh__list_*"),
         ]),
     )]);
 
-    let patterns = extract_mcp_patterns_from_call(&call).expect("expected success");
+    let patterns = extract_tool_filter_from_call(&call).expect("expected success");
     assert_eq!(patterns, vec!["k8s__*", "gh__list_*"]);
 }
 
 #[test]
-fn extract_mcp_patterns_rejects_non_string_entries() {
+fn extract_tool_filter_rejects_non_string_entries() {
     let call = create_test_call(vec![(
-        "mcp-tools",
+        "tool-filter",
         Value::test_list(vec![Value::test_string("k8s__*"), Value::test_int(42)]),
     )]);
 
-    let err = extract_mcp_patterns_from_call(&call).expect_err("expected error");
+    let err = extract_tool_filter_from_call(&call).expect_err("expected error");
     assert!(
-        err.msg.contains("mcp-tools") || err.msg.contains("string"),
+        err.msg.contains("tool-filter") || err.msg.contains("string"),
         "unexpected error: {}",
         err.msg
     );
+}
+
+#[test]
+fn tool_filter_applies_to_all_tool_types() {
+    // Test that the filter function works with builtin tool names
+    use crate::tools::mcp::filter::matches_patterns;
+    
+    // Builtin tools
+    assert!(matches_patterns("read", &["read".to_string()]));
+    assert!(matches_patterns("edit", &["edit".to_string()]));
+    assert!(!matches_patterns("read", &["write".to_string()]));
+    
+    // Glob patterns
+    assert!(matches_patterns("read", &["re*".to_string()]));
+    assert!(matches_patterns("edit", &["ed*".to_string()]));
+    assert!(!matches_patterns("patch", &["re*".to_string()]));
+    
+    // Multiple patterns (OR semantics)
+    assert!(matches_patterns("read", &["read".to_string(), "write".to_string()]));
+    assert!(matches_patterns("write", &["read".to_string(), "write".to_string()]));
+    assert!(!matches_patterns("edit", &["read".to_string(), "write".to_string()]));
+}
+
+#[test]
+fn tool_filter_empty_patterns_matches_all_tools() {
+    use crate::tools::mcp::filter::matches_patterns;
+    
+    // Empty patterns should match everything
+    assert!(matches_patterns("read", &[]));
+    assert!(matches_patterns("edit", &[]));
+    assert!(matches_patterns("k8s__list_pods", &[]));
+    assert!(matches_patterns("anything", &[]));
 }
 
 #[test]
@@ -1328,7 +1360,7 @@ mod new_plugin_config_tests {
         let mut providers_map = HashMap::new();
         let mut models = HashMap::new();
         models.insert(
-            "claude-sonnet-4.5".to_string(),
+            "claude-sonnet-4-20250514".to_string(),
             Value::test_record(record! {}),
         );
 
@@ -1359,7 +1391,7 @@ mod new_plugin_config_tests {
                     }),
                 }),
             }),
-            "model" => Value::test_string("github-copilot/anthropic/claude-sonnet-4.5"),
+            "model" => Value::test_string("github-copilot/anthropic/claude-sonnet-4-20250514"),
             "providers" => Value::test_record(providers_map.into_iter().collect()),
         });
 
@@ -2037,6 +2069,40 @@ mod session_flags_tests {
         );
         assert!(!flag.desc.is_empty(), "Missing description for --session");
     }
+
+    #[test]
+    fn agent_command_signature_has_agent_flag() {
+        let (agent, _temp_dir) = create_test_agent();
+        let sig = SimplePluginCommand::signature(&agent);
+
+        let agent_flag = sig.named.iter().find(|f| f.long == "agent");
+        assert!(agent_flag.is_some(), "Missing --agent flag");
+
+        let flag = agent_flag.unwrap();
+        assert_eq!(
+            flag.arg,
+            Some(SyntaxShape::String),
+            "Wrong type for --agent"
+        );
+        assert!(!flag.desc.is_empty(), "Missing description for --agent");
+    }
+
+    #[test]
+    fn agent_command_signature_has_name_flag() {
+        let (agent, _temp_dir) = create_test_agent();
+        let sig = SimplePluginCommand::signature(&agent);
+
+        let name_flag = sig.named.iter().find(|f| f.long == "name");
+        assert!(name_flag.is_some(), "Missing --name flag");
+
+        let flag = name_flag.unwrap();
+        assert_eq!(
+            flag.arg,
+            Some(SyntaxShape::String),
+            "Wrong type for --name"
+        );
+        assert!(!flag.desc.is_empty(), "Missing description for --name");
+    }
 }
 
 // Tests for session flag validation
@@ -2379,4 +2445,109 @@ mod tool_timeout_tests {
             "Missing description for --tool-timeout"
         );
     }
+}
+
+// ============================================================================
+// Persona Model Precedence Tests - Fix for persona model override bug
+// ============================================================================
+
+#[test]
+fn apply_persona_model_overrides_plugin_config() {
+    let mut config = Config {
+        provider: "openai".to_string(),
+        model: "gpt-4o".to_string(),
+        provider_impl: None,
+        ..Config::default()
+    };
+
+    let applied = runtime_build::apply_persona_model(
+        &mut config,
+        Some("github-copilot/claude-opus-4.6"),
+        false,
+    );
+
+    assert!(applied, "Should apply persona model");
+    assert_eq!(config.provider, "github-copilot");
+    assert_eq!(config.model, "claude-opus-4.6");
+    assert_eq!(config.provider_impl, None);
+}
+
+#[test]
+fn apply_persona_model_cli_wins() {
+    let mut config = Config {
+        provider: "openai".to_string(),
+        model: "gpt-4o".to_string(),
+        provider_impl: None,
+        ..Config::default()
+    };
+
+    let applied = runtime_build::apply_persona_model(
+        &mut config,
+        Some("github-copilot/claude-opus-4.6"),
+        true, // CLI model was provided
+    );
+
+    assert!(!applied, "Should NOT apply persona model when CLI provided");
+    assert_eq!(config.provider, "openai", "Config should be unchanged");
+    assert_eq!(config.model, "gpt-4o", "Config should be unchanged");
+}
+
+#[test]
+fn apply_persona_model_no_slash_ignored() {
+    let mut config = Config {
+        provider: "openai".to_string(),
+        model: "gpt-4o".to_string(),
+        provider_impl: None,
+        ..Config::default()
+    };
+
+    let applied = runtime_build::apply_persona_model(
+        &mut config,
+        Some("just-a-model"),
+        false,
+    );
+
+    assert!(!applied, "Should NOT apply invalid persona model");
+    assert_eq!(config.provider, "openai", "Config should be unchanged");
+    assert_eq!(config.model, "gpt-4o", "Config should be unchanged");
+}
+
+#[test]
+fn apply_persona_model_none_preserves_config() {
+    let mut config = Config {
+        provider: "openai".to_string(),
+        model: "gpt-4o".to_string(),
+        provider_impl: None,
+        ..Config::default()
+    };
+
+    let applied = runtime_build::apply_persona_model(&mut config, None, false);
+
+    assert!(!applied, "Should NOT apply when persona model is None");
+    assert_eq!(config.provider, "openai", "Config should be unchanged");
+    assert_eq!(config.model, "gpt-4o", "Config should be unchanged");
+}
+
+#[test]
+fn apply_persona_model_clears_provider_impl() {
+    let mut config = Config {
+        provider: "openai".to_string(),
+        model: "gpt-4o".to_string(),
+        provider_impl: Some("openai".to_string()),
+        ..Config::default()
+    };
+
+    let applied = runtime_build::apply_persona_model(
+        &mut config,
+        Some("anthropic/claude-sonnet-4-20250514"),
+        false,
+    );
+
+    assert!(applied, "Should apply persona model");
+    assert_eq!(config.provider, "anthropic");
+    assert_eq!(config.model, "claude-sonnet-4-20250514");
+    assert_eq!(
+        config.provider_impl, None,
+        "provider_impl should be cleared"
+    );
 }

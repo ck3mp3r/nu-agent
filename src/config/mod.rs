@@ -331,7 +331,7 @@ impl PluginConfig {
     ///
     /// # Examples
     /// - `"openai/gpt-4"` → provider: `"openai"`, model: `"gpt-4"`
-    /// - `"github-copilot/anthropic/claude-sonnet-4.5"` → provider: `"github-copilot"`, model: `"anthropic/claude-sonnet-4.5"`
+    /// - `"github-copilot/anthropic/claude-sonnet-4-20250514"` → provider: `"github-copilot"`, model: `"anthropic/claude-sonnet-4-20250514"`
     /// - `"anthropic/claude-3"` → provider: `"anthropic"`, model: `"claude-3"`
     ///
     /// The model string is passed directly to the provider implementation,

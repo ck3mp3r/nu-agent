@@ -41,11 +41,14 @@ const COMPACTION_FAILURE_WARNING: &str =
 /// Joins non-empty parts with separators. Returns None if all empty.
 fn build_system_preamble(
     config_preamble: Option<&str>,
+    agent_persona: Option<&str>,
     context: Option<&str>,
     agents_chain: Option<&str>,
     available_skills: Option<&str>,
 ) -> Option<String> {
-    let parts: Vec<&str> = [config_preamble, context, agents_chain, available_skills]
+    log::trace!("build_system_preamble: config_preamble={}, agent_persona={}, context={}, agents_chain={}, available_skills={}", config_preamble.is_some(), agent_persona.is_some(), context.is_some(), agents_chain.is_some(), available_skills.is_some());
+    
+    let parts: Vec<&str> = [config_preamble, agent_persona, context, agents_chain, available_skills]
         .into_iter()
         .flatten()
         .collect();
@@ -53,6 +56,7 @@ fn build_system_preamble(
     if parts.is_empty() {
         None
     } else {
+        log::debug!("build_system_preamble: parts_count={}, total_len={}", parts.len(), parts.iter().map(|p| p.len()).sum::<usize>());
         Some(parts.join("\n\n---\n\n"))
     }
 }
@@ -241,7 +245,7 @@ pub(crate) struct AgentConversationRuntime {
     pub mcp_tool_server_handle: rig::tool::server::ToolServerHandle,
     pub mcp_lifecycle_projection: Vec<McpServerLifecycle>,
     pub mcp_server_configs: Vec<McpServerConfig>,
-    pub mcp_cli_patterns: Vec<String>,
+    pub tool_filter_patterns: Vec<String>,
     pub mcp_caller_cwd: Option<std::path::PathBuf>,
     #[allow(dead_code)]
     pub tool_executor: ToolExecutor,
@@ -264,6 +268,12 @@ pub(crate) struct AgentConversationRuntime {
     pub memory_message_count: usize,
     pub cached_client: Option<CachedProviderClient>,
     pub cached_client_key: Option<ClientCacheKey>,
+    #[allow(dead_code)]
+    pub agent_persona_body: Option<String>,
+    #[allow(dead_code)]
+    pub agent_identity: Option<String>,
+    #[allow(dead_code)]
+    pub agent_description: Option<String>,
 }
 
 fn emit_permissions_startup_summary_once<U: ProgressUi>(
@@ -484,7 +494,7 @@ impl ConversationRuntime for AgentConversationRuntime {
                     &self.mcp_registry,
                     server_name,
                     &discovered,
-                    &self.mcp_cli_patterns,
+                    &self.tool_filter_patterns,
                 )?;
 
                 self.tool_definitions = staged_tool_definitions;
@@ -624,6 +634,8 @@ impl ConversationRuntime for AgentConversationRuntime {
             .map(crate::agent::protocol::agents::load_agents_chain_for_cwd)
             .unwrap_or_default();
 
+        log::debug!("execute_turn: agents_chain loaded={}, warnings={}", loaded_agents.merged_chain.is_some(), loaded_agents.warnings.len());
+
         for warning in &loaded_agents.warnings {
             ui.emit(&UiEvent::Warning {
                 message: warning.clone(),
@@ -638,10 +650,13 @@ impl ConversationRuntime for AgentConversationRuntime {
         // Build system preamble from components
         let preamble = build_system_preamble(
             self.config.preamble.as_deref(),
+            self.agent_persona_body.as_deref(),
             context.as_deref(),
             loaded_agents.merged_chain.as_deref(),
             available_skills.as_deref(),
         );
+
+        log::debug!("execute_turn: preamble present={}, preamble_len={}", preamble.is_some(), preamble.as_ref().map_or(0, |p| p.len()));
 
         // Hydrate memory from conversation store on session attach
         let conversation_id = if let Some(ref session_id) = self.final_session_id {

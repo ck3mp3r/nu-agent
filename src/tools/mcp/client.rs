@@ -43,11 +43,16 @@ impl McpToolDefinition {
 }
 
 pub fn filter_tools(tools: &[McpToolDefinition], patterns: &[String]) -> Vec<McpToolDefinition> {
-    tools
+    log::debug!("filter_tools: input_count={}, pattern_count={}", tools.len(), patterns.len());
+    
+    let result: Vec<McpToolDefinition> = tools
         .iter()
         .filter(|tool| matches_patterns(&tool.name, patterns))
         .cloned()
-        .collect()
+        .collect();
+    
+    log::debug!("filter_tools: output_count={}", result.len());
+    result
 }
 
 #[cfg(test)]

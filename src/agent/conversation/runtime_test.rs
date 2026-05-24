@@ -222,7 +222,7 @@ fn enabling_startup_disabled_server_materializes_filtered_mcp_tools_for_current_
     assert!(visible.iter().any(|tool| tool.name == "k8s__list_pods"));
     assert!(
         visible.iter().all(|tool| tool.name != "k8s__delete_pod"),
-        "cli MCP patterns must be applied consistently when enabling servers in-session"
+        "cli tool filter patterns must be applied consistently when enabling servers in-session"
     );
     assert_eq!(
         visible
@@ -335,6 +335,7 @@ fn lifecycle_projection_recomputes_from_registry_state_without_runtime() {
 fn build_system_preamble_joins_non_empty_parts() {
     let result = super::build_system_preamble(
         Some("preamble text"),
+        None,
         Some("context text"),
         Some("agents chain"),
         Some("available skills"),
@@ -350,18 +351,56 @@ fn build_system_preamble_joins_non_empty_parts() {
 
 #[test]
 fn build_system_preamble_returns_none_when_all_empty() {
-    let result = super::build_system_preamble(None, None, None, None);
+    let result = super::build_system_preamble(None, None, None, None, None);
     assert!(result.is_none());
 }
 
 #[test]
 fn build_system_preamble_handles_partial_inputs() {
-    let result = super::build_system_preamble(Some("preamble"), None, Some("agents"), None);
+    let result = super::build_system_preamble(Some("preamble"), None, None, Some("agents"), None);
 
     assert!(result.is_some());
     let text = result.unwrap();
     assert!(text.contains("preamble"));
     assert!(text.contains("agents"));
+}
+
+#[test]
+fn build_system_preamble_includes_persona_in_correct_position() {
+    let result = super::build_system_preamble(
+        Some("config preamble"),
+        Some("agent persona"),
+        Some("context text"),
+        Some("agents chain"),
+        Some("available skills"),
+    );
+
+    assert!(result.is_some());
+    let text = result.unwrap();
+    
+    // Verify all parts are present
+    assert!(text.contains("config preamble"));
+    assert!(text.contains("agent persona"));
+    assert!(text.contains("context text"));
+    assert!(text.contains("agents chain"));
+    assert!(text.contains("available skills"));
+    
+    // Verify persona appears between config preamble and context
+    let config_pos = text.find("config preamble").unwrap();
+    let persona_pos = text.find("agent persona").unwrap();
+    let context_pos = text.find("context text").unwrap();
+    
+    assert!(config_pos < persona_pos, "config preamble should come before persona");
+    assert!(persona_pos < context_pos, "persona should come before context");
+}
+
+#[test]
+fn build_system_preamble_persona_only() {
+    let result = super::build_system_preamble(None, Some("persona only"), None, None, None);
+
+    assert!(result.is_some());
+    let text = result.unwrap();
+    assert_eq!(text, "persona only");
 }
 
 // ========================================================================

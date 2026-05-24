@@ -24,7 +24,7 @@ fn mcp_config_from_plugin_config_reads_map_shape() {
                 "enabled" => Value::test_bool(false),
             }),
         }),
-        "model" => Value::test_string("github-copilot/anthropic/claude-sonnet-4.5"),
+        "model" => Value::test_string("github-copilot/anthropic/claude-sonnet-4-20250514"),
         "providers" => Value::test_record(Record::new()),
     });
 

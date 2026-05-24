@@ -7,15 +7,15 @@ use super::agents::load_agents_chain_for_cwd_for_tests;
 #[test]
 fn loads_home_agents_when_present() {
     let tmp = tempdir().expect("tempdir");
-    let home = tmp.path().join("home");
+    let config = tmp.path().join("config");
     let cwd = tmp.path().join("cwd");
-    fs::create_dir_all(home.join(".agents")).expect("home/.agents");
+    fs::create_dir_all(config.join("agents")).expect("config/agents");
     fs::create_dir_all(&cwd).expect("cwd");
-    fs::write(home.join(".agents/AGENTS.md"), "HOME\n").expect("write home agents");
+    fs::write(config.join("agents/AGENTS.md"), "CONFIG\n").expect("write config agents");
 
-    let loaded = load_agents_chain_for_cwd_for_tests(&cwd, Some(&home), Some(tmp.path()));
+    let loaded = load_agents_chain_for_cwd_for_tests(&cwd, Some(&config), Some(tmp.path()));
 
-    assert_eq!(loaded.merged_chain.as_deref(), Some("HOME\n"));
+    assert_eq!(loaded.merged_chain.as_deref(), Some("CONFIG\n"));
     assert!(loaded.warnings.is_empty());
 }
 

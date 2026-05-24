@@ -650,6 +650,109 @@ impl PermissionsOverlay {
 
         Ok(overlay)
     }
+
+    pub fn parse_from_yaml(mapping: &serde_yml::Mapping) -> Result<Self, String> {
+        let mut overlay = Self::default();
+
+        for (yaml_key, yaml_value) in mapping.iter() {
+            let key_str = yaml_key.as_str().ok_or_else(|| {
+                "permissions key must be a string (path: permissions)".to_string()
+            })?;
+
+            if key_str == "*" {
+                let action_str = yaml_value.as_str().ok_or_else(|| {
+                    "permissions.* value must be a string (path: permissions.*)".to_string()
+                })?;
+                let action = PermissionAction::from_str(action_str).ok_or_else(|| {
+                    format!("invalid permission action '{}' (path: permissions.*)", action_str)
+                })?;
+                overlay.global = Some(action);
+                continue;
+            }
+
+            if key_str == "nu__run" {
+                // Check if value is a mapping (nested command rules) or string (tool rule)
+                if let Some(nu_run_mapping) = yaml_value.as_mapping() {
+                    for (field_key, field_value) in nu_run_mapping.iter() {
+                        let field_name = field_key.as_str().ok_or_else(|| {
+                            "permissions.nu__run field key must be a string (path: permissions.nu__run)"
+                                .to_string()
+                        })?;
+
+                        if field_name != "command" {
+                            return Err(format!(
+                                "unsupported field under permissions.nu__run: '{}' (path: permissions.nu__run.{field_name})",
+                                field_name
+                            ));
+                        }
+
+                        let command_mapping = field_value.as_mapping().ok_or_else(|| {
+                            "permissions.nu__run.command must be a mapping of pattern -> action (path: permissions.nu__run.command)"
+                                .to_string()
+                        })?;
+
+                        for (pattern_key, action_value) in command_mapping.iter() {
+                            let pattern = pattern_key.as_str().ok_or_else(|| {
+                                "permissions.nu__run.command pattern must be a string (path: permissions.nu__run.command)"
+                                    .to_string()
+                            })?;
+
+                            let action_str = action_value.as_str().ok_or_else(|| {
+                                format!("permissions.nu__run.command['{}'] value must be a string (path: permissions.nu__run.command.{})", pattern, path_segment(pattern))
+                            })?;
+
+                            let action = PermissionAction::from_str(action_str).ok_or_else(|| {
+                                format!(
+                                    "invalid permission action '{}' (path: permissions.nu__run.command.{})",
+                                    action_str,
+                                    path_segment(pattern)
+                                )
+                            })?;
+                            overlay
+                                .nu_run_command_rules
+                                .insert(pattern.to_string(), action);
+                        }
+                    }
+
+                    continue;
+                } else {
+                    // nu__run is a string, treat it as a tool rule
+                    let action_str = yaml_value.as_str().ok_or_else(|| {
+                        "permissions.nu__run must be either a string or a mapping (path: permissions.nu__run)"
+                            .to_string()
+                    })?;
+
+                    let action = PermissionAction::from_str(action_str).ok_or_else(|| {
+                        format!(
+                            "invalid permission action '{}' (path: permissions.nu__run)",
+                            action_str
+                        )
+                    })?;
+                    overlay.tool_rules.insert(key_str.to_string(), action);
+                    continue;
+                }
+            }
+
+            let action_str = yaml_value.as_str().ok_or_else(|| {
+                format!(
+                    "permissions.{} value must be a string (path: permissions.{})",
+                    key_str,
+                    path_segment(key_str)
+                )
+            })?;
+
+            let action = PermissionAction::from_str(action_str).ok_or_else(|| {
+                format!(
+                    "invalid permission action '{}' (path: permissions.{})",
+                    action_str,
+                    path_segment(key_str)
+                )
+            })?;
+            overlay.tool_rules.insert(key_str.to_string(), action);
+        }
+
+        Ok(overlay)
+    }
 }
 
 #[derive(Debug, Default)]

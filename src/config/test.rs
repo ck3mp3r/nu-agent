@@ -1362,7 +1362,7 @@ fn resolve_model_validates_empty_parts() {
 #[test]
 fn resolve_model_uses_split_once_for_multi_part_models() {
     let plugin_config = PluginConfig {
-        model: "github-copilot/anthropic/claude-sonnet-4.5".to_string(),
+        model: "github-copilot/anthropic/claude-sonnet-4-20250514".to_string(),
         small_model: None,
         providers: {
             let mut map = HashMap::new();
@@ -1382,14 +1382,14 @@ fn resolve_model_uses_split_once_for_multi_part_models() {
     };
 
     let config = plugin_config
-        .resolve_model("github-copilot/anthropic/claude-sonnet-4.5")
+        .resolve_model("github-copilot/anthropic/claude-sonnet-4-20250514")
         .expect("Should resolve github-copilot model");
 
     // Provider should be "github-copilot"
     assert_eq!(config.provider, "github-copilot");
 
-    // Model should be "anthropic/claude-sonnet-4.5" (everything after first /)
-    assert_eq!(config.model, "anthropic/claude-sonnet-4.5");
+    // Model should be "anthropic/claude-sonnet-4-20250514" (everything after first /)
+    assert_eq!(config.model, "anthropic/claude-sonnet-4-20250514");
 
     // API key should come from provider config
     assert_eq!(config.api_key, Some("test-key".to_string()));
@@ -1429,12 +1429,12 @@ fn resolve_model_works_with_simple_two_part() {
 fn integration_github_copilot_with_backend_in_model() {
     // This simulates the full flow:
     // 1. Config has github-copilot provider
-    // 2. User specifies model as "github-copilot/anthropic/claude-sonnet-4.5"
-    // 3. resolve_model extracts provider="github-copilot", model="anthropic/claude-sonnet-4.5"
+    // 2. User specifies model as "github-copilot/anthropic/claude-sonnet-4-20250514"
+    // 3. resolve_model extracts provider="github-copilot", model="anthropic/claude-sonnet-4-20250514"
     // 4. github-copilot provider receives model string and parses backend internally
 
     let plugin_config = PluginConfig {
-        model: "github-copilot/anthropic/claude-sonnet-4.5".to_string(),
+        model: "github-copilot/anthropic/claude-sonnet-4-20250514".to_string(),
         small_model: Some("github-copilot/openai/gpt-4o-mini".to_string()),
         providers: {
             let mut map = HashMap::new();
@@ -1455,11 +1455,11 @@ fn integration_github_copilot_with_backend_in_model() {
 
     // Test default model
     let config = plugin_config
-        .resolve_model("github-copilot/anthropic/claude-sonnet-4.5")
+        .resolve_model("github-copilot/anthropic/claude-sonnet-4-20250514")
         .expect("Should resolve github-copilot anthropic model");
 
     assert_eq!(config.provider, "github-copilot");
-    assert_eq!(config.model, "anthropic/claude-sonnet-4.5");
+    assert_eq!(config.model, "anthropic/claude-sonnet-4-20250514");
     assert_eq!(config.api_key, Some("test-key".to_string()));
     assert_eq!(
         config.base_url,

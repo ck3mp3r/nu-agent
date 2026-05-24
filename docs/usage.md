@@ -43,6 +43,60 @@ let tools = {
 "what time is it" | agent --tools $tools
 ```
 
+## Agent personas
+
+Load instructions and configuration from persona files using `--agent`:
+
+```nu
+"implement the feature" | agent --agent coder
+```
+
+Persona file resolution (first match wins):
+- `.agents/<name>.md` (project-local)
+- `$XDG_CONFIG_HOME/nu-agent/agents/<name>.md` (global, usually `~/.config/nu-agent/agents/`)
+
+### Front matter keys (optional YAML)
+
+```yaml
+---
+name: coder
+description: Development agent focused on implementing features
+model: anthropic/claude-sonnet-4-20250514
+tool_filter: ["read", "write", "edit", "grep", "glob", "nu__run"]
+permissions:
+  "*": "ask"
+  "read": "allow"
+  "c5t_get*": "allow"
+---
+
+# Your agent instructions here
+```
+
+All front matter keys are optional:
+- `name` - Agent identity (overridden by `--name` flag)
+- `description` - Persona summary
+- `model` - Default model (overridden by `--model` flag)
+- `tool_filter` - Tool filtering (overridden by `--tool-filter` flag)
+- `permissions` - Authorization overlay (overridden by `--permissions` flag)
+
+**Precedence:** CLI flags > front matter > plugin config
+
+### Examples
+
+```nu
+# Use persona as-is
+agent --agent researcher
+
+# Override persona's model
+agent --agent coder --model openai/gpt-4o
+
+# Override persona's name
+agent --agent coder --name "bob"
+
+# Override tool filter
+agent --agent coder --tool-filter ["read", "grep"]
+```
+
 ## Tool authorization (permissions DSL)
 
 Authorization uses a **map-style** `permissions` DSL (not a rules array).
@@ -425,11 +479,15 @@ built-ins.
 - Keyboard selection behavior is unchanged; moving selection updates the details pane.
 - Top legend line is removed; controls remain compact (`Session-only toggles | Enter/Space toggle | Esc close`).
 
-## MCP tool filtering
+## Tool filtering
+
+Filter exposed tools (builtin, MCP, closure) using glob patterns:
 
 ```nu
-"what tools do you have" | agent --mcp-tools ["c5t/*" "nu/*"]
+"what tools do you have" | agent --tool-filter ["c5t/*" "nu/*"]
 ```
+
+Applies to ALL tool types. Omit to expose all tools.
 
 ## Flag reference
 
@@ -442,7 +500,7 @@ built-ins.
 - `--max-output-tokens <int>`
 - `--max-turns <int>`
 - `--tools <record>`
-- `--mcp-tools <list<string>>`
+- `--tool-filter <list<string>>`
 - `--permissions <record>`
 - `--tool-timeout <duration>`
 - `--session <id>`

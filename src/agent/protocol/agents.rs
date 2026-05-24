@@ -11,31 +11,33 @@ pub(crate) struct AgentsLoadResult {
 }
 
 pub(crate) fn load_agents_chain_for_cwd(cwd: &Path) -> AgentsLoadResult {
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .filter(|path| !path.as_os_str().is_empty());
-    load_agents_chain_internal(cwd, home.as_deref(), None)
+    let config_dir = crate::utils::xdg::config_dir()
+        .ok()
+        .map(|base| base.join("nu-agent"));
+    load_agents_chain_internal(cwd, config_dir.as_deref(), None)
 }
 
 #[cfg(test)]
 pub(crate) fn load_agents_chain_for_cwd_for_tests(
     cwd: &Path,
-    home: Option<&Path>,
+    config_dir: Option<&Path>,
     stop_at: Option<&Path>,
 ) -> AgentsLoadResult {
-    load_agents_chain_internal(cwd, home, stop_at)
+    load_agents_chain_internal(cwd, config_dir, stop_at)
 }
 
 fn load_agents_chain_internal(
     cwd: &Path,
-    home: Option<&Path>,
+    config_dir: Option<&Path>,
     stop_at: Option<&Path>,
 ) -> AgentsLoadResult {
+    log::debug!("load_agents_chain: cwd={cwd:?}, config_dir={config_dir:?}");
+    
     let mut warnings = Vec::new();
     let mut merged_segments = Vec::new();
     let mut seen = HashSet::new();
 
-    for candidate in discover_candidate_paths(cwd, home, stop_at) {
+    for candidate in discover_candidate_paths(cwd, config_dir, stop_at) {
         if !candidate.exists() {
             continue;
         }
@@ -46,7 +48,10 @@ fn load_agents_chain_internal(
         }
 
         match fs::read_to_string(&candidate) {
-            Ok(content) => merged_segments.push(content),
+            Ok(content) => {
+                log::debug!("load_agents_chain: loaded {:?} ({} bytes)", candidate, content.len());
+                merged_segments.push(content);
+            }
             Err(err) => warnings.push(format!("failed to read {}: {}", candidate.display(), err)),
         }
     }
@@ -56,6 +61,8 @@ fn load_agents_chain_internal(
     } else {
         Some(merged_segments.join("\n"))
     };
+
+    log::debug!("load_agents_chain: segments={}, merged_len={:?}", merged_segments.len(), merged_chain.as_ref().map(|c| c.len()));
 
     AgentsLoadResult {
         merged_chain,
@@ -69,13 +76,13 @@ fn canonical_path_key(path: &Path) -> PathBuf {
 
 fn discover_candidate_paths(
     cwd: &Path,
-    home: Option<&Path>,
+    config_dir: Option<&Path>,
     stop_at: Option<&Path>,
 ) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
-    if let Some(home_dir) = home {
-        candidates.push(home_dir.join(".agents").join("AGENTS.md"));
+    if let Some(cfg_dir) = config_dir {
+        candidates.push(cfg_dir.join("agents").join("AGENTS.md"));
     }
 
     let mut ancestors = cwd

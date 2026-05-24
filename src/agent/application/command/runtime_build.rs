@@ -242,3 +242,26 @@ pub(crate) fn resolve_with_old_config(
 
     Ok(config)
 }
+
+/// Apply persona model override if CLI --model was not provided.
+/// Returns true if persona model was applied.
+pub(crate) fn apply_persona_model(
+    config: &mut Config,
+    persona_model: Option<&str>,
+    cli_model_provided: bool,
+) -> bool {
+    if cli_model_provided {
+        return false;
+    }
+    let Some(m) = persona_model else {
+        return false;
+    };
+    let Some((provider, model)) = m.split_once('/') else {
+        return false;
+    };
+    config.provider = provider.to_string();
+    config.model = model.to_string();
+    config.provider_impl = None;
+    log::debug!("apply_persona_model: overriding to provider={provider}, model={model}");
+    true
+}

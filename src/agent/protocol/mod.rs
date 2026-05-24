@@ -4,6 +4,7 @@ pub mod compaction;
 pub mod contracts;
 pub mod event;
 pub mod permission;
+pub(crate) mod persona;
 pub mod preamble;
 pub mod prompt;
 pub mod skills;
@@ -21,6 +22,9 @@ mod event_contract_test;
 
 #[cfg(test)]
 mod permission_test;
+
+#[cfg(test)]
+mod persona_test;
 
 #[cfg(test)]
 mod slash_test;

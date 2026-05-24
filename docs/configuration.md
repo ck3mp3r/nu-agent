@@ -31,14 +31,12 @@ Optional top-level fields:
 
 ## Model Format
 
-- Default model: `provider/model`
-- GitHub Copilot: `github-copilot/<backend>/<model>`
-
-Examples:
+All models use `provider/model` format:
 
 - `ollama/gemma4:31b`
 - `openai/gpt-4o`
-- `github-copilot/openai/gpt-5.3-codex`
+- `anthropic/claude-sonnet-4-20250514`
+- `github-copilot/claude-opus-4.6`
 
 ## Precedence
 

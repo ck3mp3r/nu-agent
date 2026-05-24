@@ -19,14 +19,14 @@ $env.config.plugins.agent = {
       env: { GIT_PAGER: "" }
     }
   }
-  model: "github-copilot/openai/gpt-5.3-codex"
+  model: "github-copilot/claude-opus-4.6"
   providers: {
     "github-copilot": {
       provider_impl: "openai"
       api_key: $env.GITHUB_TOKEN
       base_url: "https://api.individual.githubcopilot.com"
       models: {
-        "openai/gpt-5.3-codex": {}
+        "claude-opus-4.6": {}
       }
     }
   }
@@ -39,7 +39,7 @@ $env.config.plugins.agent = {
 - Tools are discovered from connected MCP servers at runtime.
 - Exposed/callable MCP tool names are namespaced as `<server_key>__<raw_tool_name>`.
   - `server_key` is the key under `mcp.<server_key>` in plugin config.
-- `--mcp-tools` filters discovered tools for that single run.
+- `--tool-filter` can filter all tools (builtin, MCP, closure) for a single run.
 
 ## Transport Rules
 
@@ -86,16 +86,16 @@ Typical recovery flow:
 Fatal errors still remain for unrecoverable command-level failures (for example: invalid top-level
 agent config or LLM provider initialization failures).
 
-## `--mcp-tools`
+## `--tool-filter`
 
-Use glob patterns to restrict exposed MCP tools:
+Use glob patterns to filter exposed tools (applies to ALL tool types: builtin, MCP, closure):
 
 ```nu
-"check open prs" | agent --mcp-tools ["gh__*"]
-"cluster + prs" | agent --mcp-tools ["k8s__*" "gh__list_*"]
+"check open prs" | agent --tool-filter ["gh__*"]
+"cluster + prs" | agent --tool-filter ["k8s__*" "gh__list_*"]
 ```
 
-If omitted, all discovered MCP tools are exposed.
+If omitted, all discovered tools are exposed.
 
 ## Collision prevention
 
@@ -120,7 +120,7 @@ Previous behavior exposed raw MCP tool names directly (e.g. `list_prs`).
 
 Current behavior requires namespaced names (e.g. `gh__list_prs`) for:
 
-- `--mcp-tools` filters
+- `--tool-filter` patterns
 - LLM tool-call names routed through the tool handler
 
 Update any existing filters/prompts that referenced raw MCP tool names.
