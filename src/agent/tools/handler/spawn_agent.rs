@@ -142,18 +142,39 @@ pub(crate) fn handle_spawn_agent<T: TmuxRunner>(
         .map_err(|_| ToolExecError::execution("Failed to acquire registry lock"))?
         .register_pending(token.clone(), assigned_name.clone());
 
-    // 5. Tmux pane management
+    // 5. Tmux pane management — with stale window recovery
     let socket_path = state.socket_path.as_ref().unwrap();
-    if let Some(window) = &state.tmux_window {
-        // Split existing window
-        log::debug!("Splitting existing tmux window");
-        tmux.run(&["split-window", "-c", &state.cwd.display().to_string(), "-t", window])?;
-    } else {
-        // Create new window
+    let cwd_str = state.cwd.display().to_string();
+
+    // Try splitting existing window; on failure, clear stale reference
+    if let Some(window) = state.tmux_window.take() {
+        log::debug!("Splitting existing tmux window: {}", window);
+        match tmux.run(&["split-window", "-h", "-c", &cwd_str, "-t", &window]) {
+            Ok(_) => {
+                state.tmux_window = Some(window);
+            }
+            Err(e) => {
+                log::warn!(
+                    "split-window failed (stale window?), will create new: {}",
+                    e.message
+                );
+                // tmux_window already None from take()
+            }
+        }
+    }
+
+    // Create new window if needed (either originally None or after failed split)
+    if state.tmux_window.is_none() {
         log::debug!("Creating new tmux window for agents");
-        let window_id = tmux.run(&["new-window", "-c", &state.cwd.display().to_string(), "-P", "-F", "#{window_id}", "-n", "agents"])?;
+        let window_id = tmux.run(&[
+            "new-window", "-c", &cwd_str, "-P", "-F", "#{window_id}", "-n", "agents",
+        ])?;
         state.tmux_window = Some(window_id.trim().to_string());
     }
+
+    // 5b. Re-tile panes evenly
+    let window_ref = state.tmux_window.as_ref().unwrap();
+    tmux.run(&["select-layout", "-t", window_ref, "even-horizontal"])?;
 
     // 6. Send command to pane
     let parent_name = state

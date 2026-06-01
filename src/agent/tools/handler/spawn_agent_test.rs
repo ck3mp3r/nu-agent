@@ -6,6 +6,7 @@ use crate::agent::mailbox::AgentRegistry;
 use super::spawn_agent::{
     generate_hex_token, handle_spawn_agent, OrchestratorState, TmuxRunner, ToolExecError,
 };
+use super::ToolErrorKind;
 
 /// Mock TmuxRunner for testing - thread-safe version
 struct MockTmuxRunner {
@@ -177,6 +178,15 @@ async fn handle_spawn_agent_creates_tmux_window() {
         first_call.contains(&"new-window".to_string()),
         "First tmux call should create a new window"
     );
+
+    // Second call should be select-layout even-horizontal
+    let second_call = &calls_vec[1];
+    assert!(
+        second_call.contains(&"select-layout".to_string())
+            && second_call.contains(&"even-horizontal".to_string()),
+        "Second tmux call should select-layout even-horizontal, got: {:?}",
+        second_call
+    );
 }
 
 #[tokio::test]
@@ -195,7 +205,7 @@ async fn handle_spawn_agent_splits_pane_on_second_spawn() {
 
     let calls_vec = tmux.get_calls();
 
-    // Find split-window call
+    // Find split-window call and verify -h flag
     let split_calls: Vec<_> = calls_vec
         .iter()
         .filter(|call| call.contains(&"split-window".to_string()))
@@ -204,6 +214,25 @@ async fn handle_spawn_agent_splits_pane_on_second_spawn() {
     assert!(
         !split_calls.is_empty(),
         "Second spawn should split the window, not create a new one"
+    );
+    assert!(
+        split_calls[0].contains(&"-h".to_string()),
+        "split-window should use -h flag for horizontal split, got: {:?}",
+        split_calls[0]
+    );
+
+    // Verify select-layout is called after split
+    let layout_calls: Vec<_> = calls_vec
+        .iter()
+        .filter(|call| call.contains(&"select-layout".to_string()))
+        .collect();
+    assert!(
+        !layout_calls.is_empty(),
+        "Should call select-layout after split-window"
+    );
+    assert!(
+        layout_calls[0].contains(&"even-horizontal".to_string()),
+        "select-layout should use even-horizontal"
     );
 }
 
@@ -304,5 +333,81 @@ async fn handle_spawn_agent_defaults_parent_name_to_orchestrator() {
     assert!(
         command.contains("--parent-name") && command.contains("'orchestrator'"),
         "Command should default --parent-name to 'orchestrator', got: {command}"
+    );
+}
+
+/// Mock TmuxRunner that fails on split-window but succeeds on new-window and send-keys
+struct StaleTmuxRunner {
+    calls: Arc<std::sync::Mutex<Vec<Vec<String>>>>,
+    new_window_id: String,
+}
+
+impl StaleTmuxRunner {
+    fn new(new_window_id: String) -> Self {
+        Self {
+            calls: Arc::new(std::sync::Mutex::new(Vec::new())),
+            new_window_id,
+        }
+    }
+
+    fn get_calls(&self) -> Vec<Vec<String>> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+impl TmuxRunner for StaleTmuxRunner {
+    fn run(&self, args: &[&str]) -> Result<String, ToolExecError> {
+        let args_owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        self.calls.lock().unwrap().push(args_owned.clone());
+
+        if args_owned.contains(&"split-window".to_string()) {
+            return Err(ToolExecError {
+                kind: ToolErrorKind::Runtime,
+                message: "can't find window: @dead".to_string(),
+                details: None,
+            });
+        }
+        if args_owned.contains(&"new-window".to_string()) {
+            return Ok(format!("{}\n", self.new_window_id));
+        }
+        // send-keys and anything else succeeds
+        Ok(String::new())
+    }
+}
+
+#[tokio::test]
+async fn handle_spawn_agent_recovers_from_stale_tmux_window() {
+    let registry = Arc::new(RwLock::new(AgentRegistry::new()));
+    let tmux = StaleTmuxRunner::new("@2".to_string());
+    let mut state = OrchestratorState::new(Arc::clone(&registry), std::env::temp_dir());
+
+    // Simulate stale window reference
+    state.tmux_window = Some("@dead".to_string());
+
+    // Pre-init broker so test focuses on tmux recovery
+    let broker = crate::agent::mailbox::Broker::start(Arc::clone(&registry))
+        .expect("broker should start");
+    state.socket_path = Some(broker.socket_path().to_path_buf());
+    state.broker = Some(broker);
+
+    let args = serde_json::json!({ "agent": "researcher" });
+    let result = handle_spawn_agent(&args, &mut state, &tmux);
+    assert!(result.is_ok(), "Spawn should recover from stale window: {result:?}");
+
+    // Window should be updated to new id
+    assert_eq!(
+        state.tmux_window.as_deref(),
+        Some("@2"),
+        "tmux_window should be set to new window id"
+    );
+
+    let calls = tmux.get_calls();
+
+    // Should have attempted split-window, then new-window, then send-keys
+    let cmd_sequence: Vec<&str> = calls.iter().map(|c| c[0].as_str()).collect();
+    assert_eq!(
+        cmd_sequence,
+        vec!["split-window", "new-window", "select-layout", "send-keys"],
+        "Should attempt split, fallback to new-window, select-layout, then send-keys"
     );
 }
