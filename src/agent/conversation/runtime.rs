@@ -42,13 +42,14 @@ const COMPACTION_FAILURE_WARNING: &str =
 fn build_system_preamble(
     config_preamble: Option<&str>,
     agent_persona: Option<&str>,
+    sub_agent_instruction: Option<&str>,
     context: Option<&str>,
     agents_chain: Option<&str>,
     available_skills: Option<&str>,
 ) -> Option<String> {
-    log::trace!("build_system_preamble: config_preamble={}, agent_persona={}, context={}, agents_chain={}, available_skills={}", config_preamble.is_some(), agent_persona.is_some(), context.is_some(), agents_chain.is_some(), available_skills.is_some());
+    log::trace!("build_system_preamble: config_preamble={}, agent_persona={}, sub_agent_instruction={}, context={}, agents_chain={}, available_skills={}", config_preamble.is_some(), agent_persona.is_some(), sub_agent_instruction.is_some(), context.is_some(), agents_chain.is_some(), available_skills.is_some());
     
-    let parts: Vec<&str> = [config_preamble, agent_persona, context, agents_chain, available_skills]
+    let parts: Vec<&str> = [config_preamble, agent_persona, sub_agent_instruction, context, agents_chain, available_skills]
         .into_iter()
         .flatten()
         .collect();
@@ -274,6 +275,13 @@ pub(crate) struct AgentConversationRuntime {
     pub agent_identity: Option<String>,
     #[allow(dead_code)]
     pub agent_description: Option<String>,
+    #[allow(dead_code)]
+    pub orchestrator: Option<std::sync::Arc<std::sync::Mutex<crate::agent::tools::handler::spawn_agent::OrchestratorState>>>,
+    #[allow(dead_code)]
+    pub broker_sender: Option<std::sync::Arc<tokio::sync::Mutex<crate::agent::mailbox::BrokerSender>>>,
+    #[allow(dead_code)]
+    pub mailbox_rx: Option<std::sync::mpsc::Receiver<crate::agent::mailbox::IncomingMessage>>,
+    pub parent_name: Option<String>,
 }
 
 fn emit_permissions_startup_summary_once<U: ProgressUi>(
@@ -612,6 +620,11 @@ impl ConversationRuntime for AgentConversationRuntime {
         self.execute_compaction_event(ui, source)
     }
 
+    fn clear_session(&mut self) {
+        self.memory = rig::memory::InMemoryConversationMemory::new();
+        self.memory_message_count = 0;
+    }
+
     fn execute_turn<U: ProgressUi>(
         &mut self,
         ui: &mut U,
@@ -647,10 +660,21 @@ impl ConversationRuntime for AgentConversationRuntime {
             .as_deref()
             .and_then(crate::agent::protocol::skills::render_available_skills_preamble);
 
+        // Build sub-agent instruction if this agent has a parent
+        let sub_agent_instruction = self.parent_name.as_ref().map(|parent| {
+            format!(
+                "You are a sub-agent. When you have completed your task, report your results back \
+                 to your parent agent using the send_message tool: \
+                 send_message(to: \"{parent}\", message: \"<your results>\"). \
+                 Work autonomously — do not ask for clarification."
+            )
+        });
+
         // Build system preamble from components
         let preamble = build_system_preamble(
             self.config.preamble.as_deref(),
             self.agent_persona_body.as_deref(),
+            sub_agent_instruction.as_deref(),
             context.as_deref(),
             loaded_agents.merged_chain.as_deref(),
             available_skills.as_deref(),

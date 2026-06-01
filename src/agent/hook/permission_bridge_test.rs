@@ -181,3 +181,30 @@ fn resolve_tool_source_prefers_closure_over_builtin() {
     let source = resolve_tool_source("read", &closure_registry, &mcp_registry);
     assert_eq!(source, ToolSource::Closure);
 }
+
+#[test]
+fn resolve_tool_source_returns_builtin_for_send_message() {
+    let closure_registry = ClosureRegistry::new();
+    let mcp_registry = McpToolRegistry::from_names::<[&str; 0], &str>([]);
+
+    let source = resolve_tool_source("send_message", &closure_registry, &mcp_registry);
+    assert_eq!(source, ToolSource::Builtin);
+}
+
+#[test]
+fn resolve_tool_source_returns_builtin_for_list_agents() {
+    let closure_registry = ClosureRegistry::new();
+    let mcp_registry = McpToolRegistry::from_names::<[&str; 0], &str>([]);
+
+    let source = resolve_tool_source("list_agents", &closure_registry, &mcp_registry);
+    assert_eq!(source, ToolSource::Builtin);
+}
+
+#[test]
+fn resolve_tool_source_returns_builtin_for_spawn_agent() {
+    let closure_registry = ClosureRegistry::new();
+    let mcp_registry = McpToolRegistry::from_names::<[&str; 0], &str>([]);
+
+    let source = resolve_tool_source("spawn_agent", &closure_registry, &mcp_registry);
+    assert_eq!(source, ToolSource::Builtin);
+}

@@ -2,6 +2,7 @@ use rig::completion::ToolDefinition;
 use rig::tool::{ToolDyn, ToolError};
 use rig::wasm_compat::WasmBoxedFuture;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::agent::tools::handler::builtin_fs::dispatch_builtin_fs_tool;
 
@@ -21,25 +22,44 @@ enum BuiltinExecError {
     ResultSerialization(String),
 }
 
-/// Adapts a builtin FS tool to rig's ToolDyn interface.
+/// Adapts a builtin tool to rig's ToolDyn interface.
 ///
-/// This adapter bridges our builtin FS tools (read, edit, patch, skill) with rig's
+/// This adapter bridges our builtin tools (read, edit, patch, skill, spawn_agent, send_message, list_agents) with rig's
 /// dynamic tool system. It wraps a tool definition and the current working directory,
 /// then dispatches calls to the appropriate builtin handler.
 pub struct BuiltinToolAdapter {
     tool_def: ToolDefinition,
     cwd: PathBuf,
+    orchestrator: Option<Arc<std::sync::Mutex<crate::agent::tools::handler::spawn_agent::OrchestratorState>>>,
+    broker_sender: Option<Arc<tokio::sync::Mutex<crate::agent::mailbox::BrokerSender>>>,
+    agent_name: Option<String>,
 }
 
 impl BuiltinToolAdapter {
-    /// Create a new adapter for a builtin FS tool.
+    /// Create a new adapter for a builtin tool.
     ///
     /// # Arguments
     ///
     /// * `tool_def` - The tool definition (name, description, parameters schema)
     /// * `cwd` - The current working directory for resolving relative paths
-    pub fn new(tool_def: ToolDefinition, cwd: PathBuf) -> Self {
-        Self { tool_def, cwd }
+    /// * `orchestrator` - Optional orchestrator state for spawn_agent, send_message (parent), and list_agents
+    /// * `broker_sender` - Optional broker sender for send_message (children)
+    /// * `agent_name` - Optional agent identity for send_message `from` field
+    #[allow(private_interfaces)]
+    pub fn new(
+        tool_def: ToolDefinition,
+        cwd: PathBuf,
+        orchestrator: Option<Arc<std::sync::Mutex<crate::agent::tools::handler::spawn_agent::OrchestratorState>>>,
+        broker_sender: Option<Arc<tokio::sync::Mutex<crate::agent::mailbox::BrokerSender>>>,
+        agent_name: Option<String>,
+    ) -> Self {
+        Self {
+            tool_def,
+            cwd,
+            orchestrator,
+            broker_sender,
+            agent_name,
+        }
     }
 }
 
@@ -62,8 +82,20 @@ impl ToolDyn for BuiltinToolAdapter {
                 ))))
             })?;
 
-            // Call the builtin FS tool dispatcher
-            let result = dispatch_builtin_fs_tool(&self.tool_def.name, &args_json, &self.cwd)
+            // Dispatch based on tool name
+            let result = if self.tool_def.name == "spawn_agent" {
+                // spawn_agent requires orchestrator state
+                let orchestrator = self.orchestrator.as_ref().ok_or_else(|| {
+                    ToolError::ToolCallError(Box::new(BuiltinExecError::Execution(
+                        "spawn_agent is only available to orchestrator agents".to_string(),
+                    )))
+                })?;
+
+                let mut state = orchestrator.lock().unwrap();
+                crate::agent::tools::handler::spawn_agent::dispatch_spawn_agent(
+                    &args_json,
+                    &mut state,
+                )
                 .map_err(|e| {
                     ToolError::ToolCallError(Box::new(BuiltinExecError::Execution(format!(
                         "{}: {}",
@@ -72,7 +104,80 @@ impl ToolDyn for BuiltinToolAdapter {
                             .map(|d| d.to_string())
                             .unwrap_or_else(|| "no details".to_string())
                     ))))
+                })?
+            } else if self.tool_def.name == "send_message" {
+                // send_message: prefer broker_sender (child), fallback to orchestrator registry (parent)
+                if let Some(sender) = &self.broker_sender {
+                    let mut sender_guard = sender.lock().await;
+                    crate::agent::tools::handler::messaging::dispatch_send_message(
+                        &args_json,
+                        &mut sender_guard,
+                    )
+                    .await
+                    .map_err(|e| {
+                        ToolError::ToolCallError(Box::new(BuiltinExecError::Execution(format!(
+                            "{}: {}",
+                            e.message,
+                            e.details
+                                .map(|d| d.to_string())
+                                .unwrap_or_else(|| "no details".to_string())
+                        ))))
+                    })?
+                } else if let Some(orchestrator) = &self.orchestrator {
+                    let state = orchestrator.lock().unwrap();
+                    let from = self.agent_name.as_deref().unwrap_or("orchestrator");
+                    crate::agent::tools::handler::messaging::dispatch_send_message_via_registry(
+                        &args_json,
+                        &state.registry,
+                        from,
+                    )
+                    .map_err(|e| {
+                        ToolError::ToolCallError(Box::new(BuiltinExecError::Execution(format!(
+                            "{}: {}",
+                            e.message,
+                            e.details
+                                .map(|d| d.to_string())
+                                .unwrap_or_else(|| "no details".to_string())
+                        ))))
+                    })?
+                } else {
+                    return Err(ToolError::ToolCallError(Box::new(BuiltinExecError::Execution(
+                        "send_message requires either broker_sender or orchestrator state".to_string(),
+                    ))));
+                }
+            } else if self.tool_def.name == "list_agents" {
+                // list_agents requires orchestrator state (parent only)
+                let orchestrator = self.orchestrator.as_ref().ok_or_else(|| {
+                    ToolError::ToolCallError(Box::new(BuiltinExecError::Execution(
+                        "list_agents requires orchestrator state".to_string(),
+                    )))
                 })?;
+
+                let state = orchestrator.lock().unwrap();
+                crate::agent::tools::handler::messaging::dispatch_list_agents(&state.registry)
+                    .map_err(|e| {
+                        ToolError::ToolCallError(Box::new(BuiltinExecError::Execution(format!(
+                            "{}: {}",
+                            e.message,
+                            e.details
+                                .map(|d| d.to_string())
+                                .unwrap_or_else(|| "no details".to_string())
+                        ))))
+                    })?
+            } else {
+                // Call the builtin FS tool dispatcher
+                dispatch_builtin_fs_tool(&self.tool_def.name, &args_json, &self.cwd).map_err(
+                    |e| {
+                        ToolError::ToolCallError(Box::new(BuiltinExecError::Execution(format!(
+                            "{}: {}",
+                            e.message,
+                            e.details
+                                .map(|d| d.to_string())
+                                .unwrap_or_else(|| "no details".to_string())
+                        ))))
+                    },
+                )?
+            };
 
             // The dispatcher returns Option<JsonValue>. If None, the tool wasn't recognized.
             let result_json = result.ok_or_else(|| {
@@ -92,27 +197,34 @@ impl ToolDyn for BuiltinToolAdapter {
     }
 }
 
-/// Convert all builtin FS tool definitions to BuiltinToolAdapter instances.
+/// Convert all builtin tool definitions to BuiltinToolAdapter instances.
 ///
 /// This function creates a BuiltinToolAdapter for each builtin tool definition,
 /// allowing them to be registered with rig's ToolServer.
 ///
 /// # Arguments
 ///
-/// * `tool_definitions` - Vector of tool definitions for builtin FS tools
+/// * `tool_definitions` - Vector of tool definitions for builtin tools
 /// * `cwd` - The current working directory for resolving relative paths
+/// * `orchestrator` - Optional orchestrator state for spawn_agent, send_message (parent), and list_agents
+/// * `broker_sender` - Optional broker sender for send_message (children)
+/// * `agent_name` - Optional agent identity for send_message `from` field
 ///
 /// # Returns
 ///
 /// A vector of BuiltinToolAdapter instances, one for each tool definition.
 /// These can be passed directly to ToolServerHandle::add_tool() since they implement ToolDyn.
+#[allow(private_interfaces)]
 pub fn adapt_builtins(
     tool_definitions: Vec<ToolDefinition>,
     cwd: PathBuf,
+    orchestrator: Option<Arc<std::sync::Mutex<crate::agent::tools::handler::spawn_agent::OrchestratorState>>>,
+    broker_sender: Option<Arc<tokio::sync::Mutex<crate::agent::mailbox::BrokerSender>>>,
+    agent_name: Option<String>,
 ) -> Vec<BuiltinToolAdapter> {
     tool_definitions
         .into_iter()
-        .map(|tool_def| BuiltinToolAdapter::new(tool_def, cwd.clone()))
+        .map(|tool_def| BuiltinToolAdapter::new(tool_def, cwd.clone(), orchestrator.clone(), broker_sender.clone(), agent_name.clone()))
         .collect()
 }
 

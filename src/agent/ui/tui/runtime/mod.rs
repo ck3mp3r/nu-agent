@@ -921,6 +921,10 @@ impl RuntimeCoordinator {
         )
     }
 
+    pub(crate) fn display_incoming_message(&mut self, text: &str) {
+        self.state.enqueue_external_prompt(text.to_string());
+    }
+
     pub(crate) fn take_submitted_prompt(&mut self) -> Option<String> {
         self.state.take_next_prompt_for_execution()
     }
@@ -2242,6 +2246,10 @@ where
                 self.inner.emit(event);
             }
         }
+    }
+
+    pub(crate) fn display_incoming_message(&mut self, text: &str) {
+        self.coordinator.display_incoming_message(text);
     }
 
     pub(crate) fn take_submitted_prompt(&mut self) -> Option<String> {

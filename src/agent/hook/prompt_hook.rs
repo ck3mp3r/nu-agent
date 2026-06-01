@@ -5,7 +5,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use rig::agent::{HookAction, PromptHook, ToolCallHookAction};
-use rig::completion::CompletionResponse;
+use rig::completion::GetTokenUsage;
 use rig::completion::request::CompletionModel;
 use rig::message::Message;
 
@@ -84,43 +84,6 @@ where
             };
         }
         self.send_event(HookEvent::LlmStart);
-        HookAction::Continue
-    }
-
-    async fn on_completion_response(
-        &self,
-        _prompt: &Message,
-        response: &CompletionResponse<M::Response>,
-    ) -> HookAction {
-        use rig::completion::message::AssistantContent;
-
-        // Extract token usage from response
-        let usage = &response.usage;
-
-        // Count response chars and tool calls from the choice content
-        let mut response_chars = 0;
-        let mut tool_calls = 0;
-
-        for content in response.choice.iter() {
-            match content {
-                AssistantContent::Text(text) => {
-                    response_chars += text.text.len();
-                }
-                AssistantContent::ToolCall(_) => {
-                    tool_calls += 1;
-                }
-                // Ignore other content types (Reasoning, Image)
-                _ => {}
-            }
-        }
-
-        self.send_event(HookEvent::LlmEnd {
-            response_chars,
-            tool_calls,
-            input_tokens: usage.input_tokens,
-            output_tokens: usage.output_tokens,
-            total_tokens: usage.total_tokens,
-        });
         HookAction::Continue
     }
 
@@ -232,7 +195,24 @@ where
         HookAction::Continue
     }
 
-    // Use defaults for on_tool_call_delta and on_stream_completion_response_finish
+    async fn on_stream_completion_response_finish(
+        &self,
+        _prompt: &Message,
+        response: &M::StreamingResponse,
+    ) -> HookAction {
+        if let Some(usage) = response.token_usage() {
+            self.send_event(HookEvent::LlmEnd {
+                response_chars: 0,
+                tool_calls: 0,
+                input_tokens: usage.input_tokens,
+                output_tokens: usage.output_tokens,
+                total_tokens: usage.total_tokens,
+            });
+        }
+        HookAction::Continue
+    }
+
+    // Use default for on_tool_call_delta
 }
 
 #[cfg(test)]

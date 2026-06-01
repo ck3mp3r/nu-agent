@@ -12,8 +12,8 @@ panic = "abort"
 strip = "symbols"
 
 [dependencies]
-nu-plugin = "0.112.2"
-nu-protocol = "0.112.2"
+nu-plugin = "0.113.1"
+nu-protocol = "0.113.1"
 rig = { package = "rig-core", version = "0.37.0", default-features = false, features = ["derive", "rmcp"] }
 tokio = { version = "1.52.3", features = ["full"] }
 tokio-util = "0.7"
@@ -36,7 +36,7 @@ log = { version = "0.4", features = ["release_max_level_trace"] }
 env_logger = "0.11"
 sha2 = "0.11"
 regex = "1"
-similar = "2"
+similar = "3.1.1"
 http = "1.4"
 crossterm = "0.29"
 ratatui = "0.30"
@@ -46,8 +46,9 @@ libc = "0.2"
 pulldown-cmark = "0.13"
 arboard = "3.6"
 syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "default-themes", "parsing", "regex-fancy", "yaml-load"] }
-serde_yml = "0.0.12"
+noyalib = "0.0.6"
+rand = "0.10.1"
 
 [dev-dependencies]
 serial_test = "3.4.0"
-nu-parser = "0.112.2"
+nu-parser = "0.113.1"

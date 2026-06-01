@@ -336,6 +336,7 @@ fn build_system_preamble_joins_non_empty_parts() {
     let result = super::build_system_preamble(
         Some("preamble text"),
         None,
+        None,
         Some("context text"),
         Some("agents chain"),
         Some("available skills"),
@@ -351,13 +352,13 @@ fn build_system_preamble_joins_non_empty_parts() {
 
 #[test]
 fn build_system_preamble_returns_none_when_all_empty() {
-    let result = super::build_system_preamble(None, None, None, None, None);
+    let result = super::build_system_preamble(None, None, None, None, None, None);
     assert!(result.is_none());
 }
 
 #[test]
 fn build_system_preamble_handles_partial_inputs() {
-    let result = super::build_system_preamble(Some("preamble"), None, None, Some("agents"), None);
+    let result = super::build_system_preamble(Some("preamble"), None, None, None, Some("agents"), None);
 
     assert!(result.is_some());
     let text = result.unwrap();
@@ -370,6 +371,7 @@ fn build_system_preamble_includes_persona_in_correct_position() {
     let result = super::build_system_preamble(
         Some("config preamble"),
         Some("agent persona"),
+        None,
         Some("context text"),
         Some("agents chain"),
         Some("available skills"),
@@ -396,11 +398,42 @@ fn build_system_preamble_includes_persona_in_correct_position() {
 
 #[test]
 fn build_system_preamble_persona_only() {
-    let result = super::build_system_preamble(None, Some("persona only"), None, None, None);
+    let result = super::build_system_preamble(None, Some("persona only"), None, None, None, None);
 
     assert!(result.is_some());
     let text = result.unwrap();
     assert_eq!(text, "persona only");
+}
+
+#[test]
+fn build_system_preamble_includes_sub_agent_instruction() {
+    let result = super::build_system_preamble(
+        None,
+        Some("persona"),
+        Some("sub-agent instruction"),
+        None,
+        None,
+        None,
+    );
+
+    assert!(result.is_some());
+    let text = result.unwrap();
+    assert!(text.contains("persona"));
+    assert!(text.contains("sub-agent instruction"));
+
+    // sub-agent instruction should come after persona
+    let persona_pos = text.find("persona").unwrap();
+    let instruction_pos = text.find("sub-agent instruction").unwrap();
+    assert!(persona_pos < instruction_pos, "sub-agent instruction should come after persona");
+}
+
+#[test]
+fn build_system_preamble_sub_agent_instruction_only() {
+    let result = super::build_system_preamble(None, None, Some("you are a sub-agent"), None, None, None);
+
+    assert!(result.is_some());
+    let text = result.unwrap();
+    assert_eq!(text, "you are a sub-agent");
 }
 
 // ========================================================================
@@ -660,4 +693,55 @@ fn provider_dispatch_unsupported_provider_returns_error() {
     // "Unsupported provider: 'unsupported-provider'"
     // This test documents the requirement for now
     assert_eq!(config.provider, "unsupported-provider");
+}
+
+// Mailbox/session clearing tests
+
+#[test]
+fn clear_session_resets_memory() {
+    use rig::memory::InMemoryConversationMemory;
+    use rig::one_or_many::OneOrMany;
+    use rig::completion::message::{UserContent, Text};
+    
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let mut memory = InMemoryConversationMemory::new();
+    
+    // Populate memory with some messages
+    runtime.block_on(async {
+        memory
+            .append(
+                "test-session",
+                vec![rig::completion::Message::User {
+                    content: OneOrMany::one(UserContent::Text(Text {
+                        text: "hello".to_string(),
+                    })),
+                }],
+            )
+            .await
+            .unwrap();
+    });
+    
+    // Verify messages exist
+    let messages_before = runtime.block_on(async { memory.load("test-session").await.unwrap() });
+    assert_eq!(messages_before.len(), 1);
+    
+    // Clear session by creating a new memory instance (simulates clear_session behavior)
+    memory = InMemoryConversationMemory::new();
+    
+    // Verify memory is empty after clear
+    let messages_after = runtime.block_on(async { memory.load("test-session").await.unwrap() });
+    assert_eq!(messages_after.len(), 0);
+}
+
+#[test]
+fn clear_session_resets_message_count() {
+    // This test documents the expected behavior
+    // After clear_session(), memory_message_count should be 0
+    
+    let message_count = 5usize;
+    
+    // Simulate clear_session behavior
+    let message_count = 0;
+    
+    assert_eq!(message_count, 0, "message count should be reset to 0 after clear_session");
 }

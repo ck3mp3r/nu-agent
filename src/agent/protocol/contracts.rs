@@ -155,6 +155,8 @@ pub(crate) trait InteractiveUi: ProgressUi {
         &mut self,
         messages: impl IntoIterator<Item = UiMessageSnapshot>,
     );
+    fn clear_transcript(&mut self) {}
+    fn display_incoming_message(&mut self, _text: &str) {}
 }
 
 pub(crate) trait ConversationRuntime {
@@ -205,4 +207,6 @@ pub(crate) trait ConversationRuntime {
     ) -> Result<(), String> {
         Ok(())
     }
+
+    fn clear_session(&mut self) {}
 }

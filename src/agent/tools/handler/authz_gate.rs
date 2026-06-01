@@ -21,6 +21,11 @@ pub(crate) fn enforce_authorization_for_tool_call(
     ask_hook: &mut impl AskApprovalHook,
     event_sink: &mut impl PermissionEventSink,
 ) -> Option<AuthorizationDeniedDetails> {
+    // Builtin tools are always allowed — skip the full permission flow.
+    if source == ToolSource::Builtin {
+        return None;
+    }
+
     let mut auth_decision =
         permissions.evaluate(&tool_call.function.name, &tool_call.function.arguments);
     auth_decision = apply_session_grant_override(
@@ -70,3 +75,7 @@ pub(crate) fn enforce_authorization_for_tool_call(
     }
     None
 }
+
+#[cfg(test)]
+#[path = "authz_gate_test.rs"]
+mod authz_gate_test;

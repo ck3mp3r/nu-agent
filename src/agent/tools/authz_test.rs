@@ -986,7 +986,7 @@ fn display_tool_name_non_object_args_returns_tool_name_only() {
 
 #[test]
 fn parse_from_yaml_global_allow() {
-    let yaml = serde_yml::from_str::<serde_yml::Mapping>(
+    let yaml = noyalib::from_str::<noyalib::Mapping>(
         r#"
         "*": "allow"
         "#,
@@ -1001,7 +1001,7 @@ fn parse_from_yaml_global_allow() {
 
 #[test]
 fn parse_from_yaml_tool_rules() {
-    let yaml = serde_yml::from_str::<serde_yml::Mapping>(
+    let yaml = noyalib::from_str::<noyalib::Mapping>(
         r#"
         read: "allow"
         nu__run: "deny"
@@ -1025,7 +1025,7 @@ fn parse_from_yaml_tool_rules() {
 
 #[test]
 fn parse_from_yaml_nu_run_commands() {
-    let yaml = serde_yml::from_str::<serde_yml::Mapping>(
+    let yaml = noyalib::from_str::<noyalib::Mapping>(
         r#"
         nu__run:
           command:
@@ -1051,7 +1051,7 @@ fn parse_from_yaml_nu_run_commands() {
 
 #[test]
 fn parse_from_yaml_invalid_action() {
-    let yaml = serde_yml::from_str::<serde_yml::Mapping>(
+    let yaml = noyalib::from_str::<noyalib::Mapping>(
         r#"
         "*": "yolo"
         "#,
@@ -1065,7 +1065,7 @@ fn parse_from_yaml_invalid_action() {
 
 #[test]
 fn parse_from_yaml_invalid_structure() {
-    let yaml = serde_yml::from_str::<serde_yml::Mapping>(
+    let yaml = noyalib::from_str::<noyalib::Mapping>(
         r#"
         nu__run: 42
         "#,
@@ -1078,7 +1078,7 @@ fn parse_from_yaml_invalid_structure() {
 
 #[test]
 fn parse_from_yaml_empty_mapping() {
-    let yaml = serde_yml::Mapping::new();
+    let yaml = noyalib::Mapping::new();
 
     let overlay = PermissionsOverlay::parse_from_yaml(&yaml).expect("parse");
     assert_eq!(overlay.global, None);
@@ -1088,7 +1088,7 @@ fn parse_from_yaml_empty_mapping() {
 
 #[test]
 fn parse_from_yaml_mixed() {
-    let yaml = serde_yml::from_str::<serde_yml::Mapping>(
+    let yaml = noyalib::from_str::<noyalib::Mapping>(
         r#"
         "*": "ask"
         read: "allow"

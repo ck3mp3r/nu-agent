@@ -651,13 +651,11 @@ impl PermissionsOverlay {
         Ok(overlay)
     }
 
-    pub fn parse_from_yaml(mapping: &serde_yml::Mapping) -> Result<Self, String> {
+    pub fn parse_from_yaml(mapping: &noyalib::Mapping) -> Result<Self, String> {
         let mut overlay = Self::default();
 
         for (yaml_key, yaml_value) in mapping.iter() {
-            let key_str = yaml_key.as_str().ok_or_else(|| {
-                "permissions key must be a string (path: permissions)".to_string()
-            })?;
+            let key_str = yaml_key.as_str();
 
             if key_str == "*" {
                 let action_str = yaml_value.as_str().ok_or_else(|| {
@@ -674,10 +672,7 @@ impl PermissionsOverlay {
                 // Check if value is a mapping (nested command rules) or string (tool rule)
                 if let Some(nu_run_mapping) = yaml_value.as_mapping() {
                     for (field_key, field_value) in nu_run_mapping.iter() {
-                        let field_name = field_key.as_str().ok_or_else(|| {
-                            "permissions.nu__run field key must be a string (path: permissions.nu__run)"
-                                .to_string()
-                        })?;
+                        let field_name = field_key.as_str();
 
                         if field_name != "command" {
                             return Err(format!(
@@ -692,10 +687,7 @@ impl PermissionsOverlay {
                         })?;
 
                         for (pattern_key, action_value) in command_mapping.iter() {
-                            let pattern = pattern_key.as_str().ok_or_else(|| {
-                                "permissions.nu__run.command pattern must be a string (path: permissions.nu__run.command)"
-                                    .to_string()
-                            })?;
+                            let pattern = pattern_key.as_str();
 
                             let action_str = action_value.as_str().ok_or_else(|| {
                                 format!("permissions.nu__run.command['{}'] value must be a string (path: permissions.nu__run.command.{})", pattern, path_segment(pattern))

@@ -49,7 +49,7 @@ impl std::error::Error for PersonaError {
 #[derive(Debug)]
 #[allow(dead_code)]
 pub(crate) enum FrontMatterError {
-    YamlParseFailed { source: serde_yml::Error },
+    YamlParseFailed { source: noyalib::Error },
     InvalidField { key: String, expected: String, got: String },
 }
 
@@ -78,7 +78,7 @@ impl std::error::Error for FrontMatterError {
 /// Raw parsed persona with optional front matter and body content (parser output)
 #[allow(dead_code)]
 pub(crate) struct RawParsedPersona {
-    pub front_matter: Option<serde_yml::Mapping>,
+    pub front_matter: Option<noyalib::Mapping>,
     pub body: String,
 }
 
@@ -89,14 +89,14 @@ pub(crate) struct ParsedPersona {
     pub description: Option<String>,
     pub model: Option<String>,
     pub tool_filter: Option<Vec<String>>,
-    pub permissions: Option<serde_yml::Mapping>,
+    pub permissions: Option<noyalib::Mapping>,
     pub body: String,
 }
 
 /// Interprets front matter into typed ParsedPersona struct
 #[allow(dead_code)]
 pub(crate) fn interpret_front_matter(
-    front_matter: Option<&serde_yml::Mapping>,
+    front_matter: Option<&noyalib::Mapping>,
     body: String,
 ) -> Result<ParsedPersona, FrontMatterError> {
     log::debug!("interpret_front_matter: has_front_matter={}", front_matter.is_some());
@@ -118,12 +118,7 @@ pub(crate) fn interpret_front_matter(
     let mut permissions = None;
 
     for (key, value) in mapping.iter() {
-        let key_str = match key.as_str() {
-            Some(s) => s,
-            None => continue, // Non-string keys are ignored
-        };
-
-        match key_str {
+        match key.as_str() {
             "name" => {
                 name = Some(value.as_str().ok_or_else(|| FrontMatterError::InvalidField {
                     key: "name".to_string(),
@@ -177,7 +172,7 @@ pub(crate) fn interpret_front_matter(
             }
             _ => {
                 // Unknown keys are silently ignored
-                log::trace!("interpret_front_matter: ignoring unknown key={key_str:?}");
+                log::trace!("interpret_front_matter: ignoring unknown key={key:?}");
             }
         }
     }
@@ -193,15 +188,15 @@ pub(crate) fn interpret_front_matter(
 }
 
 /// Helper to get type name for YAML value
-fn value_type_name(value: &serde_yml::Value) -> String {
+fn value_type_name(value: &noyalib::Value) -> String {
     match value {
-        serde_yml::Value::Null => "null".to_string(),
-        serde_yml::Value::Bool(_) => "boolean".to_string(),
-        serde_yml::Value::Number(_) => "number".to_string(),
-        serde_yml::Value::String(_) => "string".to_string(),
-        serde_yml::Value::Sequence(_) => "sequence".to_string(),
-        serde_yml::Value::Mapping(_) => "mapping".to_string(),
-        serde_yml::Value::Tagged(_) => "tagged".to_string(),
+        noyalib::Value::Null => "null".to_string(),
+        noyalib::Value::Bool(_) => "boolean".to_string(),
+        noyalib::Value::Number(_) => "number".to_string(),
+        noyalib::Value::String(_) => "string".to_string(),
+        noyalib::Value::Sequence(_) => "sequence".to_string(),
+        noyalib::Value::Mapping(_) => "mapping".to_string(),
+        noyalib::Value::Tagged(_) => "tagged".to_string(),
     }
 }
 
@@ -211,11 +206,24 @@ pub(crate) trait FrontMatterParser {
     fn parse(&self, input: &str) -> Result<RawParsedPersona, FrontMatterError>;
 }
 
+/// Summary of a discovered agent persona (name + description).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PersonaSummary {
+    pub name: String,
+    pub description: Option<String>,
+}
+
 /// Trait for resolving persona files
 #[allow(dead_code)]
 pub(crate) trait PersonaFileResolver {
     /// Resolves a persona file by name, returning the path and contents
     fn resolve(&self, persona_name: &str) -> Result<(PathBuf, String), PersonaError>;
+}
+
+/// Trait for listing all available persona files
+pub(crate) trait PersonaLister {
+    /// Lists all available personas, deduplicated (cwd takes precedence over XDG).
+    fn list_available(&self) -> Vec<PersonaSummary>;
 }
 
 /// Filesystem-based persona resolver
@@ -258,6 +266,63 @@ impl FsPersonaResolver {
         match std::fs::read_to_string(&path) {
             Ok(content) => Some(Ok((path, content))),
             Err(e) => Some(Err(PersonaError::ReadFailed { path, source: e })),
+        }
+    }
+}
+
+impl PersonaLister for FsPersonaResolver {
+    fn list_available(&self) -> Vec<PersonaSummary> {
+        let parser = PulldownCmarkFrontMatterParser;
+        let mut seen = std::collections::HashMap::<String, PersonaSummary>::new();
+
+        // Scan XDG first so cwd can override
+        let xdg_dir = self.config_dir.join("agents");
+        Self::scan_dir(&xdg_dir, &parser, &mut seen);
+
+        // Scan cwd (overrides XDG entries with same name)
+        let cwd_dir = self.cwd.join(".agents");
+        Self::scan_dir(&cwd_dir, &parser, &mut seen);
+
+        let mut result: Vec<PersonaSummary> = seen.into_values().collect();
+        result.sort_by(|a, b| a.name.cmp(&b.name));
+        result
+    }
+}
+
+impl FsPersonaResolver {
+    fn scan_dir(
+        dir: &Path,
+        parser: &PulldownCmarkFrontMatterParser,
+        seen: &mut std::collections::HashMap<String, PersonaSummary>,
+    ) {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(_) => return,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            let stem = match path.file_stem().and_then(|s| s.to_str()) {
+                Some(s) => s.to_string(),
+                None => continue,
+            };
+            let contents = match std::fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let raw = match parser.parse(&contents) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+            let parsed = match interpret_front_matter(raw.front_matter.as_ref(), raw.body) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            let name = parsed.name.unwrap_or_else(|| stem.clone());
+            let description = parsed.description;
+            seen.insert(stem, PersonaSummary { name, description });
         }
     }
 }
@@ -321,9 +386,14 @@ impl FrontMatterParser for PulldownCmarkFrontMatterParser {
         // Parse front matter if we found a metadata block
         let front_matter = if metadata_end_offset.is_some() {
             // Empty YAML should parse to an empty mapping
-            match serde_yml::from_str::<serde_yml::Mapping>(&yaml_text) {
-                Ok(mapping) => Some(mapping),
-                Err(e) => return Err(FrontMatterError::YamlParseFailed { source: e }),
+            let trimmed = yaml_text.trim();
+            if trimmed.is_empty() || trimmed.lines().all(|l| l.trim_start().starts_with('#') || l.trim().is_empty()) {
+                Some(noyalib::Mapping::new())
+            } else {
+                match noyalib::from_str::<noyalib::Mapping>(&yaml_text) {
+                    Ok(mapping) => Some(mapping),
+                    Err(e) => return Err(FrontMatterError::YamlParseFailed { source: e }),
+                }
             }
         } else {
             None

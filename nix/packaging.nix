@@ -39,7 +39,6 @@
       installData
       supportedTargets
       ;
-    fenix = inputs.fenix;
     nixpkgs = inputs.nixpkgs;
     src = ../.;
     packageName = "nu-agent";
@@ -58,7 +57,6 @@
       installData
       supportedTargets
       ;
-    fenix = inputs.fenix;
     nixpkgs = inputs.nixpkgs;
     src = ../.;
     packageName = "archive";

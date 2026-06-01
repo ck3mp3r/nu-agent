@@ -56,6 +56,7 @@ enum WorkerCommand {
         model_spec: String,
         response_tx: mpsc::Sender<ModelSwitchResult>,
     },
+    ClearSession,
     Shutdown,
 }
 
@@ -79,6 +80,7 @@ impl ProgressUi for WorkerProgressUi {
 pub(crate) fn run_interactive_loop<R, U>(
     runtime: &mut R,
     ui: &mut U,
+    mailbox_rx: Option<std::sync::mpsc::Receiver<crate::agent::mailbox::IncomingMessage>>,
     span: Span,
 ) -> Result<Value, LabeledError>
 where
@@ -165,6 +167,9 @@ where
                     } => {
                         let _ = response_tx.send(runtime.switch_model(&model_spec));
                     }
+                    WorkerCommand::ClearSession => {
+                        runtime.clear_session();
+                    }
                     WorkerCommand::Shutdown => break,
                 }
             }
@@ -176,6 +181,7 @@ where
         let mut pending_compaction_trigger: Option<PendingCompactionTrigger> = None;
         let mut pending_model_switch: Option<PendingModelSwitch> = None;
         let mut queued_model_switch: Option<String> = None;
+        let mut pending_mailbox_prompts: Vec<String> = Vec::new();
 
         loop {
             ui.pump_once();
@@ -488,6 +494,39 @@ where
                 }
             }
 
+            // Poll mailbox for incoming messages
+            if let Some(ref rx) = mailbox_rx {
+                while let Ok(msg) = rx.try_recv() {
+                    if msg.message == "/clear" {
+                        let _ = worker_cmd_tx.send(WorkerCommand::ClearSession);
+                        ui.clear_transcript();
+                        continue;
+                    }
+                    let prompt = format!("[from: {}] {}", msg.from, msg.message);
+                    if !worker_active {
+                        ui.display_incoming_message(&prompt);
+                        worker_cmd_tx
+                            .send(WorkerCommand::ExecuteTurn { prompt, span })
+                            .map_err(|_| LabeledError::new("Worker channel closed"))?;
+                        worker_active = true;
+                        break;
+                    } else {
+                        pending_mailbox_prompts.push(prompt);
+                    }
+                }
+            }
+
+            // Drain pending mailbox prompts when worker becomes idle
+            if !worker_active && !pending_mailbox_prompts.is_empty()
+                && let Some(prompt) = pending_mailbox_prompts.drain(0..1).next()
+            {
+                ui.display_incoming_message(&prompt);
+                worker_cmd_tx
+                    .send(WorkerCommand::ExecuteTurn { prompt, span })
+                    .map_err(|_| LabeledError::new("Worker channel closed"))?;
+                worker_active = true;
+            }
+
             if ui.quit_requested() {
                 if worker_active {
                     cancel_requested.store(true, Ordering::SeqCst);
@@ -515,6 +554,7 @@ pub(crate) fn run_hydrated_interactive_loop<R, U>(
     runtime: &mut R,
     ui: &mut U,
     messages: impl IntoIterator<Item = UiMessageSnapshot>,
+    mailbox_rx: Option<std::sync::mpsc::Receiver<crate::agent::mailbox::IncomingMessage>>,
     span: Span,
 ) -> Result<Value, LabeledError>
 where
@@ -522,7 +562,7 @@ where
     U: InteractiveUi,
 {
     ui.hydrate_transcript_from_messages(messages);
-    run_interactive_loop(runtime, ui, span)
+    run_interactive_loop(runtime, ui, mailbox_rx, span)
 }
 
 pub(crate) fn run_single_turn<R, U>(

@@ -891,3 +891,72 @@ fn push_transcript_item_follows_when_nothing_selected() {
         "first push should select item 0 when nothing was selected"
     );
 }
+
+#[test]
+fn enqueue_external_prompt_creates_in_progress_prompt_without_pending() {
+    let mut state = AppState::new();
+
+    state.enqueue_external_prompt("mailbox message".to_string());
+
+    assert_eq!(state.phase, UiPhase::Busy);
+    assert!(state.is_active_cycle());
+    assert_eq!(state.prompt_items().len(), 1);
+    assert_eq!(state.prompt_items()[0].status, PromptStatus::InProgress);
+    assert_eq!(state.prompt_items()[0].prompt_text, "mailbox message");
+    assert_eq!(state.active_prompt_id(), Some(1));
+    assert!(
+        state.pending_prompt_ids().is_empty(),
+        "external prompt must NOT appear in pending_prompt_ids"
+    );
+}
+
+#[test]
+fn enqueue_external_prompt_adds_user_transcript_line() {
+    let mut state = AppState::new();
+
+    state.enqueue_external_prompt("hello from parent".to_string());
+
+    assert!(!state.transcript_preview.is_empty());
+    assert_eq!(state.transcript_preview.last().unwrap().role(), Role::User);
+}
+
+#[test]
+fn enqueue_external_prompt_completes_via_complete_active_prompt() {
+    let mut state = AppState::new();
+
+    state.enqueue_external_prompt("external task".to_string());
+    assert_eq!(state.prompt_items()[0].status, PromptStatus::InProgress);
+
+    state.complete_active_prompt();
+
+    assert_eq!(state.prompt_items()[0].status, PromptStatus::Done);
+    assert_eq!(state.phase, UiPhase::Idle);
+    assert!(!state.is_active_cycle());
+    assert_eq!(state.active_prompt_id(), None);
+}
+
+#[test]
+fn enqueue_external_prompt_not_returned_by_take_submitted_prompt() {
+    let mut state = AppState::new();
+
+    state.enqueue_external_prompt("external".to_string());
+
+    // take_next_prompt_for_execution should NOT return the external prompt
+    // because it's already active (not pending)
+    let taken = state.take_next_prompt_for_execution();
+    assert_eq!(taken, None, "external prompt must not be re-dispatched");
+}
+
+#[test]
+fn enqueue_external_prompt_has_spinner_status_on_transcript_line() {
+    let mut state = AppState::new();
+
+    state.enqueue_external_prompt("spinner check".to_string());
+
+    let transcript_idx = state.prompt_items()[0].transcript_line_index;
+    assert_eq!(
+        state.transcript_line_status_for_index(transcript_idx),
+        Some(TranscriptLineStatus::Prompt(PromptStatus::InProgress)),
+        "transcript line should show InProgress for spinner"
+    );
+}

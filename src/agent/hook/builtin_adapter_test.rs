@@ -40,7 +40,7 @@ fn adapter_returns_correct_name() {
     };
     let cwd = std::path::PathBuf::from("/tmp");
 
-    let adapter = BuiltinToolAdapter::new(tool_def, cwd);
+    let adapter = BuiltinToolAdapter::new(tool_def, cwd, None, None, None);
 
     assert_eq!(adapter.name(), "test_tool");
 }
@@ -62,7 +62,7 @@ fn adapter_returns_correct_definition() {
     };
     let cwd = std::path::PathBuf::from("/tmp");
 
-    let adapter = BuiltinToolAdapter::new(tool_def.clone(), cwd);
+    let adapter = BuiltinToolAdapter::new(tool_def.clone(), cwd, None, None, None);
 
     // Since definition() is async, we need to use a runtime
     let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -93,7 +93,7 @@ fn adapter_calls_skill_tool() {
     let cwd = temp_dir.join("nu-agent-test-builtin-adapter");
     std::fs::create_dir_all(&cwd).unwrap();
 
-    let adapter = BuiltinToolAdapter::new(tool_def, cwd.clone());
+    let adapter = BuiltinToolAdapter::new(tool_def, cwd.clone(), None, None, None);
 
     // Create a simple skill for testing
     let skill_dir = cwd.join(".agents").join("skills").join("test_skill");
@@ -127,3 +127,79 @@ fn adapter_calls_skill_tool() {
 // Note: Testing `read` tool would require actual files, which is more of an integration test.
 // We verify the critical trait bounds (Send + Sync) and basic functionality here.
 // The dispatch_builtin_fs_tool function is already tested elsewhere.
+
+#[test]
+fn adapter_stores_agent_name() {
+    let tool_def = rig::completion::ToolDefinition {
+        name: "send_message".to_string(),
+        description: "Send a message".to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "to": { "type": "string" },
+                "message": { "type": "string" }
+            },
+            "required": ["to", "message"]
+        }),
+    };
+    let cwd = std::path::PathBuf::from("/tmp");
+
+    let adapter = BuiltinToolAdapter::new(
+        tool_def,
+        cwd,
+        None,
+        None,
+        Some("my-agent".to_string()),
+    );
+
+    assert_eq!(adapter.agent_name.as_deref(), Some("my-agent"));
+}
+
+#[test]
+fn adapter_agent_name_defaults_to_none() {
+    let tool_def = rig::completion::ToolDefinition {
+        name: "send_message".to_string(),
+        description: "Send a message".to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {}
+        }),
+    };
+    let cwd = std::path::PathBuf::from("/tmp");
+
+    let adapter = BuiltinToolAdapter::new(tool_def, cwd, None, None, None);
+
+    assert_eq!(adapter.agent_name, None);
+}
+
+#[test]
+fn spawn_agent_without_orchestrator_returns_descriptive_error() {
+    use rig::tool::ToolDyn;
+
+    let tool_def = rig::completion::ToolDefinition {
+        name: "spawn_agent".to_string(),
+        description: "Spawn agent".to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "agent": { "type": "string" }
+            },
+            "required": ["agent"]
+        }),
+    };
+    let cwd = std::path::PathBuf::from("/tmp");
+
+    // No orchestrator state — simulates a child agent calling spawn_agent
+    let adapter = BuiltinToolAdapter::new(tool_def, cwd, None, None, None);
+
+    let args = serde_json::json!({ "agent": "coder" });
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let result = runtime.block_on(adapter.call(args.to_string()));
+
+    assert!(result.is_err());
+    let err_msg = format!("{}", result.unwrap_err());
+    assert!(
+        err_msg.contains("only available to orchestrator agents"),
+        "Expected orchestrator error, got: {err_msg}"
+    );
+}

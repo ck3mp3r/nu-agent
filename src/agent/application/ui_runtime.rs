@@ -233,6 +233,10 @@ where
     fn emit_batch(&mut self, events: &[UiEvent]) {
         self.renderer.emit_batch(events);
     }
+
+    fn display_incoming_message(&mut self, text: &str) {
+        self.renderer.display_incoming_message(text);
+    }
 }
 
 #[cfg(test)]

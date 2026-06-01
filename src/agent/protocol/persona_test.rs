@@ -1,4 +1,4 @@
-use super::persona::{FsPersonaResolver, PersonaError, PersonaFileResolver, FrontMatterParser, PulldownCmarkFrontMatterParser, interpret_front_matter, FrontMatterError};
+use super::persona::{FsPersonaResolver, PersonaError, PersonaFileResolver, FrontMatterParser, PulldownCmarkFrontMatterParser, interpret_front_matter, FrontMatterError, PersonaLister, PersonaSummary};
 use std::fs;
 use tempfile::TempDir;
 
@@ -262,10 +262,10 @@ Body content"#;
 
 #[test]
 fn interpret_name_extracts_string() {
-    let mut mapping = serde_yml::Mapping::new();
+    let mut mapping = noyalib::Mapping::new();
     mapping.insert(
-        serde_yml::Value::String("name".to_string()),
-        serde_yml::Value::String("test-agent".to_string()),
+        "name",
+        noyalib::Value::String("test-agent".to_string()),
     );
 
     let result = interpret_front_matter(Some(&mapping), "body content".to_string());
@@ -277,10 +277,10 @@ fn interpret_name_extracts_string() {
 
 #[test]
 fn interpret_name_rejects_non_string() {
-    let mut mapping = serde_yml::Mapping::new();
+    let mut mapping = noyalib::Mapping::new();
     mapping.insert(
-        serde_yml::Value::String("name".to_string()),
-        serde_yml::Value::Number(42.into()),
+        "name",
+        noyalib::Value::Number(42.into()),
     );
 
     let result = interpret_front_matter(Some(&mapping), "body".to_string());
@@ -296,10 +296,10 @@ fn interpret_name_rejects_non_string() {
 
 #[test]
 fn interpret_description_extracts_string() {
-    let mut mapping = serde_yml::Mapping::new();
+    let mut mapping = noyalib::Mapping::new();
     mapping.insert(
-        serde_yml::Value::String("description".to_string()),
-        serde_yml::Value::String("A test agent".to_string()),
+        "description",
+        noyalib::Value::String("A test agent".to_string()),
     );
 
     let result = interpret_front_matter(Some(&mapping), "body".to_string());
@@ -310,10 +310,10 @@ fn interpret_description_extracts_string() {
 
 #[test]
 fn interpret_model_extracts_string() {
-    let mut mapping = serde_yml::Mapping::new();
+    let mut mapping = noyalib::Mapping::new();
     mapping.insert(
-        serde_yml::Value::String("model".to_string()),
-        serde_yml::Value::String("gpt-4".to_string()),
+        "model",
+        noyalib::Value::String("gpt-4".to_string()),
     );
 
     let result = interpret_front_matter(Some(&mapping), "body".to_string());
@@ -324,14 +324,14 @@ fn interpret_model_extracts_string() {
 
 #[test]
 fn interpret_tool_filter_extracts_list() {
-    let mut mapping = serde_yml::Mapping::new();
+    let mut mapping = noyalib::Mapping::new();
     let tools = vec![
-        serde_yml::Value::String("read".to_string()),
-        serde_yml::Value::String("write".to_string()),
+        noyalib::Value::String("read".to_string()),
+        noyalib::Value::String("write".to_string()),
     ];
     mapping.insert(
-        serde_yml::Value::String("tool_filter".to_string()),
-        serde_yml::Value::Sequence(tools),
+        "tool_filter",
+        noyalib::Value::Sequence(tools),
     );
 
     let result = interpret_front_matter(Some(&mapping), "body".to_string());
@@ -342,10 +342,10 @@ fn interpret_tool_filter_extracts_list() {
 
 #[test]
 fn interpret_tool_filter_rejects_non_list() {
-    let mut mapping = serde_yml::Mapping::new();
+    let mut mapping = noyalib::Mapping::new();
     mapping.insert(
-        serde_yml::Value::String("tool_filter".to_string()),
-        serde_yml::Value::String("not-a-list".to_string()),
+        "tool_filter",
+        noyalib::Value::String("not-a-list".to_string()),
     );
 
     let result = interpret_front_matter(Some(&mapping), "body".to_string());
@@ -361,14 +361,14 @@ fn interpret_tool_filter_rejects_non_list() {
 
 #[test]
 fn interpret_tool_filter_rejects_non_string_elements() {
-    let mut mapping = serde_yml::Mapping::new();
+    let mut mapping = noyalib::Mapping::new();
     let tools = vec![
-        serde_yml::Value::String("read".to_string()),
-        serde_yml::Value::Number(42.into()),
+        noyalib::Value::String("read".to_string()),
+        noyalib::Value::Number(42.into()),
     ];
     mapping.insert(
-        serde_yml::Value::String("tool_filter".to_string()),
-        serde_yml::Value::Sequence(tools),
+        "tool_filter",
+        noyalib::Value::Sequence(tools),
     );
 
     let result = interpret_front_matter(Some(&mapping), "body".to_string());
@@ -384,15 +384,15 @@ fn interpret_tool_filter_rejects_non_string_elements() {
 
 #[test]
 fn interpret_permissions_extracts_mapping() {
-    let mut mapping = serde_yml::Mapping::new();
-    let mut perms = serde_yml::Mapping::new();
+    let mut mapping = noyalib::Mapping::new();
+    let mut perms = noyalib::Mapping::new();
     perms.insert(
-        serde_yml::Value::String("read".to_string()),
-        serde_yml::Value::String("allow".to_string()),
+        "read",
+        noyalib::Value::String("allow".to_string()),
     );
     mapping.insert(
-        serde_yml::Value::String("permissions".to_string()),
-        serde_yml::Value::Mapping(perms.clone()),
+        "permissions",
+        noyalib::Value::Mapping(perms.clone()),
     );
 
     let result = interpret_front_matter(Some(&mapping), "body".to_string());
@@ -418,18 +418,18 @@ fn interpret_no_front_matter() {
 
 #[test]
 fn interpret_unknown_keys_ignored() {
-    let mut mapping = serde_yml::Mapping::new();
+    let mut mapping = noyalib::Mapping::new();
     mapping.insert(
-        serde_yml::Value::String("name".to_string()),
-        serde_yml::Value::String("test".to_string()),
+        "name",
+        noyalib::Value::String("test".to_string()),
     );
     mapping.insert(
-        serde_yml::Value::String("unknown_key".to_string()),
-        serde_yml::Value::String("ignored".to_string()),
+        "unknown_key",
+        noyalib::Value::String("ignored".to_string()),
     );
     mapping.insert(
-        serde_yml::Value::String("another_unknown".to_string()),
-        serde_yml::Value::Number(42.into()),
+        "another_unknown",
+        noyalib::Value::Number(42.into()),
     );
 
     let result = interpret_front_matter(Some(&mapping), "body".to_string());
@@ -441,35 +441,35 @@ fn interpret_unknown_keys_ignored() {
 
 #[test]
 fn interpret_all_fields_together() {
-    let mut mapping = serde_yml::Mapping::new();
+    let mut mapping = noyalib::Mapping::new();
     mapping.insert(
-        serde_yml::Value::String("name".to_string()),
-        serde_yml::Value::String("full-agent".to_string()),
+        "name",
+        noyalib::Value::String("full-agent".to_string()),
     );
     mapping.insert(
-        serde_yml::Value::String("description".to_string()),
-        serde_yml::Value::String("A complete agent".to_string()),
+        "description",
+        noyalib::Value::String("A complete agent".to_string()),
     );
     mapping.insert(
-        serde_yml::Value::String("model".to_string()),
-        serde_yml::Value::String("claude-3".to_string()),
+        "model",
+        noyalib::Value::String("claude-3".to_string()),
     );
     let tools = vec![
-        serde_yml::Value::String("read".to_string()),
-        serde_yml::Value::String("write".to_string()),
+        noyalib::Value::String("read".to_string()),
+        noyalib::Value::String("write".to_string()),
     ];
     mapping.insert(
-        serde_yml::Value::String("tool_filter".to_string()),
-        serde_yml::Value::Sequence(tools),
+        "tool_filter",
+        noyalib::Value::Sequence(tools),
     );
-    let mut perms = serde_yml::Mapping::new();
+    let mut perms = noyalib::Mapping::new();
     perms.insert(
-        serde_yml::Value::String("*".to_string()),
-        serde_yml::Value::String("allow".to_string()),
+        "*",
+        noyalib::Value::String("allow".to_string()),
     );
     mapping.insert(
-        serde_yml::Value::String("permissions".to_string()),
-        serde_yml::Value::Mapping(perms.clone()),
+        "permissions",
+        noyalib::Value::Mapping(perms.clone()),
     );
 
     let result = interpret_front_matter(Some(&mapping), "body content".to_string());
@@ -485,7 +485,7 @@ fn interpret_all_fields_together() {
 
 #[test]
 fn interpret_empty_mapping() {
-    let mapping = serde_yml::Mapping::new();
+    let mapping = noyalib::Mapping::new();
 
     let result = interpret_front_matter(Some(&mapping), "body".to_string());
     assert!(result.is_ok());
@@ -496,4 +496,105 @@ fn interpret_empty_mapping() {
     assert_eq!(persona.tool_filter, None);
     assert_eq!(persona.permissions, None);
     assert_eq!(persona.body, "body");
+}
+
+#[test]
+fn list_available_returns_empty_when_no_dirs() {
+    let temp_cwd = TempDir::new().unwrap();
+    let temp_config = TempDir::new().unwrap();
+    let resolver = FsPersonaResolver::new(temp_cwd.path().to_path_buf(), temp_config.path().to_path_buf());
+    let result = resolver.list_available();
+    assert!(result.is_empty());
+}
+
+#[test]
+fn list_available_finds_cwd_agents() {
+    let temp_cwd = TempDir::new().unwrap();
+    let temp_config = TempDir::new().unwrap();
+
+    let agents_dir = temp_cwd.path().join(".agents");
+    fs::create_dir_all(&agents_dir).unwrap();
+    fs::write(
+        agents_dir.join("coder.md"),
+        "---\nname: coder\ndescription: Writes code\n---\n# Coder",
+    ).unwrap();
+
+    let resolver = FsPersonaResolver::new(temp_cwd.path().to_path_buf(), temp_config.path().to_path_buf());
+    let result = resolver.list_available();
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].name, "coder");
+    assert_eq!(result[0].description.as_deref(), Some("Writes code"));
+}
+
+#[test]
+fn list_available_deduplicates_cwd_over_xdg() {
+    let temp_cwd = TempDir::new().unwrap();
+    let temp_config = TempDir::new().unwrap();
+
+    let cwd_agents = temp_cwd.path().join(".agents");
+    fs::create_dir_all(&cwd_agents).unwrap();
+    fs::write(cwd_agents.join("coder.md"), "---\nname: local-coder\ndescription: Local\n---\n").unwrap();
+
+    let xdg_agents = temp_config.path().join("agents");
+    fs::create_dir_all(&xdg_agents).unwrap();
+    fs::write(xdg_agents.join("coder.md"), "---\nname: global-coder\ndescription: Global\n---\n").unwrap();
+
+    let resolver = FsPersonaResolver::new(temp_cwd.path().to_path_buf(), temp_config.path().to_path_buf());
+    let result = resolver.list_available();
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].name, "local-coder");
+    assert_eq!(result[0].description.as_deref(), Some("Local"));
+}
+
+#[test]
+fn list_available_merges_cwd_and_xdg() {
+    let temp_cwd = TempDir::new().unwrap();
+    let temp_config = TempDir::new().unwrap();
+
+    let cwd_agents = temp_cwd.path().join(".agents");
+    fs::create_dir_all(&cwd_agents).unwrap();
+    fs::write(cwd_agents.join("coder.md"), "---\nname: coder\n---\n").unwrap();
+
+    let xdg_agents = temp_config.path().join("agents");
+    fs::create_dir_all(&xdg_agents).unwrap();
+    fs::write(xdg_agents.join("reviewer.md"), "---\nname: reviewer\n---\n").unwrap();
+
+    let resolver = FsPersonaResolver::new(temp_cwd.path().to_path_buf(), temp_config.path().to_path_buf());
+    let result = resolver.list_available();
+    assert_eq!(result.len(), 2);
+    assert_eq!(result[0].name, "coder");
+    assert_eq!(result[1].name, "reviewer");
+}
+
+#[test]
+fn list_available_uses_filename_stem_when_no_name_in_frontmatter() {
+    let temp_cwd = TempDir::new().unwrap();
+    let temp_config = TempDir::new().unwrap();
+
+    let agents_dir = temp_cwd.path().join(".agents");
+    fs::create_dir_all(&agents_dir).unwrap();
+    fs::write(agents_dir.join("my-agent.md"), "# Just a body, no front matter").unwrap();
+
+    let resolver = FsPersonaResolver::new(temp_cwd.path().to_path_buf(), temp_config.path().to_path_buf());
+    let result = resolver.list_available();
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].name, "my-agent");
+    assert_eq!(result[0].description, None);
+}
+
+#[test]
+fn list_available_skips_non_md_files() {
+    let temp_cwd = TempDir::new().unwrap();
+    let temp_config = TempDir::new().unwrap();
+
+    let agents_dir = temp_cwd.path().join(".agents");
+    fs::create_dir_all(&agents_dir).unwrap();
+    fs::write(agents_dir.join("coder.md"), "---\nname: coder\n---\n").unwrap();
+    fs::write(agents_dir.join("notes.txt"), "not a persona").unwrap();
+    fs::write(agents_dir.join("config.yaml"), "key: value").unwrap();
+
+    let resolver = FsPersonaResolver::new(temp_cwd.path().to_path_buf(), temp_config.path().to_path_buf());
+    let result = resolver.list_available();
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].name, "coder");
 }

@@ -322,7 +322,7 @@ pub fn select_mcp_tools(
     crate::tools::mcp::registration::registerable_tools(discovered_tools, cli_allowlist_patterns)
 }
 
-pub(crate) fn builtin_fs_tool_definitions() -> Vec<rig::completion::ToolDefinition> {
+pub(crate) fn builtin_tool_definitions() -> Vec<rig::completion::ToolDefinition> {
     vec![
         rig::completion::ToolDefinition {
             name: "read".to_string(),
@@ -404,6 +404,71 @@ pub(crate) fn builtin_fs_tool_definitions() -> Vec<rig::completion::ToolDefiniti
                     "name": { "type": "string" }
                 },
                 "required": ["name"]
+            }),
+        },
+    ]
+}
+
+pub(crate) fn orchestrator_tool_definitions(
+    available_agents: &[crate::agent::protocol::persona::PersonaSummary],
+) -> Vec<rig::completion::ToolDefinition> {
+    let description = if available_agents.is_empty() {
+        "Spawn a new agent in a tmux pane. No agent personas found. Create .agents/<name>.md files to define agents.".to_string()
+    } else {
+        let mut desc = String::from(
+            "Spawn a new agent in a tmux pane (in a window called \"agents\"). \
+             Communicate with spawned agents via `send_message`. \
+             The user can also interact directly with spawned agent panes.\n\n\
+             Available agents:\n",
+        );
+        for agent in available_agents {
+            desc.push_str(&format!("- {}", agent.name));
+            if let Some(ref d) = agent.description {
+                desc.push_str(&format!(": {}", d));
+            }
+            desc.push('\n');
+        }
+        desc
+    };
+
+    vec![
+        rig::completion::ToolDefinition {
+            name: "spawn_agent".to_string(),
+            description,
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "agent": { "type": "string", "description": "Persona name (loads .agents/<name>.md)" },
+                    "name": { "type": "string", "description": "Instance identity (optional, defaults to agent-N)" }
+                },
+                "required": ["agent"]
+            }),
+        },
+    ]
+}
+
+pub(crate) fn messaging_tool_definitions() -> Vec<rig::completion::ToolDefinition> {
+    vec![
+        rig::completion::ToolDefinition {
+            name: "send_message".to_string(),
+            description: "Send a message to another agent. Messages are delivered as conversation turns to the target agent. \
+                           The target agent name must match a spawned agent's --name (use list_agents to discover running agents). \
+                           The response comes back asynchronously as a new conversation turn.".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "to": { "type": "string", "description": "Target agent name" },
+                    "message": { "type": "string", "description": "Message content" }
+                },
+                "required": ["to", "message"]
+            }),
+        },
+        rig::completion::ToolDefinition {
+            name: "list_agents".to_string(),
+            description: "List all connected agents and their names".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {},
             }),
         },
     ]
@@ -630,6 +695,24 @@ CLI flags override front matter values. Front matter overrides plugin config."
                 "Agent instance identity for multi-agent messaging",
                 None,
             )
+            .named(
+                "broker-socket",
+                nu_protocol::SyntaxShape::String,
+                "Broker socket path (internal)",
+                None,
+            )
+            .named(
+                "broker-token",
+                nu_protocol::SyntaxShape::String,
+                "Broker auth token (internal)",
+                None,
+            )
+            .named(
+                "parent-name",
+                nu_protocol::SyntaxShape::String,
+                "Parent agent name for sub-agent reporting (internal)",
+                None,
+            )
     }
 
     fn run(
@@ -744,6 +827,10 @@ CLI flags override front matter values. Front matter overrides plugin config."
         // Load agent persona and extract permissions overlay before resolving effective permissions
         let (agent_name, cli_name) = args::extract_agent_flags(call);
         log::debug!("agent flags: agent_name={agent_name:?}, cli_name={cli_name:?}");
+        
+        // Extract broker flags early (before runtime construction)
+        let broker_flags = args::extract_broker_flags(call)?;
+        log::debug!("broker flags: present={}", broker_flags.is_some());
         
         let persona = if let Some(ref name) = agent_name {
             let cwd = engine.get_current_dir()
@@ -875,7 +962,32 @@ CLI flags override front matter values. Front matter overrides plugin config."
             .map(|(name, closure)| closure_to_tool_definition(name.clone(), closure, engine, None))
             .collect();
 
-        tool_definitions.extend(builtin_fs_tool_definitions());
+        tool_definitions.extend(builtin_tool_definitions());
+
+        // Only add orchestrator tools (spawn_agent) for parent agents (no broker_flags)
+        let is_orchestrator = broker_flags.is_none();
+
+        // Add messaging tools when agent has broker access (child) or is orchestrator (parent)
+        let has_messaging = broker_flags.is_some() || is_orchestrator;
+        if has_messaging {
+            tool_definitions.extend(messaging_tool_definitions());
+        }
+        let available_agents = if is_orchestrator {
+            use crate::agent::protocol::persona::{FsPersonaResolver, PersonaLister};
+            let cwd = engine.get_current_dir()
+                .map(std::path::PathBuf::from)
+                .unwrap_or_default();
+            let config_dir = crate::utils::xdg::config_dir()
+                .map(|base| base.join("nu-agent"))
+                .unwrap_or_default();
+            let resolver = FsPersonaResolver::new(cwd, config_dir);
+            resolver.list_available()
+        } else {
+            Vec::new()
+        };
+        if is_orchestrator {
+            tool_definitions.extend(orchestrator_tool_definitions(&available_agents));
+        }
 
         tool_definitions.extend(discovered_mcp_tools.iter().map(|tool| {
             rig::completion::ToolDefinition {
@@ -959,16 +1071,57 @@ CLI flags override front matter values. Front matter overrides plugin config."
         })?;
         let cwd_path = std::path::PathBuf::from(cwd);
 
-        let builtin_tools = adapt_builtins(builtin_fs_tool_definitions(), cwd_path);
-
-        for tool in builtin_tools {
-            runtime
-                .block_on(async { tool_server_handle.add_tool(tool).await })
-                .map_err(|e| {
-                    LabeledError::new(format!("Failed to register builtin tool: {}", e))
-                        .with_label(format!("{}", e), call.head)
-                })?;
+        let mut builtin_defs = builtin_tool_definitions();
+        if has_messaging {
+            builtin_defs.extend(messaging_tool_definitions());
         }
+
+        // Create orchestrator state for parent agents (no broker_flags = orchestrator)
+        // Also register the orchestrator itself in the AgentRegistry so child agents
+        // can send messages back to it via send_message(to: "<orchestrator_name>").
+        let (orchestrator_state, orchestrator_mailbox_rx) = if is_orchestrator {
+            builtin_defs.extend(orchestrator_tool_definitions(&available_agents));
+            let registry = std::sync::Arc::new(tokio::sync::RwLock::new(
+                crate::agent::mailbox::AgentRegistry::new(),
+            ));
+
+            // Register the orchestrator in its own registry
+            let orchestrator_name = agent_identity
+                .clone()
+                .unwrap_or_else(|| "orchestrator".to_string());
+            let (tokio_tx, mut tokio_rx) = tokio::sync::mpsc::channel::<crate::agent::mailbox::ServerFrame>(64);
+            runtime.block_on(async {
+                registry.write().await.add_connected(orchestrator_name.clone(), tokio_tx);
+            });
+            log::debug!("Registered orchestrator '{}' in agent registry", orchestrator_name);
+
+            // Bridge tokio channel to std::sync::mpsc for mailbox_rx
+            let (std_tx, std_rx) = std::sync::mpsc::channel::<crate::agent::mailbox::IncomingMessage>();
+            runtime.spawn(async move {
+                while let Some(frame) = tokio_rx.recv().await {
+                    if let crate::agent::mailbox::ServerFrame::Message { from, message } = frame {
+                        log::trace!("Orchestrator received message from '{}': {}", from, message);
+                        if std_tx
+                            .send(crate::agent::mailbox::IncomingMessage { from, message })
+                            .is_err()
+                        {
+                            log::debug!("Orchestrator mailbox receiver dropped, stopping forwarding task");
+                            break;
+                        }
+                    }
+                }
+            });
+
+            let state = Some(std::sync::Arc::new(std::sync::Mutex::new(
+                crate::agent::tools::handler::spawn_agent::OrchestratorState {
+                    agent_identity: agent_identity.clone(),
+                    ..crate::agent::tools::handler::spawn_agent::OrchestratorState::new(registry, cwd_path.clone())
+                },
+            )));
+            (state, Some(std_rx))
+        } else {
+            (None, None)
+        };
 
         // Extract session metadata before constructing runtime
         let (compaction_threshold, compaction_count) =
@@ -980,6 +1133,65 @@ CLI flags override front matter values. Front matter overrides plugin config."
             } else {
                 (None, 0)
             };
+
+        // Connect to broker if flags provided
+        let (broker_sender, mailbox_rx, parent_name) = if let Some(flags) = broker_flags {
+            log::debug!("Connecting to broker at {:?}", flags.socket_path);
+            let client = runtime
+                .block_on(async {
+                    crate::agent::mailbox::BrokerClient::connect(&flags.socket_path, &flags.token)
+                        .await
+                })
+                .map_err(|e| {
+                    LabeledError::new(format!("Failed to connect to broker: {}", e))
+                })?;
+
+            log::debug!("Connected to broker as '{}'", client.name);
+
+            let (sender, mut receiver) = client.split();
+
+            // Spawn a task to forward broker messages to a channel
+            let (tx, rx) = std::sync::mpsc::channel();
+            runtime.spawn(async move {
+                loop {
+                    match receiver.recv().await {
+                        Ok(crate::agent::mailbox::ServerFrame::Message { from, message }) => {
+                            log::trace!("Received message from '{}': {}", from, message);
+                            if tx
+                                .send(crate::agent::mailbox::IncomingMessage { from, message })
+                                .is_err()
+                            {
+                                log::debug!("Mailbox receiver dropped, stopping forwarding task");
+                                break;
+                            }
+                        }
+                        Ok(_frame) => {
+                            log::trace!("Ignoring non-message frame");
+                        }
+                        Err(e) => {
+                            log::debug!("Broker receiver error: {}", e);
+                            break;
+                        }
+                    }
+                }
+            });
+
+            (Some(sender), Some(rx), flags.parent_name)
+        } else {
+            (None, orchestrator_mailbox_rx, None)
+        };
+
+        let broker_sender_arc = broker_sender.map(|s| std::sync::Arc::new(tokio::sync::Mutex::new(s)));
+        let builtin_tools = adapt_builtins(builtin_defs, cwd_path, orchestrator_state.clone(), broker_sender_arc.clone(), agent_identity.clone());
+
+        for tool in builtin_tools {
+            runtime
+                .block_on(async { tool_server_handle.add_tool(tool).await })
+                .map_err(|e| {
+                    LabeledError::new(format!("Failed to register builtin tool: {}", e))
+                        .with_label(format!("{}", e), call.head)
+                })?;
+        }
 
         let mut runtime_impl = AgentConversationRuntime {
             runtime,
@@ -1030,6 +1242,10 @@ CLI flags override front matter values. Front matter overrides plugin config."
             agent_persona_body: persona.as_ref().map(|p| p.body.clone()),
             agent_identity,
             agent_description: persona.as_ref().and_then(|p| p.description.clone()),
+            orchestrator: orchestrator_state,
+            broker_sender: broker_sender_arc,
+            mailbox_rx,
+            parent_name,
         };
         log::debug!("runtime: agent_persona_body_len={:?}, agent_identity={:?}, agent_description={:?}", 
             runtime_impl.agent_persona_body.as_ref().map(|b| b.len()),

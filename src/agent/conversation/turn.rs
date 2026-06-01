@@ -274,7 +274,6 @@ where
     let stream = agent
         .stream_prompt(prompt)
         .conversation(&conversation_id)
-        .with_history(Vec::<rig::completion::Message>::new())
         .multi_turn(effective_max_turns as usize)
         .await;
 

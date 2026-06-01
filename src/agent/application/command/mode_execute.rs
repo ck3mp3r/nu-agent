@@ -75,10 +75,11 @@ pub(crate) fn run_tui_mode(
 
     let result = run_with_terminal_restore(&mut terminal_lifecycle, || {
         if input_is_nothing {
+            let mailbox_rx = runtime_impl.mailbox_rx.take();
             if tui_should_hydrate_transcript {
-                run_hydrated_interactive_loop(runtime_impl, &mut tui_ui, tui_initial_messages, span)
+                run_hydrated_interactive_loop(runtime_impl, &mut tui_ui, tui_initial_messages, mailbox_rx, span)
             } else {
-                run_interactive_loop(runtime_impl, &mut tui_ui, span)
+                run_interactive_loop(runtime_impl, &mut tui_ui, mailbox_rx, span)
             }
         } else {
             let (prompt, context) = super::extract_prompt_and_context(input)?;

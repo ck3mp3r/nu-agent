@@ -36,7 +36,14 @@ mod test_support {
 
     impl rig::completion::request::GetTokenUsage for DummyStreamResponse {
         fn token_usage(&self) -> Option<rig::completion::request::Usage> {
-            None
+            Some(rig::completion::request::Usage {
+                input_tokens: 150,
+                output_tokens: 75,
+                total_tokens: 225,
+                cached_input_tokens: 0,
+                cache_creation_input_tokens: 0,
+                reasoning_tokens: 0,
+            })
         }
     }
 
@@ -307,52 +314,16 @@ async fn on_tool_call_passes_none_when_tool_call_id_not_provided() {
     handle.await.unwrap();
 }
 
-// RED: Test for extracting token usage from completion response
+// Tests for streaming usage reporting via on_stream_completion_response_finish
+
 #[tokio::test]
-async fn on_completion_response_extracts_token_usage() {
-    use rig::completion::message::{AssistantContent, Text, ToolCall, ToolFunction, UserContent};
-    use rig::completion::request::{CompletionResponse, Usage};
+async fn on_stream_completion_response_finish_emits_usage() {
+    use rig::completion::message::{Text, UserContent};
     use rig::message::Message;
     use rig::one_or_many::OneOrMany;
+    use test_support::{DummyModel, DummyStreamResponse};
 
     let (hook, mut rx) = make_hook();
-
-    // Create a completion response with usage data and mixed content
-    let usage = Usage {
-        input_tokens: 150,
-        output_tokens: 75,
-        total_tokens: 225,
-        cached_input_tokens: 0,
-        cache_creation_input_tokens: 0,
-        reasoning_tokens: 0,
-    };
-
-    let response_text = "Here is my response with some text.";
-    let response = CompletionResponse {
-        choice: OneOrMany::many(vec![
-            AssistantContent::Text(Text {
-                text: response_text.to_string(),
-            }),
-            AssistantContent::ToolCall(ToolCall::new(
-                "call_1".to_string(),
-                ToolFunction {
-                    name: "read_file".to_string(),
-                    arguments: serde_json::json!({}),
-                },
-            )),
-            AssistantContent::ToolCall(ToolCall::new(
-                "call_2".to_string(),
-                ToolFunction {
-                    name: "write_file".to_string(),
-                    arguments: serde_json::json!({}),
-                },
-            )),
-        ])
-        .unwrap(),
-        usage,
-        raw_response: serde_json::json!({}),
-        message_id: None,
-    };
 
     let prompt = Message::User {
         content: OneOrMany::one(UserContent::Text(Text {
@@ -360,10 +331,13 @@ async fn on_completion_response_extracts_token_usage() {
         })),
     };
 
-    let result = PromptHook::<DummyModel>::on_completion_response(&hook, &prompt, &response).await;
+    let response = DummyStreamResponse;
+
+    let result =
+        PromptHook::<DummyModel>::on_stream_completion_response_finish(&hook, &prompt, &response)
+            .await;
     assert!(matches!(result, HookAction::Continue));
 
-    // Verify the emitted event has correct token counts
     let event = rx.try_recv().unwrap();
     match event {
         HookEvent::LlmEnd {
@@ -373,140 +347,86 @@ async fn on_completion_response_extracts_token_usage() {
             output_tokens,
             total_tokens,
         } => {
-            assert_eq!(
-                input_tokens, 150,
-                "input_tokens should match response usage"
-            );
-            assert_eq!(
-                output_tokens, 75,
-                "output_tokens should match response usage"
-            );
-            assert_eq!(
-                total_tokens, 225,
-                "total_tokens should match response usage"
-            );
-            assert_eq!(
-                response_chars,
-                response_text.len(),
-                "response_chars should count text length"
-            );
-            assert_eq!(tool_calls, 2, "should count 2 tool calls");
+            assert_eq!(response_chars, 0);
+            assert_eq!(tool_calls, 0);
+            assert_eq!(input_tokens, 150);
+            assert_eq!(output_tokens, 75);
+            assert_eq!(total_tokens, 225);
         }
         _ => panic!("Expected LlmEnd event"),
     }
 }
 
-#[tokio::test]
-async fn on_completion_response_handles_text_only_response() {
-    use rig::completion::message::{AssistantContent, Text, UserContent};
-    use rig::completion::request::{CompletionResponse, Usage};
-    use rig::message::Message;
-    use rig::one_or_many::OneOrMany;
-
-    let (hook, mut rx) = make_hook();
-
-    let usage = Usage {
-        input_tokens: 50,
-        output_tokens: 25,
-        total_tokens: 75,
-        cached_input_tokens: 0,
-        cache_creation_input_tokens: 0,
-        reasoning_tokens: 0,
+#[cfg(test)]
+mod no_usage_support {
+    use rig::completion::request::{
+        CompletionError, CompletionModel, CompletionRequest, CompletionResponse,
     };
+    use rig::streaming::StreamingCompletionResponse;
+    use serde::{Deserialize, Serialize};
 
-    let response_text = "Simple text response.";
-    let response = CompletionResponse {
-        choice: OneOrMany::one(AssistantContent::Text(Text {
-            text: response_text.to_string(),
-        })),
-        usage,
-        raw_response: serde_json::json!({}),
-        message_id: None,
-    };
+    #[derive(Clone)]
+    pub struct DummyModelNoUsage;
 
-    let prompt = Message::User {
-        content: OneOrMany::one(UserContent::Text(Text {
-            text: "test".to_string(),
-        })),
-    };
+    #[derive(Clone, Serialize, Deserialize)]
+    pub struct DummyStreamResponseNoUsage;
 
-    let result = PromptHook::<DummyModel>::on_completion_response(&hook, &prompt, &response).await;
-    assert!(matches!(result, HookAction::Continue));
-
-    let event = rx.try_recv().unwrap();
-    match event {
-        HookEvent::LlmEnd {
-            response_chars,
-            tool_calls,
-            input_tokens,
-            output_tokens,
-            total_tokens,
-        } => {
-            assert_eq!(input_tokens, 50);
-            assert_eq!(output_tokens, 25);
-            assert_eq!(total_tokens, 75);
-            assert_eq!(response_chars, response_text.len());
-            assert_eq!(tool_calls, 0, "text-only response should have 0 tool calls");
+    impl rig::completion::request::GetTokenUsage for DummyStreamResponseNoUsage {
+        fn token_usage(&self) -> Option<rig::completion::request::Usage> {
+            None
         }
-        _ => panic!("Expected LlmEnd event"),
+    }
+
+    impl CompletionModel for DummyModelNoUsage {
+        type Response = serde_json::Value;
+        type StreamingResponse = DummyStreamResponseNoUsage;
+        type Client = ();
+
+        fn make(_client: &(), _model: impl Into<String>) -> Self {
+            Self
+        }
+
+        async fn completion(
+            &self,
+            _req: CompletionRequest,
+        ) -> Result<CompletionResponse<Self::Response>, CompletionError> {
+            unimplemented!()
+        }
+
+        async fn stream(
+            &self,
+            _req: CompletionRequest,
+        ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
+            unimplemented!()
+        }
     }
 }
 
 #[tokio::test]
-async fn on_completion_response_handles_tool_only_response() {
-    use rig::completion::message::{AssistantContent, Text, ToolCall, ToolFunction, UserContent};
-    use rig::completion::request::{CompletionResponse, Usage};
+async fn on_stream_completion_response_finish_no_usage_no_event() {
+    use rig::agent::PromptHook;
+    use rig::completion::message::{Text, UserContent};
     use rig::message::Message;
     use rig::one_or_many::OneOrMany;
+    use tokio::sync::mpsc::error::TryRecvError;
+
+    use no_usage_support::{DummyModelNoUsage, DummyStreamResponseNoUsage};
 
     let (hook, mut rx) = make_hook();
 
-    let usage = Usage {
-        input_tokens: 100,
-        output_tokens: 50,
-        total_tokens: 150,
-        cached_input_tokens: 0,
-        cache_creation_input_tokens: 0,
-        reasoning_tokens: 0,
-    };
-
-    let response = CompletionResponse {
-        choice: OneOrMany::one(AssistantContent::ToolCall(ToolCall::new(
-            "call_1".to_string(),
-            ToolFunction {
-                name: "read_file".to_string(),
-                arguments: serde_json::json!({}),
-            },
-        ))),
-        usage,
-        raw_response: serde_json::json!({}),
-        message_id: None,
-    };
-
     let prompt = Message::User {
         content: OneOrMany::one(UserContent::Text(Text {
-            text: "test".to_string(),
+            text: "test prompt".to_string(),
         })),
     };
 
-    let result = PromptHook::<DummyModel>::on_completion_response(&hook, &prompt, &response).await;
+    let response = DummyStreamResponseNoUsage;
+
+    let result = PromptHook::<DummyModelNoUsage>::on_stream_completion_response_finish(
+        &hook, &prompt, &response,
+    )
+    .await;
     assert!(matches!(result, HookAction::Continue));
 
-    let event = rx.try_recv().unwrap();
-    match event {
-        HookEvent::LlmEnd {
-            response_chars,
-            tool_calls,
-            input_tokens,
-            output_tokens,
-            total_tokens,
-        } => {
-            assert_eq!(input_tokens, 100);
-            assert_eq!(output_tokens, 50);
-            assert_eq!(total_tokens, 150);
-            assert_eq!(response_chars, 0, "tool-only response should have 0 chars");
-            assert_eq!(tool_calls, 1, "should count 1 tool call");
-        }
-        _ => panic!("Expected LlmEnd event"),
-    }
+    assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
 }
