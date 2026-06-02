@@ -104,6 +104,43 @@ fn shell_escape(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
+/// Poll until the shell in the given pane is ready to accept commands
+fn wait_for_shell_ready<T: TmuxRunner>(
+    tmux: &T,
+    pane_id: &str,
+    timeout: std::time::Duration,
+) -> Result<(), ToolExecError> {
+    let known_shells = ["bash", "zsh", "nu", "fish", "sh", "dash"];
+    let start = std::time::Instant::now();
+    let poll_interval = std::time::Duration::from_millis(200);
+    loop {
+        let output = tmux.run(&[
+            "display-message", "-p", "-t", pane_id, "#{pane_current_command}",
+        ])?;
+        let cmd = output.trim();
+        if known_shells.contains(&cmd) {
+            return Ok(());
+        }
+        if start.elapsed() > timeout {
+            return Err(ToolExecError::execution(format!(
+                "Shell not ready after {}s (current: '{}')",
+                timeout.as_secs(),
+                cmd
+            )));
+        }
+        std::thread::sleep(poll_interval);
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn wait_for_shell_ready_pub<T: TmuxRunner>(
+    tmux: &T,
+    pane_id: &str,
+    timeout: std::time::Duration,
+) -> Result<(), ToolExecError> {
+    wait_for_shell_ready(tmux, pane_id, timeout)
+}
+
 /// Handle spawn_agent tool invocation
 pub(crate) fn handle_spawn_agent<T: TmuxRunner>(
     args: &serde_json::Value,
@@ -147,10 +184,12 @@ pub(crate) fn handle_spawn_agent<T: TmuxRunner>(
     let cwd_str = state.cwd.display().to_string();
 
     // Try splitting existing window; on failure, clear stale reference
+    let mut pane_id: Option<String> = None;
     if let Some(window) = state.tmux_window.take() {
         log::debug!("Splitting existing tmux window: {}", window);
-        match tmux.run(&["split-window", "-h", "-c", &cwd_str, "-t", &window]) {
-            Ok(_) => {
+        match tmux.run(&["split-window", "-h", "-c", &cwd_str, "-P", "-F", "#{pane_id}", "-t", &window]) {
+            Ok(id) => {
+                pane_id = Some(id.trim().to_string());
                 state.tmux_window = Some(window);
             }
             Err(e) => {
@@ -166,15 +205,24 @@ pub(crate) fn handle_spawn_agent<T: TmuxRunner>(
     // Create new window if needed (either originally None or after failed split)
     if state.tmux_window.is_none() {
         log::debug!("Creating new tmux window for agents");
-        let window_id = tmux.run(&[
-            "new-window", "-c", &cwd_str, "-P", "-F", "#{window_id}", "-n", "agents",
+        let output = tmux.run(&[
+            "new-window", "-c", &cwd_str, "-P", "-F", "#{window_id}\t#{pane_id}", "-n", "agents",
         ])?;
-        state.tmux_window = Some(window_id.trim().to_string());
+        let mut parts = output.trim().splitn(2, '\t');
+        let window_id = parts.next().unwrap_or("").to_string();
+        let pid = parts.next().unwrap_or("").to_string();
+        state.tmux_window = Some(window_id);
+        pane_id = Some(pid);
     }
+
+    let pane_id = pane_id.unwrap();
 
     // 5b. Re-tile panes evenly
     let window_ref = state.tmux_window.as_ref().unwrap();
     tmux.run(&["select-layout", "-t", window_ref, "even-horizontal"])?;
+
+    // 5c. Wait for the shell to be ready in the new pane
+    wait_for_shell_ready(tmux, &pane_id, std::time::Duration::from_secs(30))?;
 
     // 6. Send command to pane
     let parent_name = state
@@ -190,7 +238,7 @@ pub(crate) fn handle_spawn_agent<T: TmuxRunner>(
         shell_escape(parent_name)
     );
     log::debug!("Sending command to tmux pane: {}", cmd);
-    tmux.run(&["send-keys", &cmd, "Enter"])?;
+    tmux.run(&["send-keys", "-t", &pane_id, &cmd, "Enter"])?;
 
     // 7. Return result
     Ok(serde_json::json!({
