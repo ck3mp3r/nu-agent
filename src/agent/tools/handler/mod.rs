@@ -24,6 +24,9 @@ pub use types::{
 // Export authz_gate types for permission_bridge
 pub(crate) use authz_gate::{AuthorizationFlowContext, enforce_authorization_for_tool_call};
 
+/// Returns true for filesystem-mutating builtin tools (`edit`, `patch`).
+/// These are classified as `ToolSource::BuiltinFs` and go through the full
+/// permission flow — they are NOT auto-approved despite being built-in.
 pub(crate) fn is_builtin_fs_tool_name(tool_name: &str) -> bool {
     matches!(tool_name, "edit" | "patch")
 }

@@ -45,7 +45,25 @@ Code + tests:
   - `required_permission_line_fallback_clamps_to_transcript_bounds_when_anchor_resolution_drifts`
   - `sticky_permission_footer_row_is_reserved_from_transcript_pane_height`
 
-## 3) Tool/authz architecture direction
+## 3) ToolSource taxonomy and permission gating
+
+Every tool call is classified into one of five `ToolSource` variants before authorization:
+
+| Variant | Tools | Permission gating |
+|---|---|---|
+| `Builtin` | `read`, `skill`, `spawn_agent`, `send_message`, `list_agents` | **Bypasses** — agent-coordination and read-only tools are always allowed |
+| `BuiltinFs` | `edit`, `patch` | **Gated** — filesystem-mutating tools go through the full permission flow |
+| `Closure` | user-defined Nushell tools | **Gated** |
+| `Mcp` | MCP server tools | **Gated** |
+| `Unknown` | unrecognized tool names | **Gated** |
+
+Security rationale:
+- `Builtin` tools are either read-only (`read`, `skill`) or purely agent-coordination (`spawn_agent`, `send_message`, `list_agents`) — they carry no filesystem mutation risk and bypassing permissions keeps overhead low for safe operations.
+- `BuiltinFs` tools (`edit`, `patch`) mutate the filesystem and must be subject to the same permission policy as MCP/closure tools. They are not implicitly trusted even though they are built-in.
+
+See `src/agent/tools/handler/types.rs` (`ToolSource`) and `src/agent/tools/handler/authz_gate.rs` for the enforcement point.
+
+## 4) Tool/authz architecture direction
 
 Keep handler dependencies one-way:
 
@@ -67,7 +85,7 @@ Source + contract:
 
 Before code:
 
-- [ ] Confirm tool source classification and ownership boundary (`dispatch` vs `builtin_fs` vs MCP).
+- [ ] Confirm tool source classification and ownership boundary (`dispatch` vs `builtin_fs` vs MCP); see ToolSource taxonomy table (section 3) for correct variant.
 - [ ] Confirm permission DSL mapping and precedence impact (`*` -> tool -> nested field rule).
 - [ ] Confirm whether pre-authorize preview is required and remains zero-write.
 

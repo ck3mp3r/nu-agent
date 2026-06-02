@@ -22,7 +22,7 @@ Scope: decomposition of `src/agent/tools/handler/mod.rs` to unblock R2–R6 and 
 | Module | Owns | Must NOT own |
 |---|---|---|
 | `dispatch.rs` | `handle_single_tool_call` orchestration order: classify -> pre-authorize -> authz gate -> execute -> shape result | JSON payload shaping details, policy internals, fs edit planning internals |
-| `authz_gate.rs` | `permissions.evaluate`, ask-hook flow, session grant override/application, deny decision output model | Tool execution, direct filesystem mutation, MCP invocation, serialization formatting |
+| `authz_gate.rs` | `permissions.evaluate`, ask-hook flow, session grant override/application, deny decision output model — handles all `ToolSource` variants except `Builtin` (which bypasses entirely); `BuiltinFs` tools (`edit`, `patch`) go through the full flow here | Tool execution, direct filesystem mutation, MCP invocation, serialization formatting |
 | `pre_authorize.rs` | Read-only preflight context generation (currently edit preview + ask context), zero-write guarantee | Permission decisions, write/apply operations, final result assembly |
 | `builtin_fs.rs` | Builtin fs/tool argument models, parse/validate/dispatch for `read`/`edit`/`patch`/`skill`, deterministic edit contract responses | Permission policy decisions, MCP/closure dispatch routing, global result envelope shaping |
 | `result.rs` | `ToolCallResult`/failure payload construction, display extraction/attachment, error-class mapping used for result shaping | Tool execution side effects, policy ask flow, fs planning logic |

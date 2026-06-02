@@ -21,9 +21,9 @@ pub(crate) fn enforce_authorization_for_tool_call(
     ask_hook: &mut impl AskApprovalHook,
     event_sink: &mut impl PermissionEventSink,
 ) -> Option<AuthorizationDeniedDetails> {
-    // Builtin agent-coordination tools (spawn_agent, send_message, list_agents)
-    // and read-only tools (read, skill) bypass permissions.
-    // BuiltinFs tools (edit, patch) flow through the full permission evaluation below.
+    // `Builtin` tools (read-only + agent-coordination) bypass permissions entirely.
+    // `BuiltinFs` tools (edit, patch) are NOT in this set — they mutate the filesystem
+    // and must go through the full permission flow below, same as MCP/closure tools.
     if source == ToolSource::Builtin {
         return None;
     }

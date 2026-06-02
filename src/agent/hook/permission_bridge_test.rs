@@ -144,7 +144,7 @@ fn resolve_tool_source_returns_builtin_for_read() {
 }
 
 #[test]
-fn resolve_tool_source_returns_builtin_for_edit() {
+fn resolve_tool_source_returns_builtin_fs_for_edit() {
     let closure_registry = ClosureRegistry::new();
     let mcp_registry = McpToolRegistry::from_names::<[&str; 0], &str>([]);
 
@@ -153,7 +153,7 @@ fn resolve_tool_source_returns_builtin_for_edit() {
 }
 
 #[test]
-fn resolve_tool_source_returns_builtin_for_patch() {
+fn resolve_tool_source_returns_builtin_fs_for_patch() {
     let closure_registry = ClosureRegistry::new();
     let mcp_registry = McpToolRegistry::from_names::<[&str; 0], &str>([]);
 

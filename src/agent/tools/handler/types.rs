@@ -12,8 +12,12 @@ use crate::tools::{closure::ClosureRegistry, executor::ToolExecutor};
 pub enum ToolSource {
     Closure,
     Mcp,
+    /// Agent-coordination and read-only builtin tools (`read`, `skill`, `spawn_agent`,
+    /// `send_message`, `list_agents`). These bypass the permission system entirely.
     Builtin,
-    BuiltinFs,  // Filesystem-mutating builtins (edit, patch) — gated by permissions
+    /// Filesystem-mutating builtin tools (`edit`, `patch`). Despite being built-in,
+    /// these go through the full permission flow because they can modify files on disk.
+    BuiltinFs,
     Unknown,
 }
 

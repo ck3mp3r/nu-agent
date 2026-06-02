@@ -64,6 +64,35 @@ fn builtin_tools_bypass_permission_flow() {
 }
 
 #[test]
+fn builtin_fs_tools_go_through_permission_flow() {
+    let permissions = PermissionsConfig::safe_defaults();
+    let mut grant_cache = SessionGrantCache::default();
+    let flow_context = AuthorizationFlowContext {
+        ask_context: AskContext::default(),
+    };
+    let mut ask_hook = AlwaysDenyHook;
+    let mut sink = NoopSink;
+
+    for tool_name in ["edit", "patch"] {
+        let tool_call = make_tool_call(tool_name);
+        let result = enforce_authorization_for_tool_call(
+            &tool_call,
+            ToolSource::BuiltinFs,
+            &permissions,
+            &mut grant_cache,
+            &flow_context,
+            &mut ask_hook,
+            &mut sink,
+        );
+        assert!(
+            result.is_some(),
+            "BuiltinFs tool '{}' should go through permission flow and be denied by AlwaysDenyHook",
+            tool_name,
+        );
+    }
+}
+
+#[test]
 fn non_builtin_tools_go_through_permission_flow() {
     let permissions = PermissionsConfig::safe_defaults();
     let mut grant_cache = SessionGrantCache::default();

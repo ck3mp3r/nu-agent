@@ -266,6 +266,44 @@ The agent exposes exactly three built-in filesystem tools:
 These names are unprefixed and exact. There are no builtin aliases like
 `fs__read` or `tool__edit`.
 
+### Filesystem tool permission gating
+
+`read` is non-mutating and **bypasses** the permission system entirely — it is always allowed.
+
+`edit` and `patch` are filesystem-mutating and **require permission approval**, exactly like MCP or closure tools. Use the permissions DSL to control their behavior per persona:
+
+```nu
+# Developer persona — allow edit/patch without prompting
+permissions:
+  "*": "ask"
+  "edit": "allow"
+  "patch": "allow"
+```
+
+```nu
+# Researcher persona — deny all writes
+permissions:
+  "*": "ask"
+  "edit": "deny"
+  "patch": "deny"
+```
+
+```nu
+# Default (safe) — prompt before every edit/patch
+permissions:
+  "*": "ask"
+```
+
+Via CLI:
+
+```nu
+# Allow edit/patch for this run
+let perms = { "*": "ask", "edit": "allow", "patch": "allow" }
+"refactor the code" | agent --permissions $perms
+```
+
+The default for unmatched tools is `ask` (interactive prompt in TUI, deny in non-interactive mode).
+
 ### Contracts
 
 - `read` is non-mutating and returns file content plus metadata, including
