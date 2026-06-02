@@ -1,4 +1,4 @@
-use super::persona::{FsPersonaResolver, PersonaError, PersonaFileResolver, FrontMatterParser, PulldownCmarkFrontMatterParser, interpret_front_matter, FrontMatterError, PersonaLister, PersonaSummary};
+use super::persona::{FsPersonaResolver, PersonaError, PersonaFileResolver, FrontMatterParser, PulldownCmarkFrontMatterParser, interpret_front_matter, FrontMatterError, PersonaLister};
 use std::fs;
 use tempfile::TempDir;
 

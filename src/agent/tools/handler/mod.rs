@@ -24,9 +24,8 @@ pub use types::{
 // Export authz_gate types for permission_bridge
 pub(crate) use authz_gate::{AuthorizationFlowContext, enforce_authorization_for_tool_call};
 
-#[allow(dead_code)]
 pub(crate) fn is_builtin_fs_tool_name(tool_name: &str) -> bool {
-    matches!(tool_name, "read" | "edit" | "patch" | "skill")
+    matches!(tool_name, "edit" | "patch")
 }
 
 pub(crate) fn is_builtin_tool_name(tool_name: &str) -> bool {

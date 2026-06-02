@@ -44,7 +44,7 @@ fn builtin_tools_bypass_permission_flow() {
     let mut ask_hook = AlwaysDenyHook;
     let mut sink = NoopSink;
 
-    for tool_name in ["read", "edit", "patch", "skill", "send_message", "list_agents", "spawn_agent"] {
+    for tool_name in ["read", "skill", "send_message", "list_agents", "spawn_agent"] {
         let tool_call = make_tool_call(tool_name);
         let result = enforce_authorization_for_tool_call(
             &tool_call,

@@ -98,7 +98,9 @@ impl EditToolMode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum EditWriteDecision {
     Approve,
-    #[allow(dead_code)] // Reserved for future write-safety checks
+    /// Secondary defense-in-depth check. Primary enforcement happens at authz gate
+    /// (enforce_authorization_for_tool_call) which blocks execution before this point.
+    #[allow(dead_code)]
     Deny {
         message: String,
     },

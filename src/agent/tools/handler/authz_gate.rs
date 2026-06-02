@@ -21,7 +21,9 @@ pub(crate) fn enforce_authorization_for_tool_call(
     ask_hook: &mut impl AskApprovalHook,
     event_sink: &mut impl PermissionEventSink,
 ) -> Option<AuthorizationDeniedDetails> {
-    // Builtin tools are always allowed — skip the full permission flow.
+    // Builtin agent-coordination tools (spawn_agent, send_message, list_agents)
+    // and read-only tools (read, skill) bypass permissions.
+    // BuiltinFs tools (edit, patch) flow through the full permission evaluation below.
     if source == ToolSource::Builtin {
         return None;
     }

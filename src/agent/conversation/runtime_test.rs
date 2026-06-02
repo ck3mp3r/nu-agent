@@ -738,7 +738,7 @@ fn clear_session_resets_message_count() {
     // This test documents the expected behavior
     // After clear_session(), memory_message_count should be 0
     
-    let message_count = 5usize;
+    let _message_count = 5usize;
     
     // Simulate clear_session behavior
     let message_count = 0;

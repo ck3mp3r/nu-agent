@@ -13,6 +13,7 @@ pub enum ToolSource {
     Closure,
     Mcp,
     Builtin,
+    BuiltinFs,  // Filesystem-mutating builtins (edit, patch) — gated by permissions
     Unknown,
 }
 
@@ -22,6 +23,7 @@ impl ToolSource {
             Self::Closure => "closure",
             Self::Mcp => "mcp",
             Self::Builtin => "builtin",
+            Self::BuiltinFs => "builtin_fs",
             Self::Unknown => "unknown",
         }
     }

@@ -149,7 +149,7 @@ fn resolve_tool_source_returns_builtin_for_edit() {
     let mcp_registry = McpToolRegistry::from_names::<[&str; 0], &str>([]);
 
     let source = resolve_tool_source("edit", &closure_registry, &mcp_registry);
-    assert_eq!(source, ToolSource::Builtin);
+    assert_eq!(source, ToolSource::BuiltinFs);
 }
 
 #[test]
@@ -158,7 +158,7 @@ fn resolve_tool_source_returns_builtin_for_patch() {
     let mcp_registry = McpToolRegistry::from_names::<[&str; 0], &str>([]);
 
     let source = resolve_tool_source("patch", &closure_registry, &mcp_registry);
-    assert_eq!(source, ToolSource::Builtin);
+    assert_eq!(source, ToolSource::BuiltinFs);
 }
 
 #[test]

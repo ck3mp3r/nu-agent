@@ -8,7 +8,7 @@ use super::types::PermissionDecision;
 use crate::agent::tools::authz::{
     AskApprovalHook, PermissionEventSink, PermissionsConfig, SessionGrantCache,
 };
-use crate::agent::tools::handler::{McpToolRegistry, ToolSource, is_builtin_tool_name};
+use crate::agent::tools::handler::{McpToolRegistry, ToolSource, is_builtin_fs_tool_name, is_builtin_tool_name};
 use crate::tools::closure::ClosureRegistry;
 
 /// Resolve the source of a tool by checking the closure and MCP registries.
@@ -19,6 +19,8 @@ pub fn resolve_tool_source(
 ) -> ToolSource {
     if closures.get(name).is_some() {
         ToolSource::Closure
+    } else if is_builtin_fs_tool_name(name) {
+        ToolSource::BuiltinFs
     } else if is_builtin_tool_name(name) {
         ToolSource::Builtin
     } else if mcp.contains(name) {
