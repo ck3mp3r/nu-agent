@@ -18,7 +18,7 @@ use rig::streaming::StreamingPrompt;
 
 /// Default max tool turns when config doesn't specify a limit.
 /// Matches v1 "unlimited" semantics with a practical upper bound.
-const DEFAULT_MAX_TURNS: u32 = 64;
+const DEFAULT_MAX_TURNS: u32 = 256;
 
 /// Result of a successful conversation turn
 #[derive(Debug)]
