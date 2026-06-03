@@ -166,7 +166,7 @@ use render_frame::{
 };
 use status::{
     availability_label, build_status_lines, compact_status_line, cursor_style_for_mode,
-    lane_2_status_line,
+    lane_2_status_line, model_activity_label,
 };
 #[cfg(test)]
 pub use terminal_events::ScriptedTerminalEvents;
@@ -1373,24 +1373,23 @@ impl RuntimeCoordinator {
                     }
                 }
 
+                let busy_millis = if model_activity_label(&self.state) == "busy" {
+                    Some(now_millis)
+                } else {
+                    None
+                };
                 let lane_1 = compact_status_line(
-                    &self.state,
                     &self.active_model_identity,
                     self.repo_branch_tracker
                         .as_ref()
                         .and_then(|tracker| tracker.branch()),
-                    &self.input_backend_status,
-                    &self.last_input_poll_status,
-                    self.last_input_error.as_deref(),
+                    busy_millis,
                     vertical[3].width as usize,
                 );
                 let lane_2 = lane_2_status_line(&self.state, vertical[3].width as usize);
                 let _status_lines = build_status_lines(
                     &self.state,
                     &self.active_model_identity,
-                    &self.input_backend_status,
-                    &self.last_input_poll_status,
-                    self.last_input_error.as_deref(),
                 );
                 let status_widget =
                     Paragraph::new(Text::from(vec![Line::from(lane_1), Line::from(lane_2)]))
@@ -1608,9 +1607,6 @@ impl RuntimeCoordinator {
                                 InfoPanel::Status => status_panel_lines(
                                     &self.state,
                                     &self.active_model_identity,
-                                    &self.input_backend_status,
-                                    &self.last_input_poll_status,
-                                    self.last_input_error.as_deref(),
                                 ),
                                 InfoPanel::Skills => skills_panel_lines(&self.state),
                                 InfoPanel::Mcps => unreachable!("handled above"),
@@ -1776,16 +1772,10 @@ fn help_panel_markdown_source() -> &'static str {
 fn status_panel_lines(
     state: &AppState,
     active_model_identity: &str,
-    input_backend_status: &str,
-    last_input_poll_status: &str,
-    last_input_error: Option<&str>,
 ) -> (&'static str, Vec<Line<'static>>) {
     let lines = build_status_lines(
         state,
         active_model_identity,
-        input_backend_status,
-        last_input_poll_status,
-        last_input_error,
     )
     .into_iter()
     .map(Line::from)
@@ -1825,16 +1815,10 @@ pub(super) fn help_panel_visible_window_for_test(
 pub(super) fn status_panel_lines_for_test(
     state: &AppState,
     active_model_identity: &str,
-    input_backend_status: &str,
-    last_input_poll_status: &str,
-    last_input_error: Option<&str>,
 ) -> (&'static str, Vec<Line<'static>>) {
     status_panel_lines(
         state,
         active_model_identity,
-        input_backend_status,
-        last_input_poll_status,
-        last_input_error,
     )
 }
 
@@ -1948,19 +1932,13 @@ pub(super) fn inline_slash_lines_for_test(state: &AppState) -> Vec<String> {
 
 #[cfg(test)]
 pub(super) fn compact_status_line_for_test(
-    state: &AppState,
     active_model_identity: &str,
-    input_backend_status: &str,
-    last_input_poll_status: &str,
-    last_input_error: Option<&str>,
+    now_millis: Option<u128>,
 ) -> String {
     compact_status_line(
-        state,
         active_model_identity,
         None,
-        input_backend_status,
-        last_input_poll_status,
-        last_input_error,
+        now_millis,
         120,
     )
 }
@@ -1974,16 +1952,10 @@ pub(super) fn lane_2_status_line_for_test(state: &AppState, width: usize) -> Str
 pub(super) fn status_lines_for_test(
     state: &AppState,
     active_model_identity: &str,
-    input_backend_status: &str,
-    last_input_poll_status: &str,
-    last_input_error: Option<&str>,
 ) -> Vec<String> {
     build_status_lines(
         state,
         active_model_identity,
-        input_backend_status,
-        last_input_poll_status,
-        last_input_error,
     )
 }
 
@@ -1992,6 +1964,11 @@ pub(super) fn cursor_style_for_test(
     mode: crate::agent::ui::tui::state::InputMode,
 ) -> crossterm::cursor::SetCursorStyle {
     cursor_style_for_mode(mode)
+}
+
+#[cfg(test)]
+pub(super) fn status_indicator_for_test(now_millis: Option<u128>) -> &'static str {
+    status::status_indicator_for_test(now_millis)
 }
 
 #[cfg(test)]

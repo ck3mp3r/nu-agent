@@ -637,9 +637,6 @@ fn status_updates_stay_in_status_area_and_do_not_pollute_input_line() {
     let status_lines = crate::agent::ui::tui::runtime::status_lines_for_test(
         coordinator.state(),
         "openai/gpt-4",
-        "active=crossterm, crossterm=available, /dev/tty=available",
-        "event from crossterm",
-        None,
     );
     let joined = status_lines.join("\n");
 
@@ -656,9 +653,6 @@ fn status_updates_stay_in_status_area_and_do_not_pollute_input_line() {
     let status_lines = crate::agent::ui::tui::runtime::status_lines_for_test(
         coordinator.state(),
         "openai/gpt-4",
-        "active=crossterm, crossterm=available, /dev/tty=available",
-        "event from crossterm",
-        None,
     );
     assert!(status_lines[0].contains("(idle)"));
     assert!(
@@ -676,116 +670,103 @@ fn status_lines_do_not_report_input_mode() {
     let lines = crate::agent::ui::tui::runtime::status_lines_for_test(
         &state,
         "openai/gpt-4",
-        "active=crossterm",
-        "event",
-        None,
     );
     assert!(!lines.iter().any(|line| line.starts_with("Input mode:")));
 }
 
 #[test]
 fn compact_status_line_matches_lane_1_contract() {
-    let state = AppState::new();
-
     let status_line = crate::agent::ui::tui::runtime::compact_status_line_for_test(
-        &state,
         "openai/gpt-4o-mini",
-        "active=crossterm",
-        "event",
         None,
     );
 
-    assert!(status_line.starts_with("openai/gpt-4o-mini"));
+    assert!(status_line.starts_with("○ openai/gpt-4o-mini"));
     assert!(!status_line.contains('|'));
 }
 
+
 #[test]
 fn lane_1_wide_no_truncation() {
-    let state = AppState::new();
     let line = crate::agent::ui::tui::runtime::status::compact_status_line_with_branch_for_test(
-        &state,
         "abcdefghijklmnop",
         Some("branchname"),
+        None,
         40,
     );
 
-    assert_eq!(line, "abcdefghijklmnop              branchname");
+    assert_eq!(line, "○ abcdefghijklmnop            branchname");
     assert!(!line.contains('|'));
 }
 
 #[test]
 fn lane_1_medium_one_side_truncation() {
-    let state = AppState::new();
     let line = crate::agent::ui::tui::runtime::status::compact_status_line_with_branch_for_test(
-        &state,
         "abcdefghijklmnop",
         Some("branchname"),
+        None,
         23,
     );
 
-    assert_eq!(line, "...hijklmnop branchname");
+    assert_eq!(line, "○ ...jklmnop branchname");
     assert!(!line.contains('|'));
 }
 
 #[test]
 fn lane_1_narrow_both_side_truncation() {
-    let state = AppState::new();
     let line = crate::agent::ui::tui::runtime::status::compact_status_line_with_branch_for_test(
-        &state,
         "abcdefghijklmnop",
         Some("branchname"),
+        None,
         20,
     );
 
-    assert_eq!(line, "...klmnop branchname");
+    assert_eq!(line, "○ ...mnop branchname");
     assert!(!line.contains('|'));
 }
 
 #[test]
 fn lane_1_branch_segment_is_right_aligned_when_present() {
-    let state = AppState::new();
     let width = 40usize;
     let line = crate::agent::ui::tui::runtime::status::compact_status_line_with_branch_for_test(
-        &state,
         "abcdefghijklmnop",
         Some("branchname"),
+        None,
         width,
     );
 
     assert_eq!(line.chars().count(), width);
-    assert!(line.starts_with("abcdefghijklmnop"));
+    assert!(line.starts_with("○ abcdefghijklmnop"));
     assert!(line.ends_with("branchname"));
     assert!(!line.contains('|'));
 }
 
 #[test]
 fn lane_1_narrow_truncation_keeps_branch_right_anchored() {
-    let state = AppState::new();
     let width = 20usize;
     let line = crate::agent::ui::tui::runtime::status::compact_status_line_with_branch_for_test(
-        &state,
         "abcdefghijklmnop",
         Some("branchname"),
+        None,
         width,
     );
 
     assert_eq!(line.chars().count(), width);
     assert!(line.ends_with("branchname"));
-    assert!(line.contains("...klmnop"));
+    assert!(line.contains("...mnop"));
     assert!(!line.contains('|'));
 }
 
 #[test]
 fn lane_1_omits_branch_when_unavailable() {
-    let state = AppState::new();
     let line = crate::agent::ui::tui::runtime::status::compact_status_line_with_branch_for_test(
-        &state,
         "openai/gpt-4o-mini",
+        None,
         None,
         80,
     );
 
-    assert_eq!(line, "openai/gpt-4o-mini");
+    assert_eq!(line, "○ openai/gpt-4o-mini");
     assert!(!line.contains('|'));
 }
 
@@ -913,30 +894,24 @@ fn repo_branch_tracker_does_not_leak_between_repositories() {
 
 #[test]
 fn lane_1_has_no_mode_token_in_any_input_mode() {
-    let mut insert = AppState::new();
-    insert.input_mode = InputMode::Insert;
     let insert_line =
         crate::agent::ui::tui::runtime::status::compact_status_line_with_branch_for_test(
-            &insert, "model", None, 80,
+            "model", None, None, 80,
         );
 
-    let mut normal = AppState::new();
-    normal.input_mode = InputMode::Normal;
     let normal_line =
         crate::agent::ui::tui::runtime::status::compact_status_line_with_branch_for_test(
-            &normal, "model", None, 80,
+            "model", None, None, 80,
         );
 
-    let mut visual = AppState::new();
-    visual.input_mode = InputMode::Visual;
     let visual_line =
         crate::agent::ui::tui::runtime::status::compact_status_line_with_branch_for_test(
-            &visual, "model", None, 80,
+            "model", None, None, 80,
         );
 
-    assert_eq!(insert_line, "model");
-    assert_eq!(normal_line, "model");
-    assert_eq!(visual_line, "model");
+    assert_eq!(insert_line, "○ model");
+    assert_eq!(normal_line, "○ model");
+    assert_eq!(visual_line, "○ model");
 }
 
 #[test]
@@ -1691,9 +1666,6 @@ fn status_contract_a_model_line_reports_identity_and_busy_idle() {
     let idle_lines = crate::agent::ui::tui::runtime::status_lines_for_test(
         &state,
         "openai/gpt-4o-mini",
-        "active=crossterm",
-        "event",
-        None,
     );
     assert!(
         idle_lines
@@ -1705,9 +1677,6 @@ fn status_contract_a_model_line_reports_identity_and_busy_idle() {
     let busy_lines = crate::agent::ui::tui::runtime::status_lines_for_test(
         &state,
         "openai/gpt-4o-mini",
-        "active=crossterm",
-        "event",
-        None,
     );
     assert!(
         busy_lines
@@ -1723,9 +1692,6 @@ fn status_contract_b_excludes_input_mode_backend_poll_and_hint_lines() {
     let lines = crate::agent::ui::tui::runtime::status_lines_for_test(
         &state,
         "openai/gpt-4o-mini",
-        "active=crossterm",
-        "event",
-        Some("err"),
     );
     assert!(!lines.iter().any(|line| line.starts_with("Input mode:")));
     assert!(!lines.iter().any(|line| line.starts_with("Input backend:")));
@@ -1755,9 +1721,6 @@ fn status_contract_c_mcp_counts_include_configured_enabled_disabled_failed() {
     let lines = crate::agent::ui::tui::runtime::status_lines_for_test(
         &state,
         "openai/gpt-4o-mini",
-        "active=crossterm",
-        "event",
-        None,
     );
     assert!(
         lines
@@ -1774,9 +1737,6 @@ fn status_contract_d_visible_mcp_tool_count_uses_runtime_truth_and_updates() {
     let before = crate::agent::ui::tui::runtime::status_lines_for_test(
         &state,
         "openai/gpt-4o-mini",
-        "active=crossterm",
-        "event",
-        None,
     );
     assert!(before.iter().any(|line| line == "LLM-visible MCP tools: 5"));
 
@@ -1784,9 +1744,6 @@ fn status_contract_d_visible_mcp_tool_count_uses_runtime_truth_and_updates() {
     let after = crate::agent::ui::tui::runtime::status_lines_for_test(
         &state,
         "openai/gpt-4o-mini",
-        "active=crossterm",
-        "event",
-        None,
     );
     assert!(after.iter().any(|line| line == "LLM-visible MCP tools: 2"));
 }
@@ -1818,9 +1775,6 @@ fn status_contract_e_failures_show_names_and_reasons_and_healthy_none_when_clear
     let failed_lines = crate::agent::ui::tui::runtime::status_lines_for_test(
         &state,
         "openai/gpt-4o-mini",
-        "active=crossterm",
-        "event",
-        None,
     );
     let failed_rendered = failed_lines.join("\n");
     assert!(failed_rendered.contains("Failures: gh (timeout), k8s"));
@@ -1838,9 +1792,6 @@ fn status_contract_e_failures_show_names_and_reasons_and_healthy_none_when_clear
     let healthy_lines = crate::agent::ui::tui::runtime::status_lines_for_test(
         &state,
         "openai/gpt-4o-mini",
-        "active=crossterm",
-        "event",
-        None,
     );
     assert!(
         healthy_lines
@@ -1868,26 +1819,20 @@ fn status_contract_f_narrow_layout_is_compact_and_ellipsizes_deterministically()
     let lines = crate::agent::ui::tui::runtime::status_lines_for_test(
         &state,
         "provider/super-long-model-name-that-needs-truncation",
-        "active=crossterm",
-        "event",
-        None,
     );
     let rendered = lines.join("\n");
     assert!(rendered.contains('…'));
     assert!(!rendered.contains("Hint: Ctrl-P -> MCPs"));
 
     let compact = crate::agent::ui::tui::runtime::compact_status_line_for_test(
-        &state,
         "provider/super-long-model-name-that-needs-truncation",
-        "active=crossterm",
-        "event",
         None,
     );
     let compact_narrow =
         crate::agent::ui::tui::runtime::status::compact_status_line_with_branch_for_test(
-            &state,
             "provider/super-long-model-name-that-needs-truncation",
             Some("feature/very-long-branch-name-that-needs-truncation"),
+            None,
             24,
         );
     assert!(!compact.starts_with("❯ "));
@@ -1912,9 +1857,6 @@ fn status_lines_include_stable_active_model_identity_line() {
     let status_lines = crate::agent::ui::tui::runtime::status_lines_for_test(
         &state,
         "openai/gpt-4o-mini",
-        "active=crossterm, crossterm=available, /dev/tty=available",
-        "event from crossterm",
-        None,
     );
 
     assert!(
@@ -2103,9 +2045,6 @@ fn status_panel_exposes_model_and_mcp_backend_status_lines() {
     let (title, lines) = status_panel_lines_for_test(
         &state,
         "openai/gpt-4o-mini",
-        "active=tty, crossterm=available, /dev/tty=available",
-        "event from tty",
-        None,
     );
     assert_eq!(title, "Status");
     let rendered = lines
@@ -2881,9 +2820,6 @@ fn status_lines_report_failed_state_count_when_present() {
     let status_lines = crate::agent::ui::tui::runtime::status_lines_for_test(
         &state,
         "openai/gpt-4o-mini",
-        "active=crossterm, crossterm=available, /dev/tty=available",
-        "event from crossterm",
-        None,
     );
 
     assert!(
@@ -2899,9 +2835,6 @@ fn status_lines_include_tokens_line_with_na_before_any_llm_end() {
     let status_lines = crate::agent::ui::tui::runtime::status_lines_for_test(
         &state,
         "openai/gpt-4o-mini",
-        "active=crossterm, crossterm=available, /dev/tty=available",
-        "event from crossterm",
-        None,
     );
 
     assert!(
@@ -2936,9 +2869,6 @@ fn status_lines_include_latest_and_rolling_tokens_after_llm_end_events() {
     let status_lines = crate::agent::ui::tui::runtime::status_lines_for_test(
         coordinator.state(),
         "openai/gpt-4o-mini",
-        "active=crossterm, crossterm=available, /dev/tty=available",
-        "event from crossterm",
-        None,
     );
 
     assert!(
@@ -2960,14 +2890,11 @@ fn compact_status_line_reports_lane_1_only() {
     state.session_total_tokens = 27;
 
     let status_line = crate::agent::ui::tui::runtime::compact_status_line_for_test(
-        &state,
         "openai/gpt-4o-mini",
-        "active=crossterm",
-        "event",
         None,
     );
 
-    assert!(status_line.starts_with("openai/gpt-4o-mini"));
+    assert!(status_line.starts_with("○ openai/gpt-4o-mini"));
     assert!(!status_line.contains('|'));
 }
 
@@ -3012,15 +2939,12 @@ fn footer_two_lane_contract_exposes_lane_1_and_lane_2_simultaneously() {
     state.set_context_window_max_tokens(Some(1000));
 
     let lane_1 = crate::agent::ui::tui::runtime::compact_status_line_for_test(
-        &state,
         "openai/gpt-4o-mini",
-        "active=crossterm",
-        "event",
         None,
     );
     let lane_2 = crate::agent::ui::tui::runtime::lane_2_status_line_for_test(&state, 120);
 
-    assert!(lane_1.starts_with("openai/gpt-4o-mini"));
+    assert!(lane_1.starts_with("○ openai/gpt-4o-mini"));
     assert!(!lane_1.contains('|'));
     assert!(lane_2.ends_with("250 (25%)"));
 }
@@ -3560,4 +3484,47 @@ fn main_pane_rects_transcript_gets_remaining_space() {
         transcript.height,
         main_height - INPUT_MIN_HEIGHT - STATUS_TARGET_HEIGHT
     );
+}
+
+#[test]
+fn status_indicator_idle_returns_empty_circle() {
+    assert_eq!(
+        crate::agent::ui::tui::runtime::status_indicator_for_test(None),
+        "○"
+    );
+}
+
+#[test]
+fn status_indicator_busy_cycles_through_four_frames() {
+    let f = crate::agent::ui::tui::runtime::status_indicator_for_test;
+    assert_eq!(f(Some(0)), "◐");
+    assert_eq!(f(Some(150)), "◓");
+    assert_eq!(f(Some(300)), "◑");
+    assert_eq!(f(Some(450)), "◒");
+    assert_eq!(f(Some(600)), "◐"); // wraps
+}
+
+#[test]
+fn lane_1_idle_shows_empty_circle_prefix() {
+    let line = crate::agent::ui::tui::runtime::status::compact_status_line_with_branch_for_test(
+        "mymodel", None, None, 40,
+    );
+    assert!(line.starts_with("○ mymodel"));
+}
+
+#[test]
+fn lane_1_busy_shows_spinner_prefix() {
+    let line = crate::agent::ui::tui::runtime::status::compact_status_line_with_branch_for_test(
+        "mymodel", None, Some(0), 40,
+    );
+    assert!(line.starts_with("◐ mymodel"));
+}
+
+#[test]
+fn lane_1_prefix_does_not_exceed_available_width() {
+    let line = crate::agent::ui::tui::runtime::status::compact_status_line_with_branch_for_test(
+        "abcdefghijklmnop", Some("branchname"), None, 40,
+    );
+    assert!(line.chars().count() <= 40);
+    assert!(line.starts_with("○ "));
 }

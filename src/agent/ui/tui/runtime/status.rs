@@ -9,12 +9,12 @@ use std::{
 
 use crate::agent::ui::tui::state::AppState;
 
+const BUSY_SPINNER_FRAMES: &[&str] = &["◐", "◓", "◑", "◒"];
+const IDLE_INDICATOR: &str = "○";
+
 pub(super) fn build_status_lines(
     state: &AppState,
     active_model_identity: &str,
-    _input_backend_status: &str,
-    _last_input_poll_status: &str,
-    _last_input_error: Option<&str>,
 ) -> Vec<String> {
     let (configured, enabled, disabled, failed) = state.mcp_counts();
     let model_phase = model_activity_label(state);
@@ -38,15 +38,12 @@ pub(super) fn build_status_lines(
 }
 
 pub(super) fn compact_status_line(
-    state: &AppState,
     active_model_identity: &str,
     repo_branch: Option<&str>,
-    _input_backend_status: &str,
-    _last_input_poll_status: &str,
-    _last_input_error: Option<&str>,
+    now_millis: Option<u128>,
     available_width: usize,
 ) -> String {
-    compact_status_line_with_repo_branch(state, active_model_identity, repo_branch, available_width)
+    format_lane_1(active_model_identity, repo_branch, now_millis, available_width)
 }
 
 #[derive(Debug, Clone)]
@@ -381,30 +378,26 @@ fn compact_scaled(value: u64, divisor: u64, suffix: &str) -> String {
     }
 }
 
-fn compact_status_line_with_repo_branch(
-    _state: &AppState,
-    active_model_identity: &str,
-    repo_branch: Option<&str>,
-    available_width: usize,
-) -> String {
-    format_lane_1(active_model_identity, repo_branch, available_width)
-}
-
 #[cfg(test)]
 pub(super) fn compact_status_line_with_branch_for_test(
-    state: &AppState,
     active_model_identity: &str,
     repo_branch: Option<&str>,
+    now_millis: Option<u128>,
     available_width: usize,
 ) -> String {
-    compact_status_line_with_repo_branch(state, active_model_identity, repo_branch, available_width)
+    compact_status_line(active_model_identity, repo_branch, now_millis, available_width)
 }
 
-fn format_lane_1(model: &str, repo_branch: Option<&str>, available_width: usize) -> String {
-    match repo_branch.filter(|branch| !branch.is_empty()) {
-        Some(branch) => format_lane_1_with_branch(model, branch, available_width),
-        None => tail_ellipsize(model, available_width),
-    }
+fn format_lane_1(model: &str, repo_branch: Option<&str>, now_millis: Option<u128>, available_width: usize) -> String {
+    let indicator = status_indicator(now_millis);
+    let prefix = format!("{indicator} ");
+    let prefix_width = prefix.chars().count(); // always 2
+    let inner_width = available_width.saturating_sub(prefix_width);
+    let inner = match repo_branch.filter(|branch| !branch.is_empty()) {
+        Some(branch) => format_lane_1_with_branch(model, branch, inner_width),
+        None => tail_ellipsize(model, inner_width),
+    };
+    format!("{prefix}{inner}")
 }
 
 fn format_lane_1_with_branch(model: &str, branch: &str, available_width: usize) -> String {
@@ -487,7 +480,17 @@ fn ellipsize(input: &str, max_chars: usize) -> String {
     out
 }
 
-fn model_activity_label(state: &AppState) -> &'static str {
+fn status_indicator(now_millis: Option<u128>) -> &'static str {
+    match now_millis {
+        Some(ms) => {
+            let idx = ((ms / 150) % BUSY_SPINNER_FRAMES.len() as u128) as usize;
+            BUSY_SPINNER_FRAMES[idx]
+        }
+        None => IDLE_INDICATOR,
+    }
+}
+
+pub(super) fn model_activity_label(state: &AppState) -> &'static str {
     match state.phase {
         crate::agent::ui::tui::state::UiPhase::Busy
         | crate::agent::ui::tui::state::UiPhase::AbortPending => "busy",
@@ -544,4 +547,9 @@ pub(super) fn availability_label(availability: Option<bool>) -> &'static str {
         Some(false) => "unavailable",
         None => "unknown",
     }
+}
+
+#[cfg(test)]
+pub(super) fn status_indicator_for_test(now_millis: Option<u128>) -> &'static str {
+    status_indicator(now_millis)
 }
