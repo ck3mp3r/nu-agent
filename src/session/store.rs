@@ -1,10 +1,52 @@
 use super::SessionMetadata;
+use chrono::{DateTime, Utc};
 use rig::completion::Message;
+use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
-use tempfile::NamedTempFile;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CompactionMarker {
+    /// Discriminator — always "compaction_marker"
+    #[serde(rename = "type")]
+    pub entry_type: String,
+    /// LLM-generated summary of older messages
+    pub summary: String,
+    /// Number of messages immediately before this marker that are "kept recent"
+    pub kept_recent_count: usize,
+    /// Number of messages that were summarized
+    pub summarized_count: usize,
+    /// Strategy used
+    pub strategy: String,
+    /// When compaction occurred
+    pub created_at: DateTime<Utc>,
+}
+
+impl CompactionMarker {
+    pub fn new(
+        summary: String,
+        kept_recent_count: usize,
+        summarized_count: usize,
+        strategy: &str,
+    ) -> Self {
+        Self {
+            entry_type: "compaction_marker".to_string(),
+            summary,
+            kept_recent_count,
+            summarized_count,
+            strategy: strategy.to_string(),
+            created_at: Utc::now(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum StoreEntry {
+    Message(Message),
+    Marker(CompactionMarker),
+}
 
 /// Trait for conversation storage implementations.
 ///
@@ -40,25 +82,6 @@ pub trait ConversationStore {
     /// Ok(()) on success, or an error if the operation fails.
     fn append(&self, session_id: &str, messages: &[Message]) -> Result<(), Box<dyn Error>>;
 
-    /// Atomically rewrite the entire session with new metadata and messages.
-    ///
-    /// This operation should be atomic (write to temporary file, then rename).
-    /// Replaces all existing content for this session.
-    ///
-    /// # Arguments
-    /// * `session_id` - The unique identifier for the session
-    /// * `metadata` - Session metadata to write as the first line
-    /// * `messages` - Complete list of messages to store
-    ///
-    /// # Returns
-    /// Ok(()) on success, or an error if the operation fails.
-    fn rewrite(
-        &self,
-        session_id: &str,
-        metadata: &SessionMetadata,
-        messages: &[Message],
-    ) -> Result<(), Box<dyn Error>>;
-
     /// Clear all messages from a session.
     ///
     /// After this operation, the session will be deleted from storage.
@@ -70,6 +93,30 @@ pub trait ConversationStore {
     /// # Returns
     /// Ok(()) on success, or an error if the operation fails.
     fn clear(&self, session_id: &str) -> Result<(), Box<dyn Error>>;
+
+    /// Append a compaction marker to the session log.
+    ///
+    /// If the session doesn't exist, it will be created with a metadata line first.
+    ///
+    /// # Arguments
+    /// * `session_id` - The unique identifier for the session
+    /// * `marker` - The compaction marker to append
+    ///
+    /// # Returns
+    /// Ok(()) on success, or an error if the operation fails.
+    fn append_marker(&self, session_id: &str, marker: &CompactionMarker)
+        -> Result<(), Box<dyn Error>>;
+
+    /// Load all entries (messages + markers) preserving JSONL order.
+    ///
+    /// Returns an empty vector for new or missing sessions (not an error).
+    ///
+    /// # Arguments
+    /// * `session_id` - The unique identifier for the session
+    ///
+    /// # Returns
+    /// A vector of StoreEntry in the order they were stored.
+    fn load_all(&self, session_id: &str) -> Result<Vec<StoreEntry>, Box<dyn Error>>;
 }
 
 /// JSONL-based implementation of ConversationStore.
@@ -134,8 +181,8 @@ impl ConversationStore for JsonlConversationStore {
             match serde_json::from_str::<Message>(&line) {
                 Ok(message) => messages.push(message),
                 Err(e) => {
-                    eprintln!(
-                        "Warning: Skipping corrupt line {} in session {}: {}",
+                    log::warn!(
+                        "Skipping corrupt line {} in session {}: {}",
                         line_num + 1,
                         session_id,
                         e
@@ -185,37 +232,6 @@ impl ConversationStore for JsonlConversationStore {
         Ok(())
     }
 
-    fn rewrite(
-        &self,
-        session_id: &str,
-        metadata: &SessionMetadata,
-        messages: &[Message],
-    ) -> Result<(), Box<dyn Error>> {
-        let path = self.session_path(session_id);
-
-        // Ensure base directory exists
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
-        // Use atomic write: temp file + rename
-        let mut temp_file =
-            NamedTempFile::new_in(path.parent().unwrap_or_else(|| std::path::Path::new(".")))?;
-
-        // Write metadata as first line
-        writeln!(temp_file, "{}", serde_json::to_string(metadata)?)?;
-
-        // Write all messages
-        for message in messages {
-            writeln!(temp_file, "{}", serde_json::to_string(message)?)?;
-        }
-
-        // Atomic rename
-        temp_file.persist(&path)?;
-
-        Ok(())
-    }
-
     fn clear(&self, session_id: &str) -> Result<(), Box<dyn Error>> {
         let path = self.session_path(session_id);
 
@@ -225,5 +241,179 @@ impl ConversationStore for JsonlConversationStore {
         }
 
         Ok(())
+    }
+
+    fn append_marker(
+        &self,
+        session_id: &str,
+        marker: &CompactionMarker,
+    ) -> Result<(), Box<dyn Error>> {
+        let path = self.session_path(session_id);
+
+        // Ensure base directory exists
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        // If file doesn't exist, create it with metadata first
+        if !path.exists() {
+            let metadata = SessionMetadata {
+                metadata_type: "session".to_string(),
+                session_id: session_id.to_string(),
+                created_at: chrono::Utc::now(),
+                compaction_count: 0,
+            };
+
+            let mut file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)?;
+
+            writeln!(file, "{}", serde_json::to_string(&metadata)?)?;
+        }
+
+        // Append marker
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)?;
+
+        writeln!(file, "{}", serde_json::to_string(marker)?)?;
+
+        Ok(())
+    }
+
+    fn load_all(&self, session_id: &str) -> Result<Vec<StoreEntry>, Box<dyn Error>> {
+        let path = self.session_path(session_id);
+
+        // Return empty vec if file doesn't exist (new session)
+        if !path.exists() {
+            return Ok(vec![]);
+        }
+
+        let file = File::open(&path)?;
+        let reader = BufReader::new(file);
+        let mut entries = Vec::new();
+
+        for (line_num, line) in reader.lines().enumerate() {
+            let line = line?;
+
+            // Skip empty lines
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            // Skip first line (metadata)
+            if line_num == 0 {
+                continue;
+            }
+
+            // Parse as serde_json::Value first to discriminate type
+            match serde_json::from_str::<serde_json::Value>(&line) {
+                Ok(value) => {
+                    if value.get("type").and_then(|v| v.as_str()) == Some("compaction_marker") {
+                        // Deserialize as CompactionMarker
+                        match serde_json::from_value::<CompactionMarker>(value) {
+                            Ok(marker) => entries.push(StoreEntry::Marker(marker)),
+                            Err(e) => {
+                                log::warn!(
+                                    "Skipping corrupt marker at line {} in session {}: {}",
+                                    line_num + 1,
+                                    session_id,
+                                    e
+                                );
+                            }
+                        }
+                    } else if value.get("role").is_some() {
+                        // Deserialize as Message
+                        match serde_json::from_value::<Message>(value) {
+                            Ok(message) => entries.push(StoreEntry::Message(message)),
+                            Err(e) => {
+                                log::warn!(
+                                    "Skipping corrupt message at line {} in session {}: {}",
+                                    line_num + 1,
+                                    session_id,
+                                    e
+                                );
+                            }
+                        }
+                    } else {
+                        log::warn!(
+                            "Skipping unknown entry at line {} in session {}: no 'type' or 'role' key",
+                            line_num + 1,
+                            session_id,
+                        );
+                    }
+                }
+                Err(e) => {
+                    log::warn!(
+                        "Skipping corrupt line {} in session {}: {}",
+                        line_num + 1,
+                        session_id,
+                        e
+                    );
+                }
+            }
+        }
+
+        Ok(entries)
+    }
+}
+
+/// Extracts the LLM context from a sequence of store entries.
+///
+/// If there are compaction markers, uses the **last** marker to determine context:
+/// - Prepends the marker's summary as a system message (if non-empty)
+/// - Includes `kept_recent_count` messages immediately before the marker
+/// - Includes all messages after the marker
+/// - Skips any older markers that fall within the kept range
+///
+/// If there are no markers, returns all messages.
+pub fn extract_llm_context(entries: &[StoreEntry]) -> Vec<Message> {
+    let last_marker_idx = entries
+        .iter()
+        .rposition(|e| matches!(e, StoreEntry::Marker(_)));
+
+    match last_marker_idx {
+        Some(idx) => {
+            let marker = match &entries[idx] {
+                StoreEntry::Marker(m) => m,
+                _ => unreachable!(),
+            };
+            let mut context = Vec::new();
+
+            // Summary as system message (only if non-empty — SlidingWindow has no summary)
+            if !marker.summary.is_empty() {
+                context.push(Message::system(&marker.summary));
+            }
+
+            // Kept recent = k messages immediately before marker
+            let kept_start = idx.saturating_sub(marker.kept_recent_count);
+            for entry in &entries[kept_start..idx] {
+                if let StoreEntry::Message(m) = entry {
+                    context.push(m.clone());
+                }
+                // Skip any older markers in the kept range
+            }
+
+            // Post-marker messages
+            for entry in &entries[idx + 1..] {
+                if let StoreEntry::Message(m) = entry {
+                    context.push(m.clone());
+                }
+            }
+
+            context
+        }
+        None => {
+            // No markers — all messages are context
+            entries
+                .iter()
+                .filter_map(|e| match e {
+                    StoreEntry::Message(m) => Some(m.clone()),
+                    _ => None,
+                })
+                .collect()
+        }
     }
 }

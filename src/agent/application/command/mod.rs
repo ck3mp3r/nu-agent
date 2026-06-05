@@ -26,6 +26,7 @@ use crate::{
     },
     config::{Config, PluginConfig},
     plugin::RuntimeCtx,
+    session::CompactionStrategy,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -524,7 +525,19 @@ Persona file front matter (optional YAML):
   tool_filter: [<globs>]        # Tool filtering (overridden by --tool-filter)
   permissions: <record>         # Authorization overlay (overridden by --permissions)
 
-CLI flags override front matter values. Front matter overrides plugin config."
+CLI flags override front matter values. Front matter overrides plugin config.
+
+Compaction strategies via --compaction-strategy:
+  - sliding_summary (default): LLM summarizes old messages, keeps recent verbatim window.
+  - sliding_window: drops old messages, keeps only the last N. No LLM call.
+  - token_truncate: keeps newest messages within a token budget (chars/4 estimate). No LLM call.
+
+Compaction flags:
+  --compaction-strategy <string>   Primary strategy (sliding_summary, sliding_window, token_truncate)
+  --compaction-threshold <int>     Message count threshold for auto-compaction (default: 100)
+  --keep-recent <int>              Recent messages to keep during compaction (default: 10)
+  --token-budget <int>             Token budget for token_truncate strategy
+  --proactive-threshold-pct <num>  Proactive compaction threshold 0.0-1.0 (default: 0.80)"
     }
 
     fn search_terms(&self) -> Vec<&str> {
@@ -576,6 +589,16 @@ CLI flags override front matter values. Front matter overrides plugin config."
             Example {
                 description: "Filter tools to specific patterns",
                 example: r#""analyze code" | agent --tool-filter ['read' 'grep' 'glob']"#,
+                result: None,
+            },
+            Example {
+                description: "Use sliding_window compaction strategy",
+                example: r#"agent --compaction-strategy sliding_window"#,
+                result: None,
+            },
+            Example {
+                description: "Custom compaction threshold and keep-recent count",
+                example: r#"agent --compaction-threshold 50 --keep-recent 5"#,
                 result: None,
             },
         ]
@@ -711,6 +734,36 @@ CLI flags override front matter values. Front matter overrides plugin config."
                 "parent-name",
                 nu_protocol::SyntaxShape::String,
                 "Parent agent name for sub-agent reporting (internal)",
+                None,
+            )
+            .named(
+                "compaction-strategy",
+                nu_protocol::SyntaxShape::String,
+                "Compaction strategy: sliding_summary, sliding_window, token_truncate",
+                None,
+            )
+            .named(
+                "compaction-threshold",
+                nu_protocol::SyntaxShape::Int,
+                "Message count threshold for auto-compaction",
+                None,
+            )
+            .named(
+                "keep-recent",
+                nu_protocol::SyntaxShape::Int,
+                "Number of recent messages to keep during compaction",
+                None,
+            )
+            .named(
+                "token-budget",
+                nu_protocol::SyntaxShape::Int,
+                "Token budget for token_truncate strategy",
+                None,
+            )
+            .named(
+                "proactive-threshold-pct",
+                nu_protocol::SyntaxShape::Number,
+                "Proactive compaction threshold (0.0-1.0)",
                 None,
             )
     }
@@ -1021,7 +1074,7 @@ CLI flags override front matter values. Front matter overrides plugin config."
         }
 
         let resolver = DefaultSessionResolver::new(&self.store);
-        let session_resolution = resolver.resolve(SessionResolutionInput {
+        let mut session_resolution = resolver.resolve(SessionResolutionInput {
             use_tui: mode.is_tui(),
             input_is_nothing,
             session_id,
@@ -1123,16 +1176,49 @@ CLI flags override front matter values. Front matter overrides plugin config."
             (None, None)
         };
 
-        // Extract session metadata before constructing runtime
-        let (compaction_threshold, compaction_count) =
-            if let Some(ref session) = session_resolution.session {
-                (
-                    Some(session.config().compaction_threshold),
-                    session.compaction_count(),
-                )
-            } else {
-                (None, 0)
-            };
+        // Merge compaction config: default < plugin_config < CLI flags
+        // Extract compaction config from plugin config (if available)
+        let plugin_compaction = plugin_config_value
+            .as_ref()
+            .and_then(|v| PluginConfig::from_plugin_config(v).ok())
+            .and_then(|pc| pc.compaction);
+
+        // Extract compaction flags from CLI
+        let cli_compaction = args::extract_compaction_flags(call)?;
+
+        // Merge: plugin config overrides defaults, CLI overrides plugin config
+        let merged_compaction =
+            runtime_build::merge_compaction_configs(plugin_compaction.as_ref(), &cli_compaction);
+
+        // Validate merged compaction config
+        merged_compaction.validate().map_err(|msg| {
+            LabeledError::new("Compaction config validation failed").with_label(msg, call.head)
+        })?;
+
+        // Build SessionConfig from merged compaction config
+        let session_config = runtime_build::build_session_config(&merged_compaction);
+
+        // Extract compaction policy fields (not in SessionConfig)
+        let compaction_strategy = session_config.compaction_strategy;
+        let compaction_proactive_threshold_pct = merged_compaction
+            .proactive_threshold_pct
+            .unwrap_or(0.80);
+        let compaction_fallback_strategies = merged_compaction
+            .fallback_strategies
+            .unwrap_or_else(|| vec![CompactionStrategy::SlidingWindow]);
+
+        // Apply config to session and extract session metadata
+        let (compaction_threshold, compaction_count) = if let Some(ref mut session) =
+            session_resolution.session
+        {
+            session.set_config(session_config);
+            (
+                Some(session.config().compaction_threshold),
+                session.compaction_count(),
+            )
+        } else {
+            (None, 0)
+        };
 
         // Connect to broker if flags provided
         let (broker_sender, mailbox_rx, parent_name) = if let Some(flags) = broker_flags {
@@ -1218,6 +1304,9 @@ CLI flags override front matter values. Front matter overrides plugin config."
             auto_compaction_tolerance: 0,
             auto_compaction_hysteresis_margin: 0,
             auto_compaction_state: CompactionTriggerState::default(),
+            compaction_strategy,
+            compaction_proactive_threshold_pct,
+            compaction_fallback_strategies,
             startup_plugin_config: plugin_config_value
                 .as_ref()
                 .and_then(|value| PluginConfig::from_plugin_config(value).ok()),
@@ -1237,6 +1326,7 @@ CLI flags override front matter values. Front matter overrides plugin config."
                 self.store.cache_dir().to_path_buf(),
             ),
             memory_message_count: 0,
+            memory_hydrated: false,
             cached_client: None,
             cached_client_key: None,
             agent_persona_body: persona.as_ref().map(|p| p.body.clone()),
@@ -1246,6 +1336,7 @@ CLI flags override front matter values. Front matter overrides plugin config."
             broker_sender: broker_sender_arc,
             mailbox_rx,
             parent_name,
+            compacting: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
         log::debug!("runtime: agent_persona_body_len={:?}, agent_identity={:?}, agent_description={:?}", 
             runtime_impl.agent_persona_body.as_ref().map(|b| b.len()),
@@ -1462,3 +1553,6 @@ mod prompt_test;
 
 #[cfg(test)]
 mod args_test;
+
+#[cfg(test)]
+mod runtime_build_test;

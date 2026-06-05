@@ -1,3 +1,5 @@
+use crate::session::CompactionStrategy;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CompactionTriggerSource {
     AutoThreshold,
@@ -18,6 +20,12 @@ pub(crate) enum CompactionTriggerDecision {
     Fire {
         source: CompactionTriggerSource,
         reason: String,
+        strategy: CompactionStrategy,
+    },
+    FallbackFire {
+        source: CompactionTriggerSource,
+        reason: String,
+        strategies: Vec<CompactionStrategy>,
     },
     NoFire {
         reason: String,
@@ -57,19 +65,48 @@ pub(crate) trait CompactionTriggerPolicy {
     ) -> CompactionTriggerDecision;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ThresholdCompactionPolicy {
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct TwoTierCompactionPolicy {
     threshold: usize,
     tolerance: usize,
     hysteresis_margin: usize,
+    proactive_threshold_pct: f32,
+    primary_strategy: CompactionStrategy,
+    fallback_strategies: Vec<CompactionStrategy>,
 }
 
-impl ThresholdCompactionPolicy {
+impl TwoTierCompactionPolicy {
+    #[cfg(test)]
     pub(crate) fn new(threshold: usize, tolerance: usize, hysteresis_margin: usize) -> Self {
         Self {
             threshold,
             tolerance,
             hysteresis_margin,
+            proactive_threshold_pct: 0.80,
+            primary_strategy: CompactionStrategy::SlidingSummary,
+            fallback_strategies: vec![CompactionStrategy::SlidingWindow],
+        }
+    }
+
+    /// Create a policy with explicit strategy, proactive threshold, and fallback configuration.
+    ///
+    /// This is the config-aware constructor used when `SessionConfig` / `CompactionConfig`
+    /// values have been resolved from plugin config + CLI flags.
+    pub(crate) fn with_config(
+        threshold: usize,
+        tolerance: usize,
+        hysteresis_margin: usize,
+        primary_strategy: CompactionStrategy,
+        proactive_threshold_pct: f32,
+        fallback_strategies: Vec<CompactionStrategy>,
+    ) -> Self {
+        Self {
+            threshold,
+            tolerance,
+            hysteresis_margin,
+            proactive_threshold_pct,
+            primary_strategy,
+            fallback_strategies,
         }
     }
 
@@ -83,7 +120,7 @@ impl ThresholdCompactionPolicy {
     }
 }
 
-impl CompactionTriggerPolicy for ThresholdCompactionPolicy {
+impl CompactionTriggerPolicy for TwoTierCompactionPolicy {
     fn evaluate(
         &self,
         usage_signal: Option<usize>,
@@ -95,29 +132,59 @@ impl CompactionTriggerPolicy for ThresholdCompactionPolicy {
             };
         };
 
-        if state.armed() {
+        let decision = if state.armed() {
             if usage >= self.lower_bound() {
                 state.disarm();
-                return CompactionTriggerDecision::Fire {
+                CompactionTriggerDecision::Fire {
                     source: CompactionTriggerSource::AutoThreshold,
                     reason: "threshold_reached".to_string(),
+                    strategy: self.primary_strategy,
+                }
+            } else {
+                CompactionTriggerDecision::NoFire {
+                    reason: "below_lower_bound".to_string(),
+                }
+            }
+        } else if usage <= self.rearm_bound() {
+            state.rearm();
+            if usage >= self.lower_bound() {
+                state.disarm();
+                CompactionTriggerDecision::Fire {
+                    source: CompactionTriggerSource::AutoThreshold,
+                    reason: "rearmed_and_threshold_reached".to_string(),
+                    strategy: self.primary_strategy,
+                }
+            } else {
+                CompactionTriggerDecision::NoFire {
+                    reason: "rearmed".to_string(),
+                }
+            }
+        } else if usage >= self.lower_bound() {
+            state.rearm();
+            state.disarm();
+            CompactionTriggerDecision::Fire {
+                source: CompactionTriggerSource::AutoThreshold,
+                reason: "sustained_high_usage".to_string(),
+                strategy: self.primary_strategy,
+            }
+        } else {
+            CompactionTriggerDecision::NoFire {
+                reason: "disarmed_below_threshold".to_string(),
+            }
+        };
+
+        // Tier 2: if NoFire but approaching threshold, emit FallbackFire
+        if matches!(decision, CompactionTriggerDecision::NoFire { .. }) {
+            let fallback_bound = (self.threshold as f32 * 0.95) as usize;
+            if usage >= fallback_bound {
+                return CompactionTriggerDecision::FallbackFire {
+                    source: CompactionTriggerSource::AutoThreshold,
+                    reason: "approaching_threshold".to_string(),
+                    strategies: self.fallback_strategies.clone(),
                 };
             }
-
-            return CompactionTriggerDecision::NoFire {
-                reason: "below_lower_bound".to_string(),
-            };
         }
 
-        if usage <= self.rearm_bound() {
-            state.rearm();
-            return CompactionTriggerDecision::NoFire {
-                reason: "rearmed".to_string(),
-            };
-        }
-
-        CompactionTriggerDecision::NoFire {
-            reason: "disarmed".to_string(),
-        }
+        decision
     }
 }

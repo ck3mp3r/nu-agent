@@ -1,5 +1,9 @@
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
+
+use crate::session::CompactionStrategy;
+
 /// Model limits (context and output token limits)
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelLimits {
@@ -59,6 +63,69 @@ pub struct PluginConfig {
 
     /// Provider configurations
     pub providers: HashMap<String, ProviderConfig>,
+
+    /// Compaction configuration (optional, uses defaults if not set)
+    pub compaction: Option<CompactionConfig>,
+}
+
+/// Configuration for conversation compaction behavior.
+///
+/// All fields are `Option` — `None` means "use default". This follows
+/// the merge pattern from `Config::merge()`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CompactionConfig {
+    /// Primary compaction strategy: "sliding_summary", "sliding_window", "token_truncate"
+    pub strategy: Option<CompactionStrategy>,
+    /// Message count threshold to trigger auto-compaction (default: 100)
+    pub threshold: Option<usize>,
+    /// Number of recent messages to keep during compaction (default: 10)
+    pub keep_recent: Option<usize>,
+    /// Token budget for TokenTruncate strategy (chars/4 estimation)
+    pub token_budget: Option<usize>,
+    /// Proactive compaction threshold percentage 0.0-1.0 (default: 0.80)
+    pub proactive_threshold_pct: Option<f64>,
+    /// Ordered list of fallback strategies (default: ["sliding_window"])
+    pub fallback_strategies: Option<Vec<CompactionStrategy>>,
+}
+
+impl CompactionConfig {
+    /// Validate the compaction configuration.
+    ///
+    /// Rules:
+    /// - `proactive_threshold_pct` must be in 0.0..=1.0 if set
+    /// - `fallback_strategies` must not be empty if set
+    /// - `threshold` must be > 0 if set
+    /// - `keep_recent` must be > 0 if set
+    pub fn validate(&self) -> Result<(), String> {
+        if let Some(pct) = self.proactive_threshold_pct
+            && !(0.0..=1.0).contains(&pct)
+        {
+            return Err(format!(
+                "proactive_threshold_pct must be between 0.0 and 1.0, got {}",
+                pct
+            ));
+        }
+
+        if let Some(ref strategies) = self.fallback_strategies
+            && strategies.is_empty()
+        {
+            return Err("fallback_strategies must not be empty if set".to_string());
+        }
+
+        if let Some(threshold) = self.threshold
+            && threshold == 0
+        {
+            return Err("threshold must be greater than 0".to_string());
+        }
+
+        if let Some(keep_recent) = self.keep_recent
+            && keep_recent == 0
+        {
+            return Err("keep_recent must be greater than 0".to_string());
+        }
+
+        Ok(())
+    }
 }
 
 impl PluginConfig {
@@ -143,10 +210,18 @@ impl PluginConfig {
             providers.insert(provider_name.clone(), provider_config);
         }
 
+        // Extract optional 'compaction' config
+        let compaction = if let Some(compaction_value) = record.get("compaction") {
+            Some(Self::parse_compaction_config(compaction_value)?)
+        } else {
+            None
+        };
+
         Ok(Self {
             model,
             small_model,
             providers,
+            compaction,
         })
     }
 
@@ -321,6 +396,102 @@ impl PluginConfig {
         let output = get_optional_u32(record, "output");
 
         Ok(ModelLimits { context, output })
+    }
+
+    /// Parse compaction configuration from a Nushell record
+    fn parse_compaction_config(
+        value: &nu_protocol::Value,
+    ) -> Result<CompactionConfig, nu_protocol::LabeledError> {
+        use nu_protocol::LabeledError;
+
+        let record = value.as_record().map_err(|_| {
+            LabeledError::new("Invalid compaction configuration")
+                .with_label("Compaction configuration must be a record", value.span())
+        })?;
+
+        let span = value.span();
+
+        // Parse optional 'strategy' field
+        let strategy = if let Some(strategy_value) = record.get("strategy") {
+            let s = strategy_value.as_str().map_err(|_| {
+                LabeledError::new("Invalid field type")
+                    .with_label("'strategy' must be a string", span)
+            })?;
+            let parsed: CompactionStrategy =
+                serde_json::from_value(serde_json::Value::String(s.to_string())).map_err(
+                    |_| {
+                        LabeledError::new("Invalid compaction strategy").with_label(
+                            format!(
+                            "Unknown strategy '{}'. Valid: sliding_summary, sliding_window, token_truncate",
+                            s
+                        ),
+                            span,
+                        )
+                    },
+                )?;
+            Some(parsed)
+        } else {
+            None
+        };
+
+        // Helper to extract optional usize field
+        fn get_optional_usize(record: &nu_protocol::Record, key: &str) -> Option<usize> {
+            record.get(key).and_then(|v| {
+                v.as_int()
+                    .ok()
+                    .and_then(|i| if i >= 0 { Some(i as usize) } else { None })
+            })
+        }
+
+        let threshold = get_optional_usize(record, "threshold");
+        let keep_recent = get_optional_usize(record, "keep_recent");
+        let token_budget = get_optional_usize(record, "token_budget");
+
+        // Parse optional 'proactive_threshold_pct' field
+        let proactive_threshold_pct = record
+            .get("proactive_threshold_pct")
+            .and_then(|v| v.as_float().ok());
+
+        // Parse optional 'fallback_strategies' field
+        let fallback_strategies = if let Some(list_value) = record.get("fallback_strategies") {
+            let list = list_value.as_list().map_err(|_| {
+                LabeledError::new("Invalid field type")
+                    .with_label("'fallback_strategies' must be a list", span)
+            })?;
+
+            let mut strategies = Vec::new();
+            for item in list {
+                let s = item.as_str().map_err(|_| {
+                    LabeledError::new("Invalid field type")
+                        .with_label("Each fallback strategy must be a string", item.span())
+                })?;
+                let parsed: CompactionStrategy =
+                    serde_json::from_value(serde_json::Value::String(s.to_string())).map_err(
+                        |_| {
+                            LabeledError::new("Invalid compaction strategy").with_label(
+                                format!(
+                                "Unknown strategy '{}'. Valid: sliding_summary, sliding_window, token_truncate",
+                                s
+                            ),
+                                item.span(),
+                            )
+                        },
+                    )?;
+                strategies.push(parsed);
+            }
+            Some(strategies)
+        } else {
+            None
+        };
+
+        Ok(CompactionConfig {
+            strategy,
+            threshold,
+            keep_recent,
+            token_budget,
+            proactive_threshold_pct,
+            fallback_strategies,
+        })
     }
 
     /// Resolve model specification to runtime Config.

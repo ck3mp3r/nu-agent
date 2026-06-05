@@ -23,6 +23,10 @@ $env.config.plugins.agent = {
       }
     }
   }
+  compaction: {               # optional
+    strategy: "sliding_summary"
+    threshold: 100
+  }
 }
 ```
 

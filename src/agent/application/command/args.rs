@@ -193,3 +193,86 @@ pub(crate) fn extract_agent_flags(call: &EvaluatedCall) -> (Option<String>, Opti
     log::trace!("extract_agent_flags: agent={agent:?}, name={name:?}");
     (agent, name)
 }
+
+/// Parse a compaction strategy string into a `CompactionStrategy` enum.
+///
+/// Uses serde deserialization which supports the canonical names and aliases:
+/// - `"sliding_summary"` / `"truncate"` / `"sliding"` / `"summarize"` → `SlidingSummary`
+/// - `"sliding_window"` → `SlidingWindow`
+/// - `"token_truncate"` → `TokenTruncate`
+///
+/// # Arguments
+/// * `s` - The strategy string to parse
+///
+/// # Returns
+/// Ok(CompactionStrategy) if valid, Err(String) with user-facing message if invalid.
+pub(crate) fn parse_strategy_from_str(
+    s: &str,
+) -> Result<crate::session::CompactionStrategy, String> {
+    serde_json::from_value(serde_json::Value::String(s.to_string())).map_err(|_| {
+        format!(
+            "Unknown compaction strategy '{}'. Valid values: sliding_summary, sliding_window, token_truncate",
+            s
+        )
+    })
+}
+
+/// Extract compaction-related CLI flags into a `CompactionConfig`.
+///
+/// All fields are `Option` — `None` means the flag was not provided.
+/// The `--compaction-strategy` flag is parsed into a `CompactionStrategy` enum.
+///
+/// # Arguments
+/// * `call` - The EvaluatedCall containing the compaction flags
+///
+/// # Returns
+/// Ok(CompactionConfig) with provided flag values, Err if strategy string is invalid.
+///
+/// # Errors
+/// Returns LabeledError if `--compaction-strategy` contains an invalid strategy name.
+pub(crate) fn extract_compaction_flags(
+    call: &EvaluatedCall,
+) -> Result<crate::config::CompactionConfig, LabeledError> {
+    // Helper to safely extract usize flag (from i64, rejecting negatives)
+    fn get_usize_flag(call: &EvaluatedCall, name: &str) -> Option<usize> {
+        call.get_flag(name)
+            .ok()
+            .flatten()
+            .and_then(|v: Value| v.as_int().ok())
+            .and_then(|i| if i >= 0 { Some(i as usize) } else { None })
+    }
+
+    // Parse --compaction-strategy
+    let strategy = if let Some(strategy_str) = call
+        .get_flag::<Value>("compaction-strategy")
+        .ok()
+        .flatten()
+        .and_then(|v| v.as_str().map(|s| s.to_string()).ok())
+    {
+        Some(parse_strategy_from_str(&strategy_str).map_err(|msg| {
+            LabeledError::new("Invalid --compaction-strategy").with_label(msg, call.head)
+        })?)
+    } else {
+        None
+    };
+
+    let threshold = get_usize_flag(call, "compaction-threshold");
+    let keep_recent = get_usize_flag(call, "keep-recent");
+    let token_budget = get_usize_flag(call, "token-budget");
+
+    // Parse --proactive-threshold-pct
+    let proactive_threshold_pct = call
+        .get_flag::<Value>("proactive-threshold-pct")
+        .ok()
+        .flatten()
+        .and_then(|v| v.as_float().ok());
+
+    Ok(crate::config::CompactionConfig {
+        strategy,
+        threshold,
+        keep_recent,
+        token_budget,
+        proactive_threshold_pct,
+        fallback_strategies: None, // Not configurable via CLI
+    })
+}

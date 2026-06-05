@@ -1,4 +1,5 @@
 use super::*;
+use crate::session::CompactionStrategy;
 use nu_protocol::{Span, Value, record};
 use serial_test::serial;
 use std::env;
@@ -1093,6 +1094,7 @@ fn test_resolve_model_basic() {
             );
             providers
         },
+        compaction: None,
     };
 
     let config = plugin_config
@@ -1128,6 +1130,7 @@ fn test_resolve_model_with_env_fallback() {
             );
             providers
         },
+        compaction: None,
     };
 
     let config = plugin_config
@@ -1147,6 +1150,7 @@ fn test_resolve_model_invalid_format() {
         model: "openai/gpt-4".to_string(),
         small_model: None,
         providers: HashMap::new(),
+        compaction: None,
     };
 
     // No slash separator
@@ -1170,6 +1174,7 @@ fn test_resolve_model_provider_not_found() {
         model: "openai/gpt-4".to_string(),
         small_model: None,
         providers: HashMap::new(),
+        compaction: None,
     };
 
     let result = plugin_config.resolve_model("unknown/model");
@@ -1199,6 +1204,7 @@ fn test_resolve_model_model_not_in_config() {
             );
             providers
         },
+        compaction: None,
     };
 
     let config = plugin_config
@@ -1233,6 +1239,7 @@ fn test_resolve_model_with_provider_impl() {
             );
             providers
         },
+        compaction: None,
     };
 
     let config = plugin_config
@@ -1285,6 +1292,7 @@ fn test_resolve_model_merges_limits() {
             );
             providers
         },
+        compaction: None,
     };
 
     let config = plugin_config
@@ -1320,6 +1328,7 @@ fn resolve_model_handles_two_part_format() {
             );
             providers
         },
+        compaction: None,
     };
 
     let config = plugin_config
@@ -1338,6 +1347,7 @@ fn resolve_model_validates_empty_parts() {
         model: "provider/model".to_string(),
         small_model: None,
         providers: HashMap::new(),
+        compaction: None,
     };
 
     // Empty provider
@@ -1379,6 +1389,7 @@ fn resolve_model_uses_split_once_for_multi_part_models() {
             );
             map
         },
+        compaction: None,
     };
 
     let config = plugin_config
@@ -1415,6 +1426,7 @@ fn resolve_model_works_with_simple_two_part() {
             );
             map
         },
+        compaction: None,
     };
 
     let config = plugin_config
@@ -1451,6 +1463,7 @@ fn integration_github_copilot_with_backend_in_model() {
             );
             map
         },
+        compaction: None,
     };
 
     // Test default model
@@ -1631,6 +1644,104 @@ fn test_from_env_copilot_case_insensitive() {
         let config4 = Config::from_env("GitHub-Copilot", "claude");
         assert_eq!(config4.api_key, None);
     });
+}
+
+// ============================================================================
+// CompactionConfig Tests
+// ============================================================================
+
+#[test]
+fn compaction_config_defaults_all_none() {
+    let config = CompactionConfig::default();
+    assert_eq!(config.strategy, None);
+    assert_eq!(config.threshold, None);
+    assert_eq!(config.keep_recent, None);
+    assert_eq!(config.token_budget, None);
+    assert_eq!(config.proactive_threshold_pct, None);
+    assert_eq!(config.fallback_strategies, None);
+}
+
+#[test]
+fn compaction_config_serde_roundtrip() {
+    let config = CompactionConfig {
+        strategy: Some(CompactionStrategy::SlidingSummary),
+        threshold: Some(50),
+        keep_recent: Some(5),
+        token_budget: Some(8000),
+        proactive_threshold_pct: Some(0.75),
+        fallback_strategies: Some(vec![
+            CompactionStrategy::SlidingWindow,
+            CompactionStrategy::TokenTruncate,
+        ]),
+    };
+
+    let json = serde_json::to_string(&config).expect("serialize");
+    let deserialized: CompactionConfig = serde_json::from_str(&json).expect("deserialize");
+
+    assert_eq!(config, deserialized);
+}
+
+#[test]
+fn compaction_config_validate_valid() {
+    let config = CompactionConfig {
+        strategy: Some(CompactionStrategy::SlidingSummary),
+        threshold: Some(50),
+        keep_recent: Some(5),
+        token_budget: Some(8000),
+        proactive_threshold_pct: Some(0.75),
+        fallback_strategies: Some(vec![CompactionStrategy::SlidingWindow]),
+    };
+
+    assert!(config.validate().is_ok());
+}
+
+#[test]
+fn compaction_config_validate_pct_out_of_range() {
+    // pct > 1.0
+    let config = CompactionConfig {
+        proactive_threshold_pct: Some(1.5),
+        ..CompactionConfig::default()
+    };
+    let err = config.validate().unwrap_err();
+    assert!(err.contains("proactive_threshold_pct"));
+
+    // pct < 0.0
+    let config = CompactionConfig {
+        proactive_threshold_pct: Some(-0.1),
+        ..CompactionConfig::default()
+    };
+    let err = config.validate().unwrap_err();
+    assert!(err.contains("proactive_threshold_pct"));
+}
+
+#[test]
+fn compaction_config_validate_empty_fallbacks() {
+    let config = CompactionConfig {
+        fallback_strategies: Some(vec![]),
+        ..CompactionConfig::default()
+    };
+    let err = config.validate().unwrap_err();
+    assert!(err.contains("fallback_strategies"));
+}
+
+#[test]
+fn compaction_config_validate_zero_threshold() {
+    let config = CompactionConfig {
+        threshold: Some(0),
+        ..CompactionConfig::default()
+    };
+    let err = config.validate().unwrap_err();
+    assert!(err.contains("threshold"));
+}
+
+#[test]
+fn compaction_config_validate_zero_keep_recent() {
+    let config = CompactionConfig {
+        keep_recent: Some(0),
+        ..CompactionConfig::default()
+    };
+    let err = config.validate().unwrap_err();
+    assert!(err.contains("keep_recent"));
 }
 
 // ============================================================================

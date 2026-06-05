@@ -2,7 +2,7 @@
 // and other deprecated APIs that use the old crate::session::Message type.
 //
 // These tests need to be:
-// 1. Deleted if they test deprecated methods (add_message, append_message, rewrite_jsonl)
+// 1. Deleted if they test deprecated methods (add_message, append_message)
 // 2. Migrated to use ConversationStore with rig::completion::Message
 // 3. Kept if they test config/metadata that doesn't depend on old Message types
 //
@@ -21,6 +21,42 @@ fn compaction_strategy_defaults_to_sliding_summary_only() {
         crate::session::CompactionStrategy::SlidingSummary
     );
     assert_eq!(cfg.compaction_strategy.as_str(), "sliding_summary");
+}
+
+#[test]
+fn sliding_window_deserializes_from_canonical_name() {
+    let strategy: crate::session::CompactionStrategy =
+        serde_json::from_str("\"sliding_window\"").expect("sliding_window canonical");
+    assert_eq!(strategy, crate::session::CompactionStrategy::SlidingWindow);
+    assert_eq!(strategy.as_str(), "sliding_window");
+}
+
+#[test]
+fn sliding_window_roundtrip_preserves_name() {
+    let strategy = crate::session::CompactionStrategy::SlidingWindow;
+    let json = serde_json::to_string(&strategy).expect("serialize");
+    assert_eq!(json, "\"sliding_window\"");
+    let decoded: crate::session::CompactionStrategy =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(decoded, crate::session::CompactionStrategy::SlidingWindow);
+}
+
+#[test]
+fn session_config_roundtrip_preserves_sliding_window_mode() {
+    let cfg = crate::session::SessionConfig {
+        compaction_threshold: 50,
+        compaction_strategy: crate::session::CompactionStrategy::SlidingWindow,
+        keep_recent: 5,
+        token_budget: None,
+    };
+    let json = serde_json::to_string(&cfg).expect("serialize");
+    assert!(json.contains("sliding_window"));
+
+    let decoded: crate::session::SessionConfig = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(
+        decoded.compaction_strategy,
+        crate::session::CompactionStrategy::SlidingWindow
+    );
 }
 
 #[test]
@@ -52,6 +88,7 @@ fn session_config_roundtrip_preserves_sliding_summary_mode() {
         compaction_threshold: 7,
         compaction_strategy: crate::session::CompactionStrategy::SlidingSummary,
         keep_recent: 3,
+        token_budget: None,
     };
     let json = serde_json::to_string(&cfg).expect("serialize");
     assert!(json.contains("sliding_summary"));

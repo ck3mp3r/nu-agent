@@ -28,6 +28,7 @@ Optional top-level fields:
 
 - `small_model`
 - `mcp`
+- `compaction`
 
 ## Model Format
 
@@ -102,3 +103,40 @@ $env.config.plugins.agent = {
   }
 }
 ```
+
+## Compaction
+
+Configure conversation compaction via the optional `compaction` block:
+
+```nu
+$env.config.plugins.agent = {
+  # ...existing config...
+  compaction: {
+    strategy: "sliding_summary"              # or sliding_window, token_truncate
+    threshold: 100                           # message count for auto-compaction
+    keep_recent: 10                          # messages to keep
+    token_budget: 4000                       # for token_truncate only
+    proactive_threshold_pct: 0.80            # 0.0-1.0, proactive trigger
+    fallback_strategies: ["sliding_window"]  # ordered fallback list
+  }
+}
+```
+
+All fields are optional — defaults are used when omitted.
+
+### Strategies
+
+- `sliding_summary` (default) — LLM summarizes old messages, keeps recent verbatim window.
+- `sliding_window` — drops old messages, keeps only the last N. No LLM call.
+- `token_truncate` — keeps newest messages within a token budget (chars/4 estimate). No LLM call.
+
+### Validation rules
+
+- `proactive_threshold_pct` must be between 0.0 and 1.0.
+- `threshold` must be greater than 0.
+- `keep_recent` must be greater than 0.
+- `fallback_strategies` must not be empty if set.
+
+### Precedence
+
+CLI flags override plugin config, which overrides built-in defaults.

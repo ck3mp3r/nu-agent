@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use nu_plugin::EngineInterface;
@@ -9,8 +11,8 @@ use crate::{
     config::Config,
     plugin::RuntimeCtx,
     session::{
-        CompactionInvocationMode, CompactionOutcome, ConversationStore, JsonlConversationStore,
-        Session, SessionStore,
+        CompactionInvocationMode, CompactionOutcome, CompactionStrategy, ConversationStore,
+        JsonlConversationStore, Session, SessionStore, StoreEntry, extract_llm_context,
     },
     tools::{closure::ClosureRegistry, executor::ToolExecutor},
 };
@@ -19,7 +21,7 @@ use crate::agent::{
     protocol::{
         compaction::{
             CompactionTriggerDecision, CompactionTriggerPolicy, CompactionTriggerSource,
-            CompactionTriggerState, ThresholdCompactionPolicy,
+            CompactionTriggerState, TwoTierCompactionPolicy,
         },
         contracts::{ConversationRuntime, McpUsabilityState, ProgressUi},
         event::UiEvent,
@@ -258,6 +260,9 @@ pub(crate) struct AgentConversationRuntime {
     pub auto_compaction_tolerance: usize,
     pub auto_compaction_hysteresis_margin: usize,
     pub auto_compaction_state: CompactionTriggerState,
+    pub compaction_strategy: CompactionStrategy,
+    pub compaction_proactive_threshold_pct: f64,
+    pub compaction_fallback_strategies: Vec<CompactionStrategy>,
     pub startup_plugin_config: Option<crate::config::PluginConfig>,
     pub permissions: PermissionsConfig,
     pub permissions_startup_summary: String,
@@ -267,6 +272,7 @@ pub(crate) struct AgentConversationRuntime {
     pub memory: rig::memory::InMemoryConversationMemory,
     pub conversation_store: JsonlConversationStore,
     pub memory_message_count: usize,
+    pub memory_hydrated: bool,
     pub cached_client: Option<CachedProviderClient>,
     pub cached_client_key: Option<ClientCacheKey>,
     #[allow(dead_code)]
@@ -282,6 +288,7 @@ pub(crate) struct AgentConversationRuntime {
     #[allow(dead_code)]
     pub mailbox_rx: Option<std::sync::mpsc::Receiver<crate::agent::mailbox::IncomingMessage>>,
     pub parent_name: Option<String>,
+    pub compacting: Arc<AtomicBool>,
 }
 
 fn emit_permissions_startup_summary_once<U: ProgressUi>(
@@ -601,10 +608,13 @@ impl ConversationRuntime for AgentConversationRuntime {
             });
         };
 
-        let policy = ThresholdCompactionPolicy::new(
+        let policy = TwoTierCompactionPolicy::with_config(
             threshold,
             self.auto_compaction_tolerance,
             self.auto_compaction_hysteresis_margin,
+            self.compaction_strategy,
+            self.compaction_proactive_threshold_pct as f32,
+            self.compaction_fallback_strategies.clone(),
         );
         Some(policy.evaluate(
             Some(self.memory_message_count),
@@ -623,6 +633,7 @@ impl ConversationRuntime for AgentConversationRuntime {
     fn clear_session(&mut self) {
         self.memory = rig::memory::InMemoryConversationMemory::new();
         self.memory_message_count = 0;
+        self.memory_hydrated = false;
     }
 
     fn execute_turn<U: ProgressUi>(
@@ -682,30 +693,10 @@ impl ConversationRuntime for AgentConversationRuntime {
 
         log::debug!("execute_turn: preamble present={}, preamble_len={}", preamble.is_some(), preamble.as_ref().map_or(0, |p| p.len()));
 
-        // Hydrate memory from conversation store on session attach
+        // Hydrate memory from conversation store (idempotent, guarded)
+        self.ensure_memory_hydrated()?;
+
         let conversation_id = if let Some(ref session_id) = self.final_session_id {
-            // Session exists: load from conversation store and populate memory
-            let messages = self
-                .conversation_store
-                .load(session_id)
-                .unwrap_or_else(|e| {
-                    // Log error but continue with empty history
-                    eprintln!("Failed to load conversation history: {}", e);
-                    Vec::new()
-                });
-
-            // Append loaded messages to memory (memory.append is async and takes a Vec)
-            if !messages.is_empty()
-                && let Err(e) = self
-                    .runtime
-                    .block_on(self.memory.append(session_id, messages.clone()))
-            {
-                eprintln!("Failed to append messages to memory: {}", e);
-            }
-
-            // Track message count
-            self.memory_message_count = messages.len();
-
             session_id.to_string()
         } else {
             // No session: use transient ID based on timestamp
@@ -777,8 +768,8 @@ impl ConversationRuntime for AgentConversationRuntime {
         {
             // Persist the new messages from the turn result
             if let Err(e) = self.conversation_store.append(session_id, messages) {
-                eprintln!(
-                    "Warning: Failed to persist turn messages to conversation store: {}",
+                log::warn!(
+                    "Failed to persist turn messages to conversation store: {}",
                     e
                 );
             }
@@ -792,11 +783,19 @@ impl ConversationRuntime for AgentConversationRuntime {
         let mut compaction_count = 0;
 
         if self.final_session_id.is_some() {
-            if let Some(CompactionTriggerDecision::Fire { source, .. }) =
-                self.evaluate_auto_compaction()
-                && let Err(error) = self.execute_compaction_event(ui, source)
-            {
-                ui.emit(&UiEvent::Warning { message: error });
+            match self.evaluate_auto_compaction() {
+                Some(CompactionTriggerDecision::Fire { source, .. }) => {
+                    if let Err(error) = self.execute_compaction_event(ui, source) {
+                        ui.emit(&UiEvent::Warning { message: error });
+                    }
+                }
+                Some(CompactionTriggerDecision::FallbackFire { source, .. }) => {
+                    log::warn!("Compaction fallback triggered: executing with first available strategy");
+                    if let Err(error) = self.execute_compaction_event(ui, source) {
+                        ui.emit(&UiEvent::Warning { message: error });
+                    }
+                }
+                _ => {}
             }
 
             message_count = self.memory_message_count;
@@ -858,7 +857,62 @@ impl ConversationRuntime for AgentConversationRuntime {
     }
 }
 
+/// RAII guard that resets the compaction flag when dropped, even on error/panic.
+struct CompactionGuard(Arc<AtomicBool>);
+
+impl Drop for CompactionGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
 impl AgentConversationRuntime {
+    /// Idempotent memory hydration: loads stored messages into in-memory
+    /// conversation memory exactly once per runtime lifetime (or until
+    /// `clear_session` resets the guard).
+    ///
+    /// This must be called before any operation that reads memory
+    /// (`execute_turn`, `execute_compaction_event`) so that reloaded
+    /// sessions have their history available.
+    fn ensure_memory_hydrated(&mut self) -> Result<(), LabeledError> {
+        if self.memory_hydrated {
+            return Ok(());
+        }
+        if let Some(ref session_id) = self.final_session_id {
+            // Load ALL entries (messages + markers)
+            let entries = self
+                .conversation_store
+                .load_all(session_id)
+                .map_err(|e| {
+                    LabeledError::new(format!("Failed to load session entries: {}", e))
+                })?;
+
+            // Extract only LLM-relevant messages (from latest marker onward)
+            let llm_context = extract_llm_context(&entries);
+
+            if !llm_context.is_empty() {
+                self.runtime
+                    .block_on(self.memory.append(session_id, llm_context.clone()))
+                    .map_err(|e| {
+                        LabeledError::new(format!(
+                            "Failed to append messages to memory: {}",
+                            e
+                        ))
+                    })?;
+            }
+            self.memory_message_count = llm_context.len();
+
+            // Derive compaction_count from markers
+            let marker_count = entries
+                .iter()
+                .filter(|e| matches!(e, StoreEntry::Marker(_)))
+                .count();
+            self.compaction_count = marker_count;
+        }
+        self.memory_hydrated = true;
+        Ok(())
+    }
+
     fn client_cache_key(&self) -> ClientCacheKey {
         (
             self.config.provider.clone(),
@@ -904,7 +958,21 @@ impl AgentConversationRuntime {
         ui: &mut U,
         source: CompactionTriggerSource,
     ) -> Result<(), String> {
+        // Prevent overlapping compactions: if another is already running, skip.
+        if self
+            .compacting
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            return Ok(());
+        }
+        let _guard = CompactionGuard(Arc::clone(&self.compacting));
+
         self.ensure_client_cached()
+            .map_err(|e| e.to_string())?;
+
+        // Ensure memory is hydrated before compaction reads it
+        self.ensure_memory_hydrated()
             .map_err(|e| e.to_string())?;
 
         let runtime = &self.runtime;

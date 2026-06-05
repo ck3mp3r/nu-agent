@@ -464,11 +464,24 @@ built-ins.
   - transcript-visible compaction summary artifact includes source + summarized/kept counts
   - compaction summary artifact includes summary preview/body from the produced summary text
 
-### Compaction strategy contract
+### Compaction strategies
 
-- Canonical strategy name is `sliding_summary`.
-- Current runtime exposes a single active compaction mode only (`sliding_summary`).
-- Legacy stored strategy values `truncate`, `sliding`, and `summarize` normalize to `sliding_summary` on deserialize.
+Three compaction strategies are available:
+
+- `sliding_summary` (default) — LLM summarizes old messages, keeps recent verbatim window.
+- `sliding_window` — drops old messages, keeps only the last N. No LLM call.
+- `token_truncate` — keeps newest messages within a token budget (chars/4 estimate). No LLM call.
+
+Legacy stored strategy values `truncate`, `sliding`, and `summarize` normalize to `sliding_summary` on deserialize.
+
+### Two-tier compaction policy
+
+Compaction uses a two-tier policy:
+
+1. **Proactive compaction** fires when context usage reaches `proactive_threshold_pct` (default: 0.80 = 80%) of the context window. Uses the configured primary strategy.
+2. **Fallback compaction** fires at 95% of the context window using the ordered `fallback_strategies` list (default: `["sliding_window"]`). This is a safety net if the primary strategy is unavailable or insufficient.
+
+CLI flags override plugin config, which overrides built-in defaults.
 
 ### Inline slash suggestions and slash commands
 
@@ -544,6 +557,11 @@ Applies to ALL tool types. Omit to expose all tools.
 - `--session <id>`
 - `--quiet` / `-q`
 - `--verbose` / `-v` (progressive: `-v`, `-vv`, `-vvv+`)
+- `--compaction-strategy <string>` — `sliding_summary`, `sliding_window`, `token_truncate`
+- `--compaction-threshold <int>` — message count threshold for auto-compaction (default: 100)
+- `--keep-recent <int>` — recent messages to keep during compaction (default: 10)
+- `--token-budget <int>` — token budget for `token_truncate` strategy
+- `--proactive-threshold-pct <number>` — proactive compaction threshold 0.0–1.0 (default: 0.80)
 
 ## Output contract
 

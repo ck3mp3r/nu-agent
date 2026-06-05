@@ -74,11 +74,17 @@
 - Modal frames use rounded borders.
 - Modal-open states apply dimmed backdrop treatment for non-modal regions.
 
-# Compaction mode
+# Compaction
 
-- Current runtime has a single active compaction mode: `sliding_summary`.
-- Legacy serialized values (`truncate`, `sliding`, `summarize`) normalize to `sliding_summary`.
-- This single active compaction mode is the only mode presented in docs/help UX.
+Three compaction strategies are available:
+
+- `sliding_summary` (default) — LLM summarizes old messages, keeps recent verbatim window.
+- `sliding_window` — drops old messages, keeps only the last N. No LLM call.
+- `token_truncate` — keeps newest messages within a token budget (chars/4 estimate). No LLM call.
+
+Legacy serialized values (`truncate`, `sliding`, `summarize`) normalize to `sliding_summary`.
+
+Use `/compact` to trigger manual compaction immediately (bypasses threshold gating).
 
 # Auto compaction behavior
 

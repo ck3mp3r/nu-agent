@@ -69,10 +69,11 @@ fn help_describes_inline_slash_suggestions_behavior() {
 }
 
 #[test]
-fn help_describes_sliding_summary_only_compaction() {
+fn help_describes_compaction_strategies() {
     let help = read_help_markdown();
     assert!(help.contains("sliding_summary"));
-    assert!(help.contains("single active compaction mode"));
+    assert!(help.contains("sliding_window"));
+    assert!(help.contains("token_truncate"));
 }
 
 #[test]

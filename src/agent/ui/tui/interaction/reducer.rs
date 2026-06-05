@@ -378,7 +378,7 @@ fn reduce_ui_event(state: &mut AppState, event: UiEvent) {
         UiEvent::TurnError { message } => {
             state.push_transcript_line(TranscriptRole::System, format!("Error: {}", message));
             state.status_line = message.clone();
-            state.phase = UiPhase::Idle;
+            finalize(state);
         }
         UiEvent::CompactionStarted { source } => {
             state.start_compaction_block(&source);
@@ -410,6 +410,7 @@ fn reduce_ui_event(state: &mut AppState, event: UiEvent) {
                 }
                 state.push_transcript_rendered_line(TranscriptRole::System, line);
             }
+            state.status_line.clear();
         }
         UiEvent::CompactionFailed { source, message } => {
             state.start_compaction_block(&source);
@@ -418,6 +419,7 @@ fn reduce_ui_event(state: &mut AppState, event: UiEvent) {
                 TranscriptRole::System,
                 format!("Compaction failed deterministically: {message}"),
             );
+            state.status_line.clear();
         }
         UiEvent::AssistantMessage { text } => {
             log::trace!("reducer: AssistantMessage text_len={}", text.len());

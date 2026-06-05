@@ -543,9 +543,18 @@ fn cli_does_not_expose_unsupported_compaction_modes() {
     let (agent, _temp_dir) = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
     let rendered = format!("{sig:?}").to_ascii_lowercase();
-    assert!(!rendered.contains("truncate"));
-    assert!(!rendered.contains("sliding\""));
-    assert!(!rendered.contains("summarize"));
+    // Ensure serde aliases (standalone shorthand names) are not exposed in the CLI.
+    // Canonical names like "token_truncate" and "sliding_window" are fine since they
+    // appear in the --compaction-strategy description.
+    //
+    // Strip canonical names before checking for standalone aliases.
+    let stripped = rendered
+        .replace("sliding_summary", "")
+        .replace("sliding_window", "")
+        .replace("token_truncate", "");
+    assert!(!stripped.contains("truncate"), "standalone alias 'truncate' should not appear in CLI");
+    assert!(!stripped.contains("\"sliding\""), "standalone alias 'sliding' should not appear in CLI");
+    assert!(!stripped.contains("summarize"), "standalone alias 'summarize' should not appear in CLI");
 }
 
 #[test]
@@ -1911,6 +1920,7 @@ fn model_picker_catalog_projection_from_plugin_config_is_sorted_and_marks_active
         model: "a-provider/a-model".to_string(),
         small_model: None,
         providers,
+        compaction: None,
     };
     let projected =
         crate::agent::application::command::build_model_picker_catalog_from_plugin_config(
@@ -1958,6 +1968,7 @@ fn tui_startup_hydrates_model_picker_catalog_from_cached_plugin_config() {
         model: "openai/gpt-4o-mini".to_string(),
         small_model: None,
         providers,
+        compaction: None,
     };
 
     let catalog =

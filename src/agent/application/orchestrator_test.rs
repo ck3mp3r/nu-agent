@@ -21,6 +21,7 @@ use crate::agent::{
         },
     },
 };
+use crate::session::CompactionStrategy;
 
 #[derive(Default)]
 struct FakeProgressUi {
@@ -333,6 +334,7 @@ fn interactive_loop_emits_auto_compaction_when_policy_fires() {
         auto_decisions: [CompactionTriggerDecision::Fire {
             source: CompactionTriggerSource::AutoThreshold,
             reason: "threshold_reached".to_string(),
+            strategy: CompactionStrategy::SlidingSummary,
         }]
         .into_iter()
         .collect(),
@@ -376,6 +378,7 @@ fn interactive_loop_does_not_duplicate_auto_compaction_while_disarmed() {
             CompactionTriggerDecision::Fire {
                 source: CompactionTriggerSource::AutoThreshold,
                 reason: "threshold_reached".to_string(),
+                strategy: CompactionStrategy::SlidingSummary,
             },
             CompactionTriggerDecision::NoFire {
                 reason: "disarmed".to_string(),
@@ -407,6 +410,7 @@ fn interactive_loop_continues_turn_processing_with_auto_compaction_enabled() {
         auto_decisions: [CompactionTriggerDecision::Fire {
             source: CompactionTriggerSource::AutoThreshold,
             reason: "threshold_reached".to_string(),
+            strategy: CompactionStrategy::SlidingSummary,
         }]
         .into_iter()
         .collect(),
@@ -538,6 +542,7 @@ fn manual_and_auto_compaction_failure_surface_is_consistent() {
         auto_decisions: [CompactionTriggerDecision::Fire {
             source: CompactionTriggerSource::AutoThreshold,
             reason: "threshold_reached".to_string(),
+            strategy: CompactionStrategy::SlidingSummary,
         }]
         .into_iter()
         .collect(),
@@ -851,6 +856,7 @@ fn manual_and_auto_compaction_share_single_execution_path() {
         auto_decisions: [CompactionTriggerDecision::Fire {
             source: CompactionTriggerSource::AutoThreshold,
             reason: "threshold_reached".to_string(),
+            strategy: CompactionStrategy::SlidingSummary,
         }]
         .into_iter()
         .collect(),

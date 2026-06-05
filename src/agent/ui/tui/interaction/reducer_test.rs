@@ -2240,32 +2240,102 @@ fn streaming_message_start_reset_on_finalize() {
 }
 
 #[test]
-fn turn_error_stops_spinner_and_adds_transcript_entry() {
+fn turn_error_leaves_ui_in_recoverable_state() {
     let mut state = busy_state_with_clean_transcript();
-    
-    // Emit TurnError event
+
+    // Preconditions: busy state with active prompt
+    assert_eq!(state.phase, UiPhase::Busy);
+    assert!(state.active_prompt_id().is_some());
+    assert!(state.is_active_cycle());
+
+    // Dispatch TurnError
     reduce_with_cancel_controller(
         &mut state,
         ReducerInput::Event(UiEvent::TurnError {
-            message: "Turn failed: Not authenticated. Run `agent auth login`.".to_string(),
+            message: "test error".to_string(),
         }),
         None,
     );
-    
-    // Verify phase is Idle (spinner stopped)
+
+    // All stale state must be cleared (same as Completed handler)
+    assert_eq!(state.active_prompt_id(), None);
     assert_eq!(state.phase, UiPhase::Idle);
-    
-    // Verify error message is in status_line
-    assert!(state.status_line.contains("Not authenticated"));
-    
-    // Verify error is in transcript
+    assert!(!state.is_active_cycle());
+    assert!(!state.abort.pending);
+
+    // Error message preserved in transcript
     let has_error_in_transcript = state
         .transcript_preview
         .iter()
-        .any(|line| line.text().contains("Not authenticated"));
+        .any(|line| line.text().contains("test error"));
     assert!(
         has_error_in_transcript,
         "Expected error message in transcript"
+    );
+
+    // Verify a second prompt submission is accepted (not blocked)
+    for ch in "retry".chars() {
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::InsertChar(ch)),
+            None,
+        );
+    }
+    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
+    assert_eq!(state.phase, UiPhase::Busy);
+    assert!(
+        state
+            .transcript_preview
+            .iter()
+            .any(|line| line.text() == "retry"),
+        "Second prompt should appear in transcript"
+    );
+
+    assert_reducer_invariants(&state);
+}
+
+#[test]
+fn compaction_triggered_clears_status_line() {
+    let mut state = busy_state_with_clean_transcript();
+    state.status_line = "Thinking...".to_string();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::CompactionTriggered {
+            source: "test".into(),
+            summarized_count: 5,
+            kept_recent_count: 3,
+            summary_preview: "...".into(),
+            summary_body: "summary".into(),
+        }),
+        None,
+    );
+
+    assert!(
+        state.status_line.is_empty(),
+        "status_line should be cleared after CompactionTriggered, got: {:?}",
+        state.status_line
+    );
+}
+
+#[test]
+fn compaction_failed_clears_status_line() {
+    let mut state = busy_state_with_clean_transcript();
+    state.status_line = "Thinking...".to_string();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::CompactionFailed {
+            source: "test".into(),
+            message: "err".into(),
+        }),
+        None,
+    );
+
+    assert!(
+        state.status_line.is_empty(),
+        "status_line should be cleared after CompactionFailed, got: {:?}",
+        state.status_line
     );
 }
 

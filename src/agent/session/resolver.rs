@@ -1,7 +1,7 @@
 use nu_protocol::LabeledError;
 
 use crate::agent::protocol::contracts::UiMessageSnapshot;
-use crate::session::{ConversationStore, JsonlConversationStore, Session, SessionStore};
+use crate::session::{ConversationStore, JsonlConversationStore, Session, SessionStore, StoreEntry};
 use rig::completion::Message;
 use rig::completion::message::{AssistantContent, UserContent};
 
@@ -56,15 +56,15 @@ impl SessionResolver for DefaultSessionResolver<'_> {
                     let (session, existed_before_attach) =
                         load_or_create_tui_session(self.store, &id)?;
                     let messages = if input.input_is_nothing && existed_before_attach {
-                        // Load rig messages from JSONL via ConversationStore
+                        // Load store entries (messages + markers) from JSONL
                         let conversation_store =
                             JsonlConversationStore::new(self.store.cache_dir().to_path_buf());
-                        let rig_messages = conversation_store.load(&id).map_err(|e| {
+                        let entries = conversation_store.load_all(&id).map_err(|e| {
                             LabeledError::new(format!("Failed to load messages: {e}"))
                         })?;
 
                         // Convert to UiMessageSnapshots for transcript display
-                        hydrate_transcript_from_rig_messages(&rig_messages).collect()
+                        hydrate_transcript_from_store_entries(&entries).collect()
                     } else {
                         Vec::new()
                     };
@@ -122,84 +122,98 @@ pub(crate) fn resolve_session_request(use_tui: bool, session_id: Option<String>)
     }
 }
 
-/// Converts rig Messages loaded from JSONL into UiMessageSnapshots for TUI transcript hydration.
+/// Converts store entries (messages + compaction markers) into UiMessageSnapshots
+/// for TUI transcript hydration.
 ///
-/// This function maps rig message types to transcript display items:
-/// - `Message::User { content }` with `UserContent::Text` → user transcript item
-/// - `Message::User { content }` with `UserContent::ToolResult` → tool result display
-/// - `Message::Assistant { content }` with `AssistantContent::Text` → assistant text
-/// - `Message::Assistant { content }` with `AssistantContent::ToolCall` → tool call display
-/// - `Message::System { content }` → system/compaction summary display
+/// This function maps store entry types to transcript display items:
+/// - `StoreEntry::Message` → delegated to `hydrate_single_message`
+/// - `StoreEntry::Marker` → compaction snapshot with "summarized=N · kept=M" format
 ///
 /// # Arguments
-/// * `messages` - Slice of rig::completion::Message from ConversationStore::load()
+/// * `entries` - Slice of StoreEntry from ConversationStore::load_all()
 ///
 /// # Returns
 /// Iterator of UiMessageSnapshot ready for transcript hydration
-fn hydrate_transcript_from_rig_messages(
-    messages: &[Message],
+fn hydrate_transcript_from_store_entries(
+    entries: &[StoreEntry],
 ) -> impl Iterator<Item = UiMessageSnapshot> + '_ {
-    messages.iter().flat_map(|msg| {
-        let mut snapshots = Vec::new();
-
-        match msg {
-            Message::User { content } => {
-                for item in content.iter() {
-                    match item {
-                        UserContent::Text(text) => {
-                            snapshots.push(UiMessageSnapshot::new("user", text.text.clone()));
-                        }
-                        UserContent::ToolResult(_) => {
-                            // Tool results are kept in memory/JSONL for the LLM,
-                            // but not shown in the hydrated TUI transcript.
-                            // Only the tool invocation line (⚙) is displayed.
-                        }
-                        _ => {} // Image, etc. — skip
-                    }
-                }
+    entries.iter().flat_map(|entry| match entry {
+        StoreEntry::Message(msg) => hydrate_single_message(msg),
+        StoreEntry::Marker(marker) => {
+            let mut content = format!(
+                "summarized={} · kept={}",
+                marker.summarized_count, marker.kept_recent_count,
+            );
+            if !marker.summary.is_empty() {
+                content.push('\n');
+                content.push_str(&marker.summary);
             }
-            Message::Assistant { content, .. } => {
-                // Process text and tool calls separately
-                for item in content.iter() {
-                    match item {
-                        AssistantContent::Text(text) if !text.text.is_empty() => {
-                            snapshots
-                                .push(UiMessageSnapshot::new("assistant", text.text.clone()));
-                        }
-                        AssistantContent::ToolCall(tool_call) => {
-                            // Tool calls: hydrate as tool invocation with proper format
-                            let args_json = serde_json::to_string(&tool_call.function.arguments)
-                                .unwrap_or_else(|_| "{}".to_string());
+            vec![UiMessageSnapshot::new("compaction", content)]
+        }
+    })
+}
 
-                            // Summarize arguments to match live rendering
-                            let args_summary =
-                                crate::agent::protocol::tool_args::summarize_tool_arguments(
-                                    &args_json,
-                                );
+/// Converts a single rig Message into UiMessageSnapshots.
+///
+/// This function maps rig message types to transcript display items:
+/// - `Message::User { content }` with `UserContent::Text` → user transcript item
+/// - `Message::User { content }` with `UserContent::ToolResult` → skipped (not shown in TUI)
+/// - `Message::Assistant { content }` with `AssistantContent::Text` → assistant text
+/// - `Message::Assistant { content }` with `AssistantContent::ToolCall` → tool call display
+/// - `Message::System { content }` → system/compaction summary display
+fn hydrate_single_message(msg: &Message) -> Vec<UiMessageSnapshot> {
+    let mut snapshots = Vec::new();
 
-                            // Format content to match what start_tool_call produces
-                            let display_content =
-                                format!("tool[{}] args={}", tool_call.function.name, args_summary);
-
-                            snapshots.push(
-                                UiMessageSnapshot::new("tool", display_content).with_tool_details(
-                                    Some(args_json),
-                                    None,
-                                    Some(true),
-                                ),
-                            );
-                        }
-                        _ => {} // Reasoning, Image, etc.
+    match msg {
+        Message::User { content } => {
+            for item in content.iter() {
+                match item {
+                    UserContent::Text(text) => {
+                        snapshots.push(UiMessageSnapshot::new("user", text.text.clone()));
                     }
+                    UserContent::ToolResult(_) => {
+                        // Tool results are kept in memory/JSONL for the LLM,
+                        // but not shown in the hydrated TUI transcript.
+                        // Only the tool invocation line is displayed.
+                    }
+                    _ => {} // Image, etc. — skip
                 }
-            }
-            Message::System { content } => {
-                snapshots.push(UiMessageSnapshot::new("system", content.clone()));
             }
         }
+        Message::Assistant { content, .. } => {
+            for item in content.iter() {
+                match item {
+                    AssistantContent::Text(text) if !text.text.is_empty() => {
+                        snapshots.push(UiMessageSnapshot::new("assistant", text.text.clone()));
+                    }
+                    AssistantContent::ToolCall(tool_call) => {
+                        let args_json = serde_json::to_string(&tool_call.function.arguments)
+                            .unwrap_or_else(|_| "{}".to_string());
 
-        snapshots
-    })
+                        let args_summary =
+                            crate::agent::protocol::tool_args::summarize_tool_arguments(&args_json);
+
+                        let display_content =
+                            format!("tool[{}] args={}", tool_call.function.name, args_summary);
+
+                        snapshots.push(
+                            UiMessageSnapshot::new("tool", display_content).with_tool_details(
+                                Some(args_json),
+                                None,
+                                Some(true),
+                            ),
+                        );
+                    }
+                    _ => {} // Reasoning, Image, etc.
+                }
+            }
+        }
+        Message::System { content } => {
+            snapshots.push(UiMessageSnapshot::new("system", content.clone()));
+        }
+    }
+
+    snapshots
 }
 
 fn load_or_create_tui_session(

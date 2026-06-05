@@ -4,7 +4,8 @@ use nu_protocol::{LabeledError, Value};
 use crate::agent::protocol::preamble::{
     PreambleDefaults, UserPreambleInput, classify_model_family, resolve_preamble,
 };
-use crate::config::{Config, PluginConfig};
+use crate::config::{CompactionConfig, Config, PluginConfig};
+use crate::session::SessionConfig;
 
 /// Extract configuration from command-line flags.
 ///
@@ -264,4 +265,51 @@ pub(crate) fn apply_persona_model(
     config.provider_impl = None;
     log::debug!("apply_persona_model: overriding to provider={provider}, model={model}");
     true
+}
+
+/// Merge two `CompactionConfig`s with `override_cfg` taking precedence.
+///
+/// For each field, if `override_cfg` has `Some`, use it; otherwise keep `base`.
+/// Both inputs are `Option<&CompactionConfig>` — `None` means "no config from this source".
+pub(crate) fn merge_compaction_configs(
+    base: Option<&CompactionConfig>,
+    override_cfg: &CompactionConfig,
+) -> CompactionConfig {
+    let base = base.cloned().unwrap_or_default();
+    CompactionConfig {
+        strategy: override_cfg.strategy.or(base.strategy),
+        threshold: override_cfg.threshold.or(base.threshold),
+        keep_recent: override_cfg.keep_recent.or(base.keep_recent),
+        token_budget: override_cfg.token_budget.or(base.token_budget),
+        proactive_threshold_pct: override_cfg
+            .proactive_threshold_pct
+            .or(base.proactive_threshold_pct),
+        fallback_strategies: override_cfg
+            .fallback_strategies
+            .clone()
+            .or(base.fallback_strategies),
+    }
+}
+
+/// Build a `SessionConfig` from a merged `CompactionConfig`.
+///
+/// Applies `CompactionConfig` field overrides on top of `SessionConfig::default()`.
+/// Fields that are `None` in the config use the `SessionConfig` defaults.
+pub(crate) fn build_session_config(merged: &CompactionConfig) -> SessionConfig {
+    let mut config = SessionConfig::default();
+
+    if let Some(strategy) = merged.strategy {
+        config.compaction_strategy = strategy;
+    }
+    if let Some(threshold) = merged.threshold {
+        config.compaction_threshold = threshold;
+    }
+    if let Some(keep_recent) = merged.keep_recent {
+        config.keep_recent = keep_recent;
+    }
+    if let Some(token_budget) = merged.token_budget {
+        config.token_budget = Some(token_budget);
+    }
+
+    config
 }

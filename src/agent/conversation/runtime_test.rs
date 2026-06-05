@@ -488,11 +488,11 @@ fn evaluate_auto_compaction_uses_memory_message_count_not_session_messages() {
     // instead of the stale session.messages().len()
 
     // We can't easily construct a full runtime, but we can verify the logic
-    // by checking that the ThresholdCompactionPolicy receives the correct count
+    // by checking that the TwoTierCompactionPolicy receives the correct count
 
-    use crate::agent::protocol::compaction::{CompactionTriggerState, ThresholdCompactionPolicy};
+    use crate::agent::protocol::compaction::{CompactionTriggerState, TwoTierCompactionPolicy};
 
-    let policy = ThresholdCompactionPolicy::new(10, 2, 1);
+    let policy = TwoTierCompactionPolicy::new(10, 2, 1);
     let mut state = CompactionTriggerState::default();
 
     // Simulate memory_message_count = 12 (should trigger compaction)
@@ -744,4 +744,475 @@ fn clear_session_resets_message_count() {
     let message_count = 0;
     
     assert_eq!(message_count, 0, "message count should be reset to 0 after clear_session");
+}
+
+// ========================================================================
+// Concurrent compaction guard tests
+// ========================================================================
+
+#[test]
+fn concurrent_compaction_guard_prevents_double_entry() {
+    // When the compacting flag is already set, execute_compaction_event_shared
+    // (the core logic path) should be skippable. We test the AtomicBool +
+    // CompactionGuard pattern in isolation since AgentConversationRuntime
+    // is too expensive to construct in unit tests.
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    let compacting = Arc::new(AtomicBool::new(false));
+
+    // Simulate first compaction acquiring the lock
+    assert!(
+        compacting
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok(),
+        "first compaction should acquire the lock"
+    );
+    let _guard = super::CompactionGuard(Arc::clone(&compacting));
+
+    // Simulate second compaction attempt — should fail
+    let second_attempt =
+        compacting.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed);
+    assert!(
+        second_attempt.is_err(),
+        "second concurrent compaction should be rejected"
+    );
+}
+
+#[test]
+fn compaction_guard_resets_on_completion() {
+    // After the CompactionGuard is dropped, the flag should be false
+    // so subsequent compactions can proceed.
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    let compacting = Arc::new(AtomicBool::new(false));
+
+    // Simulate a compaction cycle
+    {
+        assert!(
+            compacting
+                .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+        );
+        let _guard = super::CompactionGuard(Arc::clone(&compacting));
+
+        // Flag should be true during compaction
+        assert!(compacting.load(Ordering::Relaxed), "flag should be true during compaction");
+    }
+    // _guard dropped here
+
+    // Flag should be reset
+    assert!(
+        !compacting.load(Ordering::Relaxed),
+        "flag should be false after guard drop"
+    );
+
+    // Subsequent compaction should succeed
+    assert!(
+        compacting
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok(),
+        "subsequent compaction should succeed after guard drop"
+    );
+}
+
+#[test]
+fn compaction_guard_resets_on_simulated_error() {
+    // Even if the compaction "body" returns an error, the RAII guard
+    // must reset the flag so future compactions are not permanently blocked.
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    let compacting = Arc::new(AtomicBool::new(false));
+
+    let result: Result<(), String> = {
+        assert!(
+            compacting
+                .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+        );
+        let _guard = super::CompactionGuard(Arc::clone(&compacting));
+
+        // Simulate compaction failure
+        Err("disk full".to_string())
+        // _guard dropped here despite error
+    };
+
+    assert!(result.is_err());
+    assert!(
+        !compacting.load(Ordering::Relaxed),
+        "flag must be reset even after error"
+    );
+}
+
+#[test]
+fn runtime_struct_has_compacting_field() {
+    // Compile-time check that the compacting field exists with correct type
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+
+    fn _assert_field_exists(_flag: &Arc<AtomicBool>) {}
+
+    let _type_check: fn(&AgentConversationRuntime) = |r| {
+        _assert_field_exists(&r.compacting);
+    };
+}
+
+// ========================================================================
+// Memory hydration guard tests
+// ========================================================================
+
+#[test]
+fn runtime_struct_has_memory_hydrated_field() {
+    // Compile-time check that the memory_hydrated field exists with correct type
+    let _type_check: fn(&AgentConversationRuntime) = |r| {
+        let _hydrated: bool = r.memory_hydrated;
+    };
+}
+
+#[test]
+fn hydration_guard_prevents_duplicate_memory_append() {
+    // Tests the guard pattern used by ensure_memory_hydrated:
+    // a bool guard must prevent double-appending stored messages to memory.
+    use rig::completion::Message;
+    use rig::memory::{ConversationMemory, InMemoryConversationMemory};
+
+    use crate::session::{ConversationStore, JsonlConversationStore};
+
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let memory = InMemoryConversationMemory::new();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
+
+    // Store 2 messages on disk
+    let messages: Vec<Message> = (0..2)
+        .map(|i| Message::user(format!("msg {}", i)))
+        .collect();
+    store.append("s1", &messages).unwrap();
+
+    let mut hydrated = false;
+
+    // First hydration — messages enter memory
+    if !hydrated {
+        let loaded = store.load("s1").unwrap();
+        if !loaded.is_empty() {
+            runtime
+                .block_on(memory.append("s1", loaded))
+                .unwrap();
+        }
+        hydrated = true;
+    }
+
+    let after_first = runtime.block_on(memory.load("s1")).unwrap();
+    assert_eq!(after_first.len(), 2);
+
+    // Second hydration — guard prevents duplicate append
+    if !hydrated {
+        let loaded = store.load("s1").unwrap();
+        if !loaded.is_empty() {
+            runtime
+                .block_on(memory.append("s1", loaded))
+                .unwrap();
+        }
+    }
+    // Guard should still be true from first hydration
+    assert!(hydrated, "guard should remain true");
+
+    let after_second = runtime.block_on(memory.load("s1")).unwrap();
+    assert_eq!(
+        after_second.len(),
+        2,
+        "Guard must prevent duplicate hydration"
+    );
+}
+
+#[test]
+fn hydration_without_guard_causes_duplicates() {
+    // Proves the bug: without a guard, calling hydration twice duplicates
+    // messages in memory — exactly the problem ensure_memory_hydrated prevents.
+    use rig::completion::Message;
+    use rig::memory::{ConversationMemory, InMemoryConversationMemory};
+
+    use crate::session::{ConversationStore, JsonlConversationStore};
+
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let memory = InMemoryConversationMemory::new();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
+
+    let messages: Vec<Message> = (0..3)
+        .map(|i| Message::user(format!("msg {}", i)))
+        .collect();
+    store.append("s1", &messages).unwrap();
+
+    // Load-and-append WITHOUT guard — twice
+    let loaded1 = store.load("s1").unwrap();
+    runtime
+        .block_on(memory.append("s1", loaded1))
+        .unwrap();
+
+    let loaded2 = store.load("s1").unwrap();
+    runtime
+        .block_on(memory.append("s1", loaded2))
+        .unwrap();
+
+    let count = runtime.block_on(memory.load("s1")).unwrap().len();
+    assert_eq!(
+        count, 6,
+        "Without guard, messages are duplicated (3 * 2 = 6)"
+    );
+}
+
+// ========================================================================
+// Memory hydration — LLM context extraction tests
+// ========================================================================
+
+#[test]
+fn hydration_loads_llm_context_not_full_history() {
+    // Store has 20 messages + 1 marker(kept=5). After hydration, memory has
+    // 6 messages (summary + 5 kept). memory_message_count == 6.
+    use rig::completion::Message;
+    use rig::memory::{ConversationMemory, InMemoryConversationMemory};
+
+    use crate::session::{
+        CompactionMarker, ConversationStore, JsonlConversationStore, extract_llm_context,
+    };
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let memory = InMemoryConversationMemory::new();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
+
+    // Store 20 messages
+    let messages: Vec<Message> = (0..20)
+        .map(|i| Message::user(format!("msg {}", i)))
+        .collect();
+    store.append("s1", &messages).unwrap();
+
+    // Append a compaction marker (kept=5, summarized 15)
+    let marker = CompactionMarker::new(
+        "Summary of older messages".to_string(),
+        5,
+        15,
+        "summarize_and_keep_recent",
+    );
+    store.append_marker("s1", &marker).unwrap();
+
+    // --- New hydration pattern ---
+    let entries = store.load_all("s1").unwrap();
+    let llm_context = extract_llm_context(&entries);
+
+    if !llm_context.is_empty() {
+        rt.block_on(memory.append("s1", llm_context.clone()))
+            .unwrap();
+    }
+    let memory_message_count = llm_context.len();
+
+    // Expect: 1 summary system message + 5 kept recent = 6
+    assert_eq!(
+        memory_message_count, 6,
+        "Should have summary + 5 kept messages, not all 20"
+    );
+    let in_memory = rt.block_on(memory.load("s1")).unwrap();
+    assert_eq!(in_memory.len(), 6);
+}
+
+#[test]
+fn hydration_no_markers_loads_all() {
+    // Store has 15 messages, no markers. Memory has 15. memory_message_count == 15.
+    use rig::completion::Message;
+    use rig::memory::{ConversationMemory, InMemoryConversationMemory};
+
+    use crate::session::{
+        ConversationStore, JsonlConversationStore, extract_llm_context,
+    };
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let memory = InMemoryConversationMemory::new();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
+
+    let messages: Vec<Message> = (0..15)
+        .map(|i| Message::user(format!("msg {}", i)))
+        .collect();
+    store.append("s1", &messages).unwrap();
+
+    let entries = store.load_all("s1").unwrap();
+    let llm_context = extract_llm_context(&entries);
+
+    if !llm_context.is_empty() {
+        rt.block_on(memory.append("s1", llm_context.clone()))
+            .unwrap();
+    }
+    let memory_message_count = llm_context.len();
+
+    assert_eq!(
+        memory_message_count, 15,
+        "Without markers, all messages should be loaded"
+    );
+    let in_memory = rt.block_on(memory.load("s1")).unwrap();
+    assert_eq!(in_memory.len(), 15);
+}
+
+#[test]
+fn hydration_multiple_markers_uses_latest() {
+    // Store has msgs + marker1 + msgs + marker2(kept=3). Memory uses
+    // marker2's context only.
+    use rig::completion::Message;
+    use rig::memory::{ConversationMemory, InMemoryConversationMemory};
+
+    use crate::session::{
+        CompactionMarker, ConversationStore, JsonlConversationStore, extract_llm_context,
+    };
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let memory = InMemoryConversationMemory::new();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
+
+    // 10 messages
+    let msgs1: Vec<Message> = (0..10)
+        .map(|i| Message::user(format!("batch1 msg {}", i)))
+        .collect();
+    store.append("s1", &msgs1).unwrap();
+
+    // Marker 1 (kept=2)
+    let marker1 = CompactionMarker::new("First summary".to_string(), 2, 8, "summarize_and_keep_recent");
+    store.append_marker("s1", &marker1).unwrap();
+
+    // 5 more messages
+    let msgs2: Vec<Message> = (0..5)
+        .map(|i| Message::user(format!("batch2 msg {}", i)))
+        .collect();
+    store.append("s1", &msgs2).unwrap();
+
+    // Marker 2 (kept=3)
+    let marker2 = CompactionMarker::new("Second summary".to_string(), 3, 12, "summarize_and_keep_recent");
+    store.append_marker("s1", &marker2).unwrap();
+
+    let entries = store.load_all("s1").unwrap();
+    let llm_context = extract_llm_context(&entries);
+
+    if !llm_context.is_empty() {
+        rt.block_on(memory.append("s1", llm_context.clone()))
+            .unwrap();
+    }
+
+    // marker2 at the end: summary("Second summary") + 3 kept messages before it + 0 post-marker
+    // Expect: 1 summary + 3 kept = 4
+    assert_eq!(
+        llm_context.len(),
+        4,
+        "Should use latest marker: 1 summary + 3 kept"
+    );
+    let in_memory = rt.block_on(memory.load("s1")).unwrap();
+    assert_eq!(in_memory.len(), 4);
+}
+
+#[test]
+fn compaction_count_derived_from_markers() {
+    // Store has 3 markers. After hydration, compaction_count == 3.
+    use rig::completion::Message;
+
+    use crate::session::{
+        CompactionMarker, ConversationStore, JsonlConversationStore, StoreEntry,
+    };
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
+
+    // Interleave messages and markers
+    let msgs: Vec<Message> = (0..5)
+        .map(|i| Message::user(format!("msg {}", i)))
+        .collect();
+    store.append("s1", &msgs).unwrap();
+
+    let m1 = CompactionMarker::new("s1".to_string(), 2, 3, "summarize_and_keep_recent");
+    store.append_marker("s1", &m1).unwrap();
+
+    let msgs2: Vec<Message> = (0..3)
+        .map(|i| Message::user(format!("msg2 {}", i)))
+        .collect();
+    store.append("s1", &msgs2).unwrap();
+
+    let m2 = CompactionMarker::new("s2".to_string(), 1, 2, "summarize_and_keep_recent");
+    store.append_marker("s1", &m2).unwrap();
+
+    let msgs3: Vec<Message> = (0..2)
+        .map(|i| Message::user(format!("msg3 {}", i)))
+        .collect();
+    store.append("s1", &msgs3).unwrap();
+
+    let m3 = CompactionMarker::new("s3".to_string(), 1, 1, "summarize_and_keep_recent");
+    store.append_marker("s1", &m3).unwrap();
+
+    let entries = store.load_all("s1").unwrap();
+
+    // Derive compaction_count from markers
+    let marker_count = entries
+        .iter()
+        .filter(|e| matches!(e, StoreEntry::Marker(_)))
+        .count();
+
+    assert_eq!(marker_count, 3, "Should count all 3 markers");
+}
+
+#[test]
+fn hydration_guard_still_prevents_duplicates() {
+    // Ensure the memory_hydrated guard still works with the new code path
+    // (load_all + extract_llm_context).
+    use rig::completion::Message;
+    use rig::memory::{ConversationMemory, InMemoryConversationMemory};
+
+    use crate::session::{
+        CompactionMarker, ConversationStore, JsonlConversationStore, extract_llm_context,
+    };
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let memory = InMemoryConversationMemory::new();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
+
+    // Store messages + marker
+    let messages: Vec<Message> = (0..10)
+        .map(|i| Message::user(format!("msg {}", i)))
+        .collect();
+    store.append("s1", &messages).unwrap();
+
+    let marker = CompactionMarker::new("Summary".to_string(), 3, 7, "summarize_and_keep_recent");
+    store.append_marker("s1", &marker).unwrap();
+
+    let mut hydrated = false;
+
+    // First hydration
+    if !hydrated {
+        let entries = store.load_all("s1").unwrap();
+        let llm_context = extract_llm_context(&entries);
+        if !llm_context.is_empty() {
+            rt.block_on(memory.append("s1", llm_context)).unwrap();
+        }
+        hydrated = true;
+    }
+
+    let after_first = rt.block_on(memory.load("s1")).unwrap();
+    // summary + 3 kept = 4
+    assert_eq!(after_first.len(), 4);
+
+    // Second hydration — guard prevents duplicate append
+    if !hydrated {
+        let entries = store.load_all("s1").unwrap();
+        let llm_context = extract_llm_context(&entries);
+        if !llm_context.is_empty() {
+            rt.block_on(memory.append("s1", llm_context)).unwrap();
+        }
+    }
+
+    assert!(hydrated, "guard should remain true");
+    let after_second = rt.block_on(memory.load("s1")).unwrap();
+    assert_eq!(
+        after_second.len(),
+        4,
+        "Guard must prevent duplicate hydration with new code path"
+    );
 }

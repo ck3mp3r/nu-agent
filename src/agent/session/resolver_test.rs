@@ -1,4 +1,5 @@
 use crate::agent::protocol::contracts::UiMessageSnapshot;
+use crate::session::{CompactionMarker, StoreEntry};
 use rig::completion::Message;
 use rig::completion::message::{
     AssistantContent, Text, ToolCall, ToolFunction, ToolResultContent, UserContent,
@@ -7,72 +8,11 @@ use rig::one_or_many::OneOrMany;
 use serde_json::json;
 
 /// Helper function to convert rig messages to UI snapshots for testing.
-/// This mirrors the private function in resolver.rs
+/// Delegates to the actual hydrate_single_message function in resolver.rs.
 fn convert_rig_messages_to_snapshots(messages: &[Message]) -> Vec<UiMessageSnapshot> {
     messages
         .iter()
-        .flat_map(|msg| {
-            let mut snapshots = Vec::new();
-
-            match msg {
-                Message::User { content } => {
-                    for item in content.iter() {
-                        match item {
-                            UserContent::Text(text) => {
-                                snapshots.push(UiMessageSnapshot::new("user", text.text.clone()));
-                            }
-                            UserContent::ToolResult(_) => {
-                                // Tool results are kept in memory/JSONL for the LLM,
-                                // but not shown in the hydrated TUI transcript.
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                Message::Assistant { content, .. } => {
-                    for item in content.iter() {
-                        match item {
-                            AssistantContent::Text(text)
-                                if !text.text.is_empty() => {
-                                    snapshots.push(UiMessageSnapshot::new(
-                                        "assistant",
-                                        text.text.clone(),
-                                    ));
-                            }
-                            AssistantContent::ToolCall(tool_call) => {
-                                // Tool calls: hydrate as tool invocation with proper format
-                                let args_json =
-                                    serde_json::to_string(&tool_call.function.arguments)
-                                        .unwrap_or_else(|_| "{}".to_string());
-
-                                // Summarize arguments to match live rendering
-                                let args_summary =
-                                    crate::agent::protocol::tool_args::summarize_tool_arguments(
-                                        &args_json,
-                                    );
-
-                                // Format content to match what start_tool_call produces
-                                let display_content = format!(
-                                    "tool[{}] args={}",
-                                    tool_call.function.name, args_summary
-                                );
-
-                                snapshots.push(
-                                    UiMessageSnapshot::new("tool", display_content)
-                                        .with_tool_details(Some(args_json), None, Some(true)),
-                                );
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                Message::System { content } => {
-                    snapshots.push(UiMessageSnapshot::new("system", content.clone()));
-                }
-            }
-
-            snapshots
-        })
+        .flat_map(super::hydrate_single_message)
         .collect()
 }
 
@@ -314,4 +254,146 @@ fn test_tool_call_argument_summarization() {
     // But raw arguments should contain full JSON
     let args = snapshots[0].tool_arguments().unwrap();
     assert!(args.contains(&long_content));
+}
+
+// --- hydrate_transcript_from_store_entries tests ---
+
+#[test]
+fn hydrate_store_entries_includes_messages() {
+    let entries = vec![
+        StoreEntry::Message(Message::User {
+            content: OneOrMany::one(UserContent::Text(Text {
+                text: "Hello".to_string(),
+            })),
+        }),
+        StoreEntry::Message(Message::Assistant {
+            id: None,
+            content: OneOrMany::one(AssistantContent::Text(Text {
+                text: "Hi there".to_string(),
+            })),
+        }),
+    ];
+
+    let snapshots: Vec<_> = super::hydrate_transcript_from_store_entries(&entries).collect();
+
+    assert_eq!(snapshots.len(), 2);
+    assert_eq!(snapshots[0].role(), "user");
+    assert_eq!(snapshots[0].content(), "Hello");
+    assert_eq!(snapshots[1].role(), "assistant");
+    assert_eq!(snapshots[1].content(), "Hi there");
+}
+
+#[test]
+fn hydrate_store_entries_includes_markers() {
+    let entries = vec![
+        StoreEntry::Message(Message::User {
+            content: OneOrMany::one(UserContent::Text(Text {
+                text: "Hello".to_string(),
+            })),
+        }),
+        StoreEntry::Marker(CompactionMarker::new(
+            "Summary of older messages".to_string(),
+            3,
+            10,
+            "SummarizeOldest",
+        )),
+        StoreEntry::Message(Message::Assistant {
+            id: None,
+            content: OneOrMany::one(AssistantContent::Text(Text {
+                text: "Response after compaction".to_string(),
+            })),
+        }),
+    ];
+
+    let snapshots: Vec<_> = super::hydrate_transcript_from_store_entries(&entries).collect();
+
+    assert_eq!(snapshots.len(), 3);
+    assert_eq!(snapshots[0].role(), "user");
+    assert_eq!(snapshots[1].role(), "compaction");
+    assert_eq!(snapshots[2].role(), "assistant");
+}
+
+#[test]
+fn hydrate_store_entries_marker_format() {
+    let entries = vec![StoreEntry::Marker(CompactionMarker::new(
+        "The user asked about weather and got a response.".to_string(),
+        3,
+        10,
+        "SummarizeOldest",
+    ))];
+
+    let snapshots: Vec<_> = super::hydrate_transcript_from_store_entries(&entries).collect();
+
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].role(), "compaction");
+
+    let content = snapshots[0].content();
+    assert!(
+        content.starts_with("summarized=10 · kept=3"),
+        "Expected content to start with 'summarized=10 · kept=3', got: {content}"
+    );
+    assert!(
+        content.contains("The user asked about weather and got a response."),
+        "Expected content to contain summary body, got: {content}"
+    );
+}
+
+#[test]
+fn hydrate_store_entries_preserves_order() {
+    let entries = vec![
+        StoreEntry::Message(Message::User {
+            content: OneOrMany::one(UserContent::Text(Text {
+                text: "First".to_string(),
+            })),
+        }),
+        StoreEntry::Message(Message::Assistant {
+            id: None,
+            content: OneOrMany::one(AssistantContent::Text(Text {
+                text: "Second".to_string(),
+            })),
+        }),
+        StoreEntry::Marker(CompactionMarker::new(
+            "compaction summary".to_string(),
+            2,
+            5,
+            "SummarizeOldest",
+        )),
+        StoreEntry::Message(Message::User {
+            content: OneOrMany::one(UserContent::Text(Text {
+                text: "Third".to_string(),
+            })),
+        }),
+    ];
+
+    let snapshots: Vec<_> = super::hydrate_transcript_from_store_entries(&entries).collect();
+
+    assert_eq!(snapshots.len(), 4);
+    assert_eq!(snapshots[0].role(), "user");
+    assert_eq!(snapshots[0].content(), "First");
+    assert_eq!(snapshots[1].role(), "assistant");
+    assert_eq!(snapshots[1].content(), "Second");
+    assert_eq!(snapshots[2].role(), "compaction");
+    assert_eq!(snapshots[3].role(), "user");
+    assert_eq!(snapshots[3].content(), "Third");
+}
+
+#[test]
+fn hydrate_store_entries_empty_summary_marker() {
+    let entries = vec![StoreEntry::Marker(CompactionMarker::new(
+        String::new(),
+        5,
+        8,
+        "SlidingWindow",
+    ))];
+
+    let snapshots: Vec<_> = super::hydrate_transcript_from_store_entries(&entries).collect();
+
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].role(), "compaction");
+
+    let content = snapshots[0].content();
+    assert_eq!(
+        content, "summarized=8 · kept=5",
+        "Empty summary should render stats only, got: {content}"
+    );
 }

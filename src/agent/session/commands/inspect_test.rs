@@ -106,6 +106,7 @@ fn session_inspect_reports_canonical_sliding_summary_mode() {
         compaction_threshold: 4,
         compaction_strategy: crate::session::CompactionStrategy::SlidingSummary,
         keep_recent: 2,
+        token_budget: None,
     });
 
     assert_eq!(
