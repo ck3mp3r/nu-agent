@@ -1001,6 +1001,9 @@ impl AppState {
         {
             return;
         }
+        if !self.transcript_preview.is_empty() {
+            self.push_transcript_line(TranscriptRole::Separator, String::new());
+        }
         self.push_transcript_line(TranscriptRole::System, "Compaction".to_string());
         let transcript_line_index = self.transcript_preview.len().saturating_sub(1);
         self.compaction_items.push(CompactionLine {
