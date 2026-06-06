@@ -237,6 +237,7 @@ pub struct AppState {
     clipboard_request: Option<String>,
     pub pre_displayed_tool_keys: std::collections::HashSet<String>,
     pub(crate) streaming_message_start: Option<usize>,
+    pub(crate) compaction_streaming_start: Option<usize>,
     #[cfg(test)]
     assistant_projection_cache_misses: usize,
 }
@@ -299,6 +300,7 @@ impl PartialEq for AppState {
             && self.clipboard_request == other.clipboard_request
             && self.pre_displayed_tool_keys == other.pre_displayed_tool_keys
             && self.streaming_message_start == other.streaming_message_start
+            && self.compaction_streaming_start == other.compaction_streaming_start
     }
 }
 
@@ -360,6 +362,7 @@ impl Default for AppState {
             clipboard_request: None,
             pre_displayed_tool_keys: std::collections::HashSet::new(),
             streaming_message_start: None,
+            compaction_streaming_start: None,
             #[cfg(test)]
             assistant_projection_cache_misses: 0,
         }

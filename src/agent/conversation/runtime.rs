@@ -1010,6 +1010,7 @@ impl AgentConversationRuntime {
                         $model.clone(),
                         mode,
                         ui,
+                        &source_label,
                     ))
                 })
             }};
@@ -1111,6 +1112,7 @@ async fn execute_compaction<M, S, U>(
     model: M,
     mode: CompactionInvocationMode,
     ui: &mut U,
+    source: &str,
 ) -> Result<Option<CompactionOutcome>, String>
 where
     M: rig::completion::CompletionModel + Clone + 'static,
@@ -1138,10 +1140,12 @@ where
     }
 
     // Perform compaction with summarizer closure
+    let source_owned = source.to_string();
     let summarizer = |old_messages: &[rig::completion::Message]| {
         let messages = old_messages.to_vec();
         let model_clone = model.clone();
-        async move { summarize_messages(model_clone, ui, &messages).await }
+        let src = source_owned.clone();
+        async move { summarize_messages(model_clone, ui, &messages, &src).await }
     };
 
     let outcome = session
@@ -1218,15 +1222,18 @@ fn format_messages_for_summary(messages: &[rig::completion::Message]) -> String 
 /// Summarize old rig messages with LLM.
 ///
 /// Formats rig messages, creates summarization prompt, and calls rig agent completion.
+/// Uses streaming API to emit progressive chunks via `UiEvent::CompactionSummaryChunk`.
 async fn summarize_messages<M, U>(
     model: M,
     ui: &mut U,
     old_messages: &[rig::completion::Message],
+    source: &str,
 ) -> std::io::Result<String>
 where
     M: rig::completion::CompletionModel + Clone + 'static,
     U: ProgressUi,
 {
+    use futures::StreamExt;
     use rig::completion::Completion;
 
     let history = format_messages_for_summary(old_messages);
@@ -1238,52 +1245,51 @@ where
     // Build rig agent from model
     let agent = rig::agent::AgentBuilder::new(model).build();
 
-    // Create the completion future
-    let call_result = agent
+    let stream_result = agent
         .completion(&prompt_text, Vec::<rig::completion::Message>::new())
         .await
         .map_err(|e| std::io::Error::other(format!("{}", e)))?
         .tools(vec![])
-        .send();
+        .stream()
+        .await
+        .map_err(|e| std::io::Error::other(format!("{}", e)))?;
 
-    let mut call_fut = std::pin::pin!(call_result);
+    let mut stream = std::pin::pin!(stream_result);
+    let mut aggregated = String::new();
 
-    // Cancellation loop - poll completion future with periodic UI ticks
     loop {
         if ui.take_cancel_requested() {
             return Err(std::io::Error::other("Compaction cancelled by user"));
         }
 
-        enum CompletionProgress<R> {
-            Tick,
-            Done(
-                Box<Result<rig::completion::CompletionResponse<R>, rig::completion::CompletionError>>,
-            ),
-        }
-
-        match tokio::select! {
-            response = &mut call_fut => CompletionProgress::Done(Box::new(response)),
-            _ = tokio::time::sleep(Duration::from_millis(80)) => CompletionProgress::Tick,
-        } {
-            CompletionProgress::Tick => ui.emit(&UiEvent::Tick),
-            CompletionProgress::Done(boxed_result) => {
-                let result = *boxed_result;
-                // Extract text from CompletionResponse
-                return result
-                    .map(|response| {
-                        use rig::completion::message::AssistantContent;
-                        let mut text_parts = Vec::new();
-                        for content in response.choice {
-                            if let AssistantContent::Text(t) = content {
-                                text_parts.push(t.to_string());
-                            }
+        tokio::select! {
+            item = stream.next() => {
+                match item {
+                    Some(Ok(chunk)) => {
+                        if let rig::streaming::StreamedAssistantContent::Text(delta) = chunk {
+                            aggregated.push_str(&delta.text);
+                            ui.emit(&UiEvent::CompactionSummaryChunk {
+                                source: source.to_string(),
+                                delta: delta.text,
+                                aggregated: aggregated.clone(),
+                            });
                         }
-                        text_parts.join("\n")
-                    })
-                    .map_err(|_| std::io::Error::other(COMPACTION_FAILURE_WARNING));
+                    }
+                    Some(Err(_)) => {
+                        return Err(std::io::Error::other(COMPACTION_FAILURE_WARNING));
+                    }
+                    None => {
+                        break;
+                    }
+                }
+            }
+            _ = tokio::time::sleep(Duration::from_millis(80)) => {
+                ui.emit(&UiEvent::Tick);
             }
         }
     }
+
+    Ok(aggregated)
 }
 
 #[cfg(test)]

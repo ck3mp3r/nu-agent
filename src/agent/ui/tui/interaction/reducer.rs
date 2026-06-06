@@ -383,6 +383,9 @@ fn reduce_ui_event(state: &mut AppState, event: UiEvent) {
         UiEvent::CompactionStarted { source } => {
             state.start_compaction_block(&source);
         }
+        UiEvent::CompactionSummaryChunk { source, aggregated, .. } => {
+            handle_compaction_summary_chunk(state, &source, aggregated);
+        }
         UiEvent::CompactionTriggered {
             source,
             summarized_count: _,
@@ -398,6 +401,11 @@ fn reduce_ui_event(state: &mut AppState, event: UiEvent) {
                 summary_body
             };
 
+            // Clear streaming state before final render pass
+            if let Some(start) = state.compaction_streaming_start {
+                state.transcript_preview.truncate(start);
+            }
+
             for line in state.project_assistant_markdown_lines(&body) {
                 let text = markdown::rendered_line_to_plain_text(&line);
                 if text.trim().is_empty() {
@@ -405,6 +413,7 @@ fn reduce_ui_event(state: &mut AppState, event: UiEvent) {
                 }
                 state.push_transcript_rendered_line(TranscriptRole::Compaction, line);
             }
+            state.compaction_streaming_start = None;
             state.status_line.clear();
         }
         UiEvent::CompactionFailed { source, message } => {
@@ -670,6 +679,37 @@ fn handle_assistant_message(state: &mut AppState, text: String) {
             continue;
         }
         state.push_transcript_rendered_line(TranscriptRole::Assistant, line);
+    }
+}
+
+fn handle_compaction_summary_chunk(state: &mut AppState, source: &str, text: String) {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+
+    // Ensure compaction block is started (idempotent)
+    state.start_compaction_block(source);
+
+    // Track streaming start position
+    if state.compaction_streaming_start.is_none() {
+        state.compaction_streaming_start = Some(state.transcript_preview.len());
+    }
+
+    // Remove previous rendering of this streaming message
+    if let Some(start) = state.compaction_streaming_start {
+        state.transcript_preview.truncate(start);
+    }
+
+    // Re-project the full accumulated text through markdown
+    let projected_lines = state.project_assistant_markdown_lines(trimmed);
+    state.scroll_transcript_to_bottom();
+    for line in projected_lines {
+        let text = markdown::rendered_line_to_plain_text(&line);
+        if text.trim().is_empty() {
+            continue;
+        }
+        state.push_transcript_rendered_line(TranscriptRole::Compaction, line);
     }
 }
 

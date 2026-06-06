@@ -59,6 +59,11 @@ fn ui_event_contract_exposes_required_variants() {
         UiEvent::CompactionStarted {
             source: "auto_threshold".to_string(),
         },
+        UiEvent::CompactionSummaryChunk {
+            source: "auto_threshold".to_string(),
+            delta: "chunk".to_string(),
+            aggregated: "chunk".to_string(),
+        },
         UiEvent::CompactionTriggered {
             source: "auto_threshold".to_string(),
             summarized_count: 3,
@@ -76,7 +81,7 @@ fn ui_event_contract_exposes_required_variants() {
         UiEvent::Completed { tool_calls: 1 },
     ];
 
-    assert_eq!(events.len(), 15);
+    assert_eq!(events.len(), 16);
 }
 
 #[test]

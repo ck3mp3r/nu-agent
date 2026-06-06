@@ -225,6 +225,7 @@ impl<W: Write> StderrUiRenderer<W> {
                     Some(format!("compaction: source={source} status=running"))
                 }
             }
+            UiEvent::CompactionSummaryChunk { .. } => None,
             UiEvent::CompactionTriggered {
                 source,
                 summarized_count,

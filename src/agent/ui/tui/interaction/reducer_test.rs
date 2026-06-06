@@ -2337,3 +2337,191 @@ fn compaction_failed_clears_status_line() {
     );
 }
 
+#[test]
+fn compaction_streaming_renders_progressively() {
+    let mut state = AppState::default();
+
+    // Start compaction block
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::CompactionStarted {
+            source: "auto".to_string(),
+        }),
+        None,
+    );
+
+    // Stream 3 chunks with growing aggregated text
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::CompactionSummaryChunk {
+            source: "auto".to_string(),
+            delta: "Hello".to_string(),
+            aggregated: "Hello".to_string(),
+        }),
+        None,
+    );
+    let after_chunk1 = state.transcript_preview.len();
+    assert!(after_chunk1 > 1, "should have header + content");
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::CompactionSummaryChunk {
+            source: "auto".to_string(),
+            delta: " world".to_string(),
+            aggregated: "Hello world".to_string(),
+        }),
+        None,
+    );
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::CompactionSummaryChunk {
+            source: "auto".to_string(),
+            delta: " done".to_string(),
+            aggregated: "Hello world done".to_string(),
+        }),
+        None,
+    );
+
+    // Finalize
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::CompactionTriggered {
+            source: "auto".to_string(),
+            summarized_count: 5,
+            kept_recent_count: 2,
+            summary_preview: "Hello world done".to_string(),
+            summary_body: "Hello world done".to_string(),
+        }),
+        None,
+    );
+
+    // Verify content is present and block is finished
+    let lines: Vec<String> = state
+        .transcript_preview
+        .iter()
+        .map(|item| item.text())
+        .collect();
+    assert!(lines.iter().any(|l| l.contains("Hello world done")));
+}
+
+#[test]
+fn compaction_streaming_truncates_and_reprojects() {
+    let mut state = AppState::default();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::CompactionStarted {
+            source: "auto".to_string(),
+        }),
+        None,
+    );
+
+    // First chunk
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::CompactionSummaryChunk {
+            source: "auto".to_string(),
+            delta: "First".to_string(),
+            aggregated: "First".to_string(),
+        }),
+        None,
+    );
+
+    // Second chunk — should truncate back and reproject
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::CompactionSummaryChunk {
+            source: "auto".to_string(),
+            delta: " Second".to_string(),
+            aggregated: "First Second".to_string(),
+        }),
+        None,
+    );
+
+    // Should NOT have both "First" standalone AND "First Second"
+    // The re-projection replaces, not appends
+    let lines: Vec<String> = state
+        .transcript_preview
+        .iter()
+        .map(|item| item.text())
+        .collect();
+    let first_only_count = lines
+        .iter()
+        .filter(|l| l.contains("First") && !l.contains("Second"))
+        .count();
+    assert_eq!(
+        first_only_count, 0,
+        "old partial render should be replaced"
+    );
+}
+
+#[test]
+fn compaction_streaming_empty_chunks_ignored() {
+    let mut state = AppState::default();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::CompactionStarted {
+            source: "auto".to_string(),
+        }),
+        None,
+    );
+    let after_start = state.transcript_preview.len();
+
+    // Empty chunk
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::CompactionSummaryChunk {
+            source: "auto".to_string(),
+            delta: "".to_string(),
+            aggregated: "".to_string(),
+        }),
+        None,
+    );
+
+    // Should not have added any content lines
+    assert_eq!(state.transcript_preview.len(), after_start);
+    assert!(state.compaction_streaming_start.is_none());
+}
+
+#[test]
+fn compaction_triggered_clears_streaming_state() {
+    let mut state = AppState::default();
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::CompactionStarted {
+            source: "auto".to_string(),
+        }),
+        None,
+    );
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::CompactionSummaryChunk {
+            source: "auto".to_string(),
+            delta: "text".to_string(),
+            aggregated: "text".to_string(),
+        }),
+        None,
+    );
+    assert!(state.compaction_streaming_start.is_some());
+
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::Event(UiEvent::CompactionTriggered {
+            source: "auto".to_string(),
+            summarized_count: 5,
+            kept_recent_count: 2,
+            summary_preview: "text".to_string(),
+            summary_body: "text".to_string(),
+        }),
+        None,
+    );
+
+    assert!(
+        state.compaction_streaming_start.is_none(),
+        "streaming state must be cleared after CompactionTriggered"
+    );
+}
+

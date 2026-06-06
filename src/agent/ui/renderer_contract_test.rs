@@ -38,6 +38,7 @@ impl UiRenderer for FakeRenderer {
             UiEvent::Warning { .. } => "warning",
             UiEvent::TurnError { .. } => "turn_error",
             UiEvent::CompactionStarted { .. } => "compaction_started",
+            UiEvent::CompactionSummaryChunk { .. } => "compaction_summary_chunk",
             UiEvent::CompactionTriggered { .. } => "compaction_triggered",
             UiEvent::CompactionFailed { .. } => "compaction_failed",
             UiEvent::AssistantMessage { .. } => "assistant_message",

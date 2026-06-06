@@ -111,6 +111,11 @@ pub enum UiEvent {
     CompactionStarted {
         source: String,
     },
+    CompactionSummaryChunk {
+        source: String,
+        delta: String,
+        aggregated: String,
+    },
     CompactionTriggered {
         source: String,
         summarized_count: usize,
