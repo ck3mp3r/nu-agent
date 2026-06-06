@@ -1,5 +1,5 @@
 use crate::agent::ui::tui::rendering::highlight::{
-    HighlightRequest, SyntaxTokenChannel, highlight_source_tokens,
+    HighlightRequest, SyntaxTokenChannel, cached_syntax_set, highlight_source_tokens,
 };
 
 #[test]
@@ -206,4 +206,11 @@ fn unsupported_language_fallback_is_plain_only() {
             .flat_map(|line| line.iter())
             .all(|span| span.channel == SyntaxTokenChannel::Plain)
     );
+}
+
+#[test]
+fn cached_syntax_set_returns_same_instance() {
+    let a = cached_syntax_set();
+    let b = cached_syntax_set();
+    assert!(std::ptr::eq(a, b));
 }

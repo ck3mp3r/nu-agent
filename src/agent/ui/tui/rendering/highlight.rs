@@ -1,8 +1,16 @@
+use std::sync::OnceLock;
+
 use syntect::{
     easy::ScopeRegionIterator,
     parsing::{ParseState, ScopeStack, SyntaxDefinition, SyntaxReference, SyntaxSet},
     util::LinesWithEndings,
 };
+
+static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
+
+pub(crate) fn cached_syntax_set() -> &'static SyntaxSet {
+    SYNTAX_SET.get_or_init(load_syntax_set_with_nix_support)
+}
 
 const NIX_SYNTAX: &str = r#"%YAML 1.2
 ---
@@ -65,15 +73,15 @@ pub struct HighlightedSpan {
     pub channel: SyntaxTokenChannel,
 }
 
-#[derive(Debug)]
 struct Highlighter {
-    syntax_set: SyntaxSet,
+    syntax_set: &'static SyntaxSet,
 }
 
 impl Default for Highlighter {
     fn default() -> Self {
-        let syntax_set = load_syntax_set_with_nix_support();
-        Self { syntax_set }
+        Self {
+            syntax_set: cached_syntax_set(),
+        }
     }
 }
 
@@ -140,7 +148,7 @@ impl Highlighter {
         for raw_line in normalized_lines(source) {
             let line = raw_line.as_str();
             let line_with_newline = format!("{line}\n");
-            let parsed = parse_state.parse_line(&line_with_newline, &self.syntax_set);
+            let parsed = parse_state.parse_line(&line_with_newline, self.syntax_set);
             match parsed {
                 Ok(parsed_line) => {
                     let mut spans = Vec::new();
@@ -355,6 +363,8 @@ fn plain_token_lines(source: &str) -> Vec<Vec<HighlightedSpan>> {
 
 pub fn highlight_source_tokens(request: HighlightRequest<'_>) -> Vec<Vec<HighlightedSpan>> {
     let highlighter = Highlighter::default();
-    std::panic::catch_unwind(|| highlighter.highlight(request))
-        .unwrap_or_else(|_| plain_token_lines(request.source))
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        highlighter.highlight(request)
+    }))
+    .unwrap_or_else(|_| plain_token_lines(request.source))
 }

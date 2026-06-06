@@ -1,6 +1,8 @@
 use crate::agent::protocol::event::PermissionDecision;
-use crate::agent::ui::transcript::ir::Role;
-use crate::agent::ui::transcript::items::TranscriptEntry;
+use crate::agent::ui::transcript::ir::{ContentLine, Role, StyleHint};
+use crate::agent::ui::transcript::items::{
+    AssistantChunk, SystemMessage, ToolInvocation, ToolResult, TranscriptEntry, UserMessage,
+};
 use crate::agent::ui::tui::state::{
     AppState, CommandPaletteAction, InputMode, McpServerUsabilityState, ModelPickerOption,
     PaneFocus, PermissionPrompt, PromptStatus, ToolCallStatus, TranscriptLineStatus,
@@ -959,4 +961,218 @@ fn enqueue_external_prompt_has_spinner_status_on_transcript_line() {
         Some(TranscriptLineStatus::Prompt(PromptStatus::InProgress)),
         "transcript line should show InProgress for spinner"
     );
+}
+
+#[test]
+fn clear_assistant_projection_cache_removes_all_entries() {
+    let mut state = AppState::new();
+    state.project_assistant_markdown_lines("hello world");
+    state.project_assistant_markdown_lines("goodbye world");
+    assert_eq!(state.assistant_projection_cache_size(), 2);
+    state.clear_assistant_projection_cache();
+    assert_eq!(state.assistant_projection_cache_size(), 0);
+}
+
+// ---- spacer insertion tests (push-time) ----
+
+#[test]
+fn spacer_not_inserted_for_empty_transcript() {
+    let state = AppState::new();
+    assert!(state.transcript_preview.is_empty());
+}
+
+#[test]
+fn spacer_not_inserted_for_single_entry() {
+    let mut state = AppState::new();
+    state.push_transcript_item(TranscriptEntry::User(UserMessage {
+        text: "hi".to_string(),
+    }));
+    assert_eq!(state.transcript_preview.len(), 1);
+    assert!(matches!(
+        state.transcript_preview[0],
+        TranscriptEntry::User(_)
+    ));
+}
+
+#[test]
+fn spacer_not_inserted_for_same_role() {
+    let mut state = AppState::new();
+    state.push_transcript_item(TranscriptEntry::Assistant(AssistantChunk {
+        lines: vec![ContentLine::single("first".to_string(), StyleHint::Normal)],
+    }));
+    state.push_transcript_item(TranscriptEntry::Assistant(AssistantChunk {
+        lines: vec![ContentLine::single("second".to_string(), StyleHint::Normal)],
+    }));
+    assert_eq!(state.transcript_preview.len(), 2);
+    assert!(matches!(
+        state.transcript_preview[0],
+        TranscriptEntry::Assistant(_)
+    ));
+    assert!(matches!(
+        state.transcript_preview[1],
+        TranscriptEntry::Assistant(_)
+    ));
+}
+
+#[test]
+fn spacer_not_inserted_for_user_then_assistant() {
+    let mut state = AppState::new();
+    state.push_transcript_item(TranscriptEntry::User(UserMessage {
+        text: "hi".to_string(),
+    }));
+    state.push_transcript_item(TranscriptEntry::Assistant(AssistantChunk {
+        lines: vec![ContentLine::single("hello".to_string(), StyleHint::Normal)],
+    }));
+    // User -> Assistant triggers turn separator, which blocks spacer
+    assert_eq!(state.transcript_preview.len(), 3);
+    assert!(matches!(
+        state.transcript_preview[0],
+        TranscriptEntry::User(_)
+    ));
+    assert!(matches!(
+        state.transcript_preview[1],
+        TranscriptEntry::Separator(_)
+    ));
+    assert!(matches!(
+        state.transcript_preview[2],
+        TranscriptEntry::Assistant(_)
+    ));
+}
+
+#[test]
+fn spacer_not_inserted_for_tool_then_tool_display() {
+    let mut state = AppState::new();
+    state.push_transcript_item(TranscriptEntry::Tool(ToolInvocation {
+        name: "read".to_string(),
+        source: "test".to_string(),
+        args: "{}".to_string(),
+    }));
+    state.push_transcript_item(TranscriptEntry::ToolResult(ToolResult {
+        name: "read".to_string(),
+        success: true,
+        lines: vec![],
+    }));
+    // Tool -> ToolResult: no turn separator (ToolDisplay not a turn role), no spacer (excluded pair)
+    assert_eq!(state.transcript_preview.len(), 2);
+    assert!(matches!(
+        state.transcript_preview[0],
+        TranscriptEntry::Tool(_)
+    ));
+    assert!(matches!(
+        state.transcript_preview[1],
+        TranscriptEntry::ToolResult(_)
+    ));
+}
+
+#[test]
+fn spacer_inserted_for_assistant_then_system() {
+    let mut state = AppState::new();
+    state.push_transcript_item(TranscriptEntry::Assistant(AssistantChunk {
+        lines: vec![ContentLine::single("done".to_string(), StyleHint::Normal)],
+    }));
+    state.push_transcript_item(TranscriptEntry::System(SystemMessage {
+        text: "system".to_string(),
+    }));
+    // Assistant -> System: no turn separator (System not a turn role), spacer inserted
+    assert_eq!(state.transcript_preview.len(), 3);
+    assert!(matches!(
+        state.transcript_preview[0],
+        TranscriptEntry::Assistant(_)
+    ));
+    assert!(matches!(
+        state.transcript_preview[1],
+        TranscriptEntry::Spacer(_)
+    ));
+    assert!(matches!(
+        state.transcript_preview[2],
+        TranscriptEntry::System(_)
+    ));
+}
+
+#[test]
+fn spacer_not_inserted_when_turn_separator_blocks() {
+    let mut state = AppState::new();
+    state.push_transcript_item(TranscriptEntry::User(UserMessage {
+        text: "hi".to_string(),
+    }));
+    state.push_transcript_item(TranscriptEntry::Tool(ToolInvocation {
+        name: "read".to_string(),
+        source: "test".to_string(),
+        args: "{}".to_string(),
+    }));
+    // User -> Tool: turn separator inserted (both are turn roles), spacer blocked by separator
+    assert_eq!(state.transcript_preview.len(), 3);
+    assert!(matches!(
+        state.transcript_preview[0],
+        TranscriptEntry::User(_)
+    ));
+    assert!(matches!(
+        state.transcript_preview[1],
+        TranscriptEntry::Separator(_)
+    ));
+    assert!(matches!(
+        state.transcript_preview[2],
+        TranscriptEntry::Tool(_)
+    ));
+}
+
+// ---- needs_spacer unit tests ----
+
+#[test]
+fn needs_spacer_no_previous() {
+    assert!(!super::needs_spacer(None, &Role::User));
+}
+
+#[test]
+fn needs_spacer_same_role() {
+    assert!(!super::needs_spacer(Some(&Role::User), &Role::User));
+}
+
+#[test]
+fn needs_spacer_separator_previous() {
+    assert!(!super::needs_spacer(Some(&Role::Separator), &Role::User));
+}
+
+#[test]
+fn needs_spacer_separator_next() {
+    assert!(!super::needs_spacer(Some(&Role::User), &Role::Separator));
+}
+
+#[test]
+fn needs_spacer_user_to_assistant() {
+    assert!(!super::needs_spacer(Some(&Role::User), &Role::Assistant));
+}
+
+#[test]
+fn needs_spacer_assistant_to_user() {
+    assert!(!super::needs_spacer(
+        Some(&Role::Assistant),
+        &Role::User
+    ));
+}
+
+#[test]
+fn needs_spacer_tool_to_tool_display() {
+    assert!(!super::needs_spacer(Some(&Role::Tool), &Role::ToolDisplay));
+}
+
+#[test]
+fn needs_spacer_tool_display_to_tool() {
+    assert!(!super::needs_spacer(
+        Some(&Role::ToolDisplay),
+        &Role::Tool
+    ));
+}
+
+#[test]
+fn needs_spacer_user_to_tool() {
+    assert!(super::needs_spacer(Some(&Role::User), &Role::Tool));
+}
+
+#[test]
+fn needs_spacer_assistant_to_system() {
+    assert!(super::needs_spacer(
+        Some(&Role::Assistant),
+        &Role::System
+    ));
 }

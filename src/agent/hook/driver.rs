@@ -113,7 +113,7 @@ impl HookDriver {
                     // No events yet — emit tick for spinner animation
                     ui.emit(&UiEvent::Tick);
                     // Brief sleep to avoid busy-spin
-                    std::thread::sleep(std::time::Duration::from_millis(1));
+                    std::thread::sleep(std::time::Duration::from_millis(16));
                 }
                 Err(mpsc::error::TryRecvError::Disconnected) => {
                     // Hook dropped — agent loop finished

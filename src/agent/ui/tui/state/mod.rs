@@ -8,9 +8,9 @@ use crate::agent::protocol::event::{PermissionDecision, PermissionDecisionSubmis
 use crate::agent::protocol::slash::{SlashCommand, filter_inline_slash_suggestions};
 use crate::agent::ui::transcript::ir::{ContentLine, DisplayLine, Role, Span, StyleHint};
 use crate::agent::ui::transcript::items::{
-    AssistantChunk, Separator as TranscriptSeparator, SystemMessage, ToolInvocation,
-    ToolResult as TranscriptToolResult, TranscriptEntry, UserMessage, annotate_diff_hint,
-    parse_tool_text,
+    AssistantChunk, Separator as TranscriptSeparator, Spacer as SpacerItem, SystemMessage,
+    ToolInvocation, ToolResult as TranscriptToolResult, TranscriptEntry, UserMessage,
+    annotate_diff_hint, parse_tool_text,
 };
 use crate::agent::ui::tui::markdown::{project_markdown_to_lines, rendered_line_to_plain_text};
 use ratatui::text::Line;
@@ -1379,6 +1379,15 @@ impl AppState {
         projected
     }
 
+    pub fn clear_assistant_projection_cache(&mut self) {
+        self.assistant_projection_cache.clear();
+    }
+
+    #[cfg(test)]
+    pub fn assistant_projection_cache_size(&self) -> usize {
+        self.assistant_projection_cache.len()
+    }
+
     #[cfg(test)]
     pub fn assistant_projection_cache_misses(&self) -> usize {
         self.assistant_projection_cache_misses
@@ -1399,6 +1408,16 @@ impl AppState {
             self.transcript_preview
                 .push(TranscriptEntry::Separator(TranscriptSeparator));
         }
+
+        // Visual spacer between different roles (checks previous role AFTER separator may have been inserted)
+        if needs_spacer(
+            self.transcript_preview.last().map(|e| e.role()).as_ref(),
+            &entry_role,
+        ) {
+            self.transcript_preview
+                .push(TranscriptEntry::Spacer(SpacerItem));
+        }
+
         self.transcript_preview.push(entry);
 
         // Only follow tail if user was already at the end
@@ -1616,6 +1635,25 @@ fn should_insert_turn_separator(previous: Option<&Role>, next: &Role) -> bool {
 
 fn is_turn_role(role: &Role) -> bool {
     matches!(role, Role::User | Role::Assistant | Role::Tool)
+}
+
+pub(super) fn needs_spacer(previous: Option<&Role>, next: &Role) -> bool {
+    let Some(previous) = previous else {
+        return false;
+    };
+    if previous == next {
+        return false;
+    }
+    if *previous == Role::Separator || *next == Role::Separator {
+        return false;
+    }
+    !matches!(
+        (previous, next),
+        (Role::User, Role::Assistant)
+            | (Role::Assistant, Role::User)
+            | (Role::Tool, Role::ToolDisplay)
+            | (Role::ToolDisplay, Role::Tool)
+    )
 }
 
 fn previous_char_start(buffer: &str, cursor: usize) -> Option<usize> {

@@ -26,15 +26,11 @@ mod test;
 #[cfg(test)]
 mod hybrid_events_test;
 
-#[cfg(test)]
-mod spacer_test;
-
 use crate::agent::protocol::contracts::{SharedUiAction, UiMessageSnapshot};
 use crate::agent::protocol::event::PermissionDecisionSubmission;
 use crate::agent::protocol::event::UiEvent;
 use crate::agent::protocol::skills::DiscoverableSkill as ProtocolDiscoverableSkill;
 use crate::agent::protocol::slash::{slash_command_label, slash_command_summary};
-use crate::agent::ui::transcript::ir::Role;
 use crate::agent::ui::transcript::items::{Renderable, TranscriptEntry};
 use crate::agent::ui::transcript::renderer::{BlockRenderer, RenderContext};
 use crate::agent::ui::transcript::tui_renderer::TuiRenderer;
@@ -50,7 +46,7 @@ use crate::agent::ui::{
         platform::{
             safety::{RestoreRunError, run_with_restore},
             terminal::{TerminalBackend, TerminalLifecycle, TerminalLifecycleError},
-            transport::TuiTransport,
+            transport::{TransportItem, TuiTransport},
         },
         rendering::{
             layout::{
@@ -105,58 +101,22 @@ fn render_permission_controls(frame: &mut ratatui::Frame, area: Rect, theme: &Tu
     frame.render_widget(widget, area);
 }
 
-fn insert_spacers(entries: Vec<TranscriptEntry>) -> Vec<TranscriptEntry> {
-    use crate::agent::ui::transcript::items::Spacer as SpacerItem;
-    let mut result = Vec::with_capacity(entries.len() * 2);
-    let mut prev_role: Option<Role> = None;
-    for entry in entries {
-        let role = entry.role();
-        if needs_spacer(prev_role.as_ref(), &role) {
-            result.push(TranscriptEntry::Spacer(SpacerItem));
-        }
-        prev_role = Some(role);
-        result.push(entry);
-    }
-    result
-}
-
-fn needs_spacer(previous: Option<&Role>, next: &Role) -> bool {
-    let Some(previous) = previous else {
-        return false;
-    };
-    if previous == next {
-        return false;
-    }
-    if *previous == Role::Separator || *next == Role::Separator {
-        return false;
-    }
-    !matches!(
-        (previous, next),
-        (Role::User, Role::Assistant)
-            | (Role::Assistant, Role::User)
-            | (Role::Tool, Role::ToolDisplay)
-            | (Role::ToolDisplay, Role::Tool)
-    )
-}
-
-fn transcript_entries_for_render(state: &AppState) -> Vec<TranscriptEntry> {
-    insert_spacers(state.transcript_preview.clone())
+fn transcript_entries_for_render(state: &AppState) -> &[TranscriptEntry] {
+    &state.transcript_preview
 }
 
 fn transcript_line_statuses_for_render(
     state: &AppState,
     entries: &[TranscriptEntry],
 ) -> Vec<Option<TranscriptLineStatus>> {
-    let mut source_idx = 0usize;
     entries
         .iter()
-        .map(|entry| {
+        .enumerate()
+        .map(|(idx, entry)| {
             if matches!(entry, TranscriptEntry::Spacer(_)) {
                 None
             } else {
-                let status = state.transcript_line_status_for_index(source_idx);
-                source_idx += 1;
-                status
+                state.transcript_line_status_for_index(idx)
             }
         })
         .collect()
@@ -778,10 +738,13 @@ pub struct RuntimeCoordinator {
     input_watchdog_timeout: Duration,
     repo_branch_tracker: Option<status::RepoBranchTracker>,
     theme: TuiTheme,
+    render_needed: bool,
+    last_render_at: Instant,
 }
 
 impl RuntimeCoordinator {
     const DEFAULT_INPUT_WATCHDOG_TIMEOUT: Duration = Duration::from_secs(5);
+    const MIN_FRAME_INTERVAL: Duration = Duration::from_millis(16);
 
     pub fn new(columns: u16, rows: u16, side_pane_visible: Option<bool>) -> Self {
         Self::new_with_watchdog(
@@ -906,6 +869,8 @@ impl RuntimeCoordinator {
             input_watchdog_timeout,
             repo_branch_tracker: None,
             theme: TuiTheme::default(),
+            render_needed: true,
+            last_render_at: Instant::now() - Duration::from_millis(100),
         };
         coordinator.sync_transcript_viewport_lines_with_layout();
         coordinator
@@ -1152,6 +1117,7 @@ impl RuntimeCoordinator {
         self.quit_requested |= self.state.quit_requested;
 
         self.sync_transcript_viewport_lines_with_layout();
+        self.mark_render_needed();
     }
 
     fn sync_transcript_viewport_lines_with_layout(&mut self) {
@@ -1263,13 +1229,107 @@ impl RuntimeCoordinator {
     }
 
     pub fn drain_transport(&mut self) {
+        let mut pending_assistant: Option<UiEvent> = None;
+        let mut pending_compaction: Option<UiEvent> = None;
+
         while let Some(item) = self.transport.poll_next() {
+            if matches!(&item, TransportItem::Event(UiEvent::AssistantMessage { .. })) {
+                pending_assistant = Some(match item {
+                    TransportItem::Event(e) => e,
+                    _ => unreachable!(),
+                });
+                continue;
+            }
+
+            if matches!(
+                &item,
+                TransportItem::Event(UiEvent::CompactionSummaryChunk { .. })
+            ) {
+                pending_compaction = Some(match item {
+                    TransportItem::Event(e) => e,
+                    _ => unreachable!(),
+                });
+                continue;
+            }
+
+            // Flush any pending coalesced events before processing a different event type
+            // (preserves ordering: assistant text before tool events, etc.)
+            if let Some(event) = pending_assistant.take() {
+                reduce_with_cancel_controller(
+                    &mut self.state,
+                    ReducerInput::Event(event),
+                    Some(&self.cancel_controller),
+                );
+            }
+            if let Some(event) = pending_compaction.take() {
+                reduce_with_cancel_controller(
+                    &mut self.state,
+                    ReducerInput::Event(event),
+                    Some(&self.cancel_controller),
+                );
+            }
+
+            // Process the current non-coalesceable event
             reduce_with_cancel_controller(
                 &mut self.state,
                 ReducerInput::from(item),
                 Some(&self.cancel_controller),
             );
         }
+
+        // Flush remaining pending events
+        if let Some(event) = pending_assistant.take() {
+            reduce_with_cancel_controller(
+                &mut self.state,
+                ReducerInput::Event(event),
+                Some(&self.cancel_controller),
+            );
+        }
+        if let Some(event) = pending_compaction.take() {
+            reduce_with_cancel_controller(
+                &mut self.state,
+                ReducerInput::Event(event),
+                Some(&self.cancel_controller),
+            );
+        }
+
+        self.mark_render_needed();
+    }
+
+    fn mark_render_needed(&mut self) {
+        self.render_needed = true;
+    }
+
+    fn render_if_needed(&mut self, live: &mut Option<LiveTerminalUi>) -> Result<(), String> {
+        if !self.render_needed {
+            return Ok(());
+        }
+        if self.last_render_at.elapsed() < Self::MIN_FRAME_INTERVAL {
+            return Ok(());
+        }
+        self.render_needed = false;
+        self.last_render_at = Instant::now();
+        self.render_frame(live)
+    }
+
+    #[cfg(test)]
+    pub fn render_needed(&self) -> bool {
+        self.render_needed
+    }
+
+    #[cfg(test)]
+    pub fn last_render_at(&self) -> Instant {
+        self.last_render_at
+    }
+
+    #[cfg(test)]
+    pub fn set_render_needed(&mut self, needed: bool) {
+        self.render_needed = needed;
+    }
+
+    #[cfg(test)]
+    pub fn set_last_render_at(&mut self, at: Instant) {
+        self.last_render_at = at;
     }
 
     fn render_frame(&self, live: &mut Option<LiveTerminalUi>) -> Result<(), String> {
@@ -1312,7 +1372,7 @@ impl RuntimeCoordinator {
 
                 let entries_for_render = transcript_entries_for_render(&self.state);
                 let transcript_line_statuses =
-                    transcript_line_statuses_for_render(&self.state, &entries_for_render);
+                    transcript_line_statuses_for_render(&self.state, entries_for_render);
                 let transcript_content_area = vertical[1];
 
                 let now_millis = current_time_millis();
@@ -2005,6 +2065,7 @@ pub(super) fn transition_spacer_for_roles_for_test(
     previous: Option<TranscriptRole>,
     next: TranscriptRole,
 ) -> bool {
+    use crate::agent::ui::transcript::ir::Role;
     let prev_role = previous.map(|r| match r {
         TranscriptRole::User => Role::User,
         TranscriptRole::Assistant => Role::Assistant,
@@ -2023,7 +2084,7 @@ pub(super) fn transition_spacer_for_roles_for_test(
         TranscriptRole::ToolDisplay => Role::ToolDisplay,
         TranscriptRole::Separator => Role::Separator,
     };
-    needs_spacer(prev_role.as_ref(), &next_role)
+    crate::agent::ui::tui::state::needs_spacer(prev_role.as_ref(), &next_role)
 }
 
 #[cfg(test)]
@@ -2227,7 +2288,7 @@ where
     pub fn pump_terminal_once(&mut self) {
         self.coordinator.poll_terminal_event(&mut self.event_source);
         self.coordinator.drain_transport();
-        if let Err(error) = self.coordinator.render_frame(&mut self.live_terminal) {
+        if let Err(error) = self.coordinator.render_if_needed(&mut self.live_terminal) {
             self.mark_render_failure(error);
         }
     }
@@ -2240,7 +2301,7 @@ where
         // Then do ONE poll + drain + render cycle
         self.coordinator.poll_terminal_event(&mut self.event_source);
         self.coordinator.drain_transport();
-        if let Err(error) = self.coordinator.render_frame(&mut self.live_terminal) {
+        if let Err(error) = self.coordinator.render_if_needed(&mut self.live_terminal) {
             self.mark_render_failure(error);
         }
         // If TUI is not active, forward to inner renderer
@@ -2281,7 +2342,7 @@ where
         self.coordinator.poll_terminal_event(&mut self.event_source);
         self.coordinator.enqueue_ui_event(event.clone());
         self.coordinator.drain_transport();
-        if let Err(error) = self.coordinator.render_frame(&mut self.live_terminal) {
+        if let Err(error) = self.coordinator.render_if_needed(&mut self.live_terminal) {
             self.mark_render_failure(error);
         }
         if !self.tui_active {

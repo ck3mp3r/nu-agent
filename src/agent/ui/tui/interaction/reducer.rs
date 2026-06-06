@@ -664,6 +664,7 @@ fn handle_assistant_message(state: &mut AppState, text: String) {
     // Remove previous rendering of this message
     if let Some(start) = state.streaming_message_start {
         state.transcript_preview.truncate(start);
+        state.clear_assistant_projection_cache();
     }
 
     // Project the full accumulated text through markdown
@@ -700,6 +701,7 @@ fn handle_compaction_summary_chunk(state: &mut AppState, source: &str, text: Str
     // Remove previous rendering of this streaming message
     if let Some(start) = state.compaction_streaming_start {
         state.transcript_preview.truncate(start);
+        state.clear_assistant_projection_cache();
     }
 
     // Re-project the full accumulated text through markdown
