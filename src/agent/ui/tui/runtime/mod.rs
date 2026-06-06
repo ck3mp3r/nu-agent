@@ -60,8 +60,9 @@ use crate::agent::ui::{
             theme::TuiTheme,
         },
         state::{
-            AppState, CommandPaletteAction, InfoPanel, McpServerState, McpServerUsabilityState,
-            McpToggleRequest, ModelPickerOption, TranscriptLineStatus, TranscriptRole,
+            AppState, CommandPaletteAction, CompactionStatus, InfoPanel, McpServerState,
+            McpServerUsabilityState, McpToggleRequest, ModelPickerOption, TranscriptLineStatus,
+            TranscriptRole,
         },
     },
 };
@@ -811,6 +812,26 @@ impl RuntimeCoordinator {
                 _ => TranscriptRole::System,
             };
             let message_content = message.content();
+
+            if role == TranscriptRole::Compaction {
+                // Create compaction block structure (header with checkmark)
+                self.state.start_compaction_block("history");
+                self.state.finish_compaction_block("history", CompactionStatus::Done);
+
+                // After Bug 2, content is just the summary body (no stats line)
+                if !message_content.trim().is_empty() {
+                    for line in self.state.project_assistant_markdown_lines(message_content) {
+                        let text = crate::agent::ui::tui::markdown::rendered_line_to_plain_text(&line);
+                        if text.trim().is_empty() {
+                            continue;
+                        }
+                        self.state
+                            .push_transcript_rendered_line(TranscriptRole::Compaction, line);
+                    }
+                }
+                continue;
+            }
+
             if message_content.trim().is_empty() {
                 continue;
             }

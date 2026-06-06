@@ -3530,3 +3530,182 @@ fn lane_1_prefix_does_not_exceed_available_width() {
     assert!(line.chars().count() <= 40);
     assert!(line.starts_with("○ "));
 }
+
+#[test]
+fn hydration_compaction_creates_block_structure() {
+    use crate::agent::ui::tui::state::CompactionStatus;
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    coordinator.hydrate_transcript_from_messages(vec![UiMessageSnapshot::new(
+        "compaction",
+        "## Summary\n- point one\n- point two",
+    )]);
+
+    // The compaction block header ("Compaction") should be present in transcript
+    let has_compaction_header = coordinator
+        .state()
+        .transcript_preview
+        .iter()
+        .any(|line| line.text() == "Compaction");
+    assert!(
+        has_compaction_header,
+        "expected compaction block header in transcript"
+    );
+
+    // The compaction block should have Done status
+    let compaction_header_idx = coordinator
+        .state()
+        .transcript_preview
+        .iter()
+        .position(|line| line.text() == "Compaction")
+        .expect("compaction header must exist");
+    assert_eq!(
+        coordinator
+            .state()
+            .transcript_line_status_for_index(compaction_header_idx),
+        Some(TranscriptLineStatus::Compaction(CompactionStatus::Done))
+    );
+}
+
+#[test]
+fn hydration_compaction_renders_markdown_body() {
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    coordinator.hydrate_transcript_from_messages(vec![UiMessageSnapshot::new(
+        "compaction",
+        "## Summary\n- alpha\n- beta",
+    )]);
+
+    let texts: Vec<String> = coordinator
+        .state()
+        .transcript_preview
+        .iter()
+        .map(|line| line.text())
+        .collect();
+
+    // Raw markdown markers should NOT appear (markdown was rendered)
+    assert!(
+        !texts.iter().any(|t| t.contains("## ")),
+        "raw markdown heading marker should not appear: {texts:?}"
+    );
+    assert!(
+        !texts.iter().any(|t| t.starts_with("- ")),
+        "raw markdown list marker should not appear: {texts:?}"
+    );
+    // Rendered content should be present
+    assert!(
+        texts.iter().any(|t| t.contains("Summary")),
+        "rendered heading text should appear: {texts:?}"
+    );
+    assert!(
+        texts.iter().any(|t| t.contains("alpha")),
+        "rendered list item text should appear: {texts:?}"
+    );
+}
+
+#[test]
+fn hydration_compaction_empty_summary_shows_block_only() {
+    use crate::agent::ui::tui::state::CompactionStatus;
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    coordinator.hydrate_transcript_from_messages(vec![UiMessageSnapshot::new("compaction", "")]);
+
+    let texts: Vec<String> = coordinator
+        .state()
+        .transcript_preview
+        .iter()
+        .map(|line| line.text())
+        .collect();
+
+    // The compaction header should exist
+    assert!(
+        texts.contains(&"Compaction".to_string()),
+        "expected compaction block header: {texts:?}"
+    );
+
+    // Only the header line should be present — no body content lines
+    let compaction_lines: Vec<_> = coordinator
+        .state()
+        .transcript_preview
+        .iter()
+        .filter(|line| line.role() == Role::Compaction)
+        .collect();
+    assert!(
+        compaction_lines.is_empty(),
+        "empty summary should produce no Compaction-role body lines: {compaction_lines:?}"
+    );
+
+    // Header should have Done status
+    let header_idx = coordinator
+        .state()
+        .transcript_preview
+        .iter()
+        .position(|line| line.text() == "Compaction")
+        .expect("header must exist");
+    assert_eq!(
+        coordinator
+            .state()
+            .transcript_line_status_for_index(header_idx),
+        Some(TranscriptLineStatus::Compaction(CompactionStatus::Done))
+    );
+}
+
+#[test]
+fn hydration_compaction_matches_live_rendering() {
+    let summary_body = "## Summary\n- alpha\n- beta";
+
+    // Live path: CompactionStarted + CompactionTriggered via reducer
+    let mut live = RuntimeCoordinator::new(120, 30, Some(true));
+    live.enqueue_ui_event(UiEvent::CompactionStarted {
+        source: "history".to_string(),
+    });
+    live.drain_transport();
+    live.enqueue_ui_event(UiEvent::CompactionTriggered {
+        source: "history".to_string(),
+        summarized_count: 5,
+        kept_recent_count: 2,
+        summary_preview: "preview".to_string(),
+        summary_body: summary_body.to_string(),
+    });
+    live.drain_transport();
+
+    // Hydration path: UiMessageSnapshot with role "compaction"
+    let mut hydrated = RuntimeCoordinator::new(120, 30, Some(true));
+    hydrated.hydrate_transcript_from_messages(vec![UiMessageSnapshot::new(
+        "compaction",
+        summary_body,
+    )]);
+
+    let live_texts: Vec<String> = live
+        .state()
+        .transcript_preview
+        .iter()
+        .map(|line| line.text())
+        .collect();
+    let hydrated_texts: Vec<String> = hydrated
+        .state()
+        .transcript_preview
+        .iter()
+        .map(|line| line.text())
+        .collect();
+
+    assert_eq!(
+        live_texts, hydrated_texts,
+        "live and hydrated transcript texts should match"
+    );
+
+    let live_roles: Vec<Role> = live
+        .state()
+        .transcript_preview
+        .iter()
+        .map(|line| line.role())
+        .collect();
+    let hydrated_roles: Vec<Role> = hydrated
+        .state()
+        .transcript_preview
+        .iter()
+        .map(|line| line.role())
+        .collect();
+
+    assert_eq!(
+        live_roles, hydrated_roles,
+        "live and hydrated transcript roles should match"
+    );
+}
