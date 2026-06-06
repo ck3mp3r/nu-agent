@@ -970,8 +970,9 @@ fn hydration_without_guard_causes_duplicates() {
 
 #[test]
 fn hydration_loads_llm_context_not_full_history() {
-    // Store has 20 messages + 1 marker(kept=5). After hydration, memory has
-    // 6 messages (summary + 5 kept). memory_message_count == 6.
+    // Store has 15 messages + 1 marker(kept=5) + 5 msgs after marker.
+    // After hydration, memory has 6 messages (summary + 5 post-marker).
+    // memory_message_count == 6.
     use rig::completion::Message;
     use rig::memory::{ConversationMemory, InMemoryConversationMemory};
 
@@ -984,8 +985,8 @@ fn hydration_loads_llm_context_not_full_history() {
     let temp_dir = tempfile::tempdir().unwrap();
     let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
 
-    // Store 20 messages
-    let messages: Vec<Message> = (0..20)
+    // Store 15 messages (old, before marker)
+    let messages: Vec<Message> = (0..15)
         .map(|i| Message::user(format!("msg {}", i)))
         .collect();
     store.append("s1", &messages).unwrap();
@@ -999,6 +1000,12 @@ fn hydration_loads_llm_context_not_full_history() {
     );
     store.append_marker("s1", &marker).unwrap();
 
+    // 5 kept messages re-appended after marker
+    let kept: Vec<Message> = (15..20)
+        .map(|i| Message::user(format!("msg {}", i)))
+        .collect();
+    store.append("s1", &kept).unwrap();
+
     // --- New hydration pattern ---
     let entries = store.load_all("s1").unwrap();
     let llm_context = extract_llm_context(&entries);
@@ -1009,7 +1016,7 @@ fn hydration_loads_llm_context_not_full_history() {
     }
     let memory_message_count = llm_context.len();
 
-    // Expect: 1 summary system message + 5 kept recent = 6
+    // Expect: 1 summary system message + 5 post-marker = 6
     assert_eq!(
         memory_message_count, 6,
         "Should have summary + 5 kept messages, not all 20"
@@ -1057,8 +1064,8 @@ fn hydration_no_markers_loads_all() {
 
 #[test]
 fn hydration_multiple_markers_uses_latest() {
-    // Store has msgs + marker1 + msgs + marker2(kept=3). Memory uses
-    // marker2's context only.
+    // Store has msgs + marker1 + msgs + marker2(kept=3) + 3 msgs after marker2.
+    // Memory uses marker2's context only.
     use rig::completion::Message;
     use rig::memory::{ConversationMemory, InMemoryConversationMemory};
 
@@ -1081,7 +1088,7 @@ fn hydration_multiple_markers_uses_latest() {
     let marker1 = CompactionMarker::new("First summary".to_string(), 2, 8, "summarize_and_keep_recent");
     store.append_marker("s1", &marker1).unwrap();
 
-    // 5 more messages
+    // 5 more messages between markers
     let msgs2: Vec<Message> = (0..5)
         .map(|i| Message::user(format!("batch2 msg {}", i)))
         .collect();
@@ -1091,6 +1098,12 @@ fn hydration_multiple_markers_uses_latest() {
     let marker2 = CompactionMarker::new("Second summary".to_string(), 3, 12, "summarize_and_keep_recent");
     store.append_marker("s1", &marker2).unwrap();
 
+    // 3 kept messages re-appended after marker2
+    let kept: Vec<Message> = (0..3)
+        .map(|i| Message::user(format!("kept msg {}", i)))
+        .collect();
+    store.append("s1", &kept).unwrap();
+
     let entries = store.load_all("s1").unwrap();
     let llm_context = extract_llm_context(&entries);
 
@@ -1099,8 +1112,7 @@ fn hydration_multiple_markers_uses_latest() {
             .unwrap();
     }
 
-    // marker2 at the end: summary("Second summary") + 3 kept messages before it + 0 post-marker
-    // Expect: 1 summary + 3 kept = 4
+    // marker2: summary("Second summary") + 3 post-marker messages = 4
     assert_eq!(
         llm_context.len(),
         4,
@@ -1174,14 +1186,20 @@ fn hydration_guard_still_prevents_duplicates() {
     let temp_dir = tempfile::tempdir().unwrap();
     let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
 
-    // Store messages + marker
-    let messages: Vec<Message> = (0..10)
+    // Store messages + marker + kept messages after marker
+    let messages: Vec<Message> = (0..7)
         .map(|i| Message::user(format!("msg {}", i)))
         .collect();
     store.append("s1", &messages).unwrap();
 
     let marker = CompactionMarker::new("Summary".to_string(), 3, 7, "summarize_and_keep_recent");
     store.append_marker("s1", &marker).unwrap();
+
+    // 3 kept messages re-appended after marker
+    let kept: Vec<Message> = (7..10)
+        .map(|i| Message::user(format!("msg {}", i)))
+        .collect();
+    store.append("s1", &kept).unwrap();
 
     let mut hydrated = false;
 

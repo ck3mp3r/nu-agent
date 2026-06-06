@@ -364,9 +364,8 @@ impl ConversationStore for JsonlConversationStore {
 ///
 /// If there are compaction markers, uses the **last** marker to determine context:
 /// - Prepends the marker's summary as a system message (if non-empty)
-/// - Includes `kept_recent_count` messages immediately before the marker
-/// - Includes all messages after the marker
-/// - Skips any older markers that fall within the kept range
+/// - Includes all messages after the marker (kept messages are re-appended after
+///   the marker during compaction, followed by any post-compaction new messages)
 ///
 /// If there are no markers, returns all messages.
 pub fn extract_llm_context(entries: &[StoreEntry]) -> Vec<Message> {
@@ -381,39 +380,23 @@ pub fn extract_llm_context(entries: &[StoreEntry]) -> Vec<Message> {
                 _ => unreachable!(),
             };
             let mut context = Vec::new();
-
-            // Summary as system message (only if non-empty — SlidingWindow has no summary)
             if !marker.summary.is_empty() {
                 context.push(Message::system(&marker.summary));
             }
-
-            // Kept recent = k messages immediately before marker
-            let kept_start = idx.saturating_sub(marker.kept_recent_count);
-            for entry in &entries[kept_start..idx] {
-                if let StoreEntry::Message(m) = entry {
-                    context.push(m.clone());
-                }
-                // Skip any older markers in the kept range
-            }
-
-            // Post-marker messages
+            // All messages after marker (re-appended kept + any post-compaction new messages)
             for entry in &entries[idx + 1..] {
                 if let StoreEntry::Message(m) = entry {
                     context.push(m.clone());
                 }
             }
-
             context
         }
-        None => {
-            // No markers — all messages are context
-            entries
-                .iter()
-                .filter_map(|e| match e {
-                    StoreEntry::Message(m) => Some(m.clone()),
-                    _ => None,
-                })
-                .collect()
-        }
+        None => entries
+            .iter()
+            .filter_map(|e| match e {
+                StoreEntry::Message(m) => Some(m.clone()),
+                _ => None,
+            })
+            .collect(),
     }
 }

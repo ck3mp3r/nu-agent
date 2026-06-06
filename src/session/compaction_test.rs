@@ -155,18 +155,22 @@ fn compact_persists_to_store() {
         .block_on(async { session.compact(&memory, &store, summarizer).await })
         .unwrap();
 
-    // Verify: store contains all original messages + compaction marker
+    // Verify: store contains all original messages + compaction marker + re-appended kept
     let stored = store.load_all(session_id).unwrap();
-    assert_eq!(stored.len(), 6); // 5 original + 1 marker
+    assert_eq!(stored.len(), 8); // 5 original + 1 marker + 2 kept
 
-    // Last entry should be a compaction marker
+    // Marker should be at index 5
     match &stored[5] {
         StoreEntry::Marker(marker) => {
             assert_eq!(marker.summary, "Summary");
             assert_eq!(marker.kept_recent_count, 2);
         }
-        _ => panic!("Expected compaction marker as last entry"),
+        _ => panic!("Expected compaction marker at index 5"),
     }
+
+    // Last 2 entries should be re-appended kept messages
+    assert!(matches!(&stored[6], StoreEntry::Message(_)));
+    assert!(matches!(&stored[7], StoreEntry::Message(_)));
 }
 
 #[test]
@@ -536,17 +540,17 @@ fn compact_store_written_before_memory() {
         .block_on(async { session.compact(&memory, &store, summarizer).await })
         .unwrap();
 
-    // Store must have all original messages + compaction marker
+    // Store must have all original messages + compaction marker + re-appended kept
     let stored = store.load_all(session_id).unwrap();
-    assert_eq!(stored.len(), 9); // 8 original + 1 marker
+    assert_eq!(stored.len(), 12); // 8 original + 1 marker + 3 kept
 
-    // Last entry should be a compaction marker
+    // Marker should be at index 8
     match &stored[8] {
         StoreEntry::Marker(marker) => {
             assert_eq!(marker.summary, "Summary of 5 messages");
             assert_eq!(marker.kept_recent_count, 3);
         }
-        _ => panic!("Expected compaction marker as last entry"),
+        _ => panic!("Expected compaction marker at index 8"),
     }
 }
 
@@ -595,9 +599,9 @@ fn compact_successful_produces_correct_state() {
         .block_on(async { memory.load(session_id).await.unwrap() });
     assert_eq!(from_memory.len(), 3); // summary + 2 recent
 
-    // Store has full history: 6 original messages + 1 marker = 7 entries
+    // Store has full history: 6 original messages + 1 marker + 2 kept = 9 entries
     let stored_entries = store.load_all(session_id).unwrap();
-    assert_eq!(stored_entries.len(), 7);
+    assert_eq!(stored_entries.len(), 9);
 
     // extract_llm_context from store should produce the same messages as memory
     let context_from_store = extract_llm_context(&stored_entries);
@@ -663,17 +667,17 @@ fn compact_sliding_window_keeps_last_n_messages() {
 
     assert_eq!(final_messages.len(), 3);
 
-    // Store should have all original messages + 1 marker
+    // Store should have all original messages + 1 marker + 3 kept
     let stored = store.load_all(session_id).unwrap();
-    assert_eq!(stored.len(), 11); // 10 original + 1 marker
+    assert_eq!(stored.len(), 14); // 10 original + 1 marker + 3 kept
 
-    // Last entry should be a compaction marker with empty summary
-    match stored.last().unwrap() {
+    // Marker should be at index 10
+    match &stored[10] {
         StoreEntry::Marker(marker) => {
             assert!(marker.summary.is_empty());
             assert_eq!(marker.strategy, "sliding_window");
         }
-        _ => panic!("Expected compaction marker as last entry"),
+        _ => panic!("Expected compaction marker at index 10"),
     }
 
     // All memory messages should be user messages (no system summary)
@@ -941,7 +945,7 @@ fn compact_appends_marker_preserving_history() {
         .unwrap();
 
     let entries = store.load_all(session_id).unwrap();
-    assert_eq!(entries.len(), 6); // 5 original + 1 marker
+    assert_eq!(entries.len(), 8); // 5 original + 1 marker + 2 kept
 
     // First 5 are messages
     for entry in &entries[..5] {
@@ -951,11 +955,19 @@ fn compact_appends_marker_preserving_history() {
         );
     }
 
-    // Last is marker
+    // Index 5 is marker
     assert!(
         matches!(&entries[5], StoreEntry::Marker(_)),
-        "Expected marker as last entry"
+        "Expected marker at index 5"
     );
+
+    // Last 2 are re-appended kept messages
+    for entry in &entries[6..8] {
+        assert!(
+            matches!(entry, StoreEntry::Message(_)),
+            "Expected re-appended kept message"
+        );
+    }
 }
 
 #[test]
@@ -1000,9 +1012,10 @@ fn compact_marker_has_correct_fields() {
         .unwrap();
 
     let entries = store.load_all(session_id).unwrap();
-    let marker = match entries.last().unwrap() {
+    // Marker should be at index 8 (8 original msgs + marker at index 8, then 3 kept after)
+    let marker = match &entries[8] {
         StoreEntry::Marker(m) => m,
-        _ => panic!("Expected marker as last entry"),
+        _ => panic!("Expected marker at index 8"),
     };
 
     assert_eq!(marker.summary, "Summarized 5 old messages");
@@ -1109,9 +1122,10 @@ fn compact_sliding_window_appends_marker_empty_summary() {
         .unwrap();
 
     let entries = store.load_all(session_id).unwrap();
-    let marker = match entries.last().unwrap() {
+    // Marker at index 6 (6 original + marker), then 2 kept after
+    let marker = match &entries[6] {
         StoreEntry::Marker(m) => m,
-        _ => panic!("Expected marker"),
+        _ => panic!("Expected marker at index 6"),
     };
 
     assert!(marker.summary.is_empty());
@@ -1160,9 +1174,10 @@ fn compact_token_truncate_appends_marker_empty_summary() {
         .unwrap();
 
     let entries = store.load_all(session_id).unwrap();
-    let marker = match entries.last().unwrap() {
+    // Marker at index 5 (5 original + marker), then kept messages after
+    let marker = match &entries[5] {
         StoreEntry::Marker(m) => m,
-        _ => panic!("Expected marker"),
+        _ => panic!("Expected marker at index 5"),
     };
 
     assert!(marker.summary.is_empty());

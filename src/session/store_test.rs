@@ -324,16 +324,21 @@ fn extract_llm_context_no_markers() {
 
 #[test]
 fn extract_llm_context_single_marker() {
-    // 10 messages + marker(kept=3) → summary + 3 kept + 0 post = 4 messages
-    let mut entries: Vec<StoreEntry> = (0..10)
+    // 7 messages + marker(kept=3) + 3 msgs after marker → summary + 3 post-marker = 4 messages
+    let mut entries: Vec<StoreEntry> = (0..7)
         .map(|i| StoreEntry::Message(Message::user(format!("msg{}", i))))
         .collect();
 
     let marker = CompactionMarker::new("Summary of first 7".to_string(), 3, 7, "sliding_summary");
     entries.push(StoreEntry::Marker(marker));
 
+    // 3 kept messages re-appended after marker
+    for i in 7..10 {
+        entries.push(StoreEntry::Message(Message::user(format!("msg{}", i))));
+    }
+
     let context = extract_llm_context(&entries);
-    assert_eq!(context.len(), 4); // 1 summary system msg + 3 kept
+    assert_eq!(context.len(), 4); // 1 summary system msg + 3 post-marker
 
     // First is system summary
     match &context[0] {
@@ -344,7 +349,7 @@ fn extract_llm_context_single_marker() {
 
 #[test]
 fn extract_llm_context_multiple_markers() {
-    // msgs + marker1 + msgs + marker2(kept=2) → uses marker2
+    // msgs + marker1 + msgs + marker2(kept=2) + 2 msgs after marker2 → uses marker2
     let mut entries = Vec::new();
 
     // 5 messages before marker1
@@ -365,15 +370,14 @@ fn extract_llm_context_multiple_markers() {
         CompactionMarker::new("Summary2".to_string(), 2, 8, "sliding_summary");
     entries.push(StoreEntry::Marker(marker2));
 
-    // 2 messages after marker2
+    // 2 kept messages re-appended after marker2
     entries.push(StoreEntry::Message(Message::user("post0".to_string())));
     entries.push(StoreEntry::Message(Message::user("post1".to_string())));
 
     let context = extract_llm_context(&entries);
 
-    // marker2 at index 10, kept=2 → kept_start=8, entries[8..10] = mid2, mid3
-    // summary + 2 kept + 2 post = 5
-    assert_eq!(context.len(), 5);
+    // summary + 2 post-marker messages = 3
+    assert_eq!(context.len(), 3);
 
     match &context[0] {
         Message::System { content } => assert_eq!(content, "Summary2"),
@@ -383,11 +387,11 @@ fn extract_llm_context_multiple_markers() {
 
 #[test]
 fn extract_llm_context_kept_recent_count_correct() {
-    // Verify exactly k messages before marker are included
+    // Verify exactly k messages after marker are included
     let mut entries = Vec::new();
 
-    // 8 messages
-    for i in 0..8 {
+    // 4 messages (old, before marker)
+    for i in 0..4 {
         entries.push(StoreEntry::Message(Message::user(format!("m{}", i))));
     }
 
@@ -395,11 +399,16 @@ fn extract_llm_context_kept_recent_count_correct() {
     let marker = CompactionMarker::new("S".to_string(), 4, 4, "sliding_summary");
     entries.push(StoreEntry::Marker(marker));
 
+    // 4 kept messages re-appended after marker
+    for i in 4..8 {
+        entries.push(StoreEntry::Message(Message::user(format!("m{}", i))));
+    }
+
     let context = extract_llm_context(&entries);
-    // summary + 4 kept + 0 post = 5
+    // summary + 4 post-marker = 5
     assert_eq!(context.len(), 5);
 
-    // Verify the kept messages are the last 4 before marker (m4, m5, m6, m7)
+    // Verify the kept messages are the 4 after marker (m4, m5, m6, m7)
     let kept_texts: Vec<String> = context[1..]
         .iter()
         .map(|m| serde_json::to_string(m).unwrap())
@@ -418,7 +427,8 @@ fn extract_llm_context_kept_recent_count_correct() {
 
 #[test]
 fn extract_llm_context_skips_older_markers_in_kept_range() {
-    // marker1 falls in kept range of marker2 → filtered out
+    // Older markers are before the latest marker; kept messages are after.
+    // Only the latest marker is used for context extraction.
     let mut entries = Vec::new();
 
     // 3 messages
@@ -434,15 +444,18 @@ fn extract_llm_context_skips_older_markers_in_kept_range() {
     entries.push(StoreEntry::Message(Message::user("b0".to_string())));
     entries.push(StoreEntry::Message(Message::user("b1".to_string())));
 
-    // marker2 at index 6, kept=4 → kept_start = max(0, 6-4) = 2
-    // kept range is entries[2..6] = [a2, marker1, b0, b1]
-    // Only messages in kept range: a2, b0, b1 (marker1 is skipped)
-    let marker2 = CompactionMarker::new("NewSummary".to_string(), 4, 5, "sliding_summary");
+    // marker2 at index 6, kept=3
+    let marker2 = CompactionMarker::new("NewSummary".to_string(), 3, 5, "sliding_summary");
     entries.push(StoreEntry::Marker(marker2));
+
+    // 3 kept messages re-appended after marker2
+    entries.push(StoreEntry::Message(Message::user("k0".to_string())));
+    entries.push(StoreEntry::Message(Message::user("k1".to_string())));
+    entries.push(StoreEntry::Message(Message::user("k2".to_string())));
 
     let context = extract_llm_context(&entries);
 
-    // summary + 3 kept messages (a2, b0, b1) + 0 post = 4
+    // summary + 3 post-marker messages = 4
     assert_eq!(context.len(), 4);
 
     match &context[0] {
@@ -464,7 +477,7 @@ fn extract_llm_context_empty_summary() {
     // SlidingWindow has empty summary → no system message prepended
     let mut entries = Vec::new();
 
-    for i in 0..6 {
+    for i in 0..3 {
         entries.push(StoreEntry::Message(Message::user(format!("w{}", i))));
     }
 
@@ -472,9 +485,14 @@ fn extract_llm_context_empty_summary() {
     let marker = CompactionMarker::new(String::new(), 3, 3, "sliding_window");
     entries.push(StoreEntry::Marker(marker));
 
+    // 3 kept messages re-appended after marker
+    for i in 3..6 {
+        entries.push(StoreEntry::Message(Message::user(format!("w{}", i))));
+    }
+
     let context = extract_llm_context(&entries);
 
-    // No summary + 3 kept + 0 post = 3
+    // No summary + 3 post-marker = 3
     assert_eq!(context.len(), 3);
 
     // First should be user message (w3), not a system message

@@ -205,7 +205,7 @@ impl Session {
         // Strategy-specific: build compacted messages, summary text, and counts.
         // TokenTruncate uses token budgets on ALL messages (ignores keep_recent/split).
         // SlidingSummary and SlidingWindow split messages into old/recent at a fixed index.
-        let (llm_context, summary_text, summarized_count, kept_recent_count, strategy_name) =
+        let (llm_context, summary_text, summarized_count, kept_recent_count, strategy_name, store_kept_messages) =
             match self.config.compaction_strategy {
                 CompactionStrategy::TokenTruncate => {
                     let budget = self
@@ -233,7 +233,8 @@ impl Session {
                     }
                     let kept_count = kept.len();
                     let dropped = messages.len().saturating_sub(kept_count);
-                    (kept, String::new(), dropped, kept_count, "token_truncate")
+                    let store_kept = kept.clone();
+                    (kept, String::new(), dropped, kept_count, "token_truncate", store_kept)
                 }
                 _ => {
                     // For SlidingSummary and SlidingWindow, use keep_recent split
@@ -260,15 +261,20 @@ impl Session {
                             let summary_message = rig::completion::Message::system(&summary);
                             let mut compacted = vec![summary_message];
                             compacted.extend_from_slice(recent_messages);
-                            (compacted, summary, summarized_count, kept_recent_count, "sliding_summary")
+                            let store_kept = recent_messages.to_vec();
+                            (compacted, summary, summarized_count, kept_recent_count, "sliding_summary", store_kept)
                         }
-                        CompactionStrategy::SlidingWindow => (
-                            recent_messages.to_vec(),
-                            String::new(),
-                            summarized_count,
-                            kept_recent_count,
-                            "sliding_window",
-                        ),
+                        CompactionStrategy::SlidingWindow => {
+                            let store_kept = recent_messages.to_vec();
+                            (
+                                store_kept.clone(),
+                                String::new(),
+                                summarized_count,
+                                kept_recent_count,
+                                "sliding_window",
+                                store_kept,
+                            )
+                        }
                         CompactionStrategy::TokenTruncate => {
                             unreachable!("TokenTruncate handled above")
                         }
@@ -289,6 +295,13 @@ impl Session {
         store
             .append_marker(&self.id, &marker)
             .map_err(|e| io::Error::other(e.to_string()))?;
+
+        // Re-append kept messages after the marker so they appear below it in transcript
+        if !store_kept_messages.is_empty() {
+            store
+                .append(&self.id, &store_kept_messages)
+                .map_err(|e| io::Error::other(e.to_string()))?;
+        }
 
         // Now update in-memory state
         memory
