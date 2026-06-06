@@ -643,7 +643,7 @@ impl ConversationRuntime for AgentConversationRuntime {
         context: Option<String>,
         span: Span,
     ) -> Result<Value, LabeledError> {
-        use crate::agent::conversation::turn::{TurnContext, TurnError, execute_turn};
+        use crate::agent::conversation::turn::{TurnContext, execute_turn};
         use crate::agent::hook::AuthzPermissionResolver;
 
         emit_permissions_startup_summary_once(
@@ -755,14 +755,50 @@ impl ConversationRuntime for AgentConversationRuntime {
             };
         }
 
-        let turn_result = with_cached_model!(model, run_with_model!(model))
-        .map_err(|e: TurnError| {
-            if e.cancelled {
-                LabeledError::new(format!("Turn cancelled: {}", e.msg)).with_label(e.msg, span)
-            } else {
-                LabeledError::new(format!("Turn failed: {}", e.msg)).with_label(e.msg, span)
+        let turn_result = match with_cached_model!(model, run_with_model!(model)) {
+            Ok(result) => result,
+            Err(e) if e.cancelled => {
+                // Path A: rig hook cancelled — persist chat_history if available
+                if let Some(ref session_id) = self.final_session_id
+                    && let Some(ref messages) = e.messages
+                {
+                    if let Err(persist_err) =
+                        self.conversation_store.append(session_id, messages)
+                    {
+                        log::warn!(
+                            "Failed to persist cancelled turn messages: {}",
+                            persist_err
+                        );
+                    }
+                    self.memory_message_count += messages.len();
+                }
+                // Return a minimal cancelled response (not an error)
+                let llm_response = crate::llm::LlmResponse {
+                    text: String::new(),
+                    usage: crate::llm::LlmUsage {
+                        input_tokens: 0,
+                        output_tokens: 0,
+                        total_tokens: 0,
+                        cached_input_tokens: 0,
+                        cache_creation_input_tokens: 0,
+                    },
+                    tool_calls: Vec::new(),
+                    tool_call_metadata: Vec::new(),
+                };
+                return Ok(crate::llm::format_response(
+                    &llm_response,
+                    &self.config,
+                    self.final_session_id.as_deref(),
+                    self.compaction_count,
+                    span,
+                ));
             }
-        })?;
+            Err(e) => {
+                return Err(
+                    LabeledError::new(format!("Turn failed: {}", e.msg)).with_label(e.msg, span)
+                );
+            }
+        };
 
         // Persist new messages to conversation store if session exists
         if let Some(ref session_id) = self.final_session_id

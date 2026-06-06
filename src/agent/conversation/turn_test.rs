@@ -20,6 +20,7 @@ fn turn_result_can_be_constructed() {
         messages: None,
         tool_call_count: 0,
         deltas_emitted: false,
+        cancelled: false,
     };
 
     assert_eq!(result.text, "Hello");
@@ -27,6 +28,7 @@ fn turn_result_can_be_constructed() {
     assert_eq!(result.usage.output_tokens, 5);
     assert_eq!(result.tool_call_count, 0);
     assert!(!result.deltas_emitted);
+    assert!(!result.cancelled);
 }
 
 #[test]
@@ -34,16 +36,20 @@ fn turn_error_can_be_constructed() {
     let error = TurnError {
         msg: "Test error".to_string(),
         cancelled: false,
+        messages: None,
     };
 
     assert_eq!(error.msg, "Test error");
     assert!(!error.cancelled);
+    assert!(error.messages.is_none());
 
     let cancelled = TurnError {
         msg: "Cancelled".to_string(),
         cancelled: true,
+        messages: None,
     };
     assert!(cancelled.cancelled);
+    assert!(cancelled.messages.is_none());
 }
 
 #[test]
@@ -99,9 +105,16 @@ fn build_agent_and_prompt_passes_max_turns_to_rig_agent_builder() {
 
 #[test]
 fn prompt_cancelled_error_is_detected_as_cancellation() {
-    // Create a PromptError::PromptCancelled variant directly
+    // Create a PromptError::PromptCancelled variant with chat_history
+    let user_msg = rig::completion::Message::User {
+        content: rig::one_or_many::OneOrMany::one(rig::completion::message::UserContent::Text(
+            rig::completion::message::Text {
+                text: "Hello".to_string(),
+            },
+        )),
+    };
     let err = rig::completion::PromptError::PromptCancelled {
-        chat_history: vec![],
+        chat_history: vec![user_msg],
         reason: "Cancelled by user".to_string(),
     };
 
@@ -114,6 +127,12 @@ fn prompt_cancelled_error_is_detected_as_cancellation() {
         "PromptCancelled variant should be detected as cancellation"
     );
     assert!(turn_err.msg.contains("Cancelled by user"));
+
+    // Should capture chat_history
+    let messages = turn_err
+        .messages
+        .expect("PromptCancelled should capture chat_history as messages");
+    assert_eq!(messages.len(), 1, "Should have one message from chat_history");
 }
 
 #[test]
@@ -284,12 +303,14 @@ fn streaming_turn_result_fields_match_turn_result() {
         messages: None,
         tool_call_count: 3, // From driver
         deltas_emitted: true, // From driver
+        cancelled: false,
     };
     
     assert_eq!(result.text, "Response from streaming");
     assert_eq!(result.usage.total_tokens, 150);
     assert_eq!(result.tool_call_count, 3);
     assert!(result.deltas_emitted);
+    assert!(!result.cancelled);
 }
 
 /// Test that build_agent_and_stream uses the multi-turn streaming API.
@@ -320,4 +341,116 @@ fn build_agent_and_stream_uses_multi_turn_streaming() {
     // - Input: CompletionModel + AgentPromptConfig
     // - Output: Result<StreamingTurnResult, rig::agent::StreamingError>
     // - Side effects: Emits text deltas via hooks (if hook is configured)
+}
+
+/// Test that TurnError from PromptCancelled captures chat_history as messages.
+#[test]
+fn turn_error_from_prompt_cancelled_captures_messages() {
+    let user_msg = rig::completion::Message::User {
+        content: rig::one_or_many::OneOrMany::one(rig::completion::message::UserContent::Text(
+            rig::completion::message::Text {
+                text: "What is Rust?".to_string(),
+            },
+        )),
+    };
+    let assistant_msg = rig::completion::Message::Assistant {
+        id: None,
+        content: rig::one_or_many::OneOrMany::one(
+            rig::completion::message::AssistantContent::Text(
+                rig::completion::message::Text {
+                    text: "Rust is a systems programming...".to_string(),
+                },
+            ),
+        ),
+    };
+
+    let err = rig::completion::PromptError::PromptCancelled {
+        reason: "User pressed Esc".to_string(),
+        chat_history: vec![user_msg, assistant_msg],
+    };
+
+    let turn_err = TurnError::from(err);
+
+    assert!(turn_err.cancelled);
+    assert_eq!(turn_err.msg, "User pressed Esc");
+
+    let messages = turn_err
+        .messages
+        .expect("PromptCancelled should preserve chat_history");
+    assert_eq!(messages.len(), 2, "Both user and assistant messages should be captured");
+}
+
+/// Test that TurnError from non-cancelled PromptError has no messages.
+#[test]
+fn turn_error_from_non_cancelled_has_no_messages() {
+    let completion_err =
+        rig::completion::CompletionError::ResponseError("Network timeout".to_string());
+    let err = rig::completion::PromptError::from(completion_err);
+
+    let turn_err = TurnError::from(err);
+
+    assert!(!turn_err.cancelled);
+    assert!(
+        turn_err.messages.is_none(),
+        "Non-cancelled errors should not have messages"
+    );
+}
+
+/// Test that TurnError from StreamingError wrapping PromptCancelled captures messages.
+#[test]
+fn turn_error_from_streaming_prompt_cancelled_captures_messages() {
+    let user_msg = rig::completion::Message::User {
+        content: rig::one_or_many::OneOrMany::one(rig::completion::message::UserContent::Text(
+            rig::completion::message::Text {
+                text: "Tell me about async".to_string(),
+            },
+        )),
+    };
+
+    let inner = rig::completion::PromptError::PromptCancelled {
+        reason: "Hook cancelled".to_string(),
+        chat_history: vec![user_msg],
+    };
+    let streaming_err = rig::agent::StreamingError::Prompt(Box::new(inner));
+
+    let turn_err = TurnError::from(streaming_err);
+
+    assert!(turn_err.cancelled);
+    assert_eq!(turn_err.msg, "Hook cancelled");
+
+    let messages = turn_err
+        .messages
+        .expect("StreamingError wrapping PromptCancelled should capture chat_history");
+    assert_eq!(messages.len(), 1);
+}
+
+/// Test that TurnResult correctly propagates the cancelled flag.
+#[test]
+fn turn_result_cancelled_flag_propagates() {
+    let cancelled_result = TurnResult {
+        text: String::new(),
+        usage: rig::completion::request::Usage::default(),
+        messages: None,
+        tool_call_count: 0,
+        deltas_emitted: true,
+        cancelled: true,
+    };
+
+    assert!(cancelled_result.cancelled, "Cancelled flag should be true");
+    assert!(cancelled_result.text.is_empty(), "Cancelled turn should have empty text");
+    assert!(
+        cancelled_result.messages.is_none(),
+        "Cancelled via cancel_token should have no messages (FinalResponse not received)"
+    );
+
+    let normal_result = TurnResult {
+        text: "Hello".to_string(),
+        usage: rig::completion::request::Usage::default(),
+        messages: Some(vec![]),
+        tool_call_count: 1,
+        deltas_emitted: true,
+        cancelled: false,
+    };
+
+    assert!(!normal_result.cancelled, "Normal turn should not be cancelled");
 }

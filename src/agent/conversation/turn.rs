@@ -33,6 +33,8 @@ pub struct TurnResult {
     pub tool_call_count: usize,
     /// Whether text deltas were emitted during streaming
     pub deltas_emitted: bool,
+    /// Whether the turn was cancelled via cancel_token
+    pub cancelled: bool,
 }
 
 /// Error from a conversation turn
@@ -42,6 +44,9 @@ pub struct TurnError {
     pub msg: String,
     /// Whether the error was due to user cancellation
     pub cancelled: bool,
+    /// Messages captured at the point of cancellation (from rig's chat_history).
+    /// Present only when `cancelled == true` and rig provided a chat_history.
+    pub messages: Option<Vec<rig::completion::Message>>,
 }
 
 impl std::fmt::Display for TurnError {
@@ -59,13 +64,18 @@ impl std::error::Error for TurnError {}
 impl From<rig::completion::PromptError> for TurnError {
     fn from(err: rig::completion::PromptError) -> Self {
         match err {
-            rig::completion::PromptError::PromptCancelled { reason, .. } => TurnError {
+            rig::completion::PromptError::PromptCancelled {
+                reason,
+                chat_history,
+            } => TurnError {
                 msg: reason,
                 cancelled: true,
+                messages: Some(chat_history),
             },
             other => TurnError {
                 msg: other.to_string(),
                 cancelled: false,
+                messages: None,
             },
         }
     }
@@ -75,18 +85,24 @@ impl From<rig::agent::StreamingError> for TurnError {
     fn from(e: rig::agent::StreamingError) -> Self {
         match e {
             rig::agent::StreamingError::Prompt(boxed) => match *boxed {
-                rig::completion::PromptError::PromptCancelled { reason, .. } => TurnError {
+                rig::completion::PromptError::PromptCancelled {
+                    reason,
+                    chat_history,
+                } => TurnError {
                     msg: reason,
                     cancelled: true,
+                    messages: Some(chat_history),
                 },
                 other => TurnError {
                     msg: other.to_string(),
                     cancelled: false,
+                    messages: None,
                 },
             },
             other => TurnError {
                 msg: other.to_string(),
                 cancelled: false,
+                messages: None,
             },
         }
     }
@@ -208,6 +224,7 @@ where
     let join_result = ctx.runtime.block_on(prompt_handle).map_err(|e| TurnError {
         msg: format!("Agent task panicked: {}", e),
         cancelled: false,
+        messages: None,
     })?;
 
     let response = join_result.map_err(TurnError::from)?;
@@ -218,6 +235,7 @@ where
         messages: response.messages,
         tool_call_count,
         deltas_emitted,
+        cancelled: response.cancelled,
     })
 }
 
@@ -238,6 +256,8 @@ struct StreamingTurnResult {
     text: String,
     usage: rig::completion::request::Usage,
     messages: Option<Vec<rig::completion::Message>>,
+    /// Whether the stream was cancelled via cancel_token
+    cancelled: bool,
 }
 
 /// Build an agent with a hook and execute a multi-turn streaming prompt loop.
@@ -282,6 +302,7 @@ where
     let mut text = String::new();
     let mut usage = rig::completion::request::Usage::default();
     let mut messages: Option<Vec<rig::completion::Message>> = None;
+    let mut cancelled = false;
 
     loop {
         tokio::select! {
@@ -305,6 +326,7 @@ where
                 }
             }
             _ = cancel_token.cancelled() => {
+                cancelled = true;
                 break;
             }
         }
@@ -314,6 +336,7 @@ where
         text,
         usage,
         messages,
+        cancelled,
     })
 }
 
