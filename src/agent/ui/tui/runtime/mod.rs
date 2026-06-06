@@ -829,6 +829,8 @@ impl RuntimeCoordinator {
                             .push_transcript_rendered_line(TranscriptRole::Compaction, line);
                     }
                 }
+                self.state
+                    .push_transcript_line(TranscriptRole::Separator, String::new());
                 continue;
             }
 

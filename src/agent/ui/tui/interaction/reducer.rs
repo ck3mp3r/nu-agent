@@ -414,6 +414,7 @@ fn reduce_ui_event(state: &mut AppState, event: UiEvent) {
                 state.push_transcript_rendered_line(TranscriptRole::Compaction, line);
             }
             state.compaction_streaming_start = None;
+            state.push_transcript_line(TranscriptRole::Separator, String::new());
             state.status_line.clear();
         }
         UiEvent::CompactionFailed { source, message } => {

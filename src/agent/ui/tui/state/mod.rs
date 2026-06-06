@@ -1346,7 +1346,7 @@ impl AppState {
 
     pub fn push_transcript_rendered_line(&mut self, role: TranscriptRole, line: Line<'static>) {
         match role {
-            TranscriptRole::Assistant => {
+            TranscriptRole::Assistant | TranscriptRole::Compaction => {
                 let content_line = ratatui_line_to_content_line(&line);
                 let entry = TranscriptEntry::Assistant(AssistantChunk {
                     lines: vec![content_line],
