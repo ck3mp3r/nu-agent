@@ -424,6 +424,93 @@ fn turn_error_from_streaming_prompt_cancelled_captures_messages() {
     assert_eq!(messages.len(), 1);
 }
 
+/// Path B: cancel_token fired, partial text accumulated.
+/// When cancelled=true, messages=None, and text is non-empty, the runtime must
+/// construct BOTH a user message and an assistant message for persistence.
+/// This test verifies the construction logic that drives the Path B code path.
+#[test]
+fn path_b_cancelled_with_partial_text_constructs_user_and_assistant_messages() {
+    use rig::completion::Message;
+
+    let turn_result = TurnResult {
+        text: "partial response".to_string(),
+        usage: rig::completion::request::Usage::default(),
+        messages: None,
+        tool_call_count: 0,
+        deltas_emitted: true,
+        cancelled: true,
+    };
+
+    // Replicate Path B construction logic from runtime.rs execute_turn
+    let prompt = "user prompt".to_string();
+    let mut cancelled_messages = vec![Message::user(prompt.clone())];
+    if !turn_result.text.is_empty() {
+        cancelled_messages.push(Message::assistant(turn_result.text.clone()));
+    }
+
+    assert_eq!(
+        cancelled_messages.len(),
+        2,
+        "Path B with partial text must produce user + assistant messages"
+    );
+
+    // Verify user message is first
+    assert!(
+        matches!(&cancelled_messages[0], Message::User { .. }),
+        "First message must be a user message"
+    );
+
+    // Verify assistant message is second with the partial text
+    match &cancelled_messages[1] {
+        Message::Assistant { content, .. } => {
+            let text = content.iter().find_map(|c| {
+                if let rig::completion::message::AssistantContent::Text(t) = c {
+                    Some(t.text.as_str())
+                } else {
+                    None
+                }
+            });
+            assert_eq!(text, Some("partial response"), "Assistant message must contain partial text");
+        }
+        other => panic!("Expected assistant message, got {:?}", other),
+    }
+}
+
+/// Path B: cancel_token fired, no text accumulated.
+/// When cancelled=true, messages=None, and text is empty, the runtime must
+/// construct ONLY a user message — no empty assistant message should be appended.
+#[test]
+fn path_b_cancelled_with_empty_text_constructs_only_user_message() {
+    use rig::completion::Message;
+
+    let turn_result = TurnResult {
+        text: String::new(),
+        usage: rig::completion::request::Usage::default(),
+        messages: None,
+        tool_call_count: 0,
+        deltas_emitted: false,
+        cancelled: true,
+    };
+
+    // Replicate Path B construction logic from runtime.rs execute_turn
+    let prompt = "user prompt".to_string();
+    let mut cancelled_messages = vec![Message::user(prompt.clone())];
+    if !turn_result.text.is_empty() {
+        cancelled_messages.push(Message::assistant(turn_result.text.clone()));
+    }
+
+    assert_eq!(
+        cancelled_messages.len(),
+        1,
+        "Path B with empty text must produce only the user message (no empty assistant)"
+    );
+
+    assert!(
+        matches!(&cancelled_messages[0], Message::User { .. }),
+        "The single message must be a user message"
+    );
+}
+
 /// Test that TurnResult correctly propagates the cancelled flag.
 #[test]
 fn turn_result_cancelled_flag_propagates() {

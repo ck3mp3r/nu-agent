@@ -729,7 +729,7 @@ impl ConversationRuntime for AgentConversationRuntime {
                     TurnContext {
                         runtime: self.runtime.handle(),
                         model: $model,
-                        prompt,
+                        prompt: prompt.clone(),
                         memory: self.memory.clone(),
                         conversation_id,
                         preamble: preamble.as_deref(),
@@ -799,6 +799,22 @@ impl ConversationRuntime for AgentConversationRuntime {
                 );
             }
         };
+
+        // Path B: cancel_token fired — FinalResponse never arrived so messages is None.
+        // Construct user + optional partial assistant message and persist manually.
+        if turn_result.cancelled && turn_result.messages.is_none()
+            && let Some(ref session_id) = self.final_session_id
+        {
+            use rig::completion::Message;
+            let mut cancelled_messages = vec![Message::user(prompt.clone())];
+            if !turn_result.text.is_empty() {
+                cancelled_messages.push(Message::assistant(turn_result.text.clone()));
+            }
+            if let Err(e) = self.conversation_store.append(session_id, &cancelled_messages) {
+                log::warn!("Failed to persist cancelled turn messages (path B): {}", e);
+            }
+            self.memory_message_count += cancelled_messages.len();
+        }
 
         // Persist new messages to conversation store if session exists
         if let Some(ref session_id) = self.final_session_id
