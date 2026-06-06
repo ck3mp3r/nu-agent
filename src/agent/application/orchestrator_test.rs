@@ -2624,6 +2624,7 @@ fn mailbox_message_injected_as_turn() {
     tx.send(IncomingMessage {
         from: "orchestrator".to_string(),
         message: "implement the login endpoint".to_string(),
+        kind: "message".to_string(),
     })
     .unwrap();
 
@@ -2653,6 +2654,7 @@ fn mailbox_clear_resets_session() {
     tx.send(IncomingMessage {
         from: "orchestrator".to_string(),
         message: "/clear".to_string(),
+        kind: "message".to_string(),
     })
     .unwrap();
 
@@ -2690,6 +2692,7 @@ fn user_input_takes_precedence() {
     tx.send(IncomingMessage {
         from: "orchestrator".to_string(),
         message: "mailbox prompt".to_string(),
+        kind: "message".to_string(),
     })
     .unwrap();
 
@@ -2752,6 +2755,7 @@ fn mailbox_queued_when_worker_busy() {
         tx.send(IncomingMessage {
             from: "orchestrator".to_string(),
             message: "queued message".to_string(),
+            kind: "message".to_string(),
         })
         .ok();
     });
@@ -2770,5 +2774,142 @@ fn mailbox_queued_when_worker_busy() {
             .contains(&"[from: orchestrator] queued message".to_string()),
         "deferred mailbox message should be displayed when sent: {:?}",
         ui.displayed_incoming_messages
+    );
+}
+
+#[test]
+fn orchestrator_formats_task_kind() {
+    use crate::agent::mailbox::IncomingMessage;
+
+    let mut runtime = MailboxTestRuntime::default();
+    let mut ui = MailboxTestUi::with_prompts(&[]);
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    tx.send(IncomingMessage {
+        from: "parent".to_string(),
+        message: "build the auth module".to_string(),
+        kind: "task".to_string(),
+    })
+    .unwrap();
+
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Some(rx), Span::test_data())
+            .expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(
+        runtime.prompts,
+        vec!["[TASK from: parent] build the auth module".to_string()]
+    );
+}
+
+#[test]
+fn orchestrator_formats_completion_kind() {
+    use crate::agent::mailbox::IncomingMessage;
+
+    let mut runtime = MailboxTestRuntime::default();
+    let mut ui = MailboxTestUi::with_prompts(&[]);
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    tx.send(IncomingMessage {
+        from: "worker-1".to_string(),
+        message: "auth module is done".to_string(),
+        kind: "completion".to_string(),
+    })
+    .unwrap();
+
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Some(rx), Span::test_data())
+            .expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(
+        runtime.prompts,
+        vec!["[COMPLETED from: worker-1] auth module is done".to_string()]
+    );
+}
+
+#[test]
+fn orchestrator_formats_question_kind() {
+    use crate::agent::mailbox::IncomingMessage;
+
+    let mut runtime = MailboxTestRuntime::default();
+    let mut ui = MailboxTestUi::with_prompts(&[]);
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    tx.send(IncomingMessage {
+        from: "worker-2".to_string(),
+        message: "which database should I use?".to_string(),
+        kind: "question".to_string(),
+    })
+    .unwrap();
+
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Some(rx), Span::test_data())
+            .expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(runtime.prompts.len(), 1);
+    assert!(
+        runtime.prompts[0].starts_with("[QUESTION from: worker-2"),
+        "question kind should start with [QUESTION from: ...]: {}",
+        runtime.prompts[0]
+    );
+    assert!(
+        runtime.prompts[0].contains("BLOCKED"),
+        "question kind should contain BLOCKED: {}",
+        runtime.prompts[0]
+    );
+}
+
+#[test]
+fn orchestrator_formats_default_kind() {
+    use crate::agent::mailbox::IncomingMessage;
+
+    let mut runtime = MailboxTestRuntime::default();
+    let mut ui = MailboxTestUi::with_prompts(&[]);
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    tx.send(IncomingMessage {
+        from: "peer".to_string(),
+        message: "general info".to_string(),
+        kind: "message".to_string(),
+    })
+    .unwrap();
+
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Some(rx), Span::test_data())
+            .expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(
+        runtime.prompts,
+        vec!["[from: peer] general info".to_string()]
+    );
+}
+
+#[test]
+fn orchestrator_formats_unknown_kind_as_default() {
+    use crate::agent::mailbox::IncomingMessage;
+
+    let mut runtime = MailboxTestRuntime::default();
+    let mut ui = MailboxTestUi::with_prompts(&[]);
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    tx.send(IncomingMessage {
+        from: "peer".to_string(),
+        message: "something custom".to_string(),
+        kind: "custom_kind".to_string(),
+    })
+    .unwrap();
+
+    let value =
+        run_interactive_loop(&mut runtime, &mut ui, Some(rx), Span::test_data())
+            .expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(
+        runtime.prompts,
+        vec!["[from: peer] something custom".to_string()]
     );
 }

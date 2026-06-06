@@ -143,6 +143,7 @@ async fn broker_routes_message_between_agents() {
         let message = ClientFrame::Message {
             to: "agent2".to_string(),
             message: "hello from agent1".to_string(),
+            kind: "message".to_string(),
         };
         write_half1
             .write_all(format!("{}\n", serde_json::to_string(&message).unwrap()).as_bytes())
@@ -155,9 +156,10 @@ async fn broker_routes_message_between_agents() {
         
         let received: ServerFrame = serde_json::from_str(msg_line.trim()).unwrap();
         match received {
-            ServerFrame::Message { from, message } => {
+            ServerFrame::Message { from, message, kind } => {
                 assert_eq!(from, "agent1");
                 assert_eq!(message, "hello from agent1");
+                assert_eq!(kind, "message");
             }
             _ => panic!("Expected Message frame"),
         }

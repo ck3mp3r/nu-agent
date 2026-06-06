@@ -35,6 +35,7 @@ async fn route_message_to_connected() {
     let frame = ServerFrame::Message {
         from: "agent2".to_string(),
         message: "hello".to_string(),
+        kind: "message".to_string(),
     };
     
     let result = registry.route_message("agent1", frame);
@@ -43,9 +44,10 @@ async fn route_message_to_connected() {
     // Verify message received
     let received = rx.recv().await.unwrap();
     match received {
-        ServerFrame::Message { from, message } => {
+        ServerFrame::Message { from, message, kind } => {
             assert_eq!(from, "agent2");
             assert_eq!(message, "hello");
+            assert_eq!(kind, "message");
         }
         _ => panic!("Expected Message frame"),
     }
@@ -58,6 +60,7 @@ fn route_message_unknown_agent_errors() {
     let frame = ServerFrame::Message {
         from: "agent1".to_string(),
         message: "hello".to_string(),
+        kind: "message".to_string(),
     };
     
     let result = registry.route_message("unknown", frame);

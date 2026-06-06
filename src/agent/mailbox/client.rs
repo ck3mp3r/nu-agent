@@ -69,10 +69,11 @@ impl BrokerClient {
     }
 
     /// Send a message to another agent
-    pub async fn send(&mut self, to: &str, message: &str) -> Result<(), BrokerClientError> {
+    pub async fn send(&mut self, to: &str, message: &str, kind: &str) -> Result<(), BrokerClientError> {
         let frame = serde_json::to_string(&ClientFrame::Message {
             to: to.to_string(),
             message: message.to_string(),
+            kind: kind.to_string(),
         })? + "\n";
         self.writer.write_all(frame.as_bytes()).await?;
         Ok(())
@@ -110,10 +111,11 @@ pub(crate) struct BrokerSender {
 #[allow(dead_code)]
 impl BrokerSender {
     /// Send a message asynchronously
-    pub async fn send(&mut self, to: &str, message: &str) -> Result<(), BrokerClientError> {
+    pub async fn send(&mut self, to: &str, message: &str, kind: &str) -> Result<(), BrokerClientError> {
         let frame = serde_json::to_string(&ClientFrame::Message {
             to: to.to_string(),
             message: message.to_string(),
+            kind: kind.to_string(),
         })? + "\n";
         self.writer.write_all(frame.as_bytes()).await?;
         Ok(())

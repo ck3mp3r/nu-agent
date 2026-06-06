@@ -1,11 +1,16 @@
 use serde::{Deserialize, Serialize};
 
+fn default_kind() -> String {
+    "message".to_string()
+}
+
 /// Incoming message from broker for agent runtime
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(crate) struct IncomingMessage {
     pub from: String,
     pub message: String,
+    pub kind: String,
 }
 
 #[allow(dead_code)]
@@ -15,7 +20,12 @@ pub(crate) enum ClientFrame {
     #[serde(rename = "auth")]
     Auth { token: String },
     #[serde(rename = "message")]
-    Message { to: String, message: String },
+    Message {
+        to: String,
+        message: String,
+        #[serde(default = "default_kind")]
+        kind: String,
+    },
 }
 
 #[allow(dead_code)]
@@ -27,5 +37,10 @@ pub(crate) enum ServerFrame {
     #[serde(rename = "auth_rejected")]
     AuthRejected { reason: String },
     #[serde(rename = "message")]
-    Message { from: String, message: String },
+    Message {
+        from: String,
+        message: String,
+        #[serde(default = "default_kind")]
+        kind: String,
+    },
 }

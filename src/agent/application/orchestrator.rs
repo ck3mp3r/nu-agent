@@ -511,7 +511,17 @@ where
                         ui.clear_transcript();
                         continue;
                     }
-                    let prompt = format!("[from: {}] {}", msg.from, msg.message);
+                    let prompt = match msg.kind.as_str() {
+                        "task" => format!("[TASK from: {}] {}", msg.from, msg.message),
+                        "completion" => {
+                            format!("[COMPLETED from: {}] {}", msg.from, msg.message)
+                        }
+                        "question" => format!(
+                            "[QUESTION from: {} — BLOCKED, needs your decision] {}",
+                            msg.from, msg.message
+                        ),
+                        _ => format!("[from: {}] {}", msg.from, msg.message),
+                    };
                     if !worker_active {
                         ui.display_incoming_message(&prompt);
                         worker_cmd_tx

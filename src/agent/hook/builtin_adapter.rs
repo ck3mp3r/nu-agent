@@ -24,7 +24,7 @@ enum BuiltinExecError {
 
 /// Adapts a builtin tool to rig's ToolDyn interface.
 ///
-/// This adapter bridges our builtin tools (read, edit, patch, skill, spawn_agent, send_message, list_agents) with rig's
+/// This adapter bridges our builtin tools (read, edit, patch, skill, spawn_agent, terminate_agent, send_message, list_agents) with rig's
 /// dynamic tool system. It wraps a tool definition and the current working directory,
 /// then dispatches calls to the appropriate builtin handler.
 pub struct BuiltinToolAdapter {
@@ -93,6 +93,28 @@ impl ToolDyn for BuiltinToolAdapter {
 
                 let mut state = orchestrator.lock().unwrap();
                 crate::agent::tools::handler::spawn_agent::dispatch_spawn_agent(
+                    &args_json,
+                    &mut state,
+                )
+                .map_err(|e| {
+                    ToolError::ToolCallError(Box::new(BuiltinExecError::Execution(format!(
+                        "{}: {}",
+                        e.message,
+                        e.details
+                            .map(|d| d.to_string())
+                            .unwrap_or_else(|| "no details".to_string())
+                    ))))
+                })?
+            } else if self.tool_def.name == "terminate_agent" {
+                // terminate_agent requires orchestrator state
+                let orchestrator = self.orchestrator.as_ref().ok_or_else(|| {
+                    ToolError::ToolCallError(Box::new(BuiltinExecError::Execution(
+                        "terminate_agent is only available to orchestrator agents".to_string(),
+                    )))
+                })?;
+
+                let mut state = orchestrator.lock().unwrap();
+                crate::agent::tools::handler::spawn_agent::dispatch_terminate_agent(
                     &args_json,
                     &mut state,
                 )

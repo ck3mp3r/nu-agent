@@ -15,8 +15,9 @@ pub(crate) async fn handle_send_message(
         .ok_or_else(|| ToolExecError::new("Missing required field: to"))?;
     let message = args["message"].as_str()
         .ok_or_else(|| ToolExecError::new("Missing required field: message"))?;
+    let kind = args["kind"].as_str().unwrap_or("message");
     
-    sender.send(to, message).await
+    sender.send(to, message, kind).await
         .map_err(|e| ToolExecError::new(format!("Failed to send message: {e}")))?;
     
     Ok(serde_json::json!({ "sent": true }))
@@ -32,10 +33,12 @@ pub(crate) fn handle_send_message_via_registry(
         .ok_or_else(|| ToolExecError::new("Missing required field: to"))?;
     let message = args["message"].as_str()
         .ok_or_else(|| ToolExecError::new("Missing required field: message"))?;
+    let kind = args["kind"].as_str().unwrap_or("message");
     
     let frame = ServerFrame::Message {
         from: from.to_string(),
         message: message.to_string(),
+        kind: kind.to_string(),
     };
     
     registry

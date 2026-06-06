@@ -675,9 +675,11 @@ impl ConversationRuntime for AgentConversationRuntime {
         let sub_agent_instruction = self.parent_name.as_ref().map(|parent| {
             format!(
                 "You are a sub-agent. When you have completed your task, report your results back \
-                 to your parent agent using the send_message tool: \
-                 send_message(to: \"{parent}\", message: \"<your results>\"). \
-                 Work autonomously — do not ask for clarification."
+                 to your parent agent using the send_message tool with kind 'completion': \
+                 send_message(to: \"{parent}\", message: \"<your results>\", kind: \"completion\"). \
+                 If you are blocked and need a decision from your parent, use kind 'question': \
+                 send_message(to: \"{parent}\", message: \"<your question>\", kind: \"question\"). \
+                 Work autonomously — only use 'question' when truly blocked."
             )
         });
 

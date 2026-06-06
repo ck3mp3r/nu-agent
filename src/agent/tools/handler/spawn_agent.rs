@@ -1,5 +1,6 @@
 #![allow(private_interfaces)]
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -44,6 +45,7 @@ pub struct OrchestratorState {
     pub(crate) tmux_window: Option<String>,
     pub(crate) cwd: PathBuf,
     pub(crate) agent_identity: Option<String>,
+    pub(crate) agent_panes: HashMap<String, String>,
 }
 
 impl OrchestratorState {
@@ -57,6 +59,7 @@ impl OrchestratorState {
             tmux_window: None,
             cwd,
             agent_identity: None,
+            agent_panes: HashMap::new(),
         }
     }
 }
@@ -202,6 +205,31 @@ pub(crate) fn handle_spawn_agent<T: TmuxRunner>(
         }
     }
 
+    // Discover existing "agents" window if we don't have one
+    if state.tmux_window.is_none()
+        && let Ok(output) = tmux.run(&["list-windows", "-F", "#{window_id}\t#{window_name}"])
+    {
+        for line in output.lines() {
+            let mut parts = line.splitn(2, '\t');
+            if let (Some(wid), Some(wname)) = (parts.next(), parts.next())
+                && wname.trim() == "agents"
+            {
+                log::debug!("Discovered existing 'agents' tmux window: {}", wid);
+                let window_id = wid.trim().to_string();
+                match tmux.run(&["split-window", "-h", "-c", &cwd_str, "-P", "-F", "#{pane_id}", "-t", &window_id]) {
+                    Ok(id) => {
+                        pane_id = Some(id.trim().to_string());
+                        state.tmux_window = Some(window_id);
+                    }
+                    Err(e) => {
+                        log::warn!("split-window into discovered window failed: {}", e.message);
+                    }
+                }
+                break;
+            }
+        }
+    }
+
     // Create new window if needed (either originally None or after failed split)
     if state.tmux_window.is_none() {
         log::debug!("Creating new tmux window for agents");
@@ -216,6 +244,9 @@ pub(crate) fn handle_spawn_agent<T: TmuxRunner>(
     }
 
     let pane_id = pane_id.unwrap();
+
+    // 5a. Track agent pane for terminate_agent
+    state.agent_panes.insert(assigned_name.clone(), pane_id.clone());
 
     // 5b. Re-tile panes evenly
     let window_ref = state.tmux_window.as_ref().unwrap();
@@ -253,4 +284,51 @@ pub(crate) fn dispatch_spawn_agent(
 ) -> Result<Option<serde_json::Value>, ToolExecError> {
     let tmux = RealTmuxRunner;
     handle_spawn_agent(arguments, state, &tmux).map(Some)
+}
+
+/// Handle terminate_agent tool invocation
+pub(crate) fn handle_terminate_agent<T: TmuxRunner>(
+    args: &serde_json::Value,
+    state: &mut OrchestratorState,
+    tmux: &T,
+) -> Result<serde_json::Value, ToolExecError> {
+    // 1. Extract name
+    let name = args["name"]
+        .as_str()
+        .ok_or_else(|| ToolExecError::validation("Missing required 'name' parameter"))?;
+
+    // 2. Look up pane_id
+    let pane_id = state
+        .agent_panes
+        .get(name)
+        .cloned()
+        .ok_or_else(|| ToolExecError::execution(format!("No agent named '{}' is running", name)))?;
+
+    // 3. Kill the pane (ignore errors — pane may already be dead)
+    let _ = tmux.run(&["kill-pane", "-t", &pane_id]);
+
+    // 4. Remove from agent_panes
+    state.agent_panes.remove(name);
+
+    // 5. Check if tmux window still has panes
+    if let Some(ref window_id) = state.tmux_window {
+        let remaining = tmux
+            .run(&["list-panes", "-t", window_id, "-F", "#{pane_id}"])
+            .unwrap_or_default();
+        if remaining.trim().is_empty() {
+            state.tmux_window = None;
+        }
+    }
+
+    // 6. Return result
+    Ok(serde_json::json!({ "terminated": name }))
+}
+
+/// Dispatch builtin terminate_agent tool
+pub(crate) fn dispatch_terminate_agent(
+    arguments: &serde_json::Value,
+    state: &mut OrchestratorState,
+) -> Result<Option<serde_json::Value>, ToolExecError> {
+    let tmux = RealTmuxRunner;
+    handle_terminate_agent(arguments, state, &tmux).map(Some)
 }

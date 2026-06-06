@@ -128,16 +128,17 @@ async fn client_sends_message() {
             let msg_frame: ClientFrame = serde_json::from_str(msg_line.trim()).unwrap();
 
             match msg_frame {
-                ClientFrame::Message { to, message } => {
+                ClientFrame::Message { to, message, kind } => {
                     assert_eq!(to, "target");
                     assert_eq!(message, "hello");
+                    assert_eq!(kind, "message");
                 }
                 other => panic!("Expected Message frame, got {:?}", other),
             }
         });
 
         let mut client = BrokerClient::connect(&path, "test-token").await.unwrap();
-        client.send("target", "hello").await.unwrap();
+        client.send("target", "hello", "message").await.unwrap();
 
         server.await.unwrap();
         let _ = std::fs::remove_file(&path);
@@ -174,6 +175,7 @@ async fn client_receives_message() {
             let msg = serde_json::to_string(&ServerFrame::Message {
                 from: "other".to_string(),
                 message: "hi".to_string(),
+                kind: "message".to_string(),
             })
             .unwrap()
                 + "\n";
@@ -184,9 +186,10 @@ async fn client_receives_message() {
         let frame = client.recv().await.unwrap();
 
         match frame {
-            ServerFrame::Message { from, message } => {
+            ServerFrame::Message { from, message, kind } => {
                 assert_eq!(from, "other");
                 assert_eq!(message, "hi");
+                assert_eq!(kind, "message");
             }
             other => panic!("Expected Message frame, got {:?}", other),
         }

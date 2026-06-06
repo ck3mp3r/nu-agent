@@ -678,7 +678,7 @@ fn orchestrator_tool_registration_contains_exact_names() {
         .map(|tool| tool.name)
         .collect::<Vec<_>>();
 
-    assert_eq!(names, vec!["spawn_agent"]);
+    assert_eq!(names, vec!["spawn_agent", "terminate_agent"]);
 }
 
 #[test]

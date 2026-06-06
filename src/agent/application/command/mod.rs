@@ -445,6 +445,17 @@ pub(crate) fn orchestrator_tool_definitions(
                 "required": ["agent"]
             }),
         },
+        rig::completion::ToolDefinition {
+            name: "terminate_agent".to_string(),
+            description: "Terminate a running sub-agent by name. Kills its tmux pane and deregisters it.".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Agent name to terminate" }
+                },
+                "required": ["name"]
+            }),
+        },
     ]
 }
 
@@ -459,7 +470,13 @@ pub(crate) fn messaging_tool_definitions() -> Vec<rig::completion::ToolDefinitio
                 "type": "object",
                 "properties": {
                     "to": { "type": "string", "description": "Target agent name" },
-                    "message": { "type": "string", "description": "Message content" }
+                    "message": { "type": "string", "description": "Message content" },
+                    "kind": {
+                        "type": "string",
+                        "description": "Message type: 'message' (generic/informational, default), 'task' (task assignment), 'completion' (task results), 'question' (blocked, needs decision)",
+                        "enum": ["message", "task", "completion", "question"],
+                        "default": "message"
+                    }
                 },
                 "required": ["to", "message"]
             }),
@@ -1152,10 +1169,10 @@ Compaction flags:
             let (std_tx, std_rx) = std::sync::mpsc::channel::<crate::agent::mailbox::IncomingMessage>();
             runtime.spawn(async move {
                 while let Some(frame) = tokio_rx.recv().await {
-                    if let crate::agent::mailbox::ServerFrame::Message { from, message } = frame {
+                    if let crate::agent::mailbox::ServerFrame::Message { from, message, kind } = frame {
                         log::trace!("Orchestrator received message from '{}': {}", from, message);
                         if std_tx
-                            .send(crate::agent::mailbox::IncomingMessage { from, message })
+                            .send(crate::agent::mailbox::IncomingMessage { from, message, kind })
                             .is_err()
                         {
                             log::debug!("Orchestrator mailbox receiver dropped, stopping forwarding task");
@@ -1241,10 +1258,10 @@ Compaction flags:
             runtime.spawn(async move {
                 loop {
                     match receiver.recv().await {
-                        Ok(crate::agent::mailbox::ServerFrame::Message { from, message }) => {
+                        Ok(crate::agent::mailbox::ServerFrame::Message { from, message, kind }) => {
                             log::trace!("Received message from '{}': {}", from, message);
                             if tx
-                                .send(crate::agent::mailbox::IncomingMessage { from, message })
+                                .send(crate::agent::mailbox::IncomingMessage { from, message, kind })
                                 .is_err()
                             {
                                 log::debug!("Mailbox receiver dropped, stopping forwarding task");

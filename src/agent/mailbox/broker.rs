@@ -224,11 +224,12 @@ impl Broker {
             };
 
             match frame {
-                ClientFrame::Message { to, message } => {
+                ClientFrame::Message { to, message, kind } => {
                     let reg = registry.read().await;
                     let server_frame = ServerFrame::Message {
                         from: agent_name.clone(),
                         message,
+                        kind,
                     };
                     if let Err(e) = reg.route_message(&to, server_frame) {
                         log::debug!("Failed to route message: {}", e);

@@ -62,9 +62,10 @@ async fn send_message_writes_frame() {
                 let msg_frame: ClientFrame = serde_json::from_str(msg_line.trim()).unwrap();
 
                 match msg_frame {
-                    ClientFrame::Message { to, message } => {
+                    ClientFrame::Message { to, message, kind } => {
                         assert_eq!(to, "agent-1");
                         assert_eq!(message, "hello from test");
+                        assert_eq!(kind, "message");
                     }
                     other => panic!("Expected Message frame, got {:?}", other),
                 }
