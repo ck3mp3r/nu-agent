@@ -807,6 +807,7 @@ impl RuntimeCoordinator {
                 "user" => TranscriptRole::User,
                 "assistant" => TranscriptRole::Assistant,
                 "tool" => TranscriptRole::Tool,
+                "compaction" => TranscriptRole::Compaction,
                 _ => TranscriptRole::System,
             };
             let message_content = message.content();
@@ -1985,6 +1986,7 @@ pub(super) fn transition_spacer_for_roles_for_test(
         TranscriptRole::User => Role::User,
         TranscriptRole::Assistant => Role::Assistant,
         TranscriptRole::System => Role::System,
+        TranscriptRole::Compaction => Role::Compaction,
         TranscriptRole::Tool => Role::Tool,
         TranscriptRole::ToolDisplay => Role::ToolDisplay,
         TranscriptRole::Separator => Role::Separator,
@@ -1993,6 +1995,7 @@ pub(super) fn transition_spacer_for_roles_for_test(
         TranscriptRole::User => Role::User,
         TranscriptRole::Assistant => Role::Assistant,
         TranscriptRole::System => Role::System,
+        TranscriptRole::Compaction => Role::Compaction,
         TranscriptRole::Tool => Role::Tool,
         TranscriptRole::ToolDisplay => Role::ToolDisplay,
         TranscriptRole::Separator => Role::Separator,

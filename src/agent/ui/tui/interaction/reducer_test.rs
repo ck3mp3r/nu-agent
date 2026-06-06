@@ -831,7 +831,6 @@ fn compaction_summary_is_rendered_in_transcript() {
         .map(|line| line.text())
         .collect::<Vec<_>>();
     assert!(lines.contains(&"Compaction".to_string()));
-    assert!(lines.contains(&"summarized=5 · kept=2".to_string()));
     assert!(lines.contains(&"full summary body".to_string()));
 }
 
@@ -969,7 +968,6 @@ fn compaction_block_completion_hides_source_and_explanatory_copy() {
         .collect::<Vec<_>>();
 
     assert!(lines.contains(&"Compaction".to_string()));
-    assert!(lines.contains(&"summarized=9 · kept=3".to_string()));
     assert!(lines.contains(&"Summary".to_string()));
     assert!(lines.contains(&"content line".to_string()));
     assert!(!lines.iter().any(|line| line.contains("source=")));
@@ -1208,7 +1206,7 @@ fn compaction_noop_does_not_claim_persisted_summary() {
         .map(|line| line.text())
         .collect::<Vec<_>>();
 
-    assert!(lines.contains(&"summarized=0 · kept=6".to_string()));
+    assert!(lines.contains(&"(empty summary)".to_string()));
     assert!(!lines.iter().any(|line| line.contains("source=")));
     assert!(!lines.iter().any(|line| line.contains(
         "metadata above is UI diagnostic only and NOT included in future LLM prompt history"

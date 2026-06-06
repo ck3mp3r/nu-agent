@@ -37,6 +37,7 @@ fn existing_role_and_status_channels_remain_unchanged() {
     assert_eq!(theme.role_user.fg, Some(CTP_MOCHA_BLUE));
     assert_eq!(theme.role_assistant.fg, Some(CTP_MOCHA_LAVENDER));
     assert_eq!(theme.role_system.fg, Some(CTP_MOCHA_YELLOW));
+    assert_eq!(theme.role_compaction.fg, Some(CTP_MOCHA_OVERLAY1));
     assert_eq!(theme.role_tool.fg, Some(CTP_MOCHA_MAUVE));
 
     assert_eq!(theme.status_queued.fg, Some(CTP_MOCHA_OVERLAY0));

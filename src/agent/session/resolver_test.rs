@@ -328,13 +328,9 @@ fn hydrate_store_entries_marker_format() {
     assert_eq!(snapshots[0].role(), "compaction");
 
     let content = snapshots[0].content();
-    assert!(
-        content.starts_with("summarized=10 · kept=3"),
-        "Expected content to start with 'summarized=10 · kept=3', got: {content}"
-    );
-    assert!(
-        content.contains("The user asked about weather and got a response."),
-        "Expected content to contain summary body, got: {content}"
+    assert_eq!(
+        content, "The user asked about weather and got a response.",
+        "Expected content to be the marker's summary text directly, got: {content}"
     );
 }
 
@@ -393,7 +389,7 @@ fn hydrate_store_entries_empty_summary_marker() {
 
     let content = snapshots[0].content();
     assert_eq!(
-        content, "summarized=8 · kept=5",
-        "Empty summary should render stats only, got: {content}"
+        content, "",
+        "Empty summary should render as empty string, got: {content}"
     );
 }

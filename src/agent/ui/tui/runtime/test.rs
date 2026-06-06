@@ -212,7 +212,6 @@ fn compact_result_artifact_is_visible_without_slash_command_echo() {
         .map(|line| line.text())
         .collect::<Vec<_>>();
     assert!(lines.contains(&"Compaction".to_string()));
-    assert!(lines.contains(&"summarized=3 · kept=2".to_string()));
     assert!(lines.contains(&"summary body".to_string()));
     assert!(!lines.iter().any(|line| line.contains("source=")));
     assert!(!lines.iter().any(|line| line.contains("status=running")));
@@ -541,6 +540,7 @@ fn user_then_assistant_inserts_turn_separator_in_runtime_transcript() {
                         TranscriptRole::ToolDisplay
                     }
                     crate::agent::ui::transcript::ir::Role::System => TranscriptRole::System,
+                    crate::agent::ui::transcript::ir::Role::Compaction => TranscriptRole::Compaction,
                     crate::agent::ui::transcript::ir::Role::Separator => TranscriptRole::Separator,
                 };
                 (role, line.text())
@@ -1160,6 +1160,7 @@ fn coordinator_hydration_skips_blank_lines_and_maps_unknown_role_to_system() {
                         TranscriptRole::ToolDisplay
                     }
                     crate::agent::ui::transcript::ir::Role::System => TranscriptRole::System,
+                    crate::agent::ui::transcript::ir::Role::Compaction => TranscriptRole::Compaction,
                     crate::agent::ui::transcript::ir::Role::Separator => TranscriptRole::Separator,
                 };
                 (role, line.text())
@@ -1236,6 +1237,7 @@ fn coordinator_hydration_projects_assistant_markdown_but_preserves_user_plain_te
                 crate::agent::ui::transcript::ir::Role::Tool => TranscriptRole::Tool,
                 crate::agent::ui::transcript::ir::Role::ToolDisplay => TranscriptRole::ToolDisplay,
                 crate::agent::ui::transcript::ir::Role::System => TranscriptRole::System,
+                crate::agent::ui::transcript::ir::Role::Compaction => TranscriptRole::Compaction,
                 crate::agent::ui::transcript::ir::Role::Separator => TranscriptRole::Separator,
             };
             (role, line.text())

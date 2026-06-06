@@ -117,7 +117,7 @@ impl Renderable for ToolResult {
 impl Renderable for CompactionNotice {
     fn to_render_block(&self) -> RenderBlock {
         RenderBlock {
-            role: Role::System,
+            role: Role::Compaction,
             lines: vec![ContentLine::from_spans(vec![
                 Span::meta(self.source.clone()),
                 Span::normal(self.summarized.to_string()),
@@ -177,7 +177,7 @@ impl TranscriptEntry {
             Self::Assistant(_) => Role::Assistant,
             Self::Tool(_) => Role::Tool,
             Self::ToolResult(_) => Role::ToolDisplay,
-            Self::Compaction(_) => Role::System,
+            Self::Compaction(_) => Role::Compaction,
             Self::System(_) => Role::System,
             Self::Separator(_) => Role::Separator,
             Self::Spacer(_) => Role::Separator,

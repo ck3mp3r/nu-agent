@@ -86,6 +86,7 @@ impl TuiRenderer {
             Role::Assistant => ("  ", self.theme.lane_prefix_assistant),
             Role::Tool => ("⚙ ", self.theme.lane_prefix_tool),
             Role::ToolDisplay => ("  ", self.theme.lane_prefix_assistant),
+            Role::Compaction => ("~ ", self.theme.lane_prefix_compaction),
             Role::System => ("· ", self.theme.lane_prefix_system),
             Role::Separator => ("  ", self.theme.role_separator),
         };
@@ -101,6 +102,7 @@ impl TuiRenderer {
             Role::Assistant => self.theme.role_assistant,
             Role::Tool => self.theme.role_tool,
             Role::ToolDisplay => self.theme.role_assistant,
+            Role::Compaction => self.theme.role_compaction,
             Role::System => self.theme.role_system,
             Role::Separator => self.theme.role_separator,
         }
@@ -112,6 +114,7 @@ impl TuiRenderer {
             Role::Assistant => self.theme.row_assistant,
             Role::Tool => self.theme.row_tool,
             Role::ToolDisplay => self.theme.row_assistant,
+            Role::Compaction => self.theme.row_compaction,
             Role::System => self.theme.row_system,
             Role::Separator => Style::default(),
         }

@@ -127,7 +127,7 @@ pub(crate) fn resolve_session_request(use_tui: bool, session_id: Option<String>)
 ///
 /// This function maps store entry types to transcript display items:
 /// - `StoreEntry::Message` → delegated to `hydrate_single_message`
-/// - `StoreEntry::Marker` → compaction snapshot with "summarized=N · kept=M" format
+/// - `StoreEntry::Marker` → compaction snapshot with summary text directly
 ///
 /// # Arguments
 /// * `entries` - Slice of StoreEntry from ConversationStore::load_all()
@@ -140,15 +140,7 @@ fn hydrate_transcript_from_store_entries(
     entries.iter().flat_map(|entry| match entry {
         StoreEntry::Message(msg) => hydrate_single_message(msg),
         StoreEntry::Marker(marker) => {
-            let mut content = format!(
-                "summarized={} · kept={}",
-                marker.summarized_count, marker.kept_recent_count,
-            );
-            if !marker.summary.is_empty() {
-                content.push('\n');
-                content.push_str(&marker.summary);
-            }
-            vec![UiMessageSnapshot::new("compaction", content)]
+            vec![UiMessageSnapshot::new("compaction", marker.summary.clone())]
         }
     })
 }

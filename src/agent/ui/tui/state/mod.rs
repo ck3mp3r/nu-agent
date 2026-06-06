@@ -43,6 +43,7 @@ pub enum TranscriptRole {
     User,
     Assistant,
     System,
+    Compaction,
     Tool,
     ToolDisplay,
     Separator,
@@ -1333,6 +1334,7 @@ impl AppState {
                 success: true,
                 lines: vec![DisplayLine::new(text.clone(), annotate_diff_hint(&text))],
             }),
+            TranscriptRole::Compaction => TranscriptEntry::System(SystemMessage { text }),
             TranscriptRole::System => TranscriptEntry::System(SystemMessage { text }),
             TranscriptRole::Separator => TranscriptEntry::Separator(TranscriptSeparator),
         };

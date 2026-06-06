@@ -98,7 +98,7 @@ fn compaction_notice_has_four_spans() {
         summary: "done".to_string(),
     }
     .to_render_block();
-    assert_eq!(block.role, Role::System);
+    assert_eq!(block.role, Role::Compaction);
     assert_eq!(block.lines[0].spans.len(), 4);
     assert_eq!(block.lines[0].spans[0], Span::meta("ctx".to_string()));
     assert_eq!(block.lines[0].spans[1], Span::normal("5".to_string()));

@@ -7,6 +7,7 @@ pub enum Role {
     Tool,
     ToolDisplay,
     System,
+    Compaction,
     Separator,
 }
 

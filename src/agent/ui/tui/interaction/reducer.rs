@@ -385,8 +385,8 @@ fn reduce_ui_event(state: &mut AppState, event: UiEvent) {
         }
         UiEvent::CompactionTriggered {
             source,
-            summarized_count,
-            kept_recent_count,
+            summarized_count: _,
+            kept_recent_count: _,
             summary_preview: _,
             summary_body,
         } => {
@@ -398,17 +398,12 @@ fn reduce_ui_event(state: &mut AppState, event: UiEvent) {
                 summary_body
             };
 
-            state.push_transcript_line(
-                TranscriptRole::System,
-                format!("summarized={summarized_count} · kept={kept_recent_count}"),
-            );
-
             for line in state.project_assistant_markdown_lines(&body) {
                 let text = markdown::rendered_line_to_plain_text(&line);
                 if text.trim().is_empty() {
                     continue;
                 }
-                state.push_transcript_rendered_line(TranscriptRole::System, line);
+                state.push_transcript_rendered_line(TranscriptRole::Compaction, line);
             }
             state.status_line.clear();
         }

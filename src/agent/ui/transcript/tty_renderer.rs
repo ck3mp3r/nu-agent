@@ -20,6 +20,7 @@ impl BlockRenderer for TtyRenderer {
             Role::Assistant => "",
             Role::Tool => "[tool] ",
             Role::ToolDisplay => "  ",
+            Role::Compaction => "[compaction] ",
             Role::System => "[system] ",
             Role::Separator => unreachable!(), // handled above
         };
