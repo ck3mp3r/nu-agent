@@ -101,6 +101,18 @@ pub(crate) fn apply_tool_filter(
         .collect()
 }
 
+/// Build a shared HTTP client with sensible timeouts.
+///
+/// Connect timeout: 10s — fail fast if host is unreachable.
+/// Request timeout: 120s — LLM responses can be slow, not infinite.
+fn build_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(120))
+        .build()
+        .expect("failed to build HTTP client")
+}
+
 /// Build a GitHub Copilot client using rig's from_env() or explicit config.
 ///
 /// If config has an explicit `api_key`, uses the builder pattern with optional `base_url`.
@@ -130,7 +142,8 @@ fn build_copilot_client(config: &Config) -> Result<rig::providers::copilot::Clie
 
     // 1. Explicit api_key from --api-key flag or plugin config
     if let Some(key) = &config.api_key {
-        let mut b = rig::providers::copilot::Client::builder();
+        let mut b = rig::providers::copilot::Client::builder()
+            .http_client(build_http_client());
         if let Some(url) = &base_url {
             b = b.base_url(url.clone());
         }
@@ -145,7 +158,8 @@ fn build_copilot_client(config: &Config) -> Result<rig::providers::copilot::Clie
         std::env::var("GITHUB_COPILOT_API_KEY").or_else(|_| std::env::var("COPILOT_API_KEY"))
         && !key.trim().is_empty()
     {
-        let mut b = rig::providers::copilot::Client::builder();
+        let mut b = rig::providers::copilot::Client::builder()
+            .http_client(build_http_client());
         if let Some(url) = &base_url {
             b = b.base_url(url.clone());
         }
@@ -160,7 +174,8 @@ fn build_copilot_client(config: &Config) -> Result<rig::providers::copilot::Clie
         std::env::var("COPILOT_GITHUB_ACCESS_TOKEN").or_else(|_| std::env::var("GITHUB_TOKEN"))
         && !token.trim().is_empty()
     {
-        let mut b = rig::providers::copilot::Client::builder();
+        let mut b = rig::providers::copilot::Client::builder()
+            .http_client(build_http_client());
         if let Some(url) = &base_url {
             b = b.base_url(url.clone());
         }
@@ -177,7 +192,8 @@ fn build_copilot_client(config: &Config) -> Result<rig::providers::copilot::Clie
         && let Ok(token) = std::fs::read_to_string(path)
         && !token.trim().is_empty()
     {
-        let mut b = rig::providers::copilot::Client::builder();
+        let mut b = rig::providers::copilot::Client::builder()
+            .http_client(build_http_client());
         if let Some(url) = &base_url {
             b = b.base_url(url.clone());
         }
@@ -214,7 +230,8 @@ fn build_openai_client(config: &Config) -> Result<rig::providers::openai::Client
     };
 
     if let Some(key) = &config.api_key {
-        let mut builder = rig::providers::openai::Client::builder();
+        let mut builder = rig::providers::openai::Client::builder()
+            .http_client(build_http_client());
         if let Some(url) = &config.base_url {
             builder = builder.base_url(url.clone());
         }
@@ -247,7 +264,8 @@ fn build_anthropic_client(
     };
 
     if let Some(key) = &config.api_key {
-        let mut builder = rig::providers::anthropic::Client::builder();
+        let mut builder = rig::providers::anthropic::Client::builder()
+            .http_client(build_http_client());
         if let Some(url) = &config.base_url {
             builder = builder.base_url(url.clone());
         }
@@ -257,29 +275,43 @@ fn build_anthropic_client(
     }
 }
 
-/// Build an Ollama client using rig's from_env().
+/// Build an Ollama client.
 ///
-/// Ollama doesn't require an API key. Reads OLLAMA_HOST environment variable
+/// Ollama doesn't require an API key. If `config.base_url` is set, uses the builder
+/// with that URL. Otherwise falls back to `from_env()` which reads `OLLAMA_API_BASE_URL`
 /// (defaults to http://localhost:11434).
-///
-/// TODO: Support explicit base_url from config once rig's ollama builder API is clarified.
 fn build_ollama_client(config: &Config) -> Result<rig::providers::ollama::Client, LabeledError> {
-    use rig::client::ProviderClient;
+    use rig::client::{Nothing, ProviderClient};
 
-    let map_err = |e: rig::client::ProviderClientError| {
+    let map_build_err = |e: rig::http_client::Error| {
         LabeledError::new(format!(
-            "Ollama client initialization failed: {e}. Ensure Ollama is running and OLLAMA_HOST is set if not using default."
+            "Ollama client initialization failed: {e}. Ensure Ollama is running."
         ))
     };
 
-    // Warn if base_url is set but we can't use it yet
-    if config.base_url.is_some() {
-        eprintln!(
-            "Warning: Ollama base_url override not yet supported. Using OLLAMA_HOST env var or default (http://localhost:11434)."
-        );
-    }
+    let map_env_err = |e: rig::client::ProviderClientError| {
+        LabeledError::new(format!(
+            "Ollama client initialization failed: {e}. Ensure OLLAMA_API_BASE_URL is set or Ollama is running on default port."
+        ))
+    };
 
-    rig::providers::ollama::Client::from_env().map_err(map_err)
+    if let Some(url) = &config.base_url {
+        rig::providers::ollama::Client::builder()
+            .http_client(build_http_client())
+            .base_url(url.clone())
+            .api_key(Nothing)
+            .build()
+            .map_err(map_build_err)
+    } else {
+        rig::providers::ollama::Client::from_env().map_err(map_env_err)
+    }
+}
+
+/// Resolve which provider implementation to use.
+/// If the provider config specifies an explicit `provider` field, use it.
+/// Otherwise, the config key name itself is the provider type.
+fn resolve_provider_type<'a>(provider_key: &'a str, provider_field: Option<&'a str>) -> &'a str {
+    provider_field.unwrap_or(provider_key)
 }
 
 pub(crate) enum CachedProviderClient {
@@ -1095,13 +1127,16 @@ impl AgentConversationRuntime {
         if self.cached_client_key.as_ref() == Some(&key) {
             return Ok(());
         }
-        let provider_name = self.config.provider.as_str();
-        log::info!(
-            "creating {} client for model={}",
-            provider_name,
-            self.config.model
+        let provider_key = self.config.provider.as_str();
+        let provider_type = resolve_provider_type(
+            provider_key,
+            self.config.provider_impl.as_deref(),
         );
-        let client = match provider_name {
+        log::info!(
+            "creating {} client (type={}) for model={}",
+            provider_key, provider_type, self.config.model
+        );
+        let client = match provider_type {
             "copilot" | "github-copilot" | "github_copilot" => {
                 CachedProviderClient::Copilot(build_copilot_client(&self.config)?)
             }
@@ -1110,8 +1145,14 @@ impl AgentConversationRuntime {
             "ollama" => CachedProviderClient::Ollama(build_ollama_client(&self.config)?),
             other => {
                 return Err(
-                    LabeledError::new(format!("Unsupported provider: '{}'", other))
-                        .with_help("Supported: copilot, openai, anthropic, ollama"),
+                    LabeledError::new(format!(
+                        "Unsupported provider: '{}' (from config key '{}')",
+                        other, provider_key
+                    ))
+                    .with_help(
+                        "Supported: copilot, openai, anthropic, ollama. \
+                         Set 'provider' field in provider config to map custom names."
+                    ),
                 );
             }
         };

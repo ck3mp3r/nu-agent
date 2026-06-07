@@ -43,7 +43,7 @@ pub struct ProviderConfig {
     pub base_url: Option<String>,
 
     /// Provider implementation to use (e.g., "openai" for github-copilot)
-    pub provider_impl: Option<String>,
+    pub provider: Option<String>,
 
     /// Optional preamble text for this provider
     pub preamble: Option<String>,
@@ -170,7 +170,7 @@ impl PluginConfig {
     ///       name: "OpenAI"  # optional
     ///       api_key: "sk-..."  # optional
     ///       base_url: "https://..."  # optional
-    ///       provider_impl: "openai"  # optional, for custom providers
+    ///       provider: "openai"  # optional, for custom providers
     ///       models: {
     ///         "gpt-4": {
     ///           name: "GPT-4"  # optional
@@ -313,8 +313,8 @@ impl PluginConfig {
             .and_then(|v| v.as_str().ok())
             .map(|s| s.to_string());
 
-        let provider_impl = record
-            .get("provider_impl")
+        let provider = record
+            .get("provider")
             .and_then(|v| v.as_str().ok())
             .map(|s| s.to_string());
 
@@ -340,7 +340,7 @@ impl PluginConfig {
             name,
             api_key,
             base_url,
-            provider_impl,
+            provider,
             preamble,
             models,
         })
@@ -634,7 +634,7 @@ impl PluginConfig {
         let mut config = Config::from_env(provider_name, model_name);
 
         // Set provider_impl if specified in provider config
-        if let Some(impl_name) = &provider_config.provider_impl {
+        if let Some(impl_name) = &provider_config.provider {
             config.provider_impl = Some(impl_name.clone());
         }
 

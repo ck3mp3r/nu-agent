@@ -1249,3 +1249,46 @@ fn hydration_guard_still_prevents_duplicates() {
         "Guard must prevent duplicate hydration with new code path"
     );
 }
+
+#[test]
+fn resolve_provider_type_uses_explicit_field() {
+    assert_eq!(super::resolve_provider_type("ollama-remote", Some("ollama")), "ollama");
+}
+
+#[test]
+fn resolve_provider_type_falls_back_to_key() {
+    assert_eq!(super::resolve_provider_type("ollama", None), "ollama");
+}
+
+#[test]
+fn resolve_provider_type_custom_key_with_known_impl() {
+    assert_eq!(super::resolve_provider_type("my-openai", Some("openai")), "openai");
+}
+
+// ========================================================================
+// HTTP client timeout tests
+// ========================================================================
+
+#[test]
+fn build_http_client_returns_configured_client() {
+    // Install crypto provider needed by reqwest+rustls
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let client = super::build_http_client();
+    drop(client);
+}
+
+#[test]
+fn build_ollama_client_with_base_url_succeeds() {
+    use crate::config::Config;
+
+    // Install crypto provider needed by reqwest+rustls
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
+    let config = Config {
+        api_key: None,
+        base_url: Some("http://localhost:11434".to_string()),
+        ..Config::default()
+    };
+    let result = super::build_ollama_client(&config);
+    assert!(result.is_ok());
+}

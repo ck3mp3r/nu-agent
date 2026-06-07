@@ -10,7 +10,7 @@ $env.config.plugins.agent = {
     provider_name: {
       api_key: "..."            # optional
       base_url: "https://..."   # optional
-      provider_impl: "openai"   # optional
+      provider: "openai"   # optional
       models: {
         "model-name": {}
       }
@@ -95,7 +95,29 @@ $env.config.plugins.agent = {
   model: "ollama/gemma4:31b"
   providers: {
     ollama: {
-      base_url: "http://127.0.0.1:11434/v1"
+      base_url: "http://127.0.0.1:11434"
+      models: {
+        "gemma4:31b": {}
+      }
+    }
+  }
+}
+```
+
+Multi-instance example (same provider, different hosts):
+
+```nu
+$env.config.plugins.agent = {
+  model: "ollama-remote/gemma4:31b"
+  providers: {
+    ollama: {
+      models: {
+        "gemma4:31b": {}
+      }
+    }
+    ollama-remote: {
+      provider: "ollama"
+      base_url: "http://gpu-server:11434"
       models: {
         "gemma4:31b": {}
       }

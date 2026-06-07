@@ -17,7 +17,7 @@ $env.config.plugins.agent = {
   model: "ollama/gemma4:31b"
   providers: {
     ollama: {
-      base_url: "http://127.0.0.1:11434/v1"
+      base_url: "http://127.0.0.1:11434"
       models: {
         "gemma4:31b": {}
       }

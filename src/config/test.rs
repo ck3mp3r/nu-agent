@@ -935,13 +935,13 @@ fn test_plugin_config_not_record() {
 }
 
 #[test]
-fn test_plugin_config_provider_impl() {
-    // Test parsing provider_impl field (for custom providers like github-copilot)
+fn test_plugin_config_provider_field() {
+    // Test parsing provider field (for custom providers like github-copilot)
     let value = Value::test_record(record! {
         "model" => Value::test_string("copilot/claude"),
         "providers" => Value::test_record(record! {
             "copilot" => Value::test_record(record! {
-                "provider_impl" => Value::test_string("openai"),
+                "provider" => Value::test_string("openai"),
                 "base_url" => Value::test_string("https://api.githubcopilot.com"),
                 "models" => Value::test_record(record! {
                     "claude" => Value::test_record(record! {}),
@@ -955,7 +955,7 @@ fn test_plugin_config_provider_impl() {
         .providers
         .get("copilot")
         .expect("copilot provider");
-    assert_eq!(copilot.provider_impl, Some("openai".to_string()));
+    assert_eq!(copilot.provider, Some("openai".to_string()));
     assert_eq!(
         copilot.base_url,
         Some("https://api.githubcopilot.com".to_string())
@@ -1071,7 +1071,7 @@ fn test_resolve_model_basic() {
                     name: None,
                     api_key: Some("sk-test123".to_string()),
                     base_url: None,
-                    provider_impl: None,
+                    provider: None,
                     preamble: None,
                     models: {
                         let mut models = HashMap::new();
@@ -1124,7 +1124,7 @@ fn test_resolve_model_with_env_fallback() {
                     name: None,
                     api_key: None, // No API key in config
                     base_url: None,
-                    provider_impl: None,
+                    provider: None,
                     preamble: None,
                     models: HashMap::new(),
                 },
@@ -1201,7 +1201,7 @@ fn test_resolve_model_model_not_in_config() {
                     name: None,
                     api_key: Some("sk-test123".to_string()),
                     base_url: None,
-                    provider_impl: None,
+                    provider: None,
                     preamble: None,
                     models: HashMap::new(), // Empty models map
                 },
@@ -1224,8 +1224,8 @@ fn test_resolve_model_model_not_in_config() {
 }
 
 #[test]
-fn test_resolve_model_with_provider_impl() {
-    // Test resolving with custom provider_impl (like github-copilot)
+fn test_resolve_model_with_provider_field() {
+    // Test resolving with custom provider field (like github-copilot)
     let plugin_config = PluginConfig {
         model: "copilot/claude".to_string(),
         small_model: None,
@@ -1237,7 +1237,7 @@ fn test_resolve_model_with_provider_impl() {
                     name: Some("GitHub Copilot".to_string()),
                     api_key: Some("ghcp-token".to_string()),
                     base_url: Some("https://api.githubcopilot.com".to_string()),
-                    provider_impl: Some("openai".to_string()), // Use OpenAI API
+                    provider: Some("openai".to_string()), // Use OpenAI API
                     preamble: None,
                     models: HashMap::new(),
                 },
@@ -1259,6 +1259,7 @@ fn test_resolve_model_with_provider_impl() {
         config.base_url,
         Some("https://api.githubcopilot.com".to_string())
     );
+    assert_eq!(config.provider_impl, Some("openai".to_string()));
 }
 
 #[test]
@@ -1275,7 +1276,7 @@ fn test_resolve_model_merges_limits() {
                     name: None,
                     api_key: None,
                     base_url: None,
-                    provider_impl: None,
+                    provider: None,
                     preamble: None,
                     models: {
                         let mut models = HashMap::new();
@@ -1328,7 +1329,7 @@ fn resolve_model_handles_two_part_format() {
                     name: None,
                     api_key: Some("sk-test123".to_string()),
                     base_url: None,
-                    provider_impl: None,
+                    provider: None,
                     preamble: None,
                     models: HashMap::new(),
                 },
@@ -1389,7 +1390,7 @@ fn resolve_model_uses_split_once_for_multi_part_models() {
                 "github-copilot".to_string(),
                 ProviderConfig {
                     name: None,
-                    provider_impl: None,
+                    provider: None,
                     api_key: Some("test-key".to_string()),
                     base_url: Some("https://api.githubcopilot.com".to_string()),
                     preamble: None,
@@ -1427,9 +1428,9 @@ fn resolve_model_works_with_simple_two_part() {
                 "openai".to_string(),
                 ProviderConfig {
                     name: None,
-                    provider_impl: None,
+                    provider: None,
                     api_key: Some("test-key".to_string()),
-                    base_url: None,
+                    base_url: Some("https://api.githubcopilot.com".to_string()),
                     preamble: None,
                     models: HashMap::new(),
                 },
@@ -1465,7 +1466,7 @@ fn integration_github_copilot_with_backend_in_model() {
                 "github-copilot".to_string(),
                 ProviderConfig {
                     name: None,
-                    provider_impl: None,
+                    provider: None,
                     api_key: Some("test-key".to_string()),
                     base_url: Some("https://api.githubcopilot.com".to_string()),
                     preamble: None,

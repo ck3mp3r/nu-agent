@@ -22,7 +22,7 @@ $env.config.plugins.agent = {
   model: "github-copilot/claude-opus-4.6"
   providers: {
     "github-copilot": {
-      provider_impl: "openai"
+      provider: "openai"
       api_key: $env.GITHUB_TOKEN
       base_url: "https://api.individual.githubcopilot.com"
       models: {
