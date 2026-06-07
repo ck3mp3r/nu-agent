@@ -101,14 +101,13 @@ pub(crate) fn apply_tool_filter(
         .collect()
 }
 
-/// Build a shared HTTP client with sensible timeouts.
+/// Build a shared HTTP client with a connect timeout.
 ///
 /// Connect timeout: 10s — fail fast if host is unreachable.
-/// Request timeout: 120s — LLM responses can be slow, not infinite.
+/// No request timeout — LLM streaming responses can take arbitrarily long.
 fn build_http_client() -> reqwest::Client {
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(120))
         .build()
         .expect("failed to build HTTP client")
 }
