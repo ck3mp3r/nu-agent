@@ -1,6 +1,8 @@
+pub(crate) mod builtins;
+
+use pulldown_cmark::{Event, MetadataBlockKind, Options, Parser, Tag, TagEnd};
 use std::fmt;
 use std::path::{Path, PathBuf};
-use pulldown_cmark::{Event, MetadataBlockKind, Options, Parser, Tag, TagEnd};
 
 /// Error type for persona file resolution
 #[derive(Debug)]
@@ -21,7 +23,10 @@ pub(crate) enum PersonaError {
 impl fmt::Display for PersonaError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PersonaError::NotFound { cwd_path, config_path } => {
+            PersonaError::NotFound {
+                cwd_path,
+                config_path,
+            } => {
                 write!(
                     f,
                     "Persona file not found. Checked:\n  - {}\n  - {}",
@@ -30,7 +35,12 @@ impl fmt::Display for PersonaError {
                 )
             }
             PersonaError::ReadFailed { path, source } => {
-                write!(f, "Failed to read persona file at {}: {}", path.display(), source)
+                write!(
+                    f,
+                    "Failed to read persona file at {}: {}",
+                    path.display(),
+                    source
+                )
             }
         }
     }
@@ -49,8 +59,14 @@ impl std::error::Error for PersonaError {
 #[derive(Debug)]
 #[allow(dead_code)]
 pub(crate) enum FrontMatterError {
-    YamlParseFailed { source: noyalib::Error },
-    InvalidField { key: String, expected: String, got: String },
+    YamlParseFailed {
+        source: noyalib::Error,
+    },
+    InvalidField {
+        key: String,
+        expected: String,
+        got: String,
+    },
 }
 
 impl fmt::Display for FrontMatterError {
@@ -60,7 +76,11 @@ impl fmt::Display for FrontMatterError {
                 write!(f, "Failed to parse YAML front matter: {}", source)
             }
             FrontMatterError::InvalidField { key, expected, got } => {
-                write!(f, "Invalid field '{}': expected {}, got {}", key, expected, got)
+                write!(
+                    f,
+                    "Invalid field '{}': expected {}, got {}",
+                    key, expected, got
+                )
             }
         }
     }
@@ -99,7 +119,10 @@ pub(crate) fn interpret_front_matter(
     front_matter: Option<&noyalib::Mapping>,
     body: String,
 ) -> Result<ParsedPersona, FrontMatterError> {
-    log::debug!("interpret_front_matter: has_front_matter={}", front_matter.is_some());
+    log::debug!(
+        "interpret_front_matter: has_front_matter={}",
+        front_matter.is_some()
+    );
     let Some(mapping) = front_matter else {
         return Ok(ParsedPersona {
             name: None,
@@ -120,54 +143,78 @@ pub(crate) fn interpret_front_matter(
     for (key, value) in mapping.iter() {
         match key.as_str() {
             "name" => {
-                name = Some(value.as_str().ok_or_else(|| FrontMatterError::InvalidField {
-                    key: "name".to_string(),
-                    expected: "string".to_string(),
-                    got: value_type_name(value),
-                })?.to_string());
+                name = Some(
+                    value
+                        .as_str()
+                        .ok_or_else(|| FrontMatterError::InvalidField {
+                            key: "name".to_string(),
+                            expected: "string".to_string(),
+                            got: value_type_name(value),
+                        })?
+                        .to_string(),
+                );
                 log::trace!("interpret_front_matter: name={name:?}");
             }
             "description" => {
-                description = Some(value.as_str().ok_or_else(|| FrontMatterError::InvalidField {
-                    key: "description".to_string(),
-                    expected: "string".to_string(),
-                    got: value_type_name(value),
-                })?.to_string());
+                description = Some(
+                    value
+                        .as_str()
+                        .ok_or_else(|| FrontMatterError::InvalidField {
+                            key: "description".to_string(),
+                            expected: "string".to_string(),
+                            got: value_type_name(value),
+                        })?
+                        .to_string(),
+                );
                 log::trace!("interpret_front_matter: description={description:?}");
             }
             "model" => {
-                model = Some(value.as_str().ok_or_else(|| FrontMatterError::InvalidField {
-                    key: "model".to_string(),
-                    expected: "string".to_string(),
-                    got: value_type_name(value),
-                })?.to_string());
+                model = Some(
+                    value
+                        .as_str()
+                        .ok_or_else(|| FrontMatterError::InvalidField {
+                            key: "model".to_string(),
+                            expected: "string".to_string(),
+                            got: value_type_name(value),
+                        })?
+                        .to_string(),
+                );
                 log::trace!("interpret_front_matter: model={model:?}");
             }
             "tool_filter" => {
-                let seq = value.as_sequence().ok_or_else(|| FrontMatterError::InvalidField {
-                    key: "tool_filter".to_string(),
-                    expected: "sequence".to_string(),
-                    got: value_type_name(value),
-                })?;
+                let seq = value
+                    .as_sequence()
+                    .ok_or_else(|| FrontMatterError::InvalidField {
+                        key: "tool_filter".to_string(),
+                        expected: "sequence".to_string(),
+                        got: value_type_name(value),
+                    })?;
 
                 let mut tools = Vec::new();
                 for item in seq {
-                    let tool = item.as_str().ok_or_else(|| FrontMatterError::InvalidField {
-                        key: "tool_filter".to_string(),
-                        expected: "sequence of strings".to_string(),
-                        got: "sequence with non-string element".to_string(),
-                    })?;
+                    let tool = item
+                        .as_str()
+                        .ok_or_else(|| FrontMatterError::InvalidField {
+                            key: "tool_filter".to_string(),
+                            expected: "sequence of strings".to_string(),
+                            got: "sequence with non-string element".to_string(),
+                        })?;
                     tools.push(tool.to_string());
                 }
                 tool_filter = Some(tools);
                 log::trace!("interpret_front_matter: tool_filter={tool_filter:?}");
             }
             "permissions" => {
-                permissions = Some(value.as_mapping().ok_or_else(|| FrontMatterError::InvalidField {
-                    key: "permissions".to_string(),
-                    expected: "mapping".to_string(),
-                    got: value_type_name(value),
-                })?.clone());
+                permissions = Some(
+                    value
+                        .as_mapping()
+                        .ok_or_else(|| FrontMatterError::InvalidField {
+                            key: "permissions".to_string(),
+                            expected: "mapping".to_string(),
+                            got: value_type_name(value),
+                        })?
+                        .clone(),
+                );
                 log::trace!("interpret_front_matter: has_permissions=true");
             }
             _ => {
@@ -211,6 +258,7 @@ pub(crate) trait FrontMatterParser {
 pub(crate) struct PersonaSummary {
     pub name: String,
     pub description: Option<String>,
+    pub builtin: bool,
 }
 
 /// Trait for resolving persona files
@@ -227,22 +275,35 @@ pub(crate) trait PersonaLister {
 }
 
 /// Filesystem-based persona resolver
-#[allow(dead_code)]
 pub(crate) struct FsPersonaResolver {
     cwd: PathBuf,
     config_dir: PathBuf,
+    agents_config: crate::config::AgentsConfig,
 }
 
-#[allow(dead_code)]
 impl FsPersonaResolver {
-    pub fn new(cwd: PathBuf, config_dir: PathBuf) -> Self {
-        Self { cwd, config_dir }
+    pub fn new(
+        cwd: PathBuf,
+        config_dir: PathBuf,
+        agents_config: crate::config::AgentsConfig,
+    ) -> Self {
+        Self {
+            cwd,
+            config_dir,
+            agents_config,
+        }
     }
 
-    fn try_read_persona(&self, base_dir: &Path, persona_name: &str) -> Option<Result<(PathBuf, String), PersonaError>> {
-        let path = base_dir.join(".agents").join(format!("{}.md", persona_name));
+    fn try_read_persona(
+        &self,
+        base_dir: &Path,
+        persona_name: &str,
+    ) -> Option<Result<(PathBuf, String), PersonaError>> {
+        let path = base_dir
+            .join(".agents")
+            .join(format!("{}.md", persona_name));
         log::trace!("try_read_persona: checking path={path:?}");
-        
+
         if !path.exists() {
             log::trace!("try_read_persona: path does not exist");
             return None;
@@ -254,10 +315,16 @@ impl FsPersonaResolver {
         }
     }
 
-    fn try_read_persona_xdg(&self, persona_name: &str) -> Option<Result<(PathBuf, String), PersonaError>> {
-        let path = self.config_dir.join("agents").join(format!("{}.md", persona_name));
+    fn try_read_persona_xdg(
+        &self,
+        persona_name: &str,
+    ) -> Option<Result<(PathBuf, String), PersonaError>> {
+        let path = self
+            .config_dir
+            .join("agents")
+            .join(format!("{}.md", persona_name));
         log::trace!("try_read_persona_xdg: checking path={path:?}");
-        
+
         if !path.exists() {
             log::trace!("try_read_persona_xdg: path does not exist");
             return None;
@@ -268,24 +335,70 @@ impl FsPersonaResolver {
             Err(e) => Some(Err(PersonaError::ReadFailed { path, source: e })),
         }
     }
+
+    fn resolve_builtin(&self, name: &str) -> Option<&'static str> {
+        use crate::agent::protocol::persona::builtins;
+        match name {
+            n if n == builtins::BUILTIN_PLANNER_NAME && self.agents_config.planner_enabled => {
+                Some(builtins::BUILTIN_PLANNER_CONTENT)
+            }
+            n if n == builtins::BUILTIN_MAKER_NAME && self.agents_config.maker_enabled => {
+                Some(builtins::BUILTIN_MAKER_CONTENT)
+            }
+            _ => None,
+        }
+    }
 }
 
 impl PersonaLister for FsPersonaResolver {
     fn list_available(&self) -> Vec<PersonaSummary> {
-        let parser = PulldownCmarkFrontMatterParser;
-        let mut seen = std::collections::HashMap::<String, PersonaSummary>::new();
+        use crate::agent::protocol::persona::builtins;
 
-        // Scan XDG first so cwd can override
+        let parser = PulldownCmarkFrontMatterParser;
+        let mut results = Vec::new();
+
+        // Add enabled built-ins first
+        for builtin in builtins::BUILTIN_PERSONAS {
+            let enabled = match builtin.name {
+                n if n == builtins::BUILTIN_PLANNER_NAME => self.agents_config.planner_enabled,
+                n if n == builtins::BUILTIN_MAKER_NAME => self.agents_config.maker_enabled,
+                _ => false,
+            };
+            if enabled {
+                let description = parser
+                    .parse(builtin.content)
+                    .ok()
+                    .and_then(|raw| {
+                        interpret_front_matter(raw.front_matter.as_ref(), raw.body).ok()
+                    })
+                    .and_then(|p| p.description);
+                results.push(PersonaSummary {
+                    name: builtin.name.to_string(),
+                    description,
+                    builtin: true,
+                });
+            }
+        }
+
+        // Then scan filesystem (XDG first so cwd can override)
+        let mut seen = std::collections::HashMap::<String, PersonaSummary>::new();
         let xdg_dir = self.config_dir.join("agents");
         Self::scan_dir(&xdg_dir, &parser, &mut seen);
 
-        // Scan cwd (overrides XDG entries with same name)
         let cwd_dir = self.cwd.join(".agents");
         Self::scan_dir(&cwd_dir, &parser, &mut seen);
 
-        let mut result: Vec<PersonaSummary> = seen.into_values().collect();
-        result.sort_by(|a, b| a.name.cmp(&b.name));
-        result
+        // Deduplicate: filter out filesystem personas that share a name with an enabled built-in
+        let builtin_names: std::collections::HashSet<&str> =
+            results.iter().map(|s| s.name.as_str()).collect();
+
+        let mut fs_results: Vec<PersonaSummary> = seen
+            .into_values()
+            .filter(|s| !builtin_names.contains(s.name.as_str()))
+            .collect();
+        fs_results.sort_by(|a, b| a.name.cmp(&b.name));
+        results.extend(fs_results);
+        results
     }
 }
 
@@ -322,14 +435,35 @@ impl FsPersonaResolver {
             };
             let name = parsed.name.unwrap_or_else(|| stem.clone());
             let description = parsed.description;
-            seen.insert(stem, PersonaSummary { name, description });
+            seen.insert(
+                stem,
+                PersonaSummary {
+                    name,
+                    description,
+                    builtin: false,
+                },
+            );
         }
     }
 }
 
 impl PersonaFileResolver for FsPersonaResolver {
     fn resolve(&self, persona_name: &str) -> Result<(PathBuf, String), PersonaError> {
-        log::debug!("persona resolve: name={persona_name:?}, cwd={:?}, config_dir={:?}", self.cwd, self.config_dir);
+        log::debug!(
+            "persona resolve: name={persona_name:?}, cwd={:?}, config_dir={:?}",
+            self.cwd,
+            self.config_dir
+        );
+
+        // Check built-ins first
+        if let Some(content) = self.resolve_builtin(persona_name) {
+            log::debug!("persona resolve: found as built-in");
+            return Ok((
+                PathBuf::from(format!("<builtin>/{persona_name}.md")),
+                content.to_string(),
+            ));
+        }
+
         // Try cwd first
         if let Some(result) = self.try_read_persona(&self.cwd, persona_name) {
             log::debug!("persona resolve: found in cwd .agents/ dir");
@@ -345,8 +479,14 @@ impl PersonaFileResolver for FsPersonaResolver {
         // Neither found
         log::debug!("persona resolve: not found for name={persona_name:?}");
         Err(PersonaError::NotFound {
-            cwd_path: self.cwd.join(".agents").join(format!("{}.md", persona_name)),
-            config_path: self.config_dir.join("agents").join(format!("{}.md", persona_name)),
+            cwd_path: self
+                .cwd
+                .join(".agents")
+                .join(format!("{}.md", persona_name)),
+            config_path: self
+                .config_dir
+                .join("agents")
+                .join(format!("{}.md", persona_name)),
         })
     }
 }
@@ -360,13 +500,13 @@ impl FrontMatterParser for PulldownCmarkFrontMatterParser {
         log::trace!("persona parse: input_len={}", input.len());
         let mut options = Options::empty();
         options.insert(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);
-        
+
         let parser = Parser::new_ext(input, options);
-        
+
         let mut yaml_text = String::new();
         let mut in_metadata = false;
         let mut metadata_end_offset: Option<usize> = None;
-        
+
         for (event, range) in parser.into_offset_iter() {
             match event {
                 Event::Start(Tag::MetadataBlock(MetadataBlockKind::YamlStyle)) => {
@@ -382,12 +522,16 @@ impl FrontMatterParser for PulldownCmarkFrontMatterParser {
                 _ => {}
             }
         }
-        
+
         // Parse front matter if we found a metadata block
         let front_matter = if metadata_end_offset.is_some() {
             // Empty YAML should parse to an empty mapping
             let trimmed = yaml_text.trim();
-            if trimmed.is_empty() || trimmed.lines().all(|l| l.trim_start().starts_with('#') || l.trim().is_empty()) {
+            if trimmed.is_empty()
+                || trimmed
+                    .lines()
+                    .all(|l| l.trim_start().starts_with('#') || l.trim().is_empty())
+            {
                 Some(noyalib::Mapping::new())
             } else {
                 match noyalib::from_str::<noyalib::Mapping>(&yaml_text) {
@@ -398,9 +542,12 @@ impl FrontMatterParser for PulldownCmarkFrontMatterParser {
         } else {
             None
         };
-        
-        log::debug!("persona parse: has_front_matter={}, metadata_end_offset={metadata_end_offset:?}", front_matter.is_some());
-        
+
+        log::debug!(
+            "persona parse: has_front_matter={}, metadata_end_offset={metadata_end_offset:?}",
+            front_matter.is_some()
+        );
+
         // Extract body
         let body = if let Some(offset) = metadata_end_offset {
             // Find the actual end of the closing --- delimiter
@@ -411,10 +558,13 @@ impl FrontMatterParser for PulldownCmarkFrontMatterParser {
             // No front matter, return entire input
             input.to_string()
         };
-        
+
         Ok(RawParsedPersona { front_matter, body })
     }
 }
+
+#[cfg(test)]
+mod test;
 
 /// Mock persona resolver for testing
 #[cfg(test)]
@@ -427,18 +577,17 @@ impl PersonaFileResolver for MockPersonaResolver {
     fn resolve(&self, _persona_name: &str) -> Result<(PathBuf, String), PersonaError> {
         match &self.result {
             Ok((path, content)) => Ok((path.clone(), content.clone())),
-            Err(PersonaError::NotFound { cwd_path, config_path }) => {
-                Err(PersonaError::NotFound {
-                    cwd_path: cwd_path.clone(),
-                    config_path: config_path.clone(),
-                })
-            }
-            Err(PersonaError::ReadFailed { path, source }) => {
-                Err(PersonaError::ReadFailed {
-                    path: path.clone(),
-                    source: std::io::Error::new(source.kind(), source.to_string()),
-                })
-            }
+            Err(PersonaError::NotFound {
+                cwd_path,
+                config_path,
+            }) => Err(PersonaError::NotFound {
+                cwd_path: cwd_path.clone(),
+                config_path: config_path.clone(),
+            }),
+            Err(PersonaError::ReadFailed { path, source }) => Err(PersonaError::ReadFailed {
+                path: path.clone(),
+                source: std::io::Error::new(source.kind(), source.to_string()),
+            }),
         }
     }
 }

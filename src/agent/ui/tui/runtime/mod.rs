@@ -201,6 +201,7 @@ fn command_palette_action_summary(action: CommandPaletteAction) -> &'static str 
         CommandPaletteAction::Mcps => "Manage MCP servers",
         CommandPaletteAction::Skills => "List available skills",
         CommandPaletteAction::Models => "Open model picker",
+        CommandPaletteAction::Agents => "Open agent picker",
     }
 }
 
@@ -226,6 +227,7 @@ fn command_palette_action_label(action: CommandPaletteAction) -> &'static str {
         CommandPaletteAction::Mcps => "MCPs",
         CommandPaletteAction::Skills => "Skills",
         CommandPaletteAction::Models => "Models",
+        CommandPaletteAction::Agents => "Agents",
     }
 }
 
@@ -264,6 +266,8 @@ fn input_buffer_for_layout(state: &AppState) -> String {
 }
 
 const MODEL_PICKER_EMPTY_STATE_MESSAGE: &str = "No models available in cached startup config.";
+const AGENT_PICKER_EMPTY_STATE_MESSAGE: &str =
+    "No agent personas found. Create .agents/<name>.md files.";
 
 fn skills_panel_lines(state: &AppState) -> (&'static str, Vec<Line<'static>>) {
     if state.skills_discovery_failed() {
@@ -779,12 +783,14 @@ impl RuntimeCoordinator {
             if role == TranscriptRole::Compaction {
                 // Create compaction block structure (header with checkmark)
                 self.state.start_compaction_block("history");
-                self.state.finish_compaction_block("history", CompactionStatus::Done);
+                self.state
+                    .finish_compaction_block("history", CompactionStatus::Done);
 
                 // After Bug 2, content is just the summary body (no stats line)
                 if !message_content.trim().is_empty() {
                     for line in self.state.project_assistant_markdown_lines(message_content) {
-                        let text = crate::agent::ui::tui::markdown::rendered_line_to_plain_text(&line);
+                        let text =
+                            crate::agent::ui::tui::markdown::rendered_line_to_plain_text(&line);
                         if text.trim().is_empty() {
                             continue;
                         }
@@ -922,6 +928,14 @@ impl RuntimeCoordinator {
         self.state.take_next_model_picker_launch_request()
     }
 
+    pub(crate) fn take_next_agent_picker_launch_request(&mut self) -> bool {
+        self.state.take_next_agent_picker_launch_request()
+    }
+
+    pub(crate) fn take_next_agent_switch_request(&mut self) -> Option<String> {
+        self.state.take_next_agent_switch_request()
+    }
+
     pub(crate) fn set_active_model_identity(&mut self, active_model_identity: String) {
         self.active_model_identity = active_model_identity;
     }
@@ -994,6 +1008,21 @@ impl RuntimeCoordinator {
         self.state.set_model_picker_options(options);
     }
 
+    pub(crate) fn set_agent_picker_options(
+        &mut self,
+        options: Vec<crate::agent::ui::tui::state::AgentPickerOption>,
+    ) {
+        self.state.set_agent_picker_options(options);
+    }
+
+    pub(crate) fn set_active_agent_identity(&mut self, name: &str) {
+        self.state.set_active_agent_identity(name);
+    }
+
+    pub(crate) fn set_agent_cycle_names(&mut self, names: Vec<String>) {
+        self.state.agent_cycle_names = names;
+    }
+
     pub(crate) fn set_repo_branch_caller_cwd(&mut self, caller_cwd: Option<PathBuf>) {
         self.repo_branch_tracker = Some(status::RepoBranchTracker::from_caller_cwd(caller_cwd));
     }
@@ -1046,10 +1075,7 @@ impl RuntimeCoordinator {
     }
 
     pub fn enqueue_ui_event(&mut self, event: UiEvent) {
-        log::trace!(
-            "tui: enqueue_ui_event {:?}",
-            std::mem::discriminant(&event)
-        );
+        log::trace!("tui: enqueue_ui_event {:?}", std::mem::discriminant(&event));
         self.transport.enqueue_ui_event(event);
     }
 
@@ -1143,6 +1169,10 @@ impl RuntimeCoordinator {
                 self.state.open_model_picker();
                 true
             }
+            SharedUiAction::Agents => {
+                self.state.open_agent_picker();
+                true
+            }
         }
     }
 
@@ -1233,7 +1263,10 @@ impl RuntimeCoordinator {
         let mut pending_compaction: Option<UiEvent> = None;
 
         while let Some(item) = self.transport.poll_next() {
-            if matches!(&item, TransportItem::Event(UiEvent::AssistantMessage { .. })) {
+            if matches!(
+                &item,
+                TransportItem::Event(UiEvent::AssistantMessage { .. })
+            ) {
                 pending_assistant = Some(match item {
                     TransportItem::Event(e) => e,
                     _ => unreachable!(),
@@ -1471,10 +1504,7 @@ impl RuntimeCoordinator {
                     vertical[3].width as usize,
                 );
                 let lane_2 = lane_2_status_line(&self.state, vertical[3].width as usize);
-                let _status_lines = build_status_lines(
-                    &self.state,
-                    &self.active_model_identity,
-                );
+                let _status_lines = build_status_lines(&self.state, &self.active_model_identity);
                 let status_widget =
                     Paragraph::new(Text::from(vec![Line::from(lane_1), Line::from(lane_2)]))
                         .block(Block::default())
@@ -1688,10 +1718,9 @@ impl RuntimeCoordinator {
                         _ => {
                             let (title, lines) = match panel {
                                 InfoPanel::Help => help_panel_lines(),
-                                InfoPanel::Status => status_panel_lines(
-                                    &self.state,
-                                    &self.active_model_identity,
-                                ),
+                                InfoPanel::Status => {
+                                    status_panel_lines(&self.state, &self.active_model_identity)
+                                }
                                 InfoPanel::Skills => skills_panel_lines(&self.state),
                                 InfoPanel::Mcps => unreachable!("handled above"),
                             };
@@ -1792,6 +1821,74 @@ impl RuntimeCoordinator {
                         frame.render_stateful_widget(table, rows[1], &mut table_state);
                     }
                 }
+
+                if self.state.agent_picker_open {
+                    let popup = modal_rect_for_panel(area, ModalPanelKind::Agents);
+                    frame.render_widget(Clear, popup);
+                    frame.render_widget(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_set(symbols::border::ROUNDED)
+                            .title("Agent (↑/↓ · Enter · Esc)"),
+                        popup,
+                    );
+
+                    let inner = popup.inner(Margin {
+                        vertical: 1,
+                        horizontal: 1,
+                    });
+                    let rows = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([Constraint::Length(1), Constraint::Min(0)])
+                        .split(inner);
+                    frame.render_widget(
+                        Paragraph::new(Line::from(format!(
+                            "Query: {}",
+                            self.state.agent_picker_query
+                        ))),
+                        rows[0],
+                    );
+
+                    let options = self.state.agent_picker_filtered_options();
+                    if options.is_empty() {
+                        frame.render_widget(
+                            Paragraph::new(Line::from(AGENT_PICKER_EMPTY_STATE_MESSAGE)),
+                            rows[1],
+                        );
+                    } else {
+                        let table_rows: Vec<Row> = options
+                            .iter()
+                            .enumerate()
+                            .map(|(idx, option)| {
+                                let active = if option.active { "*" } else { "" };
+                                let marker = if idx == self.state.agent_picker_selection {
+                                    "❯ "
+                                } else {
+                                    "  "
+                                };
+                                let desc = option.description.as_deref().unwrap_or("");
+                                Row::new(vec![
+                                    Cell::from(format!("{marker}{}", option.name)),
+                                    Cell::from(desc.to_string()),
+                                    Cell::from(active.to_string()),
+                                ])
+                            })
+                            .collect();
+                        let table = Table::new(
+                            table_rows,
+                            [
+                                Constraint::Min(12),
+                                Constraint::Min(20),
+                                Constraint::Length(1),
+                            ],
+                        )
+                        .header(Row::new(vec!["Agent", "Description", "A"]))
+                        .column_spacing(1);
+                        let mut table_state = TableState::default();
+                        table_state.select(Some(self.state.agent_picker_selection));
+                        frame.render_stateful_widget(table, rows[1], &mut table_state);
+                    }
+                }
             })
             .map_err(|err| format!("TUI render failed: {err}"))?;
 
@@ -1827,7 +1924,10 @@ pub(super) fn modal_frame_uses_rounded_border_style_for_test() -> bool {
 
 #[cfg(test)]
 pub(super) fn modal_open_state_applies_dimmed_backdrop_for_test(state: &AppState) -> bool {
-    state.command_palette_open || state.info_panel.is_some() || state.model_picker_open
+    state.command_palette_open
+        || state.info_panel.is_some()
+        || state.model_picker_open
+        || state.agent_picker_open
 }
 
 #[cfg(test)]
@@ -1857,13 +1957,10 @@ fn status_panel_lines(
     state: &AppState,
     active_model_identity: &str,
 ) -> (&'static str, Vec<Line<'static>>) {
-    let lines = build_status_lines(
-        state,
-        active_model_identity,
-    )
-    .into_iter()
-    .map(Line::from)
-    .collect();
+    let lines = build_status_lines(state, active_model_identity)
+        .into_iter()
+        .map(Line::from)
+        .collect();
     ("Status", lines)
 }
 
@@ -1900,10 +1997,7 @@ pub(super) fn status_panel_lines_for_test(
     state: &AppState,
     active_model_identity: &str,
 ) -> (&'static str, Vec<Line<'static>>) {
-    status_panel_lines(
-        state,
-        active_model_identity,
-    )
+    status_panel_lines(state, active_model_identity)
 }
 
 #[cfg(test)]
@@ -2019,12 +2113,7 @@ pub(super) fn compact_status_line_for_test(
     active_model_identity: &str,
     now_millis: Option<u128>,
 ) -> String {
-    compact_status_line(
-        active_model_identity,
-        None,
-        now_millis,
-        120,
-    )
+    compact_status_line(active_model_identity, None, now_millis, 120)
 }
 
 #[cfg(test)]
@@ -2033,14 +2122,8 @@ pub(super) fn lane_2_status_line_for_test(state: &AppState, width: usize) -> Str
 }
 
 #[cfg(test)]
-pub(super) fn status_lines_for_test(
-    state: &AppState,
-    active_model_identity: &str,
-) -> Vec<String> {
-    build_status_lines(
-        state,
-        active_model_identity,
-    )
+pub(super) fn status_lines_for_test(state: &AppState, active_model_identity: &str) -> Vec<String> {
+    build_status_lines(state, active_model_identity)
 }
 
 #[cfg(test)]
@@ -2270,6 +2353,21 @@ where
         self.coordinator.set_model_picker_options(options);
     }
 
+    pub(crate) fn set_agent_picker_options(
+        &mut self,
+        options: Vec<crate::agent::ui::tui::state::AgentPickerOption>,
+    ) {
+        self.coordinator.set_agent_picker_options(options);
+    }
+
+    pub(crate) fn set_active_agent_identity(&mut self, name: &str) {
+        self.coordinator.set_active_agent_identity(name);
+    }
+
+    pub(crate) fn set_agent_cycle_names(&mut self, names: Vec<String>) {
+        self.coordinator.set_agent_cycle_names(names);
+    }
+
     pub(crate) fn set_repo_branch_caller_cwd(&mut self, caller_cwd: Option<PathBuf>) {
         self.coordinator.set_repo_branch_caller_cwd(caller_cwd);
     }
@@ -2322,6 +2420,14 @@ where
 
     pub(crate) fn take_next_model_picker_launch_request(&mut self) -> bool {
         self.coordinator.take_next_model_picker_launch_request()
+    }
+
+    pub(crate) fn take_next_agent_picker_launch_request(&mut self) -> bool {
+        self.coordinator.take_next_agent_picker_launch_request()
+    }
+
+    pub(crate) fn take_next_agent_switch_request(&mut self) -> Option<String> {
+        self.coordinator.take_next_agent_switch_request()
     }
 
     pub(crate) fn execute_shared_ui_action(&mut self, action: SharedUiAction) -> bool {

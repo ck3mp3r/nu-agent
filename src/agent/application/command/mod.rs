@@ -83,6 +83,35 @@ fn resolve_non_interactive_ask_mode(
     }
 }
 
+fn is_builtin_enabled(name: &str, config: &crate::config::AgentsConfig) -> bool {
+    use crate::agent::protocol::persona::builtins;
+    match name {
+        n if n == builtins::BUILTIN_PLANNER_NAME => config.planner_enabled,
+        n if n == builtins::BUILTIN_MAKER_NAME => config.maker_enabled,
+        _ => true, // non-builtins are always "enabled"
+    }
+}
+
+fn resolve_default_agent(
+    config: &crate::config::AgentsConfig,
+) -> Result<Option<String>, LabeledError> {
+    use crate::agent::protocol::persona::builtins;
+    let default = &config.default;
+    if builtins::is_builtin_persona(default) && !is_builtin_enabled(default, config) {
+        // Default is disabled — try fallback
+        match &config.fallback {
+            Some(fallback) => Ok(Some(fallback.clone())),
+            None => Err(LabeledError::new(format!(
+                "Default agent '{}' is disabled and no fallback configured. \
+                 Set `agents.fallback` in config or enable '{}'.",
+                default, default
+            ))),
+        }
+    } else {
+        Ok(Some(default.clone()))
+    }
+}
+
 fn resolve_effective_permissions_config(
     call: &EvaluatedCall,
     plugin_config: Option<&Value>,
@@ -94,11 +123,11 @@ fn resolve_effective_permissions_config(
     // Build permission chain: base → agent_overlay → CLI
     // CLI always wins (highest precedence)
     let mut effective = base;
-    
+
     if let Some(overlay) = agent_overlay {
         effective = effective.with_overlay(overlay);
     }
-    
+
     if let Some(value) = cli_permissions.as_ref() {
         let overlay = PermissionsOverlay::parse_from_cli_value(value).map_err(|msg| {
             LabeledError::new("Invalid --permissions value").with_label(msg, value.span())
@@ -447,7 +476,9 @@ pub(crate) fn orchestrator_tool_definitions(
         },
         rig::completion::ToolDefinition {
             name: "terminate_agent".to_string(),
-            description: "Terminate a running sub-agent by name. Kills its tmux pane and deregisters it.".to_string(),
+            description:
+                "Terminate a running sub-agent by name. Kills its tmux pane and deregisters it."
+                    .to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -558,7 +589,20 @@ Compaction flags:
     }
 
     fn search_terms(&self) -> Vec<&str> {
-        vec!["ai", "llm", "chat", "copilot", "openai", "anthropic", "ollama", "prompt", "agent", "persona", "filter", "tools"]
+        vec![
+            "ai",
+            "llm",
+            "chat",
+            "copilot",
+            "openai",
+            "anthropic",
+            "ollama",
+            "prompt",
+            "agent",
+            "persona",
+            "filter",
+            "tools",
+        ]
     }
 
     fn examples(&self) -> Vec<Example<'_>> {
@@ -816,13 +860,20 @@ Compaction flags:
 
                 // Resolve log directory: $XDG_STATE_HOME/nu-agent/logs
                 let log_dir = crate::utils::xdg::state_dir()
-                    .map_err(|e| LabeledError::new(format!("Failed to resolve XDG state directory: {e}")))?
+                    .map_err(|e| {
+                        LabeledError::new(format!("Failed to resolve XDG state directory: {e}"))
+                    })?
                     .join("nu-agent")
                     .join("logs");
 
                 // Create log directory
-                std::fs::create_dir_all(&log_dir)
-                    .map_err(|e| LabeledError::new(format!("Failed to create log directory {}: {}", log_dir.display(), e)))?;
+                std::fs::create_dir_all(&log_dir).map_err(|e| {
+                    LabeledError::new(format!(
+                        "Failed to create log directory {}: {}",
+                        log_dir.display(),
+                        e
+                    ))
+                })?;
 
                 // Open log file in append mode
                 let log_file = std::fs::OpenOptions::new()
@@ -885,6 +936,12 @@ Compaction flags:
 
         let plugin_config_value = engine.get_plugin_config()?;
 
+        let agents_config = plugin_config_value
+            .as_ref()
+            .and_then(|v| PluginConfig::from_plugin_config(v).ok())
+            .map(|c| c.agents)
+            .unwrap_or_default();
+
         let mcp_config = plugin_config_value
             .as_ref()
             .map(crate::tools::mcp::config::McpConfig::from_plugin_config)
@@ -897,61 +954,104 @@ Compaction flags:
         // Load agent persona and extract permissions overlay before resolving effective permissions
         let (agent_name, cli_name) = args::extract_agent_flags(call);
         log::debug!("agent flags: agent_name={agent_name:?}, cli_name={cli_name:?}");
-        
+
         // Extract broker flags early (before runtime construction)
         let broker_flags = args::extract_broker_flags(call)?;
         log::debug!("broker flags: present={}", broker_flags.is_some());
-        
-        let persona = if let Some(ref name) = agent_name {
-            let cwd = engine.get_current_dir()
-                .map_err(|e| LabeledError::new("Failed to get current directory")
-                    .with_label(format!("{}", e), call.head))?;
+
+        // Determine effective agent name:
+        // 1. CLI --agent flag provided → validate it's not a disabled built-in
+        // 2. No CLI flag → resolve from config default/fallback
+        let effective_agent_name = if let Some(ref name) = agent_name {
+            if crate::agent::protocol::persona::builtins::is_builtin_persona(name)
+                && !is_builtin_enabled(name, &agents_config)
+            {
+                return Err(LabeledError::new(format!(
+                    "Agent '{}' is disabled in config. Enable it or use a different agent.",
+                    name
+                ))
+                .with_label("disabled agent", call.head));
+            }
+            Some(name.clone())
+        } else {
+            resolve_default_agent(&agents_config)?
+        };
+        log::debug!("effective_agent_name={effective_agent_name:?}");
+
+        let persona = if let Some(ref name) = effective_agent_name {
+            let cwd = engine.get_current_dir().map_err(|e| {
+                LabeledError::new("Failed to get current directory")
+                    .with_label(format!("{}", e), call.head)
+            })?;
             let cwd = std::path::PathBuf::from(cwd);
             let config_dir = crate::utils::xdg::config_dir()
                 .map(|base| base.join("nu-agent"))
-                .map_err(|e| LabeledError::new("Cannot determine config directory")
-                    .with_label(e.to_string(), call.head))?;
-            
-            use crate::agent::protocol::persona::{FsPersonaResolver, PersonaFileResolver, PulldownCmarkFrontMatterParser, FrontMatterParser, interpret_front_matter};
-            
-            let resolver = FsPersonaResolver::new(cwd, config_dir);
-            let (_path, contents) = resolver.resolve(name).map_err(|e| 
-                LabeledError::new("Agent persona not found").with_label(e.to_string(), call.head))?;
-            
+                .map_err(|e| {
+                    LabeledError::new("Cannot determine config directory")
+                        .with_label(e.to_string(), call.head)
+                })?;
+
+            use crate::agent::protocol::persona::{
+                FrontMatterParser, FsPersonaResolver, PersonaFileResolver,
+                PulldownCmarkFrontMatterParser, interpret_front_matter,
+            };
+
+            let resolver = FsPersonaResolver::new(cwd, config_dir, agents_config.clone());
+            let (_path, contents) = resolver.resolve(name).map_err(|e| {
+                LabeledError::new("Agent persona not found").with_label(e.to_string(), call.head)
+            })?;
+
             let parser = PulldownCmarkFrontMatterParser;
-            let raw = parser.parse(&contents).map_err(|e| 
-                LabeledError::new("Invalid agent persona front matter").with_label(e.to_string(), call.head))?;
-            
+            let raw = parser.parse(&contents).map_err(|e| {
+                LabeledError::new("Invalid agent persona front matter")
+                    .with_label(e.to_string(), call.head)
+            })?;
+
             // Interpret front matter into typed fields
-            Some(interpret_front_matter(raw.front_matter.as_ref(), raw.body).map_err(|e|
-                LabeledError::new("Invalid agent persona front matter").with_label(e.to_string(), call.head))?)
+            Some(
+                interpret_front_matter(raw.front_matter.as_ref(), raw.body).map_err(|e| {
+                    LabeledError::new("Invalid agent persona front matter")
+                        .with_label(e.to_string(), call.head)
+                })?,
+            )
         } else {
             None
         };
-        log::debug!("persona loaded: name={:?}, model={:?}, tool_filter={:?}, has_permissions={}, body_len={}", 
-            persona.as_ref().and_then(|p| p.name.as_ref()), 
-            persona.as_ref().and_then(|p| p.model.as_ref()), 
-            persona.as_ref().and_then(|p| p.tool_filter.as_ref()), 
-            persona.as_ref().is_some_and(|p| p.permissions.is_some()), 
-            persona.as_ref().map_or(0, |p| p.body.len()));
+        log::debug!(
+            "persona loaded: name={:?}, model={:?}, tool_filter={:?}, has_permissions={}, body_len={}",
+            persona.as_ref().and_then(|p| p.name.as_ref()),
+            persona.as_ref().and_then(|p| p.model.as_ref()),
+            persona.as_ref().and_then(|p| p.tool_filter.as_ref()),
+            persona.as_ref().is_some_and(|p| p.permissions.is_some()),
+            persona.as_ref().map_or(0, |p| p.body.len())
+        );
 
-        // Wire name field with precedence: CLI --name > front matter name > --agent
+        // Wire name field with precedence: CLI --name > front matter name > effective agent name
         let agent_identity = cli_name
             .or_else(|| persona.as_ref().and_then(|p| p.name.clone()))
-            .or_else(|| agent_name.clone());
+            .or_else(|| effective_agent_name.clone());
         log::debug!("resolved agent_identity={agent_identity:?}");
 
         // Wire permissions field
-        let agent_permissions_overlay = persona.as_ref()
+        let agent_permissions_overlay = persona
+            .as_ref()
             .and_then(|p| p.permissions.as_ref())
             .map(PermissionsOverlay::parse_from_yaml)
             .transpose()
-            .map_err(|msg| LabeledError::new("Invalid agent permissions").with_label(msg, call.head))?;
-        log::debug!("agent_permissions_overlay present={}", agent_permissions_overlay.is_some());
+            .map_err(|msg| {
+                LabeledError::new("Invalid agent permissions").with_label(msg, call.head)
+            })?;
+        log::debug!(
+            "agent_permissions_overlay present={}",
+            agent_permissions_overlay.is_some()
+        );
 
         // Wire tool_filter with precedence: CLI --tool-filter > front matter tool_filter
         let tool_filter_patterns = if cli_tool_filter_patterns.is_empty() {
-            persona.as_ref().and_then(|p| p.tool_filter.clone()).unwrap_or_default()
+            persona
+                .as_ref()
+                .and_then(|p| p.tool_filter.clone())
+                .unwrap_or_default()
         } else {
             cli_tool_filter_patterns
         };
@@ -965,10 +1065,18 @@ Compaction flags:
             persona.as_ref().and_then(|p| p.model.as_deref()),
             cli_model_provided,
         );
-        log::debug!("effective model after persona merge: provider={}, model={}", config.provider, config.model);
+        log::debug!(
+            "effective model after persona merge: provider={}, model={}",
+            config.provider,
+            config.model
+        );
 
         let (effective_permissions, permissions_startup_summary) =
-            resolve_effective_permissions_config(call, plugin_config_value.as_ref(), agent_permissions_overlay.as_ref())?;
+            resolve_effective_permissions_config(
+                call,
+                plugin_config_value.as_ref(),
+                agent_permissions_overlay.as_ref(),
+            )?;
 
         // Create async runtime for LLM and MCP tool execution
         let runtime = tokio::runtime::Runtime::new()
@@ -1044,13 +1152,14 @@ Compaction flags:
         }
         let available_agents = if is_orchestrator {
             use crate::agent::protocol::persona::{FsPersonaResolver, PersonaLister};
-            let cwd = engine.get_current_dir()
+            let cwd = engine
+                .get_current_dir()
                 .map(std::path::PathBuf::from)
                 .unwrap_or_default();
             let config_dir = crate::utils::xdg::config_dir()
                 .map(|base| base.join("nu-agent"))
                 .unwrap_or_default();
-            let resolver = FsPersonaResolver::new(cwd, config_dir);
+            let resolver = FsPersonaResolver::new(cwd, config_dir, agents_config.clone());
             resolver.list_available()
         } else {
             Vec::new()
@@ -1082,8 +1191,13 @@ Compaction flags:
         }));
 
         // Apply tool filter patterns to ALL tools (builtin + closure + MCP) if provided
+        // Store baseline (unfiltered) for agent switching
+        let baseline_tool_definitions = tool_definitions.clone();
         if !tool_filter_patterns.is_empty() {
-            log::debug!("tool filter: patterns={tool_filter_patterns:?}, pre_filter_count={}", tool_definitions.len());
+            log::debug!(
+                "tool filter: patterns={tool_filter_patterns:?}, pre_filter_count={}",
+                tool_definitions.len()
+            );
             tool_definitions.retain(|td| {
                 crate::tools::mcp::filter::matches_patterns(&td.name, &tool_filter_patterns)
             });
@@ -1159,23 +1273,42 @@ Compaction flags:
             let orchestrator_name = agent_identity
                 .clone()
                 .unwrap_or_else(|| "orchestrator".to_string());
-            let (tokio_tx, mut tokio_rx) = tokio::sync::mpsc::channel::<crate::agent::mailbox::ServerFrame>(64);
+            let (tokio_tx, mut tokio_rx) =
+                tokio::sync::mpsc::channel::<crate::agent::mailbox::ServerFrame>(64);
             runtime.block_on(async {
-                registry.write().await.add_connected(orchestrator_name.clone(), tokio_tx);
+                registry
+                    .write()
+                    .await
+                    .add_connected(orchestrator_name.clone(), tokio_tx);
             });
-            log::debug!("Registered orchestrator '{}' in agent registry", orchestrator_name);
+            log::debug!(
+                "Registered orchestrator '{}' in agent registry",
+                orchestrator_name
+            );
 
             // Bridge tokio channel to std::sync::mpsc for mailbox_rx
-            let (std_tx, std_rx) = std::sync::mpsc::channel::<crate::agent::mailbox::IncomingMessage>();
+            let (std_tx, std_rx) =
+                std::sync::mpsc::channel::<crate::agent::mailbox::IncomingMessage>();
             runtime.spawn(async move {
                 while let Some(frame) = tokio_rx.recv().await {
-                    if let crate::agent::mailbox::ServerFrame::Message { from, message, kind } = frame {
+                    if let crate::agent::mailbox::ServerFrame::Message {
+                        from,
+                        message,
+                        kind,
+                    } = frame
+                    {
                         log::trace!("Orchestrator received message from '{}': {}", from, message);
                         if std_tx
-                            .send(crate::agent::mailbox::IncomingMessage { from, message, kind })
+                            .send(crate::agent::mailbox::IncomingMessage {
+                                from,
+                                message,
+                                kind,
+                            })
                             .is_err()
                         {
-                            log::debug!("Orchestrator mailbox receiver dropped, stopping forwarding task");
+                            log::debug!(
+                                "Orchestrator mailbox receiver dropped, stopping forwarding task"
+                            );
                             break;
                         }
                     }
@@ -1185,7 +1318,10 @@ Compaction flags:
             let state = Some(std::sync::Arc::new(std::sync::Mutex::new(
                 crate::agent::tools::handler::spawn_agent::OrchestratorState {
                     agent_identity: agent_identity.clone(),
-                    ..crate::agent::tools::handler::spawn_agent::OrchestratorState::new(registry, cwd_path.clone())
+                    ..crate::agent::tools::handler::spawn_agent::OrchestratorState::new(
+                        registry,
+                        cwd_path.clone(),
+                    )
                 },
             )));
             (state, Some(std_rx))
@@ -1217,25 +1353,23 @@ Compaction flags:
 
         // Extract compaction policy fields (not in SessionConfig)
         let compaction_strategy = session_config.compaction_strategy;
-        let compaction_proactive_threshold_pct = merged_compaction
-            .proactive_threshold_pct
-            .unwrap_or(0.80);
+        let compaction_proactive_threshold_pct =
+            merged_compaction.proactive_threshold_pct.unwrap_or(0.80);
         let compaction_fallback_strategies = merged_compaction
             .fallback_strategies
             .unwrap_or_else(|| vec![CompactionStrategy::SlidingWindow]);
 
         // Apply config to session and extract session metadata
-        let (compaction_threshold, compaction_count) = if let Some(ref mut session) =
-            session_resolution.session
-        {
-            session.set_config(session_config);
-            (
-                Some(session.config().compaction_threshold),
-                session.compaction_count(),
-            )
-        } else {
-            (None, 0)
-        };
+        let (compaction_threshold, compaction_count) =
+            if let Some(ref mut session) = session_resolution.session {
+                session.set_config(session_config);
+                (
+                    Some(session.config().compaction_threshold),
+                    session.compaction_count(),
+                )
+            } else {
+                (None, 0)
+            };
 
         // Connect to broker if flags provided
         let (broker_sender, mailbox_rx, parent_name) = if let Some(flags) = broker_flags {
@@ -1245,9 +1379,7 @@ Compaction flags:
                     crate::agent::mailbox::BrokerClient::connect(&flags.socket_path, &flags.token)
                         .await
                 })
-                .map_err(|e| {
-                    LabeledError::new(format!("Failed to connect to broker: {}", e))
-                })?;
+                .map_err(|e| LabeledError::new(format!("Failed to connect to broker: {}", e)))?;
 
             log::debug!("Connected to broker as '{}'", client.name);
 
@@ -1258,10 +1390,18 @@ Compaction flags:
             runtime.spawn(async move {
                 loop {
                     match receiver.recv().await {
-                        Ok(crate::agent::mailbox::ServerFrame::Message { from, message, kind }) => {
+                        Ok(crate::agent::mailbox::ServerFrame::Message {
+                            from,
+                            message,
+                            kind,
+                        }) => {
                             log::trace!("Received message from '{}': {}", from, message);
                             if tx
-                                .send(crate::agent::mailbox::IncomingMessage { from, message, kind })
+                                .send(crate::agent::mailbox::IncomingMessage {
+                                    from,
+                                    message,
+                                    kind,
+                                })
                                 .is_err()
                             {
                                 log::debug!("Mailbox receiver dropped, stopping forwarding task");
@@ -1284,8 +1424,15 @@ Compaction flags:
             (None, orchestrator_mailbox_rx, None)
         };
 
-        let broker_sender_arc = broker_sender.map(|s| std::sync::Arc::new(tokio::sync::Mutex::new(s)));
-        let builtin_tools = adapt_builtins(builtin_defs, cwd_path, orchestrator_state.clone(), broker_sender_arc.clone(), agent_identity.clone());
+        let broker_sender_arc =
+            broker_sender.map(|s| std::sync::Arc::new(tokio::sync::Mutex::new(s)));
+        let builtin_tools = adapt_builtins(
+            builtin_defs,
+            cwd_path,
+            orchestrator_state.clone(),
+            broker_sender_arc.clone(),
+            agent_identity.clone(),
+        );
 
         for tool in builtin_tools {
             runtime
@@ -1296,11 +1443,42 @@ Compaction flags:
                 })?;
         }
 
+        let mcp_caller_cwd: Option<std::path::PathBuf> =
+            engine.get_current_dir().ok().map(std::path::PathBuf::from);
+
+        // --- Cache preamble components (loaded once, reused every turn) ---
+        let loaded_agents_result = mcp_caller_cwd
+            .as_deref()
+            .map(crate::agent::protocol::agents::load_agents_chain_for_cwd)
+            .unwrap_or_default();
+
+        for warning in &loaded_agents_result.warnings {
+            log::warn!("AGENTS.md load warning: {}", warning);
+        }
+
+        let cached_agents_chain = loaded_agents_result.merged_chain;
+
+        let cached_available_skills = mcp_caller_cwd
+            .as_deref()
+            .and_then(crate::agent::protocol::skills::render_available_skills_preamble);
+
+        let cached_sub_agent_instruction = parent_name.as_ref().map(|parent| {
+            format!(
+                "You are a sub-agent. When you have completed your task, report your results back \
+                 to your parent agent using the send_message tool with kind 'completion': \
+                 send_message(to: \"{parent}\", message: \"<your results>\", kind: \"completion\"). \
+                 If you are blocked and need a decision from your parent, use kind 'question': \
+                 send_message(to: \"{parent}\", message: \"<your question>\", kind: \"question\"). \
+                 Work autonomously — only use 'question' when truly blocked."
+            )
+        });
+
         let mut runtime_impl = AgentConversationRuntime {
             runtime,
             runtime_ctx: self.runtime_ctx.clone(),
             config,
             tool_definitions,
+            baseline_tool_definitions,
             closure_registry,
             mcp_registry,
             mcp_runtime,
@@ -1311,7 +1489,7 @@ Compaction flags:
                 .map(|cfg| cfg.mcp.clone())
                 .unwrap_or_default(),
             tool_filter_patterns,
-            mcp_caller_cwd: engine.get_current_dir().ok().map(std::path::PathBuf::from),
+            mcp_caller_cwd,
             tool_executor,
             engine: engine.clone(),
             store: self.store.clone(),
@@ -1354,11 +1532,18 @@ Compaction flags:
             mailbox_rx,
             parent_name,
             compacting: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            available_agent_summaries: available_agents,
+            agents_config,
+            cached_agents_chain,
+            cached_available_skills,
+            cached_sub_agent_instruction,
         };
-        log::debug!("runtime: agent_persona_body_len={:?}, agent_identity={:?}, agent_description={:?}", 
+        log::debug!(
+            "runtime: agent_persona_body_len={:?}, agent_identity={:?}, agent_description={:?}",
             runtime_impl.agent_persona_body.as_ref().map(|b| b.len()),
             runtime_impl.agent_identity,
-            runtime_impl.agent_description);
+            runtime_impl.agent_description
+        );
         match mode {
             AgentMode::Tui => run_tui_mode(
                 &mut runtime_impl,
@@ -1449,6 +1634,37 @@ pub(crate) fn model_picker_catalog_from_cached_startup_plugin_config(
     startup_plugin_config
         .map(|config| build_model_picker_catalog_from_plugin_config(config, active_model_identity))
         .unwrap_or_default()
+}
+
+pub(crate) fn build_agent_picker_catalog(
+    available_agents: &[crate::agent::protocol::persona::PersonaSummary],
+    active_agent: Option<&str>,
+) -> Vec<crate::agent::ui::tui::state::AgentPickerOption> {
+    use crate::agent::ui::tui::state::AgentPickerOption;
+    available_agents
+        .iter()
+        .map(|agent| {
+            let active = active_agent.is_some_and(|a| a == agent.name);
+            let display = if agent.builtin {
+                match &agent.description {
+                    Some(desc) => format!("{} — {} [built-in]", agent.name, desc),
+                    None => format!("{} [built-in]", agent.name),
+                }
+            } else {
+                match &agent.description {
+                    Some(desc) => format!("{} — {}", agent.name, desc),
+                    None => agent.name.clone(),
+                }
+            };
+            AgentPickerOption {
+                name: agent.name.clone(),
+                description: agent.description.clone(),
+                display,
+                active,
+                builtin: agent.builtin,
+            }
+        })
+        .collect()
 }
 
 fn run_stderr_mode(

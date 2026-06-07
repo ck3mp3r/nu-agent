@@ -93,6 +93,7 @@ pub enum CommandPaletteAction {
     Mcps,
     Skills,
     Models,
+    Agents,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,6 +118,15 @@ pub struct ModelPickerOption {
     pub identity: String,
     pub display: String,
     pub active: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentPickerOption {
+    pub name: String,
+    pub description: Option<String>,
+    pub display: String,
+    pub active: bool,
+    pub builtin: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -205,6 +215,14 @@ pub struct AppState {
     pub model_picker_query: String,
     pub model_picker_selection: usize,
     pub model_picker_options: Vec<ModelPickerOption>,
+    pub agent_picker_open: bool,
+    pub agent_picker_query: String,
+    pub agent_picker_selection: usize,
+    pub agent_picker_options: Vec<AgentPickerOption>,
+    pending_agent_picker_launch_requests: usize,
+    pending_agent_switch_requests: VecDeque<String>,
+    active_agent_identity: Option<String>,
+    pub agent_cycle_names: Vec<String>,
     pub info_panel: Option<InfoPanel>,
     pub info_panel_scroll: usize,
     pub mcp_servers: Vec<McpServerState>,
@@ -269,6 +287,14 @@ impl PartialEq for AppState {
             && self.model_picker_query == other.model_picker_query
             && self.model_picker_selection == other.model_picker_selection
             && self.model_picker_options == other.model_picker_options
+            && self.agent_picker_open == other.agent_picker_open
+            && self.agent_picker_query == other.agent_picker_query
+            && self.agent_picker_selection == other.agent_picker_selection
+            && self.agent_picker_options == other.agent_picker_options
+            && self.pending_agent_picker_launch_requests == other.pending_agent_picker_launch_requests
+            && self.pending_agent_switch_requests == other.pending_agent_switch_requests
+            && self.active_agent_identity == other.active_agent_identity
+            && self.agent_cycle_names == other.agent_cycle_names
             && self.info_panel == other.info_panel
             && self.info_panel_scroll == other.info_panel_scroll
             && self.mcp_servers == other.mcp_servers
@@ -330,6 +356,14 @@ impl Default for AppState {
             model_picker_query: String::new(),
             model_picker_selection: 0,
             model_picker_options: Vec::new(),
+            agent_picker_open: false,
+            agent_picker_query: String::new(),
+            agent_picker_selection: 0,
+            agent_picker_options: Vec::new(),
+            pending_agent_picker_launch_requests: 0,
+            pending_agent_switch_requests: VecDeque::new(),
+            active_agent_identity: None,
+            agent_cycle_names: Vec::new(),
             info_panel: None,
             info_panel_scroll: 0,
             mcp_servers: Vec::new(),
@@ -404,6 +438,7 @@ impl AppState {
             (CommandPaletteAction::Mcps, "MCPs"),
             (CommandPaletteAction::Skills, "Skills"),
             (CommandPaletteAction::Models, "Models"),
+            (CommandPaletteAction::Agents, "Agents"),
         ];
 
         if self.command_palette_query.is_empty() {
@@ -768,6 +803,150 @@ impl AppState {
         self.pending_model_picker_launch_requests =
             self.pending_model_picker_launch_requests.saturating_sub(1);
         true
+    }
+
+    pub fn set_agent_picker_options(&mut self, options: Vec<AgentPickerOption>) {
+        let mut options = options;
+        options.sort_by(|a, b| a.name.cmp(&b.name));
+        self.agent_picker_options = options;
+        self.ensure_invariants();
+    }
+
+    pub fn open_agent_picker(&mut self) {
+        self.close_command_palette();
+        self.close_info_panel();
+        self.agent_picker_open = true;
+        self.agent_picker_query.clear();
+        self.agent_picker_selection = 0;
+        self.ensure_invariants();
+    }
+
+    pub fn close_agent_picker(&mut self) {
+        self.agent_picker_open = false;
+        self.agent_picker_query.clear();
+        self.agent_picker_selection = 0;
+        self.ensure_invariants();
+    }
+
+    pub fn agent_picker_close_on_escape(&mut self) {
+        self.close_agent_picker();
+    }
+
+    pub fn agent_picker_move_up(&mut self) {
+        let count = self.agent_picker_filtered_options().len();
+        if count == 0 {
+            return;
+        }
+        if self.agent_picker_selection == 0 {
+            self.agent_picker_selection = count - 1;
+        } else {
+            self.agent_picker_selection -= 1;
+        }
+    }
+
+    pub fn agent_picker_move_down(&mut self) {
+        let count = self.agent_picker_filtered_options().len();
+        if count == 0 {
+            return;
+        }
+        self.agent_picker_selection = (self.agent_picker_selection + 1) % count;
+    }
+
+    pub fn append_agent_picker_query_char(&mut self, ch: char) {
+        self.agent_picker_query.push(ch);
+        self.agent_picker_selection = 0;
+        self.ensure_invariants();
+    }
+
+    pub fn backspace_agent_picker_query_char(&mut self) {
+        self.agent_picker_query.pop();
+        self.agent_picker_selection = 0;
+        self.ensure_invariants();
+    }
+
+    pub fn agent_picker_filtered_options(&self) -> Vec<AgentPickerOption> {
+        if self.agent_picker_query.is_empty() {
+            return self.agent_picker_options.clone();
+        }
+        let query = self.agent_picker_query.to_lowercase();
+        self.agent_picker_options
+            .iter()
+            .filter(|o| {
+                o.name.to_lowercase().contains(&query) || o.display.to_lowercase().contains(&query)
+            })
+            .cloned()
+            .collect()
+    }
+
+    pub fn selected_agent_picker_option(&self) -> Option<AgentPickerOption> {
+        let filtered = self.agent_picker_filtered_options();
+        filtered.get(self.agent_picker_selection).cloned()
+    }
+
+    pub fn queue_selected_agent_switch_request(&mut self) -> bool {
+        if let Some(option) = self.selected_agent_picker_option() {
+            self.pending_agent_switch_requests.push_back(option.name);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn take_next_agent_switch_request(&mut self) -> Option<String> {
+        self.pending_agent_switch_requests.pop_front()
+    }
+
+    pub fn queue_agent_picker_launch_request(&mut self) {
+        self.pending_agent_picker_launch_requests =
+            self.pending_agent_picker_launch_requests.saturating_add(1);
+        self.input.buffer.clear();
+        self.input.cursor = 0;
+        self.abort.pending = false;
+        self.ensure_invariants();
+    }
+
+    pub fn take_next_agent_picker_launch_request(&mut self) -> bool {
+        if self.pending_agent_picker_launch_requests > 0 {
+            self.pending_agent_picker_launch_requests -= 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn set_active_agent_identity(&mut self, name: &str) {
+        self.active_agent_identity = Some(name.to_string());
+        for option in &mut self.agent_picker_options {
+            option.active = option.name == name;
+        }
+    }
+
+    pub fn active_agent_identity(&self) -> Option<&str> {
+        self.active_agent_identity.as_deref()
+    }
+
+    pub fn has_agents_to_cycle(&self) -> bool {
+        self.agent_cycle_names.len() >= 2
+    }
+
+    pub fn next_agent_cycle_name(&self) -> Option<String> {
+        if !self.has_agents_to_cycle() {
+            return None;
+        }
+        let current = self.active_agent_identity.as_deref().unwrap_or("");
+        let current_idx = self
+            .agent_cycle_names
+            .iter()
+            .position(|n| n == current)
+            .unwrap_or(0);
+        let next_idx = (current_idx + 1) % self.agent_cycle_names.len();
+        Some(self.agent_cycle_names[next_idx].clone())
+    }
+
+    pub fn queue_cycle_agent_request(&mut self) {
+        if let Some(next_name) = self.next_agent_cycle_name() {
+            self.pending_agent_switch_requests.push_back(next_name);
+        }
     }
 
     pub fn discoverable_skills(&self) -> &[DiscoverableSkill] {
@@ -1579,6 +1758,18 @@ impl AppState {
             }
         }
 
+        if !self.agent_picker_open {
+            self.agent_picker_selection = 0;
+            self.agent_picker_query.clear();
+        } else {
+            let agent_filtered_count = self.agent_picker_filtered_options().len();
+            if agent_filtered_count == 0 {
+                self.agent_picker_selection = 0;
+            } else if self.agent_picker_selection >= agent_filtered_count {
+                self.agent_picker_selection = agent_filtered_count.saturating_sub(1);
+            }
+        }
+
         while self.input.cursor > 0 && !self.input.buffer.is_char_boundary(self.input.cursor) {
             self.input.cursor -= 1;
         }
@@ -1605,6 +1796,7 @@ pub fn info_panel_for_command_palette_action(action: CommandPaletteAction) -> Op
         CommandPaletteAction::Mcps => Some(InfoPanel::Mcps),
         CommandPaletteAction::Skills => Some(InfoPanel::Skills),
         CommandPaletteAction::Models => None,
+        CommandPaletteAction::Agents => None,
     }
 }
 

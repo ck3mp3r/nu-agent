@@ -12,20 +12,25 @@ use crate::agent::ui::tui::state::AppState;
 const BUSY_SPINNER_FRAMES: &[&str] = &["◐", "◓", "◑", "◒"];
 const IDLE_INDICATOR: &str = "○";
 
-pub(super) fn build_status_lines(
-    state: &AppState,
-    active_model_identity: &str,
-) -> Vec<String> {
+pub(super) fn build_status_lines(state: &AppState, active_model_identity: &str) -> Vec<String> {
     let (configured, enabled, disabled, failed) = state.mcp_counts();
     let model_phase = model_activity_label(state);
 
     let failure_line = format_mcp_failure_line(state, 64, 48, 100);
 
-    vec![
-        format!(
+    let model_line = match state.active_agent_identity() {
+        Some(agent) => format!(
+            "Model: {} ({model_phase}) | agent: {agent}",
+            ellipsize(active_model_identity, 60)
+        ),
+        None => format!(
             "Model: {} ({model_phase})",
             ellipsize(active_model_identity, 60)
         ),
+    };
+
+    vec![
+        model_line,
         format!(
             "MCP: configured={configured} enabled={enabled} disabled={disabled} failed={failed}"
         ),
@@ -43,7 +48,12 @@ pub(super) fn compact_status_line(
     now_millis: Option<u128>,
     available_width: usize,
 ) -> String {
-    format_lane_1(active_model_identity, repo_branch, now_millis, available_width)
+    format_lane_1(
+        active_model_identity,
+        repo_branch,
+        now_millis,
+        available_width,
+    )
 }
 
 #[derive(Debug, Clone)]
@@ -329,16 +339,46 @@ pub(super) fn resolve_repo_branch_for_test(caller_cwd: &Path) -> Option<String> 
     head_state_to_branch_label(&head_state)
 }
 
+fn emoji_for_agent(name: &str) -> &'static str {
+    match name {
+        "planner" => "\u{1f9ed}",  // 🧭
+        "maker" => "\u{1f6e0}\u{fe0f}",  // 🛠️
+        _ => {
+            const POOL: &[&str] = &[
+                "\u{1f98a}", "\u{1f419}", "\u{1f989}", "\u{1f41d}", "\u{1f988}",
+                "\u{1f40b}", "\u{1f98e}", "\u{1fab6}", "\u{1f335}", "\u{1f344}",
+                "\u{1f3b2}", "\u{1f9f2}", "\u{1f52e}", "\u{1fa69}", "\u{1f9ca}",
+                "\u{1fae7}", "\u{1fa90}", "\u{1f30b}", "\u{1f3aa}", "\u{1f9ff}",
+                "\u{1fac0}", "\u{1f9ec}", "\u{1fab8}", "\u{1f9a0}", "\u{1f531}",
+                "\u{1f9ea}", "\u{1fa84}", "\u{1f3ad}", "\u{1f95d}", "\u{1f9a9}",
+            ];
+            let hash = name.bytes().fold(0u64, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u64));
+            POOL[(hash as usize) % POOL.len()]
+        }
+    }
+}
+
 pub(super) fn lane_2_status_line(state: &AppState, available_width: usize) -> String {
     let current = state.latest_total_tokens.unwrap_or(0);
-    let line = match state.context_window_max_tokens() {
+    let token_str = match state.context_window_max_tokens() {
         Some(max) if max > 0 => {
             let pct = ((current as u128).saturating_mul(100) / (max as u128)).min(100) as u64;
             format!("{} ({pct}%)", compact_token_count(current))
         }
         _ => compact_token_count(current),
     };
-    align_right_lane_2(&line, available_width)
+    match state.active_agent_identity().filter(|a| !a.is_empty()) {
+        Some(agent) => {
+            let emoji = emoji_for_agent(agent);
+            let left = format!("{emoji} {agent}");
+            // Emoji is 2 display cells, but .len() counts bytes. Compute visual width manually:
+            let left_cells = 2 + 1 + agent.len(); // emoji(2 cells) + " "(1) + name
+            let right = &token_str;
+            let padding = available_width.saturating_sub(left_cells + right.len());
+            format!("{left}{}{right}", " ".repeat(padding))
+        }
+        None => align_right_lane_2(&token_str, available_width),
+    }
 }
 
 fn align_right_lane_2(line: &str, available_width: usize) -> String {
@@ -385,17 +425,28 @@ pub(super) fn compact_status_line_with_branch_for_test(
     now_millis: Option<u128>,
     available_width: usize,
 ) -> String {
-    compact_status_line(active_model_identity, repo_branch, now_millis, available_width)
+    compact_status_line(
+        active_model_identity,
+        repo_branch,
+        now_millis,
+        available_width,
+    )
 }
 
-fn format_lane_1(model: &str, repo_branch: Option<&str>, now_millis: Option<u128>, available_width: usize) -> String {
+fn format_lane_1(
+    model: &str,
+    repo_branch: Option<&str>,
+    now_millis: Option<u128>,
+    available_width: usize,
+) -> String {
     let indicator = status_indicator(now_millis);
     let prefix = format!("{indicator} ");
     let prefix_width = prefix.chars().count(); // always 2
     let inner_width = available_width.saturating_sub(prefix_width);
+    let display_model = model.to_string();
     let inner = match repo_branch.filter(|branch| !branch.is_empty()) {
-        Some(branch) => format_lane_1_with_branch(model, branch, inner_width),
-        None => tail_ellipsize(model, inner_width),
+        Some(branch) => format_lane_1_with_branch(&display_model, branch, inner_width),
+        None => tail_ellipsize(&display_model, inner_width),
     };
     format!("{prefix}{inner}")
 }

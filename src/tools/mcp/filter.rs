@@ -5,8 +5,11 @@
 /// - `*` matches zero or more characters
 /// - Matching is case-sensitive
 pub fn matches_patterns(tool_name: &str, patterns: &[String]) -> bool {
-    log::trace!("matches_patterns: tool_name={tool_name:?}, pattern_count={}", patterns.len());
-    
+    log::trace!(
+        "matches_patterns: tool_name={tool_name:?}, pattern_count={}",
+        patterns.len()
+    );
+
     if patterns.is_empty() {
         return true;
     }
@@ -14,7 +17,7 @@ pub fn matches_patterns(tool_name: &str, patterns: &[String]) -> bool {
     let result = patterns
         .iter()
         .any(|pattern| glob_match_case_sensitive(pattern, tool_name));
-    
+
     log::trace!("matches_patterns: tool_name={tool_name:?}, matched={result}");
     result
 }

@@ -1,7 +1,9 @@
 use nu_protocol::LabeledError;
 
 use crate::agent::protocol::contracts::UiMessageSnapshot;
-use crate::session::{ConversationStore, JsonlConversationStore, Session, SessionStore, StoreEntry};
+use crate::session::{
+    ConversationStore, JsonlConversationStore, Session, SessionStore, StoreEntry,
+};
 use rig::completion::Message;
 use rig::completion::message::{AssistantContent, UserContent};
 

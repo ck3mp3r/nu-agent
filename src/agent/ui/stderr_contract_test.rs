@@ -291,7 +291,7 @@ fn turn_error_visible_at_default_verbosity_and_stops_spinner() {
     // Start spinner
     renderer.emit(&UiEvent::LlmStart);
     renderer.emit(&UiEvent::Tick);
-    
+
     // Emit TurnError
     renderer.emit(&UiEvent::TurnError {
         message: "Turn failed: Not authenticated. Run `agent auth login`.".to_string(),
@@ -300,11 +300,10 @@ fn turn_error_visible_at_default_verbosity_and_stops_spinner() {
 
     // Verify spinner is stopped first (before consuming stderr_bytes)
     assert!(!renderer.spinner_active_for_test());
-    
+
     let stderr_out = String::from_utf8(stderr_bytes).expect("utf8");
-    
+
     // Verify error is visible (not gated behind verbose flags)
     assert!(stderr_out.contains("Not authenticated"));
     assert!(stderr_out.contains("Error:"));
 }
-

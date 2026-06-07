@@ -1095,6 +1095,7 @@ fn test_resolve_model_basic() {
             providers
         },
         compaction: None,
+        agents: AgentsConfig::default(),
     };
 
     let config = plugin_config
@@ -1131,6 +1132,7 @@ fn test_resolve_model_with_env_fallback() {
             providers
         },
         compaction: None,
+        agents: AgentsConfig::default(),
     };
 
     let config = plugin_config
@@ -1151,6 +1153,7 @@ fn test_resolve_model_invalid_format() {
         small_model: None,
         providers: HashMap::new(),
         compaction: None,
+        agents: AgentsConfig::default(),
     };
 
     // No slash separator
@@ -1175,6 +1178,7 @@ fn test_resolve_model_provider_not_found() {
         small_model: None,
         providers: HashMap::new(),
         compaction: None,
+        agents: AgentsConfig::default(),
     };
 
     let result = plugin_config.resolve_model("unknown/model");
@@ -1205,6 +1209,7 @@ fn test_resolve_model_model_not_in_config() {
             providers
         },
         compaction: None,
+        agents: AgentsConfig::default(),
     };
 
     let config = plugin_config
@@ -1240,6 +1245,7 @@ fn test_resolve_model_with_provider_impl() {
             providers
         },
         compaction: None,
+        agents: AgentsConfig::default(),
     };
 
     let config = plugin_config
@@ -1293,6 +1299,7 @@ fn test_resolve_model_merges_limits() {
             providers
         },
         compaction: None,
+        agents: AgentsConfig::default(),
     };
 
     let config = plugin_config
@@ -1329,6 +1336,7 @@ fn resolve_model_handles_two_part_format() {
             providers
         },
         compaction: None,
+        agents: AgentsConfig::default(),
     };
 
     let config = plugin_config
@@ -1348,6 +1356,7 @@ fn resolve_model_validates_empty_parts() {
         small_model: None,
         providers: HashMap::new(),
         compaction: None,
+        agents: AgentsConfig::default(),
     };
 
     // Empty provider
@@ -1390,6 +1399,7 @@ fn resolve_model_uses_split_once_for_multi_part_models() {
             map
         },
         compaction: None,
+        agents: AgentsConfig::default(),
     };
 
     let config = plugin_config
@@ -1427,6 +1437,7 @@ fn resolve_model_works_with_simple_two_part() {
             map
         },
         compaction: None,
+        agents: AgentsConfig::default(),
     };
 
     let config = plugin_config
@@ -1464,6 +1475,7 @@ fn integration_github_copilot_with_backend_in_model() {
             map
         },
         compaction: None,
+        agents: AgentsConfig::default(),
     };
 
     // Test default model
@@ -1551,7 +1563,7 @@ fn test_from_env_copilot_with_github_copilot_api_key() {
     // For copilot providers, api_key should be None (rig handles env vars via from_env())
     with_env_vars(vec![("GITHUB_COPILOT_API_KEY", "copilot_key")], || {
         let config = Config::from_env("copilot", "claude");
-        
+
         assert_eq!(config.provider, "copilot");
         assert_eq!(config.model, "claude");
         assert_eq!(config.api_key, None);
@@ -1565,7 +1577,7 @@ fn test_from_env_copilot_fallback_to_github_token() {
     // For copilot providers, api_key should be None (rig handles env vars via from_env())
     with_env_vars(vec![("GITHUB_TOKEN", "github_token")], || {
         let config = Config::from_env("copilot", "claude");
-        
+
         assert_eq!(config.provider, "copilot");
         assert_eq!(config.model, "claude");
         assert_eq!(config.api_key, None);
@@ -1584,7 +1596,7 @@ fn test_from_env_copilot_precedence_github_copilot_api_key_over_github_token() {
         ],
         || {
             let config = Config::from_env("copilot", "claude");
-            
+
             assert_eq!(config.provider, "copilot");
             assert_eq!(config.model, "claude");
             assert_eq!(config.api_key, None);
@@ -1599,7 +1611,7 @@ fn test_from_env_github_copilot_with_github_copilot_api_key() {
     // For copilot providers, api_key should be None (rig handles env vars via from_env())
     with_env_vars(vec![("GITHUB_COPILOT_API_KEY", "copilot_key")], || {
         let config = Config::from_env("github-copilot", "claude");
-        
+
         assert_eq!(config.provider, "github-copilot");
         assert_eq!(config.model, "claude");
         assert_eq!(config.api_key, None);
@@ -1614,9 +1626,9 @@ fn test_from_env_copilot_missing_all_keys() {
         std::env::remove_var("GITHUB_COPILOT_API_KEY");
         std::env::remove_var("GITHUB_TOKEN");
     }
-    
+
     let config = Config::from_env("copilot", "claude");
-    
+
     assert_eq!(config.provider, "copilot");
     assert_eq!(config.model, "claude");
     assert!(config.api_key.is_none());
@@ -1631,15 +1643,15 @@ fn test_from_env_copilot_case_insensitive() {
         // Lowercase
         let config1 = Config::from_env("copilot", "claude");
         assert_eq!(config1.api_key, None);
-        
+
         // Mixed case
         let config2 = Config::from_env("Copilot", "claude");
         assert_eq!(config2.api_key, None);
-        
+
         // github-copilot variant
         let config3 = Config::from_env("github-copilot", "claude");
         assert_eq!(config3.api_key, None);
-        
+
         // Mixed case variant
         let config4 = Config::from_env("GitHub-Copilot", "claude");
         assert_eq!(config4.api_key, None);
@@ -1755,7 +1767,7 @@ fn copilot_provider_does_not_set_api_key_from_env() {
     // rig's from_env() handles environment variable resolution internally
     with_env_vars(vec![("GITHUB_COPILOT_API_KEY", "test_key")], || {
         let config = Config::from_env("copilot", "claude");
-        
+
         assert_eq!(config.provider, "copilot");
         assert_eq!(config.model, "claude");
         assert_eq!(config.api_key, None);
@@ -1769,7 +1781,7 @@ fn github_copilot_provider_does_not_set_api_key_from_env() {
     // rig's from_env() handles environment variable resolution internally
     with_env_vars(vec![("GITHUB_COPILOT_API_KEY", "test_key")], || {
         let config = Config::from_env("github-copilot", "gpt-4o");
-        
+
         assert_eq!(config.provider, "github-copilot");
         assert_eq!(config.model, "gpt-4o");
         assert_eq!(config.api_key, None);
@@ -1782,9 +1794,98 @@ fn non_copilot_provider_sets_api_key_from_env() {
     // Test that non-copilot providers (e.g., openai) DO populate api_key from env vars
     with_env_vars(vec![("OPENAI_API_KEY", "sk-test123")], || {
         let config = Config::from_env("openai", "gpt-4");
-        
+
         assert_eq!(config.provider, "openai");
         assert_eq!(config.model, "gpt-4");
         assert_eq!(config.api_key, Some("sk-test123".to_string()));
     });
+}
+
+// ============================================================================
+// AgentsConfig Parsing Tests
+// ============================================================================
+
+#[test]
+fn test_parse_agents_config_defaults() {
+    // Missing "agents" section → AgentsConfig::default()
+    let value = Value::test_record(record! {
+        "model" => Value::test_string("openai/gpt-4"),
+        "providers" => Value::test_record(record! {
+            "openai" => Value::test_record(record! {
+                "models" => Value::test_record(record! {
+                    "gpt-4" => Value::test_record(record! {}),
+                }),
+            }),
+        }),
+    });
+
+    let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
+    let expected = AgentsConfig::default();
+    assert_eq!(plugin_config.agents, expected);
+    assert!(plugin_config.agents.planner_enabled);
+    assert!(plugin_config.agents.maker_enabled);
+    assert_eq!(plugin_config.agents.default, "planner");
+    assert_eq!(plugin_config.agents.fallback, None);
+}
+
+#[test]
+fn test_parse_agents_config_planner_disabled() {
+    let value = Value::test_record(record! {
+        "model" => Value::test_string("openai/gpt-4"),
+        "providers" => Value::test_record(record! {
+            "openai" => Value::test_record(record! {
+                "models" => Value::test_record(record! {
+                    "gpt-4" => Value::test_record(record! {}),
+                }),
+            }),
+        }),
+        "agents" => Value::test_record(record! {
+            "planner" => Value::test_string("disabled"),
+        }),
+    });
+
+    let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
+    assert!(!plugin_config.agents.planner_enabled);
+    // maker defaults to enabled when not specified
+    assert!(plugin_config.agents.maker_enabled);
+}
+
+#[test]
+fn test_parse_agents_config_custom_default() {
+    let value = Value::test_record(record! {
+        "model" => Value::test_string("openai/gpt-4"),
+        "providers" => Value::test_record(record! {
+            "openai" => Value::test_record(record! {
+                "models" => Value::test_record(record! {
+                    "gpt-4" => Value::test_record(record! {}),
+                }),
+            }),
+        }),
+        "agents" => Value::test_record(record! {
+            "default" => Value::test_string("maker"),
+        }),
+    });
+
+    let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
+    assert_eq!(plugin_config.agents.default, "maker");
+}
+
+#[test]
+fn test_parse_agents_config_with_fallback() {
+    let value = Value::test_record(record! {
+        "model" => Value::test_string("openai/gpt-4"),
+        "providers" => Value::test_record(record! {
+            "openai" => Value::test_record(record! {
+                "models" => Value::test_record(record! {
+                    "gpt-4" => Value::test_record(record! {}),
+                }),
+            }),
+        }),
+        "agents" => Value::test_record(record! {
+            "fallback" => Value::test_string("my-agent"),
+        }),
+    });
+
+    let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
+    assert_eq!(plugin_config.agents.fallback, Some("my-agent".to_string()));
 }

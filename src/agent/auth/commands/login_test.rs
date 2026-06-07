@@ -26,10 +26,7 @@ fn login_signature_has_provider_flag() {
         .find(|f| f.long == "provider")
         .expect("Should have --provider flag");
 
-    assert_eq!(
-        provider_flag.short, Some('p'),
-        "Should have -p short form"
-    );
+    assert_eq!(provider_flag.short, Some('p'), "Should have -p short form");
 
     // Check that the flag accepts a String
     match provider_flag.arg {
@@ -43,10 +40,7 @@ fn login_description_is_meaningful() {
     let command = AgentAuthLogin::new();
     let description = SimplePluginCommand::description(&command);
 
-    assert!(
-        !description.is_empty(),
-        "Description should not be empty"
-    );
+    assert!(!description.is_empty(), "Description should not be empty");
     assert!(
         description.contains("provider") || description.contains("Authenticate"),
         "Description should mention provider or authentication"

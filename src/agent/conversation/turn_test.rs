@@ -132,7 +132,11 @@ fn prompt_cancelled_error_is_detected_as_cancellation() {
     let messages = turn_err
         .messages
         .expect("PromptCancelled should capture chat_history as messages");
-    assert_eq!(messages.len(), 1, "Should have one message from chat_history");
+    assert_eq!(
+        messages.len(),
+        1,
+        "Should have one message from chat_history"
+    );
 }
 
 #[test]
@@ -253,16 +257,16 @@ fn build_agent_and_prompt_uses_memory_api() {
 fn streaming_error_converts_to_turn_error() {
     // The From<rig::agent::StreamingError> implementation maps any StreamingError
     // to a TurnError with cancelled=false (since streaming errors are not cancellations)
-    
+
     // We test this by verifying the implementation exists and documenting behavior:
     // 1. StreamingError is converted via .to_string() to get the error message
     // 2. cancelled is always false (streaming errors are provider/network issues)
     // 3. This matches the pattern: PromptError::PromptCancelled sets cancelled=true,
     //    all other errors (including StreamingError) set cancelled=false
-    
+
     // Since rig::agent::StreamingError is an opaque external type that we cannot
     // easily construct in tests, we document the expected behavior:
-    // 
+    //
     // Given: StreamingError(msg)
     // When: TurnError::from(streaming_error)
     // Then: TurnError { msg: streaming_error.to_string(), cancelled: false }
@@ -276,19 +280,19 @@ fn streaming_turn_result_fields_match_turn_result() {
     // - text: String
     // - usage: rig::completion::request::Usage
     // - messages: Option<Vec<rig::completion::Message>>
-    
+
     // These fields map to TurnResult fields:
     // - text → text
     // - usage → usage
     // - messages → messages
-    
+
     // TurnResult has additional fields populated by HookDriver:
     // - tool_call_count: usize (from driver, not from streaming)
     // - deltas_emitted: bool (from driver, not from streaming)
-    
+
     // This test documents that the streaming result provides the LLM response data,
     // while the driver provides the tool execution metadata.
-    
+
     // Construct a TurnResult to verify all fields are accessible
     let result = TurnResult {
         text: "Response from streaming".to_string(),
@@ -301,11 +305,11 @@ fn streaming_turn_result_fields_match_turn_result() {
             reasoning_tokens: 0,
         },
         messages: None,
-        tool_call_count: 3, // From driver
+        tool_call_count: 3,   // From driver
         deltas_emitted: true, // From driver
         cancelled: false,
     };
-    
+
     assert_eq!(result.text, "Response from streaming");
     assert_eq!(result.usage.total_tokens, 150);
     assert_eq!(result.tool_call_count, 3);
@@ -325,18 +329,18 @@ fn build_agent_and_stream_uses_multi_turn_streaming() {
     // 5. Calls .multi_turn(max_turns) to enable tool-calling loop
     // 6. Awaits the stream and processes MultiTurnStreamItem variants
     // 7. Returns StreamingTurnResult with text, usage, and messages
-    
+
     // The streaming loop handles:
     // - StreamAssistantItem(Text) → accumulate text deltas
     // - StreamAssistantItem(ToolCall/ToolCallDelta) → ignored (handled by hooks)
     // - FinalResponse → capture final text, usage, and message history
-    
+
     // This test documents the expected behavior without requiring a real agent.
     // Integration tests with real LLM calls verify the actual streaming behavior.
-    
+
     let max_turns = 10usize;
     assert_eq!(max_turns, 10);
-    
+
     // The key API contract:
     // - Input: CompletionModel + AgentPromptConfig
     // - Output: Result<StreamingTurnResult, rig::agent::StreamingError>
@@ -356,11 +360,9 @@ fn turn_error_from_prompt_cancelled_captures_messages() {
     let assistant_msg = rig::completion::Message::Assistant {
         id: None,
         content: rig::one_or_many::OneOrMany::one(
-            rig::completion::message::AssistantContent::Text(
-                rig::completion::message::Text {
-                    text: "Rust is a systems programming...".to_string(),
-                },
-            ),
+            rig::completion::message::AssistantContent::Text(rig::completion::message::Text {
+                text: "Rust is a systems programming...".to_string(),
+            }),
         ),
     };
 
@@ -377,7 +379,11 @@ fn turn_error_from_prompt_cancelled_captures_messages() {
     let messages = turn_err
         .messages
         .expect("PromptCancelled should preserve chat_history");
-    assert_eq!(messages.len(), 2, "Both user and assistant messages should be captured");
+    assert_eq!(
+        messages.len(),
+        2,
+        "Both user and assistant messages should be captured"
+    );
 }
 
 /// Test that TurnError from non-cancelled PromptError has no messages.
@@ -470,7 +476,11 @@ fn path_b_cancelled_with_partial_text_constructs_user_and_assistant_messages() {
                     None
                 }
             });
-            assert_eq!(text, Some("partial response"), "Assistant message must contain partial text");
+            assert_eq!(
+                text,
+                Some("partial response"),
+                "Assistant message must contain partial text"
+            );
         }
         other => panic!("Expected assistant message, got {:?}", other),
     }
@@ -524,7 +534,10 @@ fn turn_result_cancelled_flag_propagates() {
     };
 
     assert!(cancelled_result.cancelled, "Cancelled flag should be true");
-    assert!(cancelled_result.text.is_empty(), "Cancelled turn should have empty text");
+    assert!(
+        cancelled_result.text.is_empty(),
+        "Cancelled turn should have empty text"
+    );
     assert!(
         cancelled_result.messages.is_none(),
         "Cancelled via cancel_token should have no messages (FinalResponse not received)"
@@ -539,5 +552,8 @@ fn turn_result_cancelled_flag_propagates() {
         cancelled: false,
     };
 
-    assert!(!normal_result.cancelled, "Normal turn should not be cancelled");
+    assert!(
+        !normal_result.cancelled,
+        "Normal turn should not be cancelled"
+    );
 }

@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use nu_plugin::EngineInterface;
@@ -49,19 +49,56 @@ fn build_system_preamble(
     agents_chain: Option<&str>,
     available_skills: Option<&str>,
 ) -> Option<String> {
-    log::trace!("build_system_preamble: config_preamble={}, agent_persona={}, sub_agent_instruction={}, context={}, agents_chain={}, available_skills={}", config_preamble.is_some(), agent_persona.is_some(), sub_agent_instruction.is_some(), context.is_some(), agents_chain.is_some(), available_skills.is_some());
-    
-    let parts: Vec<&str> = [config_preamble, agent_persona, sub_agent_instruction, context, agents_chain, available_skills]
-        .into_iter()
-        .flatten()
-        .collect();
+    log::trace!(
+        "build_system_preamble: config_preamble={}, agent_persona={}, sub_agent_instruction={}, context={}, agents_chain={}, available_skills={}",
+        config_preamble.is_some(),
+        agent_persona.is_some(),
+        sub_agent_instruction.is_some(),
+        context.is_some(),
+        agents_chain.is_some(),
+        available_skills.is_some()
+    );
+
+    let parts: Vec<&str> = [
+        config_preamble,
+        agent_persona,
+        sub_agent_instruction,
+        context,
+        agents_chain,
+        available_skills,
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
 
     if parts.is_empty() {
         None
     } else {
-        log::debug!("build_system_preamble: parts_count={}, total_len={}", parts.len(), parts.iter().map(|p| p.len()).sum::<usize>());
+        log::debug!(
+            "build_system_preamble: parts_count={}, total_len={}",
+            parts.len(),
+            parts.iter().map(|p| p.len()).sum::<usize>()
+        );
         Some(parts.join("\n\n---\n\n"))
     }
+}
+
+/// Apply tool filter patterns to a baseline set of tool definitions.
+///
+/// If `filter_patterns` is empty, returns a clone of the baseline (all tools visible).
+/// Otherwise, returns only tools whose names match at least one glob pattern.
+pub(crate) fn apply_tool_filter(
+    baseline: &[rig::completion::ToolDefinition],
+    filter_patterns: &[String],
+) -> Vec<rig::completion::ToolDefinition> {
+    if filter_patterns.is_empty() {
+        return baseline.to_vec();
+    }
+    baseline
+        .iter()
+        .filter(|td| crate::tools::mcp::filter::matches_patterns(&td.name, filter_patterns))
+        .cloned()
+        .collect()
 }
 
 /// Build a GitHub Copilot client using rig's from_env() or explicit config.
@@ -69,9 +106,7 @@ fn build_system_preamble(
 /// If config has an explicit `api_key`, uses the builder pattern with optional `base_url`.
 /// Otherwise, delegates to `rig::providers::copilot::Client::from_env()` which handles
 /// environment variable resolution (GITHUB_COPILOT_API_KEY → GITHUB_TOKEN → OAuth).
-fn build_copilot_client(
-    config: &Config,
-) -> Result<rig::providers::copilot::Client, LabeledError> {
+fn build_copilot_client(config: &Config) -> Result<rig::providers::copilot::Client, LabeledError> {
     let auth_err = |e: rig::http_client::Error| {
         LabeledError::new(format!(
             "Copilot auth failed: {e}. Run `agent auth login` to authenticate."
@@ -79,38 +114,57 @@ fn build_copilot_client(
     };
 
     // Base URL: config takes precedence, then env vars (same as rig's from_env)
-    let base_url = config.base_url.clone()
-        .or_else(|| std::env::var("GITHUB_COPILOT_API_BASE").ok().filter(|s| !s.trim().is_empty()))
-        .or_else(|| std::env::var("COPILOT_BASE_URL").ok().filter(|s| !s.trim().is_empty()));
+    let base_url = config
+        .base_url
+        .clone()
+        .or_else(|| {
+            std::env::var("GITHUB_COPILOT_API_BASE")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+        })
+        .or_else(|| {
+            std::env::var("COPILOT_BASE_URL")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+        });
 
     // 1. Explicit api_key from --api-key flag or plugin config
     if let Some(key) = &config.api_key {
         let mut b = rig::providers::copilot::Client::builder();
-        if let Some(url) = &base_url { b = b.base_url(url.clone()); }
-        return b.api_key::<rig::providers::copilot::CopilotAuth>(key.clone())
-            .build().map_err(auth_err);
+        if let Some(url) = &base_url {
+            b = b.base_url(url.clone());
+        }
+        return b
+            .api_key::<rig::providers::copilot::CopilotAuth>(key.clone())
+            .build()
+            .map_err(auth_err);
     }
 
     // 2. GITHUB_COPILOT_API_KEY / COPILOT_API_KEY env var
-    if let Ok(key) = std::env::var("GITHUB_COPILOT_API_KEY")
-        .or_else(|_| std::env::var("COPILOT_API_KEY"))
+    if let Ok(key) =
+        std::env::var("GITHUB_COPILOT_API_KEY").or_else(|_| std::env::var("COPILOT_API_KEY"))
         && !key.trim().is_empty()
     {
         let mut b = rig::providers::copilot::Client::builder();
-        if let Some(url) = &base_url { b = b.base_url(url.clone()); }
-        return b.api_key::<rig::providers::copilot::CopilotAuth>(key)
-            .build().map_err(auth_err);
+        if let Some(url) = &base_url {
+            b = b.base_url(url.clone());
+        }
+        return b
+            .api_key::<rig::providers::copilot::CopilotAuth>(key)
+            .build()
+            .map_err(auth_err);
     }
 
     // 3. COPILOT_GITHUB_ACCESS_TOKEN / GITHUB_TOKEN env var
-    if let Ok(token) = std::env::var("COPILOT_GITHUB_ACCESS_TOKEN")
-        .or_else(|_| std::env::var("GITHUB_TOKEN"))
+    if let Ok(token) =
+        std::env::var("COPILOT_GITHUB_ACCESS_TOKEN").or_else(|_| std::env::var("GITHUB_TOKEN"))
         && !token.trim().is_empty()
     {
         let mut b = rig::providers::copilot::Client::builder();
-        if let Some(url) = &base_url { b = b.base_url(url.clone()); }
-        return b.github_access_token(token)
-            .build().map_err(auth_err);
+        if let Some(url) = &base_url {
+            b = b.base_url(url.clone());
+        }
+        return b.github_access_token(token).build().map_err(auth_err);
     }
 
     // 4. Cached OAuth access token from prior `agent auth login`
@@ -124,9 +178,13 @@ fn build_copilot_client(
         && !token.trim().is_empty()
     {
         let mut b = rig::providers::copilot::Client::builder();
-        if let Some(url) = &base_url { b = b.base_url(url.clone()); }
-        return b.github_access_token(token.trim())
-            .build().map_err(auth_err);
+        if let Some(url) = &base_url {
+            b = b.base_url(url.clone());
+        }
+        return b
+            .github_access_token(token.trim())
+            .build()
+            .map_err(auth_err);
     }
 
     // 5. No auth available
@@ -140,17 +198,15 @@ fn build_copilot_client(
 /// If config has an explicit `api_key`, uses the builder with optional `base_url`.
 /// Otherwise, delegates to `rig::providers::openai::Client::from_env()` which reads
 /// OPENAI_API_KEY environment variable.
-fn build_openai_client(
-    config: &Config,
-) -> Result<rig::providers::openai::Client, LabeledError> {
+fn build_openai_client(config: &Config) -> Result<rig::providers::openai::Client, LabeledError> {
     use rig::client::ProviderClient;
-    
+
     let map_build_err = |e: rig::http_client::Error| {
         LabeledError::new(format!(
             "OpenAI client initialization failed: {e}. Ensure OPENAI_API_KEY is set."
         ))
     };
-    
+
     let map_env_err = |e: rig::client::ProviderClientError| {
         LabeledError::new(format!(
             "OpenAI client initialization failed: {e}. Ensure OPENAI_API_KEY is set."
@@ -177,13 +233,13 @@ fn build_anthropic_client(
     config: &Config,
 ) -> Result<rig::providers::anthropic::Client, LabeledError> {
     use rig::client::ProviderClient;
-    
+
     let map_build_err = |e: rig::http_client::Error| {
         LabeledError::new(format!(
             "Anthropic client initialization failed: {e}. Ensure ANTHROPIC_API_KEY is set."
         ))
     };
-    
+
     let map_env_err = |e: rig::client::ProviderClientError| {
         LabeledError::new(format!(
             "Anthropic client initialization failed: {e}. Ensure ANTHROPIC_API_KEY is set."
@@ -207,11 +263,9 @@ fn build_anthropic_client(
 /// (defaults to http://localhost:11434).
 ///
 /// TODO: Support explicit base_url from config once rig's ollama builder API is clarified.
-fn build_ollama_client(
-    config: &Config,
-) -> Result<rig::providers::ollama::Client, LabeledError> {
+fn build_ollama_client(config: &Config) -> Result<rig::providers::ollama::Client, LabeledError> {
     use rig::client::ProviderClient;
-    
+
     let map_err = |e: rig::client::ProviderClientError| {
         LabeledError::new(format!(
             "Ollama client initialization failed: {e}. Ensure Ollama is running and OLLAMA_HOST is set if not using default."
@@ -220,12 +274,13 @@ fn build_ollama_client(
 
     // Warn if base_url is set but we can't use it yet
     if config.base_url.is_some() {
-        eprintln!("Warning: Ollama base_url override not yet supported. Using OLLAMA_HOST env var or default (http://localhost:11434).");
+        eprintln!(
+            "Warning: Ollama base_url override not yet supported. Using OLLAMA_HOST env var or default (http://localhost:11434)."
+        );
     }
 
     rig::providers::ollama::Client::from_env().map_err(map_err)
 }
-
 
 pub(crate) enum CachedProviderClient {
     Copilot(rig::providers::copilot::Client),
@@ -242,6 +297,7 @@ pub(crate) struct AgentConversationRuntime {
     pub runtime_ctx: RuntimeCtx,
     pub config: Config,
     pub tool_definitions: Vec<rig::completion::ToolDefinition>,
+    pub baseline_tool_definitions: Vec<rig::completion::ToolDefinition>,
     pub closure_registry: ClosureRegistry,
     pub mcp_registry: McpToolRegistry,
     pub mcp_runtime: Option<McpRuntime>,
@@ -282,13 +338,27 @@ pub(crate) struct AgentConversationRuntime {
     #[allow(dead_code)]
     pub agent_description: Option<String>,
     #[allow(dead_code)]
-    pub orchestrator: Option<std::sync::Arc<std::sync::Mutex<crate::agent::tools::handler::spawn_agent::OrchestratorState>>>,
+    pub cached_agents_chain: Option<String>,
     #[allow(dead_code)]
-    pub broker_sender: Option<std::sync::Arc<tokio::sync::Mutex<crate::agent::mailbox::BrokerSender>>>,
+    pub cached_available_skills: Option<String>,
+    #[allow(dead_code)]
+    pub cached_sub_agent_instruction: Option<String>,
+    #[allow(dead_code)]
+    pub orchestrator: Option<
+        std::sync::Arc<
+            std::sync::Mutex<crate::agent::tools::handler::spawn_agent::OrchestratorState>,
+        >,
+    >,
+    #[allow(dead_code)]
+    pub broker_sender:
+        Option<std::sync::Arc<tokio::sync::Mutex<crate::agent::mailbox::BrokerSender>>>,
     #[allow(dead_code)]
     pub mailbox_rx: Option<std::sync::mpsc::Receiver<crate::agent::mailbox::IncomingMessage>>,
+    #[allow(dead_code)]
     pub parent_name: Option<String>,
     pub compacting: Arc<AtomicBool>,
+    pub available_agent_summaries: Vec<crate::agent::protocol::persona::PersonaSummary>,
+    pub agents_config: crate::config::AgentsConfig,
 }
 
 fn emit_permissions_startup_summary_once<U: ProgressUi>(
@@ -597,6 +667,70 @@ impl ConversationRuntime for AgentConversationRuntime {
         Ok(format!("{}/{}", self.config.provider, self.config.model))
     }
 
+    fn switch_agent(&mut self, agent_name: &str) -> Result<String, String> {
+        use crate::agent::protocol::persona::{
+            FrontMatterParser, FsPersonaResolver, PersonaFileResolver,
+            PulldownCmarkFrontMatterParser, interpret_front_matter,
+        };
+
+        let cwd = self
+            .mcp_caller_cwd
+            .clone()
+            .ok_or_else(|| "agent switch unavailable: working directory not set".to_string())?;
+
+        let config_dir = crate::utils::xdg::config_dir()
+            .map(|base| base.join("nu-agent"))
+            .map_err(|e| format!("agent switch failed: cannot determine config directory: {e}"))?;
+
+        let resolver = FsPersonaResolver::new(cwd, config_dir, self.agents_config.clone());
+        let (_path, contents) = resolver
+            .resolve(agent_name)
+            .map_err(|e| format!("agent switch failed: {e}"))?;
+
+        let parser = PulldownCmarkFrontMatterParser;
+        let raw = parser
+            .parse(&contents)
+            .map_err(|e| format!("agent switch failed: invalid front matter: {e}"))?;
+
+        let parsed = interpret_front_matter(raw.front_matter.as_ref(), raw.body)
+            .map_err(|e| format!("agent switch failed: invalid front matter fields: {e}"))?;
+
+        // Update persona body
+        self.agent_persona_body = Some(parsed.body);
+
+        // Resolve identity: front matter name > agent_name argument
+        let identity = parsed.name.unwrap_or_else(|| agent_name.to_string());
+        self.agent_identity = Some(identity.clone());
+        self.agent_description = parsed.description;
+
+        // If persona specifies a model, attempt to switch (ignore errors)
+        if let Some(ref model) = parsed.model {
+            let _ = self.switch_model(model);
+        }
+
+        // Re-apply tool filter from new persona
+        if let Some(ref filter_patterns) = parsed.tool_filter {
+            self.tool_filter_patterns = filter_patterns.clone();
+            self.tool_definitions =
+                apply_tool_filter(&self.baseline_tool_definitions, filter_patterns);
+        } else {
+            self.tool_filter_patterns = Vec::new();
+            self.tool_definitions = self.baseline_tool_definitions.clone();
+        }
+
+        // Invalidate cached client to pick up any changes
+        self.cached_client = None;
+        self.cached_client_key = None;
+
+        log::debug!(
+            "switch_agent: switched to identity={identity:?}, model={:?}, body_len={}",
+            parsed.model,
+            self.agent_persona_body.as_ref().map_or(0, |b| b.len())
+        );
+
+        Ok(identity)
+    }
+
     fn active_model_identity(&self) -> String {
         format!("{}/{}", self.config.provider, self.config.model)
     }
@@ -652,48 +786,21 @@ impl ConversationRuntime for AgentConversationRuntime {
             &self.permissions_startup_summary,
         );
 
-        let loaded_agents = self
-            .mcp_caller_cwd
-            .as_deref()
-            .map(crate::agent::protocol::agents::load_agents_chain_for_cwd)
-            .unwrap_or_default();
-
-        log::debug!("execute_turn: agents_chain loaded={}, warnings={}", loaded_agents.merged_chain.is_some(), loaded_agents.warnings.len());
-
-        for warning in &loaded_agents.warnings {
-            ui.emit(&UiEvent::Warning {
-                message: warning.clone(),
-            });
-        }
-
-        let available_skills = self
-            .mcp_caller_cwd
-            .as_deref()
-            .and_then(crate::agent::protocol::skills::render_available_skills_preamble);
-
-        // Build sub-agent instruction if this agent has a parent
-        let sub_agent_instruction = self.parent_name.as_ref().map(|parent| {
-            format!(
-                "You are a sub-agent. When you have completed your task, report your results back \
-                 to your parent agent using the send_message tool with kind 'completion': \
-                 send_message(to: \"{parent}\", message: \"<your results>\", kind: \"completion\"). \
-                 If you are blocked and need a decision from your parent, use kind 'question': \
-                 send_message(to: \"{parent}\", message: \"<your question>\", kind: \"question\"). \
-                 Work autonomously — only use 'question' when truly blocked."
-            )
-        });
-
-        // Build system preamble from components
+        // Build system preamble from cached components
         let preamble = build_system_preamble(
             self.config.preamble.as_deref(),
             self.agent_persona_body.as_deref(),
-            sub_agent_instruction.as_deref(),
+            self.cached_sub_agent_instruction.as_deref(),
             context.as_deref(),
-            loaded_agents.merged_chain.as_deref(),
-            available_skills.as_deref(),
+            self.cached_agents_chain.as_deref(),
+            self.cached_available_skills.as_deref(),
         );
 
-        log::debug!("execute_turn: preamble present={}, preamble_len={}", preamble.is_some(), preamble.as_ref().map_or(0, |p| p.len()));
+        log::debug!(
+            "execute_turn: preamble present={}, preamble_len={}",
+            preamble.is_some(),
+            preamble.as_ref().map_or(0, |p| p.len())
+        );
 
         // Hydrate memory from conversation store (idempotent, guarded)
         self.ensure_memory_hydrated()?;
@@ -747,10 +854,22 @@ impl ConversationRuntime for AgentConversationRuntime {
         macro_rules! with_cached_model {
             ($model_var:ident, $body:expr) => {
                 match self.cached_client.as_ref().unwrap() {
-                    CachedProviderClient::Copilot(c) => { let $model_var = c.completion_model(&self.config.model); $body }
-                    CachedProviderClient::OpenAi(c) => { let $model_var = c.completion_model(&self.config.model); $body }
-                    CachedProviderClient::Anthropic(c) => { let $model_var = c.completion_model(&self.config.model); $body }
-                    CachedProviderClient::Ollama(c) => { let $model_var = c.completion_model(&self.config.model); $body }
+                    CachedProviderClient::Copilot(c) => {
+                        let $model_var = c.completion_model(&self.config.model);
+                        $body
+                    }
+                    CachedProviderClient::OpenAi(c) => {
+                        let $model_var = c.completion_model(&self.config.model);
+                        $body
+                    }
+                    CachedProviderClient::Anthropic(c) => {
+                        let $model_var = c.completion_model(&self.config.model);
+                        $body
+                    }
+                    CachedProviderClient::Ollama(c) => {
+                        let $model_var = c.completion_model(&self.config.model);
+                        $body
+                    }
                 }
             };
         }
@@ -762,13 +881,8 @@ impl ConversationRuntime for AgentConversationRuntime {
                 if let Some(ref session_id) = self.final_session_id
                     && let Some(ref messages) = e.messages
                 {
-                    if let Err(persist_err) =
-                        self.conversation_store.append(session_id, messages)
-                    {
-                        log::warn!(
-                            "Failed to persist cancelled turn messages: {}",
-                            persist_err
-                        );
+                    if let Err(persist_err) = self.conversation_store.append(session_id, messages) {
+                        log::warn!("Failed to persist cancelled turn messages: {}", persist_err);
                     }
                     self.memory_message_count += messages.len();
                 }
@@ -802,7 +916,8 @@ impl ConversationRuntime for AgentConversationRuntime {
 
         // Path B: cancel_token fired — FinalResponse never arrived so messages is None.
         // Construct user + optional partial assistant message and persist manually.
-        if turn_result.cancelled && turn_result.messages.is_none()
+        if turn_result.cancelled
+            && turn_result.messages.is_none()
             && let Some(ref session_id) = self.final_session_id
         {
             use rig::completion::Message;
@@ -810,7 +925,10 @@ impl ConversationRuntime for AgentConversationRuntime {
             if !turn_result.text.is_empty() {
                 cancelled_messages.push(Message::assistant(turn_result.text.clone()));
             }
-            if let Err(e) = self.conversation_store.append(session_id, &cancelled_messages) {
+            if let Err(e) = self
+                .conversation_store
+                .append(session_id, &cancelled_messages)
+            {
                 log::warn!("Failed to persist cancelled turn messages (path B): {}", e);
             }
             self.memory_message_count += cancelled_messages.len();
@@ -844,7 +962,9 @@ impl ConversationRuntime for AgentConversationRuntime {
                     }
                 }
                 Some(CompactionTriggerDecision::FallbackFire { source, .. }) => {
-                    log::warn!("Compaction fallback triggered: executing with first available strategy");
+                    log::warn!(
+                        "Compaction fallback triggered: executing with first available strategy"
+                    );
                     if let Err(error) = self.execute_compaction_event(ui, source) {
                         ui.emit(&UiEvent::Warning { message: error });
                     }
@@ -937,9 +1057,7 @@ impl AgentConversationRuntime {
             let entries = self
                 .conversation_store
                 .load_all(session_id)
-                .map_err(|e| {
-                    LabeledError::new(format!("Failed to load session entries: {}", e))
-                })?;
+                .map_err(|e| LabeledError::new(format!("Failed to load session entries: {}", e)))?;
 
             // Extract only LLM-relevant messages (from latest marker onward)
             let llm_context = extract_llm_context(&entries);
@@ -948,10 +1066,7 @@ impl AgentConversationRuntime {
                 self.runtime
                     .block_on(self.memory.append(session_id, llm_context.clone()))
                     .map_err(|e| {
-                        LabeledError::new(format!(
-                            "Failed to append messages to memory: {}",
-                            e
-                        ))
+                        LabeledError::new(format!("Failed to append messages to memory: {}", e))
                     })?;
             }
             self.memory_message_count = llm_context.len();
@@ -994,8 +1109,10 @@ impl AgentConversationRuntime {
             "anthropic" => CachedProviderClient::Anthropic(build_anthropic_client(&self.config)?),
             "ollama" => CachedProviderClient::Ollama(build_ollama_client(&self.config)?),
             other => {
-                return Err(LabeledError::new(format!("Unsupported provider: '{}'", other))
-                    .with_help("Supported: copilot, openai, anthropic, ollama"));
+                return Err(
+                    LabeledError::new(format!("Unsupported provider: '{}'", other))
+                        .with_help("Supported: copilot, openai, anthropic, ollama"),
+                );
             }
         };
         self.cached_client = Some(client);
@@ -1022,12 +1139,10 @@ impl AgentConversationRuntime {
         }
         let _guard = CompactionGuard(Arc::clone(&self.compacting));
 
-        self.ensure_client_cached()
-            .map_err(|e| e.to_string())?;
+        self.ensure_client_cached().map_err(|e| e.to_string())?;
 
         // Ensure memory is hydrated before compaction reads it
-        self.ensure_memory_hydrated()
-            .map_err(|e| e.to_string())?;
+        self.ensure_memory_hydrated().map_err(|e| e.to_string())?;
 
         let runtime = &self.runtime;
         let memory = &self.memory;
@@ -1055,7 +1170,9 @@ impl AgentConversationRuntime {
                 execute_compaction_event_shared(source, || {
                     let mode = match source {
                         CompactionTriggerSource::SlashCompact => CompactionInvocationMode::Force,
-                        CompactionTriggerSource::AutoThreshold => CompactionInvocationMode::Threshold,
+                        CompactionTriggerSource::AutoThreshold => {
+                            CompactionInvocationMode::Threshold
+                        }
                     };
                     runtime.block_on(execute_compaction(
                         &mut session,
@@ -1073,10 +1190,22 @@ impl AgentConversationRuntime {
         macro_rules! with_cached_model {
             ($model_var:ident, $body:expr) => {
                 match self.cached_client.as_ref().unwrap() {
-                    CachedProviderClient::Copilot(c) => { let $model_var = c.completion_model(&self.config.model); $body }
-                    CachedProviderClient::OpenAi(c) => { let $model_var = c.completion_model(&self.config.model); $body }
-                    CachedProviderClient::Anthropic(c) => { let $model_var = c.completion_model(&self.config.model); $body }
-                    CachedProviderClient::Ollama(c) => { let $model_var = c.completion_model(&self.config.model); $body }
+                    CachedProviderClient::Copilot(c) => {
+                        let $model_var = c.completion_model(&self.config.model);
+                        $body
+                    }
+                    CachedProviderClient::OpenAi(c) => {
+                        let $model_var = c.completion_model(&self.config.model);
+                        $body
+                    }
+                    CachedProviderClient::Anthropic(c) => {
+                        let $model_var = c.completion_model(&self.config.model);
+                        $body
+                    }
+                    CachedProviderClient::Ollama(c) => {
+                        let $model_var = c.completion_model(&self.config.model);
+                        $body
+                    }
                 }
             };
         }

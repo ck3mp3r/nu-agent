@@ -60,6 +60,20 @@ pub(crate) fn run_tui_mode(
         active_model_identity.as_str(),
     );
     tui_ui.set_model_picker_options(model_picker_catalog);
+    let agent_picker_catalog = super::build_agent_picker_catalog(
+        &runtime_impl.available_agent_summaries,
+        runtime_impl.agent_identity.as_deref(),
+    );
+    tui_ui.set_agent_picker_options(agent_picker_catalog);
+    let cycle_names: Vec<String> = runtime_impl
+        .available_agent_summaries
+        .iter()
+        .map(|s| s.name.clone())
+        .collect();
+    tui_ui.set_agent_cycle_names(cycle_names);
+    if let Some(ref identity) = runtime_impl.agent_identity {
+        tui_ui.set_active_agent_identity(identity);
+    }
     let caller_cwd = runtime_impl.mcp_caller_cwd.clone();
     tui_ui.set_repo_branch_caller_cwd(caller_cwd.clone());
     match caller_cwd {
@@ -77,7 +91,13 @@ pub(crate) fn run_tui_mode(
         if input_is_nothing {
             let mailbox_rx = runtime_impl.mailbox_rx.take();
             if tui_should_hydrate_transcript {
-                run_hydrated_interactive_loop(runtime_impl, &mut tui_ui, tui_initial_messages, mailbox_rx, span)
+                run_hydrated_interactive_loop(
+                    runtime_impl,
+                    &mut tui_ui,
+                    tui_initial_messages,
+                    mailbox_rx,
+                    span,
+                )
             } else {
                 run_interactive_loop(runtime_impl, &mut tui_ui, mailbox_rx, span)
             }

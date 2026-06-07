@@ -45,7 +45,6 @@ pub(crate) fn extract_broker_flags(
     }
 }
 
-
 /// Extracts and validates session flags from the evaluated call.
 ///
 /// Returns the session_id as Option<String>.

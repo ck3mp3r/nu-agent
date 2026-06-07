@@ -144,13 +144,7 @@ fn adapter_stores_agent_name() {
     };
     let cwd = std::path::PathBuf::from("/tmp");
 
-    let adapter = BuiltinToolAdapter::new(
-        tool_def,
-        cwd,
-        None,
-        None,
-        Some("my-agent".to_string()),
-    );
+    let adapter = BuiltinToolAdapter::new(tool_def, cwd, None, None, Some("my-agent".to_string()));
 
     assert_eq!(adapter.agent_name.as_deref(), Some("my-agent"));
 }

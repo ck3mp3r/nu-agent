@@ -36,13 +36,11 @@ impl SimplePluginCommand for AgentSessionInspect {
     }
 
     fn examples(&self) -> Vec<Example<'_>> {
-        vec![
-            Example {
-                description: "Inspect a session by ID",
-                example: "agent session inspect my-project",
-                result: None,
-            },
-        ]
+        vec![Example {
+            description: "Inspect a session by ID",
+            example: "agent session inspect my-project",
+            result: None,
+        }]
     }
 
     fn signature(&self) -> Signature {
@@ -89,9 +87,7 @@ impl SimplePluginCommand for AgentSessionInspect {
                             UserContent::Image(_)
                             | UserContent::Audio(_)
                             | UserContent::Video(_)
-                            | UserContent::Document(_) => {
-                                "[Media content]".to_string()
-                            }
+                            | UserContent::Document(_) => "[Media content]".to_string(),
                         })
                         .collect::<Vec<_>>()
                         .join("\n");

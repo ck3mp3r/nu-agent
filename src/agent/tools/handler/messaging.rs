@@ -1,25 +1,29 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::agent::mailbox::{BrokerSender, AgentRegistry, ServerFrame};
+use crate::agent::mailbox::{AgentRegistry, BrokerSender, ServerFrame};
 
-use super::spawn_agent::ToolExecError;
 use super::ToolErrorKind;
+use super::spawn_agent::ToolExecError;
 
 /// Handle send_message tool invocation using BrokerSender (for children)
 pub(crate) async fn handle_send_message(
     args: &serde_json::Value,
     sender: &mut BrokerSender,
 ) -> Result<serde_json::Value, ToolExecError> {
-    let to = args["to"].as_str()
+    let to = args["to"]
+        .as_str()
         .ok_or_else(|| ToolExecError::new("Missing required field: to"))?;
-    let message = args["message"].as_str()
+    let message = args["message"]
+        .as_str()
         .ok_or_else(|| ToolExecError::new("Missing required field: message"))?;
     let kind = args["kind"].as_str().unwrap_or("message");
-    
-    sender.send(to, message, kind).await
+
+    sender
+        .send(to, message, kind)
+        .await
         .map_err(|e| ToolExecError::new(format!("Failed to send message: {e}")))?;
-    
+
     Ok(serde_json::json!({ "sent": true }))
 }
 
@@ -29,24 +33,26 @@ pub(crate) fn handle_send_message_via_registry(
     registry: &Arc<RwLock<AgentRegistry>>,
     from: &str,
 ) -> Result<serde_json::Value, ToolExecError> {
-    let to = args["to"].as_str()
+    let to = args["to"]
+        .as_str()
         .ok_or_else(|| ToolExecError::new("Missing required field: to"))?;
-    let message = args["message"].as_str()
+    let message = args["message"]
+        .as_str()
         .ok_or_else(|| ToolExecError::new("Missing required field: message"))?;
     let kind = args["kind"].as_str().unwrap_or("message");
-    
+
     let frame = ServerFrame::Message {
         from: from.to_string(),
         message: message.to_string(),
         kind: kind.to_string(),
     };
-    
+
     registry
         .try_read()
         .map_err(|_| ToolExecError::new("Failed to acquire registry lock"))?
         .route_message(to, frame)
         .map_err(|e| ToolExecError::new(format!("Failed to route message: {e}")))?;
-    
+
     Ok(serde_json::json!({ "sent": true }))
 }
 
@@ -76,7 +82,8 @@ pub(crate) fn handle_list_agents(
         .try_read()
         .map_err(|_| ToolExecError::new("Failed to acquire registry lock"))?
         .connected_names();
-    let agents: Vec<serde_json::Value> = names.iter()
+    let agents: Vec<serde_json::Value> = names
+        .iter()
         .map(|n| serde_json::json!({ "name": n }))
         .collect();
     Ok(serde_json::json!(agents))

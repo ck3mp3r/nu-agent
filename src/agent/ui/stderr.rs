@@ -326,9 +326,7 @@ impl<W: Write> UiRenderer for StderrUiRenderer<W> {
                 self.draw_spinner();
                 return;
             }
-            UiEvent::LlmEnd { .. } | UiEvent::ToolEnd { .. }
-                if self.spinner.is_active() =>
-            {
+            UiEvent::LlmEnd { .. } | UiEvent::ToolEnd { .. } if self.spinner.is_active() => {
                 self.clear_spinner_line();
                 self.spinner.stop();
                 self.active_tool_name = None;

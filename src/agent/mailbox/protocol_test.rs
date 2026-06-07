@@ -86,7 +86,11 @@ fn server_frame_message_with_kind_round_trips() {
     let json = serde_json::to_string(&frame).unwrap();
     let parsed: ServerFrame = serde_json::from_str(&json).unwrap();
     match parsed {
-        ServerFrame::Message { from, message, kind } => {
+        ServerFrame::Message {
+            from,
+            message,
+            kind,
+        } => {
             assert_eq!(from, "agent1");
             assert_eq!(message, "hello");
             assert_eq!(kind, "terminate");
@@ -100,7 +104,11 @@ fn incoming_message_defaults_kind() {
     let json = r#"{"type":"message","from":"agent1","message":"hello"}"#;
     let frame: ServerFrame = serde_json::from_str(json).unwrap();
     match frame {
-        ServerFrame::Message { from, message, kind } => {
+        ServerFrame::Message {
+            from,
+            message,
+            kind,
+        } => {
             assert_eq!(from, "agent1");
             assert_eq!(message, "hello");
             assert_eq!(kind, "message");

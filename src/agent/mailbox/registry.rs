@@ -30,8 +30,13 @@ impl AgentRegistry {
         self.pending.remove(token)
     }
 
-    pub(crate) fn add_connected(&mut self, name: String, sender: tokio::sync::mpsc::Sender<ServerFrame>) {
-        self.connected.insert(name, ConnectedAgent { writer: sender });
+    pub(crate) fn add_connected(
+        &mut self,
+        name: String,
+        sender: tokio::sync::mpsc::Sender<ServerFrame>,
+    ) {
+        self.connected
+            .insert(name, ConnectedAgent { writer: sender });
     }
 
     pub(crate) fn remove_connected(&mut self, name: &str) {

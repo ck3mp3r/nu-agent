@@ -3,11 +3,11 @@ use tokio::sync::RwLock;
 
 use crate::agent::mailbox::AgentRegistry;
 
-use super::spawn_agent::{
-    generate_hex_token, handle_spawn_agent, handle_terminate_agent, OrchestratorState, TmuxRunner,
-    ToolExecError,
-};
 use super::ToolErrorKind;
+use super::spawn_agent::{
+    OrchestratorState, TmuxRunner, ToolExecError, generate_hex_token, handle_spawn_agent,
+    handle_terminate_agent,
+};
 
 /// Mock TmuxRunner for testing - thread-safe version
 /// Returns `pane_response` for new-window/split-window and `shell_response` for display-message.
@@ -75,7 +75,10 @@ impl TmuxRunner for MockTmuxRunner {
             return Ok(self.display_responses[idx].clone());
         }
         if args_owned.contains(&"new-window".to_string()) {
-            return Ok(format!("{}\t{}\n", self.window_response, self.pane_response));
+            return Ok(format!(
+                "{}\t{}\n",
+                self.window_response, self.pane_response
+            ));
         }
         if args_owned.contains(&"split-window".to_string()) {
             return Ok(format!("{}\n", self.pane_response));
@@ -100,7 +103,10 @@ async fn generate_hex_token_correct_length() {
 
     // Verify it's valid hex
     for c in token.chars() {
-        assert!(c.is_ascii_hexdigit(), "Token should contain only hex digits");
+        assert!(
+            c.is_ascii_hexdigit(),
+            "Token should contain only hex digits"
+        );
     }
 }
 
@@ -328,10 +334,7 @@ async fn handle_spawn_agent_sends_command() {
     // Verify the command contains expected parts (accounting for shell escaping)
     let send_keys_call = &send_keys_calls[0];
     let command = send_keys_call.join(" ");
-    assert!(
-        command.contains("agent"),
-        "Command should contain 'agent'"
-    );
+    assert!(command.contains("agent"), "Command should contain 'agent'");
     assert!(
         command.contains("--agent") && command.contains("'researcher'"),
         "Command should contain '--agent' and 'researcher' (shell-escaped)"
@@ -369,7 +372,10 @@ async fn handle_spawn_agent_includes_parent_name_from_identity() {
         .filter(|call| call.contains(&"send-keys".to_string()))
         .collect();
 
-    assert!(!send_keys_calls.is_empty(), "Should send command to tmux pane");
+    assert!(
+        !send_keys_calls.is_empty(),
+        "Should send command to tmux pane"
+    );
     let command = send_keys_calls[0].join(" ");
     assert!(
         command.contains("--parent-name") && command.contains("'my-orchestrator'"),
@@ -452,14 +458,17 @@ async fn handle_spawn_agent_recovers_from_stale_tmux_window() {
     state.tmux_window = Some("@dead".to_string());
 
     // Pre-init broker so test focuses on tmux recovery
-    let broker = crate::agent::mailbox::Broker::start(Arc::clone(&registry))
-        .expect("broker should start");
+    let broker =
+        crate::agent::mailbox::Broker::start(Arc::clone(&registry)).expect("broker should start");
     state.socket_path = Some(broker.socket_path().to_path_buf());
     state.broker = Some(broker);
 
     let args = serde_json::json!({ "agent": "researcher" });
     let result = handle_spawn_agent(&args, &mut state, &tmux);
-    assert!(result.is_ok(), "Spawn should recover from stale window: {result:?}");
+    assert!(
+        result.is_ok(),
+        "Spawn should recover from stale window: {result:?}"
+    );
 
     // Window should be updated to new id
     assert_eq!(
@@ -474,7 +483,14 @@ async fn handle_spawn_agent_recovers_from_stale_tmux_window() {
     let cmd_sequence: Vec<&str> = calls.iter().map(|c| c[0].as_str()).collect();
     assert_eq!(
         cmd_sequence,
-        vec!["split-window", "list-windows", "new-window", "select-layout", "display-message", "send-keys"],
+        vec![
+            "split-window",
+            "list-windows",
+            "new-window",
+            "select-layout",
+            "display-message",
+            "send-keys"
+        ],
         "Should attempt split, discover via list-windows, fallback to new-window, select-layout, display-message, then send-keys"
     );
 }
@@ -487,7 +503,10 @@ async fn shell_ready_immediately() {
 
     let args = serde_json::json!({ "agent": "researcher" });
     let result = handle_spawn_agent(&args, &mut state, &tmux);
-    assert!(result.is_ok(), "Should succeed when shell ready immediately");
+    assert!(
+        result.is_ok(),
+        "Should succeed when shell ready immediately"
+    );
 
     let calls = tmux.get_calls();
     let send_keys: Vec<_> = calls.iter().filter(|c| c[0] == "send-keys").collect();
@@ -510,10 +529,17 @@ async fn shell_ready_after_delay() {
 
     let calls = tmux.get_calls();
     let display_calls: Vec<_> = calls.iter().filter(|c| c[0] == "display-message").collect();
-    assert_eq!(display_calls.len(), 3, "Should have polled 3 times before ready");
+    assert_eq!(
+        display_calls.len(),
+        3,
+        "Should have polled 3 times before ready"
+    );
 
     let send_keys: Vec<_> = calls.iter().filter(|c| c[0] == "send-keys").collect();
-    assert!(!send_keys.is_empty(), "send-keys should be called after ready");
+    assert!(
+        !send_keys.is_empty(),
+        "send-keys should be called after ready"
+    );
 }
 
 #[tokio::test]
@@ -536,7 +562,9 @@ async fn shell_never_ready_timeout() {
     }
 
     let registry = Arc::new(RwLock::new(AgentRegistry::new()));
-    let tmux = NeverReadyRunner { calls: Arc::new(std::sync::Mutex::new(Vec::new())) };
+    let tmux = NeverReadyRunner {
+        calls: Arc::new(std::sync::Mutex::new(Vec::new())),
+    };
     let mut state = OrchestratorState::new(Arc::clone(&registry), std::env::temp_dir());
 
     // Pre-init broker
@@ -546,15 +574,23 @@ async fn shell_never_ready_timeout() {
 
     // Call wait_for_shell_ready directly with a short timeout
     let result = super::spawn_agent::wait_for_shell_ready_pub(
-        &tmux, "%3", std::time::Duration::from_millis(100)
+        &tmux,
+        "%3",
+        std::time::Duration::from_millis(100),
     );
     assert!(result.is_err(), "Should timeout when shell never ready");
     let msg = result.unwrap_err().message;
-    assert!(msg.contains("Shell not ready"), "Error should mention timeout: {msg}");
+    assert!(
+        msg.contains("Shell not ready"),
+        "Error should mention timeout: {msg}"
+    );
 
     let calls = tmux.calls.lock().unwrap().clone();
     let send_keys: Vec<_> = calls.iter().filter(|c| c[0] == "send-keys").collect();
-    assert!(send_keys.is_empty(), "send-keys should not be called on timeout");
+    assert!(
+        send_keys.is_empty(),
+        "send-keys should not be called on timeout"
+    );
 }
 
 #[tokio::test]
@@ -570,17 +606,30 @@ async fn pane_id_captured_and_used() {
 
     let new_window: Vec<_> = calls.iter().filter(|c| c[0] == "new-window").collect();
     assert!(!new_window.is_empty());
-    assert!(new_window[0].contains(&"#{window_id}\t#{pane_id}".to_string()), "new-window should request both window_id and pane_id");
+    assert!(
+        new_window[0].contains(&"#{window_id}\t#{pane_id}".to_string()),
+        "new-window should request both window_id and pane_id"
+    );
 
     let display: Vec<_> = calls.iter().filter(|c| c[0] == "display-message").collect();
     assert!(!display.is_empty());
-    assert!(display[0].contains(&"%10".to_string()), "display-message should target captured pane_id");
+    assert!(
+        display[0].contains(&"%10".to_string()),
+        "display-message should target captured pane_id"
+    );
 
     let send_keys: Vec<_> = calls.iter().filter(|c| c[0] == "send-keys").collect();
     assert!(!send_keys.is_empty());
-    assert!(send_keys[0].contains(&"%10".to_string()), "send-keys should target captured pane_id");
+    assert!(
+        send_keys[0].contains(&"%10".to_string()),
+        "send-keys should target captured pane_id"
+    );
 
-    assert_eq!(state.tmux_window.as_deref(), Some("@10"), "tmux_window should hold the window ID");
+    assert_eq!(
+        state.tmux_window.as_deref(),
+        Some("@10"),
+        "tmux_window should hold the window ID"
+    );
 }
 
 #[tokio::test]
@@ -601,12 +650,18 @@ async fn split_window_captures_pane_id() {
 
     let splits: Vec<_> = calls.iter().filter(|c| c[0] == "split-window").collect();
     assert!(!splits.is_empty());
-    assert!(splits[0].contains(&"#{pane_id}".to_string()), "split-window should request pane_id format");
+    assert!(
+        splits[0].contains(&"#{pane_id}".to_string()),
+        "split-window should request pane_id format"
+    );
 
     // Find the second set of send-keys (after split)
     let send_keys: Vec<_> = calls.iter().filter(|c| c[0] == "send-keys").collect();
     assert_eq!(send_keys.len(), 2, "Two send-keys calls expected");
-    assert!(send_keys[1].contains(&"%20".to_string()), "Second send-keys should target split pane_id");
+    assert!(
+        send_keys[1].contains(&"%20".to_string()),
+        "Second send-keys should target split pane_id"
+    );
 }
 
 // ============================================================================
@@ -634,7 +689,10 @@ async fn terminate_agent_kills_pane() {
 
     // Verify kill-pane was called with the correct pane_id
     let calls = tmux.get_calls();
-    let kill_calls: Vec<_> = calls.iter().filter(|c| c.contains(&"kill-pane".to_string())).collect();
+    let kill_calls: Vec<_> = calls
+        .iter()
+        .filter(|c| c.contains(&"kill-pane".to_string()))
+        .collect();
     assert!(!kill_calls.is_empty(), "kill-pane should have been called");
     assert!(
         kill_calls[0].contains(&"%5".to_string()),
@@ -674,7 +732,10 @@ async fn terminate_agent_clears_window_when_empty() {
     // Spawn
     let spawn_args = serde_json::json!({ "agent": "coder", "name": "c1" });
     handle_spawn_agent(&spawn_args, &mut state, &tmux).expect("spawn failed");
-    assert!(state.tmux_window.is_some(), "Window should be set after spawn");
+    assert!(
+        state.tmux_window.is_some(),
+        "Window should be set after spawn"
+    );
 
     // Terminate — list-panes returns empty
     let term_args = serde_json::json!({ "name": "c1" });
@@ -724,13 +785,15 @@ async fn terminate_agent_removes_from_panes_map() {
 #[tokio::test]
 async fn handle_spawn_agent_discovers_existing_agents_window() {
     let registry = Arc::new(RwLock::new(AgentRegistry::new()));
-    let tmux = MockTmuxRunner::new("%50")
-        .with_list_windows_response("@99\tagents\n");
+    let tmux = MockTmuxRunner::new("%50").with_list_windows_response("@99\tagents\n");
     let mut state = OrchestratorState::new(Arc::clone(&registry), std::env::temp_dir());
 
     let args = serde_json::json!({ "agent": "researcher" });
     let result = handle_spawn_agent(&args, &mut state, &tmux);
-    assert!(result.is_ok(), "Should succeed by discovering existing agents window");
+    assert!(
+        result.is_ok(),
+        "Should succeed by discovering existing agents window"
+    );
 
     let calls = tmux.get_calls();
     let cmd_names: Vec<&str> = calls.iter().map(|c| c[0].as_str()).collect();
@@ -766,8 +829,7 @@ async fn handle_spawn_agent_discovers_existing_agents_window() {
 #[tokio::test]
 async fn handle_spawn_agent_ignores_non_agents_windows() {
     let registry = Arc::new(RwLock::new(AgentRegistry::new()));
-    let tmux = MockTmuxRunner::new("%51")
-        .with_list_windows_response("@1\tshell\n@2\tcode\n");
+    let tmux = MockTmuxRunner::new("%51").with_list_windows_response("@1\tshell\n@2\tcode\n");
     let mut state = OrchestratorState::new(Arc::clone(&registry), std::env::temp_dir());
 
     let args = serde_json::json!({ "agent": "researcher" });
@@ -833,8 +895,8 @@ async fn handle_spawn_agent_fallsthrough_when_discovered_split_fails() {
     let mut state = OrchestratorState::new(Arc::clone(&registry), std::env::temp_dir());
 
     // Pre-init broker to focus on tmux logic
-    let broker = crate::agent::mailbox::Broker::start(Arc::clone(&registry))
-        .expect("broker should start");
+    let broker =
+        crate::agent::mailbox::Broker::start(Arc::clone(&registry)).expect("broker should start");
     state.socket_path = Some(broker.socket_path().to_path_buf());
     state.broker = Some(broker);
 
@@ -868,13 +930,12 @@ async fn handle_spawn_agent_fallsthrough_when_discovered_split_fails() {
 #[tokio::test]
 async fn handle_spawn_agent_skips_discovery_when_tmux_window_set() {
     let registry = Arc::new(RwLock::new(AgentRegistry::new()));
-    let tmux = MockTmuxRunner::new("%70")
-        .with_list_windows_response("@99\tagents\n");
+    let tmux = MockTmuxRunner::new("%70").with_list_windows_response("@99\tagents\n");
     let mut state = OrchestratorState::new(Arc::clone(&registry), std::env::temp_dir());
 
     // Pre-init broker
-    let broker = crate::agent::mailbox::Broker::start(Arc::clone(&registry))
-        .expect("broker should start");
+    let broker =
+        crate::agent::mailbox::Broker::start(Arc::clone(&registry)).expect("broker should start");
     state.socket_path = Some(broker.socket_path().to_path_buf());
     state.broker = Some(broker);
 

@@ -552,9 +552,18 @@ fn cli_does_not_expose_unsupported_compaction_modes() {
         .replace("sliding_summary", "")
         .replace("sliding_window", "")
         .replace("token_truncate", "");
-    assert!(!stripped.contains("truncate"), "standalone alias 'truncate' should not appear in CLI");
-    assert!(!stripped.contains("\"sliding\""), "standalone alias 'sliding' should not appear in CLI");
-    assert!(!stripped.contains("summarize"), "standalone alias 'summarize' should not appear in CLI");
+    assert!(
+        !stripped.contains("truncate"),
+        "standalone alias 'truncate' should not appear in CLI"
+    );
+    assert!(
+        !stripped.contains("\"sliding\""),
+        "standalone alias 'sliding' should not appear in CLI"
+    );
+    assert!(
+        !stripped.contains("summarize"),
+        "standalone alias 'summarize' should not appear in CLI"
+    );
 }
 
 #[test]
@@ -665,10 +674,7 @@ fn builtin_tool_registration_contains_exact_unprefixed_names() {
         .map(|tool| tool.name)
         .collect::<Vec<_>>();
 
-    assert_eq!(
-        names,
-        vec!["read", "edit", "patch", "skill"]
-    );
+    assert_eq!(names, vec!["read", "edit", "patch", "skill"]);
 }
 
 #[test]
@@ -685,21 +691,41 @@ fn orchestrator_tool_registration_contains_exact_names() {
 fn orchestrator_tool_description_shows_no_agents_message_when_empty() {
     let defs = super::orchestrator_tool_definitions(&[]);
     let desc = &defs[0].description;
-    assert!(desc.contains("No agent personas found"), "Expected no-agents message, got: {desc}");
+    assert!(
+        desc.contains("No agent personas found"),
+        "Expected no-agents message, got: {desc}"
+    );
 }
 
 #[test]
 fn orchestrator_tool_description_lists_available_agents() {
     use crate::agent::protocol::persona::PersonaSummary;
     let agents = vec![
-        PersonaSummary { name: "coder".to_string(), description: Some("Writes code".to_string()) },
-        PersonaSummary { name: "reviewer".to_string(), description: None },
+        PersonaSummary {
+            name: "coder".to_string(),
+            description: Some("Writes code".to_string()),
+            builtin: false,
+        },
+        PersonaSummary {
+            name: "reviewer".to_string(),
+            description: None,
+            builtin: false,
+        },
     ];
     let defs = super::orchestrator_tool_definitions(&agents);
     let desc = &defs[0].description;
-    assert!(desc.contains("coder: Writes code"), "Expected coder entry, got: {desc}");
-    assert!(desc.contains("- reviewer"), "Expected reviewer entry, got: {desc}");
-    assert!(desc.contains("send_message"), "Expected send_message mention, got: {desc}");
+    assert!(
+        desc.contains("coder: Writes code"),
+        "Expected coder entry, got: {desc}"
+    );
+    assert!(
+        desc.contains("- reviewer"),
+        "Expected reviewer entry, got: {desc}"
+    );
+    assert!(
+        desc.contains("send_message"),
+        "Expected send_message mention, got: {desc}"
+    );
     assert!(desc.contains("tmux"), "Expected tmux mention, got: {desc}");
 }
 
@@ -716,10 +742,25 @@ fn messaging_tool_registration_contains_exact_names() {
 #[test]
 fn send_message_description_explains_delivery_semantics() {
     let defs = super::messaging_tool_definitions();
-    let send = defs.iter().find(|d| d.name == "send_message").expect("send_message tool");
-    assert!(send.description.contains("conversation turns"), "Expected delivery semantics, got: {}", send.description);
-    assert!(send.description.contains("list_agents"), "Expected list_agents mention, got: {}", send.description);
-    assert!(send.description.contains("asynchronously"), "Expected async mention, got: {}", send.description);
+    let send = defs
+        .iter()
+        .find(|d| d.name == "send_message")
+        .expect("send_message tool");
+    assert!(
+        send.description.contains("conversation turns"),
+        "Expected delivery semantics, got: {}",
+        send.description
+    );
+    assert!(
+        send.description.contains("list_agents"),
+        "Expected list_agents mention, got: {}",
+        send.description
+    );
+    assert!(
+        send.description.contains("asynchronously"),
+        "Expected async mention, got: {}",
+        send.description
+    );
 }
 
 #[test]
@@ -850,27 +891,36 @@ fn extract_tool_filter_rejects_non_string_entries() {
 fn tool_filter_applies_to_all_tool_types() {
     // Test that the filter function works with builtin tool names
     use crate::tools::mcp::filter::matches_patterns;
-    
+
     // Builtin tools
     assert!(matches_patterns("read", &["read".to_string()]));
     assert!(matches_patterns("edit", &["edit".to_string()]));
     assert!(!matches_patterns("read", &["write".to_string()]));
-    
+
     // Glob patterns
     assert!(matches_patterns("read", &["re*".to_string()]));
     assert!(matches_patterns("edit", &["ed*".to_string()]));
     assert!(!matches_patterns("patch", &["re*".to_string()]));
-    
+
     // Multiple patterns (OR semantics)
-    assert!(matches_patterns("read", &["read".to_string(), "write".to_string()]));
-    assert!(matches_patterns("write", &["read".to_string(), "write".to_string()]));
-    assert!(!matches_patterns("edit", &["read".to_string(), "write".to_string()]));
+    assert!(matches_patterns(
+        "read",
+        &["read".to_string(), "write".to_string()]
+    ));
+    assert!(matches_patterns(
+        "write",
+        &["read".to_string(), "write".to_string()]
+    ));
+    assert!(!matches_patterns(
+        "edit",
+        &["read".to_string(), "write".to_string()]
+    ));
 }
 
 #[test]
 fn tool_filter_empty_patterns_matches_all_tools() {
     use crate::tools::mcp::filter::matches_patterns;
-    
+
     // Empty patterns should match everything
     assert!(matches_patterns("read", &[]));
     assert!(matches_patterns("edit", &[]));
@@ -1921,6 +1971,7 @@ fn model_picker_catalog_projection_from_plugin_config_is_sorted_and_marks_active
         small_model: None,
         providers,
         compaction: None,
+        agents: crate::config::AgentsConfig::default(),
     };
     let projected =
         crate::agent::application::command::build_model_picker_catalog_from_plugin_config(
@@ -1969,6 +2020,7 @@ fn tui_startup_hydrates_model_picker_catalog_from_cached_plugin_config() {
         small_model: None,
         providers,
         compaction: None,
+        agents: crate::config::AgentsConfig::default(),
     };
 
     let catalog =
@@ -2161,11 +2213,7 @@ mod session_flags_tests {
         assert!(name_flag.is_some(), "Missing --name flag");
 
         let flag = name_flag.unwrap();
-        assert_eq!(
-            flag.arg,
-            Some(SyntaxShape::String),
-            "Wrong type for --name"
-        );
+        assert_eq!(flag.arg, Some(SyntaxShape::String), "Wrong type for --name");
         assert!(!flag.desc.is_empty(), "Missing description for --name");
     }
 }
@@ -2566,11 +2614,7 @@ fn apply_persona_model_no_slash_ignored() {
         ..Config::default()
     };
 
-    let applied = runtime_build::apply_persona_model(
-        &mut config,
-        Some("just-a-model"),
-        false,
-    );
+    let applied = runtime_build::apply_persona_model(&mut config, Some("just-a-model"), false);
 
     assert!(!applied, "Should NOT apply invalid persona model");
     assert_eq!(config.provider, "openai", "Config should be unchanged");

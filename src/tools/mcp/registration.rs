@@ -4,7 +4,10 @@ pub fn registerable_tools(
     runtime_discovered: &[McpToolDefinition],
     cli_patterns: &[String],
 ) -> Vec<McpToolDefinition> {
-    log::trace!("registerable_tools: discovered={}, patterns={cli_patterns:?}", runtime_discovered.len());
+    log::trace!(
+        "registerable_tools: discovered={}, patterns={cli_patterns:?}",
+        runtime_discovered.len()
+    );
     filter_tools(runtime_discovered, cli_patterns)
 }
 

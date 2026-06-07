@@ -35,13 +35,11 @@ impl SimplePluginCommand for AgentSessionClear {
     }
 
     fn examples(&self) -> Vec<Example<'_>> {
-        vec![
-            Example {
-                description: "Delete a session",
-                example: "agent session clear my-project",
-                result: None,
-            },
-        ]
+        vec![Example {
+            description: "Delete a session",
+            example: "agent session clear my-project",
+            result: None,
+        }]
     }
 
     fn signature(&self) -> Signature {

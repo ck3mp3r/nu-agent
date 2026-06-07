@@ -5,6 +5,7 @@ pub(crate) enum SlashCommand {
     Help,
     Status,
     Models,
+    Agent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,12 +15,13 @@ pub(crate) enum SlashParseResult {
     Unknown(String),
 }
 
-pub(crate) const SLASH_COMMAND_ORDER: [SlashCommand; 5] = [
+pub(crate) const SLASH_COMMAND_ORDER: [SlashCommand; 6] = [
     SlashCommand::Compact,
     SlashCommand::Mcp,
     SlashCommand::Help,
     SlashCommand::Status,
     SlashCommand::Models,
+    SlashCommand::Agent,
 ];
 
 pub(crate) fn slash_command_label(command: SlashCommand) -> &'static str {
@@ -29,6 +31,7 @@ pub(crate) fn slash_command_label(command: SlashCommand) -> &'static str {
         SlashCommand::Help => "/help",
         SlashCommand::Status => "/status",
         SlashCommand::Models => "/models",
+        SlashCommand::Agent => "/agent",
     }
 }
 
@@ -39,6 +42,7 @@ pub(crate) fn slash_command_summary(command: SlashCommand) -> &'static str {
         SlashCommand::Help => "Open help panel",
         SlashCommand::Status => "Open status panel",
         SlashCommand::Models => "Open model picker",
+        SlashCommand::Agent => "Switch agent persona",
     }
 }
 
@@ -73,6 +77,7 @@ pub(crate) fn parse_slash_command(input: &str) -> SlashParseResult {
         "/help" => Some(SlashCommand::Help),
         "/status" => Some(SlashCommand::Status),
         "/models" => Some(SlashCommand::Models),
+        "/agent" => Some(SlashCommand::Agent),
         _ => None,
     };
 

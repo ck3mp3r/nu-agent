@@ -2182,11 +2182,7 @@ fn streaming_message_start_reset_on_llm_start() {
     assert!(state.streaming_message_start.is_some());
 
     // Emit LlmStart (new LLM response begins)
-    reduce_with_cancel_controller(
-        &mut state,
-        ReducerInput::Event(UiEvent::LlmStart),
-        None,
-    );
+    reduce_with_cancel_controller(&mut state, ReducerInput::Event(UiEvent::LlmStart), None);
 
     // Verify streaming_message_start is reset to None
     assert!(
@@ -2450,10 +2446,7 @@ fn compaction_streaming_truncates_and_reprojects() {
         .iter()
         .filter(|l| l.contains("First") && !l.contains("Second"))
         .count();
-    assert_eq!(
-        first_only_count, 0,
-        "old partial render should be replaced"
-    );
+    assert_eq!(first_only_count, 0, "old partial render should be replaced");
 }
 
 #[test]
@@ -2524,4 +2517,3 @@ fn compaction_triggered_clears_streaming_state() {
         "streaming state must be cleared after CompactionTriggered"
     );
 }
-

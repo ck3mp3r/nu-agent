@@ -31,7 +31,9 @@ type McpToggleResult = (
 );
 type PendingMcpToggle = (String, mpsc::Receiver<McpToggleResult>);
 type ModelSwitchResult = Result<String, String>;
+type AgentSwitchResult = Result<(String, String), String>;
 type PendingModelSwitch = mpsc::Receiver<ModelSwitchResult>;
+type PendingAgentSwitch = mpsc::Receiver<AgentSwitchResult>;
 type PendingAutoCompaction = mpsc::Receiver<Option<String>>;
 type PendingCompactionTrigger = mpsc::Receiver<Option<String>>;
 
@@ -55,6 +57,10 @@ enum WorkerCommand {
     SwitchModel {
         model_spec: String,
         response_tx: mpsc::Sender<ModelSwitchResult>,
+    },
+    SwitchAgent {
+        agent_name: String,
+        response_tx: mpsc::Sender<AgentSwitchResult>,
     },
     ClearSession,
     Shutdown,
@@ -176,6 +182,17 @@ where
                     } => {
                         let _ = response_tx.send(runtime.switch_model(&model_spec));
                     }
+                    WorkerCommand::SwitchAgent {
+                        agent_name,
+                        response_tx,
+                    } => {
+                        let result = runtime.switch_agent(&agent_name);
+                        let response = result.map(|agent_identity| {
+                            let model_identity = runtime.active_model_identity();
+                            (agent_identity, model_identity)
+                        });
+                        let _ = response_tx.send(response);
+                    }
                     WorkerCommand::ClearSession => {
                         runtime.clear_session();
                     }
@@ -190,6 +207,8 @@ where
         let mut pending_compaction_trigger: Option<PendingCompactionTrigger> = None;
         let mut pending_model_switch: Option<PendingModelSwitch> = None;
         let mut queued_model_switch: Option<String> = None;
+        let mut pending_agent_switch: Option<PendingAgentSwitch> = None;
+        let mut queued_agent_switch: Option<String> = None;
         let mut pending_mailbox_prompts: Vec<String> = Vec::new();
 
         loop {
@@ -237,6 +256,29 @@ where
                     Err(mpsc::TryRecvError::Disconnected) => {
                         ui.emit(&UiEvent::Warning {
                             message: "Model switch worker disconnected".to_string(),
+                        });
+                    }
+                }
+            }
+
+            if let Some(response_rx) = pending_agent_switch.take() {
+                match response_rx.try_recv() {
+                    Ok(Ok((agent_identity, model_identity))) => {
+                        ui.set_active_agent_identity(&agent_identity);
+                        ui.set_active_model_identity(&model_identity);
+                        ui.emit(&UiEvent::Warning {
+                            message: format!("Agent switched to: {agent_identity}"),
+                        });
+                    }
+                    Ok(Err(message)) => {
+                        ui.emit(&UiEvent::Warning { message });
+                    }
+                    Err(mpsc::TryRecvError::Empty) => {
+                        pending_agent_switch = Some(response_rx);
+                    }
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        ui.emit(&UiEvent::Warning {
+                            message: "Agent switch worker channel closed".to_string(),
                         });
                     }
                 }
@@ -382,6 +424,10 @@ where
                 let _ = ui.execute_shared_ui_action(SharedUiAction::Models);
             }
 
+            while ui.take_next_agent_picker_launch_request() {
+                let _ = ui.execute_shared_ui_action(SharedUiAction::Agents);
+            }
+
             while let Some(model_spec) = ui.take_next_model_switch_request() {
                 if worker_active {
                     queued_model_switch = Some(model_spec.clone());
@@ -405,6 +451,32 @@ where
                     }
                 } else {
                     queued_model_switch = Some(model_spec);
+                }
+            }
+
+            while let Some(agent_name) = ui.take_next_agent_switch_request() {
+                if worker_active {
+                    queued_agent_switch = Some(agent_name.clone());
+                    ui.emit(&UiEvent::Warning {
+                        message: format!("Agent switch queued for next turn: {agent_name}"),
+                    });
+                } else if pending_agent_switch.is_none() {
+                    let (response_tx, response_rx) = mpsc::channel();
+                    if worker_cmd_tx
+                        .send(WorkerCommand::SwitchAgent {
+                            agent_name,
+                            response_tx,
+                        })
+                        .is_ok()
+                    {
+                        pending_agent_switch = Some(response_rx);
+                    } else {
+                        ui.emit(&UiEvent::Warning {
+                            message: "Agent switch worker channel closed".to_string(),
+                        });
+                    }
+                } else {
+                    queued_agent_switch = Some(agent_name);
                 }
             }
 
@@ -440,6 +512,26 @@ where
                 } else {
                     ui.emit(&UiEvent::Warning {
                         message: "Model switch worker channel closed".to_string(),
+                    });
+                }
+            }
+
+            if !worker_active
+                && pending_agent_switch.is_none()
+                && let Some(agent_name) = queued_agent_switch.take()
+            {
+                let (response_tx, response_rx) = mpsc::channel();
+                if worker_cmd_tx
+                    .send(WorkerCommand::SwitchAgent {
+                        agent_name,
+                        response_tx,
+                    })
+                    .is_ok()
+                {
+                    pending_agent_switch = Some(response_rx);
+                } else {
+                    ui.emit(&UiEvent::Warning {
+                        message: "Agent switch worker channel closed".to_string(),
                     });
                 }
             }
@@ -482,6 +574,10 @@ where
                         }
                         SlashParseResult::Command(SlashCommand::Models) => {
                             let _ = ui.execute_shared_ui_action(SharedUiAction::Models);
+                            continue;
+                        }
+                        SlashParseResult::Command(SlashCommand::Agent) => {
+                            let _ = ui.execute_shared_ui_action(SharedUiAction::Agents);
                             continue;
                         }
                         SlashParseResult::Unknown(command) => {
@@ -536,7 +632,8 @@ where
             }
 
             // Drain pending mailbox prompts when worker becomes idle
-            if !worker_active && !pending_mailbox_prompts.is_empty()
+            if !worker_active
+                && !pending_mailbox_prompts.is_empty()
                 && let Some(prompt) = pending_mailbox_prompts.drain(0..1).next()
             {
                 ui.display_incoming_message(&prompt);
@@ -552,6 +649,7 @@ where
                     continue;
                 }
                 if pending_model_switch.is_some()
+                    || pending_agent_switch.is_some()
                     || !pending_mcp_toggles.is_empty()
                     || pending_auto_compaction.is_some()
                     || pending_compaction_trigger.is_some()

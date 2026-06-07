@@ -1,6 +1,20 @@
-use super::persona::{FsPersonaResolver, PersonaError, PersonaFileResolver, FrontMatterParser, PulldownCmarkFrontMatterParser, interpret_front_matter, FrontMatterError, PersonaLister};
+use super::{
+    FrontMatterError, FrontMatterParser, FsPersonaResolver, PersonaError, PersonaFileResolver,
+    PersonaLister, PulldownCmarkFrontMatterParser, interpret_front_matter,
+};
+use crate::agent::protocol::persona::builtins::BUILTIN_PLANNER_CONTENT;
+use crate::config::AgentsConfig;
 use std::fs;
 use tempfile::TempDir;
+
+/// AgentsConfig with all builtins disabled (for filesystem-only tests)
+fn no_builtins() -> AgentsConfig {
+    AgentsConfig {
+        planner_enabled: false,
+        maker_enabled: false,
+        ..AgentsConfig::default()
+    }
+}
 
 #[test]
 fn resolve_finds_cwd_file() {
@@ -12,7 +26,11 @@ fn resolve_finds_cwd_file() {
     let persona_file = agents_dir.join("test-agent.md");
     fs::write(&persona_file, "# Test Agent\nContent here").unwrap();
 
-    let resolver = FsPersonaResolver::new(temp_cwd.path().to_path_buf(), temp_config.path().to_path_buf());
+    let resolver = FsPersonaResolver::new(
+        temp_cwd.path().to_path_buf(),
+        temp_config.path().to_path_buf(),
+        AgentsConfig::default(),
+    );
     let result = resolver.resolve("test-agent");
 
     assert!(result.is_ok());
@@ -31,7 +49,11 @@ fn resolve_finds_home_file() {
     let persona_file = agents_dir.join("test-agent.md");
     fs::write(&persona_file, "# Home Agent\nHome content").unwrap();
 
-    let resolver = FsPersonaResolver::new(temp_cwd.path().to_path_buf(), temp_config.path().to_path_buf());
+    let resolver = FsPersonaResolver::new(
+        temp_cwd.path().to_path_buf(),
+        temp_config.path().to_path_buf(),
+        AgentsConfig::default(),
+    );
     let result = resolver.resolve("test-agent");
 
     assert!(result.is_ok());
@@ -57,7 +79,11 @@ fn resolve_cwd_takes_precedence() {
     let config_persona = config_agents_dir.join("test-agent.md");
     fs::write(&config_persona, "# Config Agent").unwrap();
 
-    let resolver = FsPersonaResolver::new(temp_cwd.path().to_path_buf(), temp_config.path().to_path_buf());
+    let resolver = FsPersonaResolver::new(
+        temp_cwd.path().to_path_buf(),
+        temp_config.path().to_path_buf(),
+        AgentsConfig::default(),
+    );
     let result = resolver.resolve("test-agent");
 
     assert!(result.is_ok());
@@ -71,13 +97,27 @@ fn resolve_not_found_lists_both_paths() {
     let temp_cwd = TempDir::new().unwrap();
     let temp_config = TempDir::new().unwrap();
 
-    let resolver = FsPersonaResolver::new(temp_cwd.path().to_path_buf(), temp_config.path().to_path_buf());
+    let resolver = FsPersonaResolver::new(
+        temp_cwd.path().to_path_buf(),
+        temp_config.path().to_path_buf(),
+        AgentsConfig::default(),
+    );
     let result = resolver.resolve("nonexistent");
 
     assert!(result.is_err());
-    if let Err(PersonaError::NotFound { cwd_path, config_path }) = result {
-        assert_eq!(cwd_path, temp_cwd.path().join(".agents").join("nonexistent.md"));
-        assert_eq!(config_path, temp_config.path().join("agents").join("nonexistent.md"));
+    if let Err(PersonaError::NotFound {
+        cwd_path,
+        config_path,
+    }) = result
+    {
+        assert_eq!(
+            cwd_path,
+            temp_cwd.path().join(".agents").join("nonexistent.md")
+        );
+        assert_eq!(
+            config_path,
+            temp_config.path().join("agents").join("nonexistent.md")
+        );
     } else {
         panic!("Expected NotFound error");
     }
@@ -102,7 +142,11 @@ fn resolve_read_error() {
         fs::set_permissions(&persona_file, perms).unwrap();
     }
 
-    let resolver = FsPersonaResolver::new(temp_cwd.path().to_path_buf(), temp_config.path().to_path_buf());
+    let resolver = FsPersonaResolver::new(
+        temp_cwd.path().to_path_buf(),
+        temp_config.path().to_path_buf(),
+        AgentsConfig::default(),
+    );
     let result = resolver.resolve("test-agent");
 
     #[cfg(unix)]
@@ -143,7 +187,7 @@ Content here"#;
     assert!(result.is_ok());
     let parsed = result.unwrap();
     assert!(parsed.front_matter.is_some());
-    
+
     let front_matter = parsed.front_matter.unwrap();
     assert!(front_matter.contains_key("permissions"));
     assert_eq!(parsed.body, "# Body\n\nContent here");
@@ -181,7 +225,7 @@ Content here"#;
     assert!(result.is_ok());
     let parsed = result.unwrap();
     assert!(parsed.front_matter.is_some());
-    
+
     let front_matter = parsed.front_matter.unwrap();
     assert_eq!(front_matter.len(), 0);
     assert_eq!(parsed.body, "# Body\n\nContent here");
@@ -220,7 +264,7 @@ fn main() {}
 
     assert!(result.is_ok());
     let parsed = result.unwrap();
-    
+
     // Body should not have leading/trailing whitespace artifacts
     assert!(parsed.body.starts_with("# Heading"));
     assert!(parsed.body.contains("- List item 1"));
@@ -250,7 +294,7 @@ Body content"#;
     assert!(result.is_ok());
     let parsed = result.unwrap();
     assert!(parsed.front_matter.is_some());
-    
+
     let front_matter = parsed.front_matter.unwrap();
     assert!(front_matter.contains_key("permissions"));
     assert!(front_matter.contains_key("author"));
@@ -263,10 +307,7 @@ Body content"#;
 #[test]
 fn interpret_name_extracts_string() {
     let mut mapping = noyalib::Mapping::new();
-    mapping.insert(
-        "name",
-        noyalib::Value::String("test-agent".to_string()),
-    );
+    mapping.insert("name", noyalib::Value::String("test-agent".to_string()));
 
     let result = interpret_front_matter(Some(&mapping), "body content".to_string());
     assert!(result.is_ok());
@@ -278,10 +319,7 @@ fn interpret_name_extracts_string() {
 #[test]
 fn interpret_name_rejects_non_string() {
     let mut mapping = noyalib::Mapping::new();
-    mapping.insert(
-        "name",
-        noyalib::Value::Number(42.into()),
-    );
+    mapping.insert("name", noyalib::Value::Number(42.into()));
 
     let result = interpret_front_matter(Some(&mapping), "body".to_string());
     assert!(result.is_err());
@@ -311,10 +349,7 @@ fn interpret_description_extracts_string() {
 #[test]
 fn interpret_model_extracts_string() {
     let mut mapping = noyalib::Mapping::new();
-    mapping.insert(
-        "model",
-        noyalib::Value::String("gpt-4".to_string()),
-    );
+    mapping.insert("model", noyalib::Value::String("gpt-4".to_string()));
 
     let result = interpret_front_matter(Some(&mapping), "body".to_string());
     assert!(result.is_ok());
@@ -329,15 +364,15 @@ fn interpret_tool_filter_extracts_list() {
         noyalib::Value::String("read".to_string()),
         noyalib::Value::String("write".to_string()),
     ];
-    mapping.insert(
-        "tool_filter",
-        noyalib::Value::Sequence(tools),
-    );
+    mapping.insert("tool_filter", noyalib::Value::Sequence(tools));
 
     let result = interpret_front_matter(Some(&mapping), "body".to_string());
     assert!(result.is_ok());
     let persona = result.unwrap();
-    assert_eq!(persona.tool_filter, Some(vec!["read".to_string(), "write".to_string()]));
+    assert_eq!(
+        persona.tool_filter,
+        Some(vec!["read".to_string(), "write".to_string()])
+    );
 }
 
 #[test]
@@ -366,10 +401,7 @@ fn interpret_tool_filter_rejects_non_string_elements() {
         noyalib::Value::String("read".to_string()),
         noyalib::Value::Number(42.into()),
     ];
-    mapping.insert(
-        "tool_filter",
-        noyalib::Value::Sequence(tools),
-    );
+    mapping.insert("tool_filter", noyalib::Value::Sequence(tools));
 
     let result = interpret_front_matter(Some(&mapping), "body".to_string());
     assert!(result.is_err());
@@ -386,14 +418,8 @@ fn interpret_tool_filter_rejects_non_string_elements() {
 fn interpret_permissions_extracts_mapping() {
     let mut mapping = noyalib::Mapping::new();
     let mut perms = noyalib::Mapping::new();
-    perms.insert(
-        "read",
-        noyalib::Value::String("allow".to_string()),
-    );
-    mapping.insert(
-        "permissions",
-        noyalib::Value::Mapping(perms.clone()),
-    );
+    perms.insert("read", noyalib::Value::String("allow".to_string()));
+    mapping.insert("permissions", noyalib::Value::Mapping(perms.clone()));
 
     let result = interpret_front_matter(Some(&mapping), "body".to_string());
     assert!(result.is_ok());
@@ -419,18 +445,9 @@ fn interpret_no_front_matter() {
 #[test]
 fn interpret_unknown_keys_ignored() {
     let mut mapping = noyalib::Mapping::new();
-    mapping.insert(
-        "name",
-        noyalib::Value::String("test".to_string()),
-    );
-    mapping.insert(
-        "unknown_key",
-        noyalib::Value::String("ignored".to_string()),
-    );
-    mapping.insert(
-        "another_unknown",
-        noyalib::Value::Number(42.into()),
-    );
+    mapping.insert("name", noyalib::Value::String("test".to_string()));
+    mapping.insert("unknown_key", noyalib::Value::String("ignored".to_string()));
+    mapping.insert("another_unknown", noyalib::Value::Number(42.into()));
 
     let result = interpret_front_matter(Some(&mapping), "body".to_string());
     assert!(result.is_ok());
@@ -442,35 +459,20 @@ fn interpret_unknown_keys_ignored() {
 #[test]
 fn interpret_all_fields_together() {
     let mut mapping = noyalib::Mapping::new();
-    mapping.insert(
-        "name",
-        noyalib::Value::String("full-agent".to_string()),
-    );
+    mapping.insert("name", noyalib::Value::String("full-agent".to_string()));
     mapping.insert(
         "description",
         noyalib::Value::String("A complete agent".to_string()),
     );
-    mapping.insert(
-        "model",
-        noyalib::Value::String("claude-3".to_string()),
-    );
+    mapping.insert("model", noyalib::Value::String("claude-3".to_string()));
     let tools = vec![
         noyalib::Value::String("read".to_string()),
         noyalib::Value::String("write".to_string()),
     ];
-    mapping.insert(
-        "tool_filter",
-        noyalib::Value::Sequence(tools),
-    );
+    mapping.insert("tool_filter", noyalib::Value::Sequence(tools));
     let mut perms = noyalib::Mapping::new();
-    perms.insert(
-        "*",
-        noyalib::Value::String("allow".to_string()),
-    );
-    mapping.insert(
-        "permissions",
-        noyalib::Value::Mapping(perms.clone()),
-    );
+    perms.insert("*", noyalib::Value::String("allow".to_string()));
+    mapping.insert("permissions", noyalib::Value::Mapping(perms.clone()));
 
     let result = interpret_front_matter(Some(&mapping), "body content".to_string());
     assert!(result.is_ok());
@@ -478,7 +480,10 @@ fn interpret_all_fields_together() {
     assert_eq!(persona.name, Some("full-agent".to_string()));
     assert_eq!(persona.description, Some("A complete agent".to_string()));
     assert_eq!(persona.model, Some("claude-3".to_string()));
-    assert_eq!(persona.tool_filter, Some(vec!["read".to_string(), "write".to_string()]));
+    assert_eq!(
+        persona.tool_filter,
+        Some(vec!["read".to_string(), "write".to_string()])
+    );
     assert!(persona.permissions.is_some());
     assert_eq!(persona.body, "body content");
 }
@@ -502,7 +507,11 @@ fn interpret_empty_mapping() {
 fn list_available_returns_empty_when_no_dirs() {
     let temp_cwd = TempDir::new().unwrap();
     let temp_config = TempDir::new().unwrap();
-    let resolver = FsPersonaResolver::new(temp_cwd.path().to_path_buf(), temp_config.path().to_path_buf());
+    let resolver = FsPersonaResolver::new(
+        temp_cwd.path().to_path_buf(),
+        temp_config.path().to_path_buf(),
+        no_builtins(),
+    );
     let result = resolver.list_available();
     assert!(result.is_empty());
 }
@@ -517,13 +526,19 @@ fn list_available_finds_cwd_agents() {
     fs::write(
         agents_dir.join("coder.md"),
         "---\nname: coder\ndescription: Writes code\n---\n# Coder",
-    ).unwrap();
+    )
+    .unwrap();
 
-    let resolver = FsPersonaResolver::new(temp_cwd.path().to_path_buf(), temp_config.path().to_path_buf());
+    let resolver = FsPersonaResolver::new(
+        temp_cwd.path().to_path_buf(),
+        temp_config.path().to_path_buf(),
+        no_builtins(),
+    );
     let result = resolver.list_available();
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].name, "coder");
     assert_eq!(result[0].description.as_deref(), Some("Writes code"));
+    assert!(!result[0].builtin);
 }
 
 #[test]
@@ -533,13 +548,25 @@ fn list_available_deduplicates_cwd_over_xdg() {
 
     let cwd_agents = temp_cwd.path().join(".agents");
     fs::create_dir_all(&cwd_agents).unwrap();
-    fs::write(cwd_agents.join("coder.md"), "---\nname: local-coder\ndescription: Local\n---\n").unwrap();
+    fs::write(
+        cwd_agents.join("coder.md"),
+        "---\nname: local-coder\ndescription: Local\n---\n",
+    )
+    .unwrap();
 
     let xdg_agents = temp_config.path().join("agents");
     fs::create_dir_all(&xdg_agents).unwrap();
-    fs::write(xdg_agents.join("coder.md"), "---\nname: global-coder\ndescription: Global\n---\n").unwrap();
+    fs::write(
+        xdg_agents.join("coder.md"),
+        "---\nname: global-coder\ndescription: Global\n---\n",
+    )
+    .unwrap();
 
-    let resolver = FsPersonaResolver::new(temp_cwd.path().to_path_buf(), temp_config.path().to_path_buf());
+    let resolver = FsPersonaResolver::new(
+        temp_cwd.path().to_path_buf(),
+        temp_config.path().to_path_buf(),
+        no_builtins(),
+    );
     let result = resolver.list_available();
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].name, "local-coder");
@@ -559,7 +586,11 @@ fn list_available_merges_cwd_and_xdg() {
     fs::create_dir_all(&xdg_agents).unwrap();
     fs::write(xdg_agents.join("reviewer.md"), "---\nname: reviewer\n---\n").unwrap();
 
-    let resolver = FsPersonaResolver::new(temp_cwd.path().to_path_buf(), temp_config.path().to_path_buf());
+    let resolver = FsPersonaResolver::new(
+        temp_cwd.path().to_path_buf(),
+        temp_config.path().to_path_buf(),
+        no_builtins(),
+    );
     let result = resolver.list_available();
     assert_eq!(result.len(), 2);
     assert_eq!(result[0].name, "coder");
@@ -573,9 +604,17 @@ fn list_available_uses_filename_stem_when_no_name_in_frontmatter() {
 
     let agents_dir = temp_cwd.path().join(".agents");
     fs::create_dir_all(&agents_dir).unwrap();
-    fs::write(agents_dir.join("my-agent.md"), "# Just a body, no front matter").unwrap();
+    fs::write(
+        agents_dir.join("my-agent.md"),
+        "# Just a body, no front matter",
+    )
+    .unwrap();
 
-    let resolver = FsPersonaResolver::new(temp_cwd.path().to_path_buf(), temp_config.path().to_path_buf());
+    let resolver = FsPersonaResolver::new(
+        temp_cwd.path().to_path_buf(),
+        temp_config.path().to_path_buf(),
+        no_builtins(),
+    );
     let result = resolver.list_available();
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].name, "my-agent");
@@ -593,8 +632,177 @@ fn list_available_skips_non_md_files() {
     fs::write(agents_dir.join("notes.txt"), "not a persona").unwrap();
     fs::write(agents_dir.join("config.yaml"), "key: value").unwrap();
 
-    let resolver = FsPersonaResolver::new(temp_cwd.path().to_path_buf(), temp_config.path().to_path_buf());
+    let resolver = FsPersonaResolver::new(
+        temp_cwd.path().to_path_buf(),
+        temp_config.path().to_path_buf(),
+        no_builtins(),
+    );
     let result = resolver.list_available();
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].name, "coder");
+}
+
+// Built-in persona resolution tests
+
+#[test]
+fn resolve_builtin_planner_enabled() {
+    let temp_cwd = TempDir::new().unwrap();
+    let temp_config = TempDir::new().unwrap();
+
+    let resolver = FsPersonaResolver::new(
+        temp_cwd.path().to_path_buf(),
+        temp_config.path().to_path_buf(),
+        AgentsConfig::default(),
+    );
+    let result = resolver.resolve("planner");
+
+    assert!(result.is_ok());
+    let (path, content) = result.unwrap();
+    assert!(path.to_str().unwrap().contains("<builtin>"));
+    assert_eq!(content, BUILTIN_PLANNER_CONTENT);
+}
+
+#[test]
+fn resolve_builtin_planner_disabled_not_found() {
+    let temp_cwd = TempDir::new().unwrap();
+    let temp_config = TempDir::new().unwrap();
+
+    let config = AgentsConfig {
+        planner_enabled: false,
+        ..AgentsConfig::default()
+    };
+    let resolver = FsPersonaResolver::new(
+        temp_cwd.path().to_path_buf(),
+        temp_config.path().to_path_buf(),
+        config,
+    );
+    let result = resolver.resolve("planner");
+
+    assert!(result.is_err());
+    assert!(matches!(result, Err(PersonaError::NotFound { .. })));
+}
+
+#[test]
+fn resolve_builtin_falls_through_when_disabled() {
+    let temp_cwd = TempDir::new().unwrap();
+    let temp_config = TempDir::new().unwrap();
+
+    // Create a filesystem planner.md so fallback succeeds
+    let agents_dir = temp_cwd.path().join(".agents");
+    fs::create_dir_all(&agents_dir).unwrap();
+    let fs_path = agents_dir.join("planner.md");
+    fs::write(&fs_path, "# Custom planner").unwrap();
+
+    let config = AgentsConfig {
+        planner_enabled: false,
+        ..AgentsConfig::default()
+    };
+    let resolver = FsPersonaResolver::new(
+        temp_cwd.path().to_path_buf(),
+        temp_config.path().to_path_buf(),
+        config,
+    );
+    let result = resolver.resolve("planner");
+
+    assert!(result.is_ok());
+    let (path, content) = result.unwrap();
+    assert_eq!(path, fs_path);
+    assert_eq!(content, "# Custom planner");
+}
+
+#[test]
+fn list_available_includes_enabled_builtins() {
+    let temp_cwd = TempDir::new().unwrap();
+    let temp_config = TempDir::new().unwrap();
+
+    let resolver = FsPersonaResolver::new(
+        temp_cwd.path().to_path_buf(),
+        temp_config.path().to_path_buf(),
+        AgentsConfig::default(),
+    );
+    let result = resolver.list_available();
+
+    // Built-ins should be the first entries
+    assert!(result.len() >= 2);
+    assert_eq!(result[0].name, "planner");
+    assert!(result[0].builtin);
+    assert_eq!(result[1].name, "maker");
+    assert!(result[1].builtin);
+}
+
+#[test]
+fn list_available_excludes_disabled_builtins() {
+    let temp_cwd = TempDir::new().unwrap();
+    let temp_config = TempDir::new().unwrap();
+
+    let config = AgentsConfig {
+        planner_enabled: false,
+        ..AgentsConfig::default()
+    };
+    let resolver = FsPersonaResolver::new(
+        temp_cwd.path().to_path_buf(),
+        temp_config.path().to_path_buf(),
+        config,
+    );
+    let result = resolver.list_available();
+
+    // "planner" should not appear as a built-in
+    let planner_builtins: Vec<_> = result
+        .iter()
+        .filter(|s| s.name == "planner" && s.builtin)
+        .collect();
+    assert!(planner_builtins.is_empty());
+
+    // "maker" should still be present
+    assert!(result.iter().any(|s| s.name == "maker" && s.builtin));
+}
+
+#[test]
+fn resolve_filesystem_persona_still_works() {
+    let temp_cwd = TempDir::new().unwrap();
+    let temp_config = TempDir::new().unwrap();
+
+    let agents_dir = temp_cwd.path().join(".agents");
+    fs::create_dir_all(&agents_dir).unwrap();
+    let persona_file = agents_dir.join("custom.md");
+    fs::write(&persona_file, "# Custom persona").unwrap();
+
+    let resolver = FsPersonaResolver::new(
+        temp_cwd.path().to_path_buf(),
+        temp_config.path().to_path_buf(),
+        AgentsConfig::default(),
+    );
+    let result = resolver.resolve("custom");
+
+    assert!(result.is_ok());
+    let (path, content) = result.unwrap();
+    assert_eq!(path, persona_file);
+    assert_eq!(content, "# Custom persona");
+}
+
+#[test]
+fn list_available_deduplicates_builtin_over_filesystem() {
+    let temp_cwd = TempDir::new().unwrap();
+    let temp_config = TempDir::new().unwrap();
+
+    // Create a filesystem planner.md that collides with the built-in
+    let agents_dir = temp_cwd.path().join(".agents");
+    fs::create_dir_all(&agents_dir).unwrap();
+    fs::write(
+        agents_dir.join("planner.md"),
+        "---\nname: planner\ndescription: Custom planner\n---\n",
+    )
+    .unwrap();
+
+    let resolver = FsPersonaResolver::new(
+        temp_cwd.path().to_path_buf(),
+        temp_config.path().to_path_buf(),
+        AgentsConfig::default(),
+    );
+    let result = resolver.list_available();
+
+    // "planner" should appear exactly once, as a built-in
+    let planner_entries: Vec<_> = result.iter().filter(|s| s.name == "planner").collect();
+    assert_eq!(planner_entries.len(), 1);
+    assert!(planner_entries[0].builtin);
 }

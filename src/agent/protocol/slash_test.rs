@@ -57,6 +57,7 @@ fn inline_slash_filter_is_prefix_based_and_deterministic() {
             SlashCommand::Help,
             SlashCommand::Status,
             SlashCommand::Models,
+            SlashCommand::Agent,
         ]
     );
     assert_eq!(
@@ -85,6 +86,7 @@ fn slash_command_catalog_exports_expected_labels_and_order() {
             SlashCommand::Help,
             SlashCommand::Status,
             SlashCommand::Models,
+            SlashCommand::Agent,
         ]
     );
 
@@ -93,10 +95,41 @@ fn slash_command_catalog_exports_expected_labels_and_order() {
     assert_eq!(slash_command_label(SlashCommand::Help), "/help");
     assert_eq!(slash_command_label(SlashCommand::Status), "/status");
     assert_eq!(slash_command_label(SlashCommand::Models), "/models");
+    assert_eq!(slash_command_label(SlashCommand::Agent), "/agent");
 
     assert!(!slash_command_summary(SlashCommand::Compact).is_empty());
     assert!(!slash_command_summary(SlashCommand::Mcp).is_empty());
     assert!(!slash_command_summary(SlashCommand::Help).is_empty());
     assert!(!slash_command_summary(SlashCommand::Status).is_empty());
     assert!(!slash_command_summary(SlashCommand::Models).is_empty());
+    assert!(!slash_command_summary(SlashCommand::Agent).is_empty());
+}
+
+#[test]
+fn parse_slash_command_agent_exact() {
+    assert_eq!(
+        parse_slash_command("/agent"),
+        SlashParseResult::Command(SlashCommand::Agent)
+    );
+}
+
+#[test]
+fn parse_slash_command_agents_does_not_match() {
+    assert_eq!(
+        parse_slash_command("/agents"),
+        SlashParseResult::Unknown("/agents".to_string())
+    );
+}
+
+#[test]
+fn slash_command_label_agent_returns_slash_agent() {
+    assert_eq!(slash_command_label(SlashCommand::Agent), "/agent");
+}
+
+#[test]
+fn slash_command_summary_agent_returns_switch_agent_persona() {
+    assert_eq!(
+        slash_command_summary(SlashCommand::Agent),
+        "Switch agent persona"
+    );
 }

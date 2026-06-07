@@ -19,6 +19,7 @@ pub(super) enum ModalPanelKind {
     Mcps,
     Skills,
     Models,
+    Agents,
 }
 
 pub(super) fn modal_rect_for_panel(area: Rect, panel: ModalPanelKind) -> Rect {
@@ -26,9 +27,10 @@ pub(super) fn modal_rect_for_panel(area: Rect, panel: ModalPanelKind) -> Rect {
         ModalPanelKind::CommandPalette => (20u16, 48u16, 5u16, 10u16),
         ModalPanelKind::Help => (72u16, 112u16, 18u16, 34u16),
         ModalPanelKind::Status => (42u16, 72u16, 8u16, 14u16),
-        ModalPanelKind::Mcps | ModalPanelKind::Skills | ModalPanelKind::Models => {
-            (56u16, 90u16, 10u16, 20u16)
-        }
+        ModalPanelKind::Mcps
+        | ModalPanelKind::Skills
+        | ModalPanelKind::Models
+        | ModalPanelKind::Agents => (56u16, 90u16, 10u16, 20u16),
     };
 
     let popup_width = area

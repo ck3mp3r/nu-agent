@@ -800,15 +800,25 @@ fn estimate_tokens_approximation() {
     let msg_small = Message::user("hello world");
     let tokens_small = estimate_tokens(&msg_small);
     // "hello world" is 11 chars but serialized JSON is larger; verify > 0
-    assert!(tokens_small > 0, "Expected non-zero tokens for 'hello world'");
+    assert!(
+        tokens_small > 0,
+        "Expected non-zero tokens for 'hello world'"
+    );
 
     let msg_large = Message::user("x".repeat(400));
     let tokens_large = estimate_tokens(&msg_large);
     // 400 chars of content → ~100 tokens of content + JSON overhead
-    assert!(tokens_large >= 100, "Expected >= 100 tokens for 400 chars, got {}", tokens_large);
+    assert!(
+        tokens_large >= 100,
+        "Expected >= 100 tokens for 400 chars, got {}",
+        tokens_large
+    );
 
     // Large message should have significantly more tokens
-    assert!(tokens_large > tokens_small, "Larger message should have more tokens");
+    assert!(
+        tokens_large > tokens_small,
+        "Larger message should have more tokens"
+    );
 }
 
 #[test]
@@ -856,7 +866,11 @@ fn compact_token_truncate_drops_oldest_within_budget() {
         .unwrap()
         .block_on(async { memory.load(session_id).await.unwrap() });
 
-    assert_eq!(final_messages.len(), 2, "Expected 2 messages within budget of 250 tokens");
+    assert_eq!(
+        final_messages.len(),
+        2,
+        "Expected 2 messages within budget of 250 tokens"
+    );
 }
 
 #[test]
@@ -901,7 +915,11 @@ fn compact_token_truncate_single_large_message() {
         .unwrap()
         .block_on(async { memory.load(session_id).await.unwrap() });
 
-    assert_eq!(final_messages.len(), 1, "Must keep at least one message even if over budget");
+    assert_eq!(
+        final_messages.len(),
+        1,
+        "Must keep at least one message even if over budget"
+    );
 }
 
 // --- Append-only marker architecture tests ---
@@ -1076,10 +1094,7 @@ fn compact_memory_has_llm_context_only() {
 
     // Remaining are user messages
     for msg in from_memory.iter().skip(1) {
-        assert!(
-            matches!(msg, Message::User { .. }),
-            "Expected user message"
-        );
+        assert!(matches!(msg, Message::User { .. }), "Expected user message");
     }
 }
 
@@ -1229,7 +1244,10 @@ fn multiple_compactions_append_multiple_markers() {
         .collect();
 
     tokio::runtime::Runtime::new().unwrap().block_on(async {
-        memory.append(session_id, more_messages.clone()).await.unwrap();
+        memory
+            .append(session_id, more_messages.clone())
+            .await
+            .unwrap();
     });
     store.append(session_id, &more_messages).unwrap();
 

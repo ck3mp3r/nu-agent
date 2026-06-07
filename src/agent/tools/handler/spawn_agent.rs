@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::agent::mailbox::{Broker, AgentRegistry};
+use crate::agent::mailbox::{AgentRegistry, Broker};
 
 use super::ToolErrorKind;
 
@@ -118,7 +118,11 @@ fn wait_for_shell_ready<T: TmuxRunner>(
     let poll_interval = std::time::Duration::from_millis(200);
     loop {
         let output = tmux.run(&[
-            "display-message", "-p", "-t", pane_id, "#{pane_current_command}",
+            "display-message",
+            "-p",
+            "-t",
+            pane_id,
+            "#{pane_current_command}",
         ])?;
         let cmd = output.trim();
         if known_shells.contains(&cmd) {
@@ -159,9 +163,8 @@ pub(crate) fn handle_spawn_agent<T: TmuxRunner>(
     // 2. Lazy broker initialization
     if state.broker.is_none() {
         log::debug!("Initializing broker for first spawn");
-        let broker = Broker::start(Arc::clone(&state.registry)).map_err(|e| {
-            ToolExecError::execution(format!("Failed to start broker: {}", e))
-        })?;
+        let broker = Broker::start(Arc::clone(&state.registry))
+            .map_err(|e| ToolExecError::execution(format!("Failed to start broker: {}", e)))?;
         state.socket_path = Some(broker.socket_path().to_path_buf());
         state.broker = Some(broker);
     }
@@ -190,7 +193,17 @@ pub(crate) fn handle_spawn_agent<T: TmuxRunner>(
     let mut pane_id: Option<String> = None;
     if let Some(window) = state.tmux_window.take() {
         log::debug!("Splitting existing tmux window: {}", window);
-        match tmux.run(&["split-window", "-h", "-c", &cwd_str, "-P", "-F", "#{pane_id}", "-t", &window]) {
+        match tmux.run(&[
+            "split-window",
+            "-h",
+            "-c",
+            &cwd_str,
+            "-P",
+            "-F",
+            "#{pane_id}",
+            "-t",
+            &window,
+        ]) {
             Ok(id) => {
                 pane_id = Some(id.trim().to_string());
                 state.tmux_window = Some(window);
@@ -216,7 +229,17 @@ pub(crate) fn handle_spawn_agent<T: TmuxRunner>(
             {
                 log::debug!("Discovered existing 'agents' tmux window: {}", wid);
                 let window_id = wid.trim().to_string();
-                match tmux.run(&["split-window", "-h", "-c", &cwd_str, "-P", "-F", "#{pane_id}", "-t", &window_id]) {
+                match tmux.run(&[
+                    "split-window",
+                    "-h",
+                    "-c",
+                    &cwd_str,
+                    "-P",
+                    "-F",
+                    "#{pane_id}",
+                    "-t",
+                    &window_id,
+                ]) {
                     Ok(id) => {
                         pane_id = Some(id.trim().to_string());
                         state.tmux_window = Some(window_id);
@@ -234,7 +257,14 @@ pub(crate) fn handle_spawn_agent<T: TmuxRunner>(
     if state.tmux_window.is_none() {
         log::debug!("Creating new tmux window for agents");
         let output = tmux.run(&[
-            "new-window", "-c", &cwd_str, "-P", "-F", "#{window_id}\t#{pane_id}", "-n", "agents",
+            "new-window",
+            "-c",
+            &cwd_str,
+            "-P",
+            "-F",
+            "#{window_id}\t#{pane_id}",
+            "-n",
+            "agents",
         ])?;
         let mut parts = output.trim().splitn(2, '\t');
         let window_id = parts.next().unwrap_or("").to_string();
@@ -246,7 +276,9 @@ pub(crate) fn handle_spawn_agent<T: TmuxRunner>(
     let pane_id = pane_id.unwrap();
 
     // 5a. Track agent pane for terminate_agent
-    state.agent_panes.insert(assigned_name.clone(), pane_id.clone());
+    state
+        .agent_panes
+        .insert(assigned_name.clone(), pane_id.clone());
 
     // 5b. Re-tile panes evenly
     let window_ref = state.tmux_window.as_ref().unwrap();
@@ -256,10 +288,7 @@ pub(crate) fn handle_spawn_agent<T: TmuxRunner>(
     wait_for_shell_ready(tmux, &pane_id, std::time::Duration::from_secs(30))?;
 
     // 6. Send command to pane
-    let parent_name = state
-        .agent_identity
-        .as_deref()
-        .unwrap_or("orchestrator");
+    let parent_name = state.agent_identity.as_deref().unwrap_or("orchestrator");
     let cmd = format!(
         "agent --agent {} --name {} --broker-socket {} --broker-token {} --parent-name {}",
         shell_escape(agent),
@@ -298,11 +327,10 @@ pub(crate) fn handle_terminate_agent<T: TmuxRunner>(
         .ok_or_else(|| ToolExecError::validation("Missing required 'name' parameter"))?;
 
     // 2. Look up pane_id
-    let pane_id = state
-        .agent_panes
-        .get(name)
-        .cloned()
-        .ok_or_else(|| ToolExecError::execution(format!("No agent named '{}' is running", name)))?;
+    let pane_id =
+        state.agent_panes.get(name).cloned().ok_or_else(|| {
+            ToolExecError::execution(format!("No agent named '{}' is running", name))
+        })?;
 
     // 3. Kill the pane (ignore errors — pane may already be dead)
     let _ = tmux.run(&["kill-pane", "-t", &pane_id]);

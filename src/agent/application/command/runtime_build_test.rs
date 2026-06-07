@@ -93,12 +93,15 @@ fn build_session_config_applies_merged_values() {
         keep_recent: Some(5),
         token_budget: Some(8000),
         proactive_threshold_pct: Some(0.9), // not in SessionConfig
-        fallback_strategies: None,           // not in SessionConfig
+        fallback_strategies: None,          // not in SessionConfig
     };
 
     let config = build_session_config(&merged);
 
-    assert_eq!(config.compaction_strategy, CompactionStrategy::SlidingWindow);
+    assert_eq!(
+        config.compaction_strategy,
+        CompactionStrategy::SlidingWindow
+    );
     assert_eq!(config.compaction_threshold, 50);
     assert_eq!(config.keep_recent, 5);
     assert_eq!(config.token_budget, Some(8000));

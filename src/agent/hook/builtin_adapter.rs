@@ -30,7 +30,8 @@ enum BuiltinExecError {
 pub struct BuiltinToolAdapter {
     tool_def: ToolDefinition,
     cwd: PathBuf,
-    orchestrator: Option<Arc<std::sync::Mutex<crate::agent::tools::handler::spawn_agent::OrchestratorState>>>,
+    orchestrator:
+        Option<Arc<std::sync::Mutex<crate::agent::tools::handler::spawn_agent::OrchestratorState>>>,
     broker_sender: Option<Arc<tokio::sync::Mutex<crate::agent::mailbox::BrokerSender>>>,
     agent_name: Option<String>,
 }
@@ -49,7 +50,9 @@ impl BuiltinToolAdapter {
     pub fn new(
         tool_def: ToolDefinition,
         cwd: PathBuf,
-        orchestrator: Option<Arc<std::sync::Mutex<crate::agent::tools::handler::spawn_agent::OrchestratorState>>>,
+        orchestrator: Option<
+            Arc<std::sync::Mutex<crate::agent::tools::handler::spawn_agent::OrchestratorState>>,
+        >,
         broker_sender: Option<Arc<tokio::sync::Mutex<crate::agent::mailbox::BrokerSender>>>,
         agent_name: Option<String>,
     ) -> Self {
@@ -93,8 +96,7 @@ impl ToolDyn for BuiltinToolAdapter {
 
                 let mut state = orchestrator.lock().unwrap();
                 crate::agent::tools::handler::spawn_agent::dispatch_spawn_agent(
-                    &args_json,
-                    &mut state,
+                    &args_json, &mut state,
                 )
                 .map_err(|e| {
                     ToolError::ToolCallError(Box::new(BuiltinExecError::Execution(format!(
@@ -115,8 +117,7 @@ impl ToolDyn for BuiltinToolAdapter {
 
                 let mut state = orchestrator.lock().unwrap();
                 crate::agent::tools::handler::spawn_agent::dispatch_terminate_agent(
-                    &args_json,
-                    &mut state,
+                    &args_json, &mut state,
                 )
                 .map_err(|e| {
                     ToolError::ToolCallError(Box::new(BuiltinExecError::Execution(format!(
@@ -163,9 +164,12 @@ impl ToolDyn for BuiltinToolAdapter {
                         ))))
                     })?
                 } else {
-                    return Err(ToolError::ToolCallError(Box::new(BuiltinExecError::Execution(
-                        "send_message requires either broker_sender or orchestrator state".to_string(),
-                    ))));
+                    return Err(ToolError::ToolCallError(Box::new(
+                        BuiltinExecError::Execution(
+                            "send_message requires either broker_sender or orchestrator state"
+                                .to_string(),
+                        ),
+                    )));
                 }
             } else if self.tool_def.name == "list_agents" {
                 // list_agents requires orchestrator state (parent only)
@@ -240,13 +244,23 @@ impl ToolDyn for BuiltinToolAdapter {
 pub fn adapt_builtins(
     tool_definitions: Vec<ToolDefinition>,
     cwd: PathBuf,
-    orchestrator: Option<Arc<std::sync::Mutex<crate::agent::tools::handler::spawn_agent::OrchestratorState>>>,
+    orchestrator: Option<
+        Arc<std::sync::Mutex<crate::agent::tools::handler::spawn_agent::OrchestratorState>>,
+    >,
     broker_sender: Option<Arc<tokio::sync::Mutex<crate::agent::mailbox::BrokerSender>>>,
     agent_name: Option<String>,
 ) -> Vec<BuiltinToolAdapter> {
     tool_definitions
         .into_iter()
-        .map(|tool_def| BuiltinToolAdapter::new(tool_def, cwd.clone(), orchestrator.clone(), broker_sender.clone(), agent_name.clone()))
+        .map(|tool_def| {
+            BuiltinToolAdapter::new(
+                tool_def,
+                cwd.clone(),
+                orchestrator.clone(),
+                broker_sender.clone(),
+                agent_name.clone(),
+            )
+        })
         .collect()
 }
 

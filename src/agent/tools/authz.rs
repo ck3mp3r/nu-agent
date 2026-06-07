@@ -662,7 +662,10 @@ impl PermissionsOverlay {
                     "permissions.* value must be a string (path: permissions.*)".to_string()
                 })?;
                 let action = PermissionAction::from_str(action_str).ok_or_else(|| {
-                    format!("invalid permission action '{}' (path: permissions.*)", action_str)
+                    format!(
+                        "invalid permission action '{}' (path: permissions.*)",
+                        action_str
+                    )
                 })?;
                 overlay.global = Some(action);
                 continue;

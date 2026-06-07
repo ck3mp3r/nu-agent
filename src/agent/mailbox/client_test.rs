@@ -7,7 +7,7 @@ use tokio::net::UnixListener;
 fn temp_socket_path() -> PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
-    
+
     std::env::temp_dir().join(format!(
         "nu-agent-test-{}-{}-{}.sock",
         std::process::id(),
@@ -82,7 +82,7 @@ async fn client_auth_rejected() {
         });
 
         let result = BrokerClient::connect(&path, "test-token").await;
-        
+
         assert!(result.is_err());
         match result.unwrap_err() {
             BrokerClientError::AuthRejected(reason) => {
@@ -186,7 +186,11 @@ async fn client_receives_message() {
         let frame = client.recv().await.unwrap();
 
         match frame {
-            ServerFrame::Message { from, message, kind } => {
+            ServerFrame::Message {
+                from,
+                message,
+                kind,
+            } => {
                 assert_eq!(from, "other");
                 assert_eq!(message, "hi");
                 assert_eq!(kind, "message");
@@ -231,10 +235,10 @@ async fn client_detects_disconnect() {
         });
 
         let mut client = BrokerClient::connect(&path, "test-token").await.unwrap();
-        
+
         // Small sleep to let server drop the connection
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-        
+
         let result = client.recv().await;
 
         assert!(result.is_err());

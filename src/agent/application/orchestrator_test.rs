@@ -55,6 +55,8 @@ struct FakeInteractiveUi {
     shared_actions: Vec<SharedUiAction>,
     model_switch_requests: std::collections::VecDeque<String>,
     active_model_identity: Option<String>,
+    agent_switch_requests: std::collections::VecDeque<String>,
+    active_agent_identity: Option<String>,
 }
 
 impl FakeInteractiveUi {
@@ -74,6 +76,8 @@ impl FakeInteractiveUi {
             shared_actions: Vec::new(),
             model_switch_requests: std::collections::VecDeque::new(),
             active_model_identity: None,
+            agent_switch_requests: std::collections::VecDeque::new(),
+            active_agent_identity: None,
         }
     }
 
@@ -172,6 +176,18 @@ impl InteractiveUi for FakeInteractiveUi {
 
     fn set_active_model_identity(&mut self, active_model_identity: &str) {
         self.active_model_identity = Some(active_model_identity.to_string());
+    }
+
+    fn take_next_agent_picker_launch_request(&mut self) -> bool {
+        false
+    }
+
+    fn take_next_agent_switch_request(&mut self) -> Option<String> {
+        self.agent_switch_requests.pop_front()
+    }
+
+    fn set_active_agent_identity(&mut self, name: &str) {
+        self.active_agent_identity = Some(name.to_string());
     }
 
     fn hydrate_transcript_from_messages(
@@ -342,8 +358,8 @@ fn interactive_loop_emits_auto_compaction_when_policy_fires() {
     };
     let mut ui = FakeInteractiveUi::with_prompts(&[]);
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -364,8 +380,8 @@ fn interactive_loop_skips_auto_compaction_when_policy_no_fire() {
     };
     let mut ui = FakeInteractiveUi::with_prompts(&[]);
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert!(runtime.executed_compaction_sources.is_empty());
@@ -393,8 +409,8 @@ fn interactive_loop_does_not_duplicate_auto_compaction_while_disarmed() {
     };
     let mut ui = FakeInteractiveUi::with_prompts(&[]);
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(runtime.executed_compaction_sources.len(), 1);
@@ -418,8 +434,8 @@ fn interactive_loop_continues_turn_processing_with_auto_compaction_enabled() {
     };
     let mut ui = FakeInteractiveUi::with_prompts(&["hello"]);
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(runtime.prompts, vec!["hello".to_string()]);
@@ -432,11 +448,12 @@ fn interactive_loop_continues_turn_processing_with_auto_compaction_enabled() {
 #[test]
 fn recognized_slash_commands_never_sent_to_llm() {
     let mut runtime = FakeRuntime::default();
-    let mut ui =
-        FakeInteractiveUi::with_prompts(&["/help", "/status", "/mcp", "/models", "/compact"]);
+    let mut ui = FakeInteractiveUi::with_prompts(&[
+        "/help", "/status", "/mcp", "/models", "/agent", "/compact",
+    ]);
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert!(runtime.prompts.is_empty());
@@ -451,8 +468,8 @@ fn models_slash_command_not_sent_to_llm() {
     let mut runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["/models"]);
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert!(runtime.prompts.is_empty());
@@ -463,8 +480,8 @@ fn models_slash_command_routes_to_shared_models_action() {
     let mut runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["/models"]);
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(ui.shared_actions, vec![SharedUiAction::Models]);
@@ -475,8 +492,8 @@ fn interactive_loop_routes_compact_slash_to_compaction_executor() {
     let mut runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["/compact", "hello"]);
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -491,8 +508,8 @@ fn typed_compact_submit_triggers_compaction_path() {
     let mut runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["/compact"]);
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -507,8 +524,8 @@ fn interactive_loop_unknown_slash_emits_warning_and_continues() {
     let mut runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["/compact now", "real prompt"]);
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert!(
@@ -524,8 +541,8 @@ fn recognized_slash_commands_not_persisted_as_session_turn_messages() {
     let mut runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["/help", "/status", "/mcp", "/compact"]);
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert!(runtime.prompts.is_empty());
@@ -550,8 +567,8 @@ fn manual_and_auto_compaction_failure_surface_is_consistent() {
     };
     let mut ui = FakeInteractiveUi::with_prompts(&["/compact"]);
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert!(
@@ -567,10 +584,11 @@ fn manual_and_auto_compaction_failure_surface_is_consistent() {
 #[test]
 fn slash_commands_reuse_command_palette_action_handlers() {
     let mut runtime = FakeRuntime::default();
-    let mut ui = FakeInteractiveUi::with_prompts(&["/help", "/status", "/mcp", "/models"]);
+    let mut ui =
+        FakeInteractiveUi::with_prompts(&["/help", "/status", "/mcp", "/models", "/agent"]);
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -580,6 +598,7 @@ fn slash_commands_reuse_command_palette_action_handlers() {
             SharedUiAction::Status,
             SharedUiAction::Mcps,
             SharedUiAction::Models,
+            SharedUiAction::Agents,
         ]
     );
     assert!(runtime.prompts.is_empty());
@@ -590,8 +609,8 @@ fn command_palette_models_action_opens_inline_model_picker() {
     let mut runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["/models"]);
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(ui.shared_actions, vec![SharedUiAction::Models]);
@@ -602,8 +621,8 @@ fn palette_models_does_not_bypass_shared_models_action_path() {
     let mut runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["/models"]);
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(ui.shared_actions, vec![SharedUiAction::Models]);
@@ -617,8 +636,8 @@ fn inline_model_picker_enter_switches_active_model_and_provider() {
     ui.model_switch_requests
         .push_back("openai/gpt-4o-mini".to_string());
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -641,8 +660,8 @@ fn model_switch_failure_keeps_previous_model_and_warns() {
     ui.model_switch_requests
         .push_back("openai/gpt-4o-mini".to_string());
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -663,8 +682,8 @@ fn model_switch_uses_cached_startup_plugin_config() {
     ui.model_switch_requests
         .push_back("openai/gpt-4o-mini".to_string());
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -680,8 +699,8 @@ fn model_switch_updates_footer_active_model_identity_immediately() {
     ui.model_switch_requests
         .push_back("openai/gpt-4o-mini".to_string());
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -697,8 +716,8 @@ fn model_switch_result_artifact_is_rendered() {
     ui.model_switch_requests
         .push_back("openai/gpt-4o-mini".to_string());
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert!(
@@ -715,8 +734,8 @@ fn next_turn_uses_newly_selected_model() {
     ui.model_switch_requests
         .push_back("openai/gpt-4o-mini".to_string());
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -741,8 +760,8 @@ fn model_switch_while_worker_active_is_queued_for_next_turn() {
         Arc::clone(&active_pump_count),
     );
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -779,8 +798,8 @@ fn queued_model_switch_applies_after_current_turn_before_next_dispatch() {
         Arc::clone(&active_pump_count),
     );
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -808,8 +827,8 @@ fn queued_model_switch_last_write_wins() {
         Arc::clone(&active_pump_count),
     );
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -838,8 +857,8 @@ fn queued_model_switch_failure_keeps_previous_model_and_warns() {
         Arc::clone(&active_pump_count),
     );
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -864,8 +883,8 @@ fn manual_and_auto_compaction_share_single_execution_path() {
     };
     let mut ui = FakeInteractiveUi::with_prompts(&["/compact"]);
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(runtime.compaction_call_count, 2);
@@ -901,8 +920,8 @@ fn run_interactive_loop_uses_interactive_ui_trait_boundary() {
     let mut runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["a", "b"]);
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(runtime.prompts, vec!["a".to_string(), "b".to_string()]);
@@ -943,8 +962,8 @@ fn interactive_loop_does_not_return_per_turn_values_to_stdout() {
     let mut runtime = FakeValueRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["hello"]);
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(runtime.prompts, vec!["hello".to_string()]);
@@ -1064,8 +1083,9 @@ fn run_hydrated_interactive_loop_hydrates_before_first_pump() {
         UiMessageSnapshot::new("assistant", "from assistant"),
     ];
 
-    let value = run_hydrated_interactive_loop(&mut runtime, &mut ui, messages, None, Span::test_data())
-        .expect("interactive loop with hydration");
+    let value =
+        run_hydrated_interactive_loop(&mut runtime, &mut ui, messages, None, Span::test_data())
+            .expect("interactive loop with hydration");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -1089,8 +1109,14 @@ fn run_hydrated_interactive_loop_hydrates_exactly_once() {
         });
         s
     }];
-    run_hydrated_interactive_loop(&mut runtime, &mut ui, messages.clone(), None, Span::test_data())
-        .expect("interactive loop with hydration");
+    run_hydrated_interactive_loop(
+        &mut runtime,
+        &mut ui,
+        messages.clone(),
+        None,
+        Span::test_data(),
+    )
+    .expect("interactive loop with hydration");
 
     assert_eq!(ui.hydrated_messages, messages);
 }
@@ -1580,8 +1606,8 @@ fn permission_requested_emits_before_execution_and_waits_for_decision_before_sid
         Arc::clone(&runtime.side_effects),
     );
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(runtime.side_effects.load(Ordering::SeqCst), 1);
@@ -1623,8 +1649,8 @@ fn deny_decision_resumes_deterministically_without_pre_decision_handler_side_eff
         Arc::clone(&runtime.side_effects),
     );
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(runtime.side_effects.load(Ordering::SeqCst), 0);
@@ -1956,8 +1982,8 @@ fn interactive_loop_startup_hydration_initializes_per_server_visible_counts_befo
     };
     let mut ui = FakeInteractiveUi::with_prompts(&[]);
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -2009,8 +2035,8 @@ fn interactive_loop_processes_mcp_toggle_requests_and_updates_ui_state() {
         enable: false,
     });
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(runtime.toggles, vec![("gh".to_string(), false)]);
@@ -2042,8 +2068,8 @@ fn interactive_loop_marks_enable_failure_as_failed_state() {
         enable: true,
     });
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(runtime.toggles, vec![("gh".to_string(), true)]);
@@ -2075,8 +2101,8 @@ fn interactive_loop_marks_enable_success_as_enabled_state() {
         enable: true,
     });
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(runtime.toggles, vec![("gh".to_string(), true)]);
@@ -2140,8 +2166,8 @@ fn interactive_loop_propagates_failure_reason_and_visible_tool_count_on_toggle_e
         enable: true,
     });
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(runtime.toggles, vec![("gh".to_string(), true)]);
@@ -2224,8 +2250,8 @@ fn interactive_toggle_enable_disable_cycle_refreshes_per_server_visible_counts()
     };
     let mut ui = StagedToggleUi::new();
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data()).expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -2628,9 +2654,8 @@ fn mailbox_message_injected_as_turn() {
     })
     .unwrap();
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, Some(rx), Span::test_data())
-            .expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, Some(rx), Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -2658,14 +2683,17 @@ fn mailbox_clear_resets_session() {
     })
     .unwrap();
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, Some(rx), Span::test_data())
-            .expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, Some(rx), Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(runtime.clear_session_calls, 1);
     assert_eq!(ui.clear_transcript_calls, 1);
-    assert_eq!(runtime.prompts.len(), 0, "/clear should not be injected as a turn");
+    assert_eq!(
+        runtime.prompts.len(),
+        0,
+        "/clear should not be injected as a turn"
+    );
 }
 
 #[test]
@@ -2696,9 +2724,8 @@ fn user_input_takes_precedence() {
     })
     .unwrap();
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, Some(rx), Span::test_data())
-            .expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, Some(rx), Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     // User prompt should be processed first
@@ -2727,7 +2754,7 @@ fn mailbox_queued_when_worker_busy() {
             _span: Span,
         ) -> Result<Value, LabeledError> {
             self.prompts.lock().unwrap().push(prompt.clone());
-            
+
             // Simulate long-running first turn
             if self.first_call.load(Ordering::SeqCst) {
                 for _ in 0..10 {
@@ -2736,7 +2763,7 @@ fn mailbox_queued_when_worker_busy() {
                 }
                 self.first_call.store(false, Ordering::SeqCst);
             }
-            
+
             Ok(Value::nothing(Span::test_data()))
         }
     }
@@ -2748,7 +2775,7 @@ fn mailbox_queued_when_worker_busy() {
     let mut ui = MailboxTestUi::with_prompts(&["first"]);
 
     let (tx, rx) = std::sync::mpsc::channel();
-    
+
     // Send mailbox message that will arrive while worker is busy
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(5));
@@ -2760,9 +2787,8 @@ fn mailbox_queued_when_worker_busy() {
         .ok();
     });
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, Some(rx), Span::test_data())
-            .expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, Some(rx), Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     let final_prompts = prompts.lock().unwrap();
@@ -2792,9 +2818,8 @@ fn orchestrator_formats_task_kind() {
     })
     .unwrap();
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, Some(rx), Span::test_data())
-            .expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, Some(rx), Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -2818,9 +2843,8 @@ fn orchestrator_formats_completion_kind() {
     })
     .unwrap();
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, Some(rx), Span::test_data())
-            .expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, Some(rx), Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -2844,9 +2868,8 @@ fn orchestrator_formats_question_kind() {
     })
     .unwrap();
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, Some(rx), Span::test_data())
-            .expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, Some(rx), Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(runtime.prompts.len(), 1);
@@ -2877,9 +2900,8 @@ fn orchestrator_formats_default_kind() {
     })
     .unwrap();
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, Some(rx), Span::test_data())
-            .expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, Some(rx), Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -2903,9 +2925,8 @@ fn orchestrator_formats_unknown_kind_as_default() {
     })
     .unwrap();
 
-    let value =
-        run_interactive_loop(&mut runtime, &mut ui, Some(rx), Span::test_data())
-            .expect("interactive loop");
+    let value = run_interactive_loop(&mut runtime, &mut ui, Some(rx), Span::test_data())
+        .expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(

@@ -39,7 +39,7 @@ impl Broker {
         // Keep it short to avoid SUN_LEN limit on Unix domain sockets (typically 108 bytes)
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -49,13 +49,12 @@ impl Broker {
         std::process::id().hash(&mut hasher);
         format!("{:?}", std::thread::current().id()).hash(&mut hasher);
         let random_suffix = format!("{:x}", hasher.finish());
-        
+
         let socket_dir = PathBuf::from(runtime_dir).join(format!("nu-agent-{}", random_suffix));
-        
+
         // Create directory with 0700 permissions
-        std::fs::create_dir_all(&socket_dir)
-            .map_err(BrokerError::DirectoryCreationFailed)?;
-        
+        std::fs::create_dir_all(&socket_dir).map_err(BrokerError::DirectoryCreationFailed)?;
+
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -66,7 +65,7 @@ impl Broker {
 
         let socket_path = socket_dir.join("broker.sock");
         let listener = UnixListener::bind(&socket_path)?;
-        
+
         let shutdown = CancellationToken::new();
         let accept_shutdown = shutdown.clone();
         let accept_registry = registry.clone();

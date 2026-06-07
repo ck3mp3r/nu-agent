@@ -171,7 +171,7 @@ fn classify_model_family_openai_reasoning_models() {
     // NOTE: These are reasoning models with distinct capabilities (reasoning tokens,
     // limited system prompt support), but we map them to Gpt4x for now as we don't
     // have a separate ModelFamily::Reasoning variant yet.
-    
+
     // Direct OpenAI provider
     assert_eq!(
         classify_model_family("openai", "o3-mini"),
@@ -181,14 +181,8 @@ fn classify_model_family_openai_reasoning_models() {
         classify_model_family("openai", "o4-mini"),
         ModelFamily::Gpt4x
     );
-    assert_eq!(
-        classify_model_family("openai", "o3"),
-        ModelFamily::Gpt4x
-    );
-    assert_eq!(
-        classify_model_family("openai", "o4"),
-        ModelFamily::Gpt4x
-    );
+    assert_eq!(classify_model_family("openai", "o3"), ModelFamily::Gpt4x);
+    assert_eq!(classify_model_family("openai", "o4"), ModelFamily::Gpt4x);
 }
 
 #[test]
@@ -295,7 +289,10 @@ fn resolve_preamble_github_copilot_anthropic_sonnet() {
         mk_input("github-copilot", ModelFamily::AnthropicSonnet, None, None),
         &defaults,
     );
-    assert_eq!(result.as_deref(), Some("builtin_pf_copilot_anthropic_sonnet"));
+    assert_eq!(
+        result.as_deref(),
+        Some("builtin_pf_copilot_anthropic_sonnet")
+    );
 }
 
 #[test]

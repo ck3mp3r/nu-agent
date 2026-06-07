@@ -169,6 +169,10 @@ fn handle_submit(state: &mut AppState) {
             state.queue_model_picker_launch_request();
             return;
         }
+        SlashParseResult::Command(crate::agent::protocol::slash::SlashCommand::Agent) => {
+            state.queue_agent_picker_launch_request();
+            return;
+        }
         SlashParseResult::Command(_) | SlashParseResult::Unknown(_) => {
             state.enqueue_immediate_submission(submitted_text);
             return;
@@ -270,6 +274,12 @@ fn handle_command_palette_select(state: &mut AppState) {
         if action == crate::agent::ui::tui::state::CommandPaletteAction::Models {
             state.close_command_palette();
             state.queue_model_picker_launch_request();
+            return;
+        }
+
+        if action == crate::agent::ui::tui::state::CommandPaletteAction::Agents {
+            state.close_command_palette();
+            state.queue_agent_picker_launch_request();
             return;
         }
 
@@ -383,7 +393,9 @@ fn reduce_ui_event(state: &mut AppState, event: UiEvent) {
         UiEvent::CompactionStarted { source } => {
             state.start_compaction_block(&source);
         }
-        UiEvent::CompactionSummaryChunk { source, aggregated, .. } => {
+        UiEvent::CompactionSummaryChunk {
+            source, aggregated, ..
+        } => {
             handle_compaction_summary_chunk(state, &source, aggregated);
         }
         UiEvent::CompactionTriggered {

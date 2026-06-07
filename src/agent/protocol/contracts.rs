@@ -24,6 +24,7 @@ pub(crate) enum SharedUiAction {
     Status,
     Mcps,
     Models,
+    Agents,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -150,6 +151,13 @@ pub(crate) trait InteractiveUi: ProgressUi {
         false
     }
     fn set_active_model_identity(&mut self, _active_model_identity: &str) {}
+    fn take_next_agent_picker_launch_request(&mut self) -> bool {
+        false
+    }
+    fn take_next_agent_switch_request(&mut self) -> Option<String> {
+        None
+    }
+    fn set_active_agent_identity(&mut self, _name: &str) {}
     fn fatal_error(&self) -> Option<&str>;
     fn hydrate_transcript_from_messages(
         &mut self,
@@ -190,6 +198,10 @@ pub(crate) trait ConversationRuntime {
 
     fn switch_model(&mut self, _model_spec: &str) -> Result<String, String> {
         Err("model switching not supported".to_string())
+    }
+
+    fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
+        Err("agent switch not supported in this runtime".to_string())
     }
 
     fn active_model_identity(&self) -> String {

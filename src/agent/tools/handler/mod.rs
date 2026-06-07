@@ -34,6 +34,13 @@ pub(crate) fn is_builtin_fs_tool_name(tool_name: &str) -> bool {
 pub(crate) fn is_builtin_tool_name(tool_name: &str) -> bool {
     matches!(
         tool_name,
-        "read" | "edit" | "patch" | "skill" | "spawn_agent" | "terminate_agent" | "send_message" | "list_agents"
+        "read"
+            | "edit"
+            | "patch"
+            | "skill"
+            | "spawn_agent"
+            | "terminate_agent"
+            | "send_message"
+            | "list_agents"
     )
 }

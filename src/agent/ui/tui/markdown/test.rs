@@ -393,10 +393,10 @@ It's a **Rust project** using **Nix flakes** for development/build environment m
     ];
 
     for (name, typ, desc_part) in &data_rows {
-        let matching_line = plain.iter().find(|line| {
-            line.contains(name) && line.contains("│")
-        });
-        
+        let matching_line = plain
+            .iter()
+            .find(|line| line.contains(name) && line.contains("│"));
+
         assert!(
             matching_line.is_some(),
             "Should find a table row containing '{}' with cell separator │",
@@ -422,7 +422,10 @@ It's a **Rust project** using **Nix flakes** for development/build environment m
 
     // Table should have header, separator, and data rows
     assert!(
-        plain.iter().any(|l| l.contains("Name") && l.contains("│") && l.contains("Type") && l.contains("Description")),
+        plain.iter().any(|l| l.contains("Name")
+            && l.contains("│")
+            && l.contains("Type")
+            && l.contains("Description")),
         "Should have header row with Name, Type, Description"
     );
     assert!(

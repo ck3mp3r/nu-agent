@@ -112,9 +112,7 @@ fn jsonl_store_append_messages() {
     ];
 
     // Write initial messages
-    store
-        .append("test-session", &initial_messages)
-        .unwrap();
+    store.append("test-session", &initial_messages).unwrap();
 
     // Append more messages
     let additional_messages = vec![
@@ -357,8 +355,7 @@ fn extract_llm_context_multiple_markers() {
         entries.push(StoreEntry::Message(Message::user(format!("old{}", i))));
     }
 
-    let marker1 =
-        CompactionMarker::new("Summary1".to_string(), 3, 5, "sliding_summary");
+    let marker1 = CompactionMarker::new("Summary1".to_string(), 3, 5, "sliding_summary");
     entries.push(StoreEntry::Marker(marker1));
 
     // 4 messages between markers
@@ -366,8 +363,7 @@ fn extract_llm_context_multiple_markers() {
         entries.push(StoreEntry::Message(Message::user(format!("mid{}", i))));
     }
 
-    let marker2 =
-        CompactionMarker::new("Summary2".to_string(), 2, 8, "sliding_summary");
+    let marker2 = CompactionMarker::new("Summary2".to_string(), 2, 8, "sliding_summary");
     entries.push(StoreEntry::Marker(marker2));
 
     // 2 kept messages re-appended after marker2

@@ -24,9 +24,6 @@ mod event_contract_test;
 mod permission_test;
 
 #[cfg(test)]
-mod persona_test;
-
-#[cfg(test)]
 mod slash_test;
 
 #[cfg(test)]

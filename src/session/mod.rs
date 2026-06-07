@@ -205,82 +205,99 @@ impl Session {
         // Strategy-specific: build compacted messages, summary text, and counts.
         // TokenTruncate uses token budgets on ALL messages (ignores keep_recent/split).
         // SlidingSummary and SlidingWindow split messages into old/recent at a fixed index.
-        let (llm_context, summary_text, summarized_count, kept_recent_count, strategy_name, store_kept_messages) =
-            match self.config.compaction_strategy {
-                CompactionStrategy::TokenTruncate => {
-                    let budget = self
-                        .config
-                        .token_budget
-                        .unwrap_or(self.config.compaction_threshold * 100);
-                    let mut kept: Vec<rig::completion::Message> = Vec::new();
-                    let mut total_tokens: usize = 0;
-                    for msg in messages.iter().rev() {
-                        let msg_tokens = estimate_tokens(msg);
-                        if total_tokens + msg_tokens > budget && !kept.is_empty() {
-                            break;
-                        }
-                        total_tokens += msg_tokens;
-                        kept.push(msg.clone());
+        let (
+            llm_context,
+            summary_text,
+            summarized_count,
+            kept_recent_count,
+            strategy_name,
+            store_kept_messages,
+        ) = match self.config.compaction_strategy {
+            CompactionStrategy::TokenTruncate => {
+                let budget = self
+                    .config
+                    .token_budget
+                    .unwrap_or(self.config.compaction_threshold * 100);
+                let mut kept: Vec<rig::completion::Message> = Vec::new();
+                let mut total_tokens: usize = 0;
+                for msg in messages.iter().rev() {
+                    let msg_tokens = estimate_tokens(msg);
+                    if total_tokens + msg_tokens > budget && !kept.is_empty() {
+                        break;
                     }
-                    kept.reverse();
-                    if let Some(rig::completion::Message::System { .. }) = messages.first()
-                        && !matches!(
-                            kept.first(),
-                            Some(rig::completion::Message::System { .. })
+                    total_tokens += msg_tokens;
+                    kept.push(msg.clone());
+                }
+                kept.reverse();
+                if let Some(rig::completion::Message::System { .. }) = messages.first()
+                    && !matches!(kept.first(), Some(rig::completion::Message::System { .. }))
+                {
+                    kept.insert(0, messages[0].clone());
+                }
+                let kept_count = kept.len();
+                let dropped = messages.len().saturating_sub(kept_count);
+                let store_kept = kept.clone();
+                (
+                    kept,
+                    String::new(),
+                    dropped,
+                    kept_count,
+                    "token_truncate",
+                    store_kept,
+                )
+            }
+            _ => {
+                // For SlidingSummary and SlidingWindow, use keep_recent split
+                if messages.len() <= keep_count {
+                    return Ok(CompactionOutcome {
+                        summarized_count: 0,
+                        kept_recent_count: messages.len(),
+                        summary_text: String::new(),
+                    });
+                }
+
+                // Split messages into old (to summarize) and recent (to keep).
+                // Use group-aware split to avoid breaking tool call/result pairs.
+                let naive_index = messages.len() - keep_count;
+                let split_index = find_safe_split_index(&messages, naive_index);
+                let old_messages = &messages[..split_index];
+                let recent_messages = &messages[split_index..];
+                let summarized_count = old_messages.len();
+                let kept_recent_count = recent_messages.len();
+
+                match self.config.compaction_strategy {
+                    CompactionStrategy::SlidingSummary => {
+                        let summary = summarizer(old_messages).await?;
+                        let summary_message = rig::completion::Message::system(&summary);
+                        let mut compacted = vec![summary_message];
+                        compacted.extend_from_slice(recent_messages);
+                        let store_kept = recent_messages.to_vec();
+                        (
+                            compacted,
+                            summary,
+                            summarized_count,
+                            kept_recent_count,
+                            "sliding_summary",
+                            store_kept,
                         )
-                    {
-                        kept.insert(0, messages[0].clone());
                     }
-                    let kept_count = kept.len();
-                    let dropped = messages.len().saturating_sub(kept_count);
-                    let store_kept = kept.clone();
-                    (kept, String::new(), dropped, kept_count, "token_truncate", store_kept)
-                }
-                _ => {
-                    // For SlidingSummary and SlidingWindow, use keep_recent split
-                    if messages.len() <= keep_count {
-                        return Ok(CompactionOutcome {
-                            summarized_count: 0,
-                            kept_recent_count: messages.len(),
-                            summary_text: String::new(),
-                        });
+                    CompactionStrategy::SlidingWindow => {
+                        let store_kept = recent_messages.to_vec();
+                        (
+                            store_kept.clone(),
+                            String::new(),
+                            summarized_count,
+                            kept_recent_count,
+                            "sliding_window",
+                            store_kept,
+                        )
                     }
-
-                    // Split messages into old (to summarize) and recent (to keep).
-                    // Use group-aware split to avoid breaking tool call/result pairs.
-                    let naive_index = messages.len() - keep_count;
-                    let split_index = find_safe_split_index(&messages, naive_index);
-                    let old_messages = &messages[..split_index];
-                    let recent_messages = &messages[split_index..];
-                    let summarized_count = old_messages.len();
-                    let kept_recent_count = recent_messages.len();
-
-                    match self.config.compaction_strategy {
-                        CompactionStrategy::SlidingSummary => {
-                            let summary = summarizer(old_messages).await?;
-                            let summary_message = rig::completion::Message::system(&summary);
-                            let mut compacted = vec![summary_message];
-                            compacted.extend_from_slice(recent_messages);
-                            let store_kept = recent_messages.to_vec();
-                            (compacted, summary, summarized_count, kept_recent_count, "sliding_summary", store_kept)
-                        }
-                        CompactionStrategy::SlidingWindow => {
-                            let store_kept = recent_messages.to_vec();
-                            (
-                                store_kept.clone(),
-                                String::new(),
-                                summarized_count,
-                                kept_recent_count,
-                                "sliding_window",
-                                store_kept,
-                            )
-                        }
-                        CompactionStrategy::TokenTruncate => {
-                            unreachable!("TokenTruncate handled above")
-                        }
+                    CompactionStrategy::TokenTruncate => {
+                        unreachable!("TokenTruncate handled above")
                     }
                 }
-            };
+            }
+        };
 
         // Increment compaction count
         self.compaction_count += 1;
@@ -660,11 +677,9 @@ impl Default for SessionStore {
 /// Returns true if the message is an Assistant message containing at least one ToolCall.
 fn has_tool_call(msg: &rig::completion::Message) -> bool {
     match msg {
-        rig::completion::Message::Assistant { content, .. } => {
-            content
-                .iter()
-                .any(|c| matches!(c, rig::completion::message::AssistantContent::ToolCall(_)))
-        }
+        rig::completion::Message::Assistant { content, .. } => content
+            .iter()
+            .any(|c| matches!(c, rig::completion::message::AssistantContent::ToolCall(_))),
         _ => false,
     }
 }
@@ -672,11 +687,9 @@ fn has_tool_call(msg: &rig::completion::Message) -> bool {
 /// Returns true if the message is a User message containing at least one ToolResult.
 fn has_tool_result(msg: &rig::completion::Message) -> bool {
     match msg {
-        rig::completion::Message::User { content } => {
-            content
-                .iter()
-                .any(|c| matches!(c, rig::completion::message::UserContent::ToolResult(_)))
-        }
+        rig::completion::Message::User { content } => content
+            .iter()
+            .any(|c| matches!(c, rig::completion::message::UserContent::ToolResult(_))),
         _ => false,
     }
 }

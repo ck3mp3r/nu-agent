@@ -66,6 +66,9 @@ pub struct PluginConfig {
 
     /// Compaction configuration (optional, uses defaults if not set)
     pub compaction: Option<CompactionConfig>,
+
+    /// Agent persona configuration
+    pub agents: AgentsConfig,
 }
 
 /// Configuration for conversation compaction behavior.
@@ -86,6 +89,32 @@ pub struct CompactionConfig {
     pub proactive_threshold_pct: Option<f64>,
     /// Ordered list of fallback strategies (default: ["sliding_window"])
     pub fallback_strategies: Option<Vec<CompactionStrategy>>,
+}
+
+/// Configuration for agent personas (planner/maker).
+///
+/// Controls which built-in personas are available and which is the default.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AgentsConfig {
+    /// Whether the planner persona is enabled
+    pub planner_enabled: bool,
+    /// Whether the maker persona is enabled
+    pub maker_enabled: bool,
+    /// Default persona at startup (e.g., "planner" or "maker")
+    pub default: String,
+    /// Fallback persona name (an .agents/*.md file) when default is disabled
+    pub fallback: Option<String>,
+}
+
+impl Default for AgentsConfig {
+    fn default() -> Self {
+        Self {
+            planner_enabled: true,
+            maker_enabled: true,
+            default: "planner".to_string(),
+            fallback: None,
+        }
+    }
 }
 
 impl CompactionConfig {
@@ -217,11 +246,19 @@ impl PluginConfig {
             None
         };
 
+        // Extract optional 'agents' config
+        let agents = if let Some(agents_value) = record.get("agents") {
+            Self::parse_agents_config(agents_value)?
+        } else {
+            AgentsConfig::default()
+        };
+
         Ok(Self {
             model,
             small_model,
             providers,
             compaction,
+            agents,
         })
     }
 
@@ -491,6 +528,47 @@ impl PluginConfig {
             token_budget,
             proactive_threshold_pct,
             fallback_strategies,
+        })
+    }
+
+    /// Parse agents configuration from a Nushell record
+    fn parse_agents_config(
+        value: &nu_protocol::Value,
+    ) -> Result<AgentsConfig, nu_protocol::LabeledError> {
+        use nu_protocol::LabeledError;
+
+        let record = value.as_record().map_err(|_| {
+            LabeledError::new("Invalid agents config").with_label("expected a record", value.span())
+        })?;
+
+        let planner_enabled = record
+            .get("planner")
+            .and_then(|v| v.as_str().ok())
+            .map(|s| s != "disabled")
+            .unwrap_or(true);
+
+        let maker_enabled = record
+            .get("maker")
+            .and_then(|v| v.as_str().ok())
+            .map(|s| s != "disabled")
+            .unwrap_or(true);
+
+        let default = record
+            .get("default")
+            .and_then(|v| v.as_str().ok())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "planner".to_string());
+
+        let fallback = record
+            .get("fallback")
+            .and_then(|v| v.as_str().ok())
+            .map(|s| s.to_string());
+
+        Ok(AgentsConfig {
+            planner_enabled,
+            maker_enabled,
+            default,
+            fallback,
         })
     }
 

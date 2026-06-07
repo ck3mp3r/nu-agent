@@ -38,10 +38,7 @@ impl std::fmt::Debug for BrokerClient {
 #[allow(dead_code)]
 impl BrokerClient {
     /// Connect to broker and authenticate
-    pub async fn connect(
-        socket_path: &Path,
-        token: &str,
-    ) -> Result<Self, BrokerClientError> {
+    pub async fn connect(socket_path: &Path, token: &str) -> Result<Self, BrokerClientError> {
         let stream = UnixStream::connect(socket_path).await?;
         let (read_half, mut write_half) = stream.into_split();
         let mut reader = BufReader::new(read_half);
@@ -69,7 +66,12 @@ impl BrokerClient {
     }
 
     /// Send a message to another agent
-    pub async fn send(&mut self, to: &str, message: &str, kind: &str) -> Result<(), BrokerClientError> {
+    pub async fn send(
+        &mut self,
+        to: &str,
+        message: &str,
+        kind: &str,
+    ) -> Result<(), BrokerClientError> {
         let frame = serde_json::to_string(&ClientFrame::Message {
             to: to.to_string(),
             message: message.to_string(),
@@ -111,7 +113,12 @@ pub(crate) struct BrokerSender {
 #[allow(dead_code)]
 impl BrokerSender {
     /// Send a message asynchronously
-    pub async fn send(&mut self, to: &str, message: &str, kind: &str) -> Result<(), BrokerClientError> {
+    pub async fn send(
+        &mut self,
+        to: &str,
+        message: &str,
+        kind: &str,
+    ) -> Result<(), BrokerClientError> {
         let frame = serde_json::to_string(&ClientFrame::Message {
             to: to.to_string(),
             message: message.to_string(),
@@ -120,7 +127,7 @@ impl BrokerSender {
         self.writer.write_all(frame.as_bytes()).await?;
         Ok(())
     }
-    
+
     #[cfg(test)]
     pub(crate) fn new_for_test(writer: tokio::net::unix::OwnedWriteHalf) -> Self {
         Self { writer }

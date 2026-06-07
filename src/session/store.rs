@@ -104,8 +104,11 @@ pub trait ConversationStore {
     ///
     /// # Returns
     /// Ok(()) on success, or an error if the operation fails.
-    fn append_marker(&self, session_id: &str, marker: &CompactionMarker)
-        -> Result<(), Box<dyn Error>>;
+    fn append_marker(
+        &self,
+        session_id: &str,
+        marker: &CompactionMarker,
+    ) -> Result<(), Box<dyn Error>>;
 
     /// Load all entries (messages + markers) preserving JSONL order.
     ///
@@ -211,19 +214,13 @@ impl ConversationStore for JsonlConversationStore {
                 compaction_count: 0,
             };
 
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)?;
+            let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
 
-        writeln!(file, "{}", serde_json::to_string(&metadata)?)?;
-    }
+            writeln!(file, "{}", serde_json::to_string(&metadata)?)?;
+        }
 
-    // Append messages
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)?;
+        // Append messages
+        let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
 
         for message in messages {
             writeln!(file, "{}", serde_json::to_string(message)?)?;
@@ -264,19 +261,13 @@ impl ConversationStore for JsonlConversationStore {
                 compaction_count: 0,
             };
 
-            let mut file = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&path)?;
+            let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
 
             writeln!(file, "{}", serde_json::to_string(&metadata)?)?;
         }
 
         // Append marker
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)?;
+        let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
 
         writeln!(file, "{}", serde_json::to_string(marker)?)?;
 

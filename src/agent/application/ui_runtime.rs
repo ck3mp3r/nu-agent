@@ -29,7 +29,10 @@ where
     R: UiRenderer,
 {
     pub fn new(renderer: R, cancel_requested: Arc<AtomicBool>) -> Self {
-        Self { renderer, cancel_requested }
+        Self {
+            renderer,
+            cancel_requested,
+        }
     }
 }
 
@@ -100,6 +103,21 @@ where
         self.renderer.set_model_picker_options(options);
     }
 
+    pub fn set_agent_picker_options(
+        &mut self,
+        options: Vec<crate::agent::ui::tui::state::AgentPickerOption>,
+    ) {
+        self.renderer.set_agent_picker_options(options);
+    }
+
+    pub fn set_active_agent_identity(&mut self, name: &str) {
+        self.renderer.set_active_agent_identity(name);
+    }
+
+    pub fn set_agent_cycle_names(&mut self, names: Vec<String>) {
+        self.renderer.set_agent_cycle_names(names);
+    }
+
     pub fn set_repo_branch_caller_cwd(&mut self, caller_cwd: Option<std::path::PathBuf>) {
         self.renderer.set_repo_branch_caller_cwd(caller_cwd);
     }
@@ -136,6 +154,18 @@ where
 
     fn take_next_model_picker_launch_request(&mut self) -> bool {
         self.renderer.take_next_model_picker_launch_request()
+    }
+
+    fn take_next_agent_picker_launch_request(&mut self) -> bool {
+        self.renderer.take_next_agent_picker_launch_request()
+    }
+
+    fn take_next_agent_switch_request(&mut self) -> Option<String> {
+        self.renderer.take_next_agent_switch_request()
+    }
+
+    fn set_active_agent_identity(&mut self, name: &str) {
+        self.renderer.set_active_agent_identity(name);
     }
 
     fn take_next_mcp_toggle_request(&mut self) -> Option<McpToggleRequest> {
@@ -242,8 +272,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::ui::stderr::StderrUiRenderer;
     use crate::agent::ui::policy::{UiPolicy, Verbosity};
+    use crate::agent::ui::stderr::StderrUiRenderer;
 
     #[test]
     fn stderr_progress_ui_take_cancel_requested_returns_flag_and_clears() {
@@ -258,16 +288,16 @@ mod tests {
             false,
         );
         let ui = StderrProgressUi::new(renderer, Arc::clone(&flag));
-        
+
         // Initially false
         assert!(!ui.take_cancel_requested());
-        
+
         // Set the flag
         flag.store(true, Ordering::SeqCst);
-        
+
         // Should return true and clear
         assert!(ui.take_cancel_requested());
-        
+
         // Should now be cleared
         assert!(!ui.take_cancel_requested());
     }

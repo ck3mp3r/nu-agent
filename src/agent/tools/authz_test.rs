@@ -1072,7 +1072,8 @@ fn parse_from_yaml_invalid_structure() {
     )
     .expect("valid YAML");
 
-    let err = PermissionsOverlay::parse_from_yaml(&yaml).expect_err("invalid structure should fail");
+    let err =
+        PermissionsOverlay::parse_from_yaml(&yaml).expect_err("invalid structure should fail");
     assert!(err.contains("permissions.nu__run"));
 }
 

@@ -148,7 +148,7 @@ fn streaming_completed_resets_state() {
     let stderr_out = String::from_utf8(stderr_bytes).expect("utf8");
     assert!(stderr_out.contains("first"));
     assert!(stderr_out.contains("second"));
-    
+
     // Verify both sequences got newlines (completed adds newline)
     let lines: Vec<&str> = stderr_out.lines().collect();
     assert!(lines.len() >= 2, "Expected at least 2 lines with content");

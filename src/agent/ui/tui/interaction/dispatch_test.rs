@@ -8,7 +8,7 @@ use crate::agent::ui::tui::{
         reducer::ESC_ABORT_CONFIRM_STATUS,
     },
     state::{
-        AppState, CommandPaletteAction, InfoPanel, InputMode, McpServerState,
+        AgentPickerOption, AppState, CommandPaletteAction, InfoPanel, InputMode, McpServerState,
         McpServerUsabilityState, ModelPickerOption, UiPhase,
     },
 };
@@ -1224,4 +1224,227 @@ fn palette_escape_closes_without_panel_route_regression() {
     assert!(changed);
     assert!(!state.command_palette_open);
     assert_eq!(state.info_panel, None);
+}
+
+// ---- agent picker dispatch tests ----
+
+fn setup_agent_picker_open() -> AppState {
+    let mut state = AppState::new();
+    state.set_agent_picker_options(vec![
+        AgentPickerOption {
+            name: "alpha".into(),
+            description: Some("Alpha agent".into()),
+            display: "alpha — Alpha agent".into(),
+            active: false,
+            builtin: false,
+        },
+        AgentPickerOption {
+            name: "beta".into(),
+            description: None,
+            display: "beta".into(),
+            active: true,
+            builtin: false,
+        },
+        AgentPickerOption {
+            name: "gamma".into(),
+            description: Some("Gamma agent".into()),
+            display: "gamma — Gamma agent".into(),
+            active: false,
+            builtin: false,
+        },
+    ]);
+    state.open_agent_picker();
+    state
+}
+
+#[test]
+fn agent_picker_open_insert_char_appends_to_query() {
+    let mut state = setup_agent_picker_open();
+
+    let changed = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('a')),
+        None,
+    );
+
+    assert!(changed);
+    assert_eq!(state.agent_picker_query, "a");
+    assert!(state.agent_picker_open);
+}
+
+#[test]
+fn agent_picker_open_esc_closes_picker() {
+    let mut state = setup_agent_picker_open();
+
+    let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Esc), None);
+
+    assert!(changed);
+    assert!(!state.agent_picker_open);
+    assert_eq!(state.agent_picker_query, "");
+    assert_eq!(state.agent_picker_selection, 0);
+}
+
+#[test]
+fn agent_picker_open_submit_queues_switch_request_and_closes() {
+    let mut state = setup_agent_picker_open();
+
+    // Move to beta (sorted: alpha=0, beta=1, gamma=2)
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
+
+    let changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+
+    assert!(changed);
+    assert!(!state.agent_picker_open);
+    assert_eq!(
+        state.take_next_agent_switch_request(),
+        Some("beta".to_string())
+    );
+}
+
+#[test]
+fn agent_picker_closed_actions_pass_through_normally() {
+    let mut state = AppState::new();
+    state.set_agent_picker_options(vec![AgentPickerOption {
+        name: "alpha".into(),
+        description: None,
+        display: "alpha".into(),
+        active: true,
+        builtin: false,
+    }]);
+    // Picker is NOT open
+    assert!(!state.agent_picker_open);
+
+    // Char should go to input buffer
+    let changed = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('x')),
+        None,
+    );
+    assert!(changed);
+    assert_eq!(state.input.buffer, "x");
+    assert!(!state.agent_picker_open);
+}
+
+#[test]
+fn agent_slash_and_palette_share_same_action_handler() {
+    // /agent slash command triggers agent picker launch
+    let mut slash_state = AppState::new();
+    for ch in "/agent".chars() {
+        let _ = dispatch_terminal_event(
+            &mut slash_state,
+            &TerminalEvent::Key(TerminalKey::Char(ch)),
+            None,
+        );
+    }
+    let _ = dispatch_terminal_event(
+        &mut slash_state,
+        &TerminalEvent::Key(TerminalKey::Enter),
+        None,
+    );
+    assert!(slash_state.take_next_agent_picker_launch_request());
+    assert_eq!(slash_state.take_next_prompt_for_execution(), None);
+
+    // Command palette Agents action triggers same path
+    let mut palette_state = AppState::new();
+    let _ = dispatch_terminal_event(
+        &mut palette_state,
+        &TerminalEvent::Key(TerminalKey::CtrlP),
+        None,
+    );
+    // Help -> Status -> MCPs -> Skills -> Models -> Agents
+    let _ = dispatch_terminal_event(
+        &mut palette_state,
+        &TerminalEvent::Key(TerminalKey::Down),
+        None,
+    );
+    let _ = dispatch_terminal_event(
+        &mut palette_state,
+        &TerminalEvent::Key(TerminalKey::Down),
+        None,
+    );
+    let _ = dispatch_terminal_event(
+        &mut palette_state,
+        &TerminalEvent::Key(TerminalKey::Down),
+        None,
+    );
+    let _ = dispatch_terminal_event(
+        &mut palette_state,
+        &TerminalEvent::Key(TerminalKey::Down),
+        None,
+    );
+    let _ = dispatch_terminal_event(
+        &mut palette_state,
+        &TerminalEvent::Key(TerminalKey::Down),
+        None,
+    );
+    assert_eq!(
+        palette_state.command_palette_selected_action(),
+        Some(CommandPaletteAction::Agents)
+    );
+    let _ = dispatch_terminal_event(
+        &mut palette_state,
+        &TerminalEvent::Key(TerminalKey::Enter),
+        None,
+    );
+    assert!(palette_state.take_next_agent_picker_launch_request());
+    assert_eq!(palette_state.take_next_prompt_for_execution(), None);
+}
+
+// ---- Tab cycling between built-in agents ----
+
+#[test]
+fn test_tab_cycles_agent_in_insert_mode() {
+    let mut state = AppState::new();
+    // Insert mode is default
+    assert_eq!(state.input_mode, InputMode::Insert);
+    // Set up 2+ builtin cycle names
+    state.agent_cycle_names = vec!["planner".to_string(), "maker".to_string()];
+    state.set_active_agent_identity("planner");
+    // No modals open (default)
+    assert!(!state.agent_picker_open);
+    assert!(!state.model_picker_open);
+
+    let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Tab), None);
+
+    assert!(changed);
+    // Tab should have queued a cycle request, resulting in Noop + force_changed
+    let request = state.take_next_agent_switch_request();
+    assert_eq!(request, Some("maker".to_string()));
+}
+
+#[test]
+fn test_tab_does_not_cycle_in_normal_mode() {
+    let mut state = AppState::new();
+    state.enter_normal_mode();
+    state.agent_cycle_names = vec!["planner".to_string(), "maker".to_string()];
+    state.set_active_agent_identity("planner");
+
+    let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Tab), None);
+
+    assert!(changed);
+    // In normal mode, Tab maps to FocusPaneRight, NOT agent cycling
+    // Verify no agent switch was queued
+    assert_eq!(state.take_next_agent_switch_request(), None);
+    // Focus should have cycled
+    assert_eq!(
+        state.pane_focus,
+        crate::agent::ui::tui::state::PaneFocus::Input
+    );
+}
+
+#[test]
+fn test_tab_does_not_cycle_when_no_builtins() {
+    let mut state = AppState::new();
+    assert_eq!(state.input_mode, InputMode::Insert);
+    // Empty cycle names
+    state.agent_cycle_names = Vec::new();
+
+    let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Tab), None);
+
+    // Tab should pass through — no agent switch queued
+    assert_eq!(state.take_next_agent_switch_request(), None);
+    // In idle insert mode, Tab maps to CompleteForward which is a no-op in the reducer
+    // (no slash menu open, no special handling), so changed depends on state diff
+    let _ = changed; // outcome is not Noop+true since cycling didn't fire
 }

@@ -1,10 +1,10 @@
 use super::{handle_list_agents, handle_send_message};
-use crate::agent::mailbox::{BrokerSender, BrokerClient, AgentRegistry, ClientFrame, ServerFrame};
+use crate::agent::mailbox::{AgentRegistry, BrokerClient, BrokerSender, ClientFrame, ServerFrame};
+use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{RwLock, mpsc};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
-use std::path::PathBuf;
+use tokio::sync::{RwLock, mpsc};
 
 fn temp_socket_path() -> PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -25,7 +25,8 @@ fn temp_socket_path() -> PathBuf {
 fn create_mock_broker_sender() -> BrokerSender {
     let (tx, _rx) = std::os::unix::net::UnixStream::pair().expect("Failed to create socket pair");
     tx.set_nonblocking(true).expect("Failed to set nonblocking");
-    let tokio_stream = tokio::net::UnixStream::from_std(tx).expect("Failed to convert to tokio stream");
+    let tokio_stream =
+        tokio::net::UnixStream::from_std(tx).expect("Failed to convert to tokio stream");
     let (_read, write) = tokio_stream.into_split();
     BrokerSender::new_for_test(write)
 }
@@ -101,10 +102,10 @@ async fn send_message_missing_to_errors() {
     let args = serde_json::json!({
         "message": "hello"
     });
-    
+
     let mut sender = create_mock_broker_sender();
     let result = handle_send_message(&args, &mut sender).await;
-    
+
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(err.message.contains("Missing required field: to"));
@@ -115,10 +116,10 @@ async fn send_message_missing_message_errors() {
     let args = serde_json::json!({
         "to": "agent-1"
     });
-    
+
     let mut sender = create_mock_broker_sender();
     let result = handle_send_message(&args, &mut sender).await;
-    
+
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(err.message.contains("Missing required field: message"));
@@ -127,7 +128,7 @@ async fn send_message_missing_message_errors() {
 #[tokio::test(flavor = "multi_thread")]
 async fn list_agents_returns_connected() {
     let registry = Arc::new(RwLock::new(AgentRegistry::new()));
-    
+
     // Add two connected agents
     {
         let mut reg = registry.write().await;
@@ -136,17 +137,17 @@ async fn list_agents_returns_connected() {
         reg.add_connected("agent-1".to_string(), tx1);
         reg.add_connected("agent-2".to_string(), tx2);
     }
-    
+
     let result = handle_list_agents(&registry).expect("list_agents failed");
-    
+
     let agents = result.as_array().expect("Expected array result");
     assert_eq!(agents.len(), 2);
-    
+
     let names: Vec<String> = agents
         .iter()
         .map(|a| a["name"].as_str().unwrap().to_string())
         .collect();
-    
+
     assert!(names.contains(&"agent-1".to_string()));
     assert!(names.contains(&"agent-2".to_string()));
 }
@@ -154,9 +155,9 @@ async fn list_agents_returns_connected() {
 #[tokio::test(flavor = "multi_thread")]
 async fn list_agents_empty_registry() {
     let registry = Arc::new(RwLock::new(AgentRegistry::new()));
-    
+
     let result = handle_list_agents(&registry).expect("list_agents failed");
-    
+
     let agents = result.as_array().expect("Expected array result");
     assert_eq!(agents.len(), 0);
 }

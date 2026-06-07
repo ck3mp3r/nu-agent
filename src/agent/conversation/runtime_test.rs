@@ -358,7 +358,8 @@ fn build_system_preamble_returns_none_when_all_empty() {
 
 #[test]
 fn build_system_preamble_handles_partial_inputs() {
-    let result = super::build_system_preamble(Some("preamble"), None, None, None, Some("agents"), None);
+    let result =
+        super::build_system_preamble(Some("preamble"), None, None, None, Some("agents"), None);
 
     assert!(result.is_some());
     let text = result.unwrap();
@@ -379,21 +380,27 @@ fn build_system_preamble_includes_persona_in_correct_position() {
 
     assert!(result.is_some());
     let text = result.unwrap();
-    
+
     // Verify all parts are present
     assert!(text.contains("config preamble"));
     assert!(text.contains("agent persona"));
     assert!(text.contains("context text"));
     assert!(text.contains("agents chain"));
     assert!(text.contains("available skills"));
-    
+
     // Verify persona appears between config preamble and context
     let config_pos = text.find("config preamble").unwrap();
     let persona_pos = text.find("agent persona").unwrap();
     let context_pos = text.find("context text").unwrap();
-    
-    assert!(config_pos < persona_pos, "config preamble should come before persona");
-    assert!(persona_pos < context_pos, "persona should come before context");
+
+    assert!(
+        config_pos < persona_pos,
+        "config preamble should come before persona"
+    );
+    assert!(
+        persona_pos < context_pos,
+        "persona should come before context"
+    );
 }
 
 #[test]
@@ -424,12 +431,16 @@ fn build_system_preamble_includes_sub_agent_instruction() {
     // sub-agent instruction should come after persona
     let persona_pos = text.find("persona").unwrap();
     let instruction_pos = text.find("sub-agent instruction").unwrap();
-    assert!(persona_pos < instruction_pos, "sub-agent instruction should come after persona");
+    assert!(
+        persona_pos < instruction_pos,
+        "sub-agent instruction should come after persona"
+    );
 }
 
 #[test]
 fn build_system_preamble_sub_agent_instruction_only() {
-    let result = super::build_system_preamble(None, None, Some("you are a sub-agent"), None, None, None);
+    let result =
+        super::build_system_preamble(None, None, Some("you are a sub-agent"), None, None, None);
 
     assert!(result.is_some());
     let text = result.unwrap();
@@ -548,11 +559,11 @@ fn build_copilot_client_function_signature_exists() {
     // Compile-time verification that build_copilot_client exists with correct signature
     use crate::config::Config;
     use nu_protocol::LabeledError;
-    
+
     // Type annotation forces the compiler to verify the function signature
     let _function: fn(&Config) -> Result<rig::providers::copilot::Client, LabeledError> =
         build_copilot_client;
-    
+
     // If this compiles, the function exists with the correct signature
 }
 
@@ -561,10 +572,10 @@ fn build_copilot_client_function_signature_exists() {
 fn build_copilot_client_no_auth_returns_error() {
     // RED: Verify that with no auth available, we get a clear error
     use crate::config::Config;
-    
+
     // Save original XDG_CONFIG_HOME if set
     let original_xdg = std::env::var("XDG_CONFIG_HOME").ok();
-    
+
     // Clear all copilot-related env vars to ensure clean test
     unsafe {
         std::env::remove_var("GITHUB_COPILOT_API_KEY");
@@ -592,7 +603,7 @@ fn build_copilot_client_no_auth_returns_error() {
     };
 
     let result = build_copilot_client(&config);
-    
+
     // Restore original XDG_CONFIG_HOME
     unsafe {
         if let Some(val) = original_xdg {
@@ -601,7 +612,7 @@ fn build_copilot_client_no_auth_returns_error() {
             std::env::remove_var("XDG_CONFIG_HOME");
         }
     }
-    
+
     assert!(result.is_err(), "Expected error without credentials");
     let err_msg = result.unwrap_err().to_string();
     assert!(
@@ -615,10 +626,10 @@ fn build_copilot_client_no_auth_returns_error() {
 fn build_copilot_client_error_mentions_auth_login() {
     // RED: Verify error message guides user to run `agent auth login`
     use crate::config::Config;
-    
+
     // Save original XDG_CONFIG_HOME if set
     let original_xdg = std::env::var("XDG_CONFIG_HOME").ok();
-    
+
     // Clear all copilot-related env vars
     unsafe {
         std::env::remove_var("GITHUB_COPILOT_API_KEY");
@@ -646,7 +657,7 @@ fn build_copilot_client_error_mentions_auth_login() {
     };
 
     let result = build_copilot_client(&config);
-    
+
     // Restore original XDG_CONFIG_HOME
     unsafe {
         if let Some(val) = original_xdg {
@@ -655,7 +666,7 @@ fn build_copilot_client_error_mentions_auth_login() {
             std::env::remove_var("XDG_CONFIG_HOME");
         }
     }
-    
+
     assert!(result.is_err(), "Expected error without credentials");
     let err_msg = result.unwrap_err().to_string();
     assert!(
@@ -670,7 +681,7 @@ fn build_copilot_client_error_mentions_auth_login() {
 fn provider_dispatch_unsupported_provider_returns_error() {
     // RED: Verify that unsupported provider returns clear error
     use crate::config::Config;
-    
+
     let config = Config {
         provider: "unsupported-provider".to_string(),
         provider_impl: None,
@@ -684,11 +695,11 @@ fn provider_dispatch_unsupported_provider_returns_error() {
         max_tool_turns: None,
         preamble: None,
     };
-    
+
     // This test will compile once we add the dispatch logic
     // For now, document that build_copilot_client works for copilot only
     // When we add dispatch in execute_turn, this will test the error path
-    
+
     // Expected behavior: execute_turn should return error with:
     // "Unsupported provider: 'unsupported-provider'"
     // This test documents the requirement for now
@@ -699,13 +710,13 @@ fn provider_dispatch_unsupported_provider_returns_error() {
 
 #[test]
 fn clear_session_resets_memory() {
+    use rig::completion::message::{Text, UserContent};
     use rig::memory::InMemoryConversationMemory;
     use rig::one_or_many::OneOrMany;
-    use rig::completion::message::{UserContent, Text};
-    
+
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let mut memory = InMemoryConversationMemory::new();
-    
+
     // Populate memory with some messages
     runtime.block_on(async {
         memory
@@ -720,14 +731,14 @@ fn clear_session_resets_memory() {
             .await
             .unwrap();
     });
-    
+
     // Verify messages exist
     let messages_before = runtime.block_on(async { memory.load("test-session").await.unwrap() });
     assert_eq!(messages_before.len(), 1);
-    
+
     // Clear session by creating a new memory instance (simulates clear_session behavior)
     memory = InMemoryConversationMemory::new();
-    
+
     // Verify memory is empty after clear
     let messages_after = runtime.block_on(async { memory.load("test-session").await.unwrap() });
     assert_eq!(messages_after.len(), 0);
@@ -737,13 +748,16 @@ fn clear_session_resets_memory() {
 fn clear_session_resets_message_count() {
     // This test documents the expected behavior
     // After clear_session(), memory_message_count should be 0
-    
+
     let _message_count = 5usize;
-    
+
     // Simulate clear_session behavior
     let message_count = 0;
-    
-    assert_eq!(message_count, 0, "message count should be reset to 0 after clear_session");
+
+    assert_eq!(
+        message_count, 0,
+        "message count should be reset to 0 after clear_session"
+    );
 }
 
 // ========================================================================
@@ -756,8 +770,8 @@ fn concurrent_compaction_guard_prevents_double_entry() {
     // (the core logic path) should be skippable. We test the AtomicBool +
     // CompactionGuard pattern in isolation since AgentConversationRuntime
     // is too expensive to construct in unit tests.
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     let compacting = Arc::new(AtomicBool::new(false));
 
@@ -783,8 +797,8 @@ fn concurrent_compaction_guard_prevents_double_entry() {
 fn compaction_guard_resets_on_completion() {
     // After the CompactionGuard is dropped, the flag should be false
     // so subsequent compactions can proceed.
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     let compacting = Arc::new(AtomicBool::new(false));
 
@@ -798,7 +812,10 @@ fn compaction_guard_resets_on_completion() {
         let _guard = super::CompactionGuard(Arc::clone(&compacting));
 
         // Flag should be true during compaction
-        assert!(compacting.load(Ordering::Relaxed), "flag should be true during compaction");
+        assert!(
+            compacting.load(Ordering::Relaxed),
+            "flag should be true during compaction"
+        );
     }
     // _guard dropped here
 
@@ -821,8 +838,8 @@ fn compaction_guard_resets_on_completion() {
 fn compaction_guard_resets_on_simulated_error() {
     // Even if the compaction "body" returns an error, the RAII guard
     // must reset the flag so future compactions are not permanently blocked.
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     let compacting = Arc::new(AtomicBool::new(false));
 
@@ -849,8 +866,8 @@ fn compaction_guard_resets_on_simulated_error() {
 #[test]
 fn runtime_struct_has_compacting_field() {
     // Compile-time check that the compacting field exists with correct type
-    use std::sync::atomic::AtomicBool;
     use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
 
     fn _assert_field_exists(_flag: &Arc<AtomicBool>) {}
 
@@ -897,9 +914,7 @@ fn hydration_guard_prevents_duplicate_memory_append() {
     if !hydrated {
         let loaded = store.load("s1").unwrap();
         if !loaded.is_empty() {
-            runtime
-                .block_on(memory.append("s1", loaded))
-                .unwrap();
+            runtime.block_on(memory.append("s1", loaded)).unwrap();
         }
         hydrated = true;
     }
@@ -911,9 +926,7 @@ fn hydration_guard_prevents_duplicate_memory_append() {
     if !hydrated {
         let loaded = store.load("s1").unwrap();
         if !loaded.is_empty() {
-            runtime
-                .block_on(memory.append("s1", loaded))
-                .unwrap();
+            runtime.block_on(memory.append("s1", loaded)).unwrap();
         }
     }
     // Guard should still be true from first hydration
@@ -948,14 +961,10 @@ fn hydration_without_guard_causes_duplicates() {
 
     // Load-and-append WITHOUT guard — twice
     let loaded1 = store.load("s1").unwrap();
-    runtime
-        .block_on(memory.append("s1", loaded1))
-        .unwrap();
+    runtime.block_on(memory.append("s1", loaded1)).unwrap();
 
     let loaded2 = store.load("s1").unwrap();
-    runtime
-        .block_on(memory.append("s1", loaded2))
-        .unwrap();
+    runtime.block_on(memory.append("s1", loaded2)).unwrap();
 
     let count = runtime.block_on(memory.load("s1")).unwrap().len();
     assert_eq!(
@@ -1031,9 +1040,7 @@ fn hydration_no_markers_loads_all() {
     use rig::completion::Message;
     use rig::memory::{ConversationMemory, InMemoryConversationMemory};
 
-    use crate::session::{
-        ConversationStore, JsonlConversationStore, extract_llm_context,
-    };
+    use crate::session::{ConversationStore, JsonlConversationStore, extract_llm_context};
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     let memory = InMemoryConversationMemory::new();
@@ -1085,7 +1092,12 @@ fn hydration_multiple_markers_uses_latest() {
     store.append("s1", &msgs1).unwrap();
 
     // Marker 1 (kept=2)
-    let marker1 = CompactionMarker::new("First summary".to_string(), 2, 8, "summarize_and_keep_recent");
+    let marker1 = CompactionMarker::new(
+        "First summary".to_string(),
+        2,
+        8,
+        "summarize_and_keep_recent",
+    );
     store.append_marker("s1", &marker1).unwrap();
 
     // 5 more messages between markers
@@ -1095,7 +1107,12 @@ fn hydration_multiple_markers_uses_latest() {
     store.append("s1", &msgs2).unwrap();
 
     // Marker 2 (kept=3)
-    let marker2 = CompactionMarker::new("Second summary".to_string(), 3, 12, "summarize_and_keep_recent");
+    let marker2 = CompactionMarker::new(
+        "Second summary".to_string(),
+        3,
+        12,
+        "summarize_and_keep_recent",
+    );
     store.append_marker("s1", &marker2).unwrap();
 
     // 3 kept messages re-appended after marker2
@@ -1127,9 +1144,7 @@ fn compaction_count_derived_from_markers() {
     // Store has 3 markers. After hydration, compaction_count == 3.
     use rig::completion::Message;
 
-    use crate::session::{
-        CompactionMarker, ConversationStore, JsonlConversationStore, StoreEntry,
-    };
+    use crate::session::{CompactionMarker, ConversationStore, JsonlConversationStore, StoreEntry};
 
     let temp_dir = tempfile::tempdir().unwrap();
     let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());

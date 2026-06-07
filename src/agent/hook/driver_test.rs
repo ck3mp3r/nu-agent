@@ -1133,4 +1133,3 @@ fn multiple_deltas_all_forwarded() {
     assert_eq!(messages[2], "Hello world");
     assert_eq!(messages[3], "Hello world!");
 }
-

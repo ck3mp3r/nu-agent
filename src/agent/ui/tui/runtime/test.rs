@@ -542,7 +542,9 @@ fn user_then_assistant_inserts_turn_separator_in_runtime_transcript() {
                         TranscriptRole::ToolDisplay
                     }
                     crate::agent::ui::transcript::ir::Role::System => TranscriptRole::System,
-                    crate::agent::ui::transcript::ir::Role::Compaction => TranscriptRole::Compaction,
+                    crate::agent::ui::transcript::ir::Role::Compaction => {
+                        TranscriptRole::Compaction
+                    }
                     crate::agent::ui::transcript::ir::Role::Separator => TranscriptRole::Separator,
                 };
                 (role, line.text())
@@ -636,10 +638,8 @@ fn status_updates_stay_in_status_area_and_do_not_pollute_input_line() {
     coordinator.enqueue_ui_event(UiEvent::Tick);
     coordinator.drain_transport();
 
-    let status_lines = crate::agent::ui::tui::runtime::status_lines_for_test(
-        coordinator.state(),
-        "openai/gpt-4",
-    );
+    let status_lines =
+        crate::agent::ui::tui::runtime::status_lines_for_test(coordinator.state(), "openai/gpt-4");
     let joined = status_lines.join("\n");
 
     assert!(joined.contains("(busy)"));
@@ -652,10 +652,8 @@ fn status_updates_stay_in_status_area_and_do_not_pollute_input_line() {
     coordinator.enqueue_ui_event(UiEvent::Completed { tool_calls: 0 });
     coordinator.drain_transport();
 
-    let status_lines = crate::agent::ui::tui::runtime::status_lines_for_test(
-        coordinator.state(),
-        "openai/gpt-4",
-    );
+    let status_lines =
+        crate::agent::ui::tui::runtime::status_lines_for_test(coordinator.state(), "openai/gpt-4");
     assert!(status_lines[0].contains("(idle)"));
     assert!(
         !status_lines
@@ -669,24 +667,18 @@ fn status_updates_stay_in_status_area_and_do_not_pollute_input_line() {
 fn status_lines_do_not_report_input_mode() {
     let state = AppState::new();
 
-    let lines = crate::agent::ui::tui::runtime::status_lines_for_test(
-        &state,
-        "openai/gpt-4",
-    );
+    let lines = crate::agent::ui::tui::runtime::status_lines_for_test(&state, "openai/gpt-4");
     assert!(!lines.iter().any(|line| line.starts_with("Input mode:")));
 }
 
 #[test]
 fn compact_status_line_matches_lane_1_contract() {
-    let status_line = crate::agent::ui::tui::runtime::compact_status_line_for_test(
-        "openai/gpt-4o-mini",
-        None,
-    );
+    let status_line =
+        crate::agent::ui::tui::runtime::compact_status_line_for_test("openai/gpt-4o-mini", None);
 
     assert!(status_line.starts_with("○ openai/gpt-4o-mini"));
     assert!(!status_line.contains('|'));
 }
-
 
 #[test]
 fn lane_1_wide_no_truncation() {
@@ -1162,7 +1154,9 @@ fn coordinator_hydration_skips_blank_lines_and_maps_unknown_role_to_system() {
                         TranscriptRole::ToolDisplay
                     }
                     crate::agent::ui::transcript::ir::Role::System => TranscriptRole::System,
-                    crate::agent::ui::transcript::ir::Role::Compaction => TranscriptRole::Compaction,
+                    crate::agent::ui::transcript::ir::Role::Compaction => {
+                        TranscriptRole::Compaction
+                    }
                     crate::agent::ui::transcript::ir::Role::Separator => TranscriptRole::Separator,
                 };
                 (role, line.text())
@@ -1319,7 +1313,12 @@ fn coordinator_hydration_keeps_unsupported_markdown_readable_in_assistant_transc
         .state()
         .transcript_preview
         .iter()
-        .filter(|line| matches!(line.role(), crate::agent::ui::transcript::ir::Role::Assistant))
+        .filter(|line| {
+            matches!(
+                line.role(),
+                crate::agent::ui::transcript::ir::Role::Assistant
+            )
+        })
         .map(|line| line.text())
         .collect::<Vec<_>>();
 
@@ -1356,7 +1355,12 @@ fn coordinator_hydration_handles_malformed_assistant_markdown_without_dropping_m
         .state()
         .transcript_preview
         .iter()
-        .filter(|line| matches!(line.role(), crate::agent::ui::transcript::ir::Role::Assistant))
+        .filter(|line| {
+            matches!(
+                line.role(),
+                crate::agent::ui::transcript::ir::Role::Assistant
+            )
+        })
         .collect::<Vec<_>>();
 
     assert!(!assistant_lines.is_empty());
@@ -1380,7 +1384,12 @@ fn assistant_message_event_sanitizes_pseudo_tags_and_control_tags_in_runtime_tra
         .state()
         .transcript_preview
         .iter()
-        .filter(|line| matches!(line.role(), crate::agent::ui::transcript::ir::Role::Assistant))
+        .filter(|line| {
+            matches!(
+                line.role(),
+                crate::agent::ui::transcript::ir::Role::Assistant
+            )
+        })
         .map(|line| line.text())
         .collect::<Vec<_>>();
 
@@ -1671,10 +1680,8 @@ fn prompt_prefix_switches_immediately_when_mode_changes() {
 fn status_contract_a_model_line_reports_identity_and_busy_idle() {
     let mut state = AppState::new();
 
-    let idle_lines = crate::agent::ui::tui::runtime::status_lines_for_test(
-        &state,
-        "openai/gpt-4o-mini",
-    );
+    let idle_lines =
+        crate::agent::ui::tui::runtime::status_lines_for_test(&state, "openai/gpt-4o-mini");
     assert!(
         idle_lines
             .iter()
@@ -1682,10 +1689,8 @@ fn status_contract_a_model_line_reports_identity_and_busy_idle() {
     );
 
     state.phase = UiPhase::Busy;
-    let busy_lines = crate::agent::ui::tui::runtime::status_lines_for_test(
-        &state,
-        "openai/gpt-4o-mini",
-    );
+    let busy_lines =
+        crate::agent::ui::tui::runtime::status_lines_for_test(&state, "openai/gpt-4o-mini");
     assert!(
         busy_lines
             .iter()
@@ -1697,10 +1702,7 @@ fn status_contract_a_model_line_reports_identity_and_busy_idle() {
 fn status_contract_b_excludes_input_mode_backend_poll_and_hint_lines() {
     let state = AppState::new();
 
-    let lines = crate::agent::ui::tui::runtime::status_lines_for_test(
-        &state,
-        "openai/gpt-4o-mini",
-    );
+    let lines = crate::agent::ui::tui::runtime::status_lines_for_test(&state, "openai/gpt-4o-mini");
     assert!(!lines.iter().any(|line| line.starts_with("Input mode:")));
     assert!(!lines.iter().any(|line| line.starts_with("Input backend:")));
     assert!(!lines.iter().any(|line| line.starts_with("Input poll:")));
@@ -1726,10 +1728,7 @@ fn status_contract_c_mcp_counts_include_configured_enabled_disabled_failed() {
         },
     ]);
 
-    let lines = crate::agent::ui::tui::runtime::status_lines_for_test(
-        &state,
-        "openai/gpt-4o-mini",
-    );
+    let lines = crate::agent::ui::tui::runtime::status_lines_for_test(&state, "openai/gpt-4o-mini");
     assert!(
         lines
             .iter()
@@ -1742,17 +1741,12 @@ fn status_contract_d_visible_mcp_tool_count_uses_runtime_truth_and_updates() {
     let mut state = AppState::new();
     state.set_llm_visible_mcp_tool_count(5);
 
-    let before = crate::agent::ui::tui::runtime::status_lines_for_test(
-        &state,
-        "openai/gpt-4o-mini",
-    );
+    let before =
+        crate::agent::ui::tui::runtime::status_lines_for_test(&state, "openai/gpt-4o-mini");
     assert!(before.iter().any(|line| line == "LLM-visible MCP tools: 5"));
 
     state.set_llm_visible_mcp_tool_count(2);
-    let after = crate::agent::ui::tui::runtime::status_lines_for_test(
-        &state,
-        "openai/gpt-4o-mini",
-    );
+    let after = crate::agent::ui::tui::runtime::status_lines_for_test(&state, "openai/gpt-4o-mini");
     assert!(after.iter().any(|line| line == "LLM-visible MCP tools: 2"));
 }
 
@@ -1780,10 +1774,8 @@ fn status_contract_e_failures_show_names_and_reasons_and_healthy_none_when_clear
         None
     ));
 
-    let failed_lines = crate::agent::ui::tui::runtime::status_lines_for_test(
-        &state,
-        "openai/gpt-4o-mini",
-    );
+    let failed_lines =
+        crate::agent::ui::tui::runtime::status_lines_for_test(&state, "openai/gpt-4o-mini");
     let failed_rendered = failed_lines.join("\n");
     assert!(failed_rendered.contains("Failures: gh (timeout), k8s"));
 
@@ -1797,10 +1789,8 @@ fn status_contract_e_failures_show_names_and_reasons_and_healthy_none_when_clear
         McpServerUsabilityState::Enabled,
         None
     ));
-    let healthy_lines = crate::agent::ui::tui::runtime::status_lines_for_test(
-        &state,
-        "openai/gpt-4o-mini",
-    );
+    let healthy_lines =
+        crate::agent::ui::tui::runtime::status_lines_for_test(&state, "openai/gpt-4o-mini");
     assert!(
         healthy_lines
             .iter()
@@ -1862,10 +1852,8 @@ fn status_lines_include_stable_active_model_identity_line() {
             state: McpServerUsabilityState::Disabled,
         },
     ]);
-    let status_lines = crate::agent::ui::tui::runtime::status_lines_for_test(
-        &state,
-        "openai/gpt-4o-mini",
-    );
+    let status_lines =
+        crate::agent::ui::tui::runtime::status_lines_for_test(&state, "openai/gpt-4o-mini");
 
     assert!(
         status_lines
@@ -2050,10 +2038,7 @@ fn status_panel_exposes_model_and_mcp_backend_status_lines() {
         },
     ]);
 
-    let (title, lines) = status_panel_lines_for_test(
-        &state,
-        "openai/gpt-4o-mini",
-    );
+    let (title, lines) = status_panel_lines_for_test(&state, "openai/gpt-4o-mini");
     assert_eq!(title, "Status");
     let rendered = lines
         .iter()
@@ -2604,7 +2589,10 @@ fn command_palette_table_renders_required_columns_and_rows() {
         .iter()
         .map(|row| row[0].as_str())
         .collect::<Vec<_>>();
-    assert_eq!(actions, vec!["Help", "Status", "MCPs", "Skills", "Models"]);
+    assert_eq!(
+        actions,
+        vec!["Help", "Status", "MCPs", "Skills", "Models", "Agents"]
+    );
     assert!(model.rows.iter().all(|row| row[2].is_empty()));
     assert_eq!(model.selected, Some(0));
 }
@@ -2825,10 +2813,8 @@ fn status_lines_report_failed_state_count_when_present() {
         },
     ]);
 
-    let status_lines = crate::agent::ui::tui::runtime::status_lines_for_test(
-        &state,
-        "openai/gpt-4o-mini",
-    );
+    let status_lines =
+        crate::agent::ui::tui::runtime::status_lines_for_test(&state, "openai/gpt-4o-mini");
 
     assert!(
         status_lines
@@ -2840,10 +2826,8 @@ fn status_lines_report_failed_state_count_when_present() {
 #[test]
 fn status_lines_include_tokens_line_with_na_before_any_llm_end() {
     let state = AppState::new();
-    let status_lines = crate::agent::ui::tui::runtime::status_lines_for_test(
-        &state,
-        "openai/gpt-4o-mini",
-    );
+    let status_lines =
+        crate::agent::ui::tui::runtime::status_lines_for_test(&state, "openai/gpt-4o-mini");
 
     assert!(
         status_lines
@@ -2897,10 +2881,8 @@ fn compact_status_line_reports_lane_1_only() {
     state.latest_total_tokens = Some(7);
     state.session_total_tokens = 27;
 
-    let status_line = crate::agent::ui::tui::runtime::compact_status_line_for_test(
-        "openai/gpt-4o-mini",
-        None,
-    );
+    let status_line =
+        crate::agent::ui::tui::runtime::compact_status_line_for_test("openai/gpt-4o-mini", None);
 
     assert!(status_line.starts_with("○ openai/gpt-4o-mini"));
     assert!(!status_line.contains('|'));
@@ -2946,10 +2928,8 @@ fn footer_two_lane_contract_exposes_lane_1_and_lane_2_simultaneously() {
     state.latest_total_tokens = Some(250);
     state.set_context_window_max_tokens(Some(1000));
 
-    let lane_1 = crate::agent::ui::tui::runtime::compact_status_line_for_test(
-        "openai/gpt-4o-mini",
-        None,
-    );
+    let lane_1 =
+        crate::agent::ui::tui::runtime::compact_status_line_for_test("openai/gpt-4o-mini", None);
     let lane_2 = crate::agent::ui::tui::runtime::lane_2_status_line_for_test(&state, 120);
 
     assert!(lane_1.starts_with("○ openai/gpt-4o-mini"));
@@ -3523,7 +3503,10 @@ fn lane_1_idle_shows_empty_circle_prefix() {
 #[test]
 fn lane_1_busy_shows_spinner_prefix() {
     let line = crate::agent::ui::tui::runtime::status::compact_status_line_with_branch_for_test(
-        "mymodel", None, Some(0), 40,
+        "mymodel",
+        None,
+        Some(0),
+        40,
     );
     assert!(line.starts_with("◐ mymodel"));
 }
@@ -3531,7 +3514,10 @@ fn lane_1_busy_shows_spinner_prefix() {
 #[test]
 fn lane_1_prefix_does_not_exceed_available_width() {
     let line = crate::agent::ui::tui::runtime::status::compact_status_line_with_branch_for_test(
-        "abcdefghijklmnop", Some("branchname"), None, 40,
+        "abcdefghijklmnop",
+        Some("branchname"),
+        None,
+        40,
     );
     assert!(line.chars().count() <= 40);
     assert!(line.starts_with("○ "));
@@ -3674,10 +3660,8 @@ fn hydration_compaction_matches_live_rendering() {
 
     // Hydration path: UiMessageSnapshot with role "compaction"
     let mut hydrated = RuntimeCoordinator::new(120, 30, Some(true));
-    hydrated.hydrate_transcript_from_messages(vec![UiMessageSnapshot::new(
-        "compaction",
-        summary_body,
-    )]);
+    hydrated
+        .hydrate_transcript_from_messages(vec![UiMessageSnapshot::new("compaction", summary_body)]);
 
     let live_texts: Vec<String> = live
         .state()
@@ -3856,4 +3840,44 @@ fn drain_transport_single_assistant_message_not_affected() {
         .map(|line| line.text())
         .collect();
     assert_eq!(texts, vec!["solo"]);
+}
+
+#[test]
+fn lane_2_shows_agent_when_active() {
+    let mut state = AppState::new();
+    state.latest_total_tokens = Some(42_300);
+    state.set_context_window_max_tokens(Some(128_000));
+    state.set_active_agent_identity("coder");
+
+    let line = crate::agent::ui::tui::runtime::lane_2_status_line_for_test(&state, 60);
+
+    assert!(line.contains("coder"));       // name is present
+    assert!(!line.contains("agent:"));     // old prefix is gone
+    assert!(line.ends_with("42.3k (33%)"));
+}
+
+#[test]
+fn lane_2_shows_only_tokens_when_no_agent() {
+    let mut state = AppState::new();
+    state.latest_total_tokens = Some(250);
+    state.set_context_window_max_tokens(Some(1000));
+
+    let line = crate::agent::ui::tui::runtime::lane_2_status_line_for_test(&state, 40);
+
+    assert!(line.ends_with("250 (25%)"));
+    assert!(!line.contains("agent"));
+}
+
+#[test]
+fn lane_1_no_longer_shows_agent() {
+    let mut state = AppState::new();
+    state.set_active_agent_identity("coder");
+
+    let lane_1 =
+        crate::agent::ui::tui::runtime::compact_status_line_for_test("openai/gpt-4o-mini", None);
+
+    assert!(lane_1.starts_with("○ openai/gpt-4o-mini"));
+    assert!(!lane_1.contains("coder"));
+    assert!(!lane_1.contains("agent"));
+    assert!(!lane_1.contains('|'));
 }

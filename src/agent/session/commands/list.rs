@@ -35,13 +35,11 @@ impl SimplePluginCommand for AgentSessionList {
     }
 
     fn examples(&self) -> Vec<Example<'_>> {
-        vec![
-            Example {
-                description: "List all sessions",
-                example: "agent session list",
-                result: None,
-            },
-        ]
+        vec![Example {
+            description: "List all sessions",
+            example: "agent session list",
+            result: None,
+        }]
     }
 
     fn signature(&self) -> Signature {

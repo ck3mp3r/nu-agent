@@ -32,7 +32,7 @@ fn load_agents_chain_internal(
     stop_at: Option<&Path>,
 ) -> AgentsLoadResult {
     log::debug!("load_agents_chain: cwd={cwd:?}, config_dir={config_dir:?}");
-    
+
     let mut warnings = Vec::new();
     let mut merged_segments = Vec::new();
     let mut seen = HashSet::new();
@@ -49,7 +49,11 @@ fn load_agents_chain_internal(
 
         match fs::read_to_string(&candidate) {
             Ok(content) => {
-                log::debug!("load_agents_chain: loaded {:?} ({} bytes)", candidate, content.len());
+                log::debug!(
+                    "load_agents_chain: loaded {:?} ({} bytes)",
+                    candidate,
+                    content.len()
+                );
                 merged_segments.push(content);
             }
             Err(err) => warnings.push(format!("failed to read {}: {}", candidate.display(), err)),
@@ -62,7 +66,11 @@ fn load_agents_chain_internal(
         Some(merged_segments.join("\n"))
     };
 
-    log::debug!("load_agents_chain: segments={}, merged_len={:?}", merged_segments.len(), merged_chain.as_ref().map(|c| c.len()));
+    log::debug!(
+        "load_agents_chain: segments={}, merged_len={:?}",
+        merged_segments.len(),
+        merged_chain.as_ref().map(|c| c.len())
+    );
 
     AgentsLoadResult {
         merged_chain,
