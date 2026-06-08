@@ -35,6 +35,7 @@ fn make_tool_result_message(call_id: &str, result_text: &str) -> Message {
                 call_id: None,
                 content: OneOrMany::one(ToolResultContent::Text(Text {
                     text: result_text.to_string(),
+                    additional_params: None,
                 })),
             },
         )),

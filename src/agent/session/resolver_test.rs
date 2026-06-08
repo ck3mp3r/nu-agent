@@ -21,6 +21,7 @@ fn test_convert_user_text() {
     let messages = vec![Message::User {
         content: OneOrMany::one(UserContent::Text(Text {
             text: "Hello, world!".to_string(),
+            additional_params: None,
         })),
     }];
 
@@ -37,6 +38,7 @@ fn test_convert_assistant_text() {
         id: None,
         content: OneOrMany::one(AssistantContent::Text(Text {
             text: "I can help you with that.".to_string(),
+            additional_params: None,
         })),
     }];
 
@@ -97,6 +99,7 @@ fn test_tool_result_not_shown_in_hydrated_transcript() {
                 call_id: None,
                 content: OneOrMany::one(ToolResultContent::Text(Text {
                     text: "File contents here".to_string(),
+                    additional_params: None,
                 })),
             },
         )),
@@ -115,6 +118,7 @@ fn test_convert_mixed_assistant_content() {
         content: OneOrMany::many(vec![
             AssistantContent::Text(Text {
                 text: "Let me help you.".to_string(),
+                additional_params: None,
             }),
             AssistantContent::ToolCall(ToolCall {
                 id: "call_weather".to_string(),
@@ -150,12 +154,14 @@ fn test_convert_multiple_messages() {
         Message::User {
             content: OneOrMany::one(UserContent::Text(Text {
                 text: "What's the weather?".to_string(),
+                additional_params: None,
             })),
         },
         Message::Assistant {
             id: None,
             content: OneOrMany::one(AssistantContent::Text(Text {
                 text: "I'll check that for you.".to_string(),
+                additional_params: None,
             })),
         },
         Message::System {
@@ -177,6 +183,7 @@ fn test_empty_assistant_text_skipped() {
         id: None,
         content: OneOrMany::one(AssistantContent::Text(Text {
             text: "".to_string(),
+            additional_params: None,
         })),
     }];
 
@@ -264,12 +271,14 @@ fn hydrate_store_entries_includes_messages() {
         StoreEntry::Message(Message::User {
             content: OneOrMany::one(UserContent::Text(Text {
                 text: "Hello".to_string(),
+                additional_params: None,
             })),
         }),
         StoreEntry::Message(Message::Assistant {
             id: None,
             content: OneOrMany::one(AssistantContent::Text(Text {
                 text: "Hi there".to_string(),
+                additional_params: None,
             })),
         }),
     ];
@@ -289,6 +298,7 @@ fn hydrate_store_entries_includes_markers() {
         StoreEntry::Message(Message::User {
             content: OneOrMany::one(UserContent::Text(Text {
                 text: "Hello".to_string(),
+                additional_params: None,
             })),
         }),
         StoreEntry::Marker(CompactionMarker::new(
@@ -301,6 +311,7 @@ fn hydrate_store_entries_includes_markers() {
             id: None,
             content: OneOrMany::one(AssistantContent::Text(Text {
                 text: "Response after compaction".to_string(),
+                additional_params: None,
             })),
         }),
     ];
@@ -340,12 +351,14 @@ fn hydrate_store_entries_preserves_order() {
         StoreEntry::Message(Message::User {
             content: OneOrMany::one(UserContent::Text(Text {
                 text: "First".to_string(),
+                additional_params: None,
             })),
         }),
         StoreEntry::Message(Message::Assistant {
             id: None,
             content: OneOrMany::one(AssistantContent::Text(Text {
                 text: "Second".to_string(),
+                additional_params: None,
             })),
         }),
         StoreEntry::Marker(CompactionMarker::new(
@@ -357,6 +370,7 @@ fn hydrate_store_entries_preserves_order() {
         StoreEntry::Message(Message::User {
             content: OneOrMany::one(UserContent::Text(Text {
                 text: "Third".to_string(),
+                additional_params: None,
             })),
         }),
     ];

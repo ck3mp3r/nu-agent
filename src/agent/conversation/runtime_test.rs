@@ -725,6 +725,7 @@ fn clear_session_resets_memory() {
                 vec![rig::completion::Message::User {
                     content: OneOrMany::one(UserContent::Text(Text {
                         text: "hello".to_string(),
+                        additional_params: None,
                     })),
                 }],
             )
@@ -970,6 +971,90 @@ fn hydration_without_guard_causes_duplicates() {
     assert_eq!(
         count, 6,
         "Without guard, messages are duplicated (3 * 2 = 6)"
+    );
+}
+
+#[test]
+fn cancelled_turn_path_a_persists_to_store_and_memory() {
+    // Path A: rig hook cancelled — e.messages contains chat_history.
+    // Fix: both store and memory must receive the messages.
+    use rig::completion::Message;
+    use rig::memory::{ConversationMemory, InMemoryConversationMemory};
+
+    use crate::session::{ConversationStore, JsonlConversationStore};
+
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let memory = InMemoryConversationMemory::new();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
+
+    // Simulate Path A: TurnError.messages contains chat_history from rig
+    let cancelled_messages = vec![
+        Message::user("what is the weather?".to_string()),
+        Message::assistant("Let me check...".to_string()),
+    ];
+
+    // Persist to store (already done in production code)
+    store.append("s1", &cancelled_messages).unwrap();
+
+    // Persist to memory (the fix)
+    runtime
+        .block_on(memory.append("s1", cancelled_messages.clone()))
+        .unwrap();
+
+    // Verify store has the messages
+    let stored = store.load("s1").unwrap();
+    assert_eq!(stored.len(), 2, "Store must have 2 cancelled messages");
+
+    // Verify memory has the messages
+    let in_memory = runtime.block_on(memory.load("s1")).unwrap();
+    assert_eq!(
+        in_memory.len(),
+        2,
+        "Memory must have 2 cancelled messages (path A fix)"
+    );
+}
+
+#[test]
+fn cancelled_turn_path_b_persists_to_store_and_memory() {
+    // Path B: cancel_token fired — messages constructed from prompt + partial text.
+    // Fix: both store and memory must receive the constructed messages.
+    use rig::completion::Message;
+    use rig::memory::{ConversationMemory, InMemoryConversationMemory};
+
+    use crate::session::{ConversationStore, JsonlConversationStore};
+
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let memory = InMemoryConversationMemory::new();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
+
+    // Simulate Path B construction: user message + partial assistant text
+    let prompt = "explain quantum computing".to_string();
+    let partial_text = "Quantum computing uses qubits which".to_string();
+    let mut cancelled_messages = vec![Message::user(prompt)];
+    if !partial_text.is_empty() {
+        cancelled_messages.push(Message::assistant(partial_text));
+    }
+
+    // Persist to store (already done in production code)
+    store.append("s1", &cancelled_messages).unwrap();
+
+    // Persist to memory (the fix)
+    runtime
+        .block_on(memory.append("s1", cancelled_messages.clone()))
+        .unwrap();
+
+    // Verify store
+    let stored = store.load("s1").unwrap();
+    assert_eq!(stored.len(), 2, "Store must have user + partial assistant");
+
+    // Verify memory
+    let in_memory = runtime.block_on(memory.load("s1")).unwrap();
+    assert_eq!(
+        in_memory.len(),
+        2,
+        "Memory must have user + partial assistant (path B fix)"
     );
 }
 

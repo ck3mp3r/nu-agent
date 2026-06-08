@@ -4,6 +4,30 @@ use super::store::{
 use rig::completion::Message;
 use tempfile::TempDir;
 
+/// Compare two messages via their serialized JSON form.
+///
+/// rig 0.38+ uses `#[serde(flatten)]` on `Text::additional_params`.
+/// A round-trip through serde turns `None` into `Some(Object {})`,
+/// which breaks `PartialEq` even though the two forms are semantically
+/// identical. Serializing first normalizes both sides.
+fn assert_msg_eq(left: &Message, right: &Message) {
+    assert_eq!(
+        serde_json::to_value(left).unwrap(),
+        serde_json::to_value(right).unwrap(),
+    );
+}
+
+fn assert_msgs_eq(left: &[Message], right: &[Message]) {
+    assert_eq!(left.len(), right.len(), "message count mismatch");
+    for (i, (l, r)) in left.iter().zip(right.iter()).enumerate() {
+        assert_eq!(
+            serde_json::to_value(l).unwrap(),
+            serde_json::to_value(r).unwrap(),
+            "message {i} mismatch",
+        );
+    }
+}
+
 /// Mock implementation for testing the trait interface
 struct MockStore {
     _temp_dir: TempDir,
@@ -97,7 +121,7 @@ fn jsonl_store_round_trip() {
 
     // Verify they match
     assert_eq!(loaded.len(), messages.len());
-    assert_eq!(loaded, messages);
+    assert_msgs_eq(&loaded, &messages);
 }
 
 #[test]
@@ -124,10 +148,10 @@ fn jsonl_store_append_messages() {
     // Load and verify all messages are present
     let loaded = store.load("test-session").unwrap();
     assert_eq!(loaded.len(), 4);
-    assert_eq!(loaded[0], initial_messages[0]);
-    assert_eq!(loaded[1], initial_messages[1]);
-    assert_eq!(loaded[2], additional_messages[0]);
-    assert_eq!(loaded[3], additional_messages[1]);
+    assert_msg_eq(&loaded[0], &initial_messages[0]);
+    assert_msg_eq(&loaded[1], &initial_messages[1]);
+    assert_msg_eq(&loaded[2], &additional_messages[0]);
+    assert_msg_eq(&loaded[3], &additional_messages[1]);
 }
 
 #[test]
@@ -189,9 +213,9 @@ fn jsonl_store_handles_corrupt_lines() {
     // Load should skip corrupt line but return valid messages
     let loaded = store.load("test-session").unwrap();
     assert_eq!(loaded.len(), 3); // 2 original + 1 after corrupt line
-    assert_eq!(loaded[0], messages[0]);
-    assert_eq!(loaded[1], messages[1]);
-    assert_eq!(loaded[2], Message::user("Valid message 2"));
+    assert_msg_eq(&loaded[0], &messages[0]);
+    assert_msg_eq(&loaded[1], &messages[1]);
+    assert_msg_eq(&loaded[2], &Message::user("Valid message 2"));
 }
 
 #[test]
@@ -208,7 +232,7 @@ fn jsonl_store_append_creates_session_if_missing() {
     // Load and verify
     let loaded = store.load("new-session").unwrap();
     assert_eq!(loaded.len(), 1);
-    assert_eq!(loaded[0], messages[0]);
+    assert_msg_eq(&loaded[0], &messages[0]);
 }
 
 // --- CompactionMarker and StoreEntry tests ---

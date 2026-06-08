@@ -15,6 +15,7 @@ fn turn_result_can_be_constructed() {
             total_tokens: 15,
             cached_input_tokens: 0,
             cache_creation_input_tokens: 0,
+            tool_use_prompt_tokens: 0,
             reasoning_tokens: 0,
         },
         messages: None,
@@ -110,6 +111,7 @@ fn prompt_cancelled_error_is_detected_as_cancellation() {
         content: rig::one_or_many::OneOrMany::one(rig::completion::message::UserContent::Text(
             rig::completion::message::Text {
                 text: "Hello".to_string(),
+                additional_params: None,
             },
         )),
     };
@@ -166,6 +168,7 @@ fn max_turns_error_is_not_cancelled() {
             content: rig::one_or_many::OneOrMany::one(rig::completion::message::UserContent::Text(
                 rig::completion::message::Text {
                     text: "test".to_string(),
+                    additional_params: None,
                 },
             )),
         }),
@@ -302,6 +305,7 @@ fn streaming_turn_result_fields_match_turn_result() {
             total_tokens: 150,
             cached_input_tokens: 0,
             cache_creation_input_tokens: 0,
+            tool_use_prompt_tokens: 0,
             reasoning_tokens: 0,
         },
         messages: None,
@@ -354,6 +358,7 @@ fn turn_error_from_prompt_cancelled_captures_messages() {
         content: rig::one_or_many::OneOrMany::one(rig::completion::message::UserContent::Text(
             rig::completion::message::Text {
                 text: "What is Rust?".to_string(),
+                additional_params: None,
             },
         )),
     };
@@ -362,6 +367,7 @@ fn turn_error_from_prompt_cancelled_captures_messages() {
         content: rig::one_or_many::OneOrMany::one(
             rig::completion::message::AssistantContent::Text(rig::completion::message::Text {
                 text: "Rust is a systems programming...".to_string(),
+                additional_params: None,
             }),
         ),
     };
@@ -409,6 +415,7 @@ fn turn_error_from_streaming_prompt_cancelled_captures_messages() {
         content: rig::one_or_many::OneOrMany::one(rig::completion::message::UserContent::Text(
             rig::completion::message::Text {
                 text: "Tell me about async".to_string(),
+                additional_params: None,
             },
         )),
     };

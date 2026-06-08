@@ -42,6 +42,7 @@ mod test_support {
                 total_tokens: 225,
                 cached_input_tokens: 0,
                 cache_creation_input_tokens: 0,
+                tool_use_prompt_tokens: 0,
                 reasoning_tokens: 0,
             })
         }
@@ -182,6 +183,7 @@ async fn on_completion_call_emits_llm_start() {
     let msg = Message::User {
         content: OneOrMany::one(UserContent::Text(Text {
             text: "hi".to_string(),
+            additional_params: None,
         })),
     };
     let result = PromptHook::<DummyModel>::on_completion_call(&hook, &msg, &[]).await;
@@ -328,6 +330,7 @@ async fn on_stream_completion_response_finish_emits_usage() {
     let prompt = Message::User {
         content: OneOrMany::one(UserContent::Text(Text {
             text: "test prompt".to_string(),
+            additional_params: None,
         })),
     };
 
@@ -417,6 +420,7 @@ async fn on_stream_completion_response_finish_no_usage_no_event() {
     let prompt = Message::User {
         content: OneOrMany::one(UserContent::Text(Text {
             text: "test prompt".to_string(),
+            additional_params: None,
         })),
     };
 

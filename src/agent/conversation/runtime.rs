@@ -916,6 +916,15 @@ impl ConversationRuntime for AgentConversationRuntime {
                         log::warn!("Failed to persist cancelled turn messages: {}", persist_err);
                     }
                     self.memory_message_count += messages.len();
+                    if let Err(mem_err) =
+                        self.runtime
+                            .block_on(self.memory.append(session_id, messages.clone()))
+                    {
+                        log::warn!(
+                            "Failed to update in-memory context for cancelled turn (path A): {}",
+                            mem_err
+                        );
+                    }
                 }
                 // Return a minimal cancelled response (not an error)
                 let llm_response = crate::llm::LlmResponse {
@@ -963,6 +972,15 @@ impl ConversationRuntime for AgentConversationRuntime {
                 log::warn!("Failed to persist cancelled turn messages (path B): {}", e);
             }
             self.memory_message_count += cancelled_messages.len();
+            if let Err(e) =
+                self.runtime
+                    .block_on(self.memory.append(session_id, cancelled_messages.clone()))
+            {
+                log::warn!(
+                    "Failed to update in-memory context for cancelled turn (path B): {}",
+                    e
+                );
+            }
         }
 
         // Persist new messages to conversation store if session exists
