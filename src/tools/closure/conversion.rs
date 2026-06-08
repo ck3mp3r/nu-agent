@@ -18,24 +18,18 @@ impl EngineInterfaceLike for EngineInterface {
 
 /// Convert a Nushell closure to a rig-rs ToolDefinition with named parameters.
 ///
-/// Extracts parameter names from the closure's source code by parsing the parameter list.
-/// Supports both required and optional parameters (marked with `?`).
-pub fn closure_to_tool_definition<E: EngineInterfaceLike>(
+/// Takes pre-resolved parameters instead of extracting them from engine,
+/// avoiding the dead-context problem with cloned EngineInterface.
+pub fn closure_to_tool_definition(
     name: String,
-    closure: &Spanned<Closure>,
-    engine: &E,
+    params: &[ClosureParameter],
     description: Option<String>,
 ) -> ToolDefinition {
     let desc = description.unwrap_or_else(|| format!("Nushell closure tool: {}", name));
 
-    let source = match engine.get_span_contents(closure.span) {
-        Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
-        Err(_) => {
-            return fallback_tool_definition(name, desc);
-        }
-    };
-
-    let params = parse_closure_parameters(&source);
+    if params.is_empty() {
+        return fallback_tool_definition(name, desc);
+    }
 
     let mut properties = serde_json::Map::new();
     let mut required = Vec::new();
@@ -50,7 +44,7 @@ pub fn closure_to_tool_definition<E: EngineInterfaceLike>(
         );
 
         if param.is_required {
-            required.push(param.name);
+            required.push(param.name.clone());
         }
     }
 
@@ -81,7 +75,7 @@ fn fallback_tool_definition(name: String, description: String) -> ToolDefinition
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ClosureParameter {
     pub name: String,
     pub is_required: bool,
@@ -91,48 +85,66 @@ pub struct ClosureParameter {
 pub fn parse_closure_parameters(source: &str) -> Vec<ClosureParameter> {
     let source = source.trim();
 
-    if let Some(start) = source.find("{|")
-        && let Some(end_relative) = source[start + 2..].find('|')
-    {
-        let param_str = &source[start + 2..start + 2 + end_relative];
+    let after_brace = if let Some(pos) = source.find('{') {
+        source[pos + 1..].trim_start()
+    } else {
+        return vec![];
+    };
 
-        return param_str
-            .split(',')
-            .map(|p| p.trim())
-            .filter(|p| !p.is_empty())
-            .map(|p| {
-                if let Some(name) = p.strip_suffix('?') {
-                    ClosureParameter {
-                        name: name.trim().to_string(),
-                        is_required: false,
-                    }
-                } else {
-                    ClosureParameter {
-                        name: p.to_string(),
-                        is_required: true,
-                    }
+    let rest = if let Some(r) = after_brace.strip_prefix('|') {
+        r
+    } else {
+        return vec![];
+    };
+
+    let param_str = if let Some(end) = rest.find('|') {
+        &rest[..end]
+    } else {
+        return vec![];
+    };
+
+    param_str
+        .split(',')
+        .map(|p| p.trim())
+        .filter(|p| !p.is_empty())
+        .map(|p| {
+            let name_part = p.split(':').next().unwrap_or(p).trim();
+            if let Some(name) = name_part.strip_suffix('?') {
+                ClosureParameter {
+                    name: name.trim().to_string(),
+                    is_required: false,
                 }
-            })
-            .collect();
-    }
-
-    vec![]
+            } else {
+                ClosureParameter {
+                    name: name_part.to_string(),
+                    is_required: true,
+                }
+            }
+        })
+        .collect()
 }
 
-/// Extract parameter names from a closure using its source span.
-pub fn extract_parameter_names<E: EngineInterfaceLike>(
+/// Resolve closure parameters eagerly using the engine's span contents.
+///
+/// This must be called with the original EngineInterface before cloning,
+/// as cloned engines produce dead contexts where `get_span_contents` fails.
+pub fn resolve_closure_params<E: EngineInterfaceLike>(
     closure: &Spanned<Closure>,
     engine: &E,
-) -> Vec<String> {
+) -> Vec<ClosureParameter> {
     match engine.get_span_contents(closure.span) {
         Ok(bytes) => {
-            let source = String::from_utf8_lossy(&bytes);
+            let source = String::from_utf8_lossy(&bytes).to_string();
             parse_closure_parameters(&source)
-                .into_iter()
-                .map(|p| p.name)
-                .collect()
         }
-        Err(_) => vec![],
+        Err(e) => {
+            log::warn!(
+                "Failed to extract closure source for parameter resolution: {}. \
+                 Tool will have no parameters.",
+                e
+            );
+            vec![]
+        }
     }
 }
 

@@ -78,7 +78,7 @@ fn create_test_closure() -> Spanned<Closure> {
 #[test]
 fn resolve_tool_source_returns_closure_for_known_closure_tool() {
     let mut closure_registry = ClosureRegistry::new();
-    closure_registry.register("run".to_string(), create_test_closure());
+    closure_registry.register("run".to_string(), crate::tools::closure::ResolvedClosure { closure: create_test_closure(), params: vec![] });
 
     let mcp_registry = McpToolRegistry::from_names::<[&str; 0], &str>([]);
 
@@ -107,7 +107,7 @@ fn resolve_tool_source_returns_unknown_for_unregistered_tool() {
 #[test]
 fn resolve_tool_source_prefers_closure_over_mcp() {
     let mut closure_registry = ClosureRegistry::new();
-    closure_registry.register("ambiguous".to_string(), create_test_closure());
+    closure_registry.register("ambiguous".to_string(), crate::tools::closure::ResolvedClosure { closure: create_test_closure(), params: vec![] });
 
     let mcp_registry = McpToolRegistry::from_names(["ambiguous"]);
 
@@ -173,7 +173,7 @@ fn resolve_tool_source_returns_builtin_for_skill() {
 #[test]
 fn resolve_tool_source_prefers_closure_over_builtin() {
     let mut closure_registry = ClosureRegistry::new();
-    closure_registry.register("read".to_string(), create_test_closure());
+    closure_registry.register("read".to_string(), crate::tools::closure::ResolvedClosure { closure: create_test_closure(), params: vec![] });
 
     let mcp_registry = McpToolRegistry::from_names::<[&str; 0], &str>([]);
 

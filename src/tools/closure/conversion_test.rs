@@ -1,4 +1,4 @@
-use super::{EngineInterfaceLike, closure_to_tool_definition};
+use super::{ClosureParameter, EngineInterfaceLike, closure_to_tool_definition, resolve_closure_params};
 use nu_protocol::{BlockId, Span, Spanned, engine::Closure};
 use serde_json::json;
 
@@ -14,22 +14,11 @@ impl EngineInterfaceLike for MockEngine {
 
 #[test]
 fn converts_closure_with_no_parameters() {
-    let closure = Spanned {
-        item: Closure {
-            block_id: BlockId::new(0),
-            captures: vec![],
-        },
-        span: Span::new(0, 7),
-    };
-
-    let engine = MockEngine {
-        source: "{|| 42}".to_string(),
-    };
+    let params = super::parse_closure_parameters("{|| 42}");
 
     let tool_def = closure_to_tool_definition(
         "constant".to_string(),
-        &closure,
-        &engine,
+        &params,
         Some("Returns 42".to_string()),
     );
 
@@ -48,22 +37,11 @@ fn converts_closure_with_no_parameters() {
 
 #[test]
 fn converts_closure_with_one_parameter() {
-    let closure = Spanned {
-        item: Closure {
-            block_id: BlockId::new(0),
-            captures: vec![],
-        },
-        span: Span::new(0, 12),
-    };
-
-    let engine = MockEngine {
-        source: "{|x| $x * 2}".to_string(),
-    };
+    let params = super::parse_closure_parameters("{|x| $x * 2}");
 
     let tool_def = closure_to_tool_definition(
         "double".to_string(),
-        &closure,
-        &engine,
+        &params,
         Some("Double a number".to_string()),
     );
 
@@ -80,22 +58,11 @@ fn converts_closure_with_one_parameter() {
 
 #[test]
 fn converts_closure_with_two_parameters() {
-    let closure = Spanned {
-        item: Closure {
-            block_id: BlockId::new(0),
-            captures: vec![],
-        },
-        span: Span::new(0, 16),
-    };
-
-    let engine = MockEngine {
-        source: "{|x, y| $x + $y}".to_string(),
-    };
+    let params = super::parse_closure_parameters("{|x, y| $x + $y}");
 
     let tool_def = closure_to_tool_definition(
         "add".to_string(),
-        &closure,
-        &engine,
+        &params,
         Some("Add two numbers".to_string()),
     );
 
@@ -117,19 +84,9 @@ fn converts_closure_with_two_parameters() {
 
 #[test]
 fn converts_closure_with_optional_parameter() {
-    let closure = Spanned {
-        item: Closure {
-            block_id: BlockId::new(0),
-            captures: vec![],
-        },
-        span: Span::new(0, 20),
-    };
+    let params = super::parse_closure_parameters("{|x, y?| $x + ($y | default 0)}");
 
-    let engine = MockEngine {
-        source: "{|x, y?| $x + ($y | default 0)}".to_string(),
-    };
-
-    let tool_def = closure_to_tool_definition("add_optional".to_string(), &closure, &engine, None);
+    let tool_def = closure_to_tool_definition("add_optional".to_string(), &params, None);
 
     let schema = tool_def.parameters;
     let properties = schema.get("properties").expect("Should have properties");
@@ -147,19 +104,9 @@ fn converts_closure_with_optional_parameter() {
 
 #[test]
 fn uses_default_description_when_none_provided() {
-    let closure = Spanned {
-        item: Closure {
-            block_id: BlockId::new(1),
-            captures: vec![],
-        },
-        span: Span::new(0, 10),
-    };
+    let params = super::parse_closure_parameters("{|x| $x}");
 
-    let engine = MockEngine {
-        source: "{|x| $x}".to_string(),
-    };
-
-    let tool_def = closure_to_tool_definition("identity".to_string(), &closure, &engine, None);
+    let tool_def = closure_to_tool_definition("identity".to_string(), &params, None);
 
     assert_eq!(tool_def.name, "identity");
     assert!(tool_def.description.starts_with("Nushell closure tool:"));
@@ -236,4 +183,108 @@ fn handles_whitespace() {
             },
         ]
     );
+}
+
+#[test]
+fn parses_spaced_opening() {
+    let params = super::parse_closure_parameters("{ |x, y| $x + $y }");
+    assert_eq!(params.len(), 2);
+    assert_eq!(
+        params[0],
+        super::ClosureParameter {
+            name: "x".to_string(),
+            is_required: true
+        }
+    );
+    assert_eq!(
+        params[1],
+        super::ClosureParameter {
+            name: "y".to_string(),
+            is_required: true
+        }
+    );
+}
+
+#[test]
+fn parses_typed_param() {
+    let params = super::parse_closure_parameters("{|city_name: string| $city_name}");
+    assert_eq!(params.len(), 1);
+    assert_eq!(
+        params[0],
+        super::ClosureParameter {
+            name: "city_name".to_string(),
+            is_required: true
+        }
+    );
+}
+
+#[test]
+fn parses_optional_typed_param() {
+    let params = super::parse_closure_parameters("{|city_name?: string| $city_name}");
+    assert_eq!(params.len(), 1);
+    assert_eq!(
+        params[0],
+        super::ClosureParameter {
+            name: "city_name".to_string(),
+            is_required: false
+        }
+    );
+}
+
+#[test]
+fn parses_typed_spaced() {
+    let params = super::parse_closure_parameters("{ |city_name: string| $city_name }");
+    assert_eq!(params.len(), 1);
+    assert_eq!(
+        params[0],
+        super::ClosureParameter {
+            name: "city_name".to_string(),
+            is_required: true
+        }
+    );
+}
+
+fn create_test_closure() -> Spanned<Closure> {
+    Spanned {
+        item: Closure {
+            block_id: BlockId::new(0),
+            captures: vec![],
+        },
+        span: Span::unknown(),
+    }
+}
+
+#[test]
+fn closure_to_tool_definition_takes_params_not_engine() {
+    let params = vec![
+        ClosureParameter { name: "city".to_string(), is_required: true },
+        ClosureParameter { name: "unit".to_string(), is_required: false },
+    ];
+    let def = closure_to_tool_definition("weather".to_string(), &params, None);
+    let schema: serde_json::Value = serde_json::from_str(&def.parameters.to_string()).unwrap();
+    assert!(schema["properties"]["city"].is_object());
+    assert!(schema["required"].as_array().unwrap().contains(&serde_json::json!("city")));
+    assert!(!schema["required"].as_array().unwrap().contains(&serde_json::json!("unit")));
+}
+
+#[test]
+fn resolve_closure_params_returns_empty_on_engine_error() {
+    struct FailingEngine;
+    impl EngineInterfaceLike for FailingEngine {
+        fn get_span_contents(&self, _span: Span) -> Result<Vec<u8>, String> {
+            Err("no active call context".to_string())
+        }
+    }
+    let closure = create_test_closure();
+    let params = resolve_closure_params(&closure, &FailingEngine);
+    assert!(params.is_empty());
+}
+
+#[test]
+fn resolve_closure_params_extracts_from_source() {
+    let engine = MockEngine { source: "{|city_name: string| $city_name}".to_string() };
+    let closure = create_test_closure();
+    let params = resolve_closure_params(&closure, &engine);
+    assert_eq!(params.len(), 1);
+    assert_eq!(params[0].name, "city_name");
 }

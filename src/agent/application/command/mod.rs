@@ -925,8 +925,12 @@ Compaction flags:
         // Extract tools from --tools flag and build ClosureRegistry
         let tools_map = extract_tools_from_call(call)?;
         let mut closure_registry = crate::tools::closure::ClosureRegistry::new();
-        for (name, closure) in &tools_map {
-            closure_registry.register(name.clone(), closure.clone());
+        for (name, closure) in tools_map {
+            let params = crate::tools::closure::resolve_closure_params(&closure, engine);
+            closure_registry.register(
+                name,
+                crate::tools::closure::ResolvedClosure { closure, params },
+            );
         }
 
         // Extract optional tool name patterns.
@@ -1134,10 +1138,16 @@ Compaction flags:
             })?;
 
         // Convert closures to tool definitions for LLM
-        use crate::tools::closure::closure_to_tool_definition;
-        let mut tool_definitions: Vec<rig::completion::ToolDefinition> = tools_map
-            .iter()
-            .map(|(name, closure)| closure_to_tool_definition(name.clone(), closure, engine, None))
+        let mut tool_definitions: Vec<rig::completion::ToolDefinition> = closure_registry
+            .names()
+            .map(|name| {
+                let resolved = closure_registry.get(name).unwrap();
+                crate::tools::closure::closure_to_tool_definition(
+                    name.clone(),
+                    &resolved.params,
+                    None,
+                )
+            })
             .collect();
 
         tool_definitions.extend(builtin_tool_definitions());

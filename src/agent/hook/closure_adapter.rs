@@ -1,11 +1,11 @@
-use nu_protocol::{Span, Spanned, Value, engine::Closure};
+use nu_protocol::{Span, Value};
 use rig::completion::ToolDefinition;
 use rig::tool::{ToolDyn, ToolError};
 use rig::wasm_compat::WasmBoxedFuture;
 use std::sync::Arc;
 
 use crate::agent::tools::handler::{json_to_nu_value, nu_value_to_json};
-use crate::tools::closure::ClosureRegistry;
+use crate::tools::closure::{ClosureRegistry, ResolvedClosure};
 use crate::tools::executor::ToolExecutor;
 
 /// Error type for closure execution failures.
@@ -31,7 +31,7 @@ enum ClosureExecError {
 pub struct ClosureToolAdapter {
     name: String,
     definition: ToolDefinition,
-    closure: Spanned<Closure>,
+    resolved: ResolvedClosure,
     executor: Arc<ToolExecutor>,
     span: Span,
 }
@@ -42,27 +42,25 @@ impl ClosureToolAdapter {
     /// # Arguments
     ///
     /// * `name` - The tool name to expose to rig
-    /// * `closure` - The Nushell closure to execute
+    /// * `resolved` - The resolved closure with pre-extracted parameters
     /// * `executor` - The ToolExecutor for running the closure
     /// * `span` - Span for error reporting
     pub fn new(
         name: String,
-        closure: Spanned<Closure>,
+        resolved: ResolvedClosure,
         executor: Arc<ToolExecutor>,
         span: Span,
     ) -> Self {
-        let engine = executor.engine();
-        let definition = crate::tools::closure::conversion::closure_to_tool_definition(
+        let definition = crate::tools::closure::closure_to_tool_definition(
             name.clone(),
-            &closure,
-            engine,
+            &resolved.params,
             None,
         );
 
         Self {
             name,
             definition,
-            closure,
+            resolved,
             executor,
             span,
         }
@@ -97,10 +95,9 @@ impl ToolDyn for ClosureToolAdapter {
 
             // Extract ordered positional arguments from the record
             let positional_args = if let Value::Record { val, .. } = &args_nu_value {
-                // Get parameter names from closure
-                use crate::tools::closure::extract_parameter_names;
-                let engine = self.executor.engine();
-                let param_names = extract_parameter_names(&self.closure, engine);
+                // Use pre-resolved parameter names from the closure
+                let param_names: Vec<&str> =
+                    self.resolved.params.iter().map(|p| p.name.as_str()).collect();
 
                 // Build positional args in the order expected by the closure
                 param_names
@@ -118,7 +115,7 @@ impl ToolDyn for ClosureToolAdapter {
             // Execute the closure via ToolExecutor
             let result = self
                 .executor
-                .invoke_closure(&self.closure, positional_args, self.span)
+                .invoke_closure(&self.resolved.closure, positional_args, self.span)
                 .await
                 .map_err(|e| {
                     ToolError::ToolCallError(Box::new(ClosureExecError::Execution(format!("{e}"))))
@@ -164,8 +161,8 @@ pub fn adapt_closures(
     registry
         .names()
         .map(|name| {
-            let closure = registry.get(name).unwrap().clone();
-            ClosureToolAdapter::new(name.clone(), closure, executor.clone(), span)
+            let resolved = registry.get(name).unwrap().clone();
+            ClosureToolAdapter::new(name.clone(), resolved, executor.clone(), span)
         })
         .collect()
 }

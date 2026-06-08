@@ -1,9 +1,9 @@
-use nu_protocol::{Spanned, engine::Closure};
+use super::ResolvedClosure;
 use std::collections::HashMap;
 
 /// Registry for storing and managing tool closures.
 pub struct ClosureRegistry {
-    closures: HashMap<String, Spanned<Closure>>,
+    closures: HashMap<String, ResolvedClosure>,
 }
 
 impl Default for ClosureRegistry {
@@ -19,11 +19,11 @@ impl ClosureRegistry {
         }
     }
 
-    pub fn register(&mut self, name: String, closure: Spanned<Closure>) {
-        self.closures.insert(name, closure);
+    pub fn register(&mut self, name: String, resolved: ResolvedClosure) {
+        self.closures.insert(name, resolved);
     }
 
-    pub fn get(&self, name: &str) -> Option<&Spanned<Closure>> {
+    pub fn get(&self, name: &str) -> Option<&ResolvedClosure> {
         self.closures.get(name)
     }
 
