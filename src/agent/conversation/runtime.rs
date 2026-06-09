@@ -105,9 +105,19 @@ pub(crate) fn apply_tool_filter(
 ///
 /// Connect timeout: 10s — fail fast if host is unreachable.
 /// No request timeout — LLM streaming responses can take arbitrarily long.
+/// Uses bundled Mozilla root certificates (webpki-roots) so the binary
+/// works in environments without system CA certs (Nix sandbox, containers).
 fn build_http_client() -> reqwest::Client {
+    let mut root_store = rustls::RootCertStore::empty();
+    root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+
+    let tls_config = rustls::ClientConfig::builder()
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
+        .use_preconfigured_tls(tls_config)
         .build()
         .expect("failed to build HTTP client")
 }
@@ -141,8 +151,7 @@ fn build_copilot_client(config: &Config) -> Result<rig::providers::copilot::Clie
 
     // 1. Explicit api_key from --api-key flag or plugin config
     if let Some(key) = &config.api_key {
-        let mut b = rig::providers::copilot::Client::builder()
-            .http_client(build_http_client());
+        let mut b = rig::providers::copilot::Client::builder().http_client(build_http_client());
         if let Some(url) = &base_url {
             b = b.base_url(url.clone());
         }
@@ -157,8 +166,7 @@ fn build_copilot_client(config: &Config) -> Result<rig::providers::copilot::Clie
         std::env::var("GITHUB_COPILOT_API_KEY").or_else(|_| std::env::var("COPILOT_API_KEY"))
         && !key.trim().is_empty()
     {
-        let mut b = rig::providers::copilot::Client::builder()
-            .http_client(build_http_client());
+        let mut b = rig::providers::copilot::Client::builder().http_client(build_http_client());
         if let Some(url) = &base_url {
             b = b.base_url(url.clone());
         }
@@ -173,8 +181,7 @@ fn build_copilot_client(config: &Config) -> Result<rig::providers::copilot::Clie
         std::env::var("COPILOT_GITHUB_ACCESS_TOKEN").or_else(|_| std::env::var("GITHUB_TOKEN"))
         && !token.trim().is_empty()
     {
-        let mut b = rig::providers::copilot::Client::builder()
-            .http_client(build_http_client());
+        let mut b = rig::providers::copilot::Client::builder().http_client(build_http_client());
         if let Some(url) = &base_url {
             b = b.base_url(url.clone());
         }
@@ -191,8 +198,7 @@ fn build_copilot_client(config: &Config) -> Result<rig::providers::copilot::Clie
         && let Ok(token) = std::fs::read_to_string(path)
         && !token.trim().is_empty()
     {
-        let mut b = rig::providers::copilot::Client::builder()
-            .http_client(build_http_client());
+        let mut b = rig::providers::copilot::Client::builder().http_client(build_http_client());
         if let Some(url) = &base_url {
             b = b.base_url(url.clone());
         }
@@ -229,8 +235,8 @@ fn build_openai_client(config: &Config) -> Result<rig::providers::openai::Client
     };
 
     if let Some(key) = &config.api_key {
-        let mut builder = rig::providers::openai::Client::builder()
-            .http_client(build_http_client());
+        let mut builder =
+            rig::providers::openai::Client::builder().http_client(build_http_client());
         if let Some(url) = &config.base_url {
             builder = builder.base_url(url.clone());
         }
@@ -263,8 +269,8 @@ fn build_anthropic_client(
     };
 
     if let Some(key) = &config.api_key {
-        let mut builder = rig::providers::anthropic::Client::builder()
-            .http_client(build_http_client());
+        let mut builder =
+            rig::providers::anthropic::Client::builder().http_client(build_http_client());
         if let Some(url) = &config.base_url {
             builder = builder.base_url(url.clone());
         }
@@ -916,9 +922,9 @@ impl ConversationRuntime for AgentConversationRuntime {
                         log::warn!("Failed to persist cancelled turn messages: {}", persist_err);
                     }
                     self.memory_message_count += messages.len();
-                    if let Err(mem_err) =
-                        self.runtime
-                            .block_on(self.memory.append(session_id, messages.clone()))
+                    if let Err(mem_err) = self
+                        .runtime
+                        .block_on(self.memory.append(session_id, messages.clone()))
                     {
                         log::warn!(
                             "Failed to update in-memory context for cancelled turn (path A): {}",
@@ -972,9 +978,9 @@ impl ConversationRuntime for AgentConversationRuntime {
                 log::warn!("Failed to persist cancelled turn messages (path B): {}", e);
             }
             self.memory_message_count += cancelled_messages.len();
-            if let Err(e) =
-                self.runtime
-                    .block_on(self.memory.append(session_id, cancelled_messages.clone()))
+            if let Err(e) = self
+                .runtime
+                .block_on(self.memory.append(session_id, cancelled_messages.clone()))
             {
                 log::warn!(
                     "Failed to update in-memory context for cancelled turn (path B): {}",
@@ -1145,13 +1151,13 @@ impl AgentConversationRuntime {
             return Ok(());
         }
         let provider_key = self.config.provider.as_str();
-        let provider_type = resolve_provider_type(
-            provider_key,
-            self.config.provider_impl.as_deref(),
-        );
+        let provider_type =
+            resolve_provider_type(provider_key, self.config.provider_impl.as_deref());
         log::info!(
             "creating {} client (type={}) for model={}",
-            provider_key, provider_type, self.config.model
+            provider_key,
+            provider_type,
+            self.config.model
         );
         let client = match provider_type {
             "copilot" | "github-copilot" | "github_copilot" => {
@@ -1161,16 +1167,14 @@ impl AgentConversationRuntime {
             "anthropic" => CachedProviderClient::Anthropic(build_anthropic_client(&self.config)?),
             "ollama" => CachedProviderClient::Ollama(build_ollama_client(&self.config)?),
             other => {
-                return Err(
-                    LabeledError::new(format!(
-                        "Unsupported provider: '{}' (from config key '{}')",
-                        other, provider_key
-                    ))
-                    .with_help(
-                        "Supported: copilot, openai, anthropic, ollama. \
-                         Set 'provider' field in provider config to map custom names."
-                    ),
-                );
+                return Err(LabeledError::new(format!(
+                    "Unsupported provider: '{}' (from config key '{}')",
+                    other, provider_key
+                ))
+                .with_help(
+                    "Supported: copilot, openai, anthropic, ollama. \
+                         Set 'provider' field in provider config to map custom names.",
+                ));
             }
         };
         self.cached_client = Some(client);

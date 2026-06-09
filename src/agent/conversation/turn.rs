@@ -175,7 +175,10 @@ where
     // Build the prompt message
     let user_message = rig::completion::Message::User {
         content: rig::one_or_many::OneOrMany::one(rig::completion::message::UserContent::Text(
-            rig::completion::message::Text { text: ctx.prompt, additional_params: None },
+            rig::completion::message::Text {
+                text: ctx.prompt,
+                additional_params: None,
+            },
         )),
     };
 

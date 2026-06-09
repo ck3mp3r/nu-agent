@@ -51,11 +51,8 @@ impl ClosureToolAdapter {
         executor: Arc<ToolExecutor>,
         span: Span,
     ) -> Self {
-        let definition = crate::tools::closure::closure_to_tool_definition(
-            name.clone(),
-            &resolved.params,
-            None,
-        );
+        let definition =
+            crate::tools::closure::closure_to_tool_definition(name.clone(), &resolved.params, None);
 
         Self {
             name,
@@ -96,8 +93,12 @@ impl ToolDyn for ClosureToolAdapter {
             // Extract ordered positional arguments from the record
             let positional_args = if let Value::Record { val, .. } = &args_nu_value {
                 // Use pre-resolved parameter names from the closure
-                let param_names: Vec<&str> =
-                    self.resolved.params.iter().map(|p| p.name.as_str()).collect();
+                let param_names: Vec<&str> = self
+                    .resolved
+                    .params
+                    .iter()
+                    .map(|p| p.name.as_str())
+                    .collect();
 
                 // Build positional args in the order expected by the closure
                 param_names

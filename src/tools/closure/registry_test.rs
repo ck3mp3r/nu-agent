@@ -85,7 +85,10 @@ fn register_stores_resolved_closure_with_params() {
     let mut reg = ClosureRegistry::new();
     let resolved = ResolvedClosure {
         closure: create_test_closure(),
-        params: vec![ClosureParameter { name: "x".to_string(), is_required: true }],
+        params: vec![ClosureParameter {
+            name: "x".to_string(),
+            is_required: true,
+        }],
     };
     reg.register("tool".to_string(), resolved);
     let got = reg.get("tool").unwrap();

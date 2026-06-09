@@ -41,7 +41,7 @@ use crate::agent::ui::{
             cancel::CancelController,
             dispatch::dispatch_terminal_event,
             input::{TerminalEvent, TerminalKey},
-            reducer::{ReducerInput, reduce_with_cancel_controller},
+            reducer::{ReducerInput, append_direct_tool_display, reduce_with_cancel_controller},
         },
         platform::{
             safety::{RestoreRunError, run_with_restore},
@@ -763,13 +763,18 @@ impl RuntimeCoordinator {
         &mut self,
         messages: impl IntoIterator<Item = UiMessageSnapshot>,
     ) {
-        for message in messages {
+        for mut message in messages {
             if let Some(usage) = message.usage() {
                 self.state.hydrate_usage(
                     usage.input_tokens(),
                     usage.output_tokens(),
                     usage.total_tokens(),
                 );
+            }
+            // Render tool display from hydrated ToolResult (if present)
+            if let Some(display) = message.take_tool_display() {
+                append_direct_tool_display(&mut self.state, display);
+                continue;
             }
             let role = match message.role() {
                 "user" => TranscriptRole::User,

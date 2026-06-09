@@ -424,7 +424,13 @@ fn driver_fills_tool_source_on_tool_start() {
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
     let mut closure_registry = ClosureRegistry::new();
-    closure_registry.register("run".to_string(), crate::tools::closure::ResolvedClosure { closure: create_test_closure(), params: vec![] });
+    closure_registry.register(
+        "run".to_string(),
+        crate::tools::closure::ResolvedClosure {
+            closure: create_test_closure(),
+            params: vec![],
+        },
+    );
     let mcp_registry = McpToolRegistry::from_names::<[&str; 0], &str>([]);
     let cancel_token = CancellationToken::new();
 

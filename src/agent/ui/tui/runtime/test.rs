@@ -3851,8 +3851,8 @@ fn lane_2_shows_agent_when_active() {
 
     let line = crate::agent::ui::tui::runtime::lane_2_status_line_for_test(&state, 60);
 
-    assert!(line.contains("coder"));       // name is present
-    assert!(!line.contains("agent:"));     // old prefix is gone
+    assert!(line.contains("coder")); // name is present
+    assert!(!line.contains("agent:")); // old prefix is gone
     assert!(line.ends_with("42.3k (33%)"));
 }
 

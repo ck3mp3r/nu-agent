@@ -492,7 +492,7 @@ fn handle_permission_requested(
     });
 }
 
-fn append_direct_tool_display(state: &mut AppState, display: ToolDisplay) {
+pub(crate) fn append_direct_tool_display(state: &mut AppState, display: ToolDisplay) {
     let suppress_title = should_suppress_redundant_edit_title(&display);
     let suppress_single_section_stats = suppress_title && display.sections.len() == 1;
 

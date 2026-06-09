@@ -1,4 +1,6 @@
-use super::{ClosureParameter, EngineInterfaceLike, closure_to_tool_definition, resolve_closure_params};
+use super::{
+    ClosureParameter, EngineInterfaceLike, closure_to_tool_definition, resolve_closure_params,
+};
 use nu_protocol::{BlockId, Span, Spanned, engine::Closure};
 use serde_json::json;
 
@@ -257,14 +259,30 @@ fn create_test_closure() -> Spanned<Closure> {
 #[test]
 fn closure_to_tool_definition_takes_params_not_engine() {
     let params = vec![
-        ClosureParameter { name: "city".to_string(), is_required: true },
-        ClosureParameter { name: "unit".to_string(), is_required: false },
+        ClosureParameter {
+            name: "city".to_string(),
+            is_required: true,
+        },
+        ClosureParameter {
+            name: "unit".to_string(),
+            is_required: false,
+        },
     ];
     let def = closure_to_tool_definition("weather".to_string(), &params, None);
     let schema: serde_json::Value = serde_json::from_str(&def.parameters.to_string()).unwrap();
     assert!(schema["properties"]["city"].is_object());
-    assert!(schema["required"].as_array().unwrap().contains(&serde_json::json!("city")));
-    assert!(!schema["required"].as_array().unwrap().contains(&serde_json::json!("unit")));
+    assert!(
+        schema["required"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("city"))
+    );
+    assert!(
+        !schema["required"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("unit"))
+    );
 }
 
 #[test]
@@ -282,7 +300,9 @@ fn resolve_closure_params_returns_empty_on_engine_error() {
 
 #[test]
 fn resolve_closure_params_extracts_from_source() {
-    let engine = MockEngine { source: "{|city_name: string| $city_name}".to_string() };
+    let engine = MockEngine {
+        source: "{|city_name: string| $city_name}".to_string(),
+    };
     let closure = create_test_closure();
     let params = resolve_closure_params(&closure, &engine);
     assert_eq!(params.len(), 1);

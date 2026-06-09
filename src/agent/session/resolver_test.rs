@@ -10,9 +10,10 @@ use serde_json::json;
 /// Helper function to convert rig messages to UI snapshots for testing.
 /// Delegates to the actual hydrate_single_message function in resolver.rs.
 fn convert_rig_messages_to_snapshots(messages: &[Message]) -> Vec<UiMessageSnapshot> {
+    let tool_names = std::collections::HashMap::new();
     messages
         .iter()
-        .flat_map(super::hydrate_single_message)
+        .flat_map(|m| super::hydrate_single_message(m, &tool_names))
         .collect()
 }
 
@@ -283,7 +284,7 @@ fn hydrate_store_entries_includes_messages() {
         }),
     ];
 
-    let snapshots: Vec<_> = super::hydrate_transcript_from_store_entries(&entries).collect();
+    let snapshots = super::hydrate_transcript_from_store_entries(&entries);
 
     assert_eq!(snapshots.len(), 2);
     assert_eq!(snapshots[0].role(), "user");
@@ -316,7 +317,7 @@ fn hydrate_store_entries_includes_markers() {
         }),
     ];
 
-    let snapshots: Vec<_> = super::hydrate_transcript_from_store_entries(&entries).collect();
+    let snapshots = super::hydrate_transcript_from_store_entries(&entries);
 
     assert_eq!(snapshots.len(), 3);
     assert_eq!(snapshots[0].role(), "user");
@@ -333,7 +334,7 @@ fn hydrate_store_entries_marker_format() {
         "SummarizeOldest",
     ))];
 
-    let snapshots: Vec<_> = super::hydrate_transcript_from_store_entries(&entries).collect();
+    let snapshots = super::hydrate_transcript_from_store_entries(&entries);
 
     assert_eq!(snapshots.len(), 1);
     assert_eq!(snapshots[0].role(), "compaction");
@@ -375,7 +376,7 @@ fn hydrate_store_entries_preserves_order() {
         }),
     ];
 
-    let snapshots: Vec<_> = super::hydrate_transcript_from_store_entries(&entries).collect();
+    let snapshots = super::hydrate_transcript_from_store_entries(&entries);
 
     assert_eq!(snapshots.len(), 4);
     assert_eq!(snapshots[0].role(), "user");
@@ -396,7 +397,7 @@ fn hydrate_store_entries_empty_summary_marker() {
         "SlidingWindow",
     ))];
 
-    let snapshots: Vec<_> = super::hydrate_transcript_from_store_entries(&entries).collect();
+    let snapshots = super::hydrate_transcript_from_store_entries(&entries);
 
     assert_eq!(snapshots.len(), 1);
     assert_eq!(snapshots[0].role(), "compaction");
@@ -406,4 +407,149 @@ fn hydrate_store_entries_empty_summary_marker() {
         content, "",
         "Empty summary should render as empty string, got: {content}"
     );
+}
+
+#[test]
+fn test_tool_result_edit_creates_display_snapshot() {
+    let entries = vec![
+        StoreEntry::Message(Message::Assistant {
+            id: None,
+            content: OneOrMany::one(AssistantContent::ToolCall(ToolCall {
+                id: "call_1".to_string(),
+                call_id: None,
+                signature: None,
+                additional_params: None,
+                function: ToolFunction {
+                    name: "edit".to_string(),
+                    arguments: json!({
+                        "filePath": "/tmp/test.rs",
+                        "oldString": "old code",
+                        "newString": "new code"
+                    }),
+                },
+            })),
+        }),
+        StoreEntry::Message(Message::User {
+            content: OneOrMany::one(UserContent::ToolResult(
+                rig::completion::message::ToolResult {
+                    id: "call_1".to_string(),
+                    call_id: None,
+                    content: OneOrMany::one(ToolResultContent::Text(Text {
+                        text: serde_json::to_string(&json!({
+                            "path": "/tmp/test.rs",
+                            "diff": "- old code\n+ new code",
+                            "stats": { "insertions": 1, "deletions": 1 }
+                        }))
+                        .unwrap(),
+                        additional_params: None,
+                    })),
+                },
+            )),
+        }),
+    ];
+
+    let snapshots = super::hydrate_transcript_from_store_entries(&entries);
+
+    assert_eq!(snapshots.len(), 2);
+    assert_eq!(snapshots[0].role(), "tool");
+
+    let display = snapshots[1].tool_display_ref();
+    assert!(
+        display.is_some(),
+        "Expected tool_display on second snapshot"
+    );
+    let display = display.unwrap();
+    assert_eq!(display.title, "edit /tmp/test.rs");
+    assert_eq!(display.sections.len(), 1);
+    assert_eq!(display.sections[0].language, "diff");
+}
+
+#[test]
+fn test_tool_result_non_json_gracefully_skipped() {
+    let entries = vec![
+        StoreEntry::Message(Message::Assistant {
+            id: None,
+            content: OneOrMany::one(AssistantContent::ToolCall(ToolCall {
+                id: "call_2".to_string(),
+                call_id: None,
+                signature: None,
+                additional_params: None,
+                function: ToolFunction {
+                    name: "read".to_string(),
+                    arguments: json!({"path": "/tmp/test.txt"}),
+                },
+            })),
+        }),
+        StoreEntry::Message(Message::User {
+            content: OneOrMany::one(UserContent::ToolResult(
+                rig::completion::message::ToolResult {
+                    id: "call_2".to_string(),
+                    call_id: None,
+                    content: OneOrMany::one(ToolResultContent::Text(Text {
+                        text: "plain text, not JSON".to_string(),
+                        additional_params: None,
+                    })),
+                },
+            )),
+        }),
+    ];
+
+    let snapshots = super::hydrate_transcript_from_store_entries(&entries);
+
+    // Only tool invocation snapshot, no display for non-JSON result
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].role(), "tool");
+}
+
+#[test]
+fn test_tool_result_with_explicit_display_key() {
+    let entries = vec![
+        StoreEntry::Message(Message::Assistant {
+            id: None,
+            content: OneOrMany::one(AssistantContent::ToolCall(ToolCall {
+                id: "call_3".to_string(),
+                call_id: None,
+                signature: None,
+                additional_params: None,
+                function: ToolFunction {
+                    name: "custom_tool".to_string(),
+                    arguments: json!({}),
+                },
+            })),
+        }),
+        StoreEntry::Message(Message::User {
+            content: OneOrMany::one(UserContent::ToolResult(
+                rig::completion::message::ToolResult {
+                    id: "call_3".to_string(),
+                    call_id: None,
+                    content: OneOrMany::one(ToolResultContent::Text(Text {
+                        text: serde_json::to_string(&json!({
+                            "display": {
+                                "title": "custom output",
+                                "sections": [{
+                                    "label": "output",
+                                    "language": "text",
+                                    "content": "some result"
+                                }]
+                            }
+                        }))
+                        .unwrap(),
+                        additional_params: None,
+                    })),
+                },
+            )),
+        }),
+    ];
+
+    let snapshots = super::hydrate_transcript_from_store_entries(&entries);
+
+    assert_eq!(snapshots.len(), 2);
+
+    let display = snapshots[1].tool_display_ref();
+    assert!(
+        display.is_some(),
+        "Expected tool_display on second snapshot"
+    );
+    let display = display.unwrap();
+    assert_eq!(display.title, "custom output");
 }

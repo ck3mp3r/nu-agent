@@ -5,7 +5,10 @@ use crate::session::{
     ConversationStore, JsonlConversationStore, Session, SessionStore, StoreEntry,
 };
 use rig::completion::Message;
-use rig::completion::message::{AssistantContent, UserContent};
+use rig::completion::message::{AssistantContent, ToolResultContent, UserContent};
+use std::collections::HashMap;
+
+use crate::agent::tools::handler::build_direct_tool_display;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SessionRequest {
@@ -66,7 +69,7 @@ impl SessionResolver for DefaultSessionResolver<'_> {
                         })?;
 
                         // Convert to UiMessageSnapshots for transcript display
-                        hydrate_transcript_from_store_entries(&entries).collect()
+                        hydrate_transcript_from_store_entries(&entries)
                     } else {
                         Vec::new()
                     };
@@ -136,15 +139,28 @@ pub(crate) fn resolve_session_request(use_tui: bool, session_id: Option<String>)
 ///
 /// # Returns
 /// Iterator of UiMessageSnapshot ready for transcript hydration
-fn hydrate_transcript_from_store_entries(
-    entries: &[StoreEntry],
-) -> impl Iterator<Item = UiMessageSnapshot> + '_ {
-    entries.iter().flat_map(|entry| match entry {
-        StoreEntry::Message(msg) => hydrate_single_message(msg),
-        StoreEntry::Marker(marker) => {
-            vec![UiMessageSnapshot::new("compaction", marker.summary.clone())]
+fn hydrate_transcript_from_store_entries(entries: &[StoreEntry]) -> Vec<UiMessageSnapshot> {
+    // Pass 1: collect call_id → tool_name from all ToolCalls
+    let mut tool_names: HashMap<String, String> = HashMap::new();
+    for entry in entries {
+        if let StoreEntry::Message(Message::Assistant { content, .. }) = entry {
+            for item in content.iter() {
+                if let AssistantContent::ToolCall(tc) = item {
+                    tool_names.insert(tc.id.clone(), tc.function.name.clone());
+                }
+            }
         }
-    })
+    }
+    // Pass 2: generate snapshots with tool display reconstruction
+    entries
+        .iter()
+        .flat_map(|entry| match entry {
+            StoreEntry::Message(msg) => hydrate_single_message(msg, &tool_names),
+            StoreEntry::Marker(marker) => {
+                vec![UiMessageSnapshot::new("compaction", marker.summary.clone())]
+            }
+        })
+        .collect()
 }
 
 /// Converts a single rig Message into UiMessageSnapshots.
@@ -155,7 +171,10 @@ fn hydrate_transcript_from_store_entries(
 /// - `Message::Assistant { content }` with `AssistantContent::Text` → assistant text
 /// - `Message::Assistant { content }` with `AssistantContent::ToolCall` → tool call display
 /// - `Message::System { content }` → system/compaction summary display
-fn hydrate_single_message(msg: &Message) -> Vec<UiMessageSnapshot> {
+fn hydrate_single_message(
+    msg: &Message,
+    tool_names: &HashMap<String, String>,
+) -> Vec<UiMessageSnapshot> {
     let mut snapshots = Vec::new();
 
     match msg {
@@ -165,10 +184,27 @@ fn hydrate_single_message(msg: &Message) -> Vec<UiMessageSnapshot> {
                     UserContent::Text(text) => {
                         snapshots.push(UiMessageSnapshot::new("user", text.text.clone()));
                     }
-                    UserContent::ToolResult(_) => {
-                        // Tool results are kept in memory/JSONL for the LLM,
-                        // but not shown in the hydrated TUI transcript.
-                        // Only the tool invocation line is displayed.
+                    UserContent::ToolResult(tr) => {
+                        if let Some(tool_name) = tool_names.get(&tr.id) {
+                            let result_text: String = tr
+                                .content
+                                .iter()
+                                .filter_map(|c| match c {
+                                    ToolResultContent::Text(t) => Some(t.text.as_str()),
+                                    _ => None,
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            if let Ok(json) =
+                                serde_json::from_str::<serde_json::Value>(&result_text)
+                                && let Some(display) = build_direct_tool_display(tool_name, &json)
+                            {
+                                snapshots.push(
+                                    UiMessageSnapshot::new("tool_display", String::new())
+                                        .with_tool_display(display),
+                                );
+                            }
+                        }
                     }
                     _ => {} // Image, etc. — skip
                 }

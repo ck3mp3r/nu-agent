@@ -58,9 +58,8 @@ fn test_builtin_content_has_valid_front_matter() {
     let maker_raw = parser
         .parse(BUILTIN_MAKER_CONTENT)
         .expect("maker content should parse");
-    let maker_parsed =
-        interpret_front_matter(maker_raw.front_matter.as_ref(), maker_raw.body)
-            .expect("maker front matter should be interpretable");
+    let maker_parsed = interpret_front_matter(maker_raw.front_matter.as_ref(), maker_raw.body)
+        .expect("maker front matter should be interpretable");
     assert!(
         maker_parsed.name.is_some(),
         "maker front matter must contain a name"

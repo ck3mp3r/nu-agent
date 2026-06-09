@@ -1337,7 +1337,10 @@ fn hydration_guard_still_prevents_duplicates() {
 
 #[test]
 fn resolve_provider_type_uses_explicit_field() {
-    assert_eq!(super::resolve_provider_type("ollama-remote", Some("ollama")), "ollama");
+    assert_eq!(
+        super::resolve_provider_type("ollama-remote", Some("ollama")),
+        "ollama"
+    );
 }
 
 #[test]
@@ -1347,7 +1350,10 @@ fn resolve_provider_type_falls_back_to_key() {
 
 #[test]
 fn resolve_provider_type_custom_key_with_known_impl() {
-    assert_eq!(super::resolve_provider_type("my-openai", Some("openai")), "openai");
+    assert_eq!(
+        super::resolve_provider_type("my-openai", Some("openai")),
+        "openai"
+    );
 }
 
 // ========================================================================

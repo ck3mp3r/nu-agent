@@ -2,7 +2,7 @@ use nu_protocol::{LabeledError, Span, Value};
 
 use crate::agent::protocol::{
     compaction::{CompactionTriggerDecision, CompactionTriggerSource},
-    event::{PermissionDecisionSubmission, UiEvent},
+    event::{PermissionDecisionSubmission, ToolDisplay, UiEvent},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +34,7 @@ pub(crate) struct UiMessageSnapshot {
     tool_arguments: Option<String>,
     tool_result: Option<String>,
     tool_success: Option<bool>,
+    tool_display: Option<ToolDisplay>,
     pub(crate) usage: Option<UiMessageUsageSnapshot>,
 }
 
@@ -52,6 +53,7 @@ impl UiMessageSnapshot {
             tool_arguments: None,
             tool_result: None,
             tool_success: None,
+            tool_display: None,
             usage: None,
         }
     }
@@ -65,6 +67,12 @@ impl UiMessageSnapshot {
         self.tool_arguments = arguments;
         self.tool_result = result;
         self.tool_success = success;
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn with_tool_display(mut self, display: ToolDisplay) -> Self {
+        self.tool_display = Some(display);
         self
     }
 
@@ -82,6 +90,16 @@ impl UiMessageSnapshot {
 
     pub fn tool_success(&self) -> Option<bool> {
         self.tool_success
+    }
+
+    #[allow(dead_code)]
+    pub fn take_tool_display(&mut self) -> Option<ToolDisplay> {
+        self.tool_display.take()
+    }
+
+    #[allow(dead_code)]
+    pub fn tool_display_ref(&self) -> Option<&ToolDisplay> {
+        self.tool_display.as_ref()
     }
 
     pub fn usage(&self) -> Option<UiMessageUsageSnapshot> {
