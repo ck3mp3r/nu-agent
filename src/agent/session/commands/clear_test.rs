@@ -22,7 +22,7 @@ fn test_agent_session_clear_deletes_existing_session() {
         .map(|i| Message::user(format!("Message {}", i)))
         .collect();
     conversation_store
-        .append("test-session", &messages, 0)
+        .append("test-session", &messages)
         .unwrap();
 
     // Verify session file exists

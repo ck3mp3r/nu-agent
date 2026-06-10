@@ -256,10 +256,8 @@ where
     fn hydrate_transcript_from_messages(
         &mut self,
         messages: impl IntoIterator<Item = UiMessageSnapshot>,
-        session_cumulative_tokens: Option<u64>,
     ) {
-        self.renderer
-            .hydrate_transcript_from_messages(messages, session_cumulative_tokens);
+        self.renderer.hydrate_transcript_from_messages(messages);
     }
 
     fn emit_batch(&mut self, events: &[UiEvent]) {

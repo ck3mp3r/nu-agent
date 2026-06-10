@@ -671,7 +671,6 @@ pub(crate) fn run_hydrated_interactive_loop<R, U>(
     runtime: &mut R,
     ui: &mut U,
     messages: impl IntoIterator<Item = UiMessageSnapshot>,
-    session_cumulative_tokens: Option<u64>,
     mailbox_rx: Option<std::sync::mpsc::Receiver<crate::agent::mailbox::IncomingMessage>>,
     span: Span,
 ) -> Result<Value, LabeledError>
@@ -679,7 +678,7 @@ where
     R: ConversationRuntime + Send,
     U: InteractiveUi,
 {
-    ui.hydrate_transcript_from_messages(messages, session_cumulative_tokens);
+    ui.hydrate_transcript_from_messages(messages);
     run_interactive_loop(runtime, ui, mailbox_rx, span)
 }
 

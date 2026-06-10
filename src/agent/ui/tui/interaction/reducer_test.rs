@@ -611,6 +611,7 @@ fn llm_end_event_updates_latest_and_rolling_token_usage() {
     assert_eq!(state.latest_input_tokens, Some(20));
     assert_eq!(state.latest_output_tokens, Some(10));
     assert_eq!(state.latest_total_tokens, Some(30));
+    assert_eq!(state.session_total_tokens, 30);
 
     reduce_with_cancel_controller(
         &mut state,
@@ -627,6 +628,7 @@ fn llm_end_event_updates_latest_and_rolling_token_usage() {
     assert_eq!(state.latest_input_tokens, Some(5));
     assert_eq!(state.latest_output_tokens, Some(7));
     assert_eq!(state.latest_total_tokens, Some(12));
+    assert_eq!(state.session_total_tokens, 42);
 }
 
 #[test]
@@ -775,6 +777,7 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
                 assert_eq!(state.latest_input_tokens, Some(4));
                 assert_eq!(state.latest_output_tokens, Some(8));
                 assert_eq!(state.latest_total_tokens, Some(12));
+                assert_eq!(state.session_total_tokens, 12);
                 assert_eq!(state.status_line, "Response ready (12 chars)");
             }
             "warning_sets_status" => {

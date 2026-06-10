@@ -50,7 +50,6 @@ impl ConversationStore for MockStore {
         &self,
         _session_id: &str,
         _messages: &[Message],
-        _cumulative_tokens: u64,
     ) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
@@ -63,16 +62,12 @@ impl ConversationStore for MockStore {
         &self,
         _session_id: &str,
         _marker: &CompactionMarker,
-        _cumulative_tokens: u64,
     ) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
 
-    fn load_all(
-        &self,
-        _session_id: &str,
-    ) -> Result<(Vec<StoreEntry>, Option<u64>), Box<dyn std::error::Error>> {
-        Ok((vec![], None))
+    fn load_all(&self, _session_id: &str) -> Result<Vec<StoreEntry>, Box<dyn std::error::Error>> {
+        Ok(vec![])
     }
 }
 
@@ -87,7 +82,7 @@ fn trait_can_be_implemented() {
 
     // Test append
     let msg = Message::user("test");
-    store.append("test-session", &[msg], 0).unwrap();
+    store.append("test-session", &[msg]).unwrap();
 
     // Test clear
     store.clear("test-session").unwrap();
@@ -119,7 +114,7 @@ fn jsonl_store_round_trip() {
     ];
 
     // Write messages
-    store.append("test-session", &messages, 0).unwrap();
+    store.append("test-session", &messages).unwrap();
 
     // Read them back
     let loaded = store.load("test-session").unwrap();
@@ -141,14 +136,14 @@ fn jsonl_store_append_messages() {
     ];
 
     // Write initial messages
-    store.append("test-session", &initial_messages, 0).unwrap();
+    store.append("test-session", &initial_messages).unwrap();
 
     // Append more messages
     let additional_messages = vec![
         Message::user("Second message"),
         Message::assistant("Second response"),
     ];
-    store.append("test-session", &additional_messages, 0).unwrap();
+    store.append("test-session", &additional_messages).unwrap();
 
     // Load and verify all messages are present
     let loaded = store.load("test-session").unwrap();
@@ -181,7 +176,7 @@ fn jsonl_store_clear_removes_session() {
     let messages = vec![Message::user("Hello"), Message::assistant("Hi")];
 
     // Write messages
-    store.append("test-session", &messages, 0).unwrap();
+    store.append("test-session", &messages).unwrap();
 
     // Clear the session
     store.clear("test-session").unwrap();
@@ -202,7 +197,7 @@ fn jsonl_store_handles_corrupt_lines() {
         Message::user("Valid message 1"),
         Message::assistant("Valid response 1"),
     ];
-    store.append("test-session", &messages, 0).unwrap();
+    store.append("test-session", &messages).unwrap();
 
     // Manually append a corrupt line to the file
     let session_path = temp_dir.path().join("test-session.jsonl");
@@ -232,7 +227,7 @@ fn jsonl_store_append_creates_session_if_missing() {
     let messages = vec![Message::user("First message in new session")];
 
     // Append to non-existent session
-    store.append("new-session", &messages, 0).unwrap();
+    store.append("new-session", &messages).unwrap();
 
     // Load and verify
     let loaded = store.load("new-session").unwrap();
@@ -269,14 +264,14 @@ fn append_marker_writes_to_store() {
 
     // Create session with some messages first
     let messages = vec![Message::user("Hello"), Message::assistant("Hi")];
-    store.append("test-session", &messages, 0).unwrap();
+    store.append("test-session", &messages).unwrap();
 
     // Append a marker
     let marker = CompactionMarker::new("Summary".to_string(), 2, 5, "sliding_summary");
-    store.append_marker("test-session", &marker, 0).unwrap();
+    store.append_marker("test-session", &marker).unwrap();
 
     // load_all should return messages + marker
-    let (entries, _) = store.load_all("test-session").unwrap();
+    let entries = store.load_all("test-session").unwrap();
     assert_eq!(entries.len(), 3);
     match &entries[2] {
         StoreEntry::Marker(m) => {
@@ -295,17 +290,17 @@ fn load_all_returns_messages_and_markers_in_order() {
     let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
 
     let initial = vec![Message::user("m1"), Message::assistant("r1")];
-    store.append("test-session", &initial, 0).unwrap();
+    store.append("test-session", &initial).unwrap();
 
     // Append a marker
     let marker = CompactionMarker::new("S1".to_string(), 2, 3, "sliding_summary");
-    store.append_marker("test-session", &marker, 0).unwrap();
+    store.append_marker("test-session", &marker).unwrap();
 
     // Append more messages after marker
     let follow_up = vec![Message::user("m2"), Message::assistant("r2")];
-    store.append("test-session", &follow_up, 0).unwrap();
+    store.append("test-session", &follow_up).unwrap();
 
-    let (entries, _) = store.load_all("test-session").unwrap();
+    let entries = store.load_all("test-session").unwrap();
     assert_eq!(entries.len(), 5); // 2 msgs + 1 marker + 2 msgs
 
     assert!(matches!(&entries[0], StoreEntry::Message(_)));
@@ -321,15 +316,15 @@ fn load_still_returns_only_messages() {
     let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
 
     let messages = vec![Message::user("m1"), Message::assistant("r1")];
-    store.append("test-session", &messages, 0).unwrap();
+    store.append("test-session", &messages).unwrap();
 
     // Append a marker
     let marker = CompactionMarker::new("S".to_string(), 1, 2, "sliding_summary");
-    store.append_marker("test-session", &marker, 0).unwrap();
+    store.append_marker("test-session", &marker).unwrap();
 
     // Append another message after
     store
-        .append("test-session", &[Message::user("m2")], 0)
+        .append("test-session", &[Message::user("m2")])
         .unwrap();
 
     // load() returns only Messages, not markers (backward compat)
@@ -525,93 +520,4 @@ fn extract_llm_context_empty_summary() {
         matches!(&context[0], Message::User { .. }),
         "Expected user message, not system message when summary is empty"
     );
-}
-
-// --- cumulative_tokens I/O boundary tests ---
-
-#[test]
-fn append_writes_cumulative_tokens_to_json_lines() {
-    let temp_dir = TempDir::new().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-
-    store
-        .append("s1", &[Message::user("hi")], 500)
-        .unwrap();
-
-    // Read raw file and parse JSON lines
-    let raw = std::fs::read_to_string(temp_dir.path().join("s1.jsonl")).unwrap();
-    let lines: Vec<&str> = raw.lines().collect();
-    // Line 0 = metadata, Line 1 = message
-    assert!(lines.len() >= 2, "Expected at least 2 lines");
-    let value: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
-    assert_eq!(
-        value.get("cumulative_tokens").and_then(|v| v.as_u64()),
-        Some(500),
-        "cumulative_tokens should be 500 in the JSON line"
-    );
-}
-
-#[test]
-fn append_marker_writes_cumulative_tokens_to_json() {
-    let temp_dir = TempDir::new().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-
-    // Create session first
-    store.append("s1", &[Message::user("hi")], 0).unwrap();
-
-    let marker = CompactionMarker::new("Summary".to_string(), 1, 5, "sliding_summary");
-    store.append_marker("s1", &marker, 1200).unwrap();
-
-    // Read raw file and parse the marker line
-    let raw = std::fs::read_to_string(temp_dir.path().join("s1.jsonl")).unwrap();
-    let lines: Vec<&str> = raw.lines().collect();
-    // Line 0 = metadata, Line 1 = message, Line 2 = marker
-    assert!(lines.len() >= 3, "Expected at least 3 lines");
-    let value: serde_json::Value = serde_json::from_str(lines[2]).unwrap();
-    assert_eq!(
-        value.get("cumulative_tokens").and_then(|v| v.as_u64()),
-        Some(1200),
-        "cumulative_tokens should be 1200 in the marker JSON line"
-    );
-}
-
-#[test]
-fn load_all_returns_last_cumulative_tokens() {
-    let temp_dir = TempDir::new().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-
-    store
-        .append("s1", &[Message::user("m1")], 100)
-        .unwrap();
-    store
-        .append("s1", &[Message::user("m2")], 350)
-        .unwrap();
-
-    let (entries, cumulative) = store.load_all("s1").unwrap();
-    assert_eq!(entries.len(), 2);
-    assert_eq!(cumulative, Some(350));
-}
-
-#[test]
-fn load_all_returns_none_for_legacy_entries() {
-    let temp_dir = TempDir::new().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-
-    // Write raw JSON without cumulative_tokens field (legacy format)
-    let metadata = serde_json::json!({
-        "type": "session",
-        "session_id": "s1",
-        "created_at": "2024-01-01T00:00:00Z",
-        "compaction_count": 0
-    });
-    let msg = serde_json::json!({
-        "role": "user",
-        "content": [{"type": "text", "text": "hello"}]
-    });
-    let content = format!("{}\n{}\n", metadata, msg);
-    std::fs::write(temp_dir.path().join("s1.jsonl"), content).unwrap();
-
-    let (entries, cumulative) = store.load_all("s1").unwrap();
-    assert_eq!(entries.len(), 1);
-    assert_eq!(cumulative, None, "Legacy entries should return None for cumulative");
 }

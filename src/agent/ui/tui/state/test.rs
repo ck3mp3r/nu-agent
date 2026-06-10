@@ -23,6 +23,7 @@ fn defaults_start_idle_with_unlocked_input_and_no_abort_pending() {
     assert_eq!(state.latest_input_tokens, None);
     assert_eq!(state.latest_output_tokens, None);
     assert_eq!(state.latest_total_tokens, None);
+    assert_eq!(state.session_total_tokens, 0);
 }
 
 #[test]
@@ -215,18 +216,20 @@ fn turn_separator_is_not_repeated_for_same_role_sequences() {
 }
 
 #[test]
-fn record_token_usage_overwrites_latest_tokens() {
+fn record_token_usage_tracks_latest_and_accumulates_session_total() {
     let mut state = AppState::new();
 
     state.record_token_usage(7, 5, 12);
     assert_eq!(state.latest_input_tokens, Some(7));
     assert_eq!(state.latest_output_tokens, Some(5));
     assert_eq!(state.latest_total_tokens, Some(12));
+    assert_eq!(state.session_total_tokens, 12);
 
     state.record_token_usage(2, 3, 5);
     assert_eq!(state.latest_input_tokens, Some(2));
     assert_eq!(state.latest_output_tokens, Some(3));
     assert_eq!(state.latest_total_tokens, Some(5));
+    assert_eq!(state.session_total_tokens, 17);
 }
 
 #[test]

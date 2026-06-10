@@ -24,20 +24,14 @@ use crate::agent::{
     },
 };
 
-/// Groups hydration-related parameters for TUI session resumption.
-pub(crate) struct TuiHydrationContext {
-    pub(crate) should_hydrate: bool,
-    pub(crate) initial_messages: Vec<UiMessageSnapshot>,
-    pub(crate) session_cumulative_tokens: Option<u64>,
-}
-
 pub(crate) fn run_tui_mode(
     runtime_impl: &mut AgentConversationRuntime,
     input: &Value,
     input_is_nothing: bool,
     span: nu_protocol::Span,
     ui_policy: UiPolicy,
-    hydration: TuiHydrationContext,
+    tui_should_hydrate_transcript: bool,
+    tui_initial_messages: Vec<UiMessageSnapshot>,
 ) -> Result<Value, LabeledError> {
     let mut terminal_lifecycle =
         TerminalLifecycle::new(AnsiTerminalBackend::new(std::io::stderr()));
@@ -96,12 +90,11 @@ pub(crate) fn run_tui_mode(
     let result = run_with_terminal_restore(&mut terminal_lifecycle, || {
         if input_is_nothing {
             let mailbox_rx = runtime_impl.mailbox_rx.take();
-            if hydration.should_hydrate {
+            if tui_should_hydrate_transcript {
                 run_hydrated_interactive_loop(
                     runtime_impl,
                     &mut tui_ui,
-                    hydration.initial_messages,
-                    hydration.session_cumulative_tokens,
+                    tui_initial_messages,
                     mailbox_rx,
                     span,
                 )

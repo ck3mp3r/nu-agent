@@ -20,7 +20,7 @@ fn test_agent_session_inspect_displays_full_session_details() {
         .map(|i| Message::user(format!("Message {}", i)))
         .collect();
     conversation_store
-        .append("test-session", &messages, 0)
+        .append("test-session", &messages)
         .unwrap();
 
     // Verify session metadata (not loading full session to avoid old Message deserialization)

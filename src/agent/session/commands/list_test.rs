@@ -16,14 +16,14 @@ fn test_agent_session_list_returns_table_with_session_stats() {
     let messages: Vec<Message> = (0..5)
         .map(|i| Message::user(format!("msg {}", i)))
         .collect();
-    conversation_store.append("session1", &messages, 0).unwrap();
+    conversation_store.append("session1", &messages).unwrap();
 
     // Create session 2 with 10 messages
     let _session2 = store.get_or_create(Some("session2".to_string())).unwrap();
     let messages: Vec<Message> = (0..10)
         .map(|i| Message::user(format!("msg {}", i)))
         .collect();
-    conversation_store.append("session2", &messages, 0).unwrap();
+    conversation_store.append("session2", &messages).unwrap();
 
     // Execute command - test the underlying list_sessions() directly
     let command = AgentSessionList::new(store);

@@ -10,7 +10,7 @@ use crate::{
     AgentPlugin,
     agent::{
         conversation::runtime::AgentConversationRuntime,
-        protocol::compaction::CompactionTriggerState,
+        protocol::{compaction::CompactionTriggerState, contracts::UiMessageSnapshot},
         session::resolver::{DefaultSessionResolver, SessionResolutionInput, SessionResolver},
         tools::{
             authz::{
@@ -1532,7 +1532,6 @@ Compaction flags:
             ),
             memory_message_count: 0,
             memory_hydrated: false,
-            session_cumulative_tokens: 0,
             cached_client: None,
             cached_client_key: None,
             agent_persona_body: persona.as_ref().map(|p| p.body.clone()),
@@ -1562,11 +1561,8 @@ Compaction flags:
                 input_is_nothing,
                 call.head,
                 ui_policy,
-                mode_execute::TuiHydrationContext {
-                    should_hydrate: session_resolution.tui_should_hydrate_transcript,
-                    initial_messages: session_resolution.tui_initial_messages,
-                    session_cumulative_tokens: session_resolution.session_cumulative_tokens,
-                },
+                session_resolution.tui_should_hydrate_transcript,
+                session_resolution.tui_initial_messages,
             ),
             AgentMode::Stderr => run_stderr_mode(
                 &mut runtime_impl,
@@ -1585,7 +1581,8 @@ fn run_tui_mode(
     input_is_nothing: bool,
     span: nu_protocol::Span,
     ui_policy: UiPolicy,
-    hydration: mode_execute::TuiHydrationContext,
+    tui_should_hydrate_transcript: bool,
+    tui_initial_messages: Vec<UiMessageSnapshot>,
 ) -> Result<Value, LabeledError> {
     mode_execute::run_tui_mode(
         runtime_impl,
@@ -1593,7 +1590,8 @@ fn run_tui_mode(
         input_is_nothing,
         span,
         ui_policy,
-        hydration,
+        tui_should_hydrate_transcript,
+        tui_initial_messages,
     )
 }
 
