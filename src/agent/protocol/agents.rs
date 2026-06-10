@@ -14,7 +14,8 @@ pub(crate) fn load_agents_chain_for_cwd(cwd: &Path) -> AgentsLoadResult {
     let config_dir = crate::utils::xdg::config_dir()
         .ok()
         .map(|base| base.join("nu-agent"));
-    load_agents_chain_internal(cwd, config_dir.as_deref(), None)
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    load_agents_chain_internal(cwd, config_dir.as_deref(), None, home.as_deref())
 }
 
 #[cfg(test)]
@@ -22,14 +23,16 @@ pub(crate) fn load_agents_chain_for_cwd_for_tests(
     cwd: &Path,
     config_dir: Option<&Path>,
     stop_at: Option<&Path>,
+    home: Option<&Path>,
 ) -> AgentsLoadResult {
-    load_agents_chain_internal(cwd, config_dir, stop_at)
+    load_agents_chain_internal(cwd, config_dir, stop_at, home)
 }
 
 fn load_agents_chain_internal(
     cwd: &Path,
     config_dir: Option<&Path>,
     stop_at: Option<&Path>,
+    home: Option<&Path>,
 ) -> AgentsLoadResult {
     log::debug!("load_agents_chain: cwd={cwd:?}, config_dir={config_dir:?}");
 
@@ -37,7 +40,7 @@ fn load_agents_chain_internal(
     let mut merged_segments = Vec::new();
     let mut seen = HashSet::new();
 
-    for candidate in discover_candidate_paths(cwd, config_dir, stop_at) {
+    for candidate in discover_candidate_paths(cwd, config_dir, stop_at, home) {
         if !candidate.exists() {
             continue;
         }
@@ -86,11 +89,16 @@ fn discover_candidate_paths(
     cwd: &Path,
     config_dir: Option<&Path>,
     stop_at: Option<&Path>,
+    home: Option<&Path>,
 ) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
     if let Some(cfg_dir) = config_dir {
         candidates.push(cfg_dir.join("agents").join("AGENTS.md"));
+    }
+
+    if let Some(home_dir) = home {
+        candidates.push(home_dir.join(".agents").join("AGENTS.md"));
     }
 
     let mut ancestors = cwd

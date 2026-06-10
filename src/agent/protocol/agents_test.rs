@@ -13,7 +13,7 @@ fn loads_home_agents_when_present() {
     fs::create_dir_all(&cwd).expect("cwd");
     fs::write(config.join("agents/AGENTS.md"), "CONFIG\n").expect("write config agents");
 
-    let loaded = load_agents_chain_for_cwd_for_tests(&cwd, Some(&config), Some(tmp.path()));
+    let loaded = load_agents_chain_for_cwd_for_tests(&cwd, Some(&config), Some(tmp.path()), None);
 
     assert_eq!(loaded.merged_chain.as_deref(), Some("CONFIG\n"));
     assert!(loaded.warnings.is_empty());
@@ -26,7 +26,7 @@ fn loads_cwd_agents_when_present() {
     fs::create_dir_all(&cwd).expect("cwd");
     fs::write(cwd.join("AGENTS.md"), "CWD\n").expect("write cwd agents");
 
-    let loaded = load_agents_chain_for_cwd_for_tests(&cwd, None, Some(tmp.path()));
+    let loaded = load_agents_chain_for_cwd_for_tests(&cwd, None, Some(tmp.path()), None);
 
     assert_eq!(loaded.merged_chain.as_deref(), Some("CWD\n"));
     assert!(loaded.warnings.is_empty());
@@ -42,7 +42,7 @@ fn loads_ancestor_agents_in_root_to_leaf_order() {
     fs::write(root.join("AGENTS.md"), "ROOT\n").expect("root agents");
     fs::write(parent.join("AGENTS.md"), "PARENT\n").expect("parent agents");
 
-    let loaded = load_agents_chain_for_cwd_for_tests(&cwd, None, Some(&root));
+    let loaded = load_agents_chain_for_cwd_for_tests(&cwd, None, Some(&root), None);
 
     assert_eq!(loaded.merged_chain.as_deref(), Some("ROOT\n\nPARENT\n"));
     assert!(loaded.warnings.is_empty());
@@ -57,7 +57,7 @@ fn nearest_agents_has_highest_precedence_position() {
     fs::write(root.join("AGENTS.md"), "ROOT\n").expect("root agents");
     fs::write(cwd.join("AGENTS.md"), "CWD\n").expect("cwd agents");
 
-    let loaded = load_agents_chain_for_cwd_for_tests(&cwd, None, Some(&root));
+    let loaded = load_agents_chain_for_cwd_for_tests(&cwd, None, Some(&root), None);
     let merged = loaded.merged_chain.expect("merged chain");
 
     assert!(merged.ends_with("CWD\n"));
@@ -70,7 +70,7 @@ fn missing_home_or_agents_files_is_noop() {
     let cwd = tmp.path().join("cwd");
     fs::create_dir_all(&cwd).expect("cwd");
 
-    let loaded = load_agents_chain_for_cwd_for_tests(&cwd, None, Some(tmp.path()));
+    let loaded = load_agents_chain_for_cwd_for_tests(&cwd, None, Some(tmp.path()), None);
 
     assert_eq!(loaded.merged_chain, None);
     assert!(loaded.warnings.is_empty());
@@ -83,7 +83,7 @@ fn unreadable_agents_is_non_fatal() {
     let agents = cwd.join("AGENTS.md");
     fs::create_dir_all(&agents).expect("create AGENTS.md directory to force read error");
 
-    let loaded = load_agents_chain_for_cwd_for_tests(&cwd, None, Some(tmp.path()));
+    let loaded = load_agents_chain_for_cwd_for_tests(&cwd, None, Some(tmp.path()), None);
 
     assert!(loaded.warnings.iter().any(|w| w.contains("AGENTS.md")));
     assert_eq!(loaded.merged_chain, None);
@@ -107,8 +107,22 @@ fn canonical_path_dedup_prevents_duplicate_load() {
     let cwd = alias.join("child");
     fs::create_dir_all(&cwd).expect("cwd");
 
-    let loaded = load_agents_chain_for_cwd_for_tests(&cwd, None, Some(&root));
+    let loaded = load_agents_chain_for_cwd_for_tests(&cwd, None, Some(&root), None);
     let merged = loaded.merged_chain.expect("merged chain");
 
     assert_eq!(merged.matches("REAL").count(), 1);
+}
+
+#[test]
+fn loads_from_home_dot_agents() {
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path().join("home");
+    let cwd = tmp.path().join("cwd");
+    fs::create_dir_all(home.join(".agents")).expect("create .agents");
+    fs::create_dir_all(&cwd).expect("create cwd");
+    fs::write(home.join(".agents/AGENTS.md"), "HOME_AGENTS\n").expect("write");
+
+    let result =
+        load_agents_chain_for_cwd_for_tests(&cwd, None, Some(tmp.path()), Some(&home));
+    assert!(result.merged_chain.unwrap().contains("HOME_AGENTS"));
 }
