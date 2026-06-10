@@ -1,12 +1,15 @@
 use super::*;
 use rig::agent::PromptHook;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 fn make_hook() -> (CopilotPromptHook, mpsc::UnboundedReceiver<HookEvent>) {
     let (tx, rx) = mpsc::unbounded_channel();
     let token = CancellationToken::new();
-    (CopilotPromptHook::new(tx, token), rx)
+    let last_total_tokens = Arc::new(AtomicU64::new(0));
+    (CopilotPromptHook::new(tx, token, last_total_tokens), rx)
 }
 
 fn make_hook_with_token() -> (
@@ -16,8 +19,21 @@ fn make_hook_with_token() -> (
 ) {
     let (tx, rx) = mpsc::unbounded_channel();
     let token = CancellationToken::new();
-    let hook = CopilotPromptHook::new(tx, token.clone());
+    let last_total_tokens = Arc::new(AtomicU64::new(0));
+    let hook = CopilotPromptHook::new(tx, token.clone(), last_total_tokens);
     (hook, rx, token)
+}
+
+fn make_hook_with_shared_tokens() -> (
+    CopilotPromptHook,
+    mpsc::UnboundedReceiver<HookEvent>,
+    Arc<AtomicU64>,
+) {
+    let (tx, rx) = mpsc::unbounded_channel();
+    let token = CancellationToken::new();
+    let last_total_tokens = Arc::new(AtomicU64::new(0));
+    let hook = CopilotPromptHook::new(tx, token, last_total_tokens.clone());
+    (hook, rx, last_total_tokens)
 }
 
 #[cfg(test)]
@@ -433,4 +449,34 @@ async fn on_stream_completion_response_finish_no_usage_no_event() {
     assert!(matches!(result, HookAction::Continue));
 
     assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
+}
+
+#[tokio::test]
+async fn on_stream_completion_response_finish_stores_last_total_tokens() {
+    use rig::completion::message::{Text, UserContent};
+    use rig::message::Message;
+    use rig::one_or_many::OneOrMany;
+    use test_support::{DummyModel, DummyStreamResponse};
+
+    let (hook, _rx, shared_tokens) = make_hook_with_shared_tokens();
+
+    // Verify starts at 0
+    assert_eq!(shared_tokens.load(Ordering::Relaxed), 0);
+
+    let prompt = Message::User {
+        content: OneOrMany::one(UserContent::Text(Text {
+            text: "test prompt".to_string(),
+            additional_params: None,
+        })),
+    };
+
+    let response = DummyStreamResponse; // returns total_tokens = 225
+
+    let result =
+        PromptHook::<DummyModel>::on_stream_completion_response_finish(&hook, &prompt, &response)
+            .await;
+    assert!(matches!(result, HookAction::Continue));
+
+    // Verify the shared AtomicU64 was updated with total_tokens from DummyStreamResponse
+    assert_eq!(shared_tokens.load(Ordering::Relaxed), 225);
 }

@@ -180,6 +180,7 @@ pub(crate) trait InteractiveUi: ProgressUi {
     fn hydrate_transcript_from_messages(
         &mut self,
         messages: impl IntoIterator<Item = UiMessageSnapshot>,
+        last_total_tokens: Option<u64>,
     );
     fn clear_transcript(&mut self) {}
     fn display_incoming_message(&mut self, _text: &str) {}

@@ -50,6 +50,7 @@ impl ConversationStore for MockStore {
         &self,
         _session_id: &str,
         _messages: &[Message],
+        _last_total_tokens: Option<u64>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
@@ -62,12 +63,16 @@ impl ConversationStore for MockStore {
         &self,
         _session_id: &str,
         _marker: &CompactionMarker,
+        _last_total_tokens: Option<u64>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
 
-    fn load_all(&self, _session_id: &str) -> Result<Vec<StoreEntry>, Box<dyn std::error::Error>> {
-        Ok(vec![])
+    fn load_all(
+        &self,
+        _session_id: &str,
+    ) -> Result<(Vec<StoreEntry>, Option<u64>), Box<dyn std::error::Error>> {
+        Ok((vec![], None))
     }
 }
 
@@ -82,7 +87,7 @@ fn trait_can_be_implemented() {
 
     // Test append
     let msg = Message::user("test");
-    store.append("test-session", &[msg]).unwrap();
+    store.append("test-session", &[msg], None).unwrap();
 
     // Test clear
     store.clear("test-session").unwrap();
@@ -114,7 +119,7 @@ fn jsonl_store_round_trip() {
     ];
 
     // Write messages
-    store.append("test-session", &messages).unwrap();
+    store.append("test-session", &messages, None).unwrap();
 
     // Read them back
     let loaded = store.load("test-session").unwrap();
@@ -136,14 +141,14 @@ fn jsonl_store_append_messages() {
     ];
 
     // Write initial messages
-    store.append("test-session", &initial_messages).unwrap();
+    store.append("test-session", &initial_messages, None).unwrap();
 
     // Append more messages
     let additional_messages = vec![
         Message::user("Second message"),
         Message::assistant("Second response"),
     ];
-    store.append("test-session", &additional_messages).unwrap();
+    store.append("test-session", &additional_messages, None).unwrap();
 
     // Load and verify all messages are present
     let loaded = store.load("test-session").unwrap();
@@ -176,7 +181,7 @@ fn jsonl_store_clear_removes_session() {
     let messages = vec![Message::user("Hello"), Message::assistant("Hi")];
 
     // Write messages
-    store.append("test-session", &messages).unwrap();
+    store.append("test-session", &messages, None).unwrap();
 
     // Clear the session
     store.clear("test-session").unwrap();
@@ -197,7 +202,7 @@ fn jsonl_store_handles_corrupt_lines() {
         Message::user("Valid message 1"),
         Message::assistant("Valid response 1"),
     ];
-    store.append("test-session", &messages).unwrap();
+    store.append("test-session", &messages, None).unwrap();
 
     // Manually append a corrupt line to the file
     let session_path = temp_dir.path().join("test-session.jsonl");
@@ -227,7 +232,7 @@ fn jsonl_store_append_creates_session_if_missing() {
     let messages = vec![Message::user("First message in new session")];
 
     // Append to non-existent session
-    store.append("new-session", &messages).unwrap();
+    store.append("new-session", &messages, None).unwrap();
 
     // Load and verify
     let loaded = store.load("new-session").unwrap();
@@ -264,14 +269,14 @@ fn append_marker_writes_to_store() {
 
     // Create session with some messages first
     let messages = vec![Message::user("Hello"), Message::assistant("Hi")];
-    store.append("test-session", &messages).unwrap();
+    store.append("test-session", &messages, None).unwrap();
 
     // Append a marker
     let marker = CompactionMarker::new("Summary".to_string(), 2, 5, "sliding_summary");
-    store.append_marker("test-session", &marker).unwrap();
+    store.append_marker("test-session", &marker, None).unwrap();
 
     // load_all should return messages + marker
-    let entries = store.load_all("test-session").unwrap();
+    let (entries, _) = store.load_all("test-session").unwrap();
     assert_eq!(entries.len(), 3);
     match &entries[2] {
         StoreEntry::Marker(m) => {
@@ -290,17 +295,17 @@ fn load_all_returns_messages_and_markers_in_order() {
     let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
 
     let initial = vec![Message::user("m1"), Message::assistant("r1")];
-    store.append("test-session", &initial).unwrap();
+    store.append("test-session", &initial, None).unwrap();
 
     // Append a marker
     let marker = CompactionMarker::new("S1".to_string(), 2, 3, "sliding_summary");
-    store.append_marker("test-session", &marker).unwrap();
+    store.append_marker("test-session", &marker, None).unwrap();
 
     // Append more messages after marker
     let follow_up = vec![Message::user("m2"), Message::assistant("r2")];
-    store.append("test-session", &follow_up).unwrap();
+    store.append("test-session", &follow_up, None).unwrap();
 
-    let entries = store.load_all("test-session").unwrap();
+    let (entries, _) = store.load_all("test-session").unwrap();
     assert_eq!(entries.len(), 5); // 2 msgs + 1 marker + 2 msgs
 
     assert!(matches!(&entries[0], StoreEntry::Message(_)));
@@ -316,15 +321,15 @@ fn load_still_returns_only_messages() {
     let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
 
     let messages = vec![Message::user("m1"), Message::assistant("r1")];
-    store.append("test-session", &messages).unwrap();
+    store.append("test-session", &messages, None).unwrap();
 
     // Append a marker
     let marker = CompactionMarker::new("S".to_string(), 1, 2, "sliding_summary");
-    store.append_marker("test-session", &marker).unwrap();
+    store.append_marker("test-session", &marker, None).unwrap();
 
     // Append another message after
     store
-        .append("test-session", &[Message::user("m2")])
+        .append("test-session", &[Message::user("m2")], None)
         .unwrap();
 
     // load() returns only Messages, not markers (backward compat)
@@ -520,4 +525,64 @@ fn extract_llm_context_empty_summary() {
         matches!(&context[0], Message::User { .. }),
         "Expected user message, not system message when summary is empty"
     );
+}
+
+// --- last_total_tokens tests ---
+
+#[test]
+fn append_writes_last_total_tokens_to_json_lines() {
+    let temp_dir = TempDir::new().unwrap();
+    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
+    store
+        .append("s1", &[Message::user("hi")], Some(1500))
+        .unwrap();
+
+    // Read raw file and verify JSON contains the field
+    let content = std::fs::read_to_string(temp_dir.path().join("s1.jsonl")).unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+    // Skip metadata line (first line)
+    let data_line = lines.last().unwrap();
+    let value: serde_json::Value = serde_json::from_str(data_line).unwrap();
+    assert_eq!(value["last_total_tokens"], 1500);
+}
+
+#[test]
+fn append_marker_writes_last_total_tokens_to_json() {
+    let temp_dir = TempDir::new().unwrap();
+    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
+    let marker = CompactionMarker::new("summary".to_string(), 5, 3, "sliding_summary");
+    store.append_marker("s1", &marker, Some(2000)).unwrap();
+
+    let content = std::fs::read_to_string(temp_dir.path().join("s1.jsonl")).unwrap();
+    let data_line = content.lines().last().unwrap();
+    let value: serde_json::Value = serde_json::from_str(data_line).unwrap();
+    assert_eq!(value["last_total_tokens"], 2000);
+}
+
+#[test]
+fn load_all_returns_last_total_tokens_from_last_entry() {
+    let temp_dir = TempDir::new().unwrap();
+    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
+    store
+        .append("s1", &[Message::user("hi")], Some(100))
+        .unwrap();
+    store
+        .append("s1", &[Message::assistant("hello")], Some(350))
+        .unwrap();
+    let (entries, last_tokens) = store.load_all("s1").unwrap();
+    assert!(!entries.is_empty());
+    assert_eq!(last_tokens, Some(350));
+}
+
+#[test]
+fn load_all_returns_none_for_legacy_entries_without_tokens() {
+    let temp_dir = TempDir::new().unwrap();
+    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
+    // Write without tokens (legacy behavior)
+    store
+        .append("s1", &[Message::user("hi")], None)
+        .unwrap();
+    let (entries, last_tokens) = store.load_all("s1").unwrap();
+    assert!(!entries.is_empty());
+    assert_eq!(last_tokens, None);
 }

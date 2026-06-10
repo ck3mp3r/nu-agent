@@ -394,6 +394,7 @@ pub(crate) struct AgentConversationRuntime {
     #[allow(dead_code)]
     pub parent_name: Option<String>,
     pub compacting: Arc<AtomicBool>,
+    pub last_total_tokens: Option<u64>,
     pub available_agent_summaries: Vec<crate::agent::protocol::persona::PersonaSummary>,
     pub agents_config: crate::config::AgentsConfig,
 }
@@ -918,7 +919,7 @@ impl ConversationRuntime for AgentConversationRuntime {
                 if let Some(ref session_id) = self.final_session_id
                     && let Some(ref messages) = e.messages
                 {
-                    if let Err(persist_err) = self.conversation_store.append(session_id, messages) {
+                    if let Err(persist_err) = self.conversation_store.append(session_id, messages, None) {
                         log::warn!("Failed to persist cancelled turn messages: {}", persist_err);
                     }
                     self.memory_message_count += messages.len();
@@ -973,7 +974,7 @@ impl ConversationRuntime for AgentConversationRuntime {
             }
             if let Err(e) = self
                 .conversation_store
-                .append(session_id, &cancelled_messages)
+                .append(session_id, &cancelled_messages, None)
             {
                 log::warn!("Failed to persist cancelled turn messages (path B): {}", e);
             }
@@ -994,12 +995,15 @@ impl ConversationRuntime for AgentConversationRuntime {
             && let Some(ref messages) = turn_result.messages
         {
             // Persist the new messages from the turn result
-            if let Err(e) = self.conversation_store.append(session_id, messages) {
+            if let Err(e) = self.conversation_store.append(session_id, messages, Some(turn_result.last_total_tokens)) {
                 log::warn!(
                     "Failed to persist turn messages to conversation store: {}",
                     e
                 );
             }
+
+            // Update last_total_tokens for compaction
+            self.last_total_tokens = Some(turn_result.last_total_tokens);
 
             // Update memory message count
             self.memory_message_count += messages.len();
@@ -1109,7 +1113,7 @@ impl AgentConversationRuntime {
         }
         if let Some(ref session_id) = self.final_session_id {
             // Load ALL entries (messages + markers)
-            let entries = self
+            let (entries, last_total_tokens) = self
                 .conversation_store
                 .load_all(session_id)
                 .map_err(|e| LabeledError::new(format!("Failed to load session entries: {}", e)))?;
@@ -1125,6 +1129,7 @@ impl AgentConversationRuntime {
                     })?;
             }
             self.memory_message_count = llm_context.len();
+            self.last_total_tokens = last_total_tokens;
 
             // Derive compaction_count from markers
             let marker_count = entries
@@ -1210,6 +1215,7 @@ impl AgentConversationRuntime {
         let memory = &self.memory;
         let conversation_store = &self.conversation_store;
         let store = &self.store;
+        let last_total_tokens = self.last_total_tokens;
 
         let source_label = source.as_str().to_string();
         ui.emit(&UiEvent::CompactionStarted {
@@ -1241,9 +1247,12 @@ impl AgentConversationRuntime {
                         memory,
                         conversation_store,
                         $model.clone(),
-                        mode,
                         ui,
-                        &source_label,
+                        CompactionInvocation {
+                            mode,
+                            source: &source_label,
+                            last_total_tokens,
+                        },
                     ))
                 })
             }};
@@ -1332,6 +1341,13 @@ where
     })
 }
 
+/// Parameters for a single compaction invocation.
+struct CompactionInvocation<'a> {
+    mode: CompactionInvocationMode,
+    source: &'a str,
+    last_total_tokens: Option<u64>,
+}
+
 /// Execute compaction using rig memory and ConversationStore.
 ///
 /// This async function:
@@ -1346,7 +1362,7 @@ where
 /// * `memory` - InMemoryConversationMemory containing messages
 /// * `store` - ConversationStore for persistence
 /// * `summarizer` - Function that takes rig messages and returns summary
-/// * `mode` - Compaction invocation mode (Threshold or Force)
+/// * `invocation` - Compaction mode, source label, and token state
 ///
 /// # Returns
 /// Ok(Some(outcome)) on successful compaction, Ok(None) if no compaction needed
@@ -1355,9 +1371,8 @@ async fn execute_compaction<M, S, U>(
     memory: &rig::memory::InMemoryConversationMemory,
     store: &S,
     model: M,
-    mode: CompactionInvocationMode,
     ui: &mut U,
-    source: &str,
+    invocation: CompactionInvocation<'_>,
 ) -> Result<Option<CompactionOutcome>, String>
 where
     M: rig::completion::CompletionModel + Clone + 'static,
@@ -1373,7 +1388,7 @@ where
         .map_err(|e| format!("Failed to load messages from memory: {}", e))?;
 
     // Determine if compaction should run
-    let should_compact = match mode {
+    let should_compact = match invocation.mode {
         CompactionInvocationMode::Threshold => {
             messages.len() > session.config().compaction_threshold
         }
@@ -1385,7 +1400,7 @@ where
     }
 
     // Perform compaction with summarizer closure
-    let source_owned = source.to_string();
+    let source_owned = invocation.source.to_string();
     let summarizer = |old_messages: &[rig::completion::Message]| {
         let messages = old_messages.to_vec();
         let model_clone = model.clone();
@@ -1394,7 +1409,7 @@ where
     };
 
     let outcome = session
-        .compact(memory, store, summarizer)
+        .compact(memory, store, summarizer, invocation.last_total_tokens)
         .await
         .map_err(|_| COMPACTION_FAILURE_WARNING.to_string())?;
 

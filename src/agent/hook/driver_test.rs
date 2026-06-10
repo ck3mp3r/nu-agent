@@ -5,6 +5,8 @@ use crate::agent::tools::authz::PermissionEventSink;
 use crate::agent::tools::handler::McpToolRegistry;
 use crate::tools::closure::ClosureRegistry;
 use nu_protocol::{BlockId, Span, Spanned, engine::Closure as NuClosure};
+use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 use tokio::sync::mpsc;
 
 // Mock ProgressUi that captures events
@@ -91,6 +93,7 @@ fn driver_receives_llm_start_event() {
         event_rx: rx,
         tool_call_count: 0,
         deltas_emitted: false,
+        last_total_tokens: Arc::new(AtomicU64::new(0)),
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -118,6 +121,7 @@ fn driver_receives_llm_end_event() {
         event_rx: rx,
         tool_call_count: 0,
         deltas_emitted: false,
+        last_total_tokens: Arc::new(AtomicU64::new(0)),
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -156,6 +160,7 @@ fn driver_receives_tool_start_event() {
         event_rx: rx,
         tool_call_count: 0,
         deltas_emitted: false,
+        last_total_tokens: Arc::new(AtomicU64::new(0)),
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -191,6 +196,7 @@ fn driver_receives_tool_end_event() {
         event_rx: rx,
         tool_call_count: 0,
         deltas_emitted: false,
+        last_total_tokens: Arc::new(AtomicU64::new(0)),
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -230,6 +236,7 @@ fn driver_resolves_permission_allow() {
         event_rx: rx,
         tool_call_count: 0,
         deltas_emitted: false,
+        last_total_tokens: Arc::new(AtomicU64::new(0)),
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -267,6 +274,7 @@ fn driver_resolves_permission_deny() {
         event_rx: rx,
         tool_call_count: 0,
         deltas_emitted: false,
+        last_total_tokens: Arc::new(AtomicU64::new(0)),
     };
     let mut ui = MockUi::new();
     let mut perms = DenyAll;
@@ -303,6 +311,7 @@ fn driver_stops_on_channel_close() {
         event_rx: rx,
         tool_call_count: 0,
         deltas_emitted: false,
+        last_total_tokens: Arc::new(AtomicU64::new(0)),
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -328,6 +337,7 @@ fn driver_emits_doom_loop_warning() {
         event_rx: rx,
         tool_call_count: 0,
         deltas_emitted: false,
+        last_total_tokens: Arc::new(AtomicU64::new(0)),
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -365,6 +375,7 @@ fn driver_handles_multiple_events_in_sequence() {
         event_rx: rx,
         tool_call_count: 0,
         deltas_emitted: false,
+        last_total_tokens: Arc::new(AtomicU64::new(0)),
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -420,6 +431,7 @@ fn driver_fills_tool_source_on_tool_start() {
         event_rx: rx,
         tool_call_count: 0,
         deltas_emitted: false,
+        last_total_tokens: Arc::new(AtomicU64::new(0)),
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -471,6 +483,7 @@ fn driver_fills_tool_source_on_tool_end() {
         event_rx: rx,
         tool_call_count: 0,
         deltas_emitted: false,
+        last_total_tokens: Arc::new(AtomicU64::new(0)),
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -519,6 +532,7 @@ fn driver_fills_unknown_source_for_unregistered_tool() {
         event_rx: rx,
         tool_call_count: 0,
         deltas_emitted: false,
+        last_total_tokens: Arc::new(AtomicU64::new(0)),
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -563,6 +577,7 @@ fn driver_counts_tool_calls() {
         event_rx: rx,
         tool_call_count: 0,
         deltas_emitted: false,
+        last_total_tokens: Arc::new(AtomicU64::new(0)),
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -622,6 +637,7 @@ fn driver_counts_zero_when_no_tools_called() {
         event_rx: rx,
         tool_call_count: 0,
         deltas_emitted: false,
+        last_total_tokens: Arc::new(AtomicU64::new(0)),
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -678,6 +694,7 @@ fn driver_passes_tool_call_id_to_permission_resolver() {
         event_rx: rx,
         tool_call_count: 0,
         deltas_emitted: false,
+        last_total_tokens: Arc::new(AtomicU64::new(0)),
     };
     let mut ui = MockUi::new();
     let mut perms = CaptureToolCallId { captured_id: None };
@@ -718,6 +735,7 @@ fn driver_passes_none_tool_call_id_when_not_provided() {
         event_rx: rx,
         tool_call_count: 0,
         deltas_emitted: false,
+        last_total_tokens: Arc::new(AtomicU64::new(0)),
     };
     let mut ui = MockUi::new();
     let mut perms = CaptureToolCallId {
@@ -760,6 +778,7 @@ fn driver_extracts_display_from_edit_tool_result() {
         event_rx: rx,
         tool_call_count: 0,
         deltas_emitted: false,
+        last_total_tokens: Arc::new(AtomicU64::new(0)),
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -827,6 +846,7 @@ fn driver_extracts_explicit_display_field() {
         event_rx: rx,
         tool_call_count: 0,
         deltas_emitted: false,
+        last_total_tokens: Arc::new(AtomicU64::new(0)),
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -892,6 +912,7 @@ fn driver_leaves_display_none_for_non_displayable_result() {
         event_rx: rx,
         tool_call_count: 0,
         deltas_emitted: false,
+        last_total_tokens: Arc::new(AtomicU64::new(0)),
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -945,6 +966,7 @@ fn driver_leaves_display_none_for_invalid_json_result() {
         event_rx: rx,
         tool_call_count: 0,
         deltas_emitted: false,
+        last_total_tokens: Arc::new(AtomicU64::new(0)),
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -992,6 +1014,7 @@ fn text_delta_emits_aggregated_not_delta() {
         event_rx: rx,
         tool_call_count: 0,
         deltas_emitted: false,
+        last_total_tokens: Arc::new(AtomicU64::new(0)),
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -1040,6 +1063,7 @@ fn text_delta_sets_deltas_emitted() {
         event_rx: rx,
         tool_call_count: 0,
         deltas_emitted: false,
+        last_total_tokens: Arc::new(AtomicU64::new(0)),
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -1080,6 +1104,7 @@ fn multiple_deltas_all_forwarded() {
         event_rx: rx,
         tool_call_count: 0,
         deltas_emitted: false,
+        last_total_tokens: Arc::new(AtomicU64::new(0)),
     };
     let mut ui = MockUi::new();
     let mut perms = AllowAll;
@@ -1138,4 +1163,11 @@ fn multiple_deltas_all_forwarded() {
     assert_eq!(messages[1], "Hello ");
     assert_eq!(messages[2], "Hello world");
     assert_eq!(messages[3], "Hello world!");
+}
+
+#[test]
+fn driver_new_returns_zero_last_total_tokens_by_default() {
+    let cancel_token = CancellationToken::new();
+    let (_hook, driver) = HookDriver::new(cancel_token);
+    assert_eq!(driver.last_total_tokens(), 0);
 }

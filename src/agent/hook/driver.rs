@@ -1,5 +1,8 @@
 //! HookDriver — bridges async hook events to sync ProgressUi
 
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+
 use serde_json::Value as JsonValue;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -56,17 +59,20 @@ pub struct HookDriver {
     event_rx: mpsc::UnboundedReceiver<HookEvent>,
     tool_call_count: usize,
     deltas_emitted: bool,
+    last_total_tokens: Arc<AtomicU64>,
 }
 
 impl HookDriver {
     /// Create a matched (hook, driver) pair.
     pub fn new(cancel_token: CancellationToken) -> (CopilotPromptHook, Self) {
         let (tx, rx) = mpsc::unbounded_channel();
-        let hook = CopilotPromptHook::new(tx, cancel_token);
+        let last_total_tokens = Arc::new(AtomicU64::new(0));
+        let hook = CopilotPromptHook::new(tx, cancel_token, last_total_tokens.clone());
         let driver = Self {
             event_rx: rx,
             tool_call_count: 0,
             deltas_emitted: false,
+            last_total_tokens,
         };
         (hook, driver)
     }
@@ -81,6 +87,12 @@ impl HookDriver {
     /// This is used to determine if the full response needs to be emitted after streaming.
     pub fn deltas_emitted(&self) -> bool {
         self.deltas_emitted
+    }
+
+    /// Get the last sub-call's total_tokens from the most recent LLM API response.
+    /// This is the per-sub-call value (not aggregated across sub-calls).
+    pub fn last_total_tokens(&self) -> u64 {
+        self.last_total_tokens.load(Ordering::Relaxed)
     }
 
     /// Run the driver loop, blocking until the hook's channel closes

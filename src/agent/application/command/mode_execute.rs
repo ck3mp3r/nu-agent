@@ -24,14 +24,20 @@ use crate::agent::{
     },
 };
 
+/// Hydration context for TUI transcript replay on session attach.
+pub(crate) struct TuiHydrationInput {
+    pub should_hydrate: bool,
+    pub initial_messages: Vec<UiMessageSnapshot>,
+    pub last_total_tokens: Option<u64>,
+}
+
 pub(crate) fn run_tui_mode(
     runtime_impl: &mut AgentConversationRuntime,
     input: &Value,
     input_is_nothing: bool,
     span: nu_protocol::Span,
     ui_policy: UiPolicy,
-    tui_should_hydrate_transcript: bool,
-    tui_initial_messages: Vec<UiMessageSnapshot>,
+    hydration: TuiHydrationInput,
 ) -> Result<Value, LabeledError> {
     let mut terminal_lifecycle =
         TerminalLifecycle::new(AnsiTerminalBackend::new(std::io::stderr()));
@@ -90,11 +96,12 @@ pub(crate) fn run_tui_mode(
     let result = run_with_terminal_restore(&mut terminal_lifecycle, || {
         if input_is_nothing {
             let mailbox_rx = runtime_impl.mailbox_rx.take();
-            if tui_should_hydrate_transcript {
+            if hydration.should_hydrate {
                 run_hydrated_interactive_loop(
                     runtime_impl,
                     &mut tui_ui,
-                    tui_initial_messages,
+                    hydration.initial_messages,
+                    hydration.last_total_tokens,
                     mailbox_rx,
                     span,
                 )

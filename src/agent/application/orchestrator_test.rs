@@ -193,6 +193,7 @@ impl InteractiveUi for FakeInteractiveUi {
     fn hydrate_transcript_from_messages(
         &mut self,
         messages: impl IntoIterator<Item = UiMessageSnapshot>,
+        _last_total_tokens: Option<u64>,
     ) {
         self.call_order.push("hydrate");
         self.hydrated_messages.extend(messages);
@@ -1084,7 +1085,7 @@ fn run_hydrated_interactive_loop_hydrates_before_first_pump() {
     ];
 
     let value =
-        run_hydrated_interactive_loop(&mut runtime, &mut ui, messages, None, Span::test_data())
+        run_hydrated_interactive_loop(&mut runtime, &mut ui, messages, None, None, Span::test_data())
             .expect("interactive loop with hydration");
 
     assert!(value.is_nothing());
@@ -1113,6 +1114,7 @@ fn run_hydrated_interactive_loop_hydrates_exactly_once() {
         &mut runtime,
         &mut ui,
         messages.clone(),
+        None,
         None,
         Span::test_data(),
     )
@@ -1430,6 +1432,7 @@ impl InteractiveUi for PermissionOrderingUi {
     fn hydrate_transcript_from_messages(
         &mut self,
         _messages: impl IntoIterator<Item = UiMessageSnapshot>,
+        _last_total_tokens: Option<u64>,
     ) {
     }
 }
@@ -1536,6 +1539,7 @@ impl InteractiveUi for ResponsiveInteractiveUi {
     fn hydrate_transcript_from_messages(
         &mut self,
         _messages: impl IntoIterator<Item = UiMessageSnapshot>,
+        _last_total_tokens: Option<u64>,
     ) {
     }
 }
@@ -1779,6 +1783,7 @@ impl InteractiveUi for ModelPickerLaunchWhileActiveUi {
     fn hydrate_transcript_from_messages(
         &mut self,
         _messages: impl IntoIterator<Item = UiMessageSnapshot>,
+        _last_total_tokens: Option<u64>,
     ) {
     }
 }
@@ -1915,6 +1920,7 @@ impl InteractiveUi for AbortDuringActiveUi {
     fn hydrate_transcript_from_messages(
         &mut self,
         _messages: impl IntoIterator<Item = UiMessageSnapshot>,
+        _last_total_tokens: Option<u64>,
     ) {
     }
 }
@@ -2434,6 +2440,7 @@ impl InteractiveUi for StagedToggleUi {
     fn hydrate_transcript_from_messages(
         &mut self,
         _messages: impl IntoIterator<Item = UiMessageSnapshot>,
+        _last_total_tokens: Option<u64>,
     ) {
     }
 }
@@ -2523,6 +2530,7 @@ fn emit_batch_delivers_all_events() {
         fn hydrate_transcript_from_messages(
             &mut self,
             _messages: impl IntoIterator<Item = UiMessageSnapshot>,
+            _last_total_tokens: Option<u64>,
         ) {
         }
     }
@@ -2627,6 +2635,7 @@ impl InteractiveUi for MailboxTestUi {
     fn hydrate_transcript_from_messages(
         &mut self,
         _messages: impl IntoIterator<Item = UiMessageSnapshot>,
+        _last_total_tokens: Option<u64>,
     ) {
     }
 

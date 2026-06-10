@@ -80,7 +80,12 @@ pub trait ConversationStore {
     ///
     /// # Returns
     /// Ok(()) on success, or an error if the operation fails.
-    fn append(&self, session_id: &str, messages: &[Message]) -> Result<(), Box<dyn Error>>;
+    fn append(
+        &self,
+        session_id: &str,
+        messages: &[Message],
+        last_total_tokens: Option<u64>,
+    ) -> Result<(), Box<dyn Error>>;
 
     /// Clear all messages from a session.
     ///
@@ -108,6 +113,7 @@ pub trait ConversationStore {
         &self,
         session_id: &str,
         marker: &CompactionMarker,
+        last_total_tokens: Option<u64>,
     ) -> Result<(), Box<dyn Error>>;
 
     /// Load all entries (messages + markers) preserving JSONL order.
@@ -119,7 +125,7 @@ pub trait ConversationStore {
     ///
     /// # Returns
     /// A vector of StoreEntry in the order they were stored.
-    fn load_all(&self, session_id: &str) -> Result<Vec<StoreEntry>, Box<dyn Error>>;
+    fn load_all(&self, session_id: &str) -> Result<(Vec<StoreEntry>, Option<u64>), Box<dyn Error>>;
 }
 
 /// JSONL-based implementation of ConversationStore.
@@ -197,7 +203,12 @@ impl ConversationStore for JsonlConversationStore {
         Ok(messages)
     }
 
-    fn append(&self, session_id: &str, messages: &[Message]) -> Result<(), Box<dyn Error>> {
+    fn append(
+        &self,
+        session_id: &str,
+        messages: &[Message],
+        last_total_tokens: Option<u64>,
+    ) -> Result<(), Box<dyn Error>> {
         let path = self.session_path(session_id);
 
         // Ensure base directory exists
@@ -223,7 +234,14 @@ impl ConversationStore for JsonlConversationStore {
         let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
 
         for message in messages {
-            writeln!(file, "{}", serde_json::to_string(message)?)?;
+            let mut value = serde_json::to_value(message)?;
+            if let (Some(obj), Some(tokens)) = (value.as_object_mut(), last_total_tokens) {
+                obj.insert(
+                    "last_total_tokens".to_string(),
+                    serde_json::json!(tokens),
+                );
+            }
+            writeln!(file, "{}", serde_json::to_string(&value)?)?;
         }
 
         Ok(())
@@ -244,6 +262,7 @@ impl ConversationStore for JsonlConversationStore {
         &self,
         session_id: &str,
         marker: &CompactionMarker,
+        last_total_tokens: Option<u64>,
     ) -> Result<(), Box<dyn Error>> {
         let path = self.session_path(session_id);
 
@@ -269,22 +288,30 @@ impl ConversationStore for JsonlConversationStore {
         // Append marker
         let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
 
-        writeln!(file, "{}", serde_json::to_string(marker)?)?;
+        let mut value = serde_json::to_value(marker)?;
+        if let (Some(obj), Some(tokens)) = (value.as_object_mut(), last_total_tokens) {
+            obj.insert(
+                "last_total_tokens".to_string(),
+                serde_json::json!(tokens),
+            );
+        }
+        writeln!(file, "{}", serde_json::to_string(&value)?)?;
 
         Ok(())
     }
 
-    fn load_all(&self, session_id: &str) -> Result<Vec<StoreEntry>, Box<dyn Error>> {
+    fn load_all(&self, session_id: &str) -> Result<(Vec<StoreEntry>, Option<u64>), Box<dyn Error>> {
         let path = self.session_path(session_id);
 
         // Return empty vec if file doesn't exist (new session)
         if !path.exists() {
-            return Ok(vec![]);
+            return Ok((vec![], None));
         }
 
         let file = File::open(&path)?;
         let reader = BufReader::new(file);
         let mut entries = Vec::new();
+        let mut last_total_tokens: Option<u64> = None;
 
         for (line_num, line) in reader.lines().enumerate() {
             let line = line?;
@@ -302,6 +329,12 @@ impl ConversationStore for JsonlConversationStore {
             // Parse as serde_json::Value first to discriminate type
             match serde_json::from_str::<serde_json::Value>(&line) {
                 Ok(value) => {
+                    // Extract last_total_tokens from each entry if present
+                    let tokens = value.get("last_total_tokens").and_then(|v| v.as_u64());
+                    if tokens.is_some() {
+                        last_total_tokens = tokens;
+                    }
+
                     if value.get("type").and_then(|v| v.as_str()) == Some("compaction_marker") {
                         // Deserialize as CompactionMarker
                         match serde_json::from_value::<CompactionMarker>(value) {
@@ -347,7 +380,7 @@ impl ConversationStore for JsonlConversationStore {
             }
         }
 
-        Ok(entries)
+        Ok((entries, last_total_tokens))
     }
 }
 

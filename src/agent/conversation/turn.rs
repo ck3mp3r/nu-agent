@@ -35,6 +35,10 @@ pub struct TurnResult {
     pub deltas_emitted: bool,
     /// Whether the turn was cancelled via cancel_token
     pub cancelled: bool,
+    /// Last sub-call's total_tokens from the hook.
+    /// This is the per-sub-call value representing actual context window usage,
+    /// NOT the aggregated total across all sub-calls in this turn.
+    pub last_total_tokens: u64,
 }
 
 /// Error from a conversation turn
@@ -216,6 +220,7 @@ where
     // Capture tool call count and deltas flag from the driver
     let tool_call_count = driver.tool_call_count();
     let deltas_emitted = driver.deltas_emitted();
+    let last_total_tokens = driver.last_total_tokens();
 
     log::info!(
         "execute_turn: complete, tool_calls={} deltas_emitted={}",
@@ -239,6 +244,7 @@ where
         tool_call_count,
         deltas_emitted,
         cancelled: response.cancelled,
+        last_total_tokens,
     })
 }
 

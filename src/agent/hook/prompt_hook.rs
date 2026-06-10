@@ -1,5 +1,6 @@
 //! CopilotPromptHook implementation — bridges async agent loop with sync UI/permission system
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -49,17 +50,20 @@ pub struct CopilotPromptHook {
     event_tx: mpsc::UnboundedSender<HookEvent>,
     doom_state: Arc<Mutex<DoomLoopState>>,
     cancel_token: CancellationToken,
+    last_total_tokens: Arc<AtomicU64>,
 }
 
 impl CopilotPromptHook {
     pub fn new(
         event_tx: mpsc::UnboundedSender<HookEvent>,
         cancel_token: CancellationToken,
+        last_total_tokens: Arc<AtomicU64>,
     ) -> Self {
         Self {
             event_tx,
             doom_state: Arc::new(Mutex::new(DoomLoopState::default())),
             cancel_token,
+            last_total_tokens,
         }
     }
 
@@ -201,6 +205,8 @@ where
         response: &M::StreamingResponse,
     ) -> HookAction {
         if let Some(usage) = response.token_usage() {
+            self.last_total_tokens
+                .store(usage.total_tokens, Ordering::Relaxed);
             self.send_event(HookEvent::LlmEnd {
                 response_chars: 0,
                 tool_calls: 0,

@@ -907,7 +907,7 @@ fn hydration_guard_prevents_duplicate_memory_append() {
     let messages: Vec<Message> = (0..2)
         .map(|i| Message::user(format!("msg {}", i)))
         .collect();
-    store.append("s1", &messages).unwrap();
+    store.append("s1", &messages, None).unwrap();
 
     let mut hydrated = false;
 
@@ -958,7 +958,7 @@ fn hydration_without_guard_causes_duplicates() {
     let messages: Vec<Message> = (0..3)
         .map(|i| Message::user(format!("msg {}", i)))
         .collect();
-    store.append("s1", &messages).unwrap();
+    store.append("s1", &messages, None).unwrap();
 
     // Load-and-append WITHOUT guard — twice
     let loaded1 = store.load("s1").unwrap();
@@ -995,7 +995,7 @@ fn cancelled_turn_path_a_persists_to_store_and_memory() {
     ];
 
     // Persist to store (already done in production code)
-    store.append("s1", &cancelled_messages).unwrap();
+    store.append("s1", &cancelled_messages, None).unwrap();
 
     // Persist to memory (the fix)
     runtime
@@ -1038,7 +1038,7 @@ fn cancelled_turn_path_b_persists_to_store_and_memory() {
     }
 
     // Persist to store (already done in production code)
-    store.append("s1", &cancelled_messages).unwrap();
+    store.append("s1", &cancelled_messages, None).unwrap();
 
     // Persist to memory (the fix)
     runtime
@@ -1083,7 +1083,7 @@ fn hydration_loads_llm_context_not_full_history() {
     let messages: Vec<Message> = (0..15)
         .map(|i| Message::user(format!("msg {}", i)))
         .collect();
-    store.append("s1", &messages).unwrap();
+    store.append("s1", &messages, None).unwrap();
 
     // Append a compaction marker (kept=5, summarized 15)
     let marker = CompactionMarker::new(
@@ -1092,16 +1092,16 @@ fn hydration_loads_llm_context_not_full_history() {
         15,
         "summarize_and_keep_recent",
     );
-    store.append_marker("s1", &marker).unwrap();
+    store.append_marker("s1", &marker, None).unwrap();
 
     // 5 kept messages re-appended after marker
     let kept: Vec<Message> = (15..20)
         .map(|i| Message::user(format!("msg {}", i)))
         .collect();
-    store.append("s1", &kept).unwrap();
+    store.append("s1", &kept, None).unwrap();
 
     // --- New hydration pattern ---
-    let entries = store.load_all("s1").unwrap();
+    let (entries, _) = store.load_all("s1").unwrap();
     let llm_context = extract_llm_context(&entries);
 
     if !llm_context.is_empty() {
@@ -1135,9 +1135,9 @@ fn hydration_no_markers_loads_all() {
     let messages: Vec<Message> = (0..15)
         .map(|i| Message::user(format!("msg {}", i)))
         .collect();
-    store.append("s1", &messages).unwrap();
+    store.append("s1", &messages, None).unwrap();
 
-    let entries = store.load_all("s1").unwrap();
+    let (entries, _) = store.load_all("s1").unwrap();
     let llm_context = extract_llm_context(&entries);
 
     if !llm_context.is_empty() {
@@ -1174,7 +1174,7 @@ fn hydration_multiple_markers_uses_latest() {
     let msgs1: Vec<Message> = (0..10)
         .map(|i| Message::user(format!("batch1 msg {}", i)))
         .collect();
-    store.append("s1", &msgs1).unwrap();
+    store.append("s1", &msgs1, None).unwrap();
 
     // Marker 1 (kept=2)
     let marker1 = CompactionMarker::new(
@@ -1183,13 +1183,13 @@ fn hydration_multiple_markers_uses_latest() {
         8,
         "summarize_and_keep_recent",
     );
-    store.append_marker("s1", &marker1).unwrap();
+    store.append_marker("s1", &marker1, None).unwrap();
 
     // 5 more messages between markers
     let msgs2: Vec<Message> = (0..5)
         .map(|i| Message::user(format!("batch2 msg {}", i)))
         .collect();
-    store.append("s1", &msgs2).unwrap();
+    store.append("s1", &msgs2, None).unwrap();
 
     // Marker 2 (kept=3)
     let marker2 = CompactionMarker::new(
@@ -1198,15 +1198,15 @@ fn hydration_multiple_markers_uses_latest() {
         12,
         "summarize_and_keep_recent",
     );
-    store.append_marker("s1", &marker2).unwrap();
+    store.append_marker("s1", &marker2, None).unwrap();
 
     // 3 kept messages re-appended after marker2
     let kept: Vec<Message> = (0..3)
         .map(|i| Message::user(format!("kept msg {}", i)))
         .collect();
-    store.append("s1", &kept).unwrap();
+    store.append("s1", &kept, None).unwrap();
 
-    let entries = store.load_all("s1").unwrap();
+    let (entries, _) = store.load_all("s1").unwrap();
     let llm_context = extract_llm_context(&entries);
 
     if !llm_context.is_empty() {
@@ -1238,28 +1238,28 @@ fn compaction_count_derived_from_markers() {
     let msgs: Vec<Message> = (0..5)
         .map(|i| Message::user(format!("msg {}", i)))
         .collect();
-    store.append("s1", &msgs).unwrap();
+    store.append("s1", &msgs, None).unwrap();
 
     let m1 = CompactionMarker::new("s1".to_string(), 2, 3, "summarize_and_keep_recent");
-    store.append_marker("s1", &m1).unwrap();
+    store.append_marker("s1", &m1, None).unwrap();
 
     let msgs2: Vec<Message> = (0..3)
         .map(|i| Message::user(format!("msg2 {}", i)))
         .collect();
-    store.append("s1", &msgs2).unwrap();
+    store.append("s1", &msgs2, None).unwrap();
 
     let m2 = CompactionMarker::new("s2".to_string(), 1, 2, "summarize_and_keep_recent");
-    store.append_marker("s1", &m2).unwrap();
+    store.append_marker("s1", &m2, None).unwrap();
 
     let msgs3: Vec<Message> = (0..2)
         .map(|i| Message::user(format!("msg3 {}", i)))
         .collect();
-    store.append("s1", &msgs3).unwrap();
+    store.append("s1", &msgs3, None).unwrap();
 
     let m3 = CompactionMarker::new("s3".to_string(), 1, 1, "summarize_and_keep_recent");
-    store.append_marker("s1", &m3).unwrap();
+    store.append_marker("s1", &m3, None).unwrap();
 
-    let entries = store.load_all("s1").unwrap();
+    let (entries, _) = store.load_all("s1").unwrap();
 
     // Derive compaction_count from markers
     let marker_count = entries
@@ -1290,22 +1290,22 @@ fn hydration_guard_still_prevents_duplicates() {
     let messages: Vec<Message> = (0..7)
         .map(|i| Message::user(format!("msg {}", i)))
         .collect();
-    store.append("s1", &messages).unwrap();
+    store.append("s1", &messages, None).unwrap();
 
     let marker = CompactionMarker::new("Summary".to_string(), 3, 7, "summarize_and_keep_recent");
-    store.append_marker("s1", &marker).unwrap();
+    store.append_marker("s1", &marker, None).unwrap();
 
     // 3 kept messages re-appended after marker
     let kept: Vec<Message> = (7..10)
         .map(|i| Message::user(format!("msg {}", i)))
         .collect();
-    store.append("s1", &kept).unwrap();
+    store.append("s1", &kept, None).unwrap();
 
     let mut hydrated = false;
 
     // First hydration
     if !hydrated {
-        let entries = store.load_all("s1").unwrap();
+        let (entries, _) = store.load_all("s1").unwrap();
         let llm_context = extract_llm_context(&entries);
         if !llm_context.is_empty() {
             rt.block_on(memory.append("s1", llm_context)).unwrap();
@@ -1319,7 +1319,7 @@ fn hydration_guard_still_prevents_duplicates() {
 
     // Second hydration — guard prevents duplicate append
     if !hydrated {
-        let entries = store.load_all("s1").unwrap();
+        let (entries, _) = store.load_all("s1").unwrap();
         let llm_context = extract_llm_context(&entries);
         if !llm_context.is_empty() {
             rt.block_on(memory.append("s1", llm_context)).unwrap();

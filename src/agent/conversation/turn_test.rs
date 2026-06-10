@@ -22,6 +22,7 @@ fn turn_result_can_be_constructed() {
         tool_call_count: 0,
         deltas_emitted: false,
         cancelled: false,
+        last_total_tokens: 0,
     };
 
     assert_eq!(result.text, "Hello");
@@ -312,6 +313,7 @@ fn streaming_turn_result_fields_match_turn_result() {
         tool_call_count: 3,   // From driver
         deltas_emitted: true, // From driver
         cancelled: false,
+        last_total_tokens: 0,
     };
 
     assert_eq!(result.text, "Response from streaming");
@@ -452,6 +454,7 @@ fn path_b_cancelled_with_partial_text_constructs_user_and_assistant_messages() {
         tool_call_count: 0,
         deltas_emitted: true,
         cancelled: true,
+        last_total_tokens: 0,
     };
 
     // Replicate Path B construction logic from runtime.rs execute_turn
@@ -507,6 +510,7 @@ fn path_b_cancelled_with_empty_text_constructs_only_user_message() {
         tool_call_count: 0,
         deltas_emitted: false,
         cancelled: true,
+        last_total_tokens: 0,
     };
 
     // Replicate Path B construction logic from runtime.rs execute_turn
@@ -538,6 +542,7 @@ fn turn_result_cancelled_flag_propagates() {
         tool_call_count: 0,
         deltas_emitted: true,
         cancelled: true,
+        last_total_tokens: 0,
     };
 
     assert!(cancelled_result.cancelled, "Cancelled flag should be true");
@@ -557,6 +562,7 @@ fn turn_result_cancelled_flag_propagates() {
         tool_call_count: 1,
         deltas_emitted: true,
         cancelled: false,
+        last_total_tokens: 0,
     };
 
     assert!(
