@@ -125,32 +125,64 @@ pub(crate) fn extract_skill_description(content: &str) -> Option<String> {
 }
 
 fn extract_skill_description_internal(content: &str) -> Option<String> {
-    for line in content.lines() {
-        let trimmed = line.trim();
+    let mut lines = content.lines().peekable();
 
-        // Skip empty lines
+    // Check for YAML frontmatter (first non-empty line is `---`)
+    if let Some(first) = lines.peek()
+        && first.trim() == "---"
+    {
+        lines.next(); // consume opening ---
+        let mut fm_description: Option<String> = None;
+
+        for line in lines.by_ref() {
+            let trimmed = line.trim();
+            if trimmed == "---" {
+                break; // end of frontmatter
+            }
+            if let Some(desc) = trimmed.strip_prefix("description:") {
+                let desc = desc.trim();
+                // Handle quoted values: "foo" or 'foo'
+                let desc = desc
+                    .strip_prefix('"')
+                    .and_then(|d| d.strip_suffix('"'))
+                    .or_else(|| desc.strip_prefix('\'').and_then(|d| d.strip_suffix('\'')))
+                    .unwrap_or(desc);
+                if !desc.is_empty() {
+                    fm_description = Some(truncate_description(desc));
+                }
+            }
+        }
+
+        if let Some(desc) = fm_description {
+            return Some(desc);
+        }
+        // No description in frontmatter — fall through to body extraction
+    }
+
+    // Body extraction: first non-empty, non-heading line
+    for line in lines {
+        let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
         }
-
-        // Skip heading lines (start with #)
         if trimmed.starts_with('#') {
             continue;
         }
-
-        // Found first non-empty, non-heading line
-        if trimmed.len() <= 150 {
-            return Some(trimmed.to_string());
-        }
-
-        // Truncate to 150 chars with ellipsis
-        let mut truncated = String::with_capacity(151);
-        truncated.push_str(&trimmed[..150]);
-        truncated.push('…');
-        return Some(truncated);
+        return Some(truncate_description(trimmed));
     }
 
     None
+}
+
+fn truncate_description(desc: &str) -> String {
+    if desc.len() <= 150 {
+        desc.to_string()
+    } else {
+        let mut truncated = String::with_capacity(151);
+        truncated.push_str(&desc[..150]);
+        truncated.push('…');
+        truncated
+    }
 }
 
 pub(crate) fn resolve_explicit_skill_request_for_cwd(

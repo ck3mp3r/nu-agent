@@ -297,3 +297,24 @@ fn available_skills_preamble_works_without_descriptions() {
     assert!(preamble.contains("<name>empty</name>"));
     assert!(!preamble.contains("<description>"));
 }
+
+#[test]
+fn extract_skill_description_from_frontmatter() {
+    let content = "---\nname: context\ndescription: Working effectively with c5t.\nlicense: GPL-2.0\n---\n\n# c5t Context Management\n\nc5t is a personal context manager.\n";
+    let desc = extract_skill_description(content).expect("should extract");
+    assert_eq!(desc, "Working effectively with c5t.");
+}
+
+#[test]
+fn extract_skill_description_falls_back_to_body_when_no_frontmatter_description() {
+    let content = "---\nname: nushell\nlicense: GPL-2.0\n---\n\n# Nushell Guide\n\nBody description here.\n";
+    let desc = extract_skill_description(content).expect("should extract");
+    assert_eq!(desc, "Body description here.");
+}
+
+#[test]
+fn extract_skill_description_handles_quoted_frontmatter_value() {
+    let content = "---\ndescription: \"Use Nushell as a shell.\"\n---\n\n# Heading\n";
+    let desc = extract_skill_description(content).expect("should extract");
+    assert_eq!(desc, "Use Nushell as a shell.");
+}
