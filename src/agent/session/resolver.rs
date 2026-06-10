@@ -30,6 +30,7 @@ pub(crate) struct SessionResolution {
     pub session: Option<Session>,
     pub tui_should_hydrate_transcript: bool,
     pub tui_initial_messages: Vec<UiMessageSnapshot>,
+    pub session_cumulative_tokens: Option<u64>,
 }
 
 pub(crate) trait SessionResolver {
@@ -55,32 +56,34 @@ impl SessionResolver for DefaultSessionResolver<'_> {
                 session: None,
                 tui_should_hydrate_transcript: false,
                 tui_initial_messages: Vec::new(),
+                session_cumulative_tokens: None,
             }),
             SessionRequest::Attach(id) => {
-                let (session, tui_hydration_messages) = if input.use_tui {
+                let (session, tui_hydration_messages, cumulative) = if input.use_tui {
                     let (session, existed_before_attach) =
                         load_or_create_tui_session(self.store, &id)?;
-                    let messages = if input.input_is_nothing && existed_before_attach {
+                    let (messages, cumulative) = if input.input_is_nothing && existed_before_attach {
                         // Load store entries (messages + markers) from JSONL
                         let conversation_store =
                             JsonlConversationStore::new(self.store.cache_dir().to_path_buf());
-                        let entries = conversation_store.load_all(&id).map_err(|e| {
-                            LabeledError::new(format!("Failed to load messages: {e}"))
-                        })?;
+                        let (entries, cumulative) =
+                            conversation_store.load_all(&id).map_err(|e| {
+                                LabeledError::new(format!("Failed to load messages: {e}"))
+                            })?;
 
                         // Convert to UiMessageSnapshots for transcript display
-                        hydrate_transcript_from_store_entries(&entries)
+                        (hydrate_transcript_from_store_entries(&entries), cumulative)
                     } else {
-                        Vec::new()
+                        (Vec::new(), None)
                     };
 
-                    (session, messages)
+                    (session, messages, cumulative)
                 } else {
                     let session = self.store.get_or_create(Some(id.clone())).map_err(|e| {
                         LabeledError::new(format!("Failed to load/create session: {e}"))
                     })?;
 
-                    (session, Vec::new())
+                    (session, Vec::new(), None)
                 };
 
                 Ok(SessionResolution {
@@ -88,6 +91,7 @@ impl SessionResolver for DefaultSessionResolver<'_> {
                     session: Some(session),
                     tui_should_hydrate_transcript: !tui_hydration_messages.is_empty(),
                     tui_initial_messages: tui_hydration_messages,
+                    session_cumulative_tokens: cumulative,
                 })
             }
             SessionRequest::Create(id) => {
@@ -100,6 +104,7 @@ impl SessionResolver for DefaultSessionResolver<'_> {
                     session: Some(session),
                     tui_should_hydrate_transcript: false,
                     tui_initial_messages: Vec::new(),
+                    session_cumulative_tokens: None,
                 })
             }
         }

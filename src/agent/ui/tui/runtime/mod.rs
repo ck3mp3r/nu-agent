@@ -762,6 +762,7 @@ impl RuntimeCoordinator {
     pub(crate) fn hydrate_transcript_from_messages(
         &mut self,
         messages: impl IntoIterator<Item = UiMessageSnapshot>,
+        session_cumulative_tokens: Option<u64>,
     ) {
         for mut message in messages {
             if let Some(usage) = message.usage() {
@@ -846,6 +847,10 @@ impl RuntimeCoordinator {
                     self.state.push_transcript_line(role, line.to_string());
                 }
             }
+        }
+
+        if let Some(cumulative) = session_cumulative_tokens {
+            self.state.latest_total_tokens = Some(cumulative);
         }
     }
 
@@ -2384,8 +2389,10 @@ where
     pub(crate) fn hydrate_transcript_from_messages(
         &mut self,
         messages: impl IntoIterator<Item = UiMessageSnapshot>,
+        session_cumulative_tokens: Option<u64>,
     ) {
-        self.coordinator.hydrate_transcript_from_messages(messages);
+        self.coordinator
+            .hydrate_transcript_from_messages(messages, session_cumulative_tokens);
     }
 
     pub fn pump_terminal_once(&mut self) {

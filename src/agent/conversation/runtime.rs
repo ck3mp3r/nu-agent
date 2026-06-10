@@ -366,6 +366,7 @@ pub(crate) struct AgentConversationRuntime {
     pub conversation_store: JsonlConversationStore,
     pub memory_message_count: usize,
     pub memory_hydrated: bool,
+    pub session_cumulative_tokens: u64,
     pub cached_client: Option<CachedProviderClient>,
     pub cached_client_key: Option<ClientCacheKey>,
     #[allow(dead_code)]
@@ -918,7 +919,9 @@ impl ConversationRuntime for AgentConversationRuntime {
                 if let Some(ref session_id) = self.final_session_id
                     && let Some(ref messages) = e.messages
                 {
-                    if let Err(persist_err) = self.conversation_store.append(session_id, messages) {
+                    if let Err(persist_err) =
+                        self.conversation_store.append(session_id, messages, self.session_cumulative_tokens)
+                    {
                         log::warn!("Failed to persist cancelled turn messages: {}", persist_err);
                     }
                     self.memory_message_count += messages.len();
@@ -973,7 +976,7 @@ impl ConversationRuntime for AgentConversationRuntime {
             }
             if let Err(e) = self
                 .conversation_store
-                .append(session_id, &cancelled_messages)
+                .append(session_id, &cancelled_messages, self.session_cumulative_tokens)
             {
                 log::warn!("Failed to persist cancelled turn messages (path B): {}", e);
             }
@@ -993,8 +996,11 @@ impl ConversationRuntime for AgentConversationRuntime {
         if let Some(ref session_id) = self.final_session_id
             && let Some(ref messages) = turn_result.messages
         {
+            // Increment cumulative token count for this successful turn
+            self.session_cumulative_tokens = turn_result.usage.total_tokens;
+
             // Persist the new messages from the turn result
-            if let Err(e) = self.conversation_store.append(session_id, messages) {
+            if let Err(e) = self.conversation_store.append(session_id, messages, self.session_cumulative_tokens) {
                 log::warn!(
                     "Failed to persist turn messages to conversation store: {}",
                     e
@@ -1109,7 +1115,7 @@ impl AgentConversationRuntime {
         }
         if let Some(ref session_id) = self.final_session_id {
             // Load ALL entries (messages + markers)
-            let entries = self
+            let (entries, last_cumulative) = self
                 .conversation_store
                 .load_all(session_id)
                 .map_err(|e| LabeledError::new(format!("Failed to load session entries: {}", e)))?;
@@ -1132,6 +1138,7 @@ impl AgentConversationRuntime {
                 .filter(|e| matches!(e, StoreEntry::Marker(_)))
                 .count();
             self.compaction_count = marker_count;
+            self.session_cumulative_tokens = last_cumulative.unwrap_or(0);
         }
         self.memory_hydrated = true;
         Ok(())
@@ -1210,6 +1217,7 @@ impl AgentConversationRuntime {
         let memory = &self.memory;
         let conversation_store = &self.conversation_store;
         let store = &self.store;
+        let cumulative = self.session_cumulative_tokens;
 
         let source_label = source.as_str().to_string();
         ui.emit(&UiEvent::CompactionStarted {
@@ -1241,9 +1249,12 @@ impl AgentConversationRuntime {
                         memory,
                         conversation_store,
                         $model.clone(),
-                        mode,
                         ui,
-                        &source_label,
+                        CompactionRequest {
+                            mode,
+                            source: &source_label,
+                            cumulative_tokens: cumulative,
+                        },
                     ))
                 })
             }};
@@ -1332,6 +1343,13 @@ where
     })
 }
 
+/// Groups invocation-specific parameters for compaction.
+struct CompactionRequest<'a> {
+    mode: CompactionInvocationMode,
+    source: &'a str,
+    cumulative_tokens: u64,
+}
+
 /// Execute compaction using rig memory and ConversationStore.
 ///
 /// This async function:
@@ -1341,12 +1359,12 @@ where
 /// 4. Updates memory and persists to store
 ///
 /// # Arguments
-/// * `runtime` - Tokio runtime for async operations
 /// * `session` - Session to compact
 /// * `memory` - InMemoryConversationMemory containing messages
 /// * `store` - ConversationStore for persistence
-/// * `summarizer` - Function that takes rig messages and returns summary
-/// * `mode` - Compaction invocation mode (Threshold or Force)
+/// * `model` - Completion model for summarization
+/// * `ui` - Progress UI for status updates
+/// * `request` - Compaction request with mode, source, and cumulative tokens
 ///
 /// # Returns
 /// Ok(Some(outcome)) on successful compaction, Ok(None) if no compaction needed
@@ -1355,9 +1373,8 @@ async fn execute_compaction<M, S, U>(
     memory: &rig::memory::InMemoryConversationMemory,
     store: &S,
     model: M,
-    mode: CompactionInvocationMode,
     ui: &mut U,
-    source: &str,
+    request: CompactionRequest<'_>,
 ) -> Result<Option<CompactionOutcome>, String>
 where
     M: rig::completion::CompletionModel + Clone + 'static,
@@ -1373,7 +1390,7 @@ where
         .map_err(|e| format!("Failed to load messages from memory: {}", e))?;
 
     // Determine if compaction should run
-    let should_compact = match mode {
+    let should_compact = match request.mode {
         CompactionInvocationMode::Threshold => {
             messages.len() > session.config().compaction_threshold
         }
@@ -1385,7 +1402,7 @@ where
     }
 
     // Perform compaction with summarizer closure
-    let source_owned = source.to_string();
+    let source_owned = request.source.to_string();
     let summarizer = |old_messages: &[rig::completion::Message]| {
         let messages = old_messages.to_vec();
         let model_clone = model.clone();
@@ -1394,7 +1411,7 @@ where
     };
 
     let outcome = session
-        .compact(memory, store, summarizer)
+        .compact(memory, store, summarizer, request.cumulative_tokens)
         .await
         .map_err(|_| COMPACTION_FAILURE_WARNING.to_string())?;
 

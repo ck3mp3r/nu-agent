@@ -203,7 +203,6 @@ pub struct AppState {
     pub latest_input_tokens: Option<u64>,
     pub latest_output_tokens: Option<u64>,
     pub latest_total_tokens: Option<u64>,
-    pub session_total_tokens: u64,
     context_window_max_tokens: Option<u64>,
     pub quit_requested: bool,
     pub command_palette_open: bool,
@@ -275,7 +274,6 @@ impl PartialEq for AppState {
             && self.latest_input_tokens == other.latest_input_tokens
             && self.latest_output_tokens == other.latest_output_tokens
             && self.latest_total_tokens == other.latest_total_tokens
-            && self.session_total_tokens == other.session_total_tokens
             && self.context_window_max_tokens == other.context_window_max_tokens
             && self.quit_requested == other.quit_requested
             && self.command_palette_open == other.command_palette_open
@@ -344,7 +342,6 @@ impl Default for AppState {
             latest_input_tokens: None,
             latest_output_tokens: None,
             latest_total_tokens: None,
-            session_total_tokens: 0,
             context_window_max_tokens: None,
             quit_requested: false,
             command_palette_open: false,
@@ -1665,14 +1662,10 @@ impl AppState {
         self.latest_input_tokens = Some(input_tokens);
         self.latest_output_tokens = Some(output_tokens);
         self.latest_total_tokens = Some(total_tokens);
-        self.session_total_tokens = self.session_total_tokens.saturating_add(total_tokens);
     }
 
     pub fn hydrate_latest_total_tokens(&mut self, total_tokens: u64) {
         self.latest_total_tokens = Some(total_tokens);
-        if self.session_total_tokens < total_tokens {
-            self.session_total_tokens = total_tokens;
-        }
     }
 
     pub fn hydrate_usage(

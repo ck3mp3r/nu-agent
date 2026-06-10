@@ -553,3 +553,31 @@ fn test_tool_result_with_explicit_display_key() {
     let display = display.unwrap();
     assert_eq!(display.title, "custom output");
 }
+
+// --- SessionResolution cumulative token propagation tests ---
+
+#[test]
+fn session_resolution_carries_cumulative_tokens_from_construction() {
+    let resolution = super::SessionResolution {
+        final_session_id: Some("test-session".to_string()),
+        session: None,
+        tui_should_hydrate_transcript: true,
+        tui_initial_messages: vec![UiMessageSnapshot::new("user", "hello")],
+        session_cumulative_tokens: Some(4200),
+    };
+
+    assert_eq!(resolution.session_cumulative_tokens, Some(4200));
+}
+
+#[test]
+fn session_resolution_none_cumulative_for_non_hydrated_path() {
+    let resolution = super::SessionResolution {
+        final_session_id: Some("new-session".to_string()),
+        session: None,
+        tui_should_hydrate_transcript: false,
+        tui_initial_messages: Vec::new(),
+        session_cumulative_tokens: None,
+    };
+
+    assert_eq!(resolution.session_cumulative_tokens, None);
+}

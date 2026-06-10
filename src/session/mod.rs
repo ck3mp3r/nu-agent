@@ -186,6 +186,7 @@ impl Session {
         memory: &rig::memory::InMemoryConversationMemory,
         store: &S,
         summarizer: F,
+        cumulative_tokens: u64,
     ) -> io::Result<CompactionOutcome>
     where
         F: FnOnce(&[rig::completion::Message]) -> Fut,
@@ -310,13 +311,13 @@ impl Session {
             strategy_name,
         );
         store
-            .append_marker(&self.id, &marker)
+            .append_marker(&self.id, &marker, cumulative_tokens)
             .map_err(|e| io::Error::other(e.to_string()))?;
 
         // Re-append kept messages after the marker so they appear below it in transcript
         if !store_kept_messages.is_empty() {
             store
-                .append(&self.id, &store_kept_messages)
+                .append(&self.id, &store_kept_messages, cumulative_tokens)
                 .map_err(|e| io::Error::other(e.to_string()))?;
         }
 
@@ -328,7 +329,7 @@ impl Session {
 
         // Rollback: if append fails after clear, reload LLM context from store
         if let Err(e) = memory.append(&self.id, llm_context).await {
-            if let Ok(entries) = store.load_all(&self.id) {
+            if let Ok((entries, _)) = store.load_all(&self.id) {
                 let context = extract_llm_context(&entries);
                 let _ = memory.append(&self.id, context).await;
             }
