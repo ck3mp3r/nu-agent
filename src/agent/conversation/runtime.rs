@@ -105,19 +105,10 @@ pub(crate) fn apply_tool_filter(
 ///
 /// Connect timeout: 10s — fail fast if host is unreachable.
 /// No request timeout — LLM streaming responses can take arbitrarily long.
-/// Uses bundled Mozilla root certificates (webpki-roots) so the binary
-/// works in environments without system CA certs (Nix sandbox, containers).
+/// Uses system certificate store via rustls-native-certs (supports corporate CAs).
 fn build_http_client() -> reqwest::Client {
-    let mut root_store = rustls::RootCertStore::empty();
-    root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-
-    let tls_config = rustls::ClientConfig::builder()
-        .with_root_certificates(root_store)
-        .with_no_client_auth();
-
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
-        .use_preconfigured_tls(tls_config)
         .build()
         .expect("failed to build HTTP client")
 }
