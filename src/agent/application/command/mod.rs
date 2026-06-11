@@ -1030,11 +1030,16 @@ Compaction flags:
             persona.as_ref().map_or(0, |p| p.body.len())
         );
 
-        // Wire name field with precedence: CLI --name > front matter name > effective agent name
-        let agent_identity = cli_name
-            .or_else(|| persona.as_ref().and_then(|p| p.name.clone()))
+        // Display identity: persona name > effective agent name (never --name)
+        let agent_identity = persona
+            .as_ref()
+            .and_then(|p| p.name.clone())
             .or_else(|| effective_agent_name.clone());
-        log::debug!("resolved agent_identity={agent_identity:?}");
+        // Messaging identity: --name > display identity (for multi-agent communication)
+        let messaging_identity = cli_name.or_else(|| agent_identity.clone());
+        log::debug!(
+            "resolved agent_identity={agent_identity:?}, messaging_identity={messaging_identity:?}"
+        );
 
         // Wire permissions field
         let agent_permissions_overlay = persona
@@ -1279,8 +1284,8 @@ Compaction flags:
                 crate::agent::mailbox::AgentRegistry::new(),
             ));
 
-            // Register the orchestrator in its own registry
-            let orchestrator_name = agent_identity
+            // Register the orchestrator in its own registry (use messaging identity)
+            let orchestrator_name = messaging_identity
                 .clone()
                 .unwrap_or_else(|| "orchestrator".to_string());
             let (tokio_tx, mut tokio_rx) =
@@ -1327,7 +1332,7 @@ Compaction flags:
 
             let state = Some(std::sync::Arc::new(std::sync::Mutex::new(
                 crate::agent::tools::handler::spawn_agent::OrchestratorState {
-                    agent_identity: agent_identity.clone(),
+                    agent_identity: messaging_identity.clone(),
                     ..crate::agent::tools::handler::spawn_agent::OrchestratorState::new(
                         registry,
                         cwd_path.clone(),
@@ -1441,7 +1446,7 @@ Compaction flags:
             cwd_path,
             orchestrator_state.clone(),
             broker_sender_arc.clone(),
-            agent_identity.clone(),
+            messaging_identity.clone(),
         );
 
         for tool in builtin_tools {
