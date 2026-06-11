@@ -62,7 +62,6 @@ Persona file resolution (first match wins):
 name: coder
 description: Development agent focused on implementing features
 model: anthropic/claude-sonnet-4-20250514
-tool_filter: ["read", "write", "edit", "grep", "glob", "nu__run"]
 permissions:
   "*": "ask"
   "read": "allow"
@@ -76,7 +75,6 @@ All front matter keys are optional:
 - `name` - Agent identity (overridden by `--name` flag)
 - `description` - Persona summary
 - `model` - Default model (overridden by `--model` flag)
-- `tool_filter` - Tool filtering (overridden by `--tool-filter` flag)
 - `permissions` - Authorization overlay (overridden by `--permissions` flag)
 
 **Precedence:** CLI flags > front matter > plugin config
@@ -93,8 +91,6 @@ agent --agent coder --model openai/gpt-4o
 # Override persona's name
 agent --agent coder --name "bob"
 
-# Override tool filter
-agent --agent coder --tool-filter ["read", "grep"]
 ```
 
 ## Tool authorization (permissions DSL)
@@ -530,15 +526,58 @@ CLI flags override plugin config, which overrides built-in defaults.
 - Keyboard selection behavior is unchanged; moving selection updates the details pane.
 - Top legend line is removed; controls remain compact (`Session-only toggles | Enter/Space toggle | Esc close`).
 
-## Tool filtering
+## Permission-based tool visibility
 
-Filter exposed tools (builtin, MCP, closure) using glob patterns:
+Permissions control both **visibility** and **authorization**. Denied tools are
+hidden from the LLM entirely — they never appear in the tool list.
+
+| Action | Visible to LLM | Behavior |
+|--------|----------------|----------|
+| `allow` | yes | Runs without prompting |
+| `ask` | yes | User prompted before each use |
+| `deny` (tool-level) | **no** | Hidden from LLM tool list |
+| `deny` (granular, e.g. `nu__run.command`) | yes | Tool visible; specific commands blocked at runtime |
+
+### Defaults
+
+| Mode | Default when no `permissions` configured |
+|------|------------------------------------------|
+| TUI (interactive) | `"*": "ask"` — all tools visible, user prompted |
+| TTY (non-interactive) | `"*": "deny"` — all tools hidden; must allowlist |
+
+### TTY allowlist example
+
+In non-interactive (TTY/pipe) mode, deny everything by default and allow only
+the tools you need:
 
 ```nu
-"what tools do you have" | agent --tool-filter ["c5t/*" "nu/*"]
+$env.config.plugins.agent = {
+  permissions: {
+    "*": "deny"
+    "read": "allow"
+    "grep": "allow"
+    "glob": "allow"
+    "c5t_get*": "allow"
+    "c5t_list*": "allow"
+  }
+}
 ```
 
-Applies to ALL tool types. Omit to expose all tools.
+### TUI denylist example
+
+In interactive (TUI) mode, ask for everything by default and deny tools that
+should never be available:
+
+```nu
+$env.config.plugins.agent = {
+  permissions: {
+    "*": "ask"
+    "nu__run": "deny"
+    "edit": "deny"
+    "patch": "deny"
+  }
+}
+```
 
 ## Flag reference
 
@@ -551,7 +590,6 @@ Applies to ALL tool types. Omit to expose all tools.
 - `--max-output-tokens <int>`
 - `--max-turns <int>`
 - `--tools <record>`
-- `--tool-filter <list<string>>`
 - `--permissions <record>`
 - `--tool-timeout <duration>`
 - `--session <id>`

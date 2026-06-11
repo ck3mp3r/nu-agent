@@ -1,11 +1,10 @@
 use crate::agent::application::command::{
-    Agent, EngineConfigInterface, extract_flag_config, extract_tool_filter_from_call,
-    extract_tool_timeout, extract_tools_from_call, runtime_build, select_mcp_tools,
+    Agent, EngineConfigInterface, extract_flag_config,
+    extract_tool_timeout, extract_tools_from_call, runtime_build,
 };
 use crate::config::Config;
 use crate::plugin::RuntimeCtx;
 use crate::session::SessionStore;
-use crate::tools::mcp::client::McpToolDefinition;
 use nu_parser::parse;
 use nu_plugin::{EvaluatedCall, SimplePluginCommand};
 use nu_protocol::{
@@ -426,20 +425,6 @@ fn agent_command_signature_has_tools_flag() {
 }
 
 #[test]
-fn agent_command_signature_has_tool_filter_flag() {
-    let (agent, _temp_dir) = create_test_agent();
-    let sig = SimplePluginCommand::signature(&agent);
-
-    let flag = sig.named.iter().find(|f| f.long == "tool-filter");
-    assert!(flag.is_some(), "Missing --tool-filter flag");
-    assert_eq!(
-        flag.unwrap().arg,
-        Some(SyntaxShape::List(Box::new(SyntaxShape::String))),
-        "Wrong type for --tool-filter (should be list<string>)"
-    );
-}
-
-#[test]
 fn agent_command_signature_has_permissions_flag_as_record() {
     let (agent, _temp_dir) = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
@@ -492,7 +477,7 @@ fn resolve_effective_permissions_merges_cli_overlay_additively() {
     )]);
 
     let (effective, summary) =
-        super::resolve_effective_permissions_config(&call, Some(&plugin), None).expect("merge");
+        super::resolve_effective_permissions_config(&call, Some(&plugin), None, true).expect("merge");
 
     assert_eq!(
         effective.evaluate("read", &serde_json::json!({})).action,
@@ -532,7 +517,7 @@ fn resolve_effective_permissions_rejects_malformed_cli_with_path_diagnostic() {
         }),
     )]);
 
-    let err = super::resolve_effective_permissions_config(&call, None, None)
+    let err = super::resolve_effective_permissions_config(&call, None, None, true)
         .expect_err("malformed cli permissions must fail fast");
 
     assert!(err.msg.contains("Invalid --permissions value"));
@@ -641,30 +626,6 @@ fn agent_command_signature_quiet_and_verbose_help_text_describes_stderr_ux_behav
             && verbose.desc.contains("-vvv"),
         "verbose help text should describe progressive levels"
     );
-}
-
-#[test]
-fn select_mcp_tools_intersects_cli_allowlist_with_config() {
-    let discovered = vec![
-        McpToolDefinition {
-            server: "local".to_string(),
-            name: "k8s__list_pods".to_string(),
-            raw_name: "list_pods".to_string(),
-            description: None,
-            parameters: None,
-        },
-        McpToolDefinition {
-            server: "local".to_string(),
-            name: "gh__list_prs".to_string(),
-            raw_name: "list_prs".to_string(),
-            description: None,
-            parameters: None,
-        },
-    ];
-
-    let selected = select_mcp_tools(&discovered, &["gh__*".to_string()]);
-    assert_eq!(selected.len(), 1);
-    assert_eq!(selected[0].name, "gh__list_prs");
 }
 
 #[test]
@@ -849,83 +810,6 @@ fn extract_flag_config_with_no_flags() {
     assert_eq!(config.max_context_tokens, None);
     assert_eq!(config.max_output_tokens, None);
     assert_eq!(config.max_tool_turns, None);
-}
-
-#[test]
-fn extract_tool_filter_defaults_empty_when_flag_missing() {
-    let call = create_test_call(vec![]);
-    let patterns = extract_tool_filter_from_call(&call).expect("expected success");
-    assert!(patterns.is_empty());
-}
-
-#[test]
-fn extract_tool_filter_reads_list_of_strings() {
-    let call = create_test_call(vec![(
-        "tool-filter",
-        Value::test_list(vec![
-            Value::test_string("k8s__*"),
-            Value::test_string("gh__list_*"),
-        ]),
-    )]);
-
-    let patterns = extract_tool_filter_from_call(&call).expect("expected success");
-    assert_eq!(patterns, vec!["k8s__*", "gh__list_*"]);
-}
-
-#[test]
-fn extract_tool_filter_rejects_non_string_entries() {
-    let call = create_test_call(vec![(
-        "tool-filter",
-        Value::test_list(vec![Value::test_string("k8s__*"), Value::test_int(42)]),
-    )]);
-
-    let err = extract_tool_filter_from_call(&call).expect_err("expected error");
-    assert!(
-        err.msg.contains("tool-filter") || err.msg.contains("string"),
-        "unexpected error: {}",
-        err.msg
-    );
-}
-
-#[test]
-fn tool_filter_applies_to_all_tool_types() {
-    // Test that the filter function works with builtin tool names
-    use crate::tools::mcp::filter::matches_patterns;
-
-    // Builtin tools
-    assert!(matches_patterns("read", &["read".to_string()]));
-    assert!(matches_patterns("edit", &["edit".to_string()]));
-    assert!(!matches_patterns("read", &["write".to_string()]));
-
-    // Glob patterns
-    assert!(matches_patterns("read", &["re*".to_string()]));
-    assert!(matches_patterns("edit", &["ed*".to_string()]));
-    assert!(!matches_patterns("patch", &["re*".to_string()]));
-
-    // Multiple patterns (OR semantics)
-    assert!(matches_patterns(
-        "read",
-        &["read".to_string(), "write".to_string()]
-    ));
-    assert!(matches_patterns(
-        "write",
-        &["read".to_string(), "write".to_string()]
-    ));
-    assert!(!matches_patterns(
-        "edit",
-        &["read".to_string(), "write".to_string()]
-    ));
-}
-
-#[test]
-fn tool_filter_empty_patterns_matches_all_tools() {
-    use crate::tools::mcp::filter::matches_patterns;
-
-    // Empty patterns should match everything
-    assert!(matches_patterns("read", &[]));
-    assert!(matches_patterns("edit", &[]));
-    assert!(matches_patterns("k8s__list_pods", &[]));
-    assert!(matches_patterns("anything", &[]));
 }
 
 #[test]

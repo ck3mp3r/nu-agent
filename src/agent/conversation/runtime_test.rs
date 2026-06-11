@@ -197,7 +197,7 @@ fn permissions_startup_summary_emits_once_before_first_turn() {
 }
 
 #[test]
-fn enabling_startup_disabled_server_materializes_filtered_mcp_tools_for_current_session() {
+fn enabling_startup_disabled_server_registers_all_discovered_mcp_tools() {
     let mut tool_definitions = vec![tool_definition_named("read")];
     let mut registry =
         McpToolRegistry::from_tools(vec![mcp_tool("gh", "gh__list_prs", "list_prs")])
@@ -212,24 +212,21 @@ fn enabling_startup_disabled_server_materializes_filtered_mcp_tools_for_current_
         &mut tool_definitions,
         &mut registry,
         &discovered_from_toggle,
-        &["k8s__list_*".to_string()],
     )
     .expect("toggle merge should succeed");
 
+    let permissions = crate::agent::tools::authz::PermissionsConfig::safe_defaults(true);
     let visible =
-        crate::agent::tools::handler::llm_visible_tool_definitions(&tool_definitions, &registry);
+        crate::agent::tools::handler::llm_visible_tool_definitions(&tool_definitions, &registry, &permissions);
 
     assert!(visible.iter().any(|tool| tool.name == "k8s__list_pods"));
-    assert!(
-        visible.iter().all(|tool| tool.name != "k8s__delete_pod"),
-        "cli tool filter patterns must be applied consistently when enabling servers in-session"
-    );
+    assert!(visible.iter().any(|tool| tool.name == "k8s__delete_pod"));
     assert_eq!(
         visible
             .iter()
             .filter(|tool| tool.name.starts_with("k8s__"))
             .count(),
-        1
+        2
     );
 }
 
@@ -240,7 +237,7 @@ fn enabling_startup_disabled_server_registers_dispatch_raw_name_mapping() {
 
     let discovered = vec![mcp_tool("k8s", "k8s__list_pods", "list_pods")];
 
-    super::merge_new_mcp_tools_into_runtime(&mut tool_definitions, &mut registry, &discovered, &[])
+    super::merge_new_mcp_tools_into_runtime(&mut tool_definitions, &mut registry, &discovered)
         .expect("toggle merge should succeed");
 
     assert_eq!(registry.raw_name_for("k8s__list_pods"), Some("list_pods"));
@@ -260,7 +257,6 @@ fn enabling_stage_conflict_is_transactional_and_keeps_original_runtime_state() {
         &registry,
         "k8s",
         &discovered_conflict,
-        &[],
     );
 
     assert!(result.is_err());

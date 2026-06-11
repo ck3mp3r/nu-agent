@@ -108,7 +108,6 @@ pub(crate) struct ParsedPersona {
     pub name: Option<String>,
     pub description: Option<String>,
     pub model: Option<String>,
-    pub tool_filter: Option<Vec<String>>,
     pub permissions: Option<noyalib::Mapping>,
     pub body: String,
 }
@@ -128,7 +127,6 @@ pub(crate) fn interpret_front_matter(
             name: None,
             description: None,
             model: None,
-            tool_filter: None,
             permissions: None,
             body,
         });
@@ -137,7 +135,6 @@ pub(crate) fn interpret_front_matter(
     let mut name = None;
     let mut description = None;
     let mut model = None;
-    let mut tool_filter = None;
     let mut permissions = None;
 
     for (key, value) in mapping.iter() {
@@ -181,29 +178,6 @@ pub(crate) fn interpret_front_matter(
                 );
                 log::trace!("interpret_front_matter: model={model:?}");
             }
-            "tool_filter" => {
-                let seq = value
-                    .as_sequence()
-                    .ok_or_else(|| FrontMatterError::InvalidField {
-                        key: "tool_filter".to_string(),
-                        expected: "sequence".to_string(),
-                        got: value_type_name(value),
-                    })?;
-
-                let mut tools = Vec::new();
-                for item in seq {
-                    let tool = item
-                        .as_str()
-                        .ok_or_else(|| FrontMatterError::InvalidField {
-                            key: "tool_filter".to_string(),
-                            expected: "sequence of strings".to_string(),
-                            got: "sequence with non-string element".to_string(),
-                        })?;
-                    tools.push(tool.to_string());
-                }
-                tool_filter = Some(tools);
-                log::trace!("interpret_front_matter: tool_filter={tool_filter:?}");
-            }
             "permissions" => {
                 permissions = Some(
                     value
@@ -228,7 +202,6 @@ pub(crate) fn interpret_front_matter(
         name,
         description,
         model,
-        tool_filter,
         permissions,
         body,
     })

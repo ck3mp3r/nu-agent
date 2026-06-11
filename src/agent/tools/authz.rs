@@ -380,9 +380,11 @@ pub struct PermissionsSummary {
 }
 
 impl PermissionsConfig {
-    pub fn safe_defaults() -> Self {
+    pub fn safe_defaults(interactive: bool) -> Self {
+        let global = if interactive { PermissionAction::Ask } else { PermissionAction::Deny };
+        let nu_run_default = if interactive { PermissionAction::Ask } else { PermissionAction::Deny };
         Self {
-            global: PermissionAction::Ask,
+            global,
             tool_rules: vec![
                 ("read".to_string(), PermissionAction::Allow),
                 ("glob".to_string(), PermissionAction::Allow),
@@ -390,7 +392,7 @@ impl PermissionsConfig {
                 ("c5t_get*".to_string(), PermissionAction::Allow),
                 ("c5t_list*".to_string(), PermissionAction::Allow),
             ],
-            nu_run_command_rules: vec![("*".to_string(), PermissionAction::Ask)],
+            nu_run_command_rules: vec![("*".to_string(), nu_run_default)],
             diagnostics: vec![PermissionDiagnostic {
                 code: "permissions.defaults.applied",
                 message: "permissions block missing; using conservative defaults".to_string(),
@@ -398,15 +400,20 @@ impl PermissionsConfig {
         }
     }
 
-    pub fn parse_from_plugin_config(plugin_config: Option<&nu_protocol::Value>) -> Self {
+    pub fn is_tool_visible(&self, tool_name: &str) -> bool {
+        let decision = self.evaluate(tool_name, &serde_json::json!({}));
+        decision.action != PermissionAction::Deny
+    }
+
+    pub fn parse_from_plugin_config(plugin_config: Option<&nu_protocol::Value>, interactive: bool) -> Self {
         let Some(value) = plugin_config else {
-            return Self::safe_defaults();
+            return Self::safe_defaults(interactive);
         };
         let Ok(record) = value.as_record() else {
-            return Self::safe_defaults();
+            return Self::safe_defaults(interactive);
         };
         let Some(permissions_value) = record.get("permissions") else {
-            return Self::safe_defaults();
+            return Self::safe_defaults(interactive);
         };
 
         let mut diagnostics = Vec::new();
@@ -415,7 +422,7 @@ impl PermissionsConfig {
         let mut nu_run_command_map = BTreeMap::<String, PermissionAction>::new();
 
         let Ok(permissions_record) = permissions_value.as_record() else {
-            return Self::safe_defaults();
+            return Self::safe_defaults(interactive);
         };
 
         for (tool_key, tool_value) in permissions_record.iter() {
@@ -430,16 +437,9 @@ impl PermissionsConfig {
                 continue;
             }
 
-            if tool_key == "nu__run" {
-                let Ok(nu_run_record) = tool_value.as_record() else {
-                    diagnostics.push(PermissionDiagnostic {
-                        code: "permissions.invalid.nu_run_shape",
-                        message: "permissions.nu__run must be a record with required 'command' map"
-                            .to_string(),
-                    });
-                    continue;
-                };
-
+            if tool_key == "nu__run"
+                && let Ok(nu_run_record) = tool_value.as_record()
+            {
                 for (field_name, nested_value) in nu_run_record.iter() {
                     if field_name != "command" {
                         diagnostics.push(PermissionDiagnostic {

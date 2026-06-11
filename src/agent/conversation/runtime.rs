@@ -83,24 +83,6 @@ fn build_system_preamble(
     }
 }
 
-/// Apply tool filter patterns to a baseline set of tool definitions.
-///
-/// If `filter_patterns` is empty, returns a clone of the baseline (all tools visible).
-/// Otherwise, returns only tools whose names match at least one glob pattern.
-pub(crate) fn apply_tool_filter(
-    baseline: &[rig::completion::ToolDefinition],
-    filter_patterns: &[String],
-) -> Vec<rig::completion::ToolDefinition> {
-    if filter_patterns.is_empty() {
-        return baseline.to_vec();
-    }
-    baseline
-        .iter()
-        .filter(|td| crate::tools::mcp::filter::matches_patterns(&td.name, filter_patterns))
-        .cloned()
-        .collect()
-}
-
 /// Build a shared HTTP client with a connect timeout.
 ///
 /// Connect timeout: 10s — fail fast if host is unreachable.
@@ -332,7 +314,6 @@ pub(crate) struct AgentConversationRuntime {
     pub mcp_tool_server_handle: rig::tool::server::ToolServerHandle,
     pub mcp_lifecycle_projection: Vec<McpServerLifecycle>,
     pub mcp_server_configs: Vec<McpServerConfig>,
-    pub tool_filter_patterns: Vec<String>,
     pub mcp_caller_cwd: Option<std::path::PathBuf>,
     #[allow(dead_code)]
     pub tool_executor: ToolExecutor,
@@ -435,24 +416,21 @@ fn merge_new_mcp_tools_into_runtime(
     tool_definitions: &mut Vec<rig::completion::ToolDefinition>,
     mcp_registry: &mut McpToolRegistry,
     discovered_tools: &[crate::tools::mcp::client::McpToolDefinition],
-    cli_patterns: &[String],
 ) -> Result<(), String> {
-    let filtered =
-        crate::tools::mcp::registration::registerable_tools(discovered_tools, cli_patterns);
-    if filtered.is_empty() {
+    if discovered_tools.is_empty() {
         return Ok(());
     }
 
-    mcp_registry.register_tools(filtered.clone())?;
+    mcp_registry.register_tools(discovered_tools.to_vec())?;
 
     let known_names = tool_definitions
         .iter()
         .map(|tool| tool.name.clone())
         .collect::<std::collections::HashSet<_>>();
 
-    for tool in filtered {
+    for tool in discovered_tools {
         if !known_names.contains(tool.name.as_str()) {
-            tool_definitions.push(mcp_tool_definition_from_discovered(&tool));
+            tool_definitions.push(mcp_tool_definition_from_discovered(tool));
         }
     }
 
@@ -464,7 +442,6 @@ fn stage_enabled_mcp_runtime_state(
     current_registry: &McpToolRegistry,
     server_name: &str,
     discovered_tools: &[crate::tools::mcp::client::McpToolDefinition],
-    cli_patterns: &[String],
 ) -> Result<(Vec<rig::completion::ToolDefinition>, McpToolRegistry), String> {
     let mut staged_tool_definitions = current_tool_definitions.to_vec();
     let mut staged_registry = current_registry.clone();
@@ -473,7 +450,6 @@ fn stage_enabled_mcp_runtime_state(
         &mut staged_tool_definitions,
         &mut staged_registry,
         discovered_tools,
-        cli_patterns,
     )?;
     staged_registry.set_server_enabled(server_name, true)?;
 
@@ -608,7 +584,6 @@ impl ConversationRuntime for AgentConversationRuntime {
                     &self.mcp_registry,
                     server_name,
                     &discovered,
-                    &self.tool_filter_patterns,
                 )?;
 
                 self.tool_definitions = staged_tool_definitions;
@@ -737,15 +712,8 @@ impl ConversationRuntime for AgentConversationRuntime {
             let _ = self.switch_model(model);
         }
 
-        // Re-apply tool filter from new persona
-        if let Some(ref filter_patterns) = parsed.tool_filter {
-            self.tool_filter_patterns = filter_patterns.clone();
-            self.tool_definitions =
-                apply_tool_filter(&self.baseline_tool_definitions, filter_patterns);
-        } else {
-            self.tool_filter_patterns = Vec::new();
-            self.tool_definitions = self.baseline_tool_definitions.clone();
-        }
+        // Reset tool definitions to baseline on agent switch
+        self.tool_definitions = self.baseline_tool_definitions.clone();
 
         // Invalidate cached client to pick up any changes
         self.cached_client = None;
@@ -850,6 +818,9 @@ impl ConversationRuntime for AgentConversationRuntime {
         // Provider dispatch - build model from cached client
         self.ensure_client_cached()?;
 
+        // Compute filtered tool definitions before entering the mutable borrow scope
+        let visible_tool_definitions = self.active_tool_definitions();
+
         // Macro to reduce TurnContext boilerplate
         macro_rules! run_with_model {
             ($model:expr) => {{
@@ -871,6 +842,7 @@ impl ConversationRuntime for AgentConversationRuntime {
                         preamble: preamble.as_deref(),
                         max_turns: self.config.max_tool_turns,
                         tool_server_handle: self.mcp_tool_server_handle.clone(),
+                        visible_tool_definitions: visible_tool_definitions.clone(),
                         closure_registry: &self.closure_registry,
                         mcp_registry: &self.mcp_registry,
                     },
@@ -1179,7 +1151,11 @@ impl AgentConversationRuntime {
     }
 
     fn active_tool_definitions(&self) -> Vec<rig::completion::ToolDefinition> {
-        handler::llm_visible_tool_definitions(&self.tool_definitions, &self.mcp_registry)
+        handler::llm_visible_tool_definitions(
+            &self.tool_definitions,
+            &self.mcp_registry,
+            &self.permissions,
+        )
     }
 
     fn execute_compaction_event<U: ProgressUi>(

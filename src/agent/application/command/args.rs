@@ -144,39 +144,6 @@ pub(crate) fn extract_tool_timeout(call: &EvaluatedCall) -> std::time::Duration 
         .unwrap_or(std::time::Duration::from_secs(30))
 }
 
-/// Extract tool name patterns from --tool-filter flag.
-///
-/// Expected input is a list of strings, e.g. ["k8s__*", "gh__list_*"]
-///
-/// Returns an empty vector when the flag is not provided.
-/// Empty vector means "no filtering" (match all tools).
-pub(crate) fn extract_tool_filter_from_call(
-    call: &EvaluatedCall,
-) -> Result<Vec<String>, LabeledError> {
-    let patterns_value: Option<Value> = call.get_flag("tool-filter").ok().flatten();
-
-    let Some(value) = patterns_value else {
-        return Ok(Vec::new());
-    };
-
-    let list = value.as_list().map_err(|_| {
-        LabeledError::new("Invalid --tool-filter value")
-            .with_label("--tool-filter must be a list of strings", value.span())
-    })?;
-
-    let mut patterns = Vec::with_capacity(list.len());
-    for item in list {
-        let pattern = item.as_str().map_err(|_| {
-            LabeledError::new("Invalid --tool-filter entry")
-                .with_label("Each --tool-filter entry must be a string", item.span())
-        })?;
-        patterns.push(pattern.to_string());
-    }
-
-    log::trace!("extract_tool_filter_from_call: patterns={patterns:?}");
-    Ok(patterns)
-}
-
 /// Extract --agent and --name flags.
 ///
 /// Returns raw (agent, name) values without fallback logic.

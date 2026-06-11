@@ -39,7 +39,6 @@ $env.config.plugins.agent = {
 - Tools are discovered from connected MCP servers at runtime.
 - Exposed/callable MCP tool names are namespaced as `<server_key>__<raw_tool_name>`.
   - `server_key` is the key under `mcp.<server_key>` in plugin config.
-- `--tool-filter` can filter all tools (builtin, MCP, closure) for a single run.
 
 ## Transport Rules
 
@@ -86,17 +85,6 @@ Typical recovery flow:
 Fatal errors still remain for unrecoverable command-level failures (for example: invalid top-level
 agent config or LLM provider initialization failures).
 
-## `--tool-filter`
-
-Use glob patterns to filter exposed tools (applies to ALL tool types: builtin, MCP, closure):
-
-```nu
-"check open prs" | agent --tool-filter ["gh__*"]
-"cluster + prs" | agent --tool-filter ["k8s__*" "gh__list_*"]
-```
-
-If omitted, all discovered tools are exposed.
-
 ## Collision prevention
 
 If two MCP servers expose the same raw tool name (for example both expose `list_prs`),
@@ -120,7 +108,7 @@ Previous behavior exposed raw MCP tool names directly (e.g. `list_prs`).
 
 Current behavior requires namespaced names (e.g. `gh__list_prs`) for:
 
-- `--tool-filter` patterns
+- permissions DSL patterns
 - LLM tool-call names routed through the tool handler
 
 Update any existing filters/prompts that referenced raw MCP tool names.

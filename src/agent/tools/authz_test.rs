@@ -61,7 +61,7 @@ fn permissions_value() -> nu_protocol::Value {
 
 #[test]
 fn parser_accepts_canonical_permissions_shape() {
-    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()));
+    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()), true);
     let deny = parsed.evaluate(
         "nu__run",
         &serde_json::json!({"command": "kubectl delete pod x"}),
@@ -73,7 +73,7 @@ fn parser_accepts_canonical_permissions_shape() {
 
 #[test]
 fn precedence_is_global_then_tool_then_nested_command() {
-    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()));
+    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()), true);
 
     let global = parsed.evaluate("unknown_tool", &serde_json::json!({}));
     assert_eq!(global.action, PermissionAction::Ask);
@@ -93,7 +93,7 @@ fn precedence_is_global_then_tool_then_nested_command() {
 
 #[test]
 fn nu_run_command_matching_normalizes_whitespace() {
-    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()));
+    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()), true);
     let decision = parsed.evaluate(
         "nu__run",
         &serde_json::json!({"command": "   kubectl    delete   pod   foo   "}),
@@ -103,7 +103,7 @@ fn nu_run_command_matching_normalizes_whitespace() {
 
 #[test]
 fn missing_command_uses_deterministic_safe_fallback_with_diagnostics() {
-    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()));
+    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()), true);
     let decision = parsed.evaluate("nu__run", &serde_json::json!({}));
     assert_eq!(decision.action, PermissionAction::Ask);
     assert!(
@@ -127,7 +127,7 @@ fn unknown_nu_run_nested_field_is_rejected_with_diagnostic() {
         })
     });
 
-    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&value));
+    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
     assert!(
         parsed
             .diagnostics
@@ -149,7 +149,7 @@ fn redundant_nested_star_equal_to_inherited_is_valid_noop_with_diagnostic() {
         })
     });
 
-    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&value));
+    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
     let decision = parsed.evaluate("nu__run", &serde_json::json!({"command": "echo hi"}));
 
     assert_eq!(decision.action, PermissionAction::Ask);
@@ -163,7 +163,7 @@ fn redundant_nested_star_equal_to_inherited_is_valid_noop_with_diagnostic() {
 
 #[test]
 fn ask_choices_apply_once_always_and_deny() {
-    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()));
+    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()), true);
     let mut cache = SessionGrantCache::default();
     let args = serde_json::json!({"command": "echo hi"});
 
@@ -208,7 +208,7 @@ fn ask_choices_apply_once_always_and_deny() {
 
 #[test]
 fn session_grants_are_keyed_by_scoped_request_context_not_call_arguments() {
-    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()));
+    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()), true);
     let mut cache = SessionGrantCache::default();
     let first_args = serde_json::json!({"command": "echo one"});
     let second_args = serde_json::json!({"command": "echo two"});
@@ -238,7 +238,7 @@ fn allow_always_for_nu_run_does_not_leak_to_read_under_global_ask() {
             "*" => Value::test_string("ask")
         })
     });
-    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&value));
+    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
     let mut cache = SessionGrantCache::default();
 
     let nu_run_args = serde_json::json!({"command": "echo one"});
@@ -266,7 +266,7 @@ fn same_rule_identity_different_tool_name_does_not_share_session_grant() {
             "*" => Value::test_string("ask")
         })
     });
-    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&value));
+    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
     let mut cache = SessionGrantCache::default();
 
     let glob_args = serde_json::json!({"pattern": "**/*.rs"});
@@ -295,7 +295,7 @@ fn same_tool_name_different_mode_does_not_share_session_grant() {
             "edit" => Value::test_string("ask")
         })
     });
-    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&value));
+    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
     let mut cache = SessionGrantCache::default();
 
     let preview_args = serde_json::json!({
@@ -329,7 +329,7 @@ fn same_tool_name_same_mode_different_source_does_not_share_session_grant() {
             "edit" => Value::test_string("ask")
         })
     });
-    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&value));
+    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
     let mut cache = SessionGrantCache::default();
 
     let args = serde_json::json!({
@@ -364,7 +364,7 @@ fn same_tool_source_mode_different_rule_identity_does_not_share_session_grant() 
             })
         })
     });
-    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&value));
+    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
     let mut cache = SessionGrantCache::default();
 
     let echo_args = serde_json::json!({"command": "echo one"});
@@ -395,7 +395,7 @@ fn same_tool_source_mode_different_rule_identity_does_not_share_session_grant() 
 
 #[test]
 fn defaults_apply_when_permissions_block_is_missing() {
-    let parsed = PermissionsConfig::parse_from_plugin_config(None);
+    let parsed = PermissionsConfig::parse_from_plugin_config(None, true);
     assert_eq!(
         parsed.evaluate("read", &serde_json::json!({})).action,
         PermissionAction::Allow
@@ -640,7 +640,7 @@ fn non_interactive_ask_allow_override_returns_allow_once() {
 
 #[test]
 fn allow_always_grant_is_session_only_and_resets_with_new_cache() {
-    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()));
+    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()), true);
 
     let mut first_session_cache = SessionGrantCache::default();
     let first_args = serde_json::json!({"command": "echo one"});
@@ -716,7 +716,7 @@ fn additive_overlay_cli_wins_on_overlap_and_retains_non_overlapping() {
             "read" => Value::test_string("allow"),
             "glob" => Value::test_string("deny")
         })
-    })));
+    })), true);
 
     let overlay = PermissionsOverlay::parse_from_cli_value(&Value::test_record(record! {
         "read" => Value::test_string("deny"),
@@ -752,7 +752,7 @@ fn additive_overlay_merges_nested_nu_run_command_deterministically() {
                 })
             })
         })
-    })));
+    })), true);
 
     let overlay = PermissionsOverlay::parse_from_cli_value(&Value::test_record(record! {
         "nu__run" => Value::test_record(record! {
@@ -1122,4 +1122,117 @@ fn parse_from_yaml_mixed() {
         overlay.nu_run_command_rules.get("*"),
         Some(&PermissionAction::Ask)
     );
+}
+
+// ── is_tool_visible tests ──────────────────────────────────────────────
+
+#[test]
+fn is_tool_visible_returns_true_for_global_ask() {
+    let value = Value::test_record(record! {
+        "permissions" => Value::test_record(record! {
+            "*" => Value::test_string("ask"),
+        })
+    });
+    let config = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
+    assert!(config.is_tool_visible("nu__run"));
+    assert!(config.is_tool_visible("read"));
+}
+
+#[test]
+fn is_tool_visible_returns_true_for_global_allow() {
+    let value = Value::test_record(record! {
+        "permissions" => Value::test_record(record! {
+            "*" => Value::test_string("allow"),
+        })
+    });
+    let config = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
+    assert!(config.is_tool_visible("nu__run"));
+}
+
+#[test]
+fn is_tool_visible_returns_false_for_global_deny() {
+    let value = Value::test_record(record! {
+        "permissions" => Value::test_record(record! {
+            "*" => Value::test_string("deny"),
+        })
+    });
+    let config = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
+    assert!(!config.is_tool_visible("nu__run"));
+    assert!(!config.is_tool_visible("read"));
+}
+
+#[test]
+fn is_tool_visible_returns_false_for_tool_level_deny() {
+    let value = Value::test_record(record! {
+        "permissions" => Value::test_record(record! {
+            "*" => Value::test_string("ask"),
+            "nu__run" => Value::test_string("deny"),
+        })
+    });
+    let config = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
+    assert!(!config.is_tool_visible("nu__run"));
+    assert!(config.is_tool_visible("read"));
+}
+
+#[test]
+fn is_tool_visible_returns_true_for_granular_deny_with_tool_level_ask() {
+    let value = Value::test_record(record! {
+        "permissions" => Value::test_record(record! {
+            "*" => Value::test_string("ask"),
+            "nu__run" => Value::test_record(record! {
+                "command" => Value::test_record(record! {
+                    "kubectl delete *" => Value::test_string("deny"),
+                    "*" => Value::test_string("ask"),
+                })
+            })
+        })
+    });
+    let config = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
+    assert!(config.is_tool_visible("nu__run"));
+}
+
+#[test]
+fn is_tool_visible_respects_specificity_over_global() {
+    let value = Value::test_record(record! {
+        "permissions" => Value::test_record(record! {
+            "*" => Value::test_string("deny"),
+            "read" => Value::test_string("allow"),
+        })
+    });
+    let config = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
+    assert!(config.is_tool_visible("read"));
+    assert!(!config.is_tool_visible("nu__run"));
+    assert!(!config.is_tool_visible("edit"));
+}
+
+// ── safe_defaults(interactive) tests ───────────────────────────────────
+
+#[test]
+fn safe_defaults_tui_mode_global_ask() {
+    let config = PermissionsConfig::safe_defaults(true);
+    let decision = config.evaluate("unknown_tool", &serde_json::json!({}));
+    assert_eq!(decision.action, PermissionAction::Ask);
+}
+
+#[test]
+fn safe_defaults_tty_mode_global_deny() {
+    let config = PermissionsConfig::safe_defaults(false);
+    let decision = config.evaluate("unknown_tool", &serde_json::json!({}));
+    assert_eq!(decision.action, PermissionAction::Deny);
+}
+
+#[test]
+fn safe_defaults_tty_mode_still_allows_read_tools() {
+    let config = PermissionsConfig::safe_defaults(false);
+    assert!(config.is_tool_visible("read"));
+    assert!(config.is_tool_visible("glob"));
+    assert!(config.is_tool_visible("grep"));
+}
+
+#[test]
+fn safe_defaults_tty_mode_hides_unknown_tools() {
+    let config = PermissionsConfig::safe_defaults(false);
+    assert!(!config.is_tool_visible("nu__run"));
+    assert!(!config.is_tool_visible("nu__shell"));
+    assert!(!config.is_tool_visible("edit"));
 }

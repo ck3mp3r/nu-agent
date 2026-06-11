@@ -1,5 +1,3 @@
-use crate::tools::mcp::filter::matches_patterns;
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct McpToolDefinition {
     pub server: String,
@@ -41,24 +39,3 @@ impl McpToolDefinition {
         }
     }
 }
-
-pub fn filter_tools(tools: &[McpToolDefinition], patterns: &[String]) -> Vec<McpToolDefinition> {
-    log::debug!(
-        "filter_tools: input_count={}, pattern_count={}",
-        tools.len(),
-        patterns.len()
-    );
-
-    let result: Vec<McpToolDefinition> = tools
-        .iter()
-        .filter(|tool| matches_patterns(&tool.name, patterns))
-        .cloned()
-        .collect();
-
-    log::debug!("filter_tools: output_count={}", result.len());
-    result
-}
-
-#[cfg(test)]
-#[path = "client_test.rs"]
-mod client_test;

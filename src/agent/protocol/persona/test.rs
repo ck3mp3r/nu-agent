@@ -358,63 +358,6 @@ fn interpret_model_extracts_string() {
 }
 
 #[test]
-fn interpret_tool_filter_extracts_list() {
-    let mut mapping = noyalib::Mapping::new();
-    let tools = vec![
-        noyalib::Value::String("read".to_string()),
-        noyalib::Value::String("write".to_string()),
-    ];
-    mapping.insert("tool_filter", noyalib::Value::Sequence(tools));
-
-    let result = interpret_front_matter(Some(&mapping), "body".to_string());
-    assert!(result.is_ok());
-    let persona = result.unwrap();
-    assert_eq!(
-        persona.tool_filter,
-        Some(vec!["read".to_string(), "write".to_string()])
-    );
-}
-
-#[test]
-fn interpret_tool_filter_rejects_non_list() {
-    let mut mapping = noyalib::Mapping::new();
-    mapping.insert(
-        "tool_filter",
-        noyalib::Value::String("not-a-list".to_string()),
-    );
-
-    let result = interpret_front_matter(Some(&mapping), "body".to_string());
-    assert!(result.is_err());
-    if let Err(FrontMatterError::InvalidField { key, expected, got }) = result {
-        assert_eq!(key, "tool_filter");
-        assert_eq!(expected, "sequence");
-        assert_eq!(got, "string");
-    } else {
-        panic!("Expected InvalidField error");
-    }
-}
-
-#[test]
-fn interpret_tool_filter_rejects_non_string_elements() {
-    let mut mapping = noyalib::Mapping::new();
-    let tools = vec![
-        noyalib::Value::String("read".to_string()),
-        noyalib::Value::Number(42.into()),
-    ];
-    mapping.insert("tool_filter", noyalib::Value::Sequence(tools));
-
-    let result = interpret_front_matter(Some(&mapping), "body".to_string());
-    assert!(result.is_err());
-    if let Err(FrontMatterError::InvalidField { key, expected, got }) = result {
-        assert_eq!(key, "tool_filter");
-        assert_eq!(expected, "sequence of strings");
-        assert_eq!(got, "sequence with non-string element");
-    } else {
-        panic!("Expected InvalidField error");
-    }
-}
-
-#[test]
 fn interpret_permissions_extracts_mapping() {
     let mut mapping = noyalib::Mapping::new();
     let mut perms = noyalib::Mapping::new();
@@ -437,7 +380,6 @@ fn interpret_no_front_matter() {
     assert_eq!(persona.name, None);
     assert_eq!(persona.description, None);
     assert_eq!(persona.model, None);
-    assert_eq!(persona.tool_filter, None);
     assert_eq!(persona.permissions, None);
     assert_eq!(persona.body, "body content");
 }
@@ -465,11 +407,6 @@ fn interpret_all_fields_together() {
         noyalib::Value::String("A complete agent".to_string()),
     );
     mapping.insert("model", noyalib::Value::String("claude-3".to_string()));
-    let tools = vec![
-        noyalib::Value::String("read".to_string()),
-        noyalib::Value::String("write".to_string()),
-    ];
-    mapping.insert("tool_filter", noyalib::Value::Sequence(tools));
     let mut perms = noyalib::Mapping::new();
     perms.insert("*", noyalib::Value::String("allow".to_string()));
     mapping.insert("permissions", noyalib::Value::Mapping(perms.clone()));
@@ -480,10 +417,6 @@ fn interpret_all_fields_together() {
     assert_eq!(persona.name, Some("full-agent".to_string()));
     assert_eq!(persona.description, Some("A complete agent".to_string()));
     assert_eq!(persona.model, Some("claude-3".to_string()));
-    assert_eq!(
-        persona.tool_filter,
-        Some(vec!["read".to_string(), "write".to_string()])
-    );
     assert!(persona.permissions.is_some());
     assert_eq!(persona.body, "body content");
 }
@@ -498,7 +431,6 @@ fn interpret_empty_mapping() {
     assert_eq!(persona.name, None);
     assert_eq!(persona.description, None);
     assert_eq!(persona.model, None);
-    assert_eq!(persona.tool_filter, None);
     assert_eq!(persona.permissions, None);
     assert_eq!(persona.body, "body");
 }

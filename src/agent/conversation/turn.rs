@@ -15,6 +15,8 @@ use crate::agent::protocol::contracts::ProgressUi;
 use crate::agent::tools::handler::McpToolRegistry;
 use crate::tools::closure::ClosureRegistry;
 use rig::streaming::StreamingPrompt;
+use rig::tool::{ToolDyn, ToolError};
+use rig::wasm_compat::WasmBoxedFuture;
 
 /// Default max tool turns when config doesn't specify a limit.
 /// Matches v1 "unlimited" semantics with a practical upper bound.
@@ -126,6 +128,7 @@ where
     pub preamble: Option<&'a str>,
     pub max_turns: Option<u32>,
     pub tool_server_handle: rig::tool::server::ToolServerHandle,
+    pub visible_tool_definitions: Vec<rig::completion::ToolDefinition>,
     pub closure_registry: &'a ClosureRegistry,
     pub mcp_registry: &'a McpToolRegistry,
 }
@@ -198,6 +201,7 @@ where
         memory: ctx.memory,
         conversation_id: ctx.conversation_id,
         tool_server_handle: ctx.tool_server_handle,
+        visible_tool_definitions: ctx.visible_tool_definitions,
         max_turns: ctx.max_turns,
     };
 
@@ -257,6 +261,7 @@ struct AgentPromptConfig {
     memory: rig::memory::InMemoryConversationMemory,
     conversation_id: String,
     tool_server_handle: rig::tool::server::ToolServerHandle,
+    visible_tool_definitions: Vec<rig::completion::ToolDefinition>,
     max_turns: Option<u32>,
 }
 
@@ -267,6 +272,41 @@ struct StreamingTurnResult {
     messages: Option<Vec<rig::completion::Message>>,
     /// Whether the stream was cancelled via cancel_token
     cancelled: bool,
+}
+
+/// A proxy tool that forwards `call` to an existing `ToolServerHandle`
+/// while providing a pre-filtered `ToolDefinition`.
+///
+/// This allows the agent builder to use `.tools()` (which controls what
+/// the LLM sees) while dispatching execution through the original shared
+/// tool server (which has all registered tool implementations).
+struct FilteredToolProxy {
+    tool_name: String,
+    tool_definition: rig::completion::ToolDefinition,
+    handle: rig::tool::server::ToolServerHandle,
+}
+
+impl ToolDyn for FilteredToolProxy {
+    fn name(&self) -> String {
+        self.tool_name.clone()
+    }
+
+    fn definition<'a>(
+        &'a self,
+        _prompt: String,
+    ) -> WasmBoxedFuture<'a, rig::completion::ToolDefinition> {
+        let def = self.tool_definition.clone();
+        Box::pin(async move { def })
+    }
+
+    fn call<'a>(&'a self, args: String) -> WasmBoxedFuture<'a, Result<String, ToolError>> {
+        Box::pin(async move {
+            self.handle
+                .call_tool(&self.tool_name, &args)
+                .await
+                .map_err(|e| ToolError::ToolCallError(Box::new(e)))
+        })
+    }
 }
 
 /// Build an agent with a hook and execute a multi-turn streaming prompt loop.
@@ -286,13 +326,28 @@ where
         memory,
         conversation_id,
         tool_server_handle,
+        visible_tool_definitions,
         max_turns,
     } = config;
+
+    // Create proxy tools that expose only the filtered definitions to the LLM
+    // while delegating execution to the original shared tool server handle.
+    let proxy_tools: Vec<Box<dyn ToolDyn>> = visible_tool_definitions
+        .into_iter()
+        .map(|def| {
+            let proxy = FilteredToolProxy {
+                tool_name: def.name.clone(),
+                tool_definition: def,
+                handle: tool_server_handle.clone(),
+            };
+            Box::new(proxy) as Box<dyn ToolDyn>
+        })
+        .collect();
 
     let mut builder = rig::agent::AgentBuilder::new(model)
         .hook(hook)
         .memory(memory.clone())
-        .tool_server_handle(tool_server_handle);
+        .tools(proxy_tools);
     if let Some(ref p) = preamble {
         builder = builder.preamble(p);
     }

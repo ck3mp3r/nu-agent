@@ -116,8 +116,9 @@ fn resolve_effective_permissions_config(
     call: &EvaluatedCall,
     plugin_config: Option<&Value>,
     agent_overlay: Option<&PermissionsOverlay>,
+    interactive: bool,
 ) -> Result<(PermissionsConfig, String), LabeledError> {
-    let base = PermissionsConfig::parse_from_plugin_config(plugin_config);
+    let base = PermissionsConfig::parse_from_plugin_config(plugin_config, interactive);
     let cli_permissions: Option<Value> = call.get_flag("permissions").ok().flatten();
 
     // Build permission chain: base → agent_overlay → CLI
@@ -329,29 +330,6 @@ pub fn extract_tool_timeout(call: &EvaluatedCall) -> std::time::Duration {
     args::extract_tool_timeout(call)
 }
 
-/// Extract tool name patterns from --tool-filter flag.
-///
-/// Expected input is a list of strings, e.g. ["k8s__*", "gh__list_*"]
-///
-/// Returns an empty vector when the flag is not provided.
-/// Empty vector means "no filtering" (match all tools).
-pub fn extract_tool_filter_from_call(call: &EvaluatedCall) -> Result<Vec<String>, LabeledError> {
-    args::extract_tool_filter_from_call(call)
-}
-
-/// Select MCP tools from config, optionally intersected by CLI allowlist patterns.
-///
-/// Behavior:
-/// - No config => empty set
-/// - Empty patterns => all runtime-discovered MCP tools
-/// - Non-empty patterns => only runtime-discovered tools matching patterns
-pub fn select_mcp_tools(
-    discovered_tools: &[crate::tools::mcp::client::McpToolDefinition],
-    cli_allowlist_patterns: &[String],
-) -> Vec<crate::tools::mcp::client::McpToolDefinition> {
-    crate::tools::mcp::registration::registerable_tools(discovered_tools, cli_allowlist_patterns)
-}
-
 pub(crate) fn builtin_tool_definitions() -> Vec<rig::completion::ToolDefinition> {
     vec![
         rig::completion::ToolDefinition {
@@ -556,9 +534,6 @@ Session persistence via --session allows resuming conversations across invocatio
 
 Tool closures via --tools enable custom Nushell functions as LLM tools.
 
-Tool filtering via --tool-filter restricts exposed tools (builtin, MCP, closure) to glob patterns.
-Applies to ALL tool types. Omit to expose all tools.
-
 Permissions overlay via --permissions controls authorization for tool calls.
 
 Agent personas via --agent loads instructions from:
@@ -570,7 +545,6 @@ Persona file front matter (optional YAML):
   name: <string>                # Agent identity (overridden by --name)
   description: <string>         # Persona summary
   model: <provider/model>       # Default model (overridden by --model)
-  tool_filter: [<globs>]        # Tool filtering (overridden by --tool-filter)
   permissions: <record>         # Authorization overlay (overridden by --permissions)
 
 CLI flags override front matter values. Front matter overrides plugin config.
@@ -600,7 +574,6 @@ Compaction flags:
             "prompt",
             "agent",
             "persona",
-            "filter",
             "tools",
         ]
     }
@@ -645,11 +618,6 @@ Compaction flags:
             Example {
                 description: "Use persona with model override",
                 example: r#""research this topic" | agent --agent researcher --model anthropic/claude-sonnet-4-20250514"#,
-                result: None,
-            },
-            Example {
-                description: "Filter tools to specific patterns",
-                example: r#""analyze code" | agent --tool-filter ['read' 'grep' 'glob']"#,
                 result: None,
             },
             Example {
@@ -725,12 +693,6 @@ Compaction flags:
                 "tools",
                 nu_protocol::SyntaxShape::Record(vec![]),
                 "Record of tool closures: {name: closure, ...}",
-                None,
-            )
-            .named(
-                "tool-filter",
-                nu_protocol::SyntaxShape::List(Box::new(nu_protocol::SyntaxShape::String)),
-                "List of tool name glob patterns, e.g. ['k8s__*', 'gh__list_*']",
                 None,
             )
             .named(
@@ -933,11 +895,6 @@ Compaction flags:
             );
         }
 
-        // Extract optional tool name patterns.
-        // Empty patterns means "no filtering" (match all tools).
-        // This is extracted early because persona hasn't been loaded yet - we'll merge it later
-        let cli_tool_filter_patterns = extract_tool_filter_from_call(call)?;
-
         let plugin_config_value = engine.get_plugin_config()?;
 
         let agents_config = plugin_config_value
@@ -1022,10 +979,9 @@ Compaction flags:
             None
         };
         log::debug!(
-            "persona loaded: name={:?}, model={:?}, tool_filter={:?}, has_permissions={}, body_len={}",
+            "persona loaded: name={:?}, model={:?}, has_permissions={}, body_len={}",
             persona.as_ref().and_then(|p| p.name.as_ref()),
             persona.as_ref().and_then(|p| p.model.as_ref()),
-            persona.as_ref().and_then(|p| p.tool_filter.as_ref()),
             persona.as_ref().is_some_and(|p| p.permissions.is_some()),
             persona.as_ref().map_or(0, |p| p.body.len())
         );
@@ -1055,17 +1011,6 @@ Compaction flags:
             agent_permissions_overlay.is_some()
         );
 
-        // Wire tool_filter with precedence: CLI --tool-filter > front matter tool_filter
-        let tool_filter_patterns = if cli_tool_filter_patterns.is_empty() {
-            persona
-                .as_ref()
-                .and_then(|p| p.tool_filter.clone())
-                .unwrap_or_default()
-        } else {
-            cli_tool_filter_patterns
-        };
-        log::debug!("effective tool_filter_patterns={tool_filter_patterns:?}");
-
         // Wire model with precedence: CLI --model > front matter model > plugin config
         // Config already has plugin/env/default merged, we just need to inject persona model if CLI didn't provide one
         let cli_model_provided = call.get_flag::<Value>("model").ok().flatten().is_some();
@@ -1085,6 +1030,7 @@ Compaction flags:
                 call,
                 plugin_config_value.as_ref(),
                 agent_permissions_overlay.as_ref(),
+                mode.is_tui(),
             )?;
 
         // Create async runtime for LLM and MCP tool execution
@@ -1120,7 +1066,7 @@ Compaction flags:
         };
 
         let discovered_mcp_tools = if let Some(mcp_runtime) = mcp_runtime.as_ref() {
-            select_mcp_tools(mcp_runtime.discovered_tools(), &tool_filter_patterns)
+            mcp_runtime.discovered_tools().to_vec()
         } else {
             Vec::new()
         };
@@ -1205,19 +1151,8 @@ Compaction flags:
             }
         }));
 
-        // Apply tool filter patterns to ALL tools (builtin + closure + MCP) if provided
-        // Store baseline (unfiltered) for agent switching
+        // Store baseline for agent switching
         let baseline_tool_definitions = tool_definitions.clone();
-        if !tool_filter_patterns.is_empty() {
-            log::debug!(
-                "tool filter: patterns={tool_filter_patterns:?}, pre_filter_count={}",
-                tool_definitions.len()
-            );
-            tool_definitions.retain(|td| {
-                crate::tools::mcp::filter::matches_patterns(&td.name, &tool_filter_patterns)
-            });
-            log::debug!("tool filter: post_filter_count={}", tool_definitions.len());
-        }
 
         let resolver = DefaultSessionResolver::new(&self.store);
         let mut session_resolution = resolver.resolve(SessionResolutionInput {
@@ -1503,7 +1438,6 @@ Compaction flags:
                 .as_ref()
                 .map(|cfg| cfg.mcp.clone())
                 .unwrap_or_default(),
-            tool_filter_patterns,
             mcp_caller_cwd,
             tool_executor,
             engine: engine.clone(),

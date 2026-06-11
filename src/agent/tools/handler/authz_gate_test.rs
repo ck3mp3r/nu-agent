@@ -36,7 +36,7 @@ fn make_tool_call(name: &str) -> ToolCall {
 #[test]
 fn builtin_tools_bypass_permission_flow() {
     // Even with deny-all permissions, builtin tools should be allowed
-    let permissions = PermissionsConfig::safe_defaults();
+    let permissions = PermissionsConfig::safe_defaults(true);
     let mut grant_cache = SessionGrantCache::default();
     let flow_context = AuthorizationFlowContext {
         ask_context: AskContext::default(),
@@ -71,7 +71,7 @@ fn builtin_tools_bypass_permission_flow() {
 
 #[test]
 fn builtin_fs_tools_go_through_permission_flow() {
-    let permissions = PermissionsConfig::safe_defaults();
+    let permissions = PermissionsConfig::safe_defaults(true);
     let mut grant_cache = SessionGrantCache::default();
     let flow_context = AuthorizationFlowContext {
         ask_context: AskContext::default(),
@@ -100,7 +100,7 @@ fn builtin_fs_tools_go_through_permission_flow() {
 
 #[test]
 fn non_builtin_tools_go_through_permission_flow() {
-    let permissions = PermissionsConfig::safe_defaults();
+    let permissions = PermissionsConfig::safe_defaults(true);
     let mut grant_cache = SessionGrantCache::default();
     let flow_context = AuthorizationFlowContext {
         ask_context: AskContext::default(),
