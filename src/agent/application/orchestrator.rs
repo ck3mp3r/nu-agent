@@ -135,15 +135,6 @@ where
                                 .execute_compaction_trigger(&mut worker_ui, source)
                                 .err()
                                 .map(|_error| COMPACTION_FAILURE_WARNING.to_string()),
-                            Some(CompactionTriggerDecision::FallbackFire {
-                                source, ..
-                            }) => {
-                                log::warn!("Compaction fallback triggered: executing with first available strategy");
-                                runtime
-                                    .execute_compaction_trigger(&mut worker_ui, source)
-                                    .err()
-                                    .map(|_error| COMPACTION_FAILURE_WARNING.to_string())
-                            }
                             _ => None,
                         };
                         let _ = response_tx.send(warning);

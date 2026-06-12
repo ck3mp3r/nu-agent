@@ -222,7 +222,6 @@ pub(crate) fn extract_compaction_flags(
         None
     };
 
-    let threshold = get_usize_flag(call, "compaction-threshold");
     let keep_recent = get_usize_flag(call, "keep-recent");
     let token_budget = get_usize_flag(call, "token-budget");
 
@@ -235,10 +234,8 @@ pub(crate) fn extract_compaction_flags(
 
     Ok(crate::config::CompactionConfig {
         strategy,
-        threshold,
         keep_recent,
         token_budget,
         proactive_threshold_pct,
-        fallback_strategies: None, // Not configurable via CLI
     })
 }

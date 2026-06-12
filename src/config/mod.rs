@@ -4,6 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::session::CompactionStrategy;
 
+/// Default context window size (tokens) when not configured.
+pub const DEFAULT_MAX_CONTEXT_TOKENS: u32 = 128_000;
+
 /// Model limits (context and output token limits)
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelLimits {
@@ -79,16 +82,12 @@ pub struct PluginConfig {
 pub struct CompactionConfig {
     /// Primary compaction strategy: "sliding_summary", "sliding_window", "token_truncate"
     pub strategy: Option<CompactionStrategy>,
-    /// Message count threshold to trigger auto-compaction (default: 100)
-    pub threshold: Option<usize>,
     /// Number of recent messages to keep during compaction (default: 10)
     pub keep_recent: Option<usize>,
     /// Token budget for TokenTruncate strategy (chars/4 estimation)
     pub token_budget: Option<usize>,
     /// Proactive compaction threshold percentage 0.0-1.0 (default: 0.80)
     pub proactive_threshold_pct: Option<f64>,
-    /// Ordered list of fallback strategies (default: ["sliding_window"])
-    pub fallback_strategies: Option<Vec<CompactionStrategy>>,
 }
 
 /// Configuration for agent personas (planner/maker).
@@ -122,8 +121,6 @@ impl CompactionConfig {
     ///
     /// Rules:
     /// - `proactive_threshold_pct` must be in 0.0..=1.0 if set
-    /// - `fallback_strategies` must not be empty if set
-    /// - `threshold` must be > 0 if set
     /// - `keep_recent` must be > 0 if set
     pub fn validate(&self) -> Result<(), String> {
         if let Some(pct) = self.proactive_threshold_pct
@@ -133,18 +130,6 @@ impl CompactionConfig {
                 "proactive_threshold_pct must be between 0.0 and 1.0, got {}",
                 pct
             ));
-        }
-
-        if let Some(ref strategies) = self.fallback_strategies
-            && strategies.is_empty()
-        {
-            return Err("fallback_strategies must not be empty if set".to_string());
-        }
-
-        if let Some(threshold) = self.threshold
-            && threshold == 0
-        {
-            return Err("threshold must be greater than 0".to_string());
         }
 
         if let Some(keep_recent) = self.keep_recent
@@ -480,7 +465,6 @@ impl PluginConfig {
             })
         }
 
-        let threshold = get_optional_usize(record, "threshold");
         let keep_recent = get_optional_usize(record, "keep_recent");
         let token_budget = get_optional_usize(record, "token_budget");
 
@@ -489,45 +473,11 @@ impl PluginConfig {
             .get("proactive_threshold_pct")
             .and_then(|v| v.as_float().ok());
 
-        // Parse optional 'fallback_strategies' field
-        let fallback_strategies = if let Some(list_value) = record.get("fallback_strategies") {
-            let list = list_value.as_list().map_err(|_| {
-                LabeledError::new("Invalid field type")
-                    .with_label("'fallback_strategies' must be a list", span)
-            })?;
-
-            let mut strategies = Vec::new();
-            for item in list {
-                let s = item.as_str().map_err(|_| {
-                    LabeledError::new("Invalid field type")
-                        .with_label("Each fallback strategy must be a string", item.span())
-                })?;
-                let parsed: CompactionStrategy =
-                    serde_json::from_value(serde_json::Value::String(s.to_string())).map_err(
-                        |_| {
-                            LabeledError::new("Invalid compaction strategy").with_label(
-                                format!(
-                                "Unknown strategy '{}'. Valid: sliding_summary, sliding_window, token_truncate",
-                                s
-                            ),
-                                item.span(),
-                            )
-                        },
-                    )?;
-                strategies.push(parsed);
-            }
-            Some(strategies)
-        } else {
-            None
-        };
-
         Ok(CompactionConfig {
             strategy,
-            threshold,
             keep_recent,
             token_budget,
             proactive_threshold_pct,
-            fallback_strategies,
         })
     }
 
@@ -706,6 +656,11 @@ pub struct Config {
 }
 
 impl Config {
+    /// Returns max_context_tokens, falling back to DEFAULT_MAX_CONTEXT_TOKENS.
+    pub fn resolved_max_context_tokens(&self) -> u32 {
+        self.max_context_tokens.unwrap_or(DEFAULT_MAX_CONTEXT_TOKENS)
+    }
+
     /// Create a Config by reading environment variables.
     ///
     /// Looks for:

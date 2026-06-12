@@ -1667,25 +1667,18 @@ fn test_from_env_copilot_case_insensitive() {
 fn compaction_config_defaults_all_none() {
     let config = CompactionConfig::default();
     assert_eq!(config.strategy, None);
-    assert_eq!(config.threshold, None);
     assert_eq!(config.keep_recent, None);
     assert_eq!(config.token_budget, None);
     assert_eq!(config.proactive_threshold_pct, None);
-    assert_eq!(config.fallback_strategies, None);
 }
 
 #[test]
 fn compaction_config_serde_roundtrip() {
     let config = CompactionConfig {
         strategy: Some(CompactionStrategy::SlidingSummary),
-        threshold: Some(50),
         keep_recent: Some(5),
         token_budget: Some(8000),
         proactive_threshold_pct: Some(0.75),
-        fallback_strategies: Some(vec![
-            CompactionStrategy::SlidingWindow,
-            CompactionStrategy::TokenTruncate,
-        ]),
     };
 
     let json = serde_json::to_string(&config).expect("serialize");
@@ -1698,11 +1691,9 @@ fn compaction_config_serde_roundtrip() {
 fn compaction_config_validate_valid() {
     let config = CompactionConfig {
         strategy: Some(CompactionStrategy::SlidingSummary),
-        threshold: Some(50),
         keep_recent: Some(5),
         token_budget: Some(8000),
         proactive_threshold_pct: Some(0.75),
-        fallback_strategies: Some(vec![CompactionStrategy::SlidingWindow]),
     };
 
     assert!(config.validate().is_ok());
@@ -1725,26 +1716,6 @@ fn compaction_config_validate_pct_out_of_range() {
     };
     let err = config.validate().unwrap_err();
     assert!(err.contains("proactive_threshold_pct"));
-}
-
-#[test]
-fn compaction_config_validate_empty_fallbacks() {
-    let config = CompactionConfig {
-        fallback_strategies: Some(vec![]),
-        ..CompactionConfig::default()
-    };
-    let err = config.validate().unwrap_err();
-    assert!(err.contains("fallback_strategies"));
-}
-
-#[test]
-fn compaction_config_validate_zero_threshold() {
-    let config = CompactionConfig {
-        threshold: Some(0),
-        ..CompactionConfig::default()
-    };
-    let err = config.validate().unwrap_err();
-    assert!(err.contains("threshold"));
 }
 
 #[test]

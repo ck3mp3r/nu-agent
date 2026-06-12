@@ -12,6 +12,8 @@ use crate::session::{CompactionInvocationMode, CompactionOutcome, ConversationSt
 pub(super) const COMPACTION_FAILURE_WARNING: &str =
     "Session compaction failed: sliding_summary summarization unavailable";
 
+const COMPACTION_SUMMARY_PROMPT: &str = include_str!("prompts/compaction_summary.md");
+
 /// RAII guard that resets the compaction flag when dropped, even on error/panic.
 pub(super) struct CompactionGuard(pub(super) Arc<AtomicBool>);
 
@@ -207,10 +209,7 @@ where
     use rig::completion::Completion;
 
     let history = format_messages_for_summary(old_messages);
-    let prompt_text = format!(
-        "Summarize the following prior conversation segment concisely while preserving critical decisions, constraints, and open tasks.\n\n{}",
-        history
-    );
+    let prompt_text = COMPACTION_SUMMARY_PROMPT.replace("{history}", &history);
 
     // Build rig agent from model
     let agent = rig::agent::AgentBuilder::new(model).build();

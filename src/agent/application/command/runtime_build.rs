@@ -278,16 +278,11 @@ pub(crate) fn merge_compaction_configs(
     let base = base.cloned().unwrap_or_default();
     CompactionConfig {
         strategy: override_cfg.strategy.or(base.strategy),
-        threshold: override_cfg.threshold.or(base.threshold),
         keep_recent: override_cfg.keep_recent.or(base.keep_recent),
         token_budget: override_cfg.token_budget.or(base.token_budget),
         proactive_threshold_pct: override_cfg
             .proactive_threshold_pct
             .or(base.proactive_threshold_pct),
-        fallback_strategies: override_cfg
-            .fallback_strategies
-            .clone()
-            .or(base.fallback_strategies),
     }
 }
 
@@ -300,9 +295,6 @@ pub(crate) fn build_session_config(merged: &CompactionConfig) -> SessionConfig {
 
     if let Some(strategy) = merged.strategy {
         config.compaction_strategy = strategy;
-    }
-    if let Some(threshold) = merged.threshold {
-        config.compaction_threshold = threshold;
     }
     if let Some(keep_recent) = merged.keep_recent {
         config.keep_recent = keep_recent;

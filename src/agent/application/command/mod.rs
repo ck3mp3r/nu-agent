@@ -20,7 +20,6 @@ use crate::{
     AgentPlugin,
     agent::{
         conversation::runtime::AgentConversationRuntime,
-        protocol::{compaction::CompactionTriggerState},
         session::resolver::{DefaultSessionResolver, SessionResolutionInput, SessionResolver},
         tools::{
             authz::{
@@ -36,7 +35,6 @@ use crate::{
     },
     config::{Config, PluginConfig},
     plugin::RuntimeCtx,
-    session::CompactionStrategy,
 };
 
 #[cfg(test)]
@@ -190,7 +188,6 @@ Compaction strategies via --compaction-strategy:
 
 Compaction flags:
   --compaction-strategy <string>   Primary strategy (sliding_summary, sliding_window, token_truncate)
-  --compaction-threshold <int>     Message count threshold for auto-compaction (default: 100)
   --keep-recent <int>              Recent messages to keep during compaction (default: 10)
   --token-budget <int>             Token budget for token_truncate strategy
   --proactive-threshold-pct <num>  Proactive compaction threshold 0.0-1.0 (default: 0.80)"
@@ -260,8 +257,8 @@ Compaction flags:
                 result: None,
             },
             Example {
-                description: "Custom compaction threshold and keep-recent count",
-                example: r#"agent --compaction-threshold 50 --keep-recent 5"#,
+                description: "Custom keep-recent count",
+                example: r#"agent --keep-recent 5"#,
                 result: None,
             },
         ]
@@ -397,12 +394,6 @@ Compaction flags:
                 "compaction-strategy",
                 nu_protocol::SyntaxShape::String,
                 "Compaction strategy: sliding_summary, sliding_window, token_truncate",
-                None,
-            )
-            .named(
-                "compaction-threshold",
-                nu_protocol::SyntaxShape::Int,
-                "Message count threshold for auto-compaction",
                 None,
             )
             .named(
@@ -937,23 +928,14 @@ Compaction flags:
 
         // Extract compaction policy fields (not in SessionConfig)
         let compaction_strategy = session_config.compaction_strategy;
-        let compaction_proactive_threshold_pct =
-            merged_compaction.proactive_threshold_pct.unwrap_or(0.80);
-        let compaction_fallback_strategies = merged_compaction
-            .fallback_strategies
-            .unwrap_or_else(|| vec![CompactionStrategy::SlidingWindow]);
 
         // Apply config to session and extract session metadata
-        let (compaction_threshold, compaction_count) =
-            if let Some(ref mut session) = session_resolution.session {
-                session.set_config(session_config);
-                (
-                    Some(session.config().compaction_threshold),
-                    session.compaction_count(),
-                )
-            } else {
-                (None, 0)
-            };
+        let compaction_count = if let Some(ref mut session) = session_resolution.session {
+            session.set_config(session_config);
+            session.compaction_count()
+        } else {
+            0
+        };
 
         // Connect to broker if flags provided
         let (broker_sender, mailbox_rx, parent_name) = if let Some(flags) = broker_flags {
@@ -1057,6 +1039,8 @@ Compaction flags:
             )
         });
 
+        let context_window_max_tokens = u64::from(config.resolved_max_context_tokens());
+
         let mut runtime_impl = AgentConversationRuntime {
             runtime,
             runtime_ctx: self.runtime_ctx.clone(),
@@ -1077,14 +1061,10 @@ Compaction flags:
             engine: engine.clone(),
             store: self.store.clone(),
             final_session_id: session_resolution.final_session_id,
-            compaction_threshold,
+            context_window_max_tokens,
+            compaction_threshold_pct: merged_compaction.proactive_threshold_pct.unwrap_or(0.80),
             compaction_count,
-            auto_compaction_tolerance: 0,
-            auto_compaction_hysteresis_margin: 0,
-            auto_compaction_state: CompactionTriggerState::default(),
             compaction_strategy,
-            compaction_proactive_threshold_pct,
-            compaction_fallback_strategies,
             startup_plugin_config: plugin_config_value
                 .as_ref()
                 .and_then(|value| PluginConfig::from_plugin_config(value).ok()),
@@ -1103,7 +1083,6 @@ Compaction flags:
             conversation_store: crate::session::JsonlConversationStore::new(
                 self.store.cache_dir().to_path_buf(),
             ),
-            memory_message_count: 0,
             memory_hydrated: false,
             cached_client: None,
             cached_client_key: None,

@@ -228,7 +228,6 @@ fn parse_strategy_invalid_rejected() {
 
 fn mock_call_with_compaction_flags(
     strategy: Option<&str>,
-    threshold: Option<i64>,
     keep_recent: Option<i64>,
     token_budget: Option<i64>,
     proactive_pct: Option<f64>,
@@ -243,15 +242,6 @@ fn mock_call_with_compaction_flags(
                 span,
             },
             Some(Value::string(s, span)),
-        ));
-    }
-    if let Some(t) = threshold {
-        named.push((
-            Spanned {
-                item: "compaction-threshold".to_string(),
-                span,
-            },
-            Some(Value::int(t, span)),
         ));
     }
     if let Some(k) = keep_recent {
@@ -293,26 +283,22 @@ fn mock_call_with_compaction_flags(
 fn extract_compaction_flags_all_provided() {
     let call = mock_call_with_compaction_flags(
         Some("sliding_window"),
-        Some(50),
         Some(5),
         Some(10000),
         Some(0.75),
     );
     let result = extract_compaction_flags(&call).unwrap();
     assert_eq!(result.strategy, Some(CompactionStrategy::SlidingWindow));
-    assert_eq!(result.threshold, Some(50));
     assert_eq!(result.keep_recent, Some(5));
     assert_eq!(result.token_budget, Some(10000));
     assert_eq!(result.proactive_threshold_pct, Some(0.75));
-    assert!(result.fallback_strategies.is_none());
 }
 
 #[test]
 fn extract_compaction_flags_none_provided() {
-    let call = mock_call_with_compaction_flags(None, None, None, None, None);
+    let call = mock_call_with_compaction_flags(None, None, None, None);
     let result = extract_compaction_flags(&call).unwrap();
     assert!(result.strategy.is_none());
-    assert!(result.threshold.is_none());
     assert!(result.keep_recent.is_none());
     assert!(result.token_budget.is_none());
     assert!(result.proactive_threshold_pct.is_none());
@@ -320,7 +306,7 @@ fn extract_compaction_flags_none_provided() {
 
 #[test]
 fn extract_compaction_flags_invalid_strategy_error() {
-    let call = mock_call_with_compaction_flags(Some("bogus"), None, None, None, None);
+    let call = mock_call_with_compaction_flags(Some("bogus"), None, None, None);
     let result = extract_compaction_flags(&call);
     assert!(result.is_err());
 }

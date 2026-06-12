@@ -20,7 +20,7 @@ use crate::agent::{
     protocol::{
         compaction::{
             CompactionTriggerDecision, CompactionTriggerPolicy, CompactionTriggerSource,
-            CompactionTriggerState, TwoTierCompactionPolicy,
+            TokenCompactionPolicy,
         },
         contracts::{ConversationRuntime, McpUsabilityState, ProgressUi},
         event::UiEvent,
@@ -106,14 +106,10 @@ pub(crate) struct AgentConversationRuntime {
     pub engine: EngineInterface,
     pub store: SessionStore,
     pub final_session_id: Option<String>,
-    pub compaction_threshold: Option<usize>,
+    pub context_window_max_tokens: u64,
+    pub compaction_threshold_pct: f64,
     pub compaction_count: usize,
-    pub auto_compaction_tolerance: usize,
-    pub auto_compaction_hysteresis_margin: usize,
-    pub auto_compaction_state: CompactionTriggerState,
     pub compaction_strategy: CompactionStrategy,
-    pub compaction_proactive_threshold_pct: f64,
-    pub compaction_fallback_strategies: Vec<CompactionStrategy>,
     pub startup_plugin_config: Option<crate::config::PluginConfig>,
     pub permissions: PermissionsConfig,
     pub permissions_startup_summary: String,
@@ -122,7 +118,6 @@ pub(crate) struct AgentConversationRuntime {
     pub ask_hook: AsyncAskHook,
     pub memory: rig::memory::InMemoryConversationMemory,
     pub conversation_store: JsonlConversationStore,
-    pub memory_message_count: usize,
     pub memory_hydrated: bool,
     pub cached_client: Option<CachedProviderClient>,
     pub cached_client_key: Option<ClientCacheKey>,
@@ -376,24 +371,12 @@ impl ConversationRuntime for AgentConversationRuntime {
     }
 
     fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
-        let Some(threshold) = self.compaction_threshold else {
-            return Some(CompactionTriggerDecision::NoFire {
-                reason: "signal_unavailable".to_string(),
-            });
-        };
-
-        let policy = TwoTierCompactionPolicy::with_config(
-            threshold,
-            self.auto_compaction_tolerance,
-            self.auto_compaction_hysteresis_margin,
+        let policy = TokenCompactionPolicy::new(
+            self.context_window_max_tokens,
+            self.compaction_threshold_pct,
             self.compaction_strategy,
-            self.compaction_proactive_threshold_pct as f32,
-            self.compaction_fallback_strategies.clone(),
         );
-        Some(policy.evaluate(
-            Some(self.memory_message_count),
-            &mut self.auto_compaction_state,
-        ))
+        Some(policy.evaluate(self.last_total_tokens))
     }
 
     fn execute_compaction_trigger<U: ProgressUi>(
@@ -406,7 +389,6 @@ impl ConversationRuntime for AgentConversationRuntime {
 
     fn clear_session(&mut self) {
         self.memory = rig::memory::InMemoryConversationMemory::new();
-        self.memory_message_count = 0;
         self.memory_hydrated = false;
     }
 
@@ -528,7 +510,6 @@ impl ConversationRuntime for AgentConversationRuntime {
                     if let Err(persist_err) = self.conversation_store.append(session_id, messages, None) {
                         log::warn!("Failed to persist cancelled turn messages: {}", persist_err);
                     }
-                    self.memory_message_count += messages.len();
                     if let Err(mem_err) = self
                         .runtime
                         .block_on(self.memory.append(session_id, messages.clone()))
@@ -584,7 +565,6 @@ impl ConversationRuntime for AgentConversationRuntime {
             {
                 log::warn!("Failed to persist cancelled turn messages (path B): {}", e);
             }
-            self.memory_message_count += cancelled_messages.len();
             if let Err(e) = self
                 .runtime
                 .block_on(self.memory.append(session_id, cancelled_messages.clone()))
@@ -610,34 +590,20 @@ impl ConversationRuntime for AgentConversationRuntime {
 
             // Update last_total_tokens for compaction
             self.last_total_tokens = Some(turn_result.last_total_tokens);
-
-            // Update memory message count
-            self.memory_message_count += messages.len();
         }
 
         // Format the response value
-        let mut message_count = 0;
+        let message_count = 0;
         let mut compaction_count = 0;
 
         if self.final_session_id.is_some() {
-            match self.evaluate_auto_compaction() {
-                Some(CompactionTriggerDecision::Fire { source, .. }) => {
-                    if let Err(error) = self.execute_compaction_event(ui, source) {
-                        ui.emit(&UiEvent::Warning { message: error });
-                    }
-                }
-                Some(CompactionTriggerDecision::FallbackFire { source, .. }) => {
-                    log::warn!(
-                        "Compaction fallback triggered: executing with first available strategy"
-                    );
-                    if let Err(error) = self.execute_compaction_event(ui, source) {
-                        ui.emit(&UiEvent::Warning { message: error });
-                    }
-                }
-                _ => {}
+            if let Some(CompactionTriggerDecision::Fire { source, .. }) =
+                self.evaluate_auto_compaction()
+                && let Err(error) = self.execute_compaction_event(ui, source)
+            {
+                ui.emit(&UiEvent::Warning { message: error });
             }
 
-            message_count = self.memory_message_count;
             compaction_count = self.compaction_count;
         }
 
@@ -725,7 +691,6 @@ impl AgentConversationRuntime {
                         LabeledError::new(format!("Failed to append messages to memory: {}", e))
                     })?;
             }
-            self.memory_message_count = llm_context.len();
             self.last_total_tokens = last_total_tokens;
 
             // Derive compaction_count from markers
@@ -888,15 +853,11 @@ impl AgentConversationRuntime {
             Ok(event) => {
                 ui.emit(&event);
 
-                // Update memory_message_count and compaction_count after successful compaction
-                if let UiEvent::CompactionTriggered {
-                    kept_recent_count, ..
-                } = &event
-                {
-                    // After compaction: summary + kept_recent_count messages
-                    self.memory_message_count = kept_recent_count + 1;
-                    // Increment compaction count
+                // Update compaction_count after successful compaction
+                if let UiEvent::CompactionTriggered { .. } = &event {
                     self.compaction_count = session.compaction_count();
+                    // Reset so stale pre-compaction token count can't re-trigger
+                    self.last_total_tokens = None;
                 }
 
                 Ok(())
