@@ -56,17 +56,17 @@ pub(crate) fn run_tui_mode(
     .map_err(|err| LabeledError::new(format!("Failed to initialize TUI renderer: {err}")))?;
 
     let mut tui_ui = TuiInteractiveUi::new(runtime_renderer);
-    let active_model_identity = super::format_active_model_identity(
+    let active_model_identity = super::picker::format_active_model_identity(
         &runtime_impl.config.provider,
         &runtime_impl.config.model,
     );
     tui_ui.set_active_model_identity(active_model_identity.clone());
-    let model_picker_catalog = super::model_picker_catalog_from_cached_startup_plugin_config(
+    let model_picker_catalog = super::picker::model_picker_catalog_from_cached_startup_plugin_config(
         runtime_impl.startup_plugin_config.as_ref(),
         active_model_identity.as_str(),
     );
     tui_ui.set_model_picker_options(model_picker_catalog);
-    let agent_picker_catalog = super::build_agent_picker_catalog(
+    let agent_picker_catalog = super::picker::build_agent_picker_catalog(
         &runtime_impl.available_agent_summaries,
         runtime_impl.agent_identity.as_deref(),
     );
@@ -109,7 +109,7 @@ pub(crate) fn run_tui_mode(
                 run_interactive_loop(runtime_impl, &mut tui_ui, mailbox_rx, span)
             }
         } else {
-            let (prompt, context) = super::extract_prompt_and_context(input)?;
+            let (prompt, context) = super::input::extract_prompt_and_context(input)?;
             run_single_turn(runtime_impl, &mut tui_ui, prompt, context, span)
         }
     });
@@ -140,6 +140,6 @@ pub(crate) fn run_stderr_mode(
         StderrUiFactory::new(std::io::stderr(), stderr_is_tty).create(ui_policy),
         cancel_flag,
     );
-    let (prompt, context) = super::extract_prompt_and_context(input)?;
+    let (prompt, context) = super::input::extract_prompt_and_context(input)?;
     run_single_turn(runtime_impl, &mut stderr_ui, prompt, context, span)
 }

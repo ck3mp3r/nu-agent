@@ -1123,52 +1123,52 @@ fn spacer_not_inserted_when_turn_separator_blocks() {
 
 #[test]
 fn needs_spacer_no_previous() {
-    assert!(!super::needs_spacer(None, &Role::User));
+    assert!(!super::transcript::needs_spacer(None, &Role::User));
 }
 
 #[test]
 fn needs_spacer_same_role() {
-    assert!(!super::needs_spacer(Some(&Role::User), &Role::User));
+    assert!(!super::transcript::needs_spacer(Some(&Role::User), &Role::User));
 }
 
 #[test]
 fn needs_spacer_separator_previous() {
-    assert!(!super::needs_spacer(Some(&Role::Separator), &Role::User));
+    assert!(!super::transcript::needs_spacer(Some(&Role::Separator), &Role::User));
 }
 
 #[test]
 fn needs_spacer_separator_next() {
-    assert!(!super::needs_spacer(Some(&Role::User), &Role::Separator));
+    assert!(!super::transcript::needs_spacer(Some(&Role::User), &Role::Separator));
 }
 
 #[test]
 fn needs_spacer_user_to_assistant() {
-    assert!(!super::needs_spacer(Some(&Role::User), &Role::Assistant));
+    assert!(!super::transcript::needs_spacer(Some(&Role::User), &Role::Assistant));
 }
 
 #[test]
 fn needs_spacer_assistant_to_user() {
-    assert!(!super::needs_spacer(Some(&Role::Assistant), &Role::User));
+    assert!(!super::transcript::needs_spacer(Some(&Role::Assistant), &Role::User));
 }
 
 #[test]
 fn needs_spacer_tool_to_tool_display() {
-    assert!(!super::needs_spacer(Some(&Role::Tool), &Role::ToolDisplay));
+    assert!(!super::transcript::needs_spacer(Some(&Role::Tool), &Role::ToolDisplay));
 }
 
 #[test]
 fn needs_spacer_tool_display_to_tool() {
-    assert!(!super::needs_spacer(Some(&Role::ToolDisplay), &Role::Tool));
+    assert!(!super::transcript::needs_spacer(Some(&Role::ToolDisplay), &Role::Tool));
 }
 
 #[test]
 fn needs_spacer_user_to_tool() {
-    assert!(super::needs_spacer(Some(&Role::User), &Role::Tool));
+    assert!(super::transcript::needs_spacer(Some(&Role::User), &Role::Tool));
 }
 
 #[test]
 fn needs_spacer_assistant_to_system() {
-    assert!(super::needs_spacer(Some(&Role::Assistant), &Role::System));
+    assert!(super::transcript::needs_spacer(Some(&Role::Assistant), &Role::System));
 }
 
 // ---- agent picker state tests ----

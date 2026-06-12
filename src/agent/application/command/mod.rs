@@ -3,8 +3,18 @@ use nu_protocol::{Category, Example, LabeledError, Signature, Type, Value};
 use std::io::IsTerminal;
 
 mod args;
+pub(crate) mod input;
 mod mode_execute;
+pub(crate) mod picker;
+mod permissions;
 mod runtime_build;
+pub(crate) mod tool_defs;
+
+use permissions::{
+    is_builtin_enabled, resolve_default_agent, resolve_effective_permissions_config,
+    resolve_non_interactive_ask_mode,
+};
+use tool_defs::{builtin_tool_definitions, messaging_tool_definitions, orchestrator_tool_definitions};
 
 use crate::{
     AgentPlugin,
@@ -14,7 +24,7 @@ use crate::{
         session::resolver::{DefaultSessionResolver, SessionResolutionInput, SessionResolver},
         tools::{
             authz::{
-                AskRuntimeConfig, AsyncAskHook, NonInteractiveAskMode, PermissionsConfig,
+                AskRuntimeConfig, AsyncAskHook,
                 PermissionsOverlay, SessionGrantCache,
             },
             handler::McpToolRegistry,
@@ -28,6 +38,9 @@ use crate::{
     plugin::RuntimeCtx,
     session::CompactionStrategy,
 };
+
+#[cfg(test)]
+use picker::format_active_model_identity;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AgentMode {
@@ -53,101 +66,6 @@ fn resolve_agent_mode(
     }
 }
 
-fn resolve_non_interactive_ask_mode(
-    plugin_config: Option<&Value>,
-) -> Result<NonInteractiveAskMode, LabeledError> {
-    let Some(config) = plugin_config else {
-        return Ok(NonInteractiveAskMode::Deny);
-    };
-    let Ok(record) = config.as_record() else {
-        return Ok(NonInteractiveAskMode::Deny);
-    };
-    let Some(value) = record.get("non_interactive_ask") else {
-        return Ok(NonInteractiveAskMode::Deny);
-    };
-    let raw = value.as_str().map_err(|_| {
-        LabeledError::new("Invalid non_interactive_ask type").with_label(
-            "non_interactive_ask must be 'deny' or 'allow'",
-            config.span(),
-        )
-    })?;
-    match raw {
-        "deny" => Ok(NonInteractiveAskMode::Deny),
-        "allow" => Ok(NonInteractiveAskMode::Allow),
-        other => Err(
-            LabeledError::new("Invalid non_interactive_ask value").with_label(
-                format!("unsupported value '{other}'; expected 'deny' or 'allow'"),
-                config.span(),
-            ),
-        ),
-    }
-}
-
-fn is_builtin_enabled(name: &str, config: &crate::config::AgentsConfig) -> bool {
-    use crate::agent::protocol::persona::builtins;
-    match name {
-        n if n == builtins::BUILTIN_PLANNER_NAME => config.planner_enabled,
-        n if n == builtins::BUILTIN_MAKER_NAME => config.maker_enabled,
-        _ => true, // non-builtins are always "enabled"
-    }
-}
-
-fn resolve_default_agent(
-    config: &crate::config::AgentsConfig,
-) -> Result<Option<String>, LabeledError> {
-    use crate::agent::protocol::persona::builtins;
-    let default = &config.default;
-    if builtins::is_builtin_persona(default) && !is_builtin_enabled(default, config) {
-        // Default is disabled — try fallback
-        match &config.fallback {
-            Some(fallback) => Ok(Some(fallback.clone())),
-            None => Err(LabeledError::new(format!(
-                "Default agent '{}' is disabled and no fallback configured. \
-                 Set `agents.fallback` in config or enable '{}'.",
-                default, default
-            ))),
-        }
-    } else {
-        Ok(Some(default.clone()))
-    }
-}
-
-fn resolve_effective_permissions_config(
-    call: &EvaluatedCall,
-    plugin_config: Option<&Value>,
-    agent_overlay: Option<&PermissionsOverlay>,
-    interactive: bool,
-) -> Result<(PermissionsConfig, String), LabeledError> {
-    let base = PermissionsConfig::parse_from_plugin_config(plugin_config, interactive);
-    let cli_permissions: Option<Value> = call.get_flag("permissions").ok().flatten();
-
-    // Build permission chain: base → agent_overlay → CLI
-    // CLI always wins (highest precedence)
-    let mut effective = base;
-
-    if let Some(overlay) = agent_overlay {
-        effective = effective.with_overlay(overlay);
-    }
-
-    if let Some(value) = cli_permissions.as_ref() {
-        let overlay = PermissionsOverlay::parse_from_cli_value(value).map_err(|msg| {
-            LabeledError::new("Invalid --permissions value").with_label(msg, value.span())
-        })?;
-        effective = effective.with_overlay(&overlay);
-    }
-
-    let summary = effective.summary();
-    let overlay_active = agent_overlay.is_some() || cli_permissions.is_some();
-    let startup_message = format!(
-        "permissions policy: overlay_active={} global={} tool_rules={} nu__run.command_rules={}",
-        overlay_active,
-        summary.global.as_str(),
-        summary.tool_rule_count,
-        summary.nu_run_command_rule_count,
-    );
-
-    Ok((effective, startup_message))
-}
 
 /// Trait abstracting the engine interface functionality needed for config resolution.
 ///
@@ -163,119 +81,6 @@ impl EngineConfigInterface for EngineInterface {
         self.get_plugin_config()
             .map_err(|e| LabeledError::new(format!("Failed to get plugin config: {}", e)))
     }
-}
-
-/// Extract prompt string from input Value.
-///
-/// Supports two input formats:
-/// 1. String input: "prompt text"
-/// 2. Record input: {prompt: "prompt text", context?: "...", model?: "...", tools?: [...]}
-///
-/// # Arguments
-/// * `input` - The input Value, expected to be a String or Record with 'prompt' field
-///
-/// # Returns
-/// The prompt string, or error if input is invalid
-///
-/// # Errors
-/// - Input is not a String or Record
-/// - Record input missing 'prompt' field
-/// - Prompt is empty or contains only whitespace
-pub fn extract_prompt_from_input(input: &Value) -> Result<String, LabeledError> {
-    // Try to extract as string first (original behavior)
-    if let Ok(prompt_str) = input.as_str() {
-        // Check for empty string
-        if prompt_str.trim().is_empty() {
-            return Err(LabeledError::new("Empty prompt")
-                .with_label("Prompt cannot be empty", input.span()));
-        }
-        return Ok(prompt_str.to_string());
-    }
-
-    // Try to extract as record
-    if let Ok(record) = input.as_record() {
-        // Look for 'prompt' field
-        let prompt_value = record.get("prompt").ok_or_else(|| {
-            LabeledError::new("Missing required field")
-                .with_label("Record input must have 'prompt' field", input.span())
-        })?;
-
-        // Extract string from prompt field
-        let prompt_str = prompt_value.as_str().map_err(|_| {
-            LabeledError::new("Invalid prompt type")
-                .with_label("'prompt' field must be a string", prompt_value.span())
-        })?;
-
-        // Check for empty string
-        if prompt_str.trim().is_empty() {
-            return Err(LabeledError::new("Empty prompt")
-                .with_label("Prompt cannot be empty", prompt_value.span()));
-        }
-
-        return Ok(prompt_str.to_string());
-    }
-
-    // Neither string nor record - error
-    Err(LabeledError::new("Invalid input type").with_label(
-        "Expected a string prompt or record with 'prompt' field",
-        input.span(),
-    ))
-}
-
-/// Extract optional context string from input Value.
-///
-/// Supports two input formats:
-/// 1. String input: Returns None (no context field available)
-/// 2. Record input: Returns Some(context) if 'context' field exists, None otherwise
-///
-/// # Arguments
-/// * `input` - The input Value
-///
-/// # Returns
-/// Optional context string, or error if context field has invalid type
-///
-/// # Errors
-/// - Context field exists but is not a string
-pub fn extract_context_from_input(input: &Value) -> Result<Option<String>, LabeledError> {
-    // String input has no context field
-    if input.as_str().is_ok() {
-        return Ok(None);
-    }
-
-    // Try to extract as record
-    if let Ok(record) = input.as_record() {
-        // Look for optional 'context' field
-        if let Some(context_value) = record.get("context") {
-            // Extract string from context field
-            let context_str = context_value.as_str().map_err(|_| {
-                LabeledError::new("Invalid context type")
-                    .with_label("'context' field must be a string", context_value.span())
-            })?;
-
-            return Ok(Some(context_str.to_string()));
-        }
-
-        // No context field - that's OK
-        return Ok(None);
-    }
-
-    // Neither string nor record - no context
-    Ok(None)
-}
-
-/// Merge optional context with prompt for LLM call.
-///
-/// If context is provided and non-empty, prepends it to the prompt with clear separation.
-/// Empty or whitespace-only context is treated as None.
-///
-/// # Arguments
-/// * `prompt` - The main prompt text
-/// * `context` - Optional context to prepend to the prompt
-///
-/// # Returns
-/// Combined prompt string with context prepended if provided
-pub fn merge_prompt_with_context(prompt: &str, context: Option<&str>) -> String {
-    crate::agent::protocol::prompt::merge_prompt_with_context(prompt, context)
 }
 
 /// Extracts and validates session flags from the evaluated call.
@@ -328,177 +133,6 @@ pub fn extract_tools_from_call(
 /// Duration for tool execution timeout
 pub fn extract_tool_timeout(call: &EvaluatedCall) -> std::time::Duration {
     args::extract_tool_timeout(call)
-}
-
-pub(crate) fn builtin_tool_definitions() -> Vec<rig::completion::ToolDefinition> {
-    vec![
-        rig::completion::ToolDefinition {
-            name: "read".to_string(),
-            description: "Read file content with optional line windowing and return content/version metadata".to_string(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "path": { "type": "string" },
-                    "offset": { "type": "integer", "minimum": 0 },
-                    "limit": { "type": "integer", "minimum": 0 }
-                },
-                "required": ["path"]
-            }),
-        },
-        rig::completion::ToolDefinition {
-            name: "edit".to_string(),
-            description: "Canonical edit contract with explicit mode (preview/apply), CAS guard, and legacy compatibility".to_string(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "path": { "type": "string" },
-                    "mode": { "type": "string", "enum": ["preview", "apply"], "default": "apply" },
-                    "expected_version": { "type": "string" },
-                    "operation": {
-                        "type": "object",
-                        "properties": {
-                            "type": { "type": "string", "enum": ["search_replace"], "default": "search_replace" },
-                            "search": { "type": "string" },
-                            "replacement": { "type": "string" },
-                            "match_mode": { "type": "string", "enum": ["literal", "regex"], "default": "literal" },
-                            "occurrence": { "type": "string", "enum": ["first", "all"], "default": "first" }
-                        },
-                        "required": ["search", "replacement"]
-                    },
-                    "search": { "type": "string", "description": "legacy compatibility field; prefer operation.search" },
-                    "replacement": { "type": "string", "description": "legacy compatibility field; prefer operation.replacement" },
-                    "match_mode": { "type": "string", "enum": ["literal", "regex"], "description": "legacy compatibility field; prefer operation.match_mode" },
-                    "occurrence": { "type": "string", "enum": ["first", "all"], "description": "legacy compatibility field; prefer operation.occurrence" }
-                },
-                "required": ["path", "expected_version"]
-            }),
-        },
-        rig::completion::ToolDefinition {
-            name: "patch".to_string(),
-            description: "Apply line-range patch operations with compare-and-swap guard".to_string(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "path": { "type": "string" },
-                    "expected_version": { "type": "string" },
-                    "operations": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "range": {
-                                    "type": "object",
-                                    "properties": {
-                                        "start": { "type": "integer", "minimum": 1 },
-                                        "end": { "type": "integer", "minimum": 1 }
-                                    },
-                                    "required": ["start", "end"]
-                                },
-                                "replacement": { "type": "string" }
-                            },
-                            "required": ["range", "replacement"]
-                        }
-                    }
-                },
-                "required": ["path", "expected_version", "operations"]
-            }),
-        },
-        rig::completion::ToolDefinition {
-            name: "skill".to_string(),
-            description: "Load skill content by explicit name from local or home skill roots".to_string(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "name": { "type": "string" }
-                },
-                "required": ["name"]
-            }),
-        },
-    ]
-}
-
-pub(crate) fn orchestrator_tool_definitions(
-    available_agents: &[crate::agent::protocol::persona::PersonaSummary],
-) -> Vec<rig::completion::ToolDefinition> {
-    let description = if available_agents.is_empty() {
-        "Spawn a new agent in a tmux pane. No agent personas found. Create .agents/<name>.md files to define agents.".to_string()
-    } else {
-        let mut desc = String::from(
-            "Spawn a new agent in a tmux pane (in a window called \"agents\"). \
-             Communicate with spawned agents via `send_message`. \
-             The user can also interact directly with spawned agent panes.\n\n\
-             Available agents:\n",
-        );
-        for agent in available_agents {
-            desc.push_str(&format!("- {}", agent.name));
-            if let Some(ref d) = agent.description {
-                desc.push_str(&format!(": {}", d));
-            }
-            desc.push('\n');
-        }
-        desc
-    };
-
-    vec![
-        rig::completion::ToolDefinition {
-            name: "spawn_agent".to_string(),
-            description,
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "agent": { "type": "string", "description": "Persona name (loads .agents/<name>.md)" },
-                    "name": { "type": "string", "description": "Instance identity (optional, defaults to agent-N)" }
-                },
-                "required": ["agent"]
-            }),
-        },
-        rig::completion::ToolDefinition {
-            name: "terminate_agent".to_string(),
-            description:
-                "Terminate a running sub-agent by name. Kills its tmux pane and deregisters it."
-                    .to_string(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "name": { "type": "string", "description": "Agent name to terminate" }
-                },
-                "required": ["name"]
-            }),
-        },
-    ]
-}
-
-pub(crate) fn messaging_tool_definitions() -> Vec<rig::completion::ToolDefinition> {
-    vec![
-        rig::completion::ToolDefinition {
-            name: "send_message".to_string(),
-            description: "Send a message to another agent. Messages are delivered as conversation turns to the target agent. \
-                           The target agent name must match a spawned agent's --name (use list_agents to discover running agents). \
-                           The response comes back asynchronously as a new conversation turn.".to_string(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "to": { "type": "string", "description": "Target agent name" },
-                    "message": { "type": "string", "description": "Message content" },
-                    "kind": {
-                        "type": "string",
-                        "description": "Message type: 'message' (generic/informational, default), 'task' (task assignment), 'completion' (task results), 'question' (blocked, needs decision)",
-                        "enum": ["message", "task", "completion", "question"],
-                        "default": "message"
-                    }
-                },
-                "required": ["to", "message"]
-            }),
-        },
-        rig::completion::ToolDefinition {
-            name: "list_agents".to_string(),
-            description: "List all connected agents and their names".to_string(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {},
-            }),
-        },
-    ]
 }
 
 pub struct Agent {
@@ -1536,88 +1170,6 @@ fn run_tui_mode(
     )
 }
 
-pub(crate) fn format_active_model_identity(provider: &str, model: &str) -> String {
-    if model.starts_with(&format!("{provider}/")) {
-        model.to_string()
-    } else {
-        format!("{provider}/{model}")
-    }
-}
-
-pub(crate) fn build_model_picker_catalog_from_plugin_config(
-    plugin_config: &PluginConfig,
-    active_model_identity: &str,
-) -> Vec<crate::agent::ui::tui::state::ModelPickerOption> {
-    let mut options = plugin_config
-        .providers
-        .iter()
-        .flat_map(|(provider, provider_config)| {
-            provider_config.models.keys().map(move |model| {
-                let identity = format!("{provider}/{model}");
-                crate::agent::ui::tui::state::ModelPickerOption {
-                    provider: provider.clone(),
-                    model: model.clone(),
-                    identity: identity.clone(),
-                    display: format!("{provider} / {model}"),
-                    active: identity == active_model_identity,
-                }
-            })
-        })
-        .collect::<Vec<_>>();
-
-    options.sort_by(|left, right| {
-        left.provider
-            .to_ascii_lowercase()
-            .cmp(&right.provider.to_ascii_lowercase())
-            .then_with(|| {
-                left.model
-                    .to_ascii_lowercase()
-                    .cmp(&right.model.to_ascii_lowercase())
-            })
-    });
-    options
-}
-
-pub(crate) fn model_picker_catalog_from_cached_startup_plugin_config(
-    startup_plugin_config: Option<&PluginConfig>,
-    active_model_identity: &str,
-) -> Vec<crate::agent::ui::tui::state::ModelPickerOption> {
-    startup_plugin_config
-        .map(|config| build_model_picker_catalog_from_plugin_config(config, active_model_identity))
-        .unwrap_or_default()
-}
-
-pub(crate) fn build_agent_picker_catalog(
-    available_agents: &[crate::agent::protocol::persona::PersonaSummary],
-    active_agent: Option<&str>,
-) -> Vec<crate::agent::ui::tui::state::AgentPickerOption> {
-    use crate::agent::ui::tui::state::AgentPickerOption;
-    available_agents
-        .iter()
-        .map(|agent| {
-            let active = active_agent.is_some_and(|a| a == agent.name);
-            let display = if agent.builtin {
-                match &agent.description {
-                    Some(desc) => format!("{} — {} [built-in]", agent.name, desc),
-                    None => format!("{} [built-in]", agent.name),
-                }
-            } else {
-                match &agent.description {
-                    Some(desc) => format!("{} — {}", agent.name, desc),
-                    None => agent.name.clone(),
-                }
-            };
-            AgentPickerOption {
-                name: agent.name.clone(),
-                description: agent.description.clone(),
-                display,
-                active,
-                builtin: agent.builtin,
-            }
-        })
-        .collect()
-}
-
 fn run_stderr_mode(
     runtime_impl: &mut AgentConversationRuntime,
     input: &Value,
@@ -1626,12 +1178,6 @@ fn run_stderr_mode(
     stderr_is_tty: bool,
 ) -> Result<Value, LabeledError> {
     mode_execute::run_stderr_mode(runtime_impl, input, span, ui_policy, stderr_is_tty)
-}
-
-fn extract_prompt_and_context(input: &Value) -> Result<(String, Option<String>), LabeledError> {
-    let prompt = extract_prompt_from_input(input)?;
-    let context = extract_context_from_input(input)?;
-    Ok((prompt, context))
 }
 
 fn map_tui_run_result(
@@ -1733,10 +1279,22 @@ fn resolve_with_old_config(
 mod test;
 
 #[cfg(test)]
-mod prompt_test;
+mod test_helpers;
+
+#[cfg(test)]
+mod input_test;
 
 #[cfg(test)]
 mod args_test;
 
 #[cfg(test)]
+mod permissions_test;
+
+#[cfg(test)]
 mod runtime_build_test;
+
+#[cfg(test)]
+mod tool_defs_test;
+
+#[cfg(test)]
+mod picker_test;
