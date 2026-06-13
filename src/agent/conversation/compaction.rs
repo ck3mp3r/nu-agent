@@ -7,7 +7,8 @@ use crate::agent::protocol::{
     contracts::ProgressUi,
     event::UiEvent,
 };
-use crate::session::{CompactionInvocationMode, CompactionOutcome, ConversationStore, Session};
+use crate::compaction::{CompactionInvocationMode, CompactionOutcome};
+use crate::session::{ConversationStore, Session};
 
 pub(super) const COMPACTION_FAILURE_WARNING: &str =
     "Session compaction failed: sliding_summary summarization unavailable";
@@ -102,7 +103,7 @@ where
     // Determine if compaction should run
     let should_compact = match invocation.mode {
         CompactionInvocationMode::Threshold => {
-            messages.len() > session.config().compaction_threshold
+            messages.len() > session.compaction_config().compaction_threshold
         }
         CompactionInvocationMode::Force => true,
     };
@@ -120,10 +121,18 @@ where
         async move { summarize_messages(model_clone, ui, &messages, &src).await }
     };
 
-    let outcome = session
-        .compact(memory, store, summarizer, invocation.last_total_tokens)
-        .await
-        .map_err(|_| COMPACTION_FAILURE_WARNING.to_string())?;
+    let outcome = crate::compaction::compact(
+        session.id(),
+        session.compaction_config(),
+        memory,
+        store,
+        summarizer,
+        invocation.last_total_tokens,
+    )
+    .await
+    .map_err(|_| COMPACTION_FAILURE_WARNING.to_string())?;
+
+    session.increment_compaction_count();
 
     if outcome.summarized_count == 0 {
         return Ok(None);

@@ -1,5 +1,5 @@
 use super::*;
-use crate::session::CompactionStrategy;
+use crate::compaction::CompactionStrategy;
 use nu_protocol::{Span, Value, record};
 use serial_test::serial;
 use std::env;

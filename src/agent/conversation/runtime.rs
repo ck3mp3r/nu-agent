@@ -7,10 +7,11 @@ use rig::client::CompletionClient;
 use rig::memory::ConversationMemory;
 
 use crate::{
+    compaction::{CompactionInvocationMode, CompactionStrategy},
     config::Config,
     plugin::RuntimeCtx,
     session::{
-        CompactionInvocationMode, CompactionStrategy, ConversationStore,
+        ConversationStore,
         JsonlConversationStore, SessionStore, StoreEntry, extract_llm_context,
     },
     tools::{closure::ClosureRegistry, executor::ToolExecutor},

@@ -131,15 +131,15 @@ impl SimplePluginCommand for AgentSessionInspect {
         let mut config_record = Record::new();
         config_record.push(
             "compaction_threshold",
-            Value::int(session.config().compaction_threshold as i64, call.head),
+            Value::int(session.compaction_config().compaction_threshold as i64, call.head),
         );
         config_record.push(
             "compaction_strategy",
-            Value::string(session.config().compaction_strategy.as_str(), call.head),
+            Value::string(session.compaction_config().compaction_strategy.as_str(), call.head),
         );
         config_record.push(
             "keep_recent",
-            Value::int(session.config().keep_recent as i64, call.head),
+            Value::int(session.compaction_config().keep_recent as i64, call.head),
         );
 
         // Build the final session record

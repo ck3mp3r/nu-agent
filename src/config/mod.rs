@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::session::CompactionStrategy;
+use crate::compaction::CompactionStrategy;
 
 /// Default context window size (tokens) when not configured.
 pub const DEFAULT_MAX_CONTEXT_TOKENS: u32 = 128_000;

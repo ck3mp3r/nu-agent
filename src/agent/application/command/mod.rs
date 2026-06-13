@@ -937,15 +937,15 @@ Compaction flags:
             LabeledError::new("Compaction config validation failed").with_label(msg, call.head)
         })?;
 
-        // Build SessionConfig from merged compaction config
-        let session_config = runtime_build::build_session_config(&merged_compaction);
+        // Build CompactionParams from merged compaction config
+        let compaction_params = runtime_build::build_compaction_params(&merged_compaction);
 
-        // Extract compaction policy fields (not in SessionConfig)
-        let compaction_strategy = session_config.compaction_strategy;
+        // Extract compaction policy fields (not in CompactionParams)
+        let compaction_strategy = compaction_params.compaction_strategy;
 
         // Apply config to session and extract session metadata
         let compaction_count = if let Some(ref mut session) = session_resolution.session {
-            session.set_config(session_config);
+            session.set_compaction_config(compaction_params);
             session.compaction_count()
         } else {
             0

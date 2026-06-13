@@ -1,4 +1,4 @@
-use crate::session::CompactionStrategy;
+use crate::compaction::CompactionStrategy;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CompactionTriggerSource {

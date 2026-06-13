@@ -1,8 +1,8 @@
 use crate::agent::application::command::runtime_build::{
-    build_session_config, merge_compaction_configs,
+    build_compaction_params, merge_compaction_configs,
 };
 use crate::config::CompactionConfig;
-use crate::session::{CompactionStrategy, SessionConfig};
+use crate::compaction::{CompactionStrategy, CompactionParams};
 
 // --- merge_compaction_configs ---
 
@@ -63,10 +63,10 @@ fn merge_default_used_when_no_config() {
     assert!(merged.proactive_threshold_pct.is_none());
 }
 
-// --- build_session_config ---
+// --- build_compaction_params ---
 
 #[test]
-fn build_session_config_applies_merged_values() {
+fn build_compaction_params_applies_merged_values() {
     let merged = CompactionConfig {
         strategy: Some(CompactionStrategy::SlidingWindow),
         keep_recent: Some(5),
@@ -74,7 +74,7 @@ fn build_session_config_applies_merged_values() {
         proactive_threshold_pct: Some(0.9), // not in SessionConfig
     };
 
-    let config = build_session_config(&merged);
+    let config = build_compaction_params(&merged);
 
     assert_eq!(
         config.compaction_strategy,
@@ -86,10 +86,10 @@ fn build_session_config_applies_merged_values() {
 }
 
 #[test]
-fn build_session_config_uses_defaults_when_none() {
+fn build_compaction_params_uses_defaults_when_none() {
     let merged = CompactionConfig::default(); // all None
-    let config = build_session_config(&merged);
-    let defaults = SessionConfig::default();
+    let config = build_compaction_params(&merged);
+    let defaults = CompactionParams::default();
 
     assert_eq!(config.compaction_strategy, defaults.compaction_strategy);
     assert_eq!(config.compaction_threshold, defaults.compaction_threshold);
@@ -98,7 +98,7 @@ fn build_session_config_uses_defaults_when_none() {
 }
 
 #[test]
-fn build_session_config_partial_override() {
+fn build_compaction_params_partial_override() {
     let merged = CompactionConfig {
         strategy: Some(CompactionStrategy::TokenTruncate),
         keep_recent: None,  // use default
@@ -106,8 +106,8 @@ fn build_session_config_partial_override() {
         proactive_threshold_pct: None,
     };
 
-    let config = build_session_config(&merged);
-    let defaults = SessionConfig::default();
+    let config = build_compaction_params(&merged);
+    let defaults = CompactionParams::default();
 
     assert_eq!(
         config.compaction_strategy,
@@ -138,7 +138,7 @@ fn full_precedence_default_then_plugin_then_cli() {
     };
 
     let merged = merge_compaction_configs(Some(&plugin), &cli);
-    let config = build_session_config(&merged);
+    let config = build_compaction_params(&merged);
 
     // CLI wins for strategy
     assert_eq!(
@@ -150,6 +150,6 @@ fn full_precedence_default_then_plugin_then_cli() {
     assert_eq!(config.keep_recent, 15);
     // CLI wins for token_budget
     assert_eq!(config.token_budget, Some(12000));
-    // proactive_threshold_pct from plugin (not in SessionConfig, but check merged)
+    // proactive_threshold_pct from plugin (not in CompactionParams, but check merged)
     assert_eq!(merged.proactive_threshold_pct, Some(0.70));
 }

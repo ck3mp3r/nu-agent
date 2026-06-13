@@ -174,7 +174,7 @@ pub(crate) fn extract_agent_flags(call: &EvaluatedCall) -> (Option<String>, Opti
 /// Ok(CompactionStrategy) if valid, Err(String) with user-facing message if invalid.
 pub(crate) fn parse_strategy_from_str(
     s: &str,
-) -> Result<crate::session::CompactionStrategy, String> {
+) -> Result<crate::compaction::CompactionStrategy, String> {
     serde_json::from_value(serde_json::Value::String(s.to_string())).map_err(|_| {
         format!(
             "Unknown compaction strategy '{}'. Valid values: sliding_summary, sliding_window, token_truncate",

@@ -1,4 +1,6 @@
 use super::*;
+use crate::session::{JsonlConversationStore, ConversationStore, StoreEntry, extract_llm_context};
+use super::helpers::{has_tool_call, has_tool_result};
 use rig::completion::Message;
 use rig::completion::message::{
     AssistantContent, Text, ToolCall, ToolFunction, ToolResultContent, UserContent,
@@ -60,18 +62,11 @@ fn compact_splits_at_keep_recent() {
     });
 
     let keep_recent = 3;
-    let config = SessionConfig {
+    let config = CompactionParams {
         compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingSummary,
         keep_recent,
         token_budget: None,
-    };
-
-    let mut session = Session {
-        id: session_id.to_string(),
-        created_at: Utc::now(),
-        config,
-        compaction_count: 0,
     };
 
     // Mock summarizer that formats old messages
@@ -82,7 +77,7 @@ fn compact_splits_at_keep_recent() {
 
     let outcome = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { session.compact(&memory, &store, summarizer, None).await })
+        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
         .unwrap();
 
     // Verify: 7 messages summarized, 3 kept recent
@@ -135,25 +130,18 @@ fn compact_persists_to_store() {
     });
     store.append(session_id, &messages, None).unwrap();
 
-    let config = SessionConfig {
+    let config = CompactionParams {
         compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingSummary,
         keep_recent: 2,
         token_budget: None,
     };
 
-    let mut session = Session {
-        id: session_id.to_string(),
-        created_at: Utc::now(),
-        config,
-        compaction_count: 0,
-    };
-
     let summarizer = |_: &[Message]| async move { Ok("Summary".to_string()) };
 
     tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { session.compact(&memory, &store, summarizer, None).await })
+        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
         .unwrap();
 
     // Verify: store contains all original messages + compaction marker + re-appended kept
@@ -175,46 +163,6 @@ fn compact_persists_to_store() {
 }
 
 #[test]
-fn compact_increments_compaction_count() {
-    // RED: Test that compaction_count is incremented
-    let temp_dir = TempDir::new().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-    let memory = Arc::new(InMemoryConversationMemory::new());
-    let session_id = "test_count";
-
-    let messages: Vec<Message> = (0..5).map(|i| Message::user(format!("M{}", i))).collect();
-
-    tokio::runtime::Runtime::new().unwrap().block_on(async {
-        memory.append(session_id, messages.clone()).await.unwrap();
-    });
-
-    let config = SessionConfig {
-        compaction_threshold: 100,
-        compaction_strategy: CompactionStrategy::SlidingSummary,
-        keep_recent: 2,
-        token_budget: None,
-    };
-
-    let mut session = Session {
-        id: session_id.to_string(),
-        created_at: Utc::now(),
-        config,
-        compaction_count: 0,
-    };
-
-    assert_eq!(session.compaction_count, 0);
-
-    let summarizer = |_: &[Message]| async move { Ok("S".to_string()) };
-
-    tokio::runtime::Runtime::new()
-        .unwrap()
-        .block_on(async { session.compact(&memory, &store, summarizer, None).await })
-        .unwrap();
-
-    assert_eq!(session.compaction_count, 1);
-}
-
-#[test]
 fn compact_handles_insufficient_messages() {
     // RED: Test no-op when messages <= keep_recent
     let temp_dir = TempDir::new().unwrap();
@@ -229,25 +177,18 @@ fn compact_handles_insufficient_messages() {
         memory.append(session_id, messages.clone()).await.unwrap();
     });
 
-    let config = SessionConfig {
+    let config = CompactionParams {
         compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingSummary,
         keep_recent: 3,
         token_budget: None,
     };
 
-    let mut session = Session {
-        id: session_id.to_string(),
-        created_at: Utc::now(),
-        config,
-        compaction_count: 0,
-    };
-
     let summarizer = |_: &[Message]| async move { Ok("Summary".to_string()) };
 
     let outcome = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { session.compact(&memory, &store, summarizer, None).await })
+        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
         .unwrap();
 
     // Should be no-op
@@ -277,18 +218,11 @@ fn compact_clears_before_append() {
         memory.append(session_id, messages.clone()).await.unwrap();
     });
 
-    let config = SessionConfig {
+    let config = CompactionParams {
         compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingSummary,
         keep_recent: 2,
         token_budget: None,
-    };
-
-    let mut session = Session {
-        id: session_id.to_string(),
-        created_at: Utc::now(),
-        config,
-        compaction_count: 0,
     };
 
     let summarizer = |old: &[Message]| {
@@ -298,7 +232,7 @@ fn compact_clears_before_append() {
 
     tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { session.compact(&memory, &store, summarizer, None).await })
+        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
         .unwrap();
 
     // Memory should contain exactly 3 messages (summary + 2 recent), not 5 + 3
@@ -329,18 +263,11 @@ fn compact_with_async_summarizer_does_not_panic() {
         memory.append(session_id, messages).await.unwrap();
     });
 
-    let config = SessionConfig {
+    let config = CompactionParams {
         compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingSummary,
         keep_recent: 2,
         token_budget: None,
-    };
-
-    let mut session = Session {
-        id: session_id.to_string(),
-        created_at: Utc::now(),
-        config,
-        compaction_count: 0,
     };
 
     // Async summarizer that actually awaits something — this is the key.
@@ -357,69 +284,11 @@ fn compact_with_async_summarizer_does_not_panic() {
     // This is the production pattern: block_on wrapping an async call
     // that internally awaits the summarizer
     let outcome = rt
-        .block_on(async { session.compact(&memory, &store, summarizer, None).await })
+        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
         .unwrap();
 
     assert_eq!(outcome.summarized_count, 3);
     assert_eq!(outcome.kept_recent_count, 2);
-}
-
-// --- find_safe_split_index unit tests ---
-
-#[test]
-fn find_safe_split_index_adjusts_for_tool_result_at_boundary() {
-    // [user, user, TC_A, TR_A, user, user]
-    // target=3 (TR_A is at index 3) → should move back to 2
-    let messages = vec![
-        Message::user("u0"),
-        Message::user("u1"),
-        make_tool_call_message("A", "read"),
-        make_tool_result_message("A", "ok"),
-        Message::user("u2"),
-        Message::user("u3"),
-    ];
-    assert_eq!(find_safe_split_index(&messages, 3), 2);
-}
-
-#[test]
-fn find_safe_split_index_adjusts_for_consecutive_pairs() {
-    // [user, TC_A, TR_A, TC_B, TR_B, user]
-    // target=4 (TR_B at index 4) → walks back to 3 (between TR_A and TC_B is safe)
-    let messages = vec![
-        Message::user("u0"),
-        make_tool_call_message("A", "read"),
-        make_tool_result_message("A", "ok"),
-        make_tool_call_message("B", "write"),
-        make_tool_result_message("B", "ok"),
-        Message::user("u1"),
-    ];
-    assert_eq!(find_safe_split_index(&messages, 4), 3);
-}
-
-#[test]
-fn find_safe_split_index_no_adjustment_when_clean() {
-    // [user, user, user, user]
-    // target=2 → no tool pairs, stays at 2
-    let messages = vec![
-        Message::user("u0"),
-        Message::user("u1"),
-        Message::user("u2"),
-        Message::user("u3"),
-    ];
-    assert_eq!(find_safe_split_index(&messages, 2), 2);
-}
-
-#[test]
-fn find_safe_split_index_all_tool_pairs() {
-    // [TC_A, TR_A, TC_B, TR_B]
-    // target=2 → boundary between TR_A and TC_B is safe, stays at 2
-    let messages = vec![
-        make_tool_call_message("A", "read"),
-        make_tool_result_message("A", "ok"),
-        make_tool_call_message("B", "write"),
-        make_tool_result_message("B", "ok"),
-    ];
-    assert_eq!(find_safe_split_index(&messages, 2), 2);
 }
 
 #[test]
@@ -449,18 +318,11 @@ fn compact_does_not_split_tool_call_result_pair() {
         memory.append(session_id, messages.clone()).await.unwrap();
     });
 
-    let config = SessionConfig {
+    let config = CompactionParams {
         compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingSummary,
         keep_recent: 3,
         token_budget: None,
-    };
-
-    let mut session = Session {
-        id: session_id.to_string(),
-        created_at: Utc::now(),
-        config,
-        compaction_count: 0,
     };
 
     let summarizer = |old: &[Message]| {
@@ -470,7 +332,7 @@ fn compact_does_not_split_tool_call_result_pair() {
 
     let outcome = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { session.compact(&memory, &store, summarizer, None).await })
+        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
         .unwrap();
 
     // Naive split at 7 → safe split at 6 → 6 summarized, 4 kept
@@ -517,18 +379,11 @@ fn compact_store_written_before_memory() {
     });
     store.append(session_id, &messages, None).unwrap();
 
-    let config = SessionConfig {
+    let config = CompactionParams {
         compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingSummary,
         keep_recent: 3,
         token_budget: None,
-    };
-
-    let mut session = Session {
-        id: session_id.to_string(),
-        created_at: Utc::now(),
-        config,
-        compaction_count: 0,
     };
 
     let summarizer = |old: &[Message]| {
@@ -538,7 +393,7 @@ fn compact_store_written_before_memory() {
 
     tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { session.compact(&memory, &store, summarizer, None).await })
+        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
         .unwrap();
 
     // Store must have all original messages + compaction marker + re-appended kept
@@ -573,25 +428,18 @@ fn compact_successful_produces_correct_state() {
     });
     store.append(session_id, &messages, None).unwrap();
 
-    let config = SessionConfig {
+    let config = CompactionParams {
         compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingSummary,
         keep_recent: 2,
         token_budget: None,
     };
 
-    let mut session = Session {
-        id: session_id.to_string(),
-        created_at: Utc::now(),
-        config,
-        compaction_count: 0,
-    };
-
     let summarizer = |_: &[Message]| async move { Ok("Compacted summary".to_string()) };
 
     tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { session.compact(&memory, &store, summarizer, None).await })
+        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
         .unwrap();
 
     // Memory has LLM context (summary + 2 recent = 3 messages)
@@ -617,8 +465,6 @@ fn compact_successful_produces_correct_state() {
     }
 }
 
-// --- SlidingWindow compaction tests ---
-
 #[test]
 fn compact_sliding_window_keeps_last_n_messages() {
     let temp_dir = TempDir::new().unwrap();
@@ -635,18 +481,11 @@ fn compact_sliding_window_keeps_last_n_messages() {
     });
     store.append(session_id, &messages, None).unwrap();
 
-    let config = SessionConfig {
+    let config = CompactionParams {
         compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingWindow,
         keep_recent: 3,
         token_budget: None,
-    };
-
-    let mut session = Session {
-        id: session_id.to_string(),
-        created_at: Utc::now(),
-        config,
-        compaction_count: 0,
     };
 
     // Summarizer should never be called — use a dummy
@@ -654,7 +493,7 @@ fn compact_sliding_window_keeps_last_n_messages() {
 
     let outcome = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { session.compact(&memory, &store, summarizer, None).await })
+        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
         .unwrap();
 
     assert_eq!(outcome.summarized_count, 7);
@@ -706,18 +545,11 @@ fn compact_sliding_window_summarizer_not_called() {
         memory.append(session_id, messages.clone()).await.unwrap();
     });
 
-    let config = SessionConfig {
+    let config = CompactionParams {
         compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingWindow,
         keep_recent: 3,
         token_budget: None,
-    };
-
-    let mut session = Session {
-        id: session_id.to_string(),
-        created_at: Utc::now(),
-        config,
-        compaction_count: 0,
     };
 
     // Summarizer panics — if SlidingWindow ever calls it, test fails
@@ -728,7 +560,7 @@ fn compact_sliding_window_summarizer_not_called() {
     // Must complete without panic
     let outcome = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { session.compact(&memory, &store, summarizer, None).await })
+        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
         .unwrap();
 
     assert_eq!(outcome.kept_recent_count, 3);
@@ -750,25 +582,18 @@ fn compact_sliding_window_preserves_message_order() {
         memory.append(session_id, messages.clone()).await.unwrap();
     });
 
-    let config = SessionConfig {
+    let config = CompactionParams {
         compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingWindow,
         keep_recent: 4,
         token_budget: None,
     };
 
-    let mut session = Session {
-        id: session_id.to_string(),
-        created_at: Utc::now(),
-        config,
-        compaction_count: 0,
-    };
-
     let summarizer = |_: &[Message]| async move { Ok(String::new()) };
 
     tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { session.compact(&memory, &store, summarizer, None).await })
+        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
         .unwrap();
 
     let final_messages = tokio::runtime::Runtime::new()
@@ -790,38 +615,6 @@ fn compact_sliding_window_preserves_message_order() {
     }
 }
 
-// --- TokenTruncate compaction tests ---
-
-#[test]
-fn estimate_tokens_approximation() {
-    // "hello world" = 11 chars → serialized in a Message::user has overhead,
-    // but raw "hello world" text = 11 chars → 2 tokens (11/4 = 2 truncated).
-    // We test via Message::user which adds JSON overhead, so we test the
-    // function's proportionality instead.
-    let msg_small = Message::user("hello world");
-    let tokens_small = estimate_tokens(&msg_small);
-    // "hello world" is 11 chars but serialized JSON is larger; verify > 0
-    assert!(
-        tokens_small > 0,
-        "Expected non-zero tokens for 'hello world'"
-    );
-
-    let msg_large = Message::user("x".repeat(400));
-    let tokens_large = estimate_tokens(&msg_large);
-    // 400 chars of content → ~100 tokens of content + JSON overhead
-    assert!(
-        tokens_large >= 100,
-        "Expected >= 100 tokens for 400 chars, got {}",
-        tokens_large
-    );
-
-    // Large message should have significantly more tokens
-    assert!(
-        tokens_large > tokens_small,
-        "Larger message should have more tokens"
-    );
-}
-
 #[test]
 fn compact_token_truncate_drops_oldest_within_budget() {
     let temp_dir = TempDir::new().unwrap();
@@ -838,18 +631,11 @@ fn compact_token_truncate_drops_oldest_within_budget() {
         memory.append(session_id, messages.clone()).await.unwrap();
     });
 
-    let config = SessionConfig {
+    let config = CompactionParams {
         compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::TokenTruncate,
         keep_recent: 999, // ignored by TokenTruncate
         token_budget: Some(250),
-    };
-
-    let mut session = Session {
-        id: session_id.to_string(),
-        created_at: Utc::now(),
-        config,
-        compaction_count: 0,
     };
 
     // Panicking summarizer — TokenTruncate must never call it
@@ -859,7 +645,7 @@ fn compact_token_truncate_drops_oldest_within_budget() {
 
     let _outcome = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { session.compact(&memory, &store, summarizer, None).await })
+        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
         .unwrap();
 
     // Verify: only newest messages kept within budget
@@ -888,18 +674,11 @@ fn compact_token_truncate_single_large_message() {
         memory.append(session_id, messages.clone()).await.unwrap();
     });
 
-    let config = SessionConfig {
+    let config = CompactionParams {
         compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::TokenTruncate,
         keep_recent: 999,
         token_budget: Some(100),
-    };
-
-    let mut session = Session {
-        id: session_id.to_string(),
-        created_at: Utc::now(),
-        config,
-        compaction_count: 0,
     };
 
     let summarizer = |_: &[Message]| async move {
@@ -908,7 +687,7 @@ fn compact_token_truncate_single_large_message() {
 
     let _outcome = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { session.compact(&memory, &store, summarizer, None).await })
+        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
         .unwrap();
 
     // Must keep the message — never return empty
@@ -922,8 +701,6 @@ fn compact_token_truncate_single_large_message() {
         "Must keep at least one message even if over budget"
     );
 }
-
-// --- Append-only marker architecture tests ---
 
 #[test]
 fn compact_appends_marker_preserving_history() {
@@ -942,25 +719,18 @@ fn compact_appends_marker_preserving_history() {
     });
     store.append(session_id, &messages, None).unwrap();
 
-    let config = SessionConfig {
+    let config = CompactionParams {
         compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingSummary,
         keep_recent: 2,
         token_budget: None,
     };
 
-    let mut session = Session {
-        id: session_id.to_string(),
-        created_at: Utc::now(),
-        config,
-        compaction_count: 0,
-    };
-
     let summarizer = |_: &[Message]| async move { Ok("Summary".to_string()) };
 
     tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { session.compact(&memory, &store, summarizer, None).await })
+        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
         .unwrap();
 
     let (entries, _) = store.load_all(session_id).unwrap();
@@ -1006,18 +776,11 @@ fn compact_marker_has_correct_fields() {
     });
     store.append(session_id, &messages, None).unwrap();
 
-    let config = SessionConfig {
+    let config = CompactionParams {
         compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingSummary,
         keep_recent: 3,
         token_budget: None,
-    };
-
-    let mut session = Session {
-        id: session_id.to_string(),
-        created_at: Utc::now(),
-        config,
-        compaction_count: 0,
     };
 
     let summarizer = |old: &[Message]| {
@@ -1027,7 +790,7 @@ fn compact_marker_has_correct_fields() {
 
     tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { session.compact(&memory, &store, summarizer, None).await })
+        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
         .unwrap();
 
     let (entries, _) = store.load_all(session_id).unwrap();
@@ -1060,25 +823,18 @@ fn compact_memory_has_llm_context_only() {
     });
     store.append(session_id, &messages, None).unwrap();
 
-    let config = SessionConfig {
+    let config = CompactionParams {
         compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingSummary,
         keep_recent: 2,
         token_budget: None,
     };
 
-    let mut session = Session {
-        id: session_id.to_string(),
-        created_at: Utc::now(),
-        config,
-        compaction_count: 0,
-    };
-
     let summarizer = |_: &[Message]| async move { Ok("LLM summary".to_string()) };
 
     tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { session.compact(&memory, &store, summarizer, None).await })
+        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
         .unwrap();
 
     let from_memory = tokio::runtime::Runtime::new()
@@ -1116,25 +872,18 @@ fn compact_sliding_window_appends_marker_empty_summary() {
     });
     store.append(session_id, &messages, None).unwrap();
 
-    let config = SessionConfig {
+    let config = CompactionParams {
         compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingWindow,
         keep_recent: 2,
         token_budget: None,
     };
 
-    let mut session = Session {
-        id: session_id.to_string(),
-        created_at: Utc::now(),
-        config,
-        compaction_count: 0,
-    };
-
     let summarizer = |_: &[Message]| async move { Ok(String::new()) };
 
     tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { session.compact(&memory, &store, summarizer, None).await })
+        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
         .unwrap();
 
     let (entries, _) = store.load_all(session_id).unwrap();
@@ -1166,18 +915,11 @@ fn compact_token_truncate_appends_marker_empty_summary() {
     });
     store.append(session_id, &messages, None).unwrap();
 
-    let config = SessionConfig {
+    let config = CompactionParams {
         compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::TokenTruncate,
         keep_recent: 999,
         token_budget: Some(250),
-    };
-
-    let mut session = Session {
-        id: session_id.to_string(),
-        created_at: Utc::now(),
-        config,
-        compaction_count: 0,
     };
 
     let summarizer = |_: &[Message]| async move {
@@ -1186,7 +928,7 @@ fn compact_token_truncate_appends_marker_empty_summary() {
 
     tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { session.compact(&memory, &store, summarizer, None).await })
+        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
         .unwrap();
 
     let (entries, _) = store.load_all(session_id).unwrap();
@@ -1217,25 +959,18 @@ fn multiple_compactions_append_multiple_markers() {
     });
     store.append(session_id, &messages, None).unwrap();
 
-    let config = SessionConfig {
+    let config = CompactionParams {
         compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingSummary,
         keep_recent: 3,
         token_budget: None,
     };
 
-    let mut session = Session {
-        id: session_id.to_string(),
-        created_at: Utc::now(),
-        config,
-        compaction_count: 0,
-    };
-
     // First compaction: 10 messages → 7 summarized, 3 kept
     let summarizer1 = |_: &[Message]| async move { Ok("Summary 1".to_string()) };
     tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { session.compact(&memory, &store, summarizer1, None).await })
+        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer1, None).await })
         .unwrap();
 
     // After first compact, memory has 4 messages (summary + 3 recent).
@@ -1256,7 +991,7 @@ fn multiple_compactions_append_multiple_markers() {
     let summarizer2 = |_: &[Message]| async move { Ok("Summary 2".to_string()) };
     tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { session.compact(&memory, &store, summarizer2, None).await })
+        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer2, None).await })
         .unwrap();
 
     let (entries, _) = store.load_all(session_id).unwrap();
@@ -1267,65 +1002,6 @@ fn multiple_compactions_append_multiple_markers() {
         .filter(|e| matches!(e, StoreEntry::Marker(_)))
         .count();
     assert_eq!(marker_count, 2, "Expected 2 compaction markers");
-}
-
-#[test]
-fn compact_increments_in_memory_count_marker() {
-    // session.compaction_count goes 0 → 1 → 2
-    let temp_dir = TempDir::new().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-    let memory = Arc::new(InMemoryConversationMemory::new());
-    let session_id = "test_count_marker";
-
-    let messages: Vec<Message> = (0..6)
-        .map(|i| Message::user(format!("Msg {}", i)))
-        .collect();
-
-    tokio::runtime::Runtime::new().unwrap().block_on(async {
-        memory.append(session_id, messages.clone()).await.unwrap();
-    });
-    store.append(session_id, &messages, None).unwrap();
-
-    let config = SessionConfig {
-        compaction_threshold: 100,
-        compaction_strategy: CompactionStrategy::SlidingSummary,
-        keep_recent: 2,
-        token_budget: None,
-    };
-
-    let mut session = Session {
-        id: session_id.to_string(),
-        created_at: Utc::now(),
-        config,
-        compaction_count: 0,
-    };
-
-    assert_eq!(session.compaction_count, 0);
-
-    // First compaction
-    let summarizer1 = |_: &[Message]| async move { Ok("S1".to_string()) };
-    tokio::runtime::Runtime::new()
-        .unwrap()
-        .block_on(async { session.compact(&memory, &store, summarizer1, None).await })
-        .unwrap();
-    assert_eq!(session.compaction_count, 1);
-
-    // Add more messages for second compaction
-    let more: Vec<Message> = (6..12)
-        .map(|i| Message::user(format!("Msg {}", i)))
-        .collect();
-    tokio::runtime::Runtime::new().unwrap().block_on(async {
-        memory.append(session_id, more.clone()).await.unwrap();
-    });
-    store.append(session_id, &more, None).unwrap();
-
-    // Second compaction
-    let summarizer2 = |_: &[Message]| async move { Ok("S2".to_string()) };
-    tokio::runtime::Runtime::new()
-        .unwrap()
-        .block_on(async { session.compact(&memory, &store, summarizer2, None).await })
-        .unwrap();
-    assert_eq!(session.compaction_count, 2);
 }
 
 #[test]
@@ -1345,25 +1021,18 @@ fn compaction_preserves_last_total_tokens() {
     });
     store.append(session_id, &messages, Some(5000)).unwrap();
 
-    let config = SessionConfig {
+    let config = CompactionParams {
         compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingWindow,
         keep_recent: 2,
         token_budget: None,
     };
 
-    let mut session = Session {
-        id: session_id.to_string(),
-        created_at: Utc::now(),
-        config,
-        compaction_count: 0,
-    };
-
     // Compact with last_total_tokens = Some(14000)
     let summarizer = |_: &[Message]| async move { Ok(String::new()) };
     tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { session.compact(&memory, &store, summarizer, Some(14000)).await })
+        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, Some(14000)).await })
         .unwrap();
 
     // Verify load_all returns Some(14000) as the last total tokens

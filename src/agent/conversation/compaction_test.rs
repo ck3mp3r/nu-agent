@@ -4,7 +4,7 @@ use std::cell::Cell;
 
 use crate::agent::conversation::test_helpers::TestProgressUi;
 use crate::agent::protocol::{compaction::CompactionTriggerSource, contracts::ProgressUi, event::UiEvent};
-use crate::session::CompactionOutcome;
+use crate::compaction::CompactionOutcome;
 
 #[test]
 fn manual_and_auto_compaction_share_single_execution_path() {

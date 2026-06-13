@@ -21,7 +21,7 @@ use crate::agent::{
         },
     },
 };
-use crate::session::CompactionStrategy;
+use crate::compaction::CompactionStrategy;
 
 #[derive(Default)]
 struct FakeProgressUi {

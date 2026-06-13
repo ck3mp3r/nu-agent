@@ -5,7 +5,7 @@ use crate::agent::protocol::preamble::{
     PreambleDefaults, UserPreambleInput, classify_model_family, resolve_preamble,
 };
 use crate::config::{CompactionConfig, Config, PluginConfig};
-use crate::session::SessionConfig;
+use crate::compaction::CompactionParams;
 
 /// Extract configuration from command-line flags.
 ///
@@ -286,12 +286,12 @@ pub(crate) fn merge_compaction_configs(
     }
 }
 
-/// Build a `SessionConfig` from a merged `CompactionConfig`.
+/// Build a `CompactionParams` from a merged `CompactionConfig`.
 ///
-/// Applies `CompactionConfig` field overrides on top of `SessionConfig::default()`.
-/// Fields that are `None` in the config use the `SessionConfig` defaults.
-pub(crate) fn build_session_config(merged: &CompactionConfig) -> SessionConfig {
-    let mut config = SessionConfig::default();
+/// Applies `CompactionConfig` field overrides on top of `CompactionParams::default()`.
+/// Fields that are `None` in the config use the `CompactionParams` defaults.
+pub(crate) fn build_compaction_params(merged: &CompactionConfig) -> CompactionParams {
+    let mut config = CompactionParams::default();
 
     if let Some(strategy) = merged.strategy {
         config.compaction_strategy = strategy;

@@ -53,7 +53,7 @@ fn test_agent_session_inspect_displays_full_session_details() {
     assert_eq!(session.compaction_count(), 0);
 
     // Verify config is present (default config)
-    let config = session.config();
+    let config = session.compaction_config();
     assert_eq!(config.compaction_threshold, 100);
 }
 
@@ -102,15 +102,15 @@ fn session_inspect_reports_canonical_sliding_summary_mode() {
         .get_or_create(Some("inspect-canonical-strategy".to_string()))
         .expect("create session");
 
-    session.set_config(crate::session::SessionConfig {
+    session.set_compaction_config(crate::compaction::CompactionParams {
         compaction_threshold: 4,
-        compaction_strategy: crate::session::CompactionStrategy::SlidingSummary,
+        compaction_strategy: crate::compaction::CompactionStrategy::SlidingSummary,
         keep_recent: 2,
         token_budget: None,
     });
 
     assert_eq!(
-        session.config().compaction_strategy.as_str(),
+        session.compaction_config().compaction_strategy.as_str(),
         "sliding_summary"
     );
 }

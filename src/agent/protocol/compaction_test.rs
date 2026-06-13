@@ -2,7 +2,7 @@ use super::compaction::{
     CompactionTriggerDecision, CompactionTriggerPolicy, CompactionTriggerSource,
     TokenCompactionPolicy,
 };
-use crate::session::CompactionStrategy;
+use crate::compaction::CompactionStrategy;
 
 #[test]
 fn fires_at_threshold_percentage() {

@@ -190,7 +190,7 @@ fn extract_broker_flags_without_parent_name() {
 // --- parse_strategy_from_str ---
 
 use crate::agent::application::command::args::{extract_compaction_flags, parse_strategy_from_str};
-use crate::session::CompactionStrategy;
+use crate::compaction::CompactionStrategy;
 
 #[test]
 fn parse_strategy_sliding_summary() {
