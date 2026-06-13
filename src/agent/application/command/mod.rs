@@ -52,6 +52,13 @@ impl AgentMode {
     }
 }
 
+/// Whether the plugin should call `enter_foreground()` to receive SIGINT.
+/// True for TUI (always needs it) and for stderr mode when stderr is a TTY
+/// (user has a terminal and may press Ctrl+C).
+fn should_enter_foreground(mode: AgentMode, stderr_is_tty: bool) -> bool {
+    mode.is_tui() || stderr_is_tty
+}
+
 fn resolve_agent_mode(
     input_is_nothing: bool,
     stdin_is_tty: bool,
@@ -483,12 +490,19 @@ Compaction flags:
         let input_is_nothing = matches!(input, Value::Nothing { .. });
         let mode = resolve_agent_mode(input_is_nothing, stdin_is_tty, stderr_is_tty);
 
-        let _foreground_guard = if mode.is_tui() {
-            Some(engine.enter_foreground().map_err(|err| {
-                LabeledError::new(format!(
-                    "Failed to enter foreground for interactive TUI input: {err}"
-                ))
-            })?)
+        let _foreground_guard = if should_enter_foreground(mode, stderr_is_tty) {
+            if mode.is_tui() {
+                // TUI requires foreground — fail hard if it can't be obtained.
+                Some(engine.enter_foreground().map_err(|err| {
+                    LabeledError::new(format!(
+                        "Failed to enter foreground for interactive TUI input: {err}"
+                    ))
+                })?)
+            } else {
+                // Stderr mode — best-effort so Ctrl+C works. Not fatal if it fails
+                // (e.g. fully piped environment with no controlling terminal).
+                engine.enter_foreground().ok()
+            }
         } else {
             None
         };

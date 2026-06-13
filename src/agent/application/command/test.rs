@@ -44,6 +44,27 @@ fn resolve_agent_mode_uses_stderr_when_stderr_is_not_tty() {
     assert_eq!(mode, super::AgentMode::Stderr);
 }
 
+#[test]
+fn should_enter_foreground_true_for_tui() {
+    assert!(super::should_enter_foreground(super::AgentMode::Tui, true));
+}
+
+#[test]
+fn should_enter_foreground_true_for_stderr_with_tty() {
+    assert!(super::should_enter_foreground(super::AgentMode::Stderr, true));
+}
+
+#[test]
+fn should_enter_foreground_false_for_stderr_without_tty() {
+    assert!(!super::should_enter_foreground(super::AgentMode::Stderr, false));
+}
+
+#[test]
+fn should_enter_foreground_true_for_tui_even_without_tty() {
+    // TUI mode always needs foreground regardless of stderr_is_tty flag
+    assert!(super::should_enter_foreground(super::AgentMode::Tui, false));
+}
+
 // Integration tests for mode-specific max_tool_turns defaults
 mod max_tool_turns_mode_defaults {
     use super::*;
