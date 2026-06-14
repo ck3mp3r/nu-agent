@@ -123,5 +123,5 @@ impl<'a, R: ExtendedRuntime + Send> CommandRouter<'a, R> {
 }
 
 #[cfg(test)]
-#[path = "command_router_test.rs"]
-mod command_router_test;
+#[path = "router_test.rs"]
+mod router_test;

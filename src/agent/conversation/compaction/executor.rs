@@ -2,7 +2,7 @@
 //! Extracted from AgentConversationRuntime::execute_compaction_event to give it a single
 //! responsibility. AgentConversationRuntime constructs a CompactionExecutor and delegates.
 
-use crate::agent::conversation::compaction::{
+use super::invocation::{
     COMPACTION_FAILURE_WARNING, CompactionInvocation, execute_compaction,
     execute_compaction_event_shared,
 };
@@ -16,13 +16,13 @@ use crate::session::{JsonlConversationStore, SessionStore};
 use crate::types::InMemoryConversationMemory;
 
 pub(crate) struct CompactionExecutor<'a> {
-    pub(crate) config: &'a Config,
-    pub(crate) runtime: &'a tokio::runtime::Runtime,
-    pub(crate) memory: &'a InMemoryConversationMemory,
-    pub(crate) conversation_store: &'a JsonlConversationStore,
-    pub(crate) store: &'a SessionStore,
-    pub(crate) last_total_tokens: Option<u64>,
-    pub(crate) final_session_id: &'a str,
+    config: &'a Config,
+    runtime: &'a tokio::runtime::Runtime,
+    memory: &'a InMemoryConversationMemory,
+    conversation_store: &'a JsonlConversationStore,
+    store: &'a SessionStore,
+    last_total_tokens: Option<u64>,
+    final_session_id: &'a str,
 }
 
 impl<'a> CompactionExecutor<'a> {
@@ -44,6 +44,16 @@ impl<'a> CompactionExecutor<'a> {
             last_total_tokens,
             final_session_id,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn last_total_tokens(&self) -> Option<u64> {
+        self.last_total_tokens
+    }
+
+    #[cfg(test)]
+    pub(crate) fn session_id(&self) -> &str {
+        self.final_session_id
     }
 
     /// Execute compaction. Returns `Ok(Some(new_compaction_count))` when compaction
@@ -148,5 +158,5 @@ impl<'a> CompactionExecutor<'a> {
 }
 
 #[cfg(test)]
-#[path = "compaction_executor_test.rs"]
-mod compaction_executor_test;
+#[path = "executor_test.rs"]
+mod executor_test;

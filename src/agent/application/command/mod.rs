@@ -5,8 +5,12 @@ use std::io::IsTerminal;
 mod args;
 pub(crate) mod input;
 mod mode_execute;
+pub(crate) mod pending;
 mod permissions;
 pub(crate) mod picker;
+pub(crate) mod poll;
+pub(crate) mod pump;
+pub(crate) mod router;
 mod runtime_build;
 pub(crate) mod tool_defs;
 
@@ -1053,10 +1057,17 @@ Compaction flags:
 
         let mut runtime_impl = AgentConversationRuntime {
             runtime,
-            config,
-            tool_definitions,
-            baseline_tool_definitions,
-            closure_registry,
+            provider_state: crate::agent::conversation::provider_state::ProviderState::new(
+                config,
+                plugin_config_value
+                    .as_ref()
+                    .and_then(|value| PluginConfig::from_plugin_config(value).ok()),
+            ),
+            tool_state: crate::agent::conversation::tool_state::ToolState::new(
+                tool_definitions,
+                baseline_tool_definitions,
+                closure_registry,
+            ),
             mcp_state: crate::agent::conversation::mcp_state::McpState {
                 mcp_registry,
                 mcp_runtime,
@@ -1071,27 +1082,24 @@ Compaction flags:
             engine: engine.clone(),
             store: self.store.clone(),
             final_session_id: session_resolution.final_session_id,
-            compaction_state: crate::agent::conversation::compaction_state::CompactionState {
+            compaction_state: crate::agent::conversation::compaction::state::CompactionState::new(
                 context_window_max_tokens,
-                compaction_threshold_pct: merged_compaction.proactive_threshold_pct.unwrap_or(0.80),
+                merged_compaction.proactive_threshold_pct.unwrap_or(0.80),
                 compaction_count,
                 compaction_strategy,
-                compacting: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            },
-            startup_plugin_config: plugin_config_value
-                .as_ref()
-                .and_then(|value| PluginConfig::from_plugin_config(value).ok()),
-            permissions: effective_permissions,
-            permissions_startup_summary,
-            permissions_startup_emitted: false,
-            session_grants: SessionGrantCache::default(),
-            ask_hook: AsyncAskHook::new(AskRuntimeConfig {
-                interactive: mode.is_tui(),
-                non_interactive_mode: resolve_non_interactive_ask_mode(
-                    plugin_config_value.as_ref(),
-                )?,
-                ..AskRuntimeConfig::default()
-            }),
+            ),
+            permission_state: crate::agent::conversation::permission_state::PermissionState::new(
+                effective_permissions,
+                SessionGrantCache::default(),
+                AsyncAskHook::new(AskRuntimeConfig {
+                    interactive: mode.is_tui(),
+                    non_interactive_mode: resolve_non_interactive_ask_mode(
+                        plugin_config_value.as_ref(),
+                    )?,
+                    ..AskRuntimeConfig::default()
+                }),
+                permissions_startup_summary,
+            ),
             memory_state: crate::agent::conversation::memory_state::MemoryState {
                 memory: crate::types::InMemoryConversationMemory::new(),
                 conversation_store: crate::session::JsonlConversationStore::new(
@@ -1100,8 +1108,6 @@ Compaction flags:
                 memory_hydrated: false,
                 last_total_tokens: None,
             },
-            cached_client: None,
-            cached_client_key: None,
             persona_state: crate::agent::conversation::persona_state::PersonaState {
                 agent_persona_body: persona.as_ref().map(|p| p.body.clone()),
                 agent_identity,
@@ -1110,9 +1116,11 @@ Compaction flags:
                 cached_available_skills,
                 cached_sub_agent_instruction,
             },
-            mailbox_rx,
-            available_agent_summaries: available_agents,
-            agents_config,
+            multi_agent_state: crate::agent::conversation::multi_agent_state::MultiAgentState::new(
+                mailbox_rx,
+                available_agents,
+                agents_config,
+            ),
         };
         log::debug!(
             "runtime: agent_persona_body_len={:?}, agent_identity={:?}, agent_description={:?}",

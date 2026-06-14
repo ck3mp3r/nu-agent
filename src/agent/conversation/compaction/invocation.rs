@@ -1,5 +1,3 @@
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crate::agent::protocol::{
@@ -9,21 +7,12 @@ use crate::compaction::{CompactionInvocationMode, CompactionOutcome};
 use crate::session::{ConversationStore, Session};
 use crate::types::{AssistantContent, InMemoryConversationMemory, Message, UserContent};
 
-pub(super) const COMPACTION_FAILURE_WARNING: &str =
+pub(in crate::agent::conversation) const COMPACTION_FAILURE_WARNING: &str =
     "Session compaction failed: sliding_summary summarization unavailable";
 
 const COMPACTION_SUMMARY_PROMPT: &str = include_str!("prompts/compaction_summary.md");
 
-/// RAII guard that resets the compaction flag when dropped, even on error/panic.
-pub(super) struct CompactionGuard(pub(super) Arc<AtomicBool>);
-
-impl Drop for CompactionGuard {
-    fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
-    }
-}
-
-pub(super) fn execute_compaction_event_shared<F>(
+pub(in crate::agent::conversation) fn execute_compaction_event_shared<F>(
     source: CompactionTriggerSource,
     mut execute: F,
 ) -> Result<UiEvent, String>
@@ -54,10 +43,10 @@ where
 }
 
 /// Parameters for a single compaction invocation.
-pub(super) struct CompactionInvocation<'a> {
-    pub(super) mode: CompactionInvocationMode,
-    pub(super) source: &'a str,
-    pub(super) last_total_tokens: Option<u64>,
+pub(in crate::agent::conversation) struct CompactionInvocation<'a> {
+    pub(in crate::agent::conversation) mode: CompactionInvocationMode,
+    pub(in crate::agent::conversation) source: &'a str,
+    pub(in crate::agent::conversation) last_total_tokens: Option<u64>,
 }
 
 /// Execute compaction using rig memory and ConversationStore.
@@ -78,7 +67,7 @@ pub(super) struct CompactionInvocation<'a> {
 ///
 /// # Returns
 /// Ok(Some(outcome)) on successful compaction, Ok(None) if no compaction needed
-pub(super) async fn execute_compaction<M, S, U>(
+pub(in crate::agent::conversation) async fn execute_compaction<M, S, U>(
     session: &mut Session,
     memory: &InMemoryConversationMemory,
     store: &S,
@@ -266,7 +255,3 @@ where
 
     Ok(aggregated)
 }
-
-#[cfg(test)]
-#[path = "compaction_test.rs"]
-mod compaction_test;

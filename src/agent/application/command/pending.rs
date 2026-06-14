@@ -38,5 +38,5 @@ impl PendingOps {
 }
 
 #[cfg(test)]
-#[path = "pending_ops_test.rs"]
-mod pending_ops_test;
+#[path = "pending_test.rs"]
+mod pending_test;

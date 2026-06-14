@@ -43,5 +43,5 @@ impl EventPump {
 }
 
 #[cfg(test)]
-#[path = "event_pump_test.rs"]
-mod event_pump_test;
+#[path = "pump_test.rs"]
+mod pump_test;

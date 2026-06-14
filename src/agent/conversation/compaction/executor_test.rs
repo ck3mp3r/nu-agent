@@ -47,7 +47,7 @@ fn compaction_executor_new_constructs_without_panic() {
 }
 
 #[test]
-fn compaction_executor_exposes_fields() {
+fn compaction_executor_accessors_return_correct_values() {
     let config = test_config();
     let rt = tokio::runtime::Runtime::new().unwrap();
     let memory = InMemoryConversationMemory::new();
@@ -65,8 +65,8 @@ fn compaction_executor_exposes_fields() {
         "my-session-id",
     );
 
-    assert_eq!(executor.last_total_tokens, Some(500));
-    assert_eq!(executor.final_session_id, "my-session-id");
+    assert_eq!(executor.last_total_tokens(), Some(500));
+    assert_eq!(executor.session_id(), "my-session-id");
 }
 
 #[test]
@@ -88,5 +88,5 @@ fn compaction_executor_none_tokens() {
         "session-no-tokens",
     );
 
-    assert_eq!(executor.last_total_tokens, None);
+    assert_eq!(executor.last_total_tokens(), None);
 }

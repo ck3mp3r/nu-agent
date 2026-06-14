@@ -8,7 +8,12 @@ use nu_protocol::{LabeledError, Span, Value};
 
 use crate::agent::{
     application::{
-        command_router::CommandRouter, event_pump::EventPump, pending_ops::PendingOps,
+        command::{
+            pending::PendingOps,
+            poll::{PollOutcome, poll_pending},
+            pump::EventPump,
+            router::CommandRouter,
+        },
         turn_outcome::TurnOutcome,
     },
     protocol::{
@@ -160,20 +165,18 @@ where
             }
 
             if let Some(response_rx) = pending_model_switch.take() {
-                match response_rx.try_recv() {
-                    Ok(Ok(active_identity)) => {
+                match poll_pending(response_rx) {
+                    PollOutcome::Ready(Ok(active_identity)) => {
                         ui.set_active_model_identity(active_identity.as_str());
                         ui.emit(&UiEvent::Warning {
                             message: format!("Model switched: {active_identity}"),
                         });
                     }
-                    Ok(Err(message)) => {
+                    PollOutcome::Ready(Err(message)) => {
                         ui.emit(&UiEvent::Warning { message });
                     }
-                    Err(mpsc::TryRecvError::Empty) => {
-                        pending_model_switch = Some(response_rx);
-                    }
-                    Err(mpsc::TryRecvError::Disconnected) => {
+                    PollOutcome::Pending(rx) => pending_model_switch = Some(rx),
+                    PollOutcome::Disconnected => {
                         ui.emit(&UiEvent::Warning {
                             message: "Model switch worker disconnected".to_string(),
                         });
@@ -182,21 +185,19 @@ where
             }
 
             if let Some(response_rx) = pending_agent_switch.take() {
-                match response_rx.try_recv() {
-                    Ok(Ok((agent_identity, model_identity))) => {
+                match poll_pending(response_rx) {
+                    PollOutcome::Ready(Ok((agent_identity, model_identity))) => {
                         ui.set_active_agent_identity(&agent_identity);
                         ui.set_active_model_identity(&model_identity);
                         ui.emit(&UiEvent::Warning {
                             message: format!("Agent switched to: {agent_identity}"),
                         });
                     }
-                    Ok(Err(message)) => {
+                    PollOutcome::Ready(Err(message)) => {
                         ui.emit(&UiEvent::Warning { message });
                     }
-                    Err(mpsc::TryRecvError::Empty) => {
-                        pending_agent_switch = Some(response_rx);
-                    }
-                    Err(mpsc::TryRecvError::Disconnected) => {
+                    PollOutcome::Pending(rx) => pending_agent_switch = Some(rx),
+                    PollOutcome::Disconnected => {
                         ui.emit(&UiEvent::Warning {
                             message: "Agent switch worker channel closed".to_string(),
                         });

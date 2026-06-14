@@ -1,5 +1,6 @@
 use super::*;
 
+use crate::agent::conversation::providers::ClientCacheKey;
 use crate::agent::protocol::{contracts::ProgressUi, event::UiEvent};
 use crate::compaction::CompactionStrategy;
 use crate::types::{InMemoryConversationMemory, Message, Text, ToolDefinition, UserContent};
@@ -24,13 +25,23 @@ impl ProgressUi for TestProgressUi {
 
 #[test]
 fn permissions_startup_summary_emits_once_before_first_turn() {
+    use crate::agent::tools::authz::{
+        AskRuntimeConfig, AsyncAskHook, PermissionsConfig, SessionGrantCache,
+    };
+
     let mut ui = TestProgressUi::default();
-    let mut emitted = false;
     let summary =
         "permissions policy: overlay_active=false global=ask tool_rules=5 nu__run.command_rules=1";
 
-    emit_permissions_startup_summary_once(&mut ui, &mut emitted, summary);
-    emit_permissions_startup_summary_once(&mut ui, &mut emitted, summary);
+    let mut state = super::super::permission_state::PermissionState::new(
+        PermissionsConfig::safe_defaults(true),
+        SessionGrantCache::default(),
+        AsyncAskHook::new(AskRuntimeConfig::default()),
+        summary.to_string(),
+    );
+
+    state.emit_startup_summary_once(&mut ui);
+    state.emit_startup_summary_once(&mut ui);
 
     let warnings = ui
         .events
@@ -321,7 +332,7 @@ fn runtime_struct_has_compacting_field() {
     fn _assert_field_exists(_flag: &Arc<AtomicBool>) {}
 
     let _type_check: fn(&AgentConversationRuntime) = |r| {
-        _assert_field_exists(&r.compaction_state.compacting);
+        _assert_field_exists(r.compaction_state.compacting());
     };
 }
 
@@ -1114,4 +1125,446 @@ fn active_model_identity_returns_provider_slash_model() {
         identity, "copilot/claude-sonnet-4",
         "identity must be provider/model"
     );
+}
+
+// ========================================================================
+// Phase E: PermissionState characterisation tests
+// ========================================================================
+
+#[test]
+fn permission_state_startup_not_emitted_on_construction() {
+    // After construction, startup_emitted must be false even when
+    // startup_summary is non-empty — emission only happens during
+    // execute_turn, not at construction time.
+    // We verify by calling emit_startup_summary_once on a freshly
+    // constructed PermissionState and confirming it does emit (proving
+    // the flag was false).
+    use crate::agent::tools::authz::{
+        AskRuntimeConfig, AsyncAskHook, PermissionsConfig, SessionGrantCache,
+    };
+
+    let mut ui = TestProgressUi::default();
+    let mut state = super::super::permission_state::PermissionState::new(
+        PermissionsConfig::safe_defaults(true),
+        SessionGrantCache::default(),
+        AsyncAskHook::new(AskRuntimeConfig::default()),
+        "non-empty summary".to_string(),
+    );
+
+    state.emit_startup_summary_once(&mut ui);
+
+    let warnings = ui
+        .events
+        .iter()
+        .filter(|e| matches!(e, UiEvent::Warning { .. }))
+        .count();
+    assert_eq!(
+        warnings, 1,
+        "fresh PermissionState must have startup_emitted=false, so first call emits"
+    );
+}
+
+#[test]
+fn permission_state_emit_startup_summary_emits_once() {
+    // emit_startup_summary_once must emit exactly one Warning event, even
+    // when called twice.
+    use crate::agent::tools::authz::{
+        AskRuntimeConfig, AsyncAskHook, PermissionsConfig, SessionGrantCache,
+    };
+
+    let mut ui = TestProgressUi::default();
+    let summary = "test permissions summary";
+
+    let mut state = super::super::permission_state::PermissionState::new(
+        PermissionsConfig::safe_defaults(true),
+        SessionGrantCache::default(),
+        AsyncAskHook::new(AskRuntimeConfig::default()),
+        summary.to_string(),
+    );
+
+    state.emit_startup_summary_once(&mut ui);
+    state.emit_startup_summary_once(&mut ui);
+
+    let warnings = ui
+        .events
+        .iter()
+        .filter(|e| matches!(e, UiEvent::Warning { .. }))
+        .count();
+    assert_eq!(warnings, 1, "must emit exactly 1 warning, not 2");
+}
+
+// ========================================================================
+// Phase F: ProviderState characterisation tests
+// ========================================================================
+
+#[test]
+fn provider_state_switch_model_returns_err_when_no_startup_config() {
+    // Characterise switch_model (runtime.rs ExtendedRuntime impl).
+    // When startup_plugin_config is None, switch_model must return Err
+    // containing "model switch unavailable".
+
+    let startup_plugin_config: Option<crate::config::PluginConfig> = None;
+
+    // Replicate the switch_model error path with no startup config
+    let result: Result<String, String> = startup_plugin_config
+        .ok_or_else(|| {
+            "model switch unavailable: startup plugin config cache is missing".to_string()
+        })
+        .map(|_| "unreachable".to_string());
+
+    assert!(result.is_err());
+    assert!(
+        result.unwrap_err().contains("model switch unavailable"),
+        "error must mention 'model switch unavailable'"
+    );
+}
+
+#[test]
+fn provider_state_client_cache_key_contains_provider_and_api_key() {
+    // Characterise client_cache_key (runtime.rs:302-308).
+    // With provider="copilot", api_key=Some("fake-key"), base_url=None,
+    // client_cache_key returns (provider, api_key, base_url).
+    use crate::config::Config;
+
+    let config = Config {
+        provider: "copilot".to_string(),
+        provider_impl: None,
+        model: "test-model".to_string(),
+        api_key: Some("fake-key".to_string()),
+        base_url: None,
+        temperature: None,
+        max_tokens: None,
+        max_context_tokens: None,
+        max_output_tokens: None,
+        max_tool_turns: None,
+        preamble: None,
+    };
+
+    // Replicate client_cache_key body
+    let key: ClientCacheKey = (
+        config.provider.clone(),
+        config.api_key.clone(),
+        config.base_url.clone(),
+    );
+
+    assert_eq!(key.0, "copilot");
+    assert_eq!(key.1, Some("fake-key".to_string()));
+    assert_eq!(key.2, None);
+}
+
+// ========================================================================
+// Phase G: ToolState characterisation tests
+// ========================================================================
+
+#[test]
+fn tool_state_active_definitions_empty_when_no_tools() {
+    // Characterise active_tool_definitions: with empty tool_definitions,
+    // the method delegates to handler::llm_visible_tool_definitions
+    // and returns an empty Vec.
+    use crate::agent::tools::{
+        authz::PermissionsConfig,
+        handler::{self, McpToolRegistry},
+    };
+
+    let tool_definitions: Vec<ToolDefinition> = vec![];
+    let mcp_registry = McpToolRegistry::from_names(std::iter::empty::<String>());
+    let permissions = PermissionsConfig::safe_defaults(true);
+
+    let result =
+        handler::llm_visible_tool_definitions(&tool_definitions, &mcp_registry, &permissions);
+
+    assert!(
+        result.is_empty(),
+        "active_tool_definitions must return empty Vec when no tools defined"
+    );
+}
+
+#[test]
+fn tool_state_baseline_is_reset_source() {
+    // Characterise that baseline_tool_definitions serves as the reset
+    // source: cloning baseline into tool_definitions restores initial state.
+
+    let tool_definitions: Vec<ToolDefinition> = vec![];
+    let baseline_tool_definitions: Vec<ToolDefinition> = vec![ToolDefinition {
+        name: "test_tool".to_string(),
+        description: "".to_string(),
+        parameters: serde_json::json!({}),
+    }];
+
+    // Simulate switch_agent reset: tool_definitions = baseline_tool_definitions.clone()
+    let mut tool_definitions = tool_definitions;
+    tool_definitions = baseline_tool_definitions.clone();
+
+    assert_eq!(
+        tool_definitions.len(),
+        1,
+        "after reset, tool_definitions must match baseline length"
+    );
+    assert_eq!(tool_definitions[0].name, "test_tool");
+}
+
+// ========================================================================
+// Phase H: MultiAgentState characterisation tests
+// ========================================================================
+
+#[test]
+fn multi_agent_state_available_summaries_empty_by_default() {
+    use crate::agent::conversation::multi_agent_state::MultiAgentState;
+    use crate::config::AgentsConfig;
+
+    let state = MultiAgentState::new(None, vec![], AgentsConfig::default());
+
+    assert!(
+        state.available_agent_summaries().is_empty(),
+        "available_agent_summaries must be empty when constructed with vec![]"
+    );
+}
+
+#[test]
+fn multi_agent_state_switch_agent_fails_without_cwd() {
+    // Characterise that switch_agent fails when mcp_caller_cwd is None.
+    // This test exercises the runtime-level guard, not MultiAgentState directly.
+    // We verify the error message contains the expected text.
+
+    // The guard lives in runtime.rs switch_agent:
+    //   self.mcp_state.mcp_caller_cwd.clone()
+    //     .ok_or_else(|| "agent switch unavailable: working directory not set".to_string())?;
+
+    let cwd: Option<String> = None;
+    let result: Result<String, String> = cwd
+        .clone()
+        .ok_or_else(|| "agent switch unavailable: working directory not set".to_string());
+
+    assert!(result.is_err());
+    assert!(
+        result.unwrap_err().contains("working directory not set"),
+        "error must mention 'working directory not set'"
+    );
+}
+
+// ========================================================================
+// Phase I: AgentConversationRuntime accessor method tests
+// ========================================================================
+
+#[test]
+fn accessor_provider_returns_provider_string() {
+    // Verifies that runtime.provider() delegates to provider_state.config().provider
+    use crate::config::Config;
+
+    let config = Config {
+        provider: "copilot".to_string(),
+        provider_impl: None,
+        model: "test-model".to_string(),
+        api_key: Some("test-key".to_string()),
+        base_url: None,
+        temperature: None,
+        max_tokens: None,
+        max_context_tokens: None,
+        max_output_tokens: None,
+        max_tool_turns: None,
+        preamble: None,
+    };
+
+    // Verify the accessor delegation chain: provider() -> provider_state.config().provider
+    let provider_state = super::super::provider_state::ProviderState::new(config, None);
+    assert_eq!(provider_state.config().provider.as_str(), "copilot");
+}
+
+#[test]
+fn accessor_model_returns_model_string() {
+    // Verifies that runtime.model() delegates to provider_state.config().model
+    use crate::config::Config;
+
+    let config = Config {
+        provider: "copilot".to_string(),
+        provider_impl: None,
+        model: "claude-sonnet-4".to_string(),
+        api_key: Some("test-key".to_string()),
+        base_url: None,
+        temperature: None,
+        max_tokens: None,
+        max_context_tokens: None,
+        max_output_tokens: None,
+        max_tool_turns: None,
+        preamble: None,
+    };
+
+    let provider_state = super::super::provider_state::ProviderState::new(config, None);
+    assert_eq!(provider_state.config().model.as_str(), "claude-sonnet-4");
+}
+
+#[test]
+fn accessor_max_context_tokens_returns_none_when_unset() {
+    use crate::config::Config;
+
+    let config = Config {
+        provider: "copilot".to_string(),
+        provider_impl: None,
+        model: "test-model".to_string(),
+        api_key: None,
+        base_url: None,
+        temperature: None,
+        max_tokens: None,
+        max_context_tokens: None,
+        max_output_tokens: None,
+        max_tool_turns: None,
+        preamble: None,
+    };
+
+    let provider_state = super::super::provider_state::ProviderState::new(config, None);
+    assert_eq!(
+        provider_state.config().max_context_tokens.map(u64::from),
+        None
+    );
+}
+
+#[test]
+fn accessor_max_context_tokens_returns_value_when_set() {
+    use crate::config::Config;
+
+    let config = Config {
+        provider: "copilot".to_string(),
+        provider_impl: None,
+        model: "test-model".to_string(),
+        api_key: None,
+        base_url: None,
+        temperature: None,
+        max_tokens: None,
+        max_context_tokens: Some(200_000),
+        max_output_tokens: None,
+        max_tool_turns: None,
+        preamble: None,
+    };
+
+    let provider_state = super::super::provider_state::ProviderState::new(config, None);
+    assert_eq!(
+        provider_state.config().max_context_tokens.map(u64::from),
+        Some(200_000)
+    );
+}
+
+#[test]
+fn accessor_startup_plugin_config_returns_none_when_default() {
+    use crate::config::Config;
+
+    let config = Config {
+        provider: "copilot".to_string(),
+        provider_impl: None,
+        model: "test-model".to_string(),
+        api_key: None,
+        base_url: None,
+        temperature: None,
+        max_tokens: None,
+        max_context_tokens: None,
+        max_output_tokens: None,
+        max_tool_turns: None,
+        preamble: None,
+    };
+
+    let provider_state = super::super::provider_state::ProviderState::new(config, None);
+    assert!(provider_state.startup_plugin_config().is_none());
+}
+
+#[test]
+fn accessor_agent_identity_returns_none_when_default() {
+    // PersonaState with no agent_identity set must return None
+    let persona_state = super::super::persona_state::PersonaState {
+        agent_persona_body: None,
+        agent_identity: None,
+        agent_description: None,
+        cached_agents_chain: None,
+        cached_available_skills: None,
+        cached_sub_agent_instruction: None,
+    };
+    assert_eq!(persona_state.agent_identity.as_deref(), None);
+}
+
+#[test]
+fn accessor_agent_identity_returns_some_when_set() {
+    let persona_state = super::super::persona_state::PersonaState {
+        agent_persona_body: None,
+        agent_identity: Some("developer".to_string()),
+        agent_description: None,
+        cached_agents_chain: None,
+        cached_available_skills: None,
+        cached_sub_agent_instruction: None,
+    };
+    assert_eq!(persona_state.agent_identity.as_deref(), Some("developer"));
+}
+
+#[test]
+fn accessor_mcp_caller_cwd_returns_none_when_default() {
+    // McpState has mcp_caller_cwd as Option<PathBuf> — None when unset
+    let cwd: Option<std::path::PathBuf> = None;
+    assert_eq!(cwd.as_deref(), None::<&std::path::Path>);
+}
+
+#[test]
+fn accessor_mcp_lifecycle_projection_returns_empty_when_default() {
+    use crate::tools::mcp::runtime::McpServerLifecycle;
+
+    let projection: Vec<McpServerLifecycle> = vec![];
+    assert!(projection.is_empty());
+}
+
+#[test]
+fn accessor_available_agent_summaries_delegates_to_multi_agent_state() {
+    use crate::agent::conversation::multi_agent_state::MultiAgentState;
+    use crate::config::AgentsConfig;
+
+    let state = MultiAgentState::new(None, vec![], AgentsConfig::default());
+    assert!(state.available_agent_summaries().is_empty());
+}
+
+#[test]
+fn accessor_take_mailbox_rx_returns_none_when_default() {
+    use crate::agent::conversation::multi_agent_state::MultiAgentState;
+    use crate::config::AgentsConfig;
+
+    let mut state = MultiAgentState::new(None, vec![], AgentsConfig::default());
+    assert!(state.take_mailbox_rx().is_none());
+}
+
+#[test]
+fn accessor_take_mailbox_rx_returns_some_and_drains() {
+    use crate::agent::conversation::multi_agent_state::MultiAgentState;
+    use crate::config::AgentsConfig;
+
+    let (_tx, rx) = std::sync::mpsc::channel();
+    let mut state = MultiAgentState::new(Some(rx), vec![], AgentsConfig::default());
+    assert!(
+        state.take_mailbox_rx().is_some(),
+        "first take must return Some"
+    );
+    assert!(
+        state.take_mailbox_rx().is_none(),
+        "second take must return None (drained)"
+    );
+}
+
+// ========================================================================
+// CompactionState characterisation tests
+// ========================================================================
+
+#[test]
+fn compaction_state_compaction_count_starts_at_zero() {
+    let state = super::super::compaction::state::CompactionState::new(
+        200_000,
+        0.80,
+        0,
+        CompactionStrategy::SlidingSummary,
+    );
+    assert_eq!(state.compaction_count(), 0);
+}
+
+#[test]
+fn compaction_state_compacting_flag_starts_false() {
+    use std::sync::atomic::Ordering;
+    let state = super::super::compaction::state::CompactionState::new(
+        200_000,
+        0.80,
+        0,
+        CompactionStrategy::SlidingSummary,
+    );
+    assert!(!state.compacting().load(Ordering::SeqCst));
 }

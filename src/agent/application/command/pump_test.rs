@@ -1,4 +1,4 @@
-use crate::agent::application::event_pump::EventPump;
+use crate::agent::application::command::pump::EventPump;
 use crate::agent::protocol::contracts::ProgressUi;
 use crate::agent::protocol::event::UiEvent;
 

@@ -15,7 +15,7 @@ use crate::agent::protocol::event::UiEvent;
 use crate::agent::tools::authz::{AsyncAskHook, PermissionsConfig, SessionGrantCache};
 use crate::agent::tools::handler::McpToolRegistry;
 use crate::config::Config;
-use crate::session::{ConversationStore, JsonlConversationStore};
+use crate::session::ConversationStore;
 use crate::tools::closure::ClosureRegistry;
 use crate::types::{InMemoryConversationMemory, Message, ToolDefinition};
 
@@ -49,21 +49,6 @@ pub(crate) struct TurnResponseData {
     pub(crate) has_session: bool,
 }
 
-/// Groups the 3 permission-related fields always passed together to build AuthzPermissionResolver.
-pub(crate) struct PermissionCtx<'a> {
-    pub(crate) permissions: &'a PermissionsConfig,
-    pub(crate) session_grants: &'a mut SessionGrantCache,
-    pub(crate) ask_hook: &'a mut AsyncAskHook,
-}
-
-/// Groups the 4 conversation persistence fields always used together in the persist block.
-pub(crate) struct ConversationState<'a> {
-    pub(crate) memory: &'a mut InMemoryConversationMemory,
-    pub(crate) conversation_store: &'a JsonlConversationStore,
-    pub(crate) last_total_tokens: &'a mut Option<u64>,
-    pub(crate) final_session_id: &'a Option<String>,
-}
-
 /// Groups the 3 tool infrastructure fields always passed through to TurnContext.
 pub(crate) struct ToolInfra<'a> {
     pub(crate) closure_registry: &'a ClosureRegistry,
@@ -74,8 +59,8 @@ pub(crate) struct ToolInfra<'a> {
 pub(crate) struct TurnExecutor<'a> {
     pub(crate) config: &'a Config,
     pub(crate) runtime: &'a tokio::runtime::Runtime,
-    pub(crate) permission_ctx: PermissionCtx<'a>,
-    pub(crate) conversation_state: ConversationState<'a>,
+    pub(crate) permission_state: &'a mut super::permission_state::PermissionState,
+    pub(crate) memory_state: &'a mut super::memory_state::MemoryState,
     pub(crate) tool_infra: ToolInfra<'a>,
     /// Stored after a completed turn so the delegate can extract it for response formatting.
     response_data: Option<TurnResponseData>,
@@ -85,15 +70,15 @@ impl<'a> TurnExecutor<'a> {
     pub(crate) fn new(
         config: &'a Config,
         runtime: &'a tokio::runtime::Runtime,
-        permission_ctx: PermissionCtx<'a>,
-        conversation_state: ConversationState<'a>,
+        permission_state: &'a mut super::permission_state::PermissionState,
+        memory_state: &'a mut super::memory_state::MemoryState,
         tool_infra: ToolInfra<'a>,
     ) -> Self {
         Self {
             config,
             runtime,
-            permission_ctx,
-            conversation_state,
+            permission_state,
+            memory_state,
             tool_infra,
             response_data: None,
         }
@@ -116,11 +101,12 @@ impl<'a> TurnExecutor<'a> {
         cached_client: &CachedProviderClient,
         visible_tool_definitions: Vec<ToolDefinition>,
         engine: &EngineInterface,
+        final_session_id: Option<&str>,
     ) -> Result<TurnOutcome, LabeledError> {
         let prompt = input.prompt;
         let preamble = input.preamble;
         let span = input.span;
-        let conversation_id = if let Some(session_id) = self.conversation_state.final_session_id {
+        let conversation_id = if let Some(session_id) = final_session_id {
             session_id.to_string()
         } else {
             // No session: use transient ID based on timestamp
@@ -189,15 +175,17 @@ impl<'a> TurnExecutor<'a> {
             }
         }
 
+        let (permissions, session_grants, ask_hook) = self.permission_state.borrow_all_mut();
+
         let visitor_result = cached_client.with_model(
             &model_name,
             TurnVisitor {
                 runtime: self.runtime,
-                memory: self.conversation_state.memory,
+                memory: &self.memory_state.memory,
                 config: self.config,
-                permissions: self.permission_ctx.permissions,
-                session_grants: self.permission_ctx.session_grants,
-                ask_hook: self.permission_ctx.ask_hook,
+                permissions,
+                session_grants,
+                ask_hook,
                 engine,
                 closure_registry: self.tool_infra.closure_registry,
                 mcp_registry: self.tool_infra.mcp_registry,
@@ -214,18 +202,18 @@ impl<'a> TurnExecutor<'a> {
             Ok(result) => result,
             Err(e) if e.cancelled => {
                 // Path A: rig hook cancelled — persist chat_history if available
-                if let Some(session_id) = self.conversation_state.final_session_id
+                if let Some(session_id) = final_session_id
                     && let Some(ref messages) = e.messages
                 {
                     if let Err(persist_err) = self
-                        .conversation_state
+                        .memory_state
                         .conversation_store
                         .append(session_id, messages, None)
                     {
                         log::warn!("Failed to persist cancelled turn messages: {}", persist_err);
                     }
                     if let Err(mem_err) = self.runtime.block_on(
-                        self.conversation_state
+                        self.memory_state
                             .memory
                             .append(session_id, messages.clone()),
                     ) {
@@ -251,7 +239,7 @@ impl<'a> TurnExecutor<'a> {
                 return Ok(TurnOutcome::EarlyReturn(crate::llm::format_response(
                     &llm_response,
                     self.config,
-                    self.conversation_state.final_session_id.as_deref(),
+                    final_session_id,
                     0, // compaction_count not relevant for cancelled turns
                     span,
                 )));
@@ -267,21 +255,21 @@ impl<'a> TurnExecutor<'a> {
         // Construct user + optional partial assistant message and persist manually.
         if turn_result.cancelled
             && turn_result.messages.is_none()
-            && let Some(session_id) = self.conversation_state.final_session_id
+            && let Some(session_id) = final_session_id
         {
             let mut cancelled_messages = vec![Message::user(prompt.clone())];
             if !turn_result.text.is_empty() {
                 cancelled_messages.push(Message::assistant(turn_result.text.clone()));
             }
-            if let Err(e) = self.conversation_state.conversation_store.append(
-                session_id,
-                &cancelled_messages,
-                None,
-            ) {
+            if let Err(e) =
+                self.memory_state
+                    .conversation_store
+                    .append(session_id, &cancelled_messages, None)
+            {
                 log::warn!("Failed to persist cancelled turn messages (path B): {}", e);
             }
             if let Err(e) = self.runtime.block_on(
-                self.conversation_state
+                self.memory_state
                     .memory
                     .append(session_id, cancelled_messages.clone()),
             ) {
@@ -293,10 +281,10 @@ impl<'a> TurnExecutor<'a> {
         }
 
         // Persist new messages to conversation store if session exists
-        if let Some(session_id) = self.conversation_state.final_session_id
+        if let Some(session_id) = final_session_id
             && let Some(ref messages) = turn_result.messages
         {
-            if let Err(e) = self.conversation_state.conversation_store.append(
+            if let Err(e) = self.memory_state.conversation_store.append(
                 session_id,
                 messages,
                 Some(turn_result.last_total_tokens),
@@ -308,7 +296,7 @@ impl<'a> TurnExecutor<'a> {
             }
 
             // Update last_total_tokens for compaction
-            *self.conversation_state.last_total_tokens = Some(turn_result.last_total_tokens);
+            self.memory_state.last_total_tokens = Some(turn_result.last_total_tokens);
         }
 
         // Emit UI events
@@ -326,7 +314,7 @@ impl<'a> TurnExecutor<'a> {
         self.response_data = Some(TurnResponseData {
             text: turn_result.text,
             usage: turn_result.usage,
-            has_session: self.conversation_state.final_session_id.is_some(),
+            has_session: final_session_id.is_some(),
         });
 
         Ok(TurnOutcome::Completed)
