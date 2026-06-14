@@ -3,7 +3,7 @@ use super::error::ToolError;
 use chrono::Utc;
 use nu_plugin::EngineInterface;
 use nu_protocol::shell_error::generic::GenericError;
-use nu_protocol::{Span, Spanned, Value, engine::Closure};
+use nu_protocol::{ShellError, Span, Spanned, Value, engine::Closure};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::time::timeout as tokio_timeout;
@@ -60,7 +60,6 @@ impl ToolExecutor {
     /// ).await?;
     /// // result is Value::int(8, span)
     /// ```
-    #[allow(clippy::result_large_err)] // ShellError is from nu_protocol, can't change size
     pub async fn invoke_closure(
         &self,
         closure: &Spanned<Closure>,
@@ -85,7 +84,9 @@ impl ToolExecutor {
 
                 // Call EngineInterface.eval_closure()
                 // This evaluates the closure in the plugin's engine context
-                engine.eval_closure(&closure_clone, positional, input)
+                engine
+                    .eval_closure(&closure_clone, positional, input)
+                    .map_err(Box::new)
             })
             .await
         })
@@ -112,10 +113,10 @@ impl ToolExecutor {
             Ok(Err(join_error)) => {
                 let err_msg = format!("Closure execution panicked: {}", join_error);
                 let audit = AuditResult::Err(err_msg.clone());
-                let shell_error =
+                let shell_error: ShellError =
                     GenericError::new("Closure execution panicked", join_error.to_string(), span)
                         .into();
-                (audit, Err(ToolError::Execution(shell_error)))
+                (audit, Err(ToolError::Execution(Box::new(shell_error))))
             }
             // Timeout elapsed
             Err(_elapsed) => {

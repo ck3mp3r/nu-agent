@@ -5,10 +5,9 @@ use crate::agent::ui::tui::{
 };
 
 #[derive(Clone)]
-#[allow(clippy::large_enum_variant)]
 enum Enqueue {
     User(UserAction),
-    Event(UiEvent),
+    Event(Box<UiEvent>),
 }
 
 fn completed(tool_calls: usize) -> UiEvent {
@@ -62,14 +61,14 @@ fn table_driven_fifo_and_deterministic_merge_policy_round_robin_user_first() {
         Case {
             name: "fifo for ui-event source only",
             enqueue: vec![
-                Enqueue::Event(completed(1)),
-                Enqueue::Event(warning("warn-1")),
-                Enqueue::Event(completed(2)),
+                Enqueue::Event(Box::new(completed(1))),
+                Enqueue::Event(Box::new(warning("warn-1"))),
+                Enqueue::Event(Box::new(completed(2))),
             ],
             expected: vec![
-                TransportItem::Event(completed(1)),
-                TransportItem::Event(warning("warn-1")),
-                TransportItem::Event(completed(2)),
+                TransportItem::Event(Box::new(completed(1))),
+                TransportItem::Event(Box::new(warning("warn-1"))),
+                TransportItem::Event(Box::new(completed(2))),
             ],
         },
         Case {
@@ -77,27 +76,27 @@ fn table_driven_fifo_and_deterministic_merge_policy_round_robin_user_first() {
             enqueue: vec![
                 Enqueue::User(UserAction::InsertChar('u')),
                 Enqueue::User(UserAction::InsertChar('v')),
-                Enqueue::Event(warning("e1")),
-                Enqueue::Event(completed(9)),
+                Enqueue::Event(Box::new(warning("e1"))),
+                Enqueue::Event(Box::new(completed(9))),
             ],
             expected: vec![
                 TransportItem::User(UserAction::InsertChar('u')),
-                TransportItem::Event(warning("e1")),
+                TransportItem::Event(Box::new(warning("e1"))),
                 TransportItem::User(UserAction::InsertChar('v')),
-                TransportItem::Event(completed(9)),
+                TransportItem::Event(Box::new(completed(9))),
             ],
         },
         Case {
             name: "when one side empties, remaining side drains in fifo",
             enqueue: vec![
                 Enqueue::User(UserAction::Submit),
-                Enqueue::Event(warning("e1")),
-                Enqueue::Event(completed(3)),
+                Enqueue::Event(Box::new(warning("e1"))),
+                Enqueue::Event(Box::new(completed(3))),
             ],
             expected: vec![
                 TransportItem::User(UserAction::Submit),
-                TransportItem::Event(warning("e1")),
-                TransportItem::Event(completed(3)),
+                TransportItem::Event(Box::new(warning("e1"))),
+                TransportItem::Event(Box::new(completed(3))),
             ],
         },
     ];
@@ -108,7 +107,7 @@ fn table_driven_fifo_and_deterministic_merge_policy_round_robin_user_first() {
         for item in case.enqueue {
             match item {
                 Enqueue::User(action) => transport.enqueue_user_action(action),
-                Enqueue::Event(event) => transport.enqueue_ui_event(event),
+                Enqueue::Event(event) => transport.enqueue_ui_event(*event),
             }
         }
 

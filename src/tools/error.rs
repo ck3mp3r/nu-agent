@@ -11,7 +11,7 @@ pub enum ToolError {
     },
 
     #[error("Tool execution failed: {0}")]
-    Execution(#[from] ShellError),
+    Execution(#[from] Box<ShellError>),
 
     #[error("Audit logging failed: {0}")]
     Audit(#[from] AuditError),

@@ -37,13 +37,11 @@ fn count_short_flag_occurrences(call: &EvaluatedCall, short: char) -> usize {
     count
 }
 
-#[allow(clippy::result_large_err)]
-fn has_true_flag(call: &EvaluatedCall, name: &str) -> Result<bool, nu_protocol::ShellError> {
-    call.has_flag(name)
+fn has_true_flag(call: &EvaluatedCall, name: &str) -> Result<bool, Box<nu_protocol::ShellError>> {
+    call.has_flag(name).map_err(Box::new)
 }
 
-#[allow(clippy::result_large_err)]
-pub fn resolve_ui_policy(call: &EvaluatedCall) -> Result<UiPolicy, nu_protocol::ShellError> {
+pub fn resolve_ui_policy(call: &EvaluatedCall) -> Result<UiPolicy, Box<nu_protocol::ShellError>> {
     let quiet = has_true_flag(call, "quiet")?;
     let long_verbose = has_true_flag(call, "verbose")?;
     let short_verbose_count = count_short_flag_occurrences(call, 'v');

@@ -5,10 +5,9 @@ use crate::agent::protocol::event::UiEvent;
 use crate::agent::ui::tui::interaction::reducer::{ReducerInput, UserAction};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(clippy::large_enum_variant)]
 pub enum TransportItem {
     User(UserAction),
-    Event(UiEvent),
+    Event(Box<UiEvent>),
 }
 
 impl From<TransportItem> for ReducerInput {
@@ -61,7 +60,10 @@ impl TuiTransport {
         match (self.user_actions.is_empty(), self.ui_events.is_empty()) {
             (true, true) => None,
             (false, true) => self.user_actions.pop_front().map(TransportItem::User),
-            (true, false) => self.ui_events.pop_front().map(TransportItem::Event),
+            (true, false) => self
+                .ui_events
+                .pop_front()
+                .map(|e| TransportItem::Event(Box::new(e))),
             (false, false) => {
                 let from_user = self.next_when_both == Source::User;
                 self.next_when_both = if from_user {
@@ -73,7 +75,9 @@ impl TuiTransport {
                 if from_user {
                     self.user_actions.pop_front().map(TransportItem::User)
                 } else {
-                    self.ui_events.pop_front().map(TransportItem::Event)
+                    self.ui_events
+                        .pop_front()
+                        .map(|e| TransportItem::Event(Box::new(e)))
                 }
             }
         }

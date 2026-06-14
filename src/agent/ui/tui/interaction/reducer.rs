@@ -65,10 +65,9 @@ pub enum UserAction {
 }
 
 #[derive(Debug, Clone)]
-#[allow(clippy::large_enum_variant)]
 pub enum ReducerInput {
     User(UserAction),
-    Event(UiEvent),
+    Event(Box<UiEvent>),
 }
 
 pub fn reduce_with_cancel_controller(
@@ -78,7 +77,7 @@ pub fn reduce_with_cancel_controller(
 ) {
     match input {
         ReducerInput::User(action) => reduce_user_action(state, action, cancel_controller),
-        ReducerInput::Event(event) => reduce_ui_event(state, event),
+        ReducerInput::Event(event) => reduce_ui_event(state, *event),
     }
 }
 

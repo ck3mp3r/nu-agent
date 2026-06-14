@@ -530,29 +530,3 @@ impl FrontMatterParser for PulldownCmarkFrontMatterParser {
 
 #[cfg(test)]
 mod test;
-
-/// Mock persona resolver for testing
-#[cfg(test)]
-pub(crate) struct MockPersonaResolver {
-    pub result: Result<(PathBuf, String), PersonaError>,
-}
-
-#[cfg(test)]
-impl PersonaFileResolver for MockPersonaResolver {
-    fn resolve(&self, _persona_name: &str) -> Result<(PathBuf, String), PersonaError> {
-        match &self.result {
-            Ok((path, content)) => Ok((path.clone(), content.clone())),
-            Err(PersonaError::NotFound {
-                cwd_path,
-                config_path,
-            }) => Err(PersonaError::NotFound {
-                cwd_path: cwd_path.clone(),
-                config_path: config_path.clone(),
-            }),
-            Err(PersonaError::ReadFailed { path, source }) => Err(PersonaError::ReadFailed {
-                path: path.clone(),
-                source: std::io::Error::new(source.kind(), source.to_string()),
-            }),
-        }
-    }
-}

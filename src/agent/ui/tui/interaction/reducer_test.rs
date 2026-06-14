@@ -20,6 +20,11 @@ fn extract_all_text_from_entry(entry: &TranscriptEntry) -> Vec<String> {
     }
 }
 
+/// Convenience: wraps a UiEvent into a boxed ReducerInput::Event.
+fn event_input(e: UiEvent) -> ReducerInput {
+    ReducerInput::Event(Box::new(e))
+}
+
 fn assert_reducer_invariants(state: &AppState) {
     assert!(!state.input.locked);
     assert_eq!(state.abort.pending, state.phase == UiPhase::AbortPending);
@@ -120,14 +125,14 @@ fn table_driven_ui_event_mapping_keeps_completed_as_finalize_boundary() {
     ];
 
     for event in cases {
-        reduce_with_cancel_controller(&mut state, ReducerInput::Event(event), None);
+        reduce_with_cancel_controller(&mut state, event_input(event), None);
         assert_eq!(state.phase, UiPhase::Busy);
         assert!(!state.input.locked);
     }
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::Completed { tool_calls: 1 }),
+        event_input(UiEvent::Completed { tool_calls: 1 }),
         None,
     );
 
@@ -188,7 +193,7 @@ fn completed_event_clears_pending_and_unlocks_input() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::Completed { tool_calls: 0 }),
+        event_input(UiEvent::Completed { tool_calls: 0 }),
         None,
     );
 
@@ -275,7 +280,7 @@ fn race_completion_before_second_escape_prevents_reentry_into_abort_pending() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::Completed { tool_calls: 0 }),
+        event_input(UiEvent::Completed { tool_calls: 0 }),
         None,
     );
     assert_eq!(state.phase, UiPhase::Idle);
@@ -309,7 +314,7 @@ fn completed_event_unlocks_and_clears_abort_pending() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::Completed { tool_calls: 0 }),
+        event_input(UiEvent::Completed { tool_calls: 0 }),
         None,
     );
 
@@ -427,7 +432,7 @@ fn assistant_message_is_appended_to_transcript_before_completed_unlock() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::AssistantMessage {
+        event_input(UiEvent::AssistantMessage {
             text: "pong".to_string(),
         }),
         None,
@@ -448,7 +453,7 @@ fn assistant_message_is_appended_to_transcript_before_completed_unlock() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::Completed { tool_calls: 0 }),
+        event_input(UiEvent::Completed { tool_calls: 0 }),
         None,
     );
 
@@ -461,7 +466,7 @@ fn tool_end_transcript_line_shows_args_summary_without_result_payload_dump() {
     let mut state = AppState::new();
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStart {
             name: "k8s__list_pods".to_string(),
             source: "mcp".to_string(),
             arguments: r#"{"namespace":"prod"}"#.to_string(),
@@ -470,7 +475,7 @@ fn tool_end_transcript_line_shows_args_summary_without_result_payload_dump() {
     );
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::ToolEnd {
+        event_input(UiEvent::ToolEnd {
             name: "k8s__list_pods".to_string(),
             source: "mcp".to_string(),
             arguments: r#"{"namespace":"prod"}"#.to_string(),
@@ -503,7 +508,7 @@ fn tool_row_materializes_immediately_on_tool_start_with_args_and_running_status(
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStart {
             name: "k8s__list_pods".to_string(),
             source: "mcp".to_string(),
             arguments: r#"{"namespace":"prod"}"#.to_string(),
@@ -532,7 +537,7 @@ fn tool_end_transitions_same_row_to_done_or_failed_status() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStart {
             name: "gh__get_pr".to_string(),
             source: "mcp".to_string(),
             arguments: r#"{"number":1}"#.to_string(),
@@ -541,7 +546,7 @@ fn tool_end_transitions_same_row_to_done_or_failed_status() {
     );
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::ToolEnd {
+        event_input(UiEvent::ToolEnd {
             name: "gh__get_pr".to_string(),
             source: "mcp".to_string(),
             arguments: r#"{"number":1}"#.to_string(),
@@ -564,7 +569,7 @@ fn tool_end_transitions_same_row_to_done_or_failed_status() {
     let mut failed = AppState::new();
     reduce_with_cancel_controller(
         &mut failed,
-        ReducerInput::Event(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStart {
             name: "gh__get_pr".to_string(),
             source: "mcp".to_string(),
             arguments: r#"{"number":2}"#.to_string(),
@@ -573,7 +578,7 @@ fn tool_end_transitions_same_row_to_done_or_failed_status() {
     );
     reduce_with_cancel_controller(
         &mut failed,
-        ReducerInput::Event(UiEvent::ToolEnd {
+        event_input(UiEvent::ToolEnd {
             name: "gh__get_pr".to_string(),
             source: "mcp".to_string(),
             arguments: r#"{"number":2}"#.to_string(),
@@ -598,7 +603,7 @@ fn llm_end_event_updates_latest_and_rolling_token_usage() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::LlmEnd {
+        event_input(UiEvent::LlmEnd {
             response_chars: 6,
             tool_calls: 0,
             input_tokens: 20,
@@ -615,7 +620,7 @@ fn llm_end_event_updates_latest_and_rolling_token_usage() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::LlmEnd {
+        event_input(UiEvent::LlmEnd {
             response_chars: 4,
             tool_calls: 0,
             input_tokens: 5,
@@ -659,7 +664,7 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
         let mut state = busy_state_with_clean_transcript();
         reduce_with_cancel_controller(
             &mut state,
-            ReducerInput::Event(UiEvent::ToolStart {
+            event_input(UiEvent::ToolStart {
                 name: "k8s__list_pods".to_string(),
                 source: "mcp".to_string(),
                 arguments: r#"{"namespace":"prod"}"#.to_string(),
@@ -748,7 +753,7 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
     for case in cases {
         let mut state = (case.pre)();
         let before = state.clone();
-        reduce_with_cancel_controller(&mut state, ReducerInput::Event(case.event), None);
+        reduce_with_cancel_controller(&mut state, event_input(case.event), None);
 
         match case.name {
             "llm_start_from_idle_moves_busy" => {
@@ -815,7 +820,7 @@ fn compaction_summary_is_rendered_in_transcript() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::CompactionTriggered {
+        event_input(UiEvent::CompactionTriggered {
             source: "slash_compact".to_string(),
             summarized_count: 5,
             kept_recent_count: 2,
@@ -841,7 +846,7 @@ fn permission_request_focuses_transcript_for_immediate_prompt_visibility() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::PermissionRequested {
+        event_input(UiEvent::PermissionRequested {
             request_id: "ask-0000000000000001".to_string(),
             context: PermissionRequestContext {
                 tool: "edit".to_string(),
@@ -871,7 +876,7 @@ fn compaction_artifact_renders_as_single_markdown_block() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::CompactionTriggered {
+        event_input(UiEvent::CompactionTriggered {
             source: "slash_compact".to_string(),
             summarized_count: 3,
             kept_recent_count: 2,
@@ -901,7 +906,7 @@ fn compaction_artifact_does_not_double_wrap_summary_heading() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::CompactionTriggered {
+        event_input(UiEvent::CompactionTriggered {
             source: "slash_compact".to_string(),
             summarized_count: 1,
             kept_recent_count: 1,
@@ -925,7 +930,7 @@ fn compaction_artifact_preserves_bullets_without_duplication() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::CompactionTriggered {
+        event_input(UiEvent::CompactionTriggered {
             source: "auto_threshold".to_string(),
             summarized_count: 8,
             kept_recent_count: 4,
@@ -951,7 +956,7 @@ fn compaction_block_completion_hides_source_and_explanatory_copy() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::CompactionTriggered {
+        event_input(UiEvent::CompactionTriggered {
             source: "auto_threshold".to_string(),
             summarized_count: 9,
             kept_recent_count: 3,
@@ -989,7 +994,7 @@ fn compaction_block_header_is_concise_without_artifact_label() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::CompactionStarted {
+        event_input(UiEvent::CompactionStarted {
             source: "auto_threshold".to_string(),
         }),
         None,
@@ -1010,7 +1015,7 @@ fn compaction_block_running_state_has_no_source_or_status_metadata_line() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::CompactionStarted {
+        event_input(UiEvent::CompactionStarted {
             source: "auto_threshold".to_string(),
         }),
         None,
@@ -1043,14 +1048,14 @@ fn compaction_block_shows_tick_on_success() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::CompactionStarted {
+        event_input(UiEvent::CompactionStarted {
             source: "slash_compact".to_string(),
         }),
         None,
     );
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::CompactionTriggered {
+        event_input(UiEvent::CompactionTriggered {
             source: "slash_compact".to_string(),
             summarized_count: 3,
             kept_recent_count: 2,
@@ -1077,14 +1082,14 @@ fn compaction_block_shows_failure_state_on_error() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::CompactionStarted {
+        event_input(UiEvent::CompactionStarted {
             source: "auto_threshold".to_string(),
         }),
         None,
     );
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::CompactionFailed {
+        event_input(UiEvent::CompactionFailed {
             source: "auto_threshold".to_string(),
             message: "sliding_summary summarization unavailable".to_string(),
         }),
@@ -1114,14 +1119,14 @@ fn compaction_block_summary_rendering_remains_clean_after_copy_removal() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::CompactionStarted {
+        event_input(UiEvent::CompactionStarted {
             source: "slash_compact".to_string(),
         }),
         None,
     );
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::CompactionTriggered {
+        event_input(UiEvent::CompactionTriggered {
             source: "slash_compact".to_string(),
             summarized_count: 1,
             kept_recent_count: 1,
@@ -1147,14 +1152,14 @@ fn compaction_metadata_not_included_in_future_prompt_history() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::CompactionStarted {
+        event_input(UiEvent::CompactionStarted {
             source: "slash_compact".to_string(),
         }),
         None,
     );
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::CompactionTriggered {
+        event_input(UiEvent::CompactionTriggered {
             source: "slash_compact".to_string(),
             summarized_count: 4,
             kept_recent_count: 2,
@@ -1183,14 +1188,14 @@ fn compaction_noop_does_not_claim_persisted_summary() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::CompactionStarted {
+        event_input(UiEvent::CompactionStarted {
             source: "auto_threshold".to_string(),
         }),
         None,
     );
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::CompactionTriggered {
+        event_input(UiEvent::CompactionTriggered {
             source: "auto_threshold".to_string(),
             summarized_count: 0,
             kept_recent_count: 6,
@@ -1223,14 +1228,14 @@ fn compaction_block_renders_for_slash_and_auto_triggers() {
     for source in ["slash_compact", "auto_threshold"] {
         reduce_with_cancel_controller(
             &mut state,
-            ReducerInput::Event(UiEvent::CompactionStarted {
+            event_input(UiEvent::CompactionStarted {
                 source: source.to_string(),
             }),
             None,
         );
         reduce_with_cancel_controller(
             &mut state,
-            ReducerInput::Event(UiEvent::CompactionTriggered {
+            event_input(UiEvent::CompactionTriggered {
                 source: source.to_string(),
                 summarized_count: 2,
                 kept_recent_count: 1,
@@ -1380,7 +1385,7 @@ fn assistant_message_whitespace_only_is_noop() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::AssistantMessage {
+        event_input(UiEvent::AssistantMessage {
             text: " \n\t\n".to_string(),
         }),
         None,
@@ -1397,7 +1402,7 @@ fn tool_start_truncates_long_args_summary_with_ellipsis() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStart {
             name: "k8s__describe".to_string(),
             source: "mcp".to_string(),
             arguments: long_args,
@@ -1422,7 +1427,7 @@ fn tool_display_renders_diff_sections_as_dedicated_code_blocks() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStart {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"path":"sample.txt"}"#.to_string(),
@@ -1432,7 +1437,7 @@ fn tool_display_renders_diff_sections_as_dedicated_code_blocks() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::ToolEnd {
+        event_input(UiEvent::ToolEnd {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"path":"sample.txt"}"#.to_string(),
@@ -1473,7 +1478,7 @@ fn tool_display_body_lines_are_unprefixed_while_tool_call_line_remains_prefixed(
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStart {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"path":"sample.txt"}"#.to_string(),
@@ -1483,7 +1488,7 @@ fn tool_display_body_lines_are_unprefixed_while_tool_call_line_remains_prefixed(
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::ToolEnd {
+        event_input(UiEvent::ToolEnd {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"path":"sample.txt"}"#.to_string(),
@@ -1539,7 +1544,7 @@ fn tool_display_diff_block_highlighting_remains_after_prefix_hygiene_fix() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStart {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"path":"sample.txt"}"#.to_string(),
@@ -1549,7 +1554,7 @@ fn tool_display_diff_block_highlighting_remains_after_prefix_hygiene_fix() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::ToolEnd {
+        event_input(UiEvent::ToolEnd {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"path":"sample.txt"}"#.to_string(),
@@ -1594,7 +1599,7 @@ fn edit_preview_display_omits_redundant_edit_path_header() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStart {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"path":"sample.txt"}"#.to_string(),
@@ -1604,7 +1609,7 @@ fn edit_preview_display_omits_redundant_edit_path_header() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::ToolEnd {
+        event_input(UiEvent::ToolEnd {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"path":"sample.txt"}"#.to_string(),
@@ -1641,7 +1646,7 @@ fn edit_preview_display_omits_redundant_single_file_stats_line() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStart {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"path":"sample.txt"}"#.to_string(),
@@ -1651,7 +1656,7 @@ fn edit_preview_display_omits_redundant_single_file_stats_line() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::ToolEnd {
+        event_input(UiEvent::ToolEnd {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"path":"sample.txt"}"#.to_string(),
@@ -1695,7 +1700,7 @@ fn assistant_dry_run_diff_regurgitation_is_suppressed_when_direct_display_presen
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStart {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"path":"sample.txt"}"#.to_string(),
@@ -1705,7 +1710,7 @@ fn assistant_dry_run_diff_regurgitation_is_suppressed_when_direct_display_presen
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::ToolEnd {
+        event_input(UiEvent::ToolEnd {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"path":"sample.txt"}"#.to_string(),
@@ -1730,7 +1735,7 @@ fn assistant_dry_run_diff_regurgitation_is_suppressed_when_direct_display_presen
     let before = state.transcript_preview.len();
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::AssistantMessage {
+        event_input(UiEvent::AssistantMessage {
             text: "Dry-run diff:\n```diff\n--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n```"
                 .to_string(),
         }),
@@ -1753,7 +1758,7 @@ fn normal_assistant_response_remains_when_no_direct_display_is_present() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::AssistantMessage {
+        event_input(UiEvent::AssistantMessage {
             text: "Dry-run diff:\n```diff\n--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n```"
                 .to_string(),
         }),
@@ -1775,7 +1780,7 @@ fn diff_display_preserves_hunk_line_range_context() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStart {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"path":"sample.txt"}"#.to_string(),
@@ -1785,7 +1790,7 @@ fn diff_display_preserves_hunk_line_range_context() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::ToolEnd {
+        event_input(UiEvent::ToolEnd {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"path":"sample.txt"}"#.to_string(),
@@ -1824,7 +1829,7 @@ fn diff_display_supports_line_number_readability_without_breaking_highlighting()
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStart {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"path":"sample.txt"}"#.to_string(),
@@ -1834,7 +1839,7 @@ fn diff_display_supports_line_number_readability_without_breaking_highlighting()
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::ToolEnd {
+        event_input(UiEvent::ToolEnd {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"path":"sample.txt"}"#.to_string(),
@@ -1879,7 +1884,7 @@ fn permission_requested_with_display_pushes_to_transcript() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStart {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"file":"foo.rs"}"#.to_string(),
@@ -1889,7 +1894,7 @@ fn permission_requested_with_display_pushes_to_transcript() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::PermissionRequested {
+        event_input(UiEvent::PermissionRequested {
             request_id: "r1".to_string(),
             context: PermissionRequestContext {
                 tool: "edit".to_string(),
@@ -1940,7 +1945,7 @@ fn tool_end_after_permission_does_not_duplicate_display() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStart {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"file":"foo.rs"}"#.to_string(),
@@ -1960,7 +1965,7 @@ fn tool_end_after_permission_does_not_duplicate_display() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::PermissionRequested {
+        event_input(UiEvent::PermissionRequested {
             request_id: "r1".to_string(),
             context: PermissionRequestContext {
                 tool: "edit".to_string(),
@@ -1979,7 +1984,7 @@ fn tool_end_after_permission_does_not_duplicate_display() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::ToolEnd {
+        event_input(UiEvent::ToolEnd {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"file":"foo.rs"}"#.to_string(),
@@ -2011,7 +2016,7 @@ fn tool_end_without_prior_permission_pushes_display_normally() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStart {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"file":"bar.rs"}"#.to_string(),
@@ -2021,7 +2026,7 @@ fn tool_end_without_prior_permission_pushes_display_normally() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::ToolEnd {
+        event_input(UiEvent::ToolEnd {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"file":"bar.rs"}"#.to_string(),
@@ -2064,7 +2069,7 @@ fn permission_requested_without_display_does_not_add_transcript_entries() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStart {
             name: "nu__run".to_string(),
             source: "mcp".to_string(),
             arguments: r#"{"command":"ls"}"#.to_string(),
@@ -2076,7 +2081,7 @@ fn permission_requested_without_display_does_not_add_transcript_entries() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::PermissionRequested {
+        event_input(UiEvent::PermissionRequested {
             request_id: "req-1".to_string(),
             context: PermissionRequestContext {
                 tool: "nu__run".to_string(),
@@ -2107,7 +2112,7 @@ fn streaming_replaces_not_appends() {
     // Emit first AssistantMessage delta
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::AssistantMessage {
+        event_input(UiEvent::AssistantMessage {
             text: "hello".to_string(),
         }),
         None,
@@ -2120,7 +2125,7 @@ fn streaming_replaces_not_appends() {
     // Emit second AssistantMessage delta (accumulated text)
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::AssistantMessage {
+        event_input(UiEvent::AssistantMessage {
             text: "hello world".to_string(),
         }),
         None,
@@ -2161,7 +2166,7 @@ fn streaming_message_start_reset_on_llm_start() {
     // Emit streaming sequence
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::AssistantMessage {
+        event_input(UiEvent::AssistantMessage {
             text: "first message".to_string(),
         }),
         None,
@@ -2172,7 +2177,7 @@ fn streaming_message_start_reset_on_llm_start() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::AssistantMessage {
+        event_input(UiEvent::AssistantMessage {
             text: "first message continues".to_string(),
         }),
         None,
@@ -2182,7 +2187,7 @@ fn streaming_message_start_reset_on_llm_start() {
     assert!(state.streaming_message_start.is_some());
 
     // Emit LlmStart (new LLM response begins)
-    reduce_with_cancel_controller(&mut state, ReducerInput::Event(UiEvent::LlmStart), None);
+    reduce_with_cancel_controller(&mut state, event_input(UiEvent::LlmStart), None);
 
     // Verify streaming_message_start is reset to None
     assert!(
@@ -2198,7 +2203,7 @@ fn streaming_message_start_reset_on_finalize() {
     // Emit streaming sequence
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::AssistantMessage {
+        event_input(UiEvent::AssistantMessage {
             text: "streaming response".to_string(),
         }),
         None,
@@ -2209,7 +2214,7 @@ fn streaming_message_start_reset_on_finalize() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::AssistantMessage {
+        event_input(UiEvent::AssistantMessage {
             text: "streaming response with more".to_string(),
         }),
         None,
@@ -2221,7 +2226,7 @@ fn streaming_message_start_reset_on_finalize() {
     // Emit Completed event (calls finalize)
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::Completed { tool_calls: 0 }),
+        event_input(UiEvent::Completed { tool_calls: 0 }),
         None,
     );
 
@@ -2245,7 +2250,7 @@ fn turn_error_leaves_ui_in_recoverable_state() {
     // Dispatch TurnError
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::TurnError {
+        event_input(UiEvent::TurnError {
             message: "test error".to_string(),
         }),
         None,
@@ -2295,7 +2300,7 @@ fn compaction_triggered_clears_status_line() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::CompactionTriggered {
+        event_input(UiEvent::CompactionTriggered {
             source: "test".into(),
             summarized_count: 5,
             kept_recent_count: 3,
@@ -2319,7 +2324,7 @@ fn compaction_failed_clears_status_line() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::CompactionFailed {
+        event_input(UiEvent::CompactionFailed {
             source: "test".into(),
             message: "err".into(),
         }),
@@ -2340,7 +2345,7 @@ fn compaction_streaming_renders_progressively() {
     // Start compaction block
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::CompactionStarted {
+        event_input(UiEvent::CompactionStarted {
             source: "auto".to_string(),
         }),
         None,
@@ -2349,7 +2354,7 @@ fn compaction_streaming_renders_progressively() {
     // Stream 3 chunks with growing aggregated text
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::CompactionSummaryChunk {
+        event_input(UiEvent::CompactionSummaryChunk {
             source: "auto".to_string(),
             delta: "Hello".to_string(),
             aggregated: "Hello".to_string(),
@@ -2361,7 +2366,7 @@ fn compaction_streaming_renders_progressively() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::CompactionSummaryChunk {
+        event_input(UiEvent::CompactionSummaryChunk {
             source: "auto".to_string(),
             delta: " world".to_string(),
             aggregated: "Hello world".to_string(),
@@ -2371,7 +2376,7 @@ fn compaction_streaming_renders_progressively() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::CompactionSummaryChunk {
+        event_input(UiEvent::CompactionSummaryChunk {
             source: "auto".to_string(),
             delta: " done".to_string(),
             aggregated: "Hello world done".to_string(),
@@ -2382,7 +2387,7 @@ fn compaction_streaming_renders_progressively() {
     // Finalize
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::CompactionTriggered {
+        event_input(UiEvent::CompactionTriggered {
             source: "auto".to_string(),
             summarized_count: 5,
             kept_recent_count: 2,
@@ -2407,7 +2412,7 @@ fn compaction_streaming_truncates_and_reprojects() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::CompactionStarted {
+        event_input(UiEvent::CompactionStarted {
             source: "auto".to_string(),
         }),
         None,
@@ -2416,7 +2421,7 @@ fn compaction_streaming_truncates_and_reprojects() {
     // First chunk
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::CompactionSummaryChunk {
+        event_input(UiEvent::CompactionSummaryChunk {
             source: "auto".to_string(),
             delta: "First".to_string(),
             aggregated: "First".to_string(),
@@ -2427,7 +2432,7 @@ fn compaction_streaming_truncates_and_reprojects() {
     // Second chunk — should truncate back and reproject
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::CompactionSummaryChunk {
+        event_input(UiEvent::CompactionSummaryChunk {
             source: "auto".to_string(),
             delta: " Second".to_string(),
             aggregated: "First Second".to_string(),
@@ -2455,7 +2460,7 @@ fn compaction_streaming_empty_chunks_ignored() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::CompactionStarted {
+        event_input(UiEvent::CompactionStarted {
             source: "auto".to_string(),
         }),
         None,
@@ -2465,7 +2470,7 @@ fn compaction_streaming_empty_chunks_ignored() {
     // Empty chunk
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::CompactionSummaryChunk {
+        event_input(UiEvent::CompactionSummaryChunk {
             source: "auto".to_string(),
             delta: "".to_string(),
             aggregated: "".to_string(),
@@ -2484,14 +2489,14 @@ fn compaction_triggered_clears_streaming_state() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::CompactionStarted {
+        event_input(UiEvent::CompactionStarted {
             source: "auto".to_string(),
         }),
         None,
     );
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::CompactionSummaryChunk {
+        event_input(UiEvent::CompactionSummaryChunk {
             source: "auto".to_string(),
             delta: "text".to_string(),
             aggregated: "text".to_string(),
@@ -2502,7 +2507,7 @@ fn compaction_triggered_clears_streaming_state() {
 
     reduce_with_cancel_controller(
         &mut state,
-        ReducerInput::Event(UiEvent::CompactionTriggered {
+        event_input(UiEvent::CompactionTriggered {
             source: "auto".to_string(),
             summarized_count: 5,
             kept_recent_count: 2,

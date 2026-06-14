@@ -1284,7 +1284,7 @@ fn tool_state_baseline_is_reset_source() {
     // Characterise that baseline_tool_definitions serves as the reset
     // source: cloning baseline into tool_definitions restores initial state.
 
-    let tool_definitions: Vec<ToolDefinition> = vec![];
+    let _tool_definitions: Vec<ToolDefinition> = vec![];
     let baseline_tool_definitions: Vec<ToolDefinition> = vec![ToolDefinition {
         name: "test_tool".to_string(),
         description: "".to_string(),
@@ -1292,8 +1292,7 @@ fn tool_state_baseline_is_reset_source() {
     }];
 
     // Simulate switch_agent reset: tool_definitions = baseline_tool_definitions.clone()
-    let mut tool_definitions = tool_definitions;
-    tool_definitions = baseline_tool_definitions.clone();
+    let tool_definitions = baseline_tool_definitions.clone();
 
     assert_eq!(
         tool_definitions.len(),
@@ -1606,7 +1605,7 @@ fn persona_state_agent_description_none_by_default() {
 #[test]
 fn mcp_state_caller_cwd_none_by_default() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let ms = super::super::memory_state::MemoryState::new(temp_dir.path().to_path_buf());
+    let _ms = super::super::memory_state::MemoryState::new(temp_dir.path().to_path_buf());
     // Access mcp_state through a compile-time type check
     let _type_check: fn(&AgentConversationRuntime) = |rt| {
         assert!(rt.mcp_state.mcp_caller_cwd().is_none());

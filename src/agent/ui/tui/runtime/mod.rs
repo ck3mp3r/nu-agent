@@ -643,10 +643,10 @@ impl RuntimeCoordinator {
         while let Some(item) = self.transport.poll_next() {
             if matches!(
                 &item,
-                TransportItem::Event(UiEvent::AssistantMessage { .. })
+                TransportItem::Event(e) if matches!(e.as_ref(), UiEvent::AssistantMessage { .. })
             ) {
                 pending_assistant = Some(match item {
-                    TransportItem::Event(e) => e,
+                    TransportItem::Event(e) => *e,
                     _ => unreachable!(),
                 });
                 continue;
@@ -654,10 +654,10 @@ impl RuntimeCoordinator {
 
             if matches!(
                 &item,
-                TransportItem::Event(UiEvent::CompactionSummaryChunk { .. })
+                TransportItem::Event(e) if matches!(e.as_ref(), UiEvent::CompactionSummaryChunk { .. })
             ) {
                 pending_compaction = Some(match item {
-                    TransportItem::Event(e) => e,
+                    TransportItem::Event(e) => *e,
                     _ => unreachable!(),
                 });
                 continue;
@@ -668,14 +668,14 @@ impl RuntimeCoordinator {
             if let Some(event) = pending_assistant.take() {
                 reduce_with_cancel_controller(
                     &mut self.state,
-                    ReducerInput::Event(event),
+                    ReducerInput::Event(Box::new(event)),
                     Some(&self.cancel_controller),
                 );
             }
             if let Some(event) = pending_compaction.take() {
                 reduce_with_cancel_controller(
                     &mut self.state,
-                    ReducerInput::Event(event),
+                    ReducerInput::Event(Box::new(event)),
                     Some(&self.cancel_controller),
                 );
             }
@@ -692,14 +692,14 @@ impl RuntimeCoordinator {
         if let Some(event) = pending_assistant.take() {
             reduce_with_cancel_controller(
                 &mut self.state,
-                ReducerInput::Event(event),
+                ReducerInput::Event(Box::new(event)),
                 Some(&self.cancel_controller),
             );
         }
         if let Some(event) = pending_compaction.take() {
             reduce_with_cancel_controller(
                 &mut self.state,
-                ReducerInput::Event(event),
+                ReducerInput::Event(Box::new(event)),
                 Some(&self.cancel_controller),
             );
         }

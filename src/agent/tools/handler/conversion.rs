@@ -11,8 +11,7 @@ use serde_json::Value as JsonValue;
 ///
 /// # Returns
 /// A Nushell Value, or ShellError if conversion fails
-#[allow(clippy::result_large_err)]
-pub fn json_to_nu_value(json: &JsonValue, span: Span) -> Result<Value, GenericError> {
+pub fn json_to_nu_value(json: &JsonValue, span: Span) -> Result<Value, Box<GenericError>> {
     match json {
         JsonValue::Null => Ok(Value::nothing(span)),
         JsonValue::Bool(b) => Ok(Value::bool(*b, span)),
@@ -22,16 +21,16 @@ pub fn json_to_nu_value(json: &JsonValue, span: Span) -> Result<Value, GenericEr
             } else if let Some(f) = n.as_f64() {
                 Ok(Value::float(f, span))
             } else {
-                Err(GenericError::new(
+                Err(Box::new(GenericError::new(
                     "Invalid JSON number",
                     "Could not convert number",
                     span,
-                ))
+                )))
             }
         }
         JsonValue::String(s) => Ok(Value::string(s.clone(), span)),
         JsonValue::Array(arr) => {
-            let values: Result<Vec<Value>, GenericError> = arr
+            let values: Result<Vec<Value>, Box<GenericError>> = arr
                 .iter()
                 .map(|item| json_to_nu_value(item, span))
                 .collect();
@@ -56,8 +55,7 @@ pub fn json_to_nu_value(json: &JsonValue, span: Span) -> Result<Value, GenericEr
 ///
 /// # Returns
 /// A JSON value, or ShellError if conversion fails
-#[allow(clippy::result_large_err)]
-pub fn nu_value_to_json(value: &Value) -> Result<JsonValue, GenericError> {
+pub fn nu_value_to_json(value: &Value) -> Result<JsonValue, Box<GenericError>> {
     match value {
         Value::Nothing { .. } => Ok(JsonValue::Null),
         Value::Bool { val, .. } => Ok(JsonValue::Bool(*val)),
@@ -65,15 +63,15 @@ pub fn nu_value_to_json(value: &Value) -> Result<JsonValue, GenericError> {
         Value::Float { val, .. } => serde_json::Number::from_f64(*val)
             .map(JsonValue::Number)
             .ok_or_else(|| {
-                GenericError::new(
+                Box::new(GenericError::new(
                     "Invalid float value",
                     "Cannot convert float to JSON",
                     value.span(),
-                )
+                ))
             }),
         Value::String { val, .. } => Ok(JsonValue::String(val.clone())),
         Value::List { vals, .. } => {
-            let json_values: Result<Vec<JsonValue>, GenericError> =
+            let json_values: Result<Vec<JsonValue>, Box<GenericError>> =
                 vals.iter().map(nu_value_to_json).collect();
             Ok(JsonValue::Array(json_values?))
         }
@@ -84,10 +82,10 @@ pub fn nu_value_to_json(value: &Value) -> Result<JsonValue, GenericError> {
             }
             Ok(JsonValue::Object(map))
         }
-        _ => Err(GenericError::new(
+        _ => Err(Box::new(GenericError::new(
             "Unsupported value type",
             format!("Cannot convert {:?} to JSON", value),
             value.span(),
-        )),
+        ))),
     }
 }
