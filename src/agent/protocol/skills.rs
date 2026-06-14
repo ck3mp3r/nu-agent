@@ -33,7 +33,6 @@ pub(crate) struct DiscoverableSkill {
     pub description: Option<String>,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ResolvedSkill {
     pub name: String,
@@ -42,7 +41,6 @@ pub(crate) struct ResolvedSkill {
     pub content: String,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SkillResolveError {
     InvalidSkillName(String),
@@ -268,7 +266,6 @@ fn discover_skill_catalog_internal(
     catalog
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 fn resolve_explicit_skill_request_internal(
     cwd: &Path,
     home: Option<&Path>,
@@ -358,7 +355,6 @@ pub(crate) fn is_higher_precedence_for_tests(
     is_higher_precedence(candidate, existing)
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 fn normalize_skill_name(skill_name: &str) -> Result<&str, SkillResolveError> {
     let trimmed = skill_name.trim();
     if trimmed.is_empty() {
@@ -484,7 +480,6 @@ fn passes_canonical_guard(path: &Path, canonical_guard_root: Option<&PathBuf>) -
         .unwrap_or(false)
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 fn resolve_skill_path_in_root(root: &Path, skill_name: &str) -> Option<PathBuf> {
     let directory_shape = root.join(skill_name).join("SKILL.md");
     if directory_shape.is_file() {

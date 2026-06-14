@@ -20,7 +20,6 @@ pub(crate) enum BrokerClientError {
 }
 
 /// Broker client for agent communication
-#[allow(dead_code)]
 pub(crate) struct BrokerClient {
     reader: BufReader<tokio::net::unix::OwnedReadHalf>,
     writer: tokio::net::unix::OwnedWriteHalf,
@@ -35,7 +34,6 @@ impl std::fmt::Debug for BrokerClient {
     }
 }
 
-#[allow(dead_code)]
 impl BrokerClient {
     /// Connect to broker and authenticate
     pub async fn connect(socket_path: &Path, token: &str) -> Result<Self, BrokerClientError> {
@@ -65,7 +63,20 @@ impl BrokerClient {
         }
     }
 
-    /// Send a message to another agent
+    /// Split into sender and receiver for separate usage
+    pub fn split(self) -> (BrokerSender, BrokerReceiver) {
+        (
+            BrokerSender {
+                writer: self.writer,
+            },
+            BrokerReceiver {
+                reader: self.reader,
+            },
+        )
+    }
+
+    /// Send a message to another agent (test-only convenience)
+    #[cfg(test)]
     pub async fn send(
         &mut self,
         to: &str,
@@ -81,7 +92,8 @@ impl BrokerClient {
         Ok(())
     }
 
-    /// Receive a frame from the broker
+    /// Receive a frame from the broker (test-only convenience)
+    #[cfg(test)]
     pub async fn recv(&mut self) -> Result<ServerFrame, BrokerClientError> {
         let mut line = String::new();
         let n = self.reader.read_line(&mut line).await?;
@@ -90,27 +102,13 @@ impl BrokerClient {
         }
         Ok(serde_json::from_str(line.trim())?)
     }
-
-    /// Split into sender and receiver for separate usage
-    pub fn split(self) -> (BrokerSender, BrokerReceiver) {
-        (
-            BrokerSender {
-                writer: self.writer,
-            },
-            BrokerReceiver {
-                reader: self.reader,
-            },
-        )
-    }
 }
 
 /// Send-only half of broker client
-#[allow(dead_code)]
 pub(crate) struct BrokerSender {
     writer: tokio::net::unix::OwnedWriteHalf,
 }
 
-#[allow(dead_code)]
 impl BrokerSender {
     /// Send a message asynchronously
     pub async fn send(
@@ -135,7 +133,6 @@ impl BrokerSender {
 }
 
 /// Receive-only half of broker client
-#[allow(dead_code)]
 pub(crate) struct BrokerReceiver {
     reader: BufReader<tokio::net::unix::OwnedReadHalf>,
 }

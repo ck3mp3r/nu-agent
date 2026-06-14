@@ -1,5 +1,5 @@
+use crate::types::ToolCall;
 use nu_plugin::EngineInterface;
-use rig::completion::message::ToolCall;
 use serde_json::Value as JsonValue;
 
 use crate::agent::protocol::event::ToolDisplay;

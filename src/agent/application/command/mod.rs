@@ -5,8 +5,8 @@ use std::io::IsTerminal;
 mod args;
 pub(crate) mod input;
 mod mode_execute;
-pub(crate) mod picker;
 mod permissions;
+pub(crate) mod picker;
 mod runtime_build;
 pub(crate) mod tool_defs;
 
@@ -14,7 +14,9 @@ use permissions::{
     is_builtin_enabled, resolve_default_agent, resolve_effective_permissions_config,
     resolve_non_interactive_ask_mode,
 };
-use tool_defs::{builtin_tool_definitions, messaging_tool_definitions, orchestrator_tool_definitions};
+use tool_defs::{
+    builtin_tool_definitions, messaging_tool_definitions, orchestrator_tool_definitions,
+};
 
 use crate::{
     AgentPlugin,
@@ -22,10 +24,7 @@ use crate::{
         conversation::runtime::AgentConversationRuntime,
         session::resolver::{DefaultSessionResolver, SessionResolutionInput, SessionResolver},
         tools::{
-            authz::{
-                AskRuntimeConfig, AsyncAskHook,
-                PermissionsOverlay, SessionGrantCache,
-            },
+            authz::{AskRuntimeConfig, AsyncAskHook, PermissionsOverlay, SessionGrantCache},
             handler::McpToolRegistry,
         },
         ui::{
@@ -34,7 +33,6 @@ use crate::{
         },
     },
     config::{Config, PluginConfig},
-    plugin::RuntimeCtx,
 };
 
 #[cfg(test)]
@@ -70,7 +68,6 @@ fn resolve_agent_mode(
         AgentMode::Stderr
     }
 }
-
 
 /// Trait abstracting the engine interface functionality needed for config resolution.
 ///
@@ -142,13 +139,12 @@ pub fn extract_tool_timeout(call: &EvaluatedCall) -> std::time::Duration {
 
 pub struct Agent {
     store: crate::session::SessionStore,
-    runtime_ctx: RuntimeCtx,
 }
 
 impl Agent {
     /// Creates a new Agent command with the given SessionStore.
-    pub fn new(store: crate::session::SessionStore, runtime_ctx: RuntimeCtx) -> Self {
-        Self { store, runtime_ctx }
+    pub fn new(store: crate::session::SessionStore) -> Self {
+        Self { store }
     }
 }
 
@@ -728,7 +724,7 @@ Compaction flags:
             })?;
 
         // Convert closures to tool definitions for LLM
-        let mut tool_definitions: Vec<rig::completion::ToolDefinition> = closure_registry
+        let mut tool_definitions: Vec<crate::types::ToolDefinition> = closure_registry
             .names()
             .map(|name| {
                 let resolved = closure_registry.get(name).unwrap();
@@ -769,7 +765,7 @@ Compaction flags:
         }
 
         tool_definitions.extend(discovered_mcp_tools.iter().map(|tool| {
-            rig::completion::ToolDefinition {
+            crate::types::ToolDefinition {
                 name: tool.name.clone(),
                 description: tool
                     .description
@@ -1009,8 +1005,8 @@ Compaction flags:
         let builtin_tools = adapt_builtins(
             builtin_defs,
             cwd_path,
-            orchestrator_state.clone(),
-            broker_sender_arc.clone(),
+            orchestrator_state,
+            broker_sender_arc,
             messaging_identity.clone(),
         );
 
@@ -1057,28 +1053,31 @@ Compaction flags:
 
         let mut runtime_impl = AgentConversationRuntime {
             runtime,
-            runtime_ctx: self.runtime_ctx.clone(),
             config,
             tool_definitions,
             baseline_tool_definitions,
             closure_registry,
-            mcp_registry,
-            mcp_runtime,
-            mcp_tool_server_handle: tool_server_handle,
-            mcp_lifecycle_projection,
-            mcp_server_configs: mcp_config
-                .as_ref()
-                .map(|cfg| cfg.mcp.clone())
-                .unwrap_or_default(),
-            mcp_caller_cwd,
-            tool_executor,
+            mcp_state: crate::agent::conversation::mcp_state::McpState {
+                mcp_registry,
+                mcp_runtime,
+                mcp_tool_server_handle: tool_server_handle,
+                mcp_lifecycle_projection,
+                mcp_server_configs: mcp_config
+                    .as_ref()
+                    .map(|cfg| cfg.mcp.clone())
+                    .unwrap_or_default(),
+                mcp_caller_cwd,
+            },
             engine: engine.clone(),
             store: self.store.clone(),
             final_session_id: session_resolution.final_session_id,
-            context_window_max_tokens,
-            compaction_threshold_pct: merged_compaction.proactive_threshold_pct.unwrap_or(0.80),
-            compaction_count,
-            compaction_strategy,
+            compaction_state: crate::agent::conversation::compaction_state::CompactionState {
+                context_window_max_tokens,
+                compaction_threshold_pct: merged_compaction.proactive_threshold_pct.unwrap_or(0.80),
+                compaction_count,
+                compaction_strategy,
+                compacting: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            },
             startup_plugin_config: plugin_config_value
                 .as_ref()
                 .and_then(|value| PluginConfig::from_plugin_config(value).ok()),
@@ -1093,33 +1092,37 @@ Compaction flags:
                 )?,
                 ..AskRuntimeConfig::default()
             }),
-            memory: rig::memory::InMemoryConversationMemory::new(),
-            conversation_store: crate::session::JsonlConversationStore::new(
-                self.store.cache_dir().to_path_buf(),
-            ),
-            memory_hydrated: false,
+            memory_state: crate::agent::conversation::memory_state::MemoryState {
+                memory: crate::types::InMemoryConversationMemory::new(),
+                conversation_store: crate::session::JsonlConversationStore::new(
+                    self.store.cache_dir().to_path_buf(),
+                ),
+                memory_hydrated: false,
+                last_total_tokens: None,
+            },
             cached_client: None,
             cached_client_key: None,
-            agent_persona_body: persona.as_ref().map(|p| p.body.clone()),
-            agent_identity,
-            agent_description: persona.as_ref().and_then(|p| p.description.clone()),
-            orchestrator: orchestrator_state,
-            broker_sender: broker_sender_arc,
+            persona_state: crate::agent::conversation::persona_state::PersonaState {
+                agent_persona_body: persona.as_ref().map(|p| p.body.clone()),
+                agent_identity,
+                agent_description: persona.as_ref().and_then(|p| p.description.clone()),
+                cached_agents_chain,
+                cached_available_skills,
+                cached_sub_agent_instruction,
+            },
             mailbox_rx,
-            parent_name,
-            compacting: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            last_total_tokens: None,
             available_agent_summaries: available_agents,
             agents_config,
-            cached_agents_chain,
-            cached_available_skills,
-            cached_sub_agent_instruction,
         };
         log::debug!(
             "runtime: agent_persona_body_len={:?}, agent_identity={:?}, agent_description={:?}",
-            runtime_impl.agent_persona_body.as_ref().map(|b| b.len()),
-            runtime_impl.agent_identity,
-            runtime_impl.agent_description
+            runtime_impl
+                .persona_state
+                .agent_persona_body
+                .as_ref()
+                .map(|b| b.len()),
+            runtime_impl.persona_state.agent_identity,
+            runtime_impl.persona_state.agent_description
         );
         match mode {
             AgentMode::Tui => run_tui_mode(

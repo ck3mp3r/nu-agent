@@ -95,41 +95,6 @@ impl EditToolMode {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum EditWriteDecision {
-    Approve,
-    /// Secondary defense-in-depth check. Primary enforcement happens at authz gate
-    /// (enforce_authorization_for_tool_call) which blocks execution before this point.
-    #[allow(dead_code)]
-    Deny {
-        message: String,
-    },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EditWritePolicy {
-    AutoApprove,
-}
-
-impl EditWritePolicy {
-    fn decide(
-        self,
-        _path: &std::path::Path,
-        _plan: &crate::tools::fs::core::EditPlan,
-    ) -> EditWriteDecision {
-        match self {
-            Self::AutoApprove => EditWriteDecision::Approve,
-        }
-    }
-}
-
-fn decide_edit_write(
-    path: &std::path::Path,
-    plan: &crate::tools::fs::core::EditPlan,
-) -> EditWriteDecision {
-    EditWritePolicy::AutoApprove.decide(path, plan)
-}
-
 fn parse_edit_match_mode(
     value: Option<&str>,
 ) -> Result<crate::tools::fs::core::EditMatchMode, BuiltinFsToolError> {
@@ -523,24 +488,10 @@ pub(crate) fn dispatch_builtin_fs_tool(
                             &args.path, &plan,
                         ))
                     });
-                    let decision = decide_edit_write(&resolved_path, &plan);
 
                     if plan.conflict || !plan.would_change {
                         let mut response =
                             build_edit_contract_response(&args.path, mode, plan, false);
-                        attach_display_payload(&mut response, &preview_display);
-                        return Ok(Some(response));
-                    }
-
-                    if let EditWriteDecision::Deny { message } = decision {
-                        let mut response =
-                            build_edit_contract_response(&args.path, mode, plan, false);
-                        if let Some(obj) = response.as_object_mut()
-                            && let Some(diagnostics) =
-                                obj.get_mut("diagnostics").and_then(JsonValue::as_array_mut)
-                        {
-                            diagnostics.push(make_edit_diagnostic("permission", message));
-                        }
                         attach_display_payload(&mut response, &preview_display);
                         return Ok(Some(response));
                     }

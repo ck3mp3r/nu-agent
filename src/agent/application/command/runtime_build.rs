@@ -4,8 +4,8 @@ use nu_protocol::{LabeledError, Value};
 use crate::agent::protocol::preamble::{
     PreambleDefaults, UserPreambleInput, classify_model_family, resolve_preamble,
 };
-use crate::config::{CompactionConfig, Config, PluginConfig};
 use crate::compaction::CompactionParams;
+use crate::config::{CompactionConfig, Config, PluginConfig};
 
 /// Extract configuration from command-line flags.
 ///

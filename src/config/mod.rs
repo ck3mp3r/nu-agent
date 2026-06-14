@@ -658,7 +658,8 @@ pub struct Config {
 impl Config {
     /// Returns max_context_tokens, falling back to DEFAULT_MAX_CONTEXT_TOKENS.
     pub fn resolved_max_context_tokens(&self) -> u32 {
-        self.max_context_tokens.unwrap_or(DEFAULT_MAX_CONTEXT_TOKENS)
+        self.max_context_tokens
+            .unwrap_or(DEFAULT_MAX_CONTEXT_TOKENS)
     }
 
     /// Create a Config by reading environment variables.

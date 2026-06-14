@@ -3,12 +3,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crate::agent::protocol::{
-    compaction::CompactionTriggerSource,
-    contracts::ProgressUi,
-    event::UiEvent,
+    compaction::CompactionTriggerSource, contracts::ProgressUi, event::UiEvent,
 };
 use crate::compaction::{CompactionInvocationMode, CompactionOutcome};
 use crate::session::{ConversationStore, Session};
+use crate::types::{AssistantContent, InMemoryConversationMemory, Message, UserContent};
 
 pub(super) const COMPACTION_FAILURE_WARNING: &str =
     "Session compaction failed: sliding_summary summarization unavailable";
@@ -81,7 +80,7 @@ pub(super) struct CompactionInvocation<'a> {
 /// Ok(Some(outcome)) on successful compaction, Ok(None) if no compaction needed
 pub(super) async fn execute_compaction<M, S, U>(
     session: &mut Session,
-    memory: &rig::memory::InMemoryConversationMemory,
+    memory: &InMemoryConversationMemory,
     store: &S,
     model: M,
     ui: &mut U,
@@ -114,7 +113,7 @@ where
 
     // Perform compaction with summarizer closure
     let source_owned = invocation.source.to_string();
-    let summarizer = |old_messages: &[rig::completion::Message]| {
+    let summarizer = |old_messages: &[Message]| {
         let messages = old_messages.to_vec();
         let model_clone = model.clone();
         let src = source_owned.clone();
@@ -154,20 +153,18 @@ fn summary_preview_text(summary_body: &str) -> String {
 /// - Message::System { content } -> content string
 ///
 /// Returns formatted string with role: content pairs.
-fn format_messages_for_summary(messages: &[rig::completion::Message]) -> String {
-    use rig::completion::message::{AssistantContent, UserContent};
-
+fn format_messages_for_summary(messages: &[Message]) -> String {
     messages
         .iter()
         .map(|msg| {
             let role = match msg {
-                rig::completion::Message::User { .. } => "user",
-                rig::completion::Message::Assistant { .. } => "assistant",
-                rig::completion::Message::System { .. } => "system",
+                Message::User { .. } => "user",
+                Message::Assistant { .. } => "assistant",
+                Message::System { .. } => "system",
             };
 
             let content = match msg {
-                rig::completion::Message::User { content } => {
+                Message::User { content } => {
                     // Extract text from OneOrMany<UserContent>
                     content
                         .iter()
@@ -178,7 +175,7 @@ fn format_messages_for_summary(messages: &[rig::completion::Message]) -> String 
                         .collect::<Vec<_>>()
                         .join(" ")
                 }
-                rig::completion::Message::Assistant { content, .. } => {
+                Message::Assistant { content, .. } => {
                     // Extract text from OneOrMany<AssistantContent>
                     content
                         .iter()
@@ -191,7 +188,7 @@ fn format_messages_for_summary(messages: &[rig::completion::Message]) -> String 
                         .collect::<Vec<_>>()
                         .join(" ")
                 }
-                rig::completion::Message::System { content } => content.clone(),
+                Message::System { content } => content.clone(),
             };
 
             format!("{}: {}", role, content)
@@ -207,7 +204,7 @@ fn format_messages_for_summary(messages: &[rig::completion::Message]) -> String 
 async fn summarize_messages<M, U>(
     model: M,
     ui: &mut U,
-    old_messages: &[rig::completion::Message],
+    old_messages: &[Message],
     source: &str,
 ) -> std::io::Result<String>
 where
@@ -224,7 +221,7 @@ where
     let agent = rig::agent::AgentBuilder::new(model).build();
 
     let stream_result = agent
-        .completion(&prompt_text, Vec::<rig::completion::Message>::new())
+        .completion(&prompt_text, Vec::<Message>::new())
         .await
         .map_err(|e| std::io::Error::other(format!("{}", e)))?
         .tools(vec![])

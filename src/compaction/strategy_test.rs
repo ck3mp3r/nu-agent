@@ -3,10 +3,7 @@ use super::*;
 #[test]
 fn compaction_strategy_defaults_to_sliding_summary_only() {
     let cfg = CompactionParams::default();
-    assert_eq!(
-        cfg.compaction_strategy,
-        CompactionStrategy::SlidingSummary
-    );
+    assert_eq!(cfg.compaction_strategy, CompactionStrategy::SlidingSummary);
     assert_eq!(cfg.compaction_strategy.as_str(), "sliding_summary");
 }
 
@@ -23,8 +20,7 @@ fn sliding_window_roundtrip_preserves_name() {
     let strategy = CompactionStrategy::SlidingWindow;
     let json = serde_json::to_string(&strategy).expect("serialize");
     assert_eq!(json, "\"sliding_window\"");
-    let decoded: CompactionStrategy =
-        serde_json::from_str(&json).expect("deserialize");
+    let decoded: CompactionStrategy = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(decoded, CompactionStrategy::SlidingWindow);
 }
 
@@ -50,8 +46,7 @@ fn compaction_params_roundtrip_preserves_sliding_window_mode() {
 fn legacy_strategy_values_normalize_to_sliding_summary() {
     let truncate: CompactionStrategy =
         serde_json::from_str("\"truncate\"").expect("truncate alias");
-    let sliding: CompactionStrategy =
-        serde_json::from_str("\"sliding\"").expect("sliding alias");
+    let sliding: CompactionStrategy = serde_json::from_str("\"sliding\"").expect("sliding alias");
     let summarize: CompactionStrategy =
         serde_json::from_str("\"summarize\"").expect("summarize alias");
     let canonical: CompactionStrategy =
@@ -59,14 +54,8 @@ fn legacy_strategy_values_normalize_to_sliding_summary() {
 
     assert_eq!(truncate, CompactionStrategy::SlidingSummary);
     assert_eq!(sliding, CompactionStrategy::SlidingSummary);
-    assert_eq!(
-        summarize,
-        CompactionStrategy::SlidingSummary
-    );
-    assert_eq!(
-        canonical,
-        CompactionStrategy::SlidingSummary
-    );
+    assert_eq!(summarize, CompactionStrategy::SlidingSummary);
+    assert_eq!(canonical, CompactionStrategy::SlidingSummary);
 }
 
 #[test]

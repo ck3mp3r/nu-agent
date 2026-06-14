@@ -1,4 +1,5 @@
 use super::*;
+use crate::types::ToolDefinition;
 use rig::tool::ToolDyn;
 
 /// Compile-time check that BuiltinToolAdapter implements Send + Sync.
@@ -28,7 +29,7 @@ fn tool_dyn_trait_object_is_send_sync() {
 
 #[test]
 fn adapter_returns_correct_name() {
-    let tool_def = rig::completion::ToolDefinition {
+    let tool_def = ToolDefinition {
         name: "test_tool".to_string(),
         description: "A test tool".to_string(),
         parameters: serde_json::json!({
@@ -49,7 +50,7 @@ fn adapter_returns_correct_name() {
 fn adapter_returns_correct_definition() {
     use rig::tool::ToolDyn;
 
-    let tool_def = rig::completion::ToolDefinition {
+    let tool_def = ToolDefinition {
         name: "read".to_string(),
         description: "Read a file".to_string(),
         parameters: serde_json::json!({
@@ -76,7 +77,7 @@ fn adapter_returns_correct_definition() {
 fn adapter_calls_skill_tool() {
     use rig::tool::ToolDyn;
 
-    let tool_def = rig::completion::ToolDefinition {
+    let tool_def = ToolDefinition {
         name: "skill".to_string(),
         description: "Load skill content".to_string(),
         parameters: serde_json::json!({
@@ -130,7 +131,7 @@ fn adapter_calls_skill_tool() {
 
 #[test]
 fn adapter_stores_agent_name() {
-    let tool_def = rig::completion::ToolDefinition {
+    let tool_def = ToolDefinition {
         name: "send_message".to_string(),
         description: "Send a message".to_string(),
         parameters: serde_json::json!({
@@ -151,7 +152,7 @@ fn adapter_stores_agent_name() {
 
 #[test]
 fn adapter_agent_name_defaults_to_none() {
-    let tool_def = rig::completion::ToolDefinition {
+    let tool_def = ToolDefinition {
         name: "send_message".to_string(),
         description: "Send a message".to_string(),
         parameters: serde_json::json!({
@@ -170,7 +171,7 @@ fn adapter_agent_name_defaults_to_none() {
 fn spawn_agent_without_orchestrator_returns_descriptive_error() {
     use rig::tool::ToolDyn;
 
-    let tool_def = rig::completion::ToolDefinition {
+    let tool_def = ToolDefinition {
         name: "spawn_agent".to_string(),
         description: "Spawn agent".to_string(),
         parameters: serde_json::json!({

@@ -229,6 +229,36 @@ pub(crate) enum CachedProviderClient {
     Ollama(rig::providers::ollama::Client),
 }
 
+/// Visitor pattern for dispatching over cached provider clients.
+///
+/// Each provider's `completion_model()` returns a different concrete type,
+/// so a plain closure can't be generic over all of them. This trait lets
+/// callers define a single generic method that the enum dispatches into,
+/// replacing the duplicated `with_cached_model!` macro with static dispatch.
+pub(crate) trait ModelVisitor {
+    type Output;
+    fn visit<M>(self, model: M) -> Self::Output
+    where
+        M: rig::completion::CompletionModel + Clone + 'static;
+}
+
+impl CachedProviderClient {
+    /// Dispatch the visitor over the cached provider's completion model.
+    ///
+    /// This replaces the `with_cached_model!` macro: each match arm builds the
+    /// concrete completion model and passes it to `visitor.visit(model)`, which
+    /// is monomorphised per variant — no dynamic dispatch needed.
+    pub(crate) fn with_model<V: ModelVisitor>(&self, model_name: &str, visitor: V) -> V::Output {
+        use rig::client::CompletionClient;
+        match self {
+            CachedProviderClient::Copilot(c) => visitor.visit(c.completion_model(model_name)),
+            CachedProviderClient::OpenAi(c) => visitor.visit(c.completion_model(model_name)),
+            CachedProviderClient::Anthropic(c) => visitor.visit(c.completion_model(model_name)),
+            CachedProviderClient::Ollama(c) => visitor.visit(c.completion_model(model_name)),
+        }
+    }
+}
+
 pub(crate) type ClientCacheKey = (String, Option<String>, Option<String>);
 
 #[cfg(test)]

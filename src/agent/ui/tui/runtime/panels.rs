@@ -58,8 +58,10 @@ pub(super) fn transcript_line_statuses_for_render(
         .collect()
 }
 
-
-pub(super) fn wrapped_visual_rows_for_rendered_line(rendered_line: &Line<'_>, content_width: usize) -> usize {
+pub(super) fn wrapped_visual_rows_for_rendered_line(
+    rendered_line: &Line<'_>,
+    content_width: usize,
+) -> usize {
     let width = rendered_line
         .spans
         .iter()
@@ -84,7 +86,11 @@ pub(super) fn help_panel_total_visual_rows(lines: &[Line<'_>], content_width: us
         .sum()
 }
 
-pub(super) fn help_panel_max_scroll(lines: &[Line<'_>], viewport_height: u16, content_width: u16) -> usize {
+pub(super) fn help_panel_max_scroll(
+    lines: &[Line<'_>],
+    viewport_height: u16,
+    content_width: u16,
+) -> usize {
     let visible_rows = viewport_height.max(1) as usize;
     let total_rows = help_panel_total_visual_rows(lines, content_width.max(1) as usize);
     total_rows.saturating_sub(visible_rows)
@@ -184,7 +190,8 @@ pub(super) fn input_buffer_for_layout(state: &AppState) -> String {
     synthetic
 }
 
-pub(super) const MODEL_PICKER_EMPTY_STATE_MESSAGE: &str = "No models available in cached startup config.";
+pub(super) const MODEL_PICKER_EMPTY_STATE_MESSAGE: &str =
+    "No models available in cached startup config.";
 pub(super) const AGENT_PICKER_EMPTY_STATE_MESSAGE: &str =
     "No agent personas found. Create .agents/<name>.md files.";
 
@@ -299,7 +306,11 @@ pub(super) fn mcp_selected_details(state: &AppState) -> Option<McpSelectedDetail
     })
 }
 
-pub(super) fn mcp_tool_lines_wrapped(tool_names: &[String], max_lines: usize, width: usize) -> Vec<String> {
+pub(super) fn mcp_tool_lines_wrapped(
+    tool_names: &[String],
+    max_lines: usize,
+    width: usize,
+) -> Vec<String> {
     const PREFIX: &str = "Tools: ";
     let continuation_prefix = " ".repeat(PREFIX.chars().count());
     let content_width = width.saturating_sub(PREFIX.chars().count());

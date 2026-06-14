@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::llm::LlmResponse;
+use crate::types::AssistantContent;
 use nu_protocol::{Span, Value};
-use rig::completion::message::AssistantContent;
 
 pub fn format_response(
     llm_response: &LlmResponse,

@@ -1,8 +1,8 @@
 use crate::agent::protocol::contracts::UiMessageSnapshot;
 use crate::session::{CompactionMarker, StoreEntry};
-use rig::completion::Message;
-use rig::completion::message::{
-    AssistantContent, Text, ToolCall, ToolFunction, ToolResultContent, UserContent,
+use crate::types::{
+    AssistantContent, Message, Text, ToolCall, ToolFunction, ToolResult, ToolResultContent,
+    UserContent,
 };
 use rig::one_or_many::OneOrMany;
 use serde_json::json;
@@ -94,16 +94,14 @@ fn test_convert_system() {
 #[test]
 fn test_tool_result_not_shown_in_hydrated_transcript() {
     let messages = vec![Message::User {
-        content: OneOrMany::one(UserContent::ToolResult(
-            rig::completion::message::ToolResult {
-                id: "call_123".to_string(),
-                call_id: None,
-                content: OneOrMany::one(ToolResultContent::Text(Text {
-                    text: "File contents here".to_string(),
-                    additional_params: None,
-                })),
-            },
-        )),
+        content: OneOrMany::one(UserContent::ToolResult(ToolResult {
+            id: "call_123".to_string(),
+            call_id: None,
+            content: OneOrMany::one(ToolResultContent::Text(Text {
+                text: "File contents here".to_string(),
+                additional_params: None,
+            })),
+        })),
     }];
 
     let snapshots = convert_rig_messages_to_snapshots(&messages);
@@ -430,21 +428,19 @@ fn test_tool_result_edit_creates_display_snapshot() {
             })),
         }),
         StoreEntry::Message(Message::User {
-            content: OneOrMany::one(UserContent::ToolResult(
-                rig::completion::message::ToolResult {
-                    id: "call_1".to_string(),
-                    call_id: None,
-                    content: OneOrMany::one(ToolResultContent::Text(Text {
-                        text: serde_json::to_string(&json!({
-                            "path": "/tmp/test.rs",
-                            "diff": "- old code\n+ new code",
-                            "stats": { "insertions": 1, "deletions": 1 }
-                        }))
-                        .unwrap(),
-                        additional_params: None,
-                    })),
-                },
-            )),
+            content: OneOrMany::one(UserContent::ToolResult(ToolResult {
+                id: "call_1".to_string(),
+                call_id: None,
+                content: OneOrMany::one(ToolResultContent::Text(Text {
+                    text: serde_json::to_string(&json!({
+                        "path": "/tmp/test.rs",
+                        "diff": "- old code\n+ new code",
+                        "stats": { "insertions": 1, "deletions": 1 }
+                    }))
+                    .unwrap(),
+                    additional_params: None,
+                })),
+            })),
         }),
     ];
 
@@ -481,16 +477,14 @@ fn test_tool_result_non_json_gracefully_skipped() {
             })),
         }),
         StoreEntry::Message(Message::User {
-            content: OneOrMany::one(UserContent::ToolResult(
-                rig::completion::message::ToolResult {
-                    id: "call_2".to_string(),
-                    call_id: None,
-                    content: OneOrMany::one(ToolResultContent::Text(Text {
-                        text: "plain text, not JSON".to_string(),
-                        additional_params: None,
-                    })),
-                },
-            )),
+            content: OneOrMany::one(UserContent::ToolResult(ToolResult {
+                id: "call_2".to_string(),
+                call_id: None,
+                content: OneOrMany::one(ToolResultContent::Text(Text {
+                    text: "plain text, not JSON".to_string(),
+                    additional_params: None,
+                })),
+            })),
         }),
     ];
 
@@ -518,26 +512,24 @@ fn test_tool_result_with_explicit_display_key() {
             })),
         }),
         StoreEntry::Message(Message::User {
-            content: OneOrMany::one(UserContent::ToolResult(
-                rig::completion::message::ToolResult {
-                    id: "call_3".to_string(),
-                    call_id: None,
-                    content: OneOrMany::one(ToolResultContent::Text(Text {
-                        text: serde_json::to_string(&json!({
-                            "display": {
-                                "title": "custom output",
-                                "sections": [{
-                                    "label": "output",
-                                    "language": "text",
-                                    "content": "some result"
-                                }]
-                            }
-                        }))
-                        .unwrap(),
-                        additional_params: None,
-                    })),
-                },
-            )),
+            content: OneOrMany::one(UserContent::ToolResult(ToolResult {
+                id: "call_3".to_string(),
+                call_id: None,
+                content: OneOrMany::one(ToolResultContent::Text(Text {
+                    text: serde_json::to_string(&json!({
+                        "display": {
+                            "title": "custom output",
+                            "sections": [{
+                                "label": "output",
+                                "language": "text",
+                                "content": "some result"
+                            }]
+                        }
+                    }))
+                    .unwrap(),
+                    additional_params: None,
+                })),
+            })),
         }),
     ];
 

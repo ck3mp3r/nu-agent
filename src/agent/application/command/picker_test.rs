@@ -71,10 +71,8 @@ fn model_picker_catalog_projection_from_plugin_config_is_sorted_and_marks_active
         compaction: None,
         agents: crate::config::AgentsConfig::default(),
     };
-    let projected = build_model_picker_catalog_from_plugin_config(
-        &plugin_config,
-        "a-provider/a-model",
-    );
+    let projected =
+        build_model_picker_catalog_from_plugin_config(&plugin_config, "a-provider/a-model");
 
     assert_eq!(projected.len(), 2);
     assert_eq!(projected[0].identity, "a-provider/a-model");

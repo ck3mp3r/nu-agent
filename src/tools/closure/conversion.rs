@@ -1,6 +1,6 @@
+use crate::types::ToolDefinition;
 use nu_plugin::EngineInterface;
 use nu_protocol::{Span, Spanned, engine::Closure};
-use rig::completion::ToolDefinition;
 use serde_json::json;
 
 /// Trait to abstract engine interface for testing

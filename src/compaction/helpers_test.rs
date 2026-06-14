@@ -1,7 +1,7 @@
 use super::helpers::*;
-use rig::completion::Message;
-use rig::completion::message::{
-    AssistantContent, Text, ToolCall, ToolFunction, ToolResultContent, UserContent,
+use crate::types::{
+    AssistantContent, Message, Text, ToolCall, ToolFunction, ToolResult, ToolResultContent,
+    UserContent,
 };
 use rig::one_or_many::OneOrMany;
 use serde_json::json;
@@ -26,16 +26,14 @@ fn make_tool_call_message(call_id: &str, tool_name: &str) -> Message {
 /// Helper: build a User message containing a single ToolResult.
 fn make_tool_result_message(call_id: &str, result_text: &str) -> Message {
     Message::User {
-        content: OneOrMany::one(UserContent::ToolResult(
-            rig::completion::message::ToolResult {
-                id: call_id.to_string(),
-                call_id: None,
-                content: OneOrMany::one(ToolResultContent::Text(Text {
-                    text: result_text.to_string(),
-                    additional_params: None,
-                })),
-            },
-        )),
+        content: OneOrMany::one(UserContent::ToolResult(ToolResult {
+            id: call_id.to_string(),
+            call_id: None,
+            content: OneOrMany::one(ToolResultContent::Text(Text {
+                text: result_text.to_string(),
+                additional_params: None,
+            })),
+        })),
     }
 }
 

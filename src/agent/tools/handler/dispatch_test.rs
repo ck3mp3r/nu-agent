@@ -1,10 +1,11 @@
 use crate::agent::tools::authz::PermissionsConfig;
 use crate::agent::tools::handler::McpToolRegistry;
+use crate::types::ToolDefinition;
 use nu_protocol::{Value, record};
 
 /// Helper: creates a `ToolDefinition` with a given name and minimal schema.
-fn tool_def(name: &str) -> rig::completion::ToolDefinition {
-    rig::completion::ToolDefinition {
+fn tool_def(name: &str) -> ToolDefinition {
+    ToolDefinition {
         name: name.to_string(),
         description: format!("tool {name}"),
         parameters: serde_json::json!({"type": "object"}),

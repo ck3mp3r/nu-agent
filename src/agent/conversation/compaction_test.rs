@@ -3,7 +3,9 @@ use super::*;
 use std::cell::Cell;
 
 use crate::agent::conversation::test_helpers::TestProgressUi;
-use crate::agent::protocol::{compaction::CompactionTriggerSource, contracts::ProgressUi, event::UiEvent};
+use crate::agent::protocol::{
+    compaction::CompactionTriggerSource, contracts::ProgressUi, event::UiEvent,
+};
 use crate::compaction::CompactionOutcome;
 
 #[test]

@@ -12,8 +12,8 @@ use crate::agent::{
     protocol::{
         compaction::{CompactionTriggerDecision, CompactionTriggerSource},
         contracts::{
-            ConversationRuntime, InteractiveUi, McpToggleRequest, McpUsabilityState, ProgressUi,
-            SharedUiAction, UiMessageSnapshot, UiMessageUsageSnapshot,
+            CoreRuntime, ExtendedRuntime, InteractiveUi, McpToggleRequest, McpUsabilityState,
+            ProgressUi, SharedUiAction, UiMessageSnapshot, UiMessageUsageSnapshot,
         },
         event::{
             PermissionDecision, PermissionDecisionSubmission, PermissionRequestContext,
@@ -203,7 +203,7 @@ impl InteractiveUi for FakeInteractiveUi {
 #[derive(Default)]
 struct ToolDisplayOnlyRuntime;
 
-impl ConversationRuntime for ToolDisplayOnlyRuntime {
+impl CoreRuntime for ToolDisplayOnlyRuntime {
     fn execute_turn<U: ProgressUi>(
         &mut self,
         ui: &mut U,
@@ -237,7 +237,9 @@ impl ConversationRuntime for ToolDisplayOnlyRuntime {
         ui.emit(&UiEvent::Completed { tool_calls: 1 });
         Ok(Value::nothing(span))
     }
+}
 
+impl ExtendedRuntime for ToolDisplayOnlyRuntime {
     fn set_mcp_server_enabled(
         &mut self,
         _server_name: &str,
@@ -291,7 +293,20 @@ struct FakeRuntime {
     switch_model_result: Option<Result<String, String>>,
 }
 
-impl ConversationRuntime for FakeRuntime {
+impl CoreRuntime for FakeRuntime {
+    fn execute_turn<U: ProgressUi>(
+        &mut self,
+        _ui: &mut U,
+        prompt: String,
+        _context: Option<String>,
+        _span: Span,
+    ) -> Result<Value, LabeledError> {
+        self.prompts.push(prompt);
+        Ok(Value::nothing(Span::test_data()))
+    }
+}
+
+impl ExtendedRuntime for FakeRuntime {
     fn set_mcp_server_enabled(
         &mut self,
         _server_name: &str,
@@ -302,17 +317,6 @@ impl ConversationRuntime for FakeRuntime {
         } else {
             McpUsabilityState::Disabled
         })
-    }
-
-    fn execute_turn<U: ProgressUi>(
-        &mut self,
-        _ui: &mut U,
-        prompt: String,
-        _context: Option<String>,
-        _span: Span,
-    ) -> Result<Value, LabeledError> {
-        self.prompts.push(prompt);
-        Ok(Value::nothing(Span::test_data()))
     }
 
     fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
@@ -933,7 +937,20 @@ struct FakeValueRuntime {
     prompts: Vec<String>,
 }
 
-impl ConversationRuntime for FakeValueRuntime {
+impl CoreRuntime for FakeValueRuntime {
+    fn execute_turn<U: ProgressUi>(
+        &mut self,
+        _ui: &mut U,
+        prompt: String,
+        _context: Option<String>,
+        span: Span,
+    ) -> Result<Value, LabeledError> {
+        self.prompts.push(prompt);
+        Ok(Value::record(nu_protocol::Record::new(), span))
+    }
+}
+
+impl ExtendedRuntime for FakeValueRuntime {
     fn set_mcp_server_enabled(
         &mut self,
         _server_name: &str,
@@ -944,17 +961,6 @@ impl ConversationRuntime for FakeValueRuntime {
         } else {
             McpUsabilityState::Disabled
         })
-    }
-
-    fn execute_turn<U: ProgressUi>(
-        &mut self,
-        _ui: &mut U,
-        prompt: String,
-        _context: Option<String>,
-        span: Span,
-    ) -> Result<Value, LabeledError> {
-        self.prompts.push(prompt);
-        Ok(Value::record(nu_protocol::Record::new(), span))
     }
 }
 
@@ -975,19 +981,7 @@ struct CancelFirstRuntime {
     prompts: Vec<String>,
 }
 
-impl ConversationRuntime for CancelFirstRuntime {
-    fn set_mcp_server_enabled(
-        &mut self,
-        _server_name: &str,
-        enabled: bool,
-    ) -> Result<McpUsabilityState, String> {
-        Ok(if enabled {
-            McpUsabilityState::Enabled
-        } else {
-            McpUsabilityState::Disabled
-        })
-    }
-
+impl CoreRuntime for CancelFirstRuntime {
     fn execute_turn<U: ProgressUi>(
         &mut self,
         _ui: &mut U,
@@ -1001,6 +995,20 @@ impl ConversationRuntime for CancelFirstRuntime {
         }
 
         Ok(Value::nothing(Span::test_data()))
+    }
+}
+
+impl ExtendedRuntime for CancelFirstRuntime {
+    fn set_mcp_server_enabled(
+        &mut self,
+        _server_name: &str,
+        enabled: bool,
+    ) -> Result<McpUsabilityState, String> {
+        Ok(if enabled {
+            McpUsabilityState::Enabled
+        } else {
+            McpUsabilityState::Disabled
+        })
     }
 }
 
@@ -1024,19 +1032,7 @@ struct ErrorFirstRuntime {
     prompts: Vec<String>,
 }
 
-impl ConversationRuntime for ErrorFirstRuntime {
-    fn set_mcp_server_enabled(
-        &mut self,
-        _server_name: &str,
-        enabled: bool,
-    ) -> Result<McpUsabilityState, String> {
-        Ok(if enabled {
-            McpUsabilityState::Enabled
-        } else {
-            McpUsabilityState::Disabled
-        })
-    }
-
+impl CoreRuntime for ErrorFirstRuntime {
     fn execute_turn<U: ProgressUi>(
         &mut self,
         _ui: &mut U,
@@ -1050,6 +1046,20 @@ impl ConversationRuntime for ErrorFirstRuntime {
         }
 
         Ok(Value::nothing(Span::test_data()))
+    }
+}
+
+impl ExtendedRuntime for ErrorFirstRuntime {
+    fn set_mcp_server_enabled(
+        &mut self,
+        _server_name: &str,
+        enabled: bool,
+    ) -> Result<McpUsabilityState, String> {
+        Ok(if enabled {
+            McpUsabilityState::Enabled
+        } else {
+            McpUsabilityState::Disabled
+        })
     }
 }
 
@@ -1084,9 +1094,15 @@ fn run_hydrated_interactive_loop_hydrates_before_first_pump() {
         UiMessageSnapshot::new("assistant", "from assistant"),
     ];
 
-    let value =
-        run_hydrated_interactive_loop(&mut runtime, &mut ui, messages, None, None, Span::test_data())
-            .expect("interactive loop with hydration");
+    let value = run_hydrated_interactive_loop(
+        &mut runtime,
+        &mut ui,
+        messages,
+        None,
+        None,
+        Span::test_data(),
+    )
+    .expect("interactive loop with hydration");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -1153,19 +1169,7 @@ impl LongRunningRuntime {
     }
 }
 
-impl ConversationRuntime for LongRunningRuntime {
-    fn set_mcp_server_enabled(
-        &mut self,
-        _server_name: &str,
-        enabled: bool,
-    ) -> Result<McpUsabilityState, String> {
-        Ok(if enabled {
-            McpUsabilityState::Enabled
-        } else {
-            McpUsabilityState::Disabled
-        })
-    }
-
+impl CoreRuntime for LongRunningRuntime {
     fn execute_turn<U: ProgressUi>(
         &mut self,
         ui: &mut U,
@@ -1197,6 +1201,20 @@ impl ConversationRuntime for LongRunningRuntime {
         ui.emit(&UiEvent::Completed { tool_calls: 0 });
         self.active.store(false, Ordering::SeqCst);
         Ok(Value::nothing(Span::test_data()))
+    }
+}
+
+impl ExtendedRuntime for LongRunningRuntime {
+    fn set_mcp_server_enabled(
+        &mut self,
+        _server_name: &str,
+        enabled: bool,
+    ) -> Result<McpUsabilityState, String> {
+        Ok(if enabled {
+            McpUsabilityState::Enabled
+        } else {
+            McpUsabilityState::Disabled
+        })
     }
 
     fn switch_model(&mut self, model_spec: &str) -> Result<String, String> {
@@ -1263,7 +1281,7 @@ impl PermissionGateRuntime {
     }
 }
 
-impl ConversationRuntime for PermissionGateRuntime {
+impl CoreRuntime for PermissionGateRuntime {
     fn execute_turn<U: ProgressUi>(
         &mut self,
         ui: &mut U,
@@ -1324,6 +1342,8 @@ impl ConversationRuntime for PermissionGateRuntime {
         Ok(Value::nothing(span))
     }
 }
+
+impl ExtendedRuntime for PermissionGateRuntime {}
 
 struct PermissionOrderingUi {
     submitted: std::collections::VecDeque<String>,
@@ -1952,7 +1972,19 @@ struct StartupHydrationRuntime {
     names_by_server: Vec<(String, Vec<String>)>,
 }
 
-impl ConversationRuntime for StartupHydrationRuntime {
+impl CoreRuntime for StartupHydrationRuntime {
+    fn execute_turn<U: ProgressUi>(
+        &mut self,
+        _ui: &mut U,
+        _prompt: String,
+        _context: Option<String>,
+        span: Span,
+    ) -> Result<Value, LabeledError> {
+        Ok(Value::nothing(span))
+    }
+}
+
+impl ExtendedRuntime for StartupHydrationRuntime {
     fn llm_visible_mcp_tool_count(&self) -> usize {
         self.names_by_server
             .iter()
@@ -1962,16 +1994,6 @@ impl ConversationRuntime for StartupHydrationRuntime {
 
     fn llm_visible_mcp_tool_names_by_server(&self) -> Vec<(String, Vec<String>)> {
         self.names_by_server.clone()
-    }
-
-    fn execute_turn<U: ProgressUi>(
-        &mut self,
-        _ui: &mut U,
-        _prompt: String,
-        _context: Option<String>,
-        span: Span,
-    ) -> Result<Value, LabeledError> {
-        Ok(Value::nothing(span))
     }
 }
 
@@ -1998,7 +2020,19 @@ fn interactive_loop_startup_hydration_initializes_per_server_visible_counts_befo
     );
 }
 
-impl ConversationRuntime for McpToggleRuntime {
+impl CoreRuntime for McpToggleRuntime {
+    fn execute_turn<U: ProgressUi>(
+        &mut self,
+        _ui: &mut U,
+        _prompt: String,
+        _context: Option<String>,
+        span: Span,
+    ) -> Result<Value, LabeledError> {
+        Ok(Value::nothing(span))
+    }
+}
+
+impl ExtendedRuntime for McpToggleRuntime {
     fn set_mcp_server_enabled(
         &mut self,
         server_name: &str,
@@ -2014,16 +2048,6 @@ impl ConversationRuntime for McpToggleRuntime {
 
     fn llm_visible_mcp_tool_count_for_server(&self, _server_name: &str) -> usize {
         self.visible_count_by_server
-    }
-
-    fn execute_turn<U: ProgressUi>(
-        &mut self,
-        _ui: &mut U,
-        _prompt: String,
-        _context: Option<String>,
-        span: Span,
-    ) -> Result<Value, LabeledError> {
-        Ok(Value::nothing(span))
     }
 }
 
@@ -2131,7 +2155,19 @@ struct FailingMcpToggleRuntime {
     visible_count: usize,
 }
 
-impl ConversationRuntime for FailingMcpToggleRuntime {
+impl CoreRuntime for FailingMcpToggleRuntime {
+    fn execute_turn<U: ProgressUi>(
+        &mut self,
+        _ui: &mut U,
+        _prompt: String,
+        _context: Option<String>,
+        span: Span,
+    ) -> Result<Value, LabeledError> {
+        Ok(Value::nothing(span))
+    }
+}
+
+impl ExtendedRuntime for FailingMcpToggleRuntime {
     fn set_mcp_server_enabled(
         &mut self,
         server_name: &str,
@@ -2147,16 +2183,6 @@ impl ConversationRuntime for FailingMcpToggleRuntime {
 
     fn llm_visible_mcp_tool_count_for_server(&self, _server_name: &str) -> usize {
         0
-    }
-
-    fn execute_turn<U: ProgressUi>(
-        &mut self,
-        _ui: &mut U,
-        _prompt: String,
-        _context: Option<String>,
-        span: Span,
-    ) -> Result<Value, LabeledError> {
-        Ok(Value::nothing(span))
     }
 }
 
@@ -2205,7 +2231,19 @@ struct SequencedMcpToggleRuntime {
     current_visible_count_by_server: usize,
 }
 
-impl ConversationRuntime for SequencedMcpToggleRuntime {
+impl CoreRuntime for SequencedMcpToggleRuntime {
+    fn execute_turn<U: ProgressUi>(
+        &mut self,
+        _ui: &mut U,
+        _prompt: String,
+        _context: Option<String>,
+        span: Span,
+    ) -> Result<Value, LabeledError> {
+        Ok(Value::nothing(span))
+    }
+}
+
+impl ExtendedRuntime for SequencedMcpToggleRuntime {
     fn set_mcp_server_enabled(
         &mut self,
         server_name: &str,
@@ -2229,16 +2267,6 @@ impl ConversationRuntime for SequencedMcpToggleRuntime {
 
     fn llm_visible_mcp_tool_count_for_server(&self, _server_name: &str) -> usize {
         self.current_visible_count_by_server
-    }
-
-    fn execute_turn<U: ProgressUi>(
-        &mut self,
-        _ui: &mut U,
-        _prompt: String,
-        _context: Option<String>,
-        span: Span,
-    ) -> Result<Value, LabeledError> {
-        Ok(Value::nothing(span))
     }
 }
 
@@ -2281,7 +2309,19 @@ struct PanicOnToggleRuntime {
     visible_count: usize,
 }
 
-impl ConversationRuntime for PanicOnToggleRuntime {
+impl CoreRuntime for PanicOnToggleRuntime {
+    fn execute_turn<U: ProgressUi>(
+        &mut self,
+        _ui: &mut U,
+        _prompt: String,
+        _context: Option<String>,
+        span: Span,
+    ) -> Result<Value, LabeledError> {
+        Ok(Value::nothing(span))
+    }
+}
+
+impl ExtendedRuntime for PanicOnToggleRuntime {
     fn set_mcp_server_enabled(
         &mut self,
         _server_name: &str,
@@ -2292,16 +2332,6 @@ impl ConversationRuntime for PanicOnToggleRuntime {
 
     fn llm_visible_mcp_tool_count(&self) -> usize {
         self.visible_count
-    }
-
-    fn execute_turn<U: ProgressUi>(
-        &mut self,
-        _ui: &mut U,
-        _prompt: String,
-        _context: Option<String>,
-        span: Span,
-    ) -> Result<Value, LabeledError> {
-        Ok(Value::nothing(span))
     }
 }
 
@@ -2570,7 +2600,7 @@ struct MailboxTestRuntime {
     clear_session_calls: usize,
 }
 
-impl ConversationRuntime for MailboxTestRuntime {
+impl CoreRuntime for MailboxTestRuntime {
     fn execute_turn<U: ProgressUi>(
         &mut self,
         _ui: &mut U,
@@ -2581,7 +2611,9 @@ impl ConversationRuntime for MailboxTestRuntime {
         self.prompts.push(prompt);
         Ok(Value::nothing(Span::test_data()))
     }
+}
 
+impl ExtendedRuntime for MailboxTestRuntime {
     fn clear_session(&mut self) {
         self.clear_session_calls += 1;
     }
@@ -2754,7 +2786,7 @@ fn mailbox_queued_when_worker_busy() {
         first_call: std::sync::atomic::AtomicBool,
     }
 
-    impl ConversationRuntime for BusyRuntime {
+    impl CoreRuntime for BusyRuntime {
         fn execute_turn<U: ProgressUi>(
             &mut self,
             ui: &mut U,
@@ -2776,6 +2808,8 @@ fn mailbox_queued_when_worker_busy() {
             Ok(Value::nothing(Span::test_data()))
         }
     }
+
+    impl ExtendedRuntime for BusyRuntime {}
 
     let mut runtime = BusyRuntime {
         prompts: prompts_clone,
@@ -2942,4 +2976,21 @@ fn orchestrator_formats_unknown_kind_as_default() {
         runtime.prompts,
         vec!["[from: peer] something custom".to_string()]
     );
+}
+
+// Compile-time check: run_single_turn must accept anything that impls CoreRuntime
+// This test will fail to compile until CoreRuntime exists and run_single_turn uses it
+fn _assert_single_turn_accepts_core_runtime<R: CoreRuntime + Send, U: ProgressUi>(_r: R, _u: U) {
+    // if this compiles, the bound is correct
+}
+
+// Compile-time check: run_interactive_loop must accept anything that impls ExtendedRuntime
+fn _assert_interactive_loop_accepts_extended_runtime<
+    R: ExtendedRuntime + Send,
+    U: InteractiveUi,
+>(
+    _r: R,
+    _u: U,
+) {
+    // if this compiles, the bound is correct
 }

@@ -1,7 +1,7 @@
 use super::store::{
     CompactionMarker, ConversationStore, JsonlConversationStore, StoreEntry, extract_llm_context,
 };
-use rig::completion::Message;
+use crate::types::Message;
 use tempfile::TempDir;
 
 /// Compare two messages via their serialized JSON form.
@@ -141,14 +141,18 @@ fn jsonl_store_append_messages() {
     ];
 
     // Write initial messages
-    store.append("test-session", &initial_messages, None).unwrap();
+    store
+        .append("test-session", &initial_messages, None)
+        .unwrap();
 
     // Append more messages
     let additional_messages = vec![
         Message::user("Second message"),
         Message::assistant("Second response"),
     ];
-    store.append("test-session", &additional_messages, None).unwrap();
+    store
+        .append("test-session", &additional_messages, None)
+        .unwrap();
 
     // Load and verify all messages are present
     let loaded = store.load("test-session").unwrap();
@@ -579,9 +583,7 @@ fn load_all_returns_none_for_legacy_entries_without_tokens() {
     let temp_dir = TempDir::new().unwrap();
     let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
     // Write without tokens (legacy behavior)
-    store
-        .append("s1", &[Message::user("hi")], None)
-        .unwrap();
+    store.append("s1", &[Message::user("hi")], None).unwrap();
     let (entries, last_tokens) = store.load_all("s1").unwrap();
     assert!(!entries.is_empty());
     assert_eq!(last_tokens, None);

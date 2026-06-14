@@ -1,5 +1,4 @@
 use crate::agent::application::command::{Agent, EngineConfigInterface};
-use crate::plugin::RuntimeCtx;
 use crate::session::SessionStore;
 use nu_parser::parse;
 use nu_plugin::EvaluatedCall;
@@ -14,7 +13,7 @@ use tempfile::TempDir;
 pub(super) fn create_test_agent() -> (Agent, TempDir) {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
-    let agent = Agent::new(store, RuntimeCtx::new());
+    let agent = Agent::new(store);
     (agent, temp_dir)
 }
 

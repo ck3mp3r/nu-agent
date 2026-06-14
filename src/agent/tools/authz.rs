@@ -381,8 +381,16 @@ pub struct PermissionsSummary {
 
 impl PermissionsConfig {
     pub fn safe_defaults(interactive: bool) -> Self {
-        let global = if interactive { PermissionAction::Ask } else { PermissionAction::Deny };
-        let nu_run_default = if interactive { PermissionAction::Ask } else { PermissionAction::Deny };
+        let global = if interactive {
+            PermissionAction::Ask
+        } else {
+            PermissionAction::Deny
+        };
+        let nu_run_default = if interactive {
+            PermissionAction::Ask
+        } else {
+            PermissionAction::Deny
+        };
         Self {
             global,
             tool_rules: vec![
@@ -405,7 +413,10 @@ impl PermissionsConfig {
         decision.action != PermissionAction::Deny
     }
 
-    pub fn parse_from_plugin_config(plugin_config: Option<&nu_protocol::Value>, interactive: bool) -> Self {
+    pub fn parse_from_plugin_config(
+        plugin_config: Option<&nu_protocol::Value>,
+        interactive: bool,
+    ) -> Self {
         let Some(value) = plugin_config else {
             return Self::safe_defaults(interactive);
         };

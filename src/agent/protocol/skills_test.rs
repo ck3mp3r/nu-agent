@@ -307,7 +307,8 @@ fn extract_skill_description_from_frontmatter() {
 
 #[test]
 fn extract_skill_description_falls_back_to_body_when_no_frontmatter_description() {
-    let content = "---\nname: nushell\nlicense: GPL-2.0\n---\n\n# Nushell Guide\n\nBody description here.\n";
+    let content =
+        "---\nname: nushell\nlicense: GPL-2.0\n---\n\n# Nushell Guide\n\nBody description here.\n";
     let desc = extract_skill_description(content).expect("should extract");
     assert_eq!(desc, "Body description here.");
 }

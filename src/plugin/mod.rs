@@ -9,21 +9,6 @@ pub struct AgentPlugin {
     session_store: SessionStore,
 }
 
-#[derive(Clone)]
-pub struct RuntimeCtx {}
-
-impl RuntimeCtx {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
-
-impl Default for RuntimeCtx {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl AgentPlugin {
     /// Creates a new AgentPlugin with default SessionStore
     pub fn new() -> Self {
@@ -36,10 +21,6 @@ impl AgentPlugin {
     #[cfg(test)]
     pub fn new_with_store(session_store: SessionStore) -> Self {
         Self { session_store }
-    }
-
-    pub fn runtime_ctx(&self) -> RuntimeCtx {
-        RuntimeCtx::new()
     }
 }
 
@@ -56,7 +37,7 @@ impl Plugin for AgentPlugin {
 
     fn commands(&self) -> Vec<Box<dyn PluginCommand<Plugin = Self>>> {
         vec![
-            Box::new(Agent::new(self.session_store.clone(), RuntimeCtx::new())),
+            Box::new(Agent::new(self.session_store.clone())),
             Box::new(AgentAuthLogin::new()),
             Box::new(AgentSessionClear::new(self.session_store.clone())),
             Box::new(AgentSessionInspect::new(self.session_store.clone())),

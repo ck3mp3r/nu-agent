@@ -8,15 +8,12 @@ use tokio_util::sync::CancellationToken;
 use super::protocol::{ClientFrame, ServerFrame};
 use super::registry::AgentRegistry;
 
-#[allow(dead_code)]
 pub(crate) struct Broker {
     socket_dir: PathBuf,
     socket_path: PathBuf,
-    registry: Arc<RwLock<AgentRegistry>>,
     shutdown: CancellationToken,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum BrokerError {
     #[error("XDG_RUNTIME_DIR environment variable not set")]
@@ -27,7 +24,6 @@ pub(crate) enum BrokerError {
     DirectoryCreationFailed(std::io::Error),
 }
 
-#[allow(dead_code)]
 impl Broker {
     pub(crate) fn start(registry: Arc<RwLock<AgentRegistry>>) -> Result<Self, BrokerError> {
         let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
@@ -102,7 +98,6 @@ impl Broker {
         Ok(Self {
             socket_dir,
             socket_path,
-            registry,
             shutdown,
         })
     }
@@ -250,10 +245,6 @@ impl Broker {
 
     pub(crate) fn socket_path(&self) -> &Path {
         &self.socket_path
-    }
-
-    pub(crate) fn shutdown(&self) {
-        self.shutdown.cancel();
     }
 }
 

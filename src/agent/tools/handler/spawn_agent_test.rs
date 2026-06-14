@@ -3,7 +3,6 @@ use tokio::sync::RwLock;
 
 use crate::agent::mailbox::AgentRegistry;
 
-use super::ToolErrorKind;
 use super::spawn_agent::{
     OrchestratorState, TmuxRunner, ToolExecError, generate_hex_token, handle_spawn_agent,
     handle_terminate_agent,
@@ -432,7 +431,6 @@ impl TmuxRunner for StaleTmuxRunner {
 
         if args_owned.contains(&"split-window".to_string()) {
             return Err(ToolExecError {
-                kind: ToolErrorKind::Runtime,
                 message: "can't find window: @dead".to_string(),
                 details: None,
             });
@@ -873,7 +871,6 @@ async fn handle_spawn_agent_fallsthrough_when_discovered_split_fails() {
             }
             if args_owned.contains(&"split-window".to_string()) {
                 return Err(ToolExecError {
-                    kind: ToolErrorKind::Runtime,
                     message: "can't find window: @99".to_string(),
                     details: None,
                 });

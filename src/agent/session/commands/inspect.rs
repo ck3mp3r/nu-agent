@@ -1,8 +1,8 @@
 use crate::AgentPlugin;
 use crate::session::{ConversationStore, JsonlConversationStore, SessionStore};
+use crate::types::{AssistantContent, Message, UserContent};
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, Example, LabeledError, Record, Signature, SyntaxShape, Value};
-use rig::completion::message::{AssistantContent, UserContent};
 
 /// The `agent session inspect` command displays full details of a specific session.
 pub struct AgentSessionInspect {
@@ -72,13 +72,13 @@ impl SimplePluginCommand for AgentSessionInspect {
             .map_err(|e| LabeledError::new(format!("Failed to load messages: {}", e)))?;
 
         // Helper function to extract role and text from rig Message
-        fn extract_message_info(msg: &rig::completion::Message) -> (String, String) {
+        fn extract_message_info(msg: &Message) -> (String, String) {
             match msg {
-                rig::completion::Message::System { content } => {
+                Message::System { content } => {
                     // System content is just a string, not an enum
                     ("system".to_string(), content.clone())
                 }
-                rig::completion::Message::User { content } => {
+                Message::User { content } => {
                     let text = content
                         .iter()
                         .map(|c| match c {
@@ -93,7 +93,7 @@ impl SimplePluginCommand for AgentSessionInspect {
                         .join("\n");
                     ("user".to_string(), text)
                 }
-                rig::completion::Message::Assistant { content, .. } => {
+                Message::Assistant { content, .. } => {
                     let text = content
                         .iter()
                         .map(|c| match c {
@@ -131,11 +131,17 @@ impl SimplePluginCommand for AgentSessionInspect {
         let mut config_record = Record::new();
         config_record.push(
             "compaction_threshold",
-            Value::int(session.compaction_config().compaction_threshold as i64, call.head),
+            Value::int(
+                session.compaction_config().compaction_threshold as i64,
+                call.head,
+            ),
         );
         config_record.push(
             "compaction_strategy",
-            Value::string(session.compaction_config().compaction_strategy.as_str(), call.head),
+            Value::string(
+                session.compaction_config().compaction_strategy.as_str(),
+                call.head,
+            ),
         );
         config_record.push(
             "keep_recent",

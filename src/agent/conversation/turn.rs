@@ -14,6 +14,7 @@ use crate::agent::hook::{
 use crate::agent::protocol::contracts::ProgressUi;
 use crate::agent::tools::handler::McpToolRegistry;
 use crate::tools::closure::ClosureRegistry;
+use crate::types::{InMemoryConversationMemory, Message, Text, ToolDefinition, UserContent};
 use rig::streaming::StreamingPrompt;
 use rig::tool::{ToolDyn, ToolError};
 use rig::wasm_compat::WasmBoxedFuture;
@@ -30,7 +31,7 @@ pub struct TurnResult {
     /// Token usage statistics
     pub usage: rig::completion::request::Usage,
     /// Complete message history (optional)
-    pub messages: Option<Vec<rig::completion::Message>>,
+    pub messages: Option<Vec<Message>>,
     /// Number of tool calls executed during this turn
     pub tool_call_count: usize,
     /// Whether text deltas were emitted during streaming
@@ -52,7 +53,7 @@ pub struct TurnError {
     pub cancelled: bool,
     /// Messages captured at the point of cancellation (from rig's chat_history).
     /// Present only when `cancelled == true` and rig provided a chat_history.
-    pub messages: Option<Vec<rig::completion::Message>>,
+    pub messages: Option<Vec<Message>>,
 }
 
 impl std::fmt::Display for TurnError {
@@ -123,12 +124,12 @@ where
     pub runtime: &'a tokio::runtime::Handle,
     pub model: M,
     pub prompt: String,
-    pub memory: rig::memory::InMemoryConversationMemory,
+    pub memory: InMemoryConversationMemory,
     pub conversation_id: String,
     pub preamble: Option<&'a str>,
     pub max_turns: Option<u32>,
     pub tool_server_handle: rig::tool::server::ToolServerHandle,
-    pub visible_tool_definitions: Vec<rig::completion::ToolDefinition>,
+    pub visible_tool_definitions: Vec<ToolDefinition>,
     pub closure_registry: &'a ClosureRegistry,
     pub mcp_registry: &'a McpToolRegistry,
 }
@@ -180,13 +181,11 @@ where
     let (hook, mut driver) = HookDriver::new(cancel_token.clone());
 
     // Build the prompt message
-    let user_message = rig::completion::Message::User {
-        content: rig::one_or_many::OneOrMany::one(rig::completion::message::UserContent::Text(
-            rig::completion::message::Text {
-                text: ctx.prompt,
-                additional_params: None,
-            },
-        )),
+    let user_message = Message::User {
+        content: rig::one_or_many::OneOrMany::one(UserContent::Text(Text {
+            text: ctx.prompt,
+            additional_params: None,
+        })),
     };
 
     // Clone preamble for the 'static future
@@ -257,11 +256,11 @@ struct AgentPromptConfig {
     hook: CopilotPromptHook,
     cancel_token: CancellationToken,
     preamble: Option<String>,
-    prompt: rig::completion::Message,
-    memory: rig::memory::InMemoryConversationMemory,
+    prompt: Message,
+    memory: InMemoryConversationMemory,
     conversation_id: String,
     tool_server_handle: rig::tool::server::ToolServerHandle,
-    visible_tool_definitions: Vec<rig::completion::ToolDefinition>,
+    visible_tool_definitions: Vec<ToolDefinition>,
     max_turns: Option<u32>,
 }
 
@@ -269,7 +268,7 @@ struct AgentPromptConfig {
 struct StreamingTurnResult {
     text: String,
     usage: rig::completion::request::Usage,
-    messages: Option<Vec<rig::completion::Message>>,
+    messages: Option<Vec<Message>>,
     /// Whether the stream was cancelled via cancel_token
     cancelled: bool,
 }
@@ -282,7 +281,7 @@ struct StreamingTurnResult {
 /// tool server (which has all registered tool implementations).
 struct FilteredToolProxy {
     tool_name: String,
-    tool_definition: rig::completion::ToolDefinition,
+    tool_definition: ToolDefinition,
     handle: rig::tool::server::ToolServerHandle,
 }
 
@@ -291,10 +290,7 @@ impl ToolDyn for FilteredToolProxy {
         self.tool_name.clone()
     }
 
-    fn definition<'a>(
-        &'a self,
-        _prompt: String,
-    ) -> WasmBoxedFuture<'a, rig::completion::ToolDefinition> {
+    fn definition<'a>(&'a self, _prompt: String) -> WasmBoxedFuture<'a, ToolDefinition> {
         let def = self.tool_definition.clone();
         Box::pin(async move { def })
     }
@@ -365,7 +361,7 @@ where
 
     let mut text = String::new();
     let mut usage = rig::completion::request::Usage::default();
-    let mut messages: Option<Vec<rig::completion::Message>> = None;
+    let mut messages: Option<Vec<Message>> = None;
     let mut cancelled = false;
 
     loop {

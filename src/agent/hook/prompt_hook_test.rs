@@ -1,7 +1,8 @@
 use super::*;
+use crate::types::{Text, UserContent};
 use rig::agent::PromptHook;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -192,7 +193,7 @@ async fn doom_loop_triggers_terminate() {
 #[tokio::test]
 async fn on_completion_call_emits_llm_start() {
     let (hook, mut rx) = make_hook();
-    use rig::completion::message::{Text, UserContent};
+
     use rig::message::Message;
     use rig::one_or_many::OneOrMany;
 
@@ -336,7 +337,6 @@ async fn on_tool_call_passes_none_when_tool_call_id_not_provided() {
 
 #[tokio::test]
 async fn on_stream_completion_response_finish_emits_usage() {
-    use rig::completion::message::{Text, UserContent};
     use rig::message::Message;
     use rig::one_or_many::OneOrMany;
     use test_support::{DummyModel, DummyStreamResponse};
@@ -424,7 +424,7 @@ mod no_usage_support {
 #[tokio::test]
 async fn on_stream_completion_response_finish_no_usage_no_event() {
     use rig::agent::PromptHook;
-    use rig::completion::message::{Text, UserContent};
+
     use rig::message::Message;
     use rig::one_or_many::OneOrMany;
     use tokio::sync::mpsc::error::TryRecvError;
@@ -453,7 +453,6 @@ async fn on_stream_completion_response_finish_no_usage_no_event() {
 
 #[tokio::test]
 async fn on_stream_completion_response_finish_stores_last_total_tokens() {
-    use rig::completion::message::{Text, UserContent};
     use rig::message::Message;
     use rig::one_or_many::OneOrMany;
     use test_support::{DummyModel, DummyStreamResponse};

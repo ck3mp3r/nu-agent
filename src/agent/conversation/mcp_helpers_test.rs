@@ -1,6 +1,8 @@
 use super::*;
 
-use crate::agent::conversation::test_helpers::{mcp_server_config, mcp_tool, tool_definition_named};
+use crate::agent::conversation::test_helpers::{
+    mcp_server_config, mcp_tool, tool_definition_named,
+};
 use crate::agent::tools::handler::McpToolRegistry;
 
 #[test]
@@ -23,8 +25,11 @@ fn enabling_startup_disabled_server_registers_all_discovered_mcp_tools() {
     .expect("toggle merge should succeed");
 
     let permissions = crate::agent::tools::authz::PermissionsConfig::safe_defaults(true);
-    let visible =
-        crate::agent::tools::handler::llm_visible_tool_definitions(&tool_definitions, &registry, &permissions);
+    let visible = crate::agent::tools::handler::llm_visible_tool_definitions(
+        &tool_definitions,
+        &registry,
+        &permissions,
+    );
 
     assert!(visible.iter().any(|tool| tool.name == "k8s__list_pods"));
     assert!(visible.iter().any(|tool| tool.name == "k8s__delete_pod"));
@@ -59,12 +64,8 @@ fn enabling_stage_conflict_is_transactional_and_keeps_original_runtime_state() {
 
     let discovered_conflict = vec![mcp_tool("k8s", "k8s__list_pods", "list_all_pods")];
 
-    let result = stage_enabled_mcp_runtime_state(
-        &tool_definitions,
-        &registry,
-        "k8s",
-        &discovered_conflict,
-    );
+    let result =
+        stage_enabled_mcp_runtime_state(&tool_definitions, &registry, "k8s", &discovered_conflict);
 
     assert!(result.is_err());
     assert!(

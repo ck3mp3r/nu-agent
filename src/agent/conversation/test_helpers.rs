@@ -1,3 +1,4 @@
+use crate::types::ToolDefinition;
 use crate::{
     agent::protocol::{contracts::ProgressUi, event::UiEvent},
     tools::mcp::{
@@ -33,8 +34,8 @@ pub(crate) fn mcp_tool(server: &str, name: &str, raw_name: &str) -> McpToolDefin
     }
 }
 
-pub(crate) fn tool_definition_named(name: &str) -> rig::completion::ToolDefinition {
-    rig::completion::ToolDefinition {
+pub(crate) fn tool_definition_named(name: &str) -> ToolDefinition {
+    ToolDefinition {
         name: name.to_string(),
         description: format!("tool {name}"),
         parameters: serde_json::json!({"type":"object"}),

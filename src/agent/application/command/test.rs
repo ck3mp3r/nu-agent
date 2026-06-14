@@ -1,6 +1,5 @@
 use super::test_helpers::{
-    MockEngineInterface, create_test_agent, create_test_call,
-    parse_agent_invocation_with_signature,
+    MockEngineInterface, create_test_agent, create_test_call, parse_agent_invocation_with_signature,
 };
 use crate::agent::application::command::{
     EngineConfigInterface, extract_flag_config, extract_tool_timeout, extract_tools_from_call,
@@ -51,12 +50,18 @@ fn should_enter_foreground_true_for_tui() {
 
 #[test]
 fn should_enter_foreground_true_for_stderr_with_tty() {
-    assert!(super::should_enter_foreground(super::AgentMode::Stderr, true));
+    assert!(super::should_enter_foreground(
+        super::AgentMode::Stderr,
+        true
+    ));
 }
 
 #[test]
 fn should_enter_foreground_false_for_stderr_without_tty() {
-    assert!(!super::should_enter_foreground(super::AgentMode::Stderr, false));
+    assert!(!super::should_enter_foreground(
+        super::AgentMode::Stderr,
+        false
+    ));
 }
 
 #[test]

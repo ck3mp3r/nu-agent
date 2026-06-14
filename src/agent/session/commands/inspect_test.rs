@@ -1,7 +1,7 @@
 use super::AgentSessionInspect;
 use crate::session::{ConversationStore, JsonlConversationStore, SessionStore};
+use crate::types::{Message, UserContent};
 use nu_plugin::SimplePluginCommand;
-use rig::completion::Message;
 use tempfile::TempDir;
 
 #[test]
@@ -34,11 +34,11 @@ fn test_agent_session_inspect_displays_full_session_details() {
     for (i, msg) in loaded_messages.iter().enumerate() {
         // rig Messages use content enum, extract text
         match msg {
-            rig::completion::Message::User { content } => {
+            Message::User { content } => {
                 let text = content
                     .iter()
                     .map(|c| match c {
-                        rig::completion::message::UserContent::Text(t) => t.text.clone(),
+                        UserContent::Text(t) => t.text.clone(),
                         _ => panic!("Expected text content"),
                     })
                     .collect::<Vec<_>>()

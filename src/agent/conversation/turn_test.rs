@@ -4,6 +4,7 @@
 //! so they are marked #[ignore] by default.
 
 use super::*;
+use crate::types::{AssistantContent, InMemoryConversationMemory, Message, Text, UserContent};
 
 #[test]
 fn turn_result_can_be_constructed() {
@@ -108,13 +109,11 @@ fn build_agent_and_prompt_passes_max_turns_to_rig_agent_builder() {
 #[test]
 fn prompt_cancelled_error_is_detected_as_cancellation() {
     // Create a PromptError::PromptCancelled variant with chat_history
-    let user_msg = rig::completion::Message::User {
-        content: rig::one_or_many::OneOrMany::one(rig::completion::message::UserContent::Text(
-            rig::completion::message::Text {
-                text: "Hello".to_string(),
-                additional_params: None,
-            },
-        )),
+    let user_msg = Message::User {
+        content: rig::one_or_many::OneOrMany::one(UserContent::Text(Text {
+            text: "Hello".to_string(),
+            additional_params: None,
+        })),
     };
     let err = rig::completion::PromptError::PromptCancelled {
         chat_history: vec![user_msg],
@@ -165,13 +164,11 @@ fn max_turns_error_is_not_cancelled() {
     let err = rig::completion::PromptError::MaxTurnsError {
         max_turns: 10,
         chat_history: Box::new(vec![]),
-        prompt: Box::new(rig::completion::Message::User {
-            content: rig::one_or_many::OneOrMany::one(rig::completion::message::UserContent::Text(
-                rig::completion::message::Text {
-                    text: "test".to_string(),
-                    additional_params: None,
-                },
-            )),
+        prompt: Box::new(Message::User {
+            content: rig::one_or_many::OneOrMany::one(UserContent::Text(Text {
+                text: "test".to_string(),
+                additional_params: None,
+            })),
         }),
     };
 
@@ -216,7 +213,7 @@ fn turn_context_uses_memory_instead_of_history_vec() {
     // After: TurnContext has memory: InMemoryConversationMemory + conversation_id: String
 
     // Create a memory instance (what TurnContext will store)
-    let memory = rig::memory::InMemoryConversationMemory::new();
+    let memory = InMemoryConversationMemory::new();
     let conversation_id = "test-conversation-123".to_string();
 
     // Memory can be cloned (required for passing to agent builder)
@@ -240,7 +237,7 @@ fn build_agent_and_prompt_uses_memory_api() {
     // Before: build_agent_and_prompt(model, hook, preamble, prompt, history: Vec, handle, max_turns)
     // After: build_agent_and_prompt(model, hook, preamble, prompt, memory, conversation_id, handle, max_turns)
 
-    let _memory = rig::memory::InMemoryConversationMemory::new();
+    let _memory = InMemoryConversationMemory::new();
     let conversation_id = "test-conv-456";
 
     // The function should:
@@ -356,22 +353,18 @@ fn build_agent_and_stream_uses_multi_turn_streaming() {
 /// Test that TurnError from PromptCancelled captures chat_history as messages.
 #[test]
 fn turn_error_from_prompt_cancelled_captures_messages() {
-    let user_msg = rig::completion::Message::User {
-        content: rig::one_or_many::OneOrMany::one(rig::completion::message::UserContent::Text(
-            rig::completion::message::Text {
-                text: "What is Rust?".to_string(),
-                additional_params: None,
-            },
-        )),
+    let user_msg = Message::User {
+        content: rig::one_or_many::OneOrMany::one(UserContent::Text(Text {
+            text: "What is Rust?".to_string(),
+            additional_params: None,
+        })),
     };
-    let assistant_msg = rig::completion::Message::Assistant {
+    let assistant_msg = Message::Assistant {
         id: None,
-        content: rig::one_or_many::OneOrMany::one(
-            rig::completion::message::AssistantContent::Text(rig::completion::message::Text {
-                text: "Rust is a systems programming...".to_string(),
-                additional_params: None,
-            }),
-        ),
+        content: rig::one_or_many::OneOrMany::one(AssistantContent::Text(Text {
+            text: "Rust is a systems programming...".to_string(),
+            additional_params: None,
+        })),
     };
 
     let err = rig::completion::PromptError::PromptCancelled {
@@ -413,13 +406,11 @@ fn turn_error_from_non_cancelled_has_no_messages() {
 /// Test that TurnError from StreamingError wrapping PromptCancelled captures messages.
 #[test]
 fn turn_error_from_streaming_prompt_cancelled_captures_messages() {
-    let user_msg = rig::completion::Message::User {
-        content: rig::one_or_many::OneOrMany::one(rig::completion::message::UserContent::Text(
-            rig::completion::message::Text {
-                text: "Tell me about async".to_string(),
-                additional_params: None,
-            },
-        )),
+    let user_msg = Message::User {
+        content: rig::one_or_many::OneOrMany::one(UserContent::Text(Text {
+            text: "Tell me about async".to_string(),
+            additional_params: None,
+        })),
     };
 
     let inner = rig::completion::PromptError::PromptCancelled {
@@ -445,8 +436,6 @@ fn turn_error_from_streaming_prompt_cancelled_captures_messages() {
 /// This test verifies the construction logic that drives the Path B code path.
 #[test]
 fn path_b_cancelled_with_partial_text_constructs_user_and_assistant_messages() {
-    use rig::completion::Message;
-
     let turn_result = TurnResult {
         text: "partial response".to_string(),
         usage: rig::completion::request::Usage::default(),
@@ -480,7 +469,7 @@ fn path_b_cancelled_with_partial_text_constructs_user_and_assistant_messages() {
     match &cancelled_messages[1] {
         Message::Assistant { content, .. } => {
             let text = content.iter().find_map(|c| {
-                if let rig::completion::message::AssistantContent::Text(t) = c {
+                if let AssistantContent::Text(t) = c {
                     Some(t.text.as_str())
                 } else {
                     None
@@ -501,8 +490,6 @@ fn path_b_cancelled_with_partial_text_constructs_user_and_assistant_messages() {
 /// construct ONLY a user message — no empty assistant message should be appended.
 #[test]
 fn path_b_cancelled_with_empty_text_constructs_only_user_message() {
-    use rig::completion::Message;
-
     let turn_result = TurnResult {
         text: String::new(),
         usage: rig::completion::request::Usage::default(),

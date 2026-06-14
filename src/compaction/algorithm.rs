@@ -3,7 +3,8 @@ use std::io;
 
 use super::helpers::{estimate_tokens, find_safe_split_index};
 use super::strategy::{CompactionOutcome, CompactionParams, CompactionStrategy};
-use crate::session::{extract_llm_context, CompactionMarker, ConversationStore};
+use crate::session::{CompactionMarker, ConversationStore, extract_llm_context};
+use crate::types::{InMemoryConversationMemory, Message};
 
 /// Compacts messages using rig memory and ConversationStore.
 ///
@@ -34,13 +35,13 @@ use crate::session::{extract_llm_context, CompactionMarker, ConversationStore};
 pub async fn compact<F, Fut, S>(
     session_id: &str,
     config: &CompactionParams,
-    memory: &rig::memory::InMemoryConversationMemory,
+    memory: &InMemoryConversationMemory,
     store: &S,
     summarizer: F,
     last_total_tokens: Option<u64>,
 ) -> io::Result<CompactionOutcome>
 where
-    F: FnOnce(&[rig::completion::Message]) -> Fut,
+    F: FnOnce(&[Message]) -> Fut,
     Fut: Future<Output = io::Result<String>>,
     S: ConversationStore,
 {
@@ -69,7 +70,7 @@ where
             let budget = config
                 .token_budget
                 .unwrap_or(config.compaction_threshold * 100);
-            let mut kept: Vec<rig::completion::Message> = Vec::new();
+            let mut kept: Vec<Message> = Vec::new();
             let mut total_tokens: usize = 0;
             for msg in messages.iter().rev() {
                 let msg_tokens = estimate_tokens(msg);
@@ -80,8 +81,8 @@ where
                 kept.push(msg.clone());
             }
             kept.reverse();
-            if let Some(rig::completion::Message::System { .. }) = messages.first()
-                && !matches!(kept.first(), Some(rig::completion::Message::System { .. }))
+            if let Some(Message::System { .. }) = messages.first()
+                && !matches!(kept.first(), Some(Message::System { .. }))
             {
                 kept.insert(0, messages[0].clone());
             }
@@ -119,7 +120,7 @@ where
             match config.compaction_strategy {
                 CompactionStrategy::SlidingSummary => {
                     let summary = summarizer(old_messages).await?;
-                    let summary_message = rig::completion::Message::system(&summary);
+                    let summary_message = Message::system(&summary);
                     let mut compacted = vec![summary_message];
                     compacted.extend_from_slice(recent_messages);
                     let store_kept = recent_messages.to_vec();

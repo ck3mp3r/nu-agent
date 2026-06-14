@@ -1,5 +1,4 @@
-use rig::completion::message::{AssistantContent, UserContent};
-use rig::completion::Message;
+use crate::types::{AssistantContent, Message, UserContent};
 
 /// Returns true if the message is an Assistant message containing at least one ToolCall.
 pub(crate) fn has_tool_call(msg: &Message) -> bool {

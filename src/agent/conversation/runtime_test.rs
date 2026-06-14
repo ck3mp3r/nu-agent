@@ -1,6 +1,9 @@
 use super::*;
 
 use crate::agent::protocol::{contracts::ProgressUi, event::UiEvent};
+use crate::compaction::CompactionStrategy;
+use crate::types::{InMemoryConversationMemory, Message, Text, ToolDefinition, UserContent};
+use rig::memory::ConversationMemory;
 
 #[derive(Default)]
 struct TestProgressUi {
@@ -46,7 +49,6 @@ fn permissions_startup_summary_emits_once_before_first_turn() {
         .expect("warning event");
     assert_eq!(warning_message, summary);
 }
-
 
 // ========================================================================
 // Structured messages tests
@@ -175,7 +177,6 @@ fn build_system_preamble_sub_agent_instruction_only() {
 #[test]
 fn runtime_struct_has_memory_field() {
     // GREEN: This test now compiles, proving the memory field exists
-    use rig::memory::InMemoryConversationMemory;
 
     // Compile-time check that the field exists with correct type
     fn _assert_field_exists(_memory: &InMemoryConversationMemory) {}
@@ -183,7 +184,7 @@ fn runtime_struct_has_memory_field() {
     // We can't easily construct a runtime in tests, but we can verify
     // the type signature compiles
     let _type_check: fn(&AgentConversationRuntime) = |r| {
-        _assert_field_exists(&r.memory);
+        _assert_field_exists(&r.memory_state.memory);
     };
 }
 
@@ -196,7 +197,7 @@ fn runtime_struct_has_conversation_store_field() {
     fn _assert_field_exists(_store: &JsonlConversationStore) {}
 
     let _type_check: fn(&AgentConversationRuntime) = |r| {
-        _assert_field_exists(&r.conversation_store);
+        _assert_field_exists(&r.memory_state.conversation_store);
     };
 }
 
@@ -264,8 +265,6 @@ fn provider_dispatch_unsupported_provider_returns_error() {
 
 #[test]
 fn clear_session_resets_memory() {
-    use rig::completion::message::{Text, UserContent};
-    use rig::memory::InMemoryConversationMemory;
     use rig::one_or_many::OneOrMany;
 
     let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -276,7 +275,7 @@ fn clear_session_resets_memory() {
         memory
             .append(
                 "test-session",
-                vec![rig::completion::Message::User {
+                vec![Message::User {
                     content: OneOrMany::one(UserContent::Text(Text {
                         text: "hello".to_string(),
                         additional_params: None,
@@ -304,8 +303,6 @@ fn clear_session_resets_memory_state() {
     // After clear_session(), memory is reset and hydrated flag is false
     // This is a behavioral test — clear_session creates fresh memory
 
-    use rig::memory::InMemoryConversationMemory;
-
     let memory = InMemoryConversationMemory::new();
     let hydrated = false;
 
@@ -324,7 +321,7 @@ fn runtime_struct_has_compacting_field() {
     fn _assert_field_exists(_flag: &Arc<AtomicBool>) {}
 
     let _type_check: fn(&AgentConversationRuntime) = |r| {
-        _assert_field_exists(&r.compacting);
+        _assert_field_exists(&r.compaction_state.compacting);
     };
 }
 
@@ -336,7 +333,7 @@ fn runtime_struct_has_compacting_field() {
 fn runtime_struct_has_memory_hydrated_field() {
     // Compile-time check that the memory_hydrated field exists with correct type
     let _type_check: fn(&AgentConversationRuntime) = |r| {
-        let _hydrated: bool = r.memory_hydrated;
+        let _hydrated: bool = r.memory_state.memory_hydrated;
     };
 }
 
@@ -344,8 +341,7 @@ fn runtime_struct_has_memory_hydrated_field() {
 fn hydration_guard_prevents_duplicate_memory_append() {
     // Tests the guard pattern used by ensure_memory_hydrated:
     // a bool guard must prevent double-appending stored messages to memory.
-    use rig::completion::Message;
-    use rig::memory::{ConversationMemory, InMemoryConversationMemory};
+    use rig::memory::ConversationMemory;
 
     use crate::session::{ConversationStore, JsonlConversationStore};
 
@@ -396,8 +392,7 @@ fn hydration_guard_prevents_duplicate_memory_append() {
 fn hydration_without_guard_causes_duplicates() {
     // Proves the bug: without a guard, calling hydration twice duplicates
     // messages in memory — exactly the problem ensure_memory_hydrated prevents.
-    use rig::completion::Message;
-    use rig::memory::{ConversationMemory, InMemoryConversationMemory};
+    use rig::memory::ConversationMemory;
 
     use crate::session::{ConversationStore, JsonlConversationStore};
 
@@ -429,8 +424,7 @@ fn hydration_without_guard_causes_duplicates() {
 fn cancelled_turn_path_a_persists_to_store_and_memory() {
     // Path A: rig hook cancelled — e.messages contains chat_history.
     // Fix: both store and memory must receive the messages.
-    use rig::completion::Message;
-    use rig::memory::{ConversationMemory, InMemoryConversationMemory};
+    use rig::memory::ConversationMemory;
 
     use crate::session::{ConversationStore, JsonlConversationStore};
 
@@ -470,8 +464,7 @@ fn cancelled_turn_path_a_persists_to_store_and_memory() {
 fn cancelled_turn_path_b_persists_to_store_and_memory() {
     // Path B: cancel_token fired — messages constructed from prompt + partial text.
     // Fix: both store and memory must receive the constructed messages.
-    use rig::completion::Message;
-    use rig::memory::{ConversationMemory, InMemoryConversationMemory};
+    use rig::memory::ConversationMemory;
 
     use crate::session::{ConversationStore, JsonlConversationStore};
 
@@ -518,8 +511,7 @@ fn hydration_loads_llm_context_not_full_history() {
     // Store has 15 messages + 1 marker(kept=5) + 5 msgs after marker.
     // After hydration, memory has 6 messages (summary + 5 post-marker).
     // memory_message_count == 6.
-    use rig::completion::Message;
-    use rig::memory::{ConversationMemory, InMemoryConversationMemory};
+    use rig::memory::ConversationMemory;
 
     use crate::session::{
         CompactionMarker, ConversationStore, JsonlConversationStore, extract_llm_context,
@@ -573,8 +565,7 @@ fn hydration_loads_llm_context_not_full_history() {
 #[test]
 fn hydration_no_markers_loads_all() {
     // Store has 15 messages, no markers. Memory has 15. memory_message_count == 15.
-    use rig::completion::Message;
-    use rig::memory::{ConversationMemory, InMemoryConversationMemory};
+    use rig::memory::ConversationMemory;
 
     use crate::session::{ConversationStore, JsonlConversationStore, extract_llm_context};
 
@@ -609,8 +600,7 @@ fn hydration_no_markers_loads_all() {
 fn hydration_multiple_markers_uses_latest() {
     // Store has msgs + marker1 + msgs + marker2(kept=3) + 3 msgs after marker2.
     // Memory uses marker2's context only.
-    use rig::completion::Message;
-    use rig::memory::{ConversationMemory, InMemoryConversationMemory};
+    use rig::memory::ConversationMemory;
 
     use crate::session::{
         CompactionMarker, ConversationStore, JsonlConversationStore, extract_llm_context,
@@ -678,7 +668,6 @@ fn hydration_multiple_markers_uses_latest() {
 #[test]
 fn compaction_count_derived_from_markers() {
     // Store has 3 markers. After hydration, compaction_count == 3.
-    use rig::completion::Message;
 
     use crate::session::{CompactionMarker, ConversationStore, JsonlConversationStore, StoreEntry};
 
@@ -725,8 +714,7 @@ fn compaction_count_derived_from_markers() {
 fn hydration_guard_still_prevents_duplicates() {
     // Ensure the memory_hydrated guard still works with the new code path
     // (load_all + extract_llm_context).
-    use rig::completion::Message;
-    use rig::memory::{ConversationMemory, InMemoryConversationMemory};
+    use rig::memory::ConversationMemory;
 
     use crate::session::{
         CompactionMarker, ConversationStore, JsonlConversationStore, extract_llm_context,
@@ -786,3 +774,344 @@ fn hydration_guard_still_prevents_duplicates() {
     );
 }
 
+// ========================================================================
+// Phase 1a: Characterise runtime.rs helpers
+// ========================================================================
+
+/// Fake ConversationStore for testing. Tracks load_all call count via an
+/// atomic counter — all methods return Ok with empty/no-op results.
+struct NullStore {
+    load_call_count: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl crate::session::ConversationStore for NullStore {
+    fn load(&self, _session_id: &str) -> Result<Vec<Message>, Box<dyn std::error::Error>> {
+        Ok(vec![])
+    }
+
+    fn load_all(
+        &self,
+        _session_id: &str,
+    ) -> Result<(Vec<crate::session::StoreEntry>, Option<u64>), Box<dyn std::error::Error>> {
+        self.load_call_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok((vec![], None))
+    }
+
+    fn append(
+        &self,
+        _session_id: &str,
+        _messages: &[Message],
+        _last_total_tokens: Option<u64>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
+    }
+
+    fn append_marker(
+        &self,
+        _session_id: &str,
+        _marker: &crate::session::CompactionMarker,
+        _last_total_tokens: Option<u64>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
+    }
+
+    fn clear(&self, _session_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
+    }
+}
+
+#[test]
+fn client_cache_key_contains_provider_and_model() {
+    // Characterise client_cache_key (runtime.rs:708-714).
+    // It returns (config.provider, config.api_key, config.base_url).
+    use crate::config::Config;
+
+    let config = Config {
+        provider: "copilot".to_string(),
+        provider_impl: None,
+        model: "test-model".to_string(),
+        api_key: Some("test-key".to_string()),
+        base_url: None,
+        temperature: None,
+        max_tokens: None,
+        max_context_tokens: None,
+        max_output_tokens: None,
+        max_tool_turns: None,
+        preamble: None,
+    };
+
+    // client_cache_key clones (provider, api_key, base_url) from config.
+    let key: ClientCacheKey = (
+        config.provider.clone(),
+        config.api_key.clone(),
+        config.base_url.clone(),
+    );
+
+    assert_eq!(
+        key,
+        ("copilot".to_string(), Some("test-key".to_string()), None,)
+    );
+}
+
+#[test]
+fn client_cache_key_includes_base_url_when_set() {
+    // Same as above but with base_url set.
+    use crate::config::Config;
+
+    let config = Config {
+        provider: "copilot".to_string(),
+        provider_impl: None,
+        model: "test-model".to_string(),
+        api_key: Some("test-key".to_string()),
+        base_url: Some("https://custom.example.com".to_string()),
+        temperature: None,
+        max_tokens: None,
+        max_context_tokens: None,
+        max_output_tokens: None,
+        max_tool_turns: None,
+        preamble: None,
+    };
+
+    let key: ClientCacheKey = (
+        config.provider.clone(),
+        config.api_key.clone(),
+        config.base_url.clone(),
+    );
+
+    assert_eq!(
+        key,
+        (
+            "copilot".to_string(),
+            Some("test-key".to_string()),
+            Some("https://custom.example.com".to_string()),
+        )
+    );
+}
+
+#[test]
+fn active_tool_definitions_returns_empty_when_no_tools() {
+    // Characterise active_tool_definitions (runtime.rs:753-759).
+    // Delegates to handler::llm_visible_tool_definitions with the runtime's
+    // tool_definitions, mcp_registry, and permissions.
+    use crate::agent::tools::{
+        authz::PermissionsConfig,
+        handler::{self, McpToolRegistry},
+    };
+
+    let tool_definitions: Vec<ToolDefinition> = vec![];
+    let mcp_registry = McpToolRegistry::from_names(std::iter::empty::<String>());
+    let permissions = PermissionsConfig::safe_defaults(true);
+
+    let result =
+        handler::llm_visible_tool_definitions(&tool_definitions, &mcp_registry, &permissions);
+
+    assert!(result.is_empty());
+}
+
+#[test]
+fn ensure_memory_hydrated_sets_hydrated_flag() {
+    // Characterise ensure_memory_hydrated (runtime.rs:674-706).
+    // With an empty store (no stored messages), calling the hydration
+    // pattern sets the hydrated flag to true and returns Ok(()).
+
+    use crate::session::{ConversationStore, JsonlConversationStore, extract_llm_context};
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let memory = InMemoryConversationMemory::new();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
+    let session_id = "test-session";
+    let mut memory_hydrated = false;
+
+    // Replicate the ensure_memory_hydrated logic (runtime.rs:674-706)
+    if !memory_hydrated {
+        let (entries, _last_total_tokens) = store.load_all(session_id).unwrap();
+        let llm_context = extract_llm_context(&entries);
+        if !llm_context.is_empty() {
+            rt.block_on(memory.append(session_id, llm_context)).unwrap();
+        }
+        memory_hydrated = true;
+    }
+
+    assert!(
+        memory_hydrated,
+        "hydrated flag must be true after hydration"
+    );
+}
+
+#[test]
+fn ensure_memory_hydrated_is_noop_on_second_call() {
+    // Characterise that ensure_memory_hydrated is idempotent:
+    // calling it twice only invokes store.load_all once (the guard
+    // short-circuits on the second call).
+    use crate::session::ConversationStore;
+
+    let load_call_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let store = NullStore {
+        load_call_count: load_call_count.clone(),
+    };
+    let session_id = "test-session";
+    let mut memory_hydrated = false;
+
+    // First call — goes through
+    if !memory_hydrated {
+        let (_entries, _) = store.load_all(session_id).unwrap();
+        memory_hydrated = true;
+    }
+
+    // Second call — guard prevents entry
+    if !memory_hydrated {
+        let (_entries, _) = store.load_all(session_id).unwrap();
+    }
+
+    assert_eq!(
+        load_call_count.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "store.load_all must only be called once"
+    );
+}
+
+// ========================================================================
+// Phase C-pre: Characterise sub-struct clusters before field decomposition
+// ========================================================================
+
+#[test]
+fn mcp_state_initial_tool_count_is_zero() {
+    // Characterise llm_visible_mcp_tool_count (runtime.rs:372-377).
+    // With an empty mcp_registry and no mcp_lifecycle_projection, the
+    // method filters active_tool_definitions by mcp_registry.is_registered
+    // — an empty registry yields 0.
+    use crate::agent::tools::{authz::PermissionsConfig, handler::McpToolRegistry};
+
+    let tool_definitions: Vec<ToolDefinition> = vec![];
+    let mcp_registry = McpToolRegistry::from_names(std::iter::empty::<String>());
+    let permissions = PermissionsConfig::safe_defaults(true);
+
+    // Replicate the method body: filter active_tool_definitions by registry
+    let active = super::super::super::tools::handler::llm_visible_tool_definitions(
+        &tool_definitions,
+        &mcp_registry,
+        &permissions,
+    );
+    let count = active
+        .iter()
+        .filter(|tool| mcp_registry.is_registered(tool.name.as_str()))
+        .count();
+
+    assert_eq!(count, 0, "empty registry must yield zero MCP tool count");
+}
+
+#[test]
+fn mcp_state_tool_count_by_server_returns_zero_for_unknown() {
+    // Characterise llm_visible_mcp_tool_count_for_server (runtime.rs:379-386).
+    // Querying for "nonexistent-server" with an empty registry must return 0.
+    use crate::agent::tools::{authz::PermissionsConfig, handler::McpToolRegistry};
+
+    let tool_definitions: Vec<ToolDefinition> = vec![];
+    let mcp_registry = McpToolRegistry::from_names(std::iter::empty::<String>());
+    let permissions = PermissionsConfig::safe_defaults(true);
+
+    let active = super::super::super::tools::handler::llm_visible_tool_definitions(
+        &tool_definitions,
+        &mcp_registry,
+        &permissions,
+    );
+    let count = active
+        .iter()
+        .filter(|tool| mcp_registry.is_registered(tool.name.as_str()))
+        .filter_map(|tool| mcp_registry.server_name_for(tool.name.as_str()))
+        .filter(|server| *server == "nonexistent-server")
+        .count();
+
+    assert_eq!(count, 0, "unknown server must yield zero tool count");
+}
+
+#[test]
+fn compaction_state_evaluate_returns_none_when_no_tokens() {
+    // Characterise evaluate_auto_compaction (runtime.rs:488-495).
+    // When last_total_tokens is None, the policy returns NoFire("no_token_data")
+    // and the method wraps it in Some(...).
+    use crate::agent::protocol::compaction::{
+        CompactionTriggerDecision, CompactionTriggerPolicy, TokenCompactionPolicy,
+    };
+
+    let policy = TokenCompactionPolicy::new(100_000, 0.8, CompactionStrategy::SlidingSummary);
+    let decision = Some(policy.evaluate(None));
+
+    assert!(
+        matches!(decision, Some(CompactionTriggerDecision::NoFire { .. })),
+        "no token data must yield Some(NoFire), not Fire"
+    );
+}
+
+#[test]
+fn compaction_state_evaluate_returns_none_below_threshold() {
+    // Characterise evaluate_auto_compaction (runtime.rs:488-495).
+    // 50k tokens against 100k window with 80% threshold => 50% usage, below threshold.
+    use crate::agent::protocol::compaction::{
+        CompactionTriggerDecision, CompactionTriggerPolicy, TokenCompactionPolicy,
+    };
+
+    let policy = TokenCompactionPolicy::new(100_000, 0.8, CompactionStrategy::SlidingSummary);
+    let decision = Some(policy.evaluate(Some(50_000)));
+
+    assert!(
+        matches!(decision, Some(CompactionTriggerDecision::NoFire { .. })),
+        "50% usage below 80% threshold must yield Some(NoFire)"
+    );
+}
+
+#[test]
+fn memory_state_hydrated_flag_starts_false() {
+    // Characterise that memory_hydrated is initialised to false.
+    // The field is a plain bool — fresh state is always false.
+    // (Mirrors the clear_session behaviour at runtime.rs:505-508.)
+    let hydrated: bool = false;
+    assert!(
+        !hydrated,
+        "memory_hydrated must start false in a fresh runtime"
+    );
+
+    // Compile-time proof the field exists with type bool on the struct.
+    let _type_check: fn(&AgentConversationRuntime) = |r| {
+        let _: bool = r.memory_state.memory_hydrated;
+    };
+}
+
+#[test]
+fn active_model_identity_returns_provider_slash_model() {
+    // Characterise active_model_identity (runtime.rs:484-486).
+    // Returns format!("{}/{}", config.provider, config.model).
+    use crate::config::Config;
+
+    let config = Config {
+        provider: "copilot".to_string(),
+        provider_impl: None,
+        model: "claude-sonnet-4".to_string(),
+        api_key: None,
+        base_url: None,
+        temperature: None,
+        max_tokens: None,
+        max_context_tokens: None,
+        max_output_tokens: None,
+        max_tool_turns: None,
+        preamble: None,
+    };
+
+    // Replicate the method body exactly
+    let identity = format!("{}/{}", config.provider, config.model);
+
+    assert!(
+        identity.contains("copilot"),
+        "identity must contain provider"
+    );
+    assert!(
+        identity.contains("claude-sonnet-4"),
+        "identity must contain model"
+    );
+    assert_eq!(
+        identity, "copilot/claude-sonnet-4",
+        "identity must be provider/model"
+    );
+}

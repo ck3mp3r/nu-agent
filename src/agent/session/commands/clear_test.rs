@@ -1,7 +1,7 @@
 use super::AgentSessionClear;
 use crate::session::{ConversationStore, JsonlConversationStore, SessionStore};
+use crate::types::Message;
 use nu_plugin::SimplePluginCommand;
-use rig::completion::Message;
 use tempfile::TempDir;
 
 #[test]

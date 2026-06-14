@@ -28,10 +28,7 @@ pub(crate) enum CompactionTriggerDecision {
 }
 
 pub(crate) trait CompactionTriggerPolicy {
-    fn evaluate(
-        &self,
-        total_tokens: Option<u64>,
-    ) -> CompactionTriggerDecision;
+    fn evaluate(&self, total_tokens: Option<u64>) -> CompactionTriggerDecision;
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -56,10 +53,7 @@ impl TokenCompactionPolicy {
 }
 
 impl CompactionTriggerPolicy for TokenCompactionPolicy {
-    fn evaluate(
-        &self,
-        total_tokens: Option<u64>,
-    ) -> CompactionTriggerDecision {
+    fn evaluate(&self, total_tokens: Option<u64>) -> CompactionTriggerDecision {
         let Some(tokens) = total_tokens else {
             return CompactionTriggerDecision::NoFire {
                 reason: "no_token_data".to_string(),

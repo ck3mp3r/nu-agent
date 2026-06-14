@@ -4,8 +4,7 @@ use crate::agent::protocol::contracts::UiMessageSnapshot;
 use crate::session::{
     ConversationStore, JsonlConversationStore, Session, SessionStore, StoreEntry,
 };
-use rig::completion::Message;
-use rig::completion::message::{AssistantContent, ToolResultContent, UserContent};
+use crate::types::{AssistantContent, Message, ToolResultContent, UserContent};
 use std::collections::HashMap;
 
 use crate::agent::tools::handler::build_direct_tool_display;
@@ -62,19 +61,24 @@ impl SessionResolver for DefaultSessionResolver<'_> {
                 let (session, tui_hydration_messages, last_total_tokens) = if input.use_tui {
                     let (session, existed_before_attach) =
                         load_or_create_tui_session(self.store, &id)?;
-                    let (messages, last_total_tokens) = if input.input_is_nothing && existed_before_attach {
-                        // Load store entries (messages + markers) from JSONL
-                        let conversation_store =
-                            JsonlConversationStore::new(self.store.cache_dir().to_path_buf());
-                        let (entries, last_total_tokens) = conversation_store.load_all(&id).map_err(|e| {
-                            LabeledError::new(format!("Failed to load messages: {e}"))
-                        })?;
+                    let (messages, last_total_tokens) =
+                        if input.input_is_nothing && existed_before_attach {
+                            // Load store entries (messages + markers) from JSONL
+                            let conversation_store =
+                                JsonlConversationStore::new(self.store.cache_dir().to_path_buf());
+                            let (entries, last_total_tokens) =
+                                conversation_store.load_all(&id).map_err(|e| {
+                                    LabeledError::new(format!("Failed to load messages: {e}"))
+                                })?;
 
-                        // Convert to UiMessageSnapshots for transcript display
-                        (hydrate_transcript_from_store_entries(&entries), last_total_tokens)
-                    } else {
-                        (Vec::new(), None)
-                    };
+                            // Convert to UiMessageSnapshots for transcript display
+                            (
+                                hydrate_transcript_from_store_entries(&entries),
+                                last_total_tokens,
+                            )
+                        } else {
+                            (Vec::new(), None)
+                        };
 
                     (session, messages, last_total_tokens)
                 } else {

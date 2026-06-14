@@ -1,5 +1,5 @@
 use crate::agent::protocol::persona::PersonaSummary;
-use rig::completion::ToolDefinition;
+use crate::types::ToolDefinition;
 use serde_json::json;
 
 pub(crate) fn builtin_tool_definitions() -> Vec<ToolDefinition> {

@@ -25,14 +25,5 @@ pub(crate) fn is_builtin_persona(name: &str) -> bool {
     BUILTIN_PERSONAS.iter().any(|p| p.name == name)
 }
 
-/// Get built-in persona content by name
-#[allow(dead_code)]
-pub(crate) fn get_builtin_content(name: &str) -> Option<&'static str> {
-    BUILTIN_PERSONAS
-        .iter()
-        .find(|p| p.name == name)
-        .map(|p| p.content)
-}
-
 #[cfg(test)]
 mod builtins_test;

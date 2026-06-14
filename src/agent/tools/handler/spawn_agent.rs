@@ -7,13 +7,9 @@ use tokio::sync::RwLock;
 
 use crate::agent::mailbox::{AgentRegistry, Broker};
 
-use super::ToolErrorKind;
-
 /// Error type for spawn_agent tool execution
 #[derive(Debug, Clone)]
 pub(crate) struct ToolExecError {
-    #[allow(dead_code)]
-    pub(crate) kind: ToolErrorKind,
     pub(crate) message: String,
     pub(crate) details: Option<serde_json::Value>,
 }
@@ -21,7 +17,6 @@ pub(crate) struct ToolExecError {
 impl ToolExecError {
     fn validation(message: impl Into<String>) -> Self {
         Self {
-            kind: ToolErrorKind::Validation,
             message: message.into(),
             details: None,
         }
@@ -29,7 +24,6 @@ impl ToolExecError {
 
     fn execution(message: impl Into<String>) -> Self {
         Self {
-            kind: ToolErrorKind::Runtime,
             message: message.into(),
             details: None,
         }
@@ -49,7 +43,6 @@ pub struct OrchestratorState {
 }
 
 impl OrchestratorState {
-    #[allow(dead_code)]
     pub fn new(registry: Arc<RwLock<AgentRegistry>>, cwd: PathBuf) -> Self {
         Self {
             broker: None,

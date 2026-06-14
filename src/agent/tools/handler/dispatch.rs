@@ -1,11 +1,12 @@
 use super::McpToolRegistry;
 use crate::agent::tools::authz::PermissionsConfig;
+use crate::types::ToolDefinition;
 
 pub(crate) fn llm_visible_tool_definitions(
-    tool_definitions: &[rig::completion::ToolDefinition],
+    tool_definitions: &[ToolDefinition],
     mcp_registry: &McpToolRegistry,
     permissions: &PermissionsConfig,
-) -> Vec<rig::completion::ToolDefinition> {
+) -> Vec<ToolDefinition> {
     tool_definitions
         .iter()
         .filter(|tool| {

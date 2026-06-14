@@ -1,7 +1,7 @@
 //! HookDriver — bridges async hook events to sync ProgressUi
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::Value as JsonValue;
 use tokio::sync::mpsc;

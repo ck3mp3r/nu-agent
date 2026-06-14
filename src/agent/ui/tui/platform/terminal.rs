@@ -2,9 +2,7 @@ use std::{error::Error, fmt};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TerminalAction {
-    #[cfg_attr(not(test), allow(dead_code))]
     EnableRawMode,
-    #[cfg_attr(not(test), allow(dead_code))]
     DisableRawMode,
     EnterAltScreen,
     LeaveAltScreen,

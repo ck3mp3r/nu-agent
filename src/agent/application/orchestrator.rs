@@ -7,12 +7,15 @@ use std::sync::{
 use nu_protocol::{LabeledError, Span, Value};
 
 use crate::agent::{
-    application::turn_outcome::TurnOutcome,
+    application::{
+        command_router::CommandRouter, event_pump::EventPump, pending_ops::PendingOps,
+        turn_outcome::TurnOutcome,
+    },
     protocol::{
-        compaction::{CompactionTriggerDecision, CompactionTriggerSource},
+        compaction::CompactionTriggerSource,
         contracts::{
-            ConversationRuntime, InteractiveUi, McpToggleRequest, McpUsabilityState, ProgressUi,
-            SharedUiAction, UiMessageSnapshot,
+            CoreRuntime, ExtendedRuntime, InteractiveUi, McpToggleRequest, McpUsabilityState,
+            ProgressUi, SharedUiAction, UiMessageSnapshot,
         },
         event::UiEvent,
         permission::submit_active_permission_decision,
@@ -20,24 +23,21 @@ use crate::agent::{
     },
 };
 
-const COMPACTION_FAILURE_WARNING: &str =
-    "Session compaction failed: sliding_summary summarization unavailable";
-
-type McpToggleResult = (
+pub(crate) type McpToggleResult = (
     Result<McpUsabilityState, String>,
     usize,
     usize,
     Vec<(String, Vec<String>)>,
 );
 type PendingMcpToggle = (String, mpsc::Receiver<McpToggleResult>);
-type ModelSwitchResult = Result<String, String>;
-type AgentSwitchResult = Result<(String, String), String>;
+pub(crate) type ModelSwitchResult = Result<String, String>;
+pub(crate) type AgentSwitchResult = Result<(String, String), String>;
 type PendingModelSwitch = mpsc::Receiver<ModelSwitchResult>;
 type PendingAgentSwitch = mpsc::Receiver<AgentSwitchResult>;
 type PendingAutoCompaction = mpsc::Receiver<Option<String>>;
 type PendingCompactionTrigger = mpsc::Receiver<Option<String>>;
 
-enum WorkerCommand {
+pub(crate) enum WorkerCommand {
     ExecuteTurn {
         prompt: String,
         span: Span,
@@ -90,7 +90,7 @@ pub(crate) fn run_interactive_loop<R, U>(
     span: Span,
 ) -> Result<Value, LabeledError>
 where
-    R: ConversationRuntime + Send,
+    R: ExtendedRuntime + Send,
     U: InteractiveUi,
 {
     let mut last_authoritative_visible_count = runtime.llm_visible_mcp_tool_count();
@@ -112,94 +112,23 @@ where
                 events: worker_event_tx,
                 cancel_requested: worker_cancel,
             };
+            let mut router = CommandRouter::new(runtime);
 
             while let Ok(command) = worker_cmd_rx.recv() {
-                match command {
-                    WorkerCommand::ExecuteTurn { prompt, span } => {
-                        let result = runtime.execute_turn(&mut worker_ui, prompt, None, span);
-                        // Convert Result<Value, LabeledError> to TurnOutcome
-                        // Detect cancellation by message content:
-                        // - v2 path: "Turn cancelled: ..."
-                        let outcome = match &result {
-                            Err(error) if error.msg.starts_with("Turn cancelled:") => {
-                                TurnOutcome::Cancelled
-                            }
-                            Ok(value) => TurnOutcome::Success(value.clone()),
-                            Err(error) => TurnOutcome::Error(error.clone()),
-                        };
-                        let _ = worker_result_tx.send(outcome);
-                    }
-                    WorkerCommand::EvaluateAutoCompaction { response_tx } => {
-                        let warning = match runtime.evaluate_auto_compaction() {
-                            Some(CompactionTriggerDecision::Fire { source, .. }) => runtime
-                                .execute_compaction_trigger(&mut worker_ui, source)
-                                .err()
-                                .map(|_error| COMPACTION_FAILURE_WARNING.to_string()),
-                            _ => None,
-                        };
-                        let _ = response_tx.send(warning);
-                    }
-                    WorkerCommand::ExecuteCompactionTrigger {
-                        source,
-                        response_tx,
-                    } => {
-                        let warning = runtime
-                            .execute_compaction_trigger(&mut worker_ui, source)
-                            .err()
-                            .map(|_error| COMPACTION_FAILURE_WARNING.to_string());
-                        let _ = response_tx.send(warning);
-                    }
-                    WorkerCommand::ToggleMcp {
-                        server_name,
-                        enable,
-                        response_tx,
-                    } => {
-                        let result = runtime.set_mcp_server_enabled(&server_name, enable);
-                        let visible_count = runtime.llm_visible_mcp_tool_count();
-                        let visible_count_for_server =
-                            runtime.llm_visible_mcp_tool_count_for_server(&server_name);
-                        let visible_names_by_server =
-                            runtime.llm_visible_mcp_tool_names_by_server();
-                        let _ = response_tx.send((
-                            result,
-                            visible_count,
-                            visible_count_for_server,
-                            visible_names_by_server,
-                        ));
-                    }
-                    WorkerCommand::SwitchModel {
-                        model_spec,
-                        response_tx,
-                    } => {
-                        let _ = response_tx.send(runtime.switch_model(&model_spec));
-                    }
-                    WorkerCommand::SwitchAgent {
-                        agent_name,
-                        response_tx,
-                    } => {
-                        let result = runtime.switch_agent(&agent_name);
-                        let response = result.map(|agent_identity| {
-                            let model_identity = runtime.active_model_identity();
-                            (agent_identity, model_identity)
-                        });
-                        let _ = response_tx.send(response);
-                    }
-                    WorkerCommand::ClearSession => {
-                        runtime.clear_session();
-                    }
-                    WorkerCommand::Shutdown => break,
+                if !router.dispatch(command, &mut worker_ui, &worker_result_tx) {
+                    break;
                 }
             }
         });
 
+        let mut event_pump = EventPump::new(worker_event_rx);
+        let mut pending_ops = PendingOps::new();
         let mut worker_active = false;
         let mut pending_mcp_toggles: Vec<PendingMcpToggle> = Vec::new();
         let mut pending_auto_compaction: Option<PendingAutoCompaction> = None;
         let mut pending_compaction_trigger: Option<PendingCompactionTrigger> = None;
         let mut pending_model_switch: Option<PendingModelSwitch> = None;
-        let mut queued_model_switch: Option<String> = None;
         let mut pending_agent_switch: Option<PendingAgentSwitch> = None;
-        let mut queued_agent_switch: Option<String> = None;
         let mut pending_mailbox_prompts: Vec<String> = Vec::new();
 
         loop {
@@ -376,19 +305,7 @@ where
                 cancel_requested.store(true, Ordering::SeqCst);
             }
 
-            {
-                let mut batch = Vec::new();
-                while let Ok(event) = worker_event_rx.try_recv() {
-                    batch.push(event);
-                }
-                if !batch.is_empty() {
-                    log::debug!(
-                        "orchestrator: forwarding {} worker events to UI",
-                        batch.len()
-                    );
-                    ui.emit_batch(&batch);
-                }
-            }
+            event_pump.drain_batch(ui);
 
             while let Ok(outcome) = worker_result_rx.try_recv() {
                 worker_active = false;
@@ -421,7 +338,7 @@ where
 
             while let Some(model_spec) = ui.take_next_model_switch_request() {
                 if worker_active {
-                    queued_model_switch = Some(model_spec.clone());
+                    pending_ops.queue_model_switch(model_spec.clone());
                     ui.emit(&UiEvent::Warning {
                         message: format!("Model switch queued for next turn: {model_spec}"),
                     });
@@ -441,13 +358,13 @@ where
                         });
                     }
                 } else {
-                    queued_model_switch = Some(model_spec);
+                    pending_ops.queue_model_switch(model_spec);
                 }
             }
 
             while let Some(agent_name) = ui.take_next_agent_switch_request() {
                 if worker_active {
-                    queued_agent_switch = Some(agent_name.clone());
+                    pending_ops.queue_agent_switch(agent_name.clone());
                     ui.emit(&UiEvent::Warning {
                         message: format!("Agent switch queued for next turn: {agent_name}"),
                     });
@@ -467,7 +384,7 @@ where
                         });
                     }
                 } else {
-                    queued_agent_switch = Some(agent_name);
+                    pending_ops.queue_agent_switch(agent_name);
                 }
             }
 
@@ -489,7 +406,7 @@ where
 
             if !worker_active
                 && pending_model_switch.is_none()
-                && let Some(model_spec) = queued_model_switch.take()
+                && let Some(model_spec) = pending_ops.take_queued_model_switch()
             {
                 let (response_tx, response_rx) = mpsc::channel();
                 if worker_cmd_tx
@@ -509,7 +426,7 @@ where
 
             if !worker_active
                 && pending_agent_switch.is_none()
-                && let Some(agent_name) = queued_agent_switch.take()
+                && let Some(agent_name) = pending_ops.take_queued_agent_switch()
             {
                 let (response_tx, response_rx) = mpsc::channel();
                 if worker_cmd_tx
@@ -667,7 +584,7 @@ pub(crate) fn run_hydrated_interactive_loop<R, U>(
     span: Span,
 ) -> Result<Value, LabeledError>
 where
-    R: ConversationRuntime + Send,
+    R: ExtendedRuntime + Send,
     U: InteractiveUi,
 {
     ui.hydrate_transcript_from_messages(messages, last_total_tokens);
@@ -682,7 +599,7 @@ pub(crate) fn run_single_turn<R, U>(
     span: Span,
 ) -> Result<Value, LabeledError>
 where
-    R: ConversationRuntime,
+    R: CoreRuntime,
     U: ProgressUi,
 {
     runtime.execute_turn(ui, prompt, context, span)

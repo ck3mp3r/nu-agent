@@ -3,11 +3,12 @@ use crate::tools::mcp::{
     config::McpServerConfig,
     runtime::{McpRuntime, McpServerLifecycle},
 };
+use crate::types::ToolDefinition;
 
 fn mcp_tool_definition_from_discovered(
     tool: &crate::tools::mcp::client::McpToolDefinition,
-) -> rig::completion::ToolDefinition {
-    rig::completion::ToolDefinition {
+) -> ToolDefinition {
+    ToolDefinition {
         name: tool.name.clone(),
         description: tool
             .description
@@ -29,7 +30,7 @@ fn mcp_tool_definition_from_discovered(
 }
 
 pub(super) fn merge_new_mcp_tools_into_runtime(
-    tool_definitions: &mut Vec<rig::completion::ToolDefinition>,
+    tool_definitions: &mut Vec<ToolDefinition>,
     mcp_registry: &mut McpToolRegistry,
     discovered_tools: &[crate::tools::mcp::client::McpToolDefinition],
 ) -> Result<(), String> {
@@ -54,11 +55,11 @@ pub(super) fn merge_new_mcp_tools_into_runtime(
 }
 
 pub(super) fn stage_enabled_mcp_runtime_state(
-    current_tool_definitions: &[rig::completion::ToolDefinition],
+    current_tool_definitions: &[ToolDefinition],
     current_registry: &McpToolRegistry,
     server_name: &str,
     discovered_tools: &[crate::tools::mcp::client::McpToolDefinition],
-) -> Result<(Vec<rig::completion::ToolDefinition>, McpToolRegistry), String> {
+) -> Result<(Vec<ToolDefinition>, McpToolRegistry), String> {
     let mut staged_tool_definitions = current_tool_definitions.to_vec();
     let mut staged_registry = current_registry.clone();
 
@@ -94,7 +95,7 @@ pub(super) fn rebuild_mcp_lifecycle_projection(
     mcp_runtime: Option<&McpRuntime>,
     mcp_server_configs: &[McpServerConfig],
     mcp_registry: &McpToolRegistry,
-    tool_definitions: &[rig::completion::ToolDefinition],
+    tool_definitions: &[ToolDefinition],
 ) -> Vec<McpServerLifecycle> {
     let visible_count_by_server = tool_definitions
         .iter()

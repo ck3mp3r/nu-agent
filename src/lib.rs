@@ -5,6 +5,7 @@ pub mod llm;
 pub mod plugin;
 pub mod session;
 pub mod tools;
+pub(crate) mod types;
 pub mod utils;
 
 pub use plugin::AgentPlugin;

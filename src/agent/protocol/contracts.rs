@@ -70,7 +70,6 @@ impl UiMessageSnapshot {
         self
     }
 
-    #[allow(dead_code)]
     pub fn with_tool_display(mut self, display: ToolDisplay) -> Self {
         self.tool_display = Some(display);
         self
@@ -92,12 +91,11 @@ impl UiMessageSnapshot {
         self.tool_success
     }
 
-    #[allow(dead_code)]
     pub fn take_tool_display(&mut self) -> Option<ToolDisplay> {
         self.tool_display.take()
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn tool_display_ref(&self) -> Option<&ToolDisplay> {
         self.tool_display.as_ref()
     }
@@ -186,7 +184,8 @@ pub(crate) trait InteractiveUi: ProgressUi {
     fn display_incoming_message(&mut self, _text: &str) {}
 }
 
-pub(crate) trait ConversationRuntime {
+/// Minimal runtime required for a single turn. Used by run_single_turn.
+pub(crate) trait CoreRuntime {
     fn execute_turn<U: ProgressUi>(
         &mut self,
         ui: &mut U,
@@ -194,7 +193,11 @@ pub(crate) trait ConversationRuntime {
         context: Option<String>,
         span: Span,
     ) -> Result<Value, LabeledError>;
+}
 
+/// Full runtime with MCP, model switching, compaction, and session management.
+/// Used by run_interactive_loop. All methods have no-op defaults.
+pub(crate) trait ExtendedRuntime: CoreRuntime {
     fn set_mcp_server_enabled(
         &mut self,
         _server_name: &str,

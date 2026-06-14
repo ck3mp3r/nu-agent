@@ -281,12 +281,8 @@ fn mock_call_with_compaction_flags(
 
 #[test]
 fn extract_compaction_flags_all_provided() {
-    let call = mock_call_with_compaction_flags(
-        Some("sliding_window"),
-        Some(5),
-        Some(10000),
-        Some(0.75),
-    );
+    let call =
+        mock_call_with_compaction_flags(Some("sliding_window"), Some(5), Some(10000), Some(0.75));
     let result = extract_compaction_flags(&call).unwrap();
     assert_eq!(result.strategy, Some(CompactionStrategy::SlidingWindow));
     assert_eq!(result.keep_recent, Some(5));

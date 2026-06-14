@@ -710,13 +710,16 @@ fn cli_permissions_overlay_rejects_invalid_action_with_explicit_leaf_path() {
 
 #[test]
 fn additive_overlay_cli_wins_on_overlap_and_retains_non_overlapping() {
-    let base = PermissionsConfig::parse_from_plugin_config(Some(&Value::test_record(record! {
-        "permissions" => Value::test_record(record! {
-            "*" => Value::test_string("ask"),
-            "read" => Value::test_string("allow"),
-            "glob" => Value::test_string("deny")
-        })
-    })), true);
+    let base = PermissionsConfig::parse_from_plugin_config(
+        Some(&Value::test_record(record! {
+            "permissions" => Value::test_record(record! {
+                "*" => Value::test_string("ask"),
+                "read" => Value::test_string("allow"),
+                "glob" => Value::test_string("deny")
+            })
+        })),
+        true,
+    );
 
     let overlay = PermissionsOverlay::parse_from_cli_value(&Value::test_record(record! {
         "read" => Value::test_string("deny"),
@@ -742,17 +745,20 @@ fn additive_overlay_cli_wins_on_overlap_and_retains_non_overlapping() {
 
 #[test]
 fn additive_overlay_merges_nested_nu_run_command_deterministically() {
-    let base = PermissionsConfig::parse_from_plugin_config(Some(&Value::test_record(record! {
-        "permissions" => Value::test_record(record! {
-            "*" => Value::test_string("ask"),
-            "nu__run" => Value::test_record(record! {
-                "command" => Value::test_record(record! {
-                    "kubectl get *" => Value::test_string("allow"),
-                    "*" => Value::test_string("ask")
+    let base = PermissionsConfig::parse_from_plugin_config(
+        Some(&Value::test_record(record! {
+            "permissions" => Value::test_record(record! {
+                "*" => Value::test_string("ask"),
+                "nu__run" => Value::test_record(record! {
+                    "command" => Value::test_record(record! {
+                        "kubectl get *" => Value::test_string("allow"),
+                        "*" => Value::test_string("ask")
+                    })
                 })
             })
-        })
-    })), true);
+        })),
+        true,
+    );
 
     let overlay = PermissionsOverlay::parse_from_cli_value(&Value::test_record(record! {
         "nu__run" => Value::test_record(record! {

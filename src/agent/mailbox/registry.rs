@@ -2,18 +2,15 @@ use std::collections::HashMap;
 
 use super::protocol::ServerFrame;
 
-#[allow(dead_code)]
 pub(crate) struct AgentRegistry {
     pending: HashMap<String, String>,
     connected: HashMap<String, ConnectedAgent>,
 }
 
-#[allow(dead_code)]
 struct ConnectedAgent {
     writer: tokio::sync::mpsc::Sender<ServerFrame>,
 }
 
-#[allow(dead_code)]
 impl AgentRegistry {
     pub(crate) fn new() -> Self {
         Self {
@@ -47,6 +44,7 @@ impl AgentRegistry {
         self.connected.keys().cloned().collect()
     }
 
+    #[cfg(test)]
     pub(crate) fn is_connected(&self, name: &str) -> bool {
         self.connected.contains_key(name)
     }

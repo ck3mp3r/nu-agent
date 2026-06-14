@@ -1,4 +1,4 @@
-use rig::completion::message::ToolCall;
+use crate::types::ToolCall;
 
 use crate::agent::tools::authz::{
     AskApprovalHook, AskContext, PermissionAction, PermissionEventSink, PermissionsConfig,

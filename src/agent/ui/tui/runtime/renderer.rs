@@ -40,7 +40,6 @@ where
         self.coordinator.quit_requested = true;
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn new(inner: R, event_source: E, columns: u16, rows: u16) -> Self {
         Self::with_terminal_mode(inner, event_source, columns, rows, None, false)
     }
@@ -183,7 +182,8 @@ where
         messages: impl IntoIterator<Item = UiMessageSnapshot>,
         last_total_tokens: Option<u64>,
     ) {
-        self.coordinator.hydrate_transcript_from_messages(messages, last_total_tokens);
+        self.coordinator
+            .hydrate_transcript_from_messages(messages, last_total_tokens);
     }
 
     pub fn pump_terminal_once(&mut self) {

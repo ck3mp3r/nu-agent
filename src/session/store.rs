@@ -1,6 +1,6 @@
 use super::SessionMetadata;
+use crate::types::Message;
 use chrono::{DateTime, Utc};
-use rig::completion::Message;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fs::{self, File, OpenOptions};
@@ -236,10 +236,7 @@ impl ConversationStore for JsonlConversationStore {
         for message in messages {
             let mut value = serde_json::to_value(message)?;
             if let (Some(obj), Some(tokens)) = (value.as_object_mut(), last_total_tokens) {
-                obj.insert(
-                    "last_total_tokens".to_string(),
-                    serde_json::json!(tokens),
-                );
+                obj.insert("last_total_tokens".to_string(), serde_json::json!(tokens));
             }
             writeln!(file, "{}", serde_json::to_string(&value)?)?;
         }
@@ -290,10 +287,7 @@ impl ConversationStore for JsonlConversationStore {
 
         let mut value = serde_json::to_value(marker)?;
         if let (Some(obj), Some(tokens)) = (value.as_object_mut(), last_total_tokens) {
-            obj.insert(
-                "last_total_tokens".to_string(),
-                serde_json::json!(tokens),
-            );
+            obj.insert("last_total_tokens".to_string(), serde_json::json!(tokens));
         }
         writeln!(file, "{}", serde_json::to_string(&value)?)?;
 

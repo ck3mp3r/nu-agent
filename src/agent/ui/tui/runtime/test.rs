@@ -1134,12 +1134,15 @@ fn crossterm_enter_modifier_mapping_distinguishes_submit_vs_newline_intents() {
 #[test]
 fn coordinator_hydration_skips_blank_lines_and_maps_unknown_role_to_system() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    coordinator.hydrate_transcript_from_messages(vec![
-        UiMessageSnapshot::new("user", "line1\n\nline2"),
-        UiMessageSnapshot::new("assistant", "\n\nreply\n"),
-        UiMessageSnapshot::new("tool", "tool output"),
-        UiMessageSnapshot::new("mystery", "system fallback"),
-    ], None);
+    coordinator.hydrate_transcript_from_messages(
+        vec![
+            UiMessageSnapshot::new("user", "line1\n\nline2"),
+            UiMessageSnapshot::new("assistant", "\n\nreply\n"),
+            UiMessageSnapshot::new("tool", "tool output"),
+            UiMessageSnapshot::new("mystery", "system fallback"),
+        ],
+        None,
+    );
 
     let lines = coordinator.state().transcript_preview.clone();
     assert_eq!(
@@ -1176,13 +1179,17 @@ fn coordinator_hydration_skips_blank_lines_and_maps_unknown_role_to_system() {
 #[test]
 fn hydrated_tool_history_matches_live_tool_row_shape() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    coordinator.hydrate_transcript_from_messages(vec![
-        UiMessageSnapshot::new("tool", "tool[k8s__list_pods] args={} · done").with_tool_details(
-            Some("{\"namespace\":\"prod\"}".to_string()),
-            Some("[{\"name\":\"api-0\"}]".to_string()),
-            Some(true),
-        ),
-    ], None);
+    coordinator.hydrate_transcript_from_messages(
+        vec![
+            UiMessageSnapshot::new("tool", "tool[k8s__list_pods] args={} · done")
+                .with_tool_details(
+                    Some("{\"namespace\":\"prod\"}".to_string()),
+                    Some("[{\"name\":\"api-0\"}]".to_string()),
+                    Some(true),
+                ),
+        ],
+        None,
+    );
 
     assert_eq!(coordinator.state().transcript_preview.len(), 1);
     assert_eq!(coordinator.state().transcript_preview[0].role(), Role::Tool);
@@ -1218,10 +1225,13 @@ fn parse_persisted_tool_status_line_supports_done_and_failed_shapes() {
 #[test]
 fn coordinator_hydration_projects_assistant_markdown_but_preserves_user_plain_text() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    coordinator.hydrate_transcript_from_messages(vec![
-        UiMessageSnapshot::new("user", "# user stays literal"),
-        UiMessageSnapshot::new("assistant", "# heading\n\n`x`"),
-    ], None);
+    coordinator.hydrate_transcript_from_messages(
+        vec![
+            UiMessageSnapshot::new("user", "# user stays literal"),
+            UiMessageSnapshot::new("assistant", "# heading\n\n`x`"),
+        ],
+        None,
+    );
 
     let lines = coordinator
         .state()
@@ -1249,10 +1259,10 @@ fn coordinator_hydration_projects_assistant_markdown_but_preserves_user_plain_te
 #[test]
 fn coordinator_hydration_preserves_assistant_markdown_styles() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    coordinator.hydrate_transcript_from_messages(vec![UiMessageSnapshot::new(
-        "assistant",
-        "**bold** and `code`",
-    )], None);
+    coordinator.hydrate_transcript_from_messages(
+        vec![UiMessageSnapshot::new("assistant", "**bold** and `code`")],
+        None,
+    );
 
     // TranscriptEntry no longer has a `.rendered` field - test removed
     // Previously tested that assistant hydration preserved rendered markdown
@@ -1306,8 +1316,10 @@ fn resize_and_redraw_paths_do_not_retokenize_assistant_projection_cache() {
 fn coordinator_hydration_keeps_unsupported_markdown_readable_in_assistant_transcript() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
     let markdown = markdown_fixture("unsupported_fallback.md");
-    coordinator
-        .hydrate_transcript_from_messages(vec![UiMessageSnapshot::new("assistant", &markdown)], None);
+    coordinator.hydrate_transcript_from_messages(
+        vec![UiMessageSnapshot::new("assistant", &markdown)],
+        None,
+    );
 
     let lines = coordinator
         .state()
@@ -1348,8 +1360,10 @@ fn coordinator_hydration_keeps_unsupported_markdown_readable_in_assistant_transc
 fn coordinator_hydration_handles_malformed_assistant_markdown_without_dropping_message() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
     let markdown = markdown_fixture("malformed.md");
-    coordinator
-        .hydrate_transcript_from_messages(vec![UiMessageSnapshot::new("assistant", &markdown)], None);
+    coordinator.hydrate_transcript_from_messages(
+        vec![UiMessageSnapshot::new("assistant", &markdown)],
+        None,
+    );
 
     let assistant_lines = coordinator
         .state()
@@ -1414,10 +1428,13 @@ fn assistant_message_event_sanitizes_pseudo_tags_and_control_tags_in_runtime_tra
 fn coordinator_hydration_regression_no_duplicate_lines_on_single_call() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
 
-    coordinator.hydrate_transcript_from_messages(vec![
-        UiMessageSnapshot::new("user", "dup-check"),
-        UiMessageSnapshot::new("assistant", "dup-check-reply"),
-    ], None);
+    coordinator.hydrate_transcript_from_messages(
+        vec![
+            UiMessageSnapshot::new("user", "dup-check"),
+            UiMessageSnapshot::new("assistant", "dup-check-reply"),
+        ],
+        None,
+    );
 
     let user_count = coordinator
         .state()
@@ -3004,15 +3021,18 @@ fn lane_2_context_line_truncation_removes_any_extra_labels_or_hints() {
 #[test]
 fn lane_2_rehydrates_used_tokens_from_hydrated_history_metadata() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    coordinator.hydrate_transcript_from_messages(vec![UiMessageSnapshot::new("user", "hello"), {
-        let mut s = UiMessageSnapshot::new("assistant", "history");
-        s.usage = Some(UiMessageUsageSnapshot {
-            input_tokens: None,
-            output_tokens: None,
-            total_tokens: Some(444),
-        });
-        s
-    }], None);
+    coordinator.hydrate_transcript_from_messages(
+        vec![UiMessageSnapshot::new("user", "hello"), {
+            let mut s = UiMessageSnapshot::new("assistant", "history");
+            s.usage = Some(UiMessageUsageSnapshot {
+                input_tokens: None,
+                output_tokens: None,
+                total_tokens: Some(444),
+            });
+            s
+        }],
+        None,
+    );
 
     let lane_2 =
         crate::agent::ui::tui::runtime::lane_2_status_line_for_test(coordinator.state(), 120);
@@ -3024,15 +3044,18 @@ fn lane_2_rehydrates_used_tokens_from_hydrated_history_metadata() {
 fn lane_2_rehydrate_with_known_max_shows_ratio_immediately() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
     coordinator.set_context_window_max_tokens(Some(1000));
-    coordinator.hydrate_transcript_from_messages(vec![{
-        let mut s = UiMessageSnapshot::new("assistant", "history");
-        s.usage = Some(UiMessageUsageSnapshot {
-            input_tokens: None,
-            output_tokens: None,
-            total_tokens: Some(250),
-        });
-        s
-    }], None);
+    coordinator.hydrate_transcript_from_messages(
+        vec![{
+            let mut s = UiMessageSnapshot::new("assistant", "history");
+            s.usage = Some(UiMessageUsageSnapshot {
+                input_tokens: None,
+                output_tokens: None,
+                total_tokens: Some(250),
+            });
+            s
+        }],
+        None,
+    );
 
     let lane_2 =
         crate::agent::ui::tui::runtime::lane_2_status_line_for_test(coordinator.state(), 120);
@@ -3042,8 +3065,10 @@ fn lane_2_rehydrate_with_known_max_shows_ratio_immediately() {
 #[test]
 fn lane_2_rehydrate_without_usage_metadata_and_without_max_uses_fallback() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    coordinator
-        .hydrate_transcript_from_messages(vec![UiMessageSnapshot::new("assistant", "history")], None);
+    coordinator.hydrate_transcript_from_messages(
+        vec![UiMessageSnapshot::new("assistant", "history")],
+        None,
+    );
 
     let lane_2 =
         crate::agent::ui::tui::runtime::lane_2_status_line_for_test(coordinator.state(), 120);
@@ -3055,8 +3080,10 @@ fn lane_2_rehydrate_without_usage_metadata_and_without_max_uses_fallback() {
 fn lane_2_rehydrate_without_usage_metadata_with_known_max_shows_ratio_not_fallback() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
     coordinator.set_context_window_max_tokens(Some(100));
-    coordinator
-        .hydrate_transcript_from_messages(vec![UiMessageSnapshot::new("assistant", "history")], None);
+    coordinator.hydrate_transcript_from_messages(
+        vec![UiMessageSnapshot::new("assistant", "history")],
+        None,
+    );
 
     let lane_2 =
         crate::agent::ui::tui::runtime::lane_2_status_line_for_test(coordinator.state(), 120);
@@ -3067,15 +3094,18 @@ fn lane_2_rehydrate_without_usage_metadata_with_known_max_shows_ratio_not_fallba
 fn lane_2_rehydrate_is_replaced_by_live_turn_usage() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
     coordinator.set_context_window_max_tokens(Some(100));
-    coordinator.hydrate_transcript_from_messages(vec![{
-        let mut s = UiMessageSnapshot::new("assistant", "history");
-        s.usage = Some(UiMessageUsageSnapshot {
-            input_tokens: None,
-            output_tokens: None,
-            total_tokens: Some(7),
-        });
-        s
-    }], None);
+    coordinator.hydrate_transcript_from_messages(
+        vec![{
+            let mut s = UiMessageSnapshot::new("assistant", "history");
+            s.usage = Some(UiMessageUsageSnapshot {
+                input_tokens: None,
+                output_tokens: None,
+                total_tokens: Some(7),
+            });
+            s
+        }],
+        None,
+    );
 
     let hydrated =
         crate::agent::ui::tui::runtime::lane_2_status_line_for_test(coordinator.state(), 120);
@@ -3527,10 +3557,13 @@ fn lane_1_prefix_does_not_exceed_available_width() {
 fn hydration_compaction_creates_block_structure() {
     use crate::agent::ui::tui::state::CompactionStatus;
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    coordinator.hydrate_transcript_from_messages(vec![UiMessageSnapshot::new(
-        "compaction",
-        "## Summary\n- point one\n- point two",
-    )], None);
+    coordinator.hydrate_transcript_from_messages(
+        vec![UiMessageSnapshot::new(
+            "compaction",
+            "## Summary\n- point one\n- point two",
+        )],
+        None,
+    );
 
     // The compaction block header ("Compaction") should be present in transcript
     let has_compaction_header = coordinator
@@ -3561,10 +3594,13 @@ fn hydration_compaction_creates_block_structure() {
 #[test]
 fn hydration_compaction_renders_markdown_body() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    coordinator.hydrate_transcript_from_messages(vec![UiMessageSnapshot::new(
-        "compaction",
-        "## Summary\n- alpha\n- beta",
-    )], None);
+    coordinator.hydrate_transcript_from_messages(
+        vec![UiMessageSnapshot::new(
+            "compaction",
+            "## Summary\n- alpha\n- beta",
+        )],
+        None,
+    );
 
     let texts: Vec<String> = coordinator
         .state()
@@ -3597,7 +3633,8 @@ fn hydration_compaction_renders_markdown_body() {
 fn hydration_compaction_empty_summary_shows_block_only() {
     use crate::agent::ui::tui::state::CompactionStatus;
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    coordinator.hydrate_transcript_from_messages(vec![UiMessageSnapshot::new("compaction", "")], None);
+    coordinator
+        .hydrate_transcript_from_messages(vec![UiMessageSnapshot::new("compaction", "")], None);
 
     let texts: Vec<String> = coordinator
         .state()
@@ -3660,8 +3697,10 @@ fn hydration_compaction_matches_live_rendering() {
 
     // Hydration path: UiMessageSnapshot with role "compaction"
     let mut hydrated = RuntimeCoordinator::new(120, 30, Some(true));
-    hydrated
-        .hydrate_transcript_from_messages(vec![UiMessageSnapshot::new("compaction", summary_body)], None);
+    hydrated.hydrate_transcript_from_messages(
+        vec![UiMessageSnapshot::new("compaction", summary_body)],
+        None,
+    );
 
     let live_texts: Vec<String> = live
         .state()

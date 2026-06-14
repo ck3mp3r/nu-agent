@@ -3,7 +3,6 @@ use tokio::sync::RwLock;
 
 use crate::agent::mailbox::{AgentRegistry, BrokerSender, ServerFrame};
 
-use super::ToolErrorKind;
 use super::spawn_agent::ToolExecError;
 
 /// Handle send_message tool invocation using BrokerSender (for children)
@@ -99,7 +98,6 @@ pub(crate) fn dispatch_list_agents(
 impl ToolExecError {
     pub(crate) fn new(message: impl Into<String>) -> Self {
         Self {
-            kind: ToolErrorKind::Validation,
             message: message.into(),
             details: None,
         }

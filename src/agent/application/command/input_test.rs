@@ -1,6 +1,8 @@
 use nu_protocol::Value;
 
-use super::input::{extract_context_from_input, extract_prompt_from_input, merge_prompt_with_context};
+use super::input::{
+    extract_context_from_input, extract_prompt_from_input, merge_prompt_with_context,
+};
 use crate::agent::protocol::prompt::merge_preamble_with_prompt_and_context;
 
 #[test]

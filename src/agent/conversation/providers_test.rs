@@ -169,3 +169,86 @@ fn build_ollama_client_with_base_url_succeeds() {
     let result = super::build_ollama_client(&config);
     assert!(result.is_ok());
 }
+
+// ========================================================================
+// Phase 1b: CachedProviderClient, resolve_provider_type, ClientCacheKey
+// ========================================================================
+
+#[test]
+fn client_cache_key_type_is_three_tuple() {
+    let key: ClientCacheKey = ("copilot".to_string(), None, None);
+    assert_eq!(key.0, "copilot");
+    assert_eq!(key.1, None);
+    assert_eq!(key.2, None);
+}
+
+#[test]
+fn resolve_provider_type_uses_field_when_set() {
+    assert_eq!(
+        super::resolve_provider_type("my-provider", Some("copilot")),
+        "copilot"
+    );
+}
+
+#[test]
+fn resolve_provider_type_falls_back_to_key_when_field_none() {
+    assert_eq!(
+        super::resolve_provider_type("github-copilot", None),
+        "github-copilot"
+    );
+}
+
+#[test]
+#[serial_test::serial]
+fn cached_provider_client_copilot_variant_holds_client() {
+    use crate::config::Config;
+
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
+    let config = Config {
+        provider: "copilot".to_string(),
+        model: "gpt-4".to_string(),
+        api_key: Some("fake-token".to_string()),
+        ..Config::default()
+    };
+    let client = build_copilot_client(&config).unwrap();
+    let c = CachedProviderClient::Copilot(client);
+    assert!(matches!(c, CachedProviderClient::Copilot(_)));
+}
+
+#[test]
+#[serial_test::serial]
+fn cached_provider_client_openai_variant_holds_client() {
+    use crate::config::Config;
+
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
+    let config = Config {
+        provider: "openai".to_string(),
+        model: "gpt-4".to_string(),
+        api_key: Some("sk-fake".to_string()),
+        ..Config::default()
+    };
+    let client = build_openai_client(&config).unwrap();
+    let c = CachedProviderClient::OpenAi(client);
+    assert!(matches!(c, CachedProviderClient::OpenAi(_)));
+}
+
+#[test]
+#[serial_test::serial]
+fn cached_provider_client_ollama_variant_holds_client() {
+    use crate::config::Config;
+
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
+    let config = Config {
+        provider: "ollama".to_string(),
+        model: "llama3".to_string(),
+        api_key: None,
+        base_url: Some("http://localhost:11434".to_string()),
+        ..Config::default()
+    };
+    let client = build_ollama_client(&config).unwrap();
+    let c = CachedProviderClient::Ollama(client);
+    assert!(matches!(c, CachedProviderClient::Ollama(_)));
+}

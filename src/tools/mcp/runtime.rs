@@ -118,10 +118,9 @@ fn merged_stdio_env_with_pwd(
 }
 
 enum McpSessionHandle {
-    Rmcp(
-        #[allow(dead_code)]
-        rmcp::service::RunningService<rmcp::service::RoleClient, NamespacedClientHandler>,
-    ),
+    Rmcp {
+        _service: rmcp::service::RunningService<rmcp::service::RoleClient, NamespacedClientHandler>,
+    },
 }
 
 fn select_enabled_servers(servers: &[McpServerConfig]) -> Vec<&McpServerConfig> {
@@ -266,7 +265,7 @@ pub async fn connect_servers(
 
         connected_servers.insert(server.name.clone());
         discovered_tools.extend(server_tools);
-        sessions.push(McpSessionHandle::Rmcp(service));
+        sessions.push(McpSessionHandle::Rmcp { _service: service });
     }
 
     Ok(McpRuntime {

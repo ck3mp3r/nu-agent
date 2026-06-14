@@ -1,8 +1,8 @@
 use crate::agent::application::command::runtime_build::{
     build_compaction_params, merge_compaction_configs,
 };
+use crate::compaction::{CompactionParams, CompactionStrategy};
 use crate::config::CompactionConfig;
-use crate::compaction::{CompactionStrategy, CompactionParams};
 
 // --- merge_compaction_configs ---
 

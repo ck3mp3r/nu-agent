@@ -1,4 +1,4 @@
-use rig::completion::message::{ToolCall, ToolFunction};
+use crate::types::{ToolCall, ToolFunction};
 use serde_json::json;
 
 use super::*;

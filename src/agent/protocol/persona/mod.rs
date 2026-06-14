@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 
 /// Error type for persona file resolution
 #[derive(Debug)]
-#[allow(dead_code)]
 pub(crate) enum PersonaError {
     /// Persona file not found in either cwd or config directory
     NotFound {
@@ -57,7 +56,6 @@ impl std::error::Error for PersonaError {
 
 /// Error type for front matter parsing
 #[derive(Debug)]
-#[allow(dead_code)]
 pub(crate) enum FrontMatterError {
     YamlParseFailed {
         source: noyalib::Error,
@@ -96,14 +94,12 @@ impl std::error::Error for FrontMatterError {
 }
 
 /// Raw parsed persona with optional front matter and body content (parser output)
-#[allow(dead_code)]
 pub(crate) struct RawParsedPersona {
     pub front_matter: Option<noyalib::Mapping>,
     pub body: String,
 }
 
 /// Parsed persona with typed front matter fields and body content
-#[allow(dead_code)]
 pub(crate) struct ParsedPersona {
     pub name: Option<String>,
     pub description: Option<String>,
@@ -113,7 +109,6 @@ pub(crate) struct ParsedPersona {
 }
 
 /// Interprets front matter into typed ParsedPersona struct
-#[allow(dead_code)]
 pub(crate) fn interpret_front_matter(
     front_matter: Option<&noyalib::Mapping>,
     body: String,
@@ -221,7 +216,6 @@ fn value_type_name(value: &noyalib::Value) -> String {
 }
 
 /// Trait for parsing front matter from markdown content
-#[allow(dead_code)]
 pub(crate) trait FrontMatterParser {
     fn parse(&self, input: &str) -> Result<RawParsedPersona, FrontMatterError>;
 }
@@ -235,7 +229,6 @@ pub(crate) struct PersonaSummary {
 }
 
 /// Trait for resolving persona files
-#[allow(dead_code)]
 pub(crate) trait PersonaFileResolver {
     /// Resolves a persona file by name, returning the path and contents
     fn resolve(&self, persona_name: &str) -> Result<(PathBuf, String), PersonaError>;
@@ -465,7 +458,6 @@ impl PersonaFileResolver for FsPersonaResolver {
 }
 
 /// Pulldown-cmark based front matter parser
-#[allow(dead_code)]
 pub(crate) struct PulldownCmarkFrontMatterParser;
 
 impl FrontMatterParser for PulldownCmarkFrontMatterParser {

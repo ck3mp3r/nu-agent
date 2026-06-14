@@ -122,7 +122,6 @@ fn loads_from_home_dot_agents() {
     fs::create_dir_all(&cwd).expect("create cwd");
     fs::write(home.join(".agents/AGENTS.md"), "HOME_AGENTS\n").expect("write");
 
-    let result =
-        load_agents_chain_for_cwd_for_tests(&cwd, None, Some(tmp.path()), Some(&home));
+    let result = load_agents_chain_for_cwd_for_tests(&cwd, None, Some(tmp.path()), Some(&home));
     assert!(result.merged_chain.unwrap().contains("HOME_AGENTS"));
 }

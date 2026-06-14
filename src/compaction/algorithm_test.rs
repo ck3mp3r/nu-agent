@@ -1,11 +1,11 @@
-use super::*;
-use crate::session::{JsonlConversationStore, ConversationStore, StoreEntry, extract_llm_context};
 use super::helpers::{has_tool_call, has_tool_result};
-use rig::completion::Message;
-use rig::completion::message::{
-    AssistantContent, Text, ToolCall, ToolFunction, ToolResultContent, UserContent,
+use super::*;
+use crate::session::{ConversationStore, JsonlConversationStore, StoreEntry, extract_llm_context};
+use crate::types::{
+    AssistantContent, InMemoryConversationMemory, Message, Text, ToolCall, ToolFunction,
+    ToolResult, ToolResultContent, UserContent,
 };
-use rig::memory::{ConversationMemory, InMemoryConversationMemory};
+use rig::memory::ConversationMemory;
 use rig::one_or_many::OneOrMany;
 use serde_json::json;
 use std::sync::Arc;
@@ -31,16 +31,14 @@ fn make_tool_call_message(call_id: &str, tool_name: &str) -> Message {
 /// Helper: build a User message containing a single ToolResult.
 fn make_tool_result_message(call_id: &str, result_text: &str) -> Message {
     Message::User {
-        content: OneOrMany::one(UserContent::ToolResult(
-            rig::completion::message::ToolResult {
-                id: call_id.to_string(),
-                call_id: None,
-                content: OneOrMany::one(ToolResultContent::Text(Text {
-                    text: result_text.to_string(),
-                    additional_params: None,
-                })),
-            },
-        )),
+        content: OneOrMany::one(UserContent::ToolResult(ToolResult {
+            id: call_id.to_string(),
+            call_id: None,
+            content: OneOrMany::one(ToolResultContent::Text(Text {
+                text: result_text.to_string(),
+                additional_params: None,
+            })),
+        })),
     }
 }
 
@@ -77,7 +75,9 @@ fn compact_splits_at_keep_recent() {
 
     let outcome = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
+        .block_on(async {
+            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+        })
         .unwrap();
 
     // Verify: 7 messages summarized, 3 kept recent
@@ -141,7 +141,9 @@ fn compact_persists_to_store() {
 
     tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
+        .block_on(async {
+            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+        })
         .unwrap();
 
     // Verify: store contains all original messages + compaction marker + re-appended kept
@@ -188,7 +190,9 @@ fn compact_handles_insufficient_messages() {
 
     let outcome = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
+        .block_on(async {
+            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+        })
         .unwrap();
 
     // Should be no-op
@@ -232,7 +236,9 @@ fn compact_clears_before_append() {
 
     tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
+        .block_on(async {
+            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+        })
         .unwrap();
 
     // Memory should contain exactly 3 messages (summary + 2 recent), not 5 + 3
@@ -284,7 +290,9 @@ fn compact_with_async_summarizer_does_not_panic() {
     // This is the production pattern: block_on wrapping an async call
     // that internally awaits the summarizer
     let outcome = rt
-        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
+        .block_on(async {
+            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+        })
         .unwrap();
 
     assert_eq!(outcome.summarized_count, 3);
@@ -332,7 +340,9 @@ fn compact_does_not_split_tool_call_result_pair() {
 
     let outcome = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
+        .block_on(async {
+            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+        })
         .unwrap();
 
     // Naive split at 7 → safe split at 6 → 6 summarized, 4 kept
@@ -393,7 +403,9 @@ fn compact_store_written_before_memory() {
 
     tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
+        .block_on(async {
+            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+        })
         .unwrap();
 
     // Store must have all original messages + compaction marker + re-appended kept
@@ -439,7 +451,9 @@ fn compact_successful_produces_correct_state() {
 
     tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
+        .block_on(async {
+            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+        })
         .unwrap();
 
     // Memory has LLM context (summary + 2 recent = 3 messages)
@@ -493,7 +507,9 @@ fn compact_sliding_window_keeps_last_n_messages() {
 
     let outcome = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
+        .block_on(async {
+            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+        })
         .unwrap();
 
     assert_eq!(outcome.summarized_count, 7);
@@ -560,7 +576,9 @@ fn compact_sliding_window_summarizer_not_called() {
     // Must complete without panic
     let outcome = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
+        .block_on(async {
+            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+        })
         .unwrap();
 
     assert_eq!(outcome.kept_recent_count, 3);
@@ -593,7 +611,9 @@ fn compact_sliding_window_preserves_message_order() {
 
     tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
+        .block_on(async {
+            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+        })
         .unwrap();
 
     let final_messages = tokio::runtime::Runtime::new()
@@ -645,7 +665,9 @@ fn compact_token_truncate_drops_oldest_within_budget() {
 
     let _outcome = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
+        .block_on(async {
+            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+        })
         .unwrap();
 
     // Verify: only newest messages kept within budget
@@ -687,7 +709,9 @@ fn compact_token_truncate_single_large_message() {
 
     let _outcome = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
+        .block_on(async {
+            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+        })
         .unwrap();
 
     // Must keep the message — never return empty
@@ -730,7 +754,9 @@ fn compact_appends_marker_preserving_history() {
 
     tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
+        .block_on(async {
+            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+        })
         .unwrap();
 
     let (entries, _) = store.load_all(session_id).unwrap();
@@ -790,7 +816,9 @@ fn compact_marker_has_correct_fields() {
 
     tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
+        .block_on(async {
+            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+        })
         .unwrap();
 
     let (entries, _) = store.load_all(session_id).unwrap();
@@ -834,7 +862,9 @@ fn compact_memory_has_llm_context_only() {
 
     tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
+        .block_on(async {
+            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+        })
         .unwrap();
 
     let from_memory = tokio::runtime::Runtime::new()
@@ -883,7 +913,9 @@ fn compact_sliding_window_appends_marker_empty_summary() {
 
     tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
+        .block_on(async {
+            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+        })
         .unwrap();
 
     let (entries, _) = store.load_all(session_id).unwrap();
@@ -928,7 +960,9 @@ fn compact_token_truncate_appends_marker_empty_summary() {
 
     tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, None).await })
+        .block_on(async {
+            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+        })
         .unwrap();
 
     let (entries, _) = store.load_all(session_id).unwrap();
@@ -970,7 +1004,9 @@ fn multiple_compactions_append_multiple_markers() {
     let summarizer1 = |_: &[Message]| async move { Ok("Summary 1".to_string()) };
     tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer1, None).await })
+        .block_on(async {
+            super::compact(session_id, &config, &memory, &store, summarizer1, None).await
+        })
         .unwrap();
 
     // After first compact, memory has 4 messages (summary + 3 recent).
@@ -991,7 +1027,9 @@ fn multiple_compactions_append_multiple_markers() {
     let summarizer2 = |_: &[Message]| async move { Ok("Summary 2".to_string()) };
     tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer2, None).await })
+        .block_on(async {
+            super::compact(session_id, &config, &memory, &store, summarizer2, None).await
+        })
         .unwrap();
 
     let (entries, _) = store.load_all(session_id).unwrap();
@@ -1032,7 +1070,17 @@ fn compaction_preserves_last_total_tokens() {
     let summarizer = |_: &[Message]| async move { Ok(String::new()) };
     tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(async { super::compact(session_id, &config, &memory, &store, summarizer, Some(14000)).await })
+        .block_on(async {
+            super::compact(
+                session_id,
+                &config,
+                &memory,
+                &store,
+                summarizer,
+                Some(14000),
+            )
+            .await
+        })
         .unwrap();
 
     // Verify load_all returns Some(14000) as the last total tokens

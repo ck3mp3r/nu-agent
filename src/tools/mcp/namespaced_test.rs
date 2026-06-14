@@ -1,5 +1,5 @@
 use super::*;
-use rig::completion::ToolDefinition;
+use crate::types::ToolDefinition;
 use rig::tool::{ToolDyn, ToolError};
 use rig::wasm_compat::WasmBoxedFuture;
 

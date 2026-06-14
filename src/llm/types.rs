@@ -1,4 +1,4 @@
-use rig::completion::message::AssistantContent;
+use crate::types::AssistantContent;
 
 /// Token usage statistics from LLM response.
 #[derive(Debug, Clone, PartialEq)]

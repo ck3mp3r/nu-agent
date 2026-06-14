@@ -14,20 +14,20 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, TableState, Wrap},
 };
+mod backend;
+mod panels;
 mod render_frame;
+mod renderer;
 mod status;
+mod status_help;
 mod terminal_events;
 mod terminal_io;
 mod tool_hydration;
-mod panels;
-mod status_help;
-mod backend;
-mod renderer;
-use panels::*;
-use status_help::*;
-pub use renderer::TuiRuntimeRenderer;
-pub use backend::{AnsiTerminalBackend, RuntimeRunError, run_with_terminal_restore};
 use backend::LiveTerminalUi;
+pub use backend::{AnsiTerminalBackend, RuntimeRunError, run_with_terminal_restore};
+use panels::*;
+pub use renderer::TuiRuntimeRenderer;
+use status_help::*;
 
 use render_frame::{
     ModalPanelKind, STATUS_TARGET_HEIGHT, current_time_millis, modal_rect_for_panel,
@@ -1319,5 +1319,3 @@ pub(super) fn inline_model_picker_modal_respects_border_and_backdrop_policy_for_
 pub(super) fn model_picker_empty_state_message_for_test() -> &'static str {
     MODEL_PICKER_EMPTY_STATE_MESSAGE
 }
-
-

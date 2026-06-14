@@ -1,7 +1,7 @@
 //! Bridges the PermissionResolver trait to the existing authorization system.
 
+use crate::types::{ToolCall, ToolFunction};
 use nu_plugin::EngineInterface;
-use rig::completion::message::{ToolCall, ToolFunction};
 use serde_json::Value as JsonValue;
 
 use super::types::PermissionDecision;
