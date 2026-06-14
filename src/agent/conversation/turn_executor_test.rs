@@ -31,14 +31,8 @@ fn turn_executor_new_constructs_without_panic() {
     let config = test_config();
     let rt = tokio::runtime::Runtime::new().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut memory_state = super::super::memory_state::MemoryState {
-        memory: crate::types::InMemoryConversationMemory::new(),
-        conversation_store: crate::session::JsonlConversationStore::new(
-            temp_dir.path().to_path_buf(),
-        ),
-        memory_hydrated: false,
-        last_total_tokens: None,
-    };
+    let mut memory_state =
+        super::super::memory_state::MemoryState::new(temp_dir.path().to_path_buf());
     let mut permission_state = super::super::permission_state::PermissionState::new(
         crate::agent::tools::authz::PermissionsConfig::safe_defaults(true),
         SessionGrantCache::default(),
@@ -68,14 +62,8 @@ fn turn_executor_exposes_memory_state() {
     let config = test_config();
     let rt = tokio::runtime::Runtime::new().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut memory_state = super::super::memory_state::MemoryState {
-        memory: crate::types::InMemoryConversationMemory::new(),
-        conversation_store: crate::session::JsonlConversationStore::new(
-            temp_dir.path().to_path_buf(),
-        ),
-        memory_hydrated: false,
-        last_total_tokens: None,
-    };
+    let mut memory_state =
+        super::super::memory_state::MemoryState::new(temp_dir.path().to_path_buf());
     let mut permission_state = super::super::permission_state::PermissionState::new(
         crate::agent::tools::authz::PermissionsConfig::safe_defaults(true),
         SessionGrantCache::default(),
@@ -99,7 +87,7 @@ fn turn_executor_exposes_memory_state() {
     );
 
     // Verify memory_state is accessible and last_total_tokens starts None
-    assert!(executor.memory_state.last_total_tokens.is_none());
+    assert!(executor.memory_state.last_total_tokens().is_none());
 }
 
 #[test]
@@ -107,14 +95,8 @@ fn turn_executor_take_response_data_returns_none_before_execute() {
     let config = test_config();
     let rt = tokio::runtime::Runtime::new().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut memory_state = super::super::memory_state::MemoryState {
-        memory: crate::types::InMemoryConversationMemory::new(),
-        conversation_store: crate::session::JsonlConversationStore::new(
-            temp_dir.path().to_path_buf(),
-        ),
-        memory_hydrated: false,
-        last_total_tokens: None,
-    };
+    let mut memory_state =
+        super::super::memory_state::MemoryState::new(temp_dir.path().to_path_buf());
     let mut permission_state = super::super::permission_state::PermissionState::new(
         crate::agent::tools::authz::PermissionsConfig::safe_defaults(true),
         SessionGrantCache::default(),

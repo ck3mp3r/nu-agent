@@ -1068,17 +1068,17 @@ Compaction flags:
                 baseline_tool_definitions,
                 closure_registry,
             ),
-            mcp_state: crate::agent::conversation::mcp_state::McpState {
-                mcp_registry,
+            mcp_state: crate::agent::conversation::mcp_state::McpState::new(
                 mcp_runtime,
-                mcp_tool_server_handle: tool_server_handle,
+                tool_server_handle,
                 mcp_lifecycle_projection,
-                mcp_server_configs: mcp_config
+                mcp_config
                     .as_ref()
                     .map(|cfg| cfg.mcp.clone())
                     .unwrap_or_default(),
                 mcp_caller_cwd,
-            },
+                mcp_registry,
+            ),
             engine: engine.clone(),
             store: self.store.clone(),
             final_session_id: session_resolution.final_session_id,
@@ -1100,22 +1100,17 @@ Compaction flags:
                 }),
                 permissions_startup_summary,
             ),
-            memory_state: crate::agent::conversation::memory_state::MemoryState {
-                memory: crate::types::InMemoryConversationMemory::new(),
-                conversation_store: crate::session::JsonlConversationStore::new(
-                    self.store.cache_dir().to_path_buf(),
-                ),
-                memory_hydrated: false,
-                last_total_tokens: None,
-            },
-            persona_state: crate::agent::conversation::persona_state::PersonaState {
-                agent_persona_body: persona.as_ref().map(|p| p.body.clone()),
+            memory_state: crate::agent::conversation::memory_state::MemoryState::new(
+                self.store.cache_dir().to_path_buf(),
+            ),
+            persona_state: crate::agent::conversation::persona_state::PersonaState::new(
+                persona.as_ref().map(|p| p.body.clone()),
                 agent_identity,
-                agent_description: persona.as_ref().and_then(|p| p.description.clone()),
+                persona.as_ref().and_then(|p| p.description.clone()),
                 cached_agents_chain,
                 cached_available_skills,
                 cached_sub_agent_instruction,
-            },
+            ),
             multi_agent_state: crate::agent::conversation::multi_agent_state::MultiAgentState::new(
                 mailbox_rx,
                 available_agents,
@@ -1124,13 +1119,9 @@ Compaction flags:
         };
         log::debug!(
             "runtime: agent_persona_body_len={:?}, agent_identity={:?}, agent_description={:?}",
-            runtime_impl
-                .persona_state
-                .agent_persona_body
-                .as_ref()
-                .map(|b| b.len()),
-            runtime_impl.persona_state.agent_identity,
-            runtime_impl.persona_state.agent_description
+            runtime_impl.persona_state.persona_body_len(),
+            runtime_impl.persona_state.agent_identity(),
+            runtime_impl.persona_state.agent_description()
         );
         match mode {
             AgentMode::Tui => run_tui_mode(

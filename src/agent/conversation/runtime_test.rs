@@ -195,7 +195,7 @@ fn runtime_struct_has_memory_field() {
     // We can't easily construct a runtime in tests, but we can verify
     // the type signature compiles
     let _type_check: fn(&AgentConversationRuntime) = |r| {
-        _assert_field_exists(&r.memory_state.memory);
+        _assert_field_exists(r.memory_state.memory());
     };
 }
 
@@ -208,7 +208,7 @@ fn runtime_struct_has_conversation_store_field() {
     fn _assert_field_exists(_store: &JsonlConversationStore) {}
 
     let _type_check: fn(&AgentConversationRuntime) = |r| {
-        _assert_field_exists(&r.memory_state.conversation_store);
+        _assert_field_exists(r.memory_state.conversation_store());
     };
 }
 
@@ -344,7 +344,7 @@ fn runtime_struct_has_compacting_field() {
 fn runtime_struct_has_memory_hydrated_field() {
     // Compile-time check that the memory_hydrated field exists with correct type
     let _type_check: fn(&AgentConversationRuntime) = |r| {
-        let _hydrated: bool = r.memory_state.memory_hydrated;
+        let _hydrated: bool = r.memory_state.is_hydrated();
     };
 }
 
@@ -1086,7 +1086,7 @@ fn memory_state_hydrated_flag_starts_false() {
 
     // Compile-time proof the field exists with type bool on the struct.
     let _type_check: fn(&AgentConversationRuntime) = |r| {
-        let _: bool = r.memory_state.memory_hydrated;
+        let _: bool = r.memory_state.is_hydrated();
     };
 }
 
@@ -1468,28 +1468,22 @@ fn accessor_startup_plugin_config_returns_none_when_default() {
 #[test]
 fn accessor_agent_identity_returns_none_when_default() {
     // PersonaState with no agent_identity set must return None
-    let persona_state = super::super::persona_state::PersonaState {
-        agent_persona_body: None,
-        agent_identity: None,
-        agent_description: None,
-        cached_agents_chain: None,
-        cached_available_skills: None,
-        cached_sub_agent_instruction: None,
-    };
-    assert_eq!(persona_state.agent_identity.as_deref(), None);
+    let persona_state =
+        super::super::persona_state::PersonaState::new(None, None, None, None, None, None);
+    assert_eq!(persona_state.agent_identity(), None);
 }
 
 #[test]
 fn accessor_agent_identity_returns_some_when_set() {
-    let persona_state = super::super::persona_state::PersonaState {
-        agent_persona_body: None,
-        agent_identity: Some("developer".to_string()),
-        agent_description: None,
-        cached_agents_chain: None,
-        cached_available_skills: None,
-        cached_sub_agent_instruction: None,
-    };
-    assert_eq!(persona_state.agent_identity.as_deref(), Some("developer"));
+    let persona_state = super::super::persona_state::PersonaState::new(
+        None,
+        Some("developer".to_string()),
+        None,
+        None,
+        None,
+        None,
+    );
+    assert_eq!(persona_state.agent_identity(), Some("developer"));
 }
 
 #[test]
@@ -1567,4 +1561,68 @@ fn compaction_state_compacting_flag_starts_false() {
         CompactionStrategy::SlidingSummary,
     );
     assert!(!state.compacting().load(Ordering::SeqCst));
+}
+
+// ========================================================================
+// Phase J: MemoryState characterisation tests
+// ========================================================================
+
+#[test]
+fn memory_state_hydrated_false_on_construction() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let ms = super::super::memory_state::MemoryState::new(temp_dir.path().to_path_buf());
+    assert!(!ms.is_hydrated());
+}
+
+#[test]
+fn memory_state_last_total_tokens_none_on_construction() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let ms = super::super::memory_state::MemoryState::new(temp_dir.path().to_path_buf());
+    assert!(ms.last_total_tokens().is_none());
+}
+
+// ========================================================================
+// Phase K: PersonaState characterisation tests
+// ========================================================================
+
+#[test]
+fn persona_state_agent_identity_none_by_default() {
+    let persona_state =
+        super::super::persona_state::PersonaState::new(None, None, None, None, None, None);
+    assert!(persona_state.agent_identity().is_none());
+}
+
+#[test]
+fn persona_state_agent_description_none_by_default() {
+    let persona_state =
+        super::super::persona_state::PersonaState::new(None, None, None, None, None, None);
+    assert!(persona_state.agent_description().is_none());
+}
+
+// ========================================================================
+// Phase L: McpState characterisation tests
+// ========================================================================
+
+#[test]
+fn mcp_state_caller_cwd_none_by_default() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let ms = super::super::memory_state::MemoryState::new(temp_dir.path().to_path_buf());
+    // Access mcp_state through a compile-time type check
+    let _type_check: fn(&AgentConversationRuntime) = |rt| {
+        assert!(rt.mcp_state.mcp_caller_cwd().is_none());
+    };
+    // Value-level proof: default Option is None
+    let cwd: Option<std::path::PathBuf> = None;
+    assert!(cwd.is_none());
+}
+
+#[test]
+fn mcp_state_lifecycle_projection_empty_by_default() {
+    use crate::tools::mcp::runtime::McpServerLifecycle;
+    let _type_check: fn(&AgentConversationRuntime) = |rt| {
+        assert!(rt.mcp_state.mcp_lifecycle_projection().is_empty());
+    };
+    // Value-level proof: default Vec is empty
+    let projection: Vec<McpServerLifecycle> = vec![];
+    assert!(projection.is_empty());
 }

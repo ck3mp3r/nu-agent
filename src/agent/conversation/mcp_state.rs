@@ -11,15 +11,46 @@ use super::mcp_helpers::{
 };
 
 pub(crate) struct McpState {
-    pub(crate) mcp_runtime: Option<McpRuntime>,
-    pub(crate) mcp_tool_server_handle: rig::tool::server::ToolServerHandle,
-    pub(crate) mcp_lifecycle_projection: Vec<McpServerLifecycle>,
-    pub(crate) mcp_server_configs: Vec<McpServerConfig>,
-    pub(crate) mcp_caller_cwd: Option<std::path::PathBuf>,
-    pub(crate) mcp_registry: McpToolRegistry,
+    mcp_runtime: Option<McpRuntime>,
+    mcp_tool_server_handle: rig::tool::server::ToolServerHandle,
+    mcp_lifecycle_projection: Vec<McpServerLifecycle>,
+    mcp_server_configs: Vec<McpServerConfig>,
+    mcp_caller_cwd: Option<std::path::PathBuf>,
+    mcp_registry: McpToolRegistry,
 }
 
 impl McpState {
+    pub(crate) fn new(
+        mcp_runtime: Option<McpRuntime>,
+        mcp_tool_server_handle: rig::tool::server::ToolServerHandle,
+        mcp_lifecycle_projection: Vec<McpServerLifecycle>,
+        mcp_server_configs: Vec<McpServerConfig>,
+        mcp_caller_cwd: Option<std::path::PathBuf>,
+        mcp_registry: McpToolRegistry,
+    ) -> Self {
+        Self {
+            mcp_runtime,
+            mcp_tool_server_handle,
+            mcp_lifecycle_projection,
+            mcp_server_configs,
+            mcp_caller_cwd,
+            mcp_registry,
+        }
+    }
+
+    pub(crate) fn mcp_registry(&self) -> &McpToolRegistry {
+        &self.mcp_registry
+    }
+    pub(crate) fn mcp_tool_server_handle(&self) -> &rig::tool::server::ToolServerHandle {
+        &self.mcp_tool_server_handle
+    }
+    pub(crate) fn mcp_caller_cwd(&self) -> Option<&std::path::Path> {
+        self.mcp_caller_cwd.as_deref()
+    }
+    pub(crate) fn mcp_lifecycle_projection(&self) -> &[McpServerLifecycle] {
+        &self.mcp_lifecycle_projection
+    }
+
     pub(crate) fn set_mcp_server_enabled(
         &mut self,
         server_name: &str,

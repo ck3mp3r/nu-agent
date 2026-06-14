@@ -1,12 +1,12 @@
 use crate::config::Config;
 
 pub(crate) struct PersonaState {
-    pub(crate) agent_persona_body: Option<String>,
-    pub(crate) agent_identity: Option<String>,
-    pub(crate) agent_description: Option<String>,
-    pub(crate) cached_agents_chain: Option<String>,
-    pub(crate) cached_available_skills: Option<String>,
-    pub(crate) cached_sub_agent_instruction: Option<String>,
+    agent_persona_body: Option<String>,
+    agent_identity: Option<String>,
+    agent_description: Option<String>,
+    cached_agents_chain: Option<String>,
+    cached_available_skills: Option<String>,
+    cached_sub_agent_instruction: Option<String>,
 }
 
 /// Result of a successful agent switch, carrying side-effects the caller must apply.
@@ -16,6 +16,46 @@ pub(crate) struct SwitchAgentResult {
 }
 
 impl PersonaState {
+    pub(crate) fn new(
+        agent_persona_body: Option<String>,
+        agent_identity: Option<String>,
+        agent_description: Option<String>,
+        cached_agents_chain: Option<String>,
+        cached_available_skills: Option<String>,
+        cached_sub_agent_instruction: Option<String>,
+    ) -> Self {
+        Self {
+            agent_persona_body,
+            agent_identity,
+            agent_description,
+            cached_agents_chain,
+            cached_available_skills,
+            cached_sub_agent_instruction,
+        }
+    }
+
+    pub(crate) fn agent_persona_body(&self) -> Option<&str> {
+        self.agent_persona_body.as_deref()
+    }
+    pub(crate) fn agent_identity(&self) -> Option<&str> {
+        self.agent_identity.as_deref()
+    }
+    pub(crate) fn agent_description(&self) -> Option<&str> {
+        self.agent_description.as_deref()
+    }
+    pub(crate) fn cached_agents_chain(&self) -> Option<&str> {
+        self.cached_agents_chain.as_deref()
+    }
+    pub(crate) fn cached_available_skills(&self) -> Option<&str> {
+        self.cached_available_skills.as_deref()
+    }
+    pub(crate) fn cached_sub_agent_instruction(&self) -> Option<&str> {
+        self.cached_sub_agent_instruction.as_deref()
+    }
+    pub(crate) fn persona_body_len(&self) -> Option<usize> {
+        self.agent_persona_body.as_ref().map(|b| b.len())
+    }
+
     pub(crate) fn switch_agent(
         &mut self,
         agent_name: &str,

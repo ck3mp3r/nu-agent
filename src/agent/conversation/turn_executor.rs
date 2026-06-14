@@ -181,7 +181,7 @@ impl<'a> TurnExecutor<'a> {
             &model_name,
             TurnVisitor {
                 runtime: self.runtime,
-                memory: &self.memory_state.memory,
+                memory: self.memory_state.memory(),
                 config: self.config,
                 permissions,
                 session_grants,
@@ -207,14 +207,14 @@ impl<'a> TurnExecutor<'a> {
                 {
                     if let Err(persist_err) = self
                         .memory_state
-                        .conversation_store
+                        .conversation_store()
                         .append(session_id, messages, None)
                     {
                         log::warn!("Failed to persist cancelled turn messages: {}", persist_err);
                     }
                     if let Err(mem_err) = self.runtime.block_on(
                         self.memory_state
-                            .memory
+                            .memory_mut()
                             .append(session_id, messages.clone()),
                     ) {
                         log::warn!(
@@ -263,14 +263,14 @@ impl<'a> TurnExecutor<'a> {
             }
             if let Err(e) =
                 self.memory_state
-                    .conversation_store
+                    .conversation_store()
                     .append(session_id, &cancelled_messages, None)
             {
                 log::warn!("Failed to persist cancelled turn messages (path B): {}", e);
             }
             if let Err(e) = self.runtime.block_on(
                 self.memory_state
-                    .memory
+                    .memory_mut()
                     .append(session_id, cancelled_messages.clone()),
             ) {
                 log::warn!(
@@ -284,7 +284,7 @@ impl<'a> TurnExecutor<'a> {
         if let Some(session_id) = final_session_id
             && let Some(ref messages) = turn_result.messages
         {
-            if let Err(e) = self.memory_state.conversation_store.append(
+            if let Err(e) = self.memory_state.conversation_store().append(
                 session_id,
                 messages,
                 Some(turn_result.last_total_tokens),
@@ -296,7 +296,7 @@ impl<'a> TurnExecutor<'a> {
             }
 
             // Update last_total_tokens for compaction
-            self.memory_state.last_total_tokens = Some(turn_result.last_total_tokens);
+            *self.memory_state.last_total_tokens_mut() = Some(turn_result.last_total_tokens);
         }
 
         // Emit UI events

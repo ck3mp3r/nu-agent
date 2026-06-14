@@ -127,7 +127,7 @@ pub(crate) fn run_stderr_mode(
 
     // Spawn a tokio task that awaits SIGINT and sets the cancel flag
     let signal_flag = Arc::clone(&cancel_flag);
-    runtime_impl.runtime.spawn(async move {
+    runtime_impl.spawn(async move {
         loop {
             if tokio::signal::ctrl_c().await.is_ok() {
                 signal_flag.store(true, Ordering::SeqCst);

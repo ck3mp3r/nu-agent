@@ -5,7 +5,6 @@ use nu_plugin::EngineInterface;
 use nu_protocol::{LabeledError, Span, Value};
 
 use crate::session::SessionStore;
-use crate::types::InMemoryConversationMemory;
 
 use super::compaction::CompactionGuard;
 use super::compaction::executor::CompactionExecutor;
@@ -60,17 +59,17 @@ fn build_system_preamble(
 }
 
 pub(crate) struct AgentConversationRuntime {
-    pub runtime: tokio::runtime::Runtime,
+    pub(crate) runtime: tokio::runtime::Runtime,
     pub(crate) provider_state: super::provider_state::ProviderState,
     pub(crate) tool_state: super::tool_state::ToolState,
-    pub mcp_state: super::mcp_state::McpState,
-    pub engine: EngineInterface,
-    pub store: SessionStore,
-    pub final_session_id: Option<String>,
-    pub compaction_state: super::compaction::state::CompactionState,
+    pub(crate) mcp_state: super::mcp_state::McpState,
+    pub(crate) engine: EngineInterface,
+    pub(crate) store: SessionStore,
+    pub(crate) final_session_id: Option<String>,
+    pub(crate) compaction_state: super::compaction::state::CompactionState,
     pub(crate) permission_state: super::permission_state::PermissionState,
-    pub memory_state: super::memory_state::MemoryState,
-    pub persona_state: super::persona_state::PersonaState,
+    pub(crate) memory_state: super::memory_state::MemoryState,
+    pub(crate) persona_state: super::persona_state::PersonaState,
     pub(crate) multi_agent_state: super::multi_agent_state::MultiAgentState,
 }
 
@@ -91,11 +90,11 @@ impl CoreRuntime for AgentConversationRuntime {
         // Build system preamble from cached components
         let preamble = build_system_preamble(
             self.provider_state.config().preamble.as_deref(),
-            self.persona_state.agent_persona_body.as_deref(),
-            self.persona_state.cached_sub_agent_instruction.as_deref(),
+            self.persona_state.agent_persona_body(),
+            self.persona_state.cached_sub_agent_instruction(),
             context.as_deref(),
-            self.persona_state.cached_agents_chain.as_deref(),
-            self.persona_state.cached_available_skills.as_deref(),
+            self.persona_state.cached_agents_chain(),
+            self.persona_state.cached_available_skills(),
         );
 
         log::debug!(
@@ -112,7 +111,7 @@ impl CoreRuntime for AgentConversationRuntime {
 
         // Compute filtered tool definitions before entering the mutable borrow scope
         let visible_tool_definitions = self.tool_state.active_definitions(
-            &self.mcp_state.mcp_registry,
+            self.mcp_state.mcp_registry(),
             self.permission_state.permissions(),
         );
 
@@ -128,8 +127,8 @@ impl CoreRuntime for AgentConversationRuntime {
                 &mut self.memory_state,
                 ToolInfra {
                     closure_registry: self.tool_state.closure_registry(),
-                    mcp_registry: &self.mcp_state.mcp_registry,
-                    mcp_tool_server_handle: &self.mcp_state.mcp_tool_server_handle,
+                    mcp_registry: self.mcp_state.mcp_registry(),
+                    mcp_tool_server_handle: self.mcp_state.mcp_tool_server_handle(),
                 },
             );
 
@@ -198,7 +197,7 @@ impl ExtendedRuntime for AgentConversationRuntime {
     fn llm_visible_mcp_tool_count(&self) -> usize {
         self.mcp_state
             .llm_visible_mcp_tool_count(&self.tool_state.active_definitions(
-                &self.mcp_state.mcp_registry,
+                self.mcp_state.mcp_registry(),
                 self.permission_state.permissions(),
             ))
     }
@@ -207,7 +206,7 @@ impl ExtendedRuntime for AgentConversationRuntime {
         self.mcp_state.llm_visible_mcp_tool_count_for_server(
             server_name,
             &self.tool_state.active_definitions(
-                &self.mcp_state.mcp_registry,
+                self.mcp_state.mcp_registry(),
                 self.permission_state.permissions(),
             ),
         )
@@ -216,7 +215,7 @@ impl ExtendedRuntime for AgentConversationRuntime {
     fn llm_visible_mcp_tool_names_by_server(&self) -> Vec<(String, Vec<String>)> {
         self.mcp_state
             .llm_visible_mcp_tool_names_by_server(&self.tool_state.active_definitions(
-                &self.mcp_state.mcp_registry,
+                self.mcp_state.mcp_registry(),
                 self.permission_state.permissions(),
             ))
     }
@@ -228,8 +227,8 @@ impl ExtendedRuntime for AgentConversationRuntime {
     fn switch_agent(&mut self, agent_name: &str) -> Result<String, String> {
         let cwd = self
             .mcp_state
-            .mcp_caller_cwd
-            .clone()
+            .mcp_caller_cwd()
+            .map(|p| p.to_path_buf())
             .ok_or_else(|| "agent switch unavailable: working directory not set".to_string())?;
 
         let result = self.persona_state.switch_agent(
@@ -259,7 +258,7 @@ impl ExtendedRuntime for AgentConversationRuntime {
 
     fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
         self.compaction_state
-            .evaluate_auto_compaction(self.memory_state.last_total_tokens)
+            .evaluate_auto_compaction(self.memory_state.last_total_tokens())
     }
 
     fn execute_compaction_trigger<U: ProgressUi>(
@@ -271,13 +270,21 @@ impl ExtendedRuntime for AgentConversationRuntime {
     }
 
     fn clear_session(&mut self) {
-        self.memory_state.memory = InMemoryConversationMemory::new();
-        self.memory_state.memory_hydrated = false;
+        self.memory_state.clear();
     }
 }
 
 impl AgentConversationRuntime {
     // ── Phase I accessor methods ────────────────────────────────────
+
+    /// Spawn a future on the tokio runtime.
+    pub(crate) fn spawn<F>(&self, future: F) -> tokio::task::JoinHandle<F::Output>
+    where
+        F: std::future::Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        self.runtime.spawn(future)
+    }
 
     pub(crate) fn provider(&self) -> &str {
         &self.provider_state.config().provider
@@ -299,17 +306,17 @@ impl AgentConversationRuntime {
     }
 
     pub(crate) fn agent_identity(&self) -> Option<&str> {
-        self.persona_state.agent_identity.as_deref()
+        self.persona_state.agent_identity()
     }
 
     pub(crate) fn mcp_caller_cwd(&self) -> Option<&std::path::Path> {
-        self.mcp_state.mcp_caller_cwd.as_deref()
+        self.mcp_state.mcp_caller_cwd()
     }
 
     pub(crate) fn mcp_lifecycle_projection(
         &self,
     ) -> &[crate::tools::mcp::runtime::McpServerLifecycle] {
-        &self.mcp_state.mcp_lifecycle_projection
+        self.mcp_state.mcp_lifecycle_projection()
     }
 
     pub(crate) fn available_agent_summaries(
@@ -365,10 +372,10 @@ impl AgentConversationRuntime {
         let result = CompactionExecutor::new(
             self.provider_state.config(),
             &self.runtime,
-            &self.memory_state.memory,
-            &self.memory_state.conversation_store,
+            self.memory_state.memory(),
+            self.memory_state.conversation_store(),
             &self.store,
-            self.memory_state.last_total_tokens,
+            self.memory_state.last_total_tokens(),
             session_id,
         )
         .execute(ui, source, self.provider_state.client().unwrap())?;
@@ -376,7 +383,7 @@ impl AgentConversationRuntime {
         if let Some(new_count) = result {
             self.compaction_state.set_compaction_count(new_count);
             // Reset so stale pre-compaction token count can't re-trigger
-            self.memory_state.last_total_tokens = None;
+            *self.memory_state.last_total_tokens_mut() = None;
         }
 
         Ok(())

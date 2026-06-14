@@ -1,20 +1,47 @@
+use crate::session::{ConversationStore, JsonlConversationStore, StoreEntry, extract_llm_context};
+use crate::types::InMemoryConversationMemory;
 use nu_protocol::LabeledError;
 use rig::memory::ConversationMemory;
 
-use crate::session::{ConversationStore, JsonlConversationStore, StoreEntry, extract_llm_context};
-use crate::types::InMemoryConversationMemory;
-
 pub(crate) struct MemoryState {
-    pub(crate) memory: InMemoryConversationMemory,
-    pub(crate) conversation_store: JsonlConversationStore,
-    pub(crate) memory_hydrated: bool,
-    pub(crate) last_total_tokens: Option<u64>,
+    memory: InMemoryConversationMemory,
+    conversation_store: JsonlConversationStore,
+    memory_hydrated: bool,
+    last_total_tokens: Option<u64>,
 }
 
 impl MemoryState {
-    /// Idempotent memory hydration: loads stored messages into in-memory
-    /// conversation memory exactly once per runtime lifetime (or until
-    /// `clear_session` resets the guard).
+    pub(crate) fn new(cache_dir: std::path::PathBuf) -> Self {
+        Self {
+            memory: InMemoryConversationMemory::new(),
+            conversation_store: JsonlConversationStore::new(cache_dir),
+            memory_hydrated: false,
+            last_total_tokens: None,
+        }
+    }
+    pub(crate) fn memory(&self) -> &InMemoryConversationMemory {
+        &self.memory
+    }
+    pub(crate) fn memory_mut(&mut self) -> &mut InMemoryConversationMemory {
+        &mut self.memory
+    }
+    pub(crate) fn conversation_store(&self) -> &JsonlConversationStore {
+        &self.conversation_store
+    }
+    pub(crate) fn last_total_tokens(&self) -> Option<u64> {
+        self.last_total_tokens
+    }
+    pub(crate) fn last_total_tokens_mut(&mut self) -> &mut Option<u64> {
+        &mut self.last_total_tokens
+    }
+    pub(crate) fn clear(&mut self) {
+        self.memory = InMemoryConversationMemory::new();
+        self.memory_hydrated = false;
+    }
+    #[cfg(test)]
+    pub(crate) fn is_hydrated(&self) -> bool {
+        self.memory_hydrated
+    }
     pub(crate) fn ensure_memory_hydrated(
         &mut self,
         final_session_id: Option<&str>,
@@ -25,15 +52,11 @@ impl MemoryState {
             return Ok(());
         }
         if let Some(session_id) = final_session_id {
-            // Load ALL entries (messages + markers)
             let (entries, last_total_tokens) = self
                 .conversation_store
                 .load_all(session_id)
                 .map_err(|e| LabeledError::new(format!("Failed to load session entries: {}", e)))?;
-
-            // Extract only LLM-relevant messages (from latest marker onward)
             let llm_context = extract_llm_context(&entries);
-
             if !llm_context.is_empty() {
                 runtime
                     .block_on(self.memory.append(session_id, llm_context.clone()))
@@ -42,8 +65,6 @@ impl MemoryState {
                     })?;
             }
             self.last_total_tokens = last_total_tokens;
-
-            // Derive compaction_count from markers
             let marker_count = entries
                 .iter()
                 .filter(|e| matches!(e, StoreEntry::Marker(_)))
