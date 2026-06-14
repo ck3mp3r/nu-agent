@@ -12,8 +12,6 @@ use crate::agent::hook::{
     driver::HookDriver, driver::PermissionResolver, prompt_hook::CopilotPromptHook,
 };
 use crate::agent::protocol::contracts::ProgressUi;
-use crate::agent::tools::handler::McpToolRegistry;
-use crate::tools::closure::ClosureRegistry;
 use crate::types::{InMemoryConversationMemory, Message, Text, ToolDefinition, UserContent};
 use rig::streaming::StreamingPrompt;
 use rig::tool::{ToolDyn, ToolError};
@@ -116,22 +114,49 @@ impl From<rig::agent::StreamingError> for TurnError {
 }
 
 /// Context for executing a conversation turn.
+pub(crate) struct TurnConversation {
+    pub(crate) memory: InMemoryConversationMemory,
+    pub(crate) conversation_id: String,
+}
+
+pub(crate) struct TurnInput<'a> {
+    pub(crate) prompt: String,
+    pub(crate) preamble: Option<&'a str>,
+    pub(crate) max_turns: Option<u32>,
+}
+
 pub(crate) struct TurnContext<'a, M>
 where
     M: rig::completion::CompletionModel + Clone + 'static,
     M::StreamingResponse: rig::completion::request::GetTokenUsage,
 {
-    pub runtime: &'a tokio::runtime::Handle,
-    pub model: M,
-    pub prompt: String,
-    pub memory: InMemoryConversationMemory,
-    pub conversation_id: String,
-    pub preamble: Option<&'a str>,
-    pub max_turns: Option<u32>,
-    pub tool_server_handle: rig::tool::server::ToolServerHandle,
-    pub visible_tool_definitions: Vec<ToolDefinition>,
-    pub closure_registry: &'a ClosureRegistry,
-    pub mcp_registry: &'a McpToolRegistry,
+    runtime: &'a tokio::runtime::Handle,
+    model: M,
+    conversation: TurnConversation,
+    input: TurnInput<'a>,
+    tool_infra: super::turn_executor::ToolInfra<'a>,
+}
+
+impl<'a, M> TurnContext<'a, M>
+where
+    M: rig::completion::CompletionModel + Clone + 'static,
+    M::StreamingResponse: rig::completion::request::GetTokenUsage,
+{
+    pub(crate) fn new(
+        runtime: &'a tokio::runtime::Handle,
+        model: M,
+        conversation: TurnConversation,
+        input: TurnInput<'a>,
+        tool_infra: super::turn_executor::ToolInfra<'a>,
+    ) -> Self {
+        Self {
+            runtime,
+            model,
+            conversation,
+            input,
+            tool_infra,
+        }
+    }
 }
 
 /// Execute a conversation turn using the agent loop with hooks.
@@ -183,13 +208,13 @@ where
     // Build the prompt message
     let user_message = Message::User {
         content: rig::one_or_many::OneOrMany::one(UserContent::Text(Text {
-            text: ctx.prompt,
+            text: ctx.input.prompt,
             additional_params: None,
         })),
     };
 
     // Clone preamble for the 'static future
-    let preamble_owned = ctx.preamble.map(|s| s.to_string());
+    let preamble_owned = ctx.input.preamble.map(|s| s.to_string());
 
     // Build and execute agent with hook
     let config = AgentPromptConfig {
@@ -197,11 +222,11 @@ where
         cancel_token: cancel_token.clone(),
         preamble: preamble_owned,
         prompt: user_message,
-        memory: ctx.memory,
-        conversation_id: ctx.conversation_id,
-        tool_server_handle: ctx.tool_server_handle,
-        visible_tool_definitions: ctx.visible_tool_definitions,
-        max_turns: ctx.max_turns,
+        memory: ctx.conversation.memory,
+        conversation_id: ctx.conversation.conversation_id,
+        tool_server_handle: ctx.tool_infra.tool_server_handle,
+        visible_tool_definitions: ctx.tool_infra.visible_tool_definitions,
+        max_turns: ctx.input.max_turns,
     };
 
     let model = ctx.model.clone();
@@ -215,8 +240,8 @@ where
     driver.run_until_complete(
         ui,
         permissions,
-        ctx.closure_registry,
-        ctx.mcp_registry,
+        ctx.tool_infra.closure_registry,
+        ctx.tool_infra.mcp_registry,
         &cancel_token,
     );
 

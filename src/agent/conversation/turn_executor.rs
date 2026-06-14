@@ -49,11 +49,12 @@ pub(crate) struct TurnResponseData {
     pub(crate) has_session: bool,
 }
 
-/// Groups the 3 tool infrastructure fields always passed through to TurnContext.
+/// Groups the tool infrastructure fields always passed through to TurnContext.
 pub(crate) struct ToolInfra<'a> {
     pub(crate) closure_registry: &'a ClosureRegistry,
     pub(crate) mcp_registry: &'a McpToolRegistry,
-    pub(crate) mcp_tool_server_handle: &'a rig::tool::server::ToolServerHandle,
+    pub(crate) tool_server_handle: rig::tool::server::ToolServerHandle,
+    pub(crate) visible_tool_definitions: Vec<ToolDefinition>,
 }
 
 pub(crate) struct TurnExecutor<'a> {
@@ -99,7 +100,6 @@ impl<'a> TurnExecutor<'a> {
         ui: &mut U,
         input: ExecuteInput,
         cached_client: &CachedProviderClient,
-        visible_tool_definitions: Vec<ToolDefinition>,
         engine: &EngineInterface,
         final_session_id: Option<&str>,
     ) -> Result<TurnOutcome, LabeledError> {
@@ -156,19 +156,25 @@ impl<'a> TurnExecutor<'a> {
                     mcp_registry: self.mcp_registry,
                 };
                 execute_turn(
-                    TurnContext {
-                        runtime: self.runtime.handle(),
+                    TurnContext::new(
+                        self.runtime.handle(),
                         model,
-                        prompt: self.prompt,
-                        memory: self.memory.clone(),
-                        conversation_id: self.conversation_id,
-                        preamble: self.preamble.as_deref(),
-                        max_turns: self.config.max_tool_turns,
-                        tool_server_handle: self.mcp_tool_server_handle.clone(),
-                        visible_tool_definitions: self.visible_tool_definitions,
-                        closure_registry: self.closure_registry,
-                        mcp_registry: self.mcp_registry,
-                    },
+                        super::turn::TurnConversation {
+                            memory: self.memory.clone(),
+                            conversation_id: self.conversation_id,
+                        },
+                        super::turn::TurnInput {
+                            prompt: self.prompt,
+                            preamble: self.preamble.as_deref(),
+                            max_turns: self.config.max_tool_turns,
+                        },
+                        ToolInfra {
+                            closure_registry: self.closure_registry,
+                            mcp_registry: self.mcp_registry,
+                            tool_server_handle: self.mcp_tool_server_handle.clone(),
+                            visible_tool_definitions: self.visible_tool_definitions,
+                        },
+                    ),
                     self.ui,
                     &mut permission_resolver,
                 )
@@ -189,12 +195,14 @@ impl<'a> TurnExecutor<'a> {
                 engine,
                 closure_registry: self.tool_infra.closure_registry,
                 mcp_registry: self.tool_infra.mcp_registry,
-                mcp_tool_server_handle: self.tool_infra.mcp_tool_server_handle,
+                mcp_tool_server_handle: &self.tool_infra.tool_server_handle,
                 ui,
                 prompt: prompt.clone(),
                 conversation_id,
                 preamble: preamble.clone(),
-                visible_tool_definitions,
+                visible_tool_definitions: std::mem::take(
+                    &mut self.tool_infra.visible_tool_definitions,
+                ),
             },
         );
 

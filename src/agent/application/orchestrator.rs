@@ -88,6 +88,25 @@ impl ProgressUi for WorkerProgressUi {
     }
 }
 
+/// Poll a one-shot option channel without blocking.
+/// Returns (value, Some(rx)) if empty (re-park the receiver), (value, None) if disconnected.
+/// The returned Option<T> is Some if a value was ready, None for all other outcomes
+/// where the caller doesn't need the value.
+///
+/// Returns: (Option<T>, Option<Receiver<Option<T>>>)
+///   - (Some(v), None)     — value ready
+///   - (None, Some(rx))    — empty, re-park
+///   - (None, None)        — disconnected
+fn poll_option_channel<T>(
+    rx: mpsc::Receiver<Option<T>>,
+) -> (Option<T>, Option<mpsc::Receiver<Option<T>>>) {
+    match rx.try_recv() {
+        Ok(val) => (val, None),
+        Err(mpsc::TryRecvError::Empty) => (None, Some(rx)),
+        Err(mpsc::TryRecvError::Disconnected) => (None, None),
+    }
+}
+
 pub(crate) fn run_interactive_loop<R, U>(
     runtime: &mut R,
     ui: &mut U,
@@ -263,17 +282,15 @@ where
 
             if !worker_active {
                 if let Some(response_rx) = pending_compaction_trigger.take() {
-                    match response_rx.try_recv() {
-                        Ok(Some(message)) => ui.emit(&UiEvent::Warning { message }),
-                        Ok(None) => {}
-                        Err(mpsc::TryRecvError::Empty) => {
-                            pending_compaction_trigger = Some(response_rx)
-                        }
-                        Err(mpsc::TryRecvError::Disconnected) => {
-                            ui.emit(&UiEvent::Warning {
-                                message: "Compaction worker disconnected".to_string(),
-                            });
-                        }
+                    let (message, rx) = poll_option_channel(response_rx);
+                    if let Some(msg) = message {
+                        ui.emit(&UiEvent::Warning { message: msg });
+                    } else if let Some(rx) = rx {
+                        pending_compaction_trigger = Some(rx);
+                    } else {
+                        ui.emit(&UiEvent::Warning {
+                            message: "Compaction worker disconnected".to_string(),
+                        });
                     }
                 }
 
@@ -288,14 +305,13 @@ where
                 }
 
                 if let Some(response_rx) = pending_auto_compaction.take() {
-                    match response_rx.try_recv() {
-                        Ok(Some(message)) => ui.emit(&UiEvent::Warning { message }),
-                        Ok(None) => {}
-                        Err(mpsc::TryRecvError::Empty) => {
-                            pending_auto_compaction = Some(response_rx)
-                        }
-                        Err(mpsc::TryRecvError::Disconnected) => {}
+                    let (message, rx) = poll_option_channel(response_rx);
+                    if let Some(msg) = message {
+                        ui.emit(&UiEvent::Warning { message: msg });
+                    } else if let Some(rx) = rx {
+                        pending_auto_compaction = Some(rx);
                     }
+                    // Disconnected: silently drop (no warning needed for auto-compaction disconnect)
                 }
             } else {
                 pending_auto_compaction = None;

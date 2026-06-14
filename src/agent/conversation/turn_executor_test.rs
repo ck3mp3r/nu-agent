@@ -51,7 +51,8 @@ fn turn_executor_new_constructs_without_panic() {
         ToolInfra {
             closure_registry: &closure_registry,
             mcp_registry: &mcp_registry,
-            mcp_tool_server_handle: &mcp_tool_server_handle,
+            tool_server_handle: mcp_tool_server_handle,
+            visible_tool_definitions: vec![],
         },
     );
     // Construction succeeded — no panic.
@@ -82,7 +83,8 @@ fn turn_executor_exposes_memory_state() {
         ToolInfra {
             closure_registry: &closure_registry,
             mcp_registry: &mcp_registry,
-            mcp_tool_server_handle: &mcp_tool_server_handle,
+            tool_server_handle: mcp_tool_server_handle,
+            visible_tool_definitions: vec![],
         },
     );
 
@@ -115,7 +117,8 @@ fn turn_executor_take_response_data_returns_none_before_execute() {
         ToolInfra {
             closure_registry: &closure_registry,
             mcp_registry: &mcp_registry,
-            mcp_tool_server_handle: &mcp_tool_server_handle,
+            tool_server_handle: mcp_tool_server_handle,
+            visible_tool_definitions: vec![],
         },
     );
 

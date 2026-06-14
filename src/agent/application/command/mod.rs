@@ -7,30 +7,24 @@ pub(crate) mod input;
 mod mode_execute;
 pub(crate) mod pending;
 mod permissions;
+mod persona;
 pub(crate) mod picker;
 pub(crate) mod poll;
 pub(crate) mod pump;
 pub(crate) mod router;
 mod runtime_build;
+mod setup;
 pub(crate) mod tool_defs;
 
-use permissions::{
-    is_builtin_enabled, resolve_default_agent, resolve_effective_permissions_config,
-    resolve_non_interactive_ask_mode,
-};
-use tool_defs::{
-    builtin_tool_definitions, messaging_tool_definitions, orchestrator_tool_definitions,
-};
+use permissions::{resolve_effective_permissions_config, resolve_non_interactive_ask_mode};
+use tool_defs::{ToolAssembly, assemble_tool_definitions};
 
 use crate::{
     AgentPlugin,
     agent::{
         conversation::runtime::AgentConversationRuntime,
         session::resolver::{DefaultSessionResolver, SessionResolutionInput, SessionResolver},
-        tools::{
-            authz::{AskRuntimeConfig, AsyncAskHook, PermissionsOverlay, SessionGrantCache},
-            handler::McpToolRegistry,
-        },
+        tools::{authz::AskRuntimeConfig, handler::McpToolRegistry},
         ui::{
             policy::{UiPolicy, resolve_ui_policy},
             tui::{platform::safety::RestoreRunError, runtime::RuntimeRunError},
@@ -551,118 +545,26 @@ Compaction flags:
                     .with_label(err.to_string(), call.head)
             })?;
 
-        // Load agent persona and extract permissions overlay before resolving effective permissions
+        // Load agent persona and resolve identity
         let (agent_name, cli_name) = args::extract_agent_flags(call);
         log::debug!("agent flags: agent_name={agent_name:?}, cli_name={cli_name:?}");
-
-        // Extract broker flags early (before runtime construction)
         let broker_flags = args::extract_broker_flags(call)?;
         log::debug!("broker flags: present={}", broker_flags.is_some());
 
-        // Determine effective agent name:
-        // 1. CLI --agent flag provided → validate it's not a disabled built-in
-        // 2. No CLI flag → resolve from config default/fallback
-        let effective_agent_name = if let Some(ref name) = agent_name {
-            if crate::agent::protocol::persona::builtins::is_builtin_persona(name)
-                && !is_builtin_enabled(name, &agents_config)
-            {
-                return Err(LabeledError::new(format!(
-                    "Agent '{}' is disabled in config. Enable it or use a different agent.",
-                    name
-                ))
-                .with_label("disabled agent", call.head));
-            }
-            Some(name.clone())
-        } else {
-            resolve_default_agent(&agents_config)?
-        };
-        log::debug!("effective_agent_name={effective_agent_name:?}");
-
-        let persona = if let Some(ref name) = effective_agent_name {
-            let cwd = engine.get_current_dir().map_err(|e| {
-                LabeledError::new("Failed to get current directory")
-                    .with_label(format!("{}", e), call.head)
-            })?;
-            let cwd = std::path::PathBuf::from(cwd);
-            let config_dir = crate::utils::xdg::config_dir()
-                .map(|base| base.join("nu-agent"))
-                .map_err(|e| {
-                    LabeledError::new("Cannot determine config directory")
-                        .with_label(e.to_string(), call.head)
-                })?;
-
-            use crate::agent::protocol::persona::{
-                FrontMatterParser, FsPersonaResolver, PersonaFileResolver,
-                PulldownCmarkFrontMatterParser, interpret_front_matter,
-            };
-
-            let resolver = FsPersonaResolver::new(cwd, config_dir, agents_config.clone());
-            let (_path, contents) = resolver.resolve(name).map_err(|e| {
-                LabeledError::new("Agent persona not found").with_label(e.to_string(), call.head)
-            })?;
-
-            let parser = PulldownCmarkFrontMatterParser;
-            let raw = parser.parse(&contents).map_err(|e| {
-                LabeledError::new("Invalid agent persona front matter")
-                    .with_label(e.to_string(), call.head)
-            })?;
-
-            // Interpret front matter into typed fields
-            Some(
-                interpret_front_matter(raw.front_matter.as_ref(), raw.body).map_err(|e| {
-                    LabeledError::new("Invalid agent persona front matter")
-                        .with_label(e.to_string(), call.head)
-                })?,
-            )
-        } else {
-            None
-        };
-        log::debug!(
-            "persona loaded: name={:?}, model={:?}, has_permissions={}, body_len={}",
-            persona.as_ref().and_then(|p| p.name.as_ref()),
-            persona.as_ref().and_then(|p| p.model.as_ref()),
-            persona.as_ref().is_some_and(|p| p.permissions.is_some()),
-            persona.as_ref().map_or(0, |p| p.body.len())
-        );
-
-        // Display identity: persona name > effective agent name (never --name)
-        let agent_identity = persona
-            .as_ref()
-            .and_then(|p| p.name.clone())
-            .or_else(|| effective_agent_name.clone());
-        // Messaging identity: --name > display identity (for multi-agent communication)
-        let messaging_identity = cli_name.or_else(|| agent_identity.clone());
-        log::debug!(
-            "resolved agent_identity={agent_identity:?}, messaging_identity={messaging_identity:?}"
-        );
-
-        // Wire permissions field
-        let agent_permissions_overlay = persona
-            .as_ref()
-            .and_then(|p| p.permissions.as_ref())
-            .map(PermissionsOverlay::parse_from_yaml)
-            .transpose()
-            .map_err(|msg| {
-                LabeledError::new("Invalid agent permissions").with_label(msg, call.head)
-            })?;
-        log::debug!(
-            "agent_permissions_overlay present={}",
-            agent_permissions_overlay.is_some()
-        );
-
-        // Wire model with precedence: CLI --model > front matter model > plugin config
-        // Config already has plugin/env/default merged, we just need to inject persona model if CLI didn't provide one
-        let cli_model_provided = call.get_flag::<Value>("model").ok().flatten().is_some();
-        runtime_build::apply_persona_model(
+        let call_has_model_flag = call.get_flag::<Value>("model").ok().flatten().is_some();
+        let persona_resolution = persona::resolve_persona(
+            agent_name,
+            cli_name,
+            &agents_config,
+            engine,
+            call,
             &mut config,
-            persona.as_ref().and_then(|p| p.model.as_deref()),
-            cli_model_provided,
-        );
-        log::debug!(
-            "effective model after persona merge: provider={}, model={}",
-            config.provider,
-            config.model
-        );
+            call_has_model_flag,
+        )?;
+        let persona = persona_resolution.persona;
+        let agent_identity = persona_resolution.agent_identity;
+        let messaging_identity = persona_resolution.messaging_identity;
+        let agent_permissions_overlay = persona_resolution.agent_permissions_overlay;
 
         let (effective_permissions, permissions_startup_summary) =
             resolve_effective_permissions_config(
@@ -727,71 +629,19 @@ Compaction flags:
                 LabeledError::new("Failed to build MCP tool registry").with_label(msg, call.head)
             })?;
 
-        // Convert closures to tool definitions for LLM
-        let mut tool_definitions: Vec<crate::types::ToolDefinition> = closure_registry
-            .names()
-            .map(|name| {
-                let resolved = closure_registry.get(name).unwrap();
-                crate::tools::closure::closure_to_tool_definition(
-                    name.clone(),
-                    &resolved.params,
-                    None,
-                )
-            })
-            .collect();
-
-        tool_definitions.extend(builtin_tool_definitions());
-
-        // Only add orchestrator tools (spawn_agent) for parent agents (no broker_flags)
-        let is_orchestrator = broker_flags.is_none();
-
-        // Add messaging tools when agent has broker access (child) or is orchestrator (parent)
-        let has_messaging = broker_flags.is_some() || is_orchestrator;
-        if has_messaging {
-            tool_definitions.extend(messaging_tool_definitions());
-        }
-        let available_agents = if is_orchestrator {
-            use crate::agent::protocol::persona::{FsPersonaResolver, PersonaLister};
-            let cwd = engine
-                .get_current_dir()
-                .map(std::path::PathBuf::from)
-                .unwrap_or_default();
-            let config_dir = crate::utils::xdg::config_dir()
-                .map(|base| base.join("nu-agent"))
-                .unwrap_or_default();
-            let resolver = FsPersonaResolver::new(cwd, config_dir, agents_config.clone());
-            resolver.list_available()
-        } else {
-            Vec::new()
-        };
-        if is_orchestrator {
-            tool_definitions.extend(orchestrator_tool_definitions(&available_agents));
-        }
-
-        tool_definitions.extend(discovered_mcp_tools.iter().map(|tool| {
-            crate::types::ToolDefinition {
-                name: tool.name.clone(),
-                description: tool
-                    .description
-                    .clone()
-                    .unwrap_or_else(|| format!("MCP tool from server '{}'", tool.server)),
-                parameters: tool.parameters.clone().unwrap_or_else(|| {
-                    serde_json::json!({
-                        "type": "object",
-                        "properties": {
-                            "args": {
-                                "type": "array",
-                                "items": {}
-                            }
-                        },
-                        "required": ["args"]
-                    })
-                }),
-            }
-        }));
-
-        // Store baseline for agent switching
-        let baseline_tool_definitions = tool_definitions.clone();
+        let ToolAssembly {
+            tool_definitions,
+            baseline_tool_definitions,
+            available_agents,
+            is_orchestrator,
+            has_messaging,
+        } = assemble_tool_definitions(
+            &closure_registry,
+            broker_flags.is_some(),
+            &agents_config,
+            &discovered_mcp_tools,
+            engine,
+        );
 
         let resolver = DefaultSessionResolver::new(&self.store);
         let mut session_resolution = resolver.resolve(SessionResolutionInput {
@@ -800,323 +650,78 @@ Compaction flags:
             session_id,
         })?;
 
-        // Create audit log directory ONCE before prompt loop
-        let log_dir = crate::utils::xdg::data_dir()
-            .map_err(|e| LabeledError::new(format!("XDG data directory error: {}", e)))?
-            .join("nu-agent");
-        std::fs::create_dir_all(&log_dir).map_err(|e| {
-            LabeledError::new(format!("Failed to create audit log directory: {}", e))
-        })?;
-        let log_path = log_dir.join("tool_audit.log");
-
-        let audit_logger = std::sync::Arc::new(crate::tools::audit::AuditLogger::new(log_path));
-        let tool_executor = crate::tools::executor::ToolExecutor::new(
-            std::sync::Arc::new(engine.clone()),
-            audit_logger,
+        let setup::SetupResult {
+            mailbox_rx,
+            parent_name,
+            merged_compaction,
+            compaction_strategy,
+            compaction_count,
+        } = setup::register_tools(setup::RegisterToolsInput {
+            runtime: &runtime,
+            tool_server_handle: &tool_server_handle,
+            closure_registry: &closure_registry,
+            engine,
+            call,
+            plugin_config_value: plugin_config_value.as_ref(),
+            available_agents: &available_agents,
+            messaging_identity: messaging_identity.clone(),
+            broker_flags,
+            is_orchestrator,
+            has_messaging,
             tool_timeout,
-        );
-
-        // Register closure tools with the ToolServer
-        // This happens once at startup, not per-turn
-        use crate::agent::hook::closure_adapter::adapt_closures;
-
-        let closure_tools = adapt_closures(
-            &closure_registry,
-            std::sync::Arc::new(tool_executor.clone()),
-            call.head,
-        );
-
-        for tool in closure_tools {
-            runtime
-                .block_on(async { tool_server_handle.add_tool(tool).await })
-                .map_err(|e| {
-                    LabeledError::new(format!("Failed to register closure tool: {}", e))
-                        .with_label(format!("{}", e), call.head)
-                })?;
-        }
-
-        // Register builtin FS tools (read, edit, patch, skill) with ToolServer
-        use crate::agent::hook::builtin_adapter::adapt_builtins;
-
-        let cwd = engine.get_current_dir().map_err(|e| {
-            LabeledError::new(format!("Failed to get current directory: {}", e))
-                .with_label(format!("{}", e), call.head)
+            session: session_resolution.session.as_mut(),
         })?;
-        let cwd_path = std::path::PathBuf::from(cwd);
-
-        let mut builtin_defs = builtin_tool_definitions();
-        if has_messaging {
-            builtin_defs.extend(messaging_tool_definitions());
-        }
-
-        // Create orchestrator state for parent agents (no broker_flags = orchestrator)
-        // Also register the orchestrator itself in the AgentRegistry so child agents
-        // can send messages back to it via send_message(to: "<orchestrator_name>").
-        let (orchestrator_state, orchestrator_mailbox_rx) = if is_orchestrator {
-            builtin_defs.extend(orchestrator_tool_definitions(&available_agents));
-            let registry = std::sync::Arc::new(tokio::sync::RwLock::new(
-                crate::agent::mailbox::AgentRegistry::new(),
-            ));
-
-            // Register the orchestrator in its own registry (use messaging identity)
-            let orchestrator_name = messaging_identity
-                .clone()
-                .unwrap_or_else(|| "orchestrator".to_string());
-            let (tokio_tx, mut tokio_rx) =
-                tokio::sync::mpsc::channel::<crate::agent::mailbox::ServerFrame>(64);
-            runtime.block_on(async {
-                registry
-                    .write()
-                    .await
-                    .add_connected(orchestrator_name.clone(), tokio_tx);
-            });
-            log::debug!(
-                "Registered orchestrator '{}' in agent registry",
-                orchestrator_name
-            );
-
-            // Bridge tokio channel to std::sync::mpsc for mailbox_rx
-            let (std_tx, std_rx) =
-                std::sync::mpsc::channel::<crate::agent::mailbox::IncomingMessage>();
-            runtime.spawn(async move {
-                while let Some(frame) = tokio_rx.recv().await {
-                    if let crate::agent::mailbox::ServerFrame::Message {
-                        from,
-                        message,
-                        kind,
-                    } = frame
-                    {
-                        log::trace!("Orchestrator received message from '{}': {}", from, message);
-                        if std_tx
-                            .send(crate::agent::mailbox::IncomingMessage {
-                                from,
-                                message,
-                                kind,
-                            })
-                            .is_err()
-                        {
-                            log::debug!(
-                                "Orchestrator mailbox receiver dropped, stopping forwarding task"
-                            );
-                            break;
-                        }
-                    }
-                }
-            });
-
-            let state = Some(std::sync::Arc::new(std::sync::Mutex::new(
-                crate::agent::tools::handler::spawn_agent::OrchestratorState {
-                    agent_identity: messaging_identity.clone(),
-                    ..crate::agent::tools::handler::spawn_agent::OrchestratorState::new(
-                        registry,
-                        cwd_path.clone(),
-                    )
-                },
-            )));
-            (state, Some(std_rx))
-        } else {
-            (None, None)
-        };
-
-        // Merge compaction config: default < plugin_config < CLI flags
-        // Extract compaction config from plugin config (if available)
-        let plugin_compaction = plugin_config_value
-            .as_ref()
-            .and_then(|v| PluginConfig::from_plugin_config(v).ok())
-            .and_then(|pc| pc.compaction);
-
-        // Extract compaction flags from CLI
-        let cli_compaction = args::extract_compaction_flags(call)?;
-
-        // Merge: plugin config overrides defaults, CLI overrides plugin config
-        let merged_compaction =
-            runtime_build::merge_compaction_configs(plugin_compaction.as_ref(), &cli_compaction);
-
-        // Validate merged compaction config
-        merged_compaction.validate().map_err(|msg| {
-            LabeledError::new("Compaction config validation failed").with_label(msg, call.head)
-        })?;
-
-        // Build CompactionParams from merged compaction config
-        let compaction_params = runtime_build::build_compaction_params(&merged_compaction);
-
-        // Extract compaction policy fields (not in CompactionParams)
-        let compaction_strategy = compaction_params.compaction_strategy;
-
-        // Apply config to session and extract session metadata
-        let compaction_count = if let Some(ref mut session) = session_resolution.session {
-            session.set_compaction_config(compaction_params);
-            session.compaction_count()
-        } else {
-            0
-        };
-
-        // Connect to broker if flags provided
-        let (broker_sender, mailbox_rx, parent_name) = if let Some(flags) = broker_flags {
-            log::debug!("Connecting to broker at {:?}", flags.socket_path);
-            let client = runtime
-                .block_on(async {
-                    crate::agent::mailbox::BrokerClient::connect(&flags.socket_path, &flags.token)
-                        .await
-                })
-                .map_err(|e| LabeledError::new(format!("Failed to connect to broker: {}", e)))?;
-
-            log::debug!("Connected to broker as '{}'", client.name);
-
-            let (sender, mut receiver) = client.split();
-
-            // Spawn a task to forward broker messages to a channel
-            let (tx, rx) = std::sync::mpsc::channel();
-            runtime.spawn(async move {
-                loop {
-                    match receiver.recv().await {
-                        Ok(crate::agent::mailbox::ServerFrame::Message {
-                            from,
-                            message,
-                            kind,
-                        }) => {
-                            log::trace!("Received message from '{}': {}", from, message);
-                            if tx
-                                .send(crate::agent::mailbox::IncomingMessage {
-                                    from,
-                                    message,
-                                    kind,
-                                })
-                                .is_err()
-                            {
-                                log::debug!("Mailbox receiver dropped, stopping forwarding task");
-                                break;
-                            }
-                        }
-                        Ok(_frame) => {
-                            log::trace!("Ignoring non-message frame");
-                        }
-                        Err(e) => {
-                            log::debug!("Broker receiver error: {}", e);
-                            break;
-                        }
-                    }
-                }
-            });
-
-            (Some(sender), Some(rx), flags.parent_name)
-        } else {
-            (None, orchestrator_mailbox_rx, None)
-        };
-
-        let broker_sender_arc =
-            broker_sender.map(|s| std::sync::Arc::new(tokio::sync::Mutex::new(s)));
-        let builtin_tools = adapt_builtins(
-            builtin_defs,
-            cwd_path,
-            orchestrator_state,
-            broker_sender_arc,
-            messaging_identity.clone(),
-        );
-
-        for tool in builtin_tools {
-            runtime
-                .block_on(async { tool_server_handle.add_tool(tool).await })
-                .map_err(|e| {
-                    LabeledError::new(format!("Failed to register builtin tool: {}", e))
-                        .with_label(format!("{}", e), call.head)
-                })?;
-        }
 
         let mcp_caller_cwd: Option<std::path::PathBuf> =
             engine.get_current_dir().ok().map(std::path::PathBuf::from);
 
-        // --- Cache preamble components (loaded once, reused every turn) ---
-        let loaded_agents_result = mcp_caller_cwd
-            .as_deref()
-            .map(crate::agent::protocol::agents::load_agents_chain_for_cwd)
-            .unwrap_or_default();
+        // ── Phase 8: Preamble cache ───────────────────────────────────────────
+        let (cached_agents_chain, cached_available_skills, cached_sub_agent_instruction) =
+            runtime_build::build_preamble_cache(mcp_caller_cwd.as_deref(), parent_name.as_deref());
 
-        for warning in &loaded_agents_result.warnings {
-            log::warn!("AGENTS.md load warning: {}", warning);
-        }
-
-        let cached_agents_chain = loaded_agents_result.merged_chain;
-
-        let cached_available_skills = mcp_caller_cwd
-            .as_deref()
-            .and_then(crate::agent::protocol::skills::render_available_skills_preamble);
-
-        let cached_sub_agent_instruction = parent_name.as_ref().map(|parent| {
-            format!(
-                "You are a sub-agent. When you have completed your task, report your results back \
-                 to your parent agent using the send_message tool with kind 'completion': \
-                 send_message(to: \"{parent}\", message: \"<your results>\", kind: \"completion\"). \
-                 If you are blocked and need a decision from your parent, use kind 'question': \
-                 send_message(to: \"{parent}\", message: \"<your question>\", kind: \"question\"). \
-                 Work autonomously — only use 'question' when truly blocked."
-            )
-        });
-
+        // ── Phase 9: Runtime construction ────────────────────────────────────
         let context_window_max_tokens = u64::from(config.resolved_max_context_tokens());
-
-        let mut runtime_impl = AgentConversationRuntime {
+        let non_interactive_mode = resolve_non_interactive_ask_mode(plugin_config_value.as_ref())?;
+        let mut runtime_impl = runtime_build::build_runtime(runtime_build::RuntimeBuildParams {
             runtime,
-            provider_state: crate::agent::conversation::provider_state::ProviderState::new(
-                config,
-                plugin_config_value
-                    .as_ref()
-                    .and_then(|value| PluginConfig::from_plugin_config(value).ok()),
-            ),
-            tool_state: crate::agent::conversation::tool_state::ToolState::new(
-                tool_definitions,
-                baseline_tool_definitions,
-                closure_registry,
-            ),
-            mcp_state: crate::agent::conversation::mcp_state::McpState::new(
-                mcp_runtime,
-                tool_server_handle,
-                mcp_lifecycle_projection,
-                mcp_config
-                    .as_ref()
-                    .map(|cfg| cfg.mcp.clone())
-                    .unwrap_or_default(),
-                mcp_caller_cwd,
-                mcp_registry,
-            ),
+            config,
+            plugin_config_value,
+            tool_definitions,
+            baseline_tool_definitions,
+            closure_registry,
+            mcp_runtime,
+            tool_server_handle,
+            mcp_lifecycle_projection,
+            mcp_server_configs: mcp_config
+                .as_ref()
+                .map(|cfg| cfg.mcp.clone())
+                .unwrap_or_default(),
+            mcp_caller_cwd,
+            mcp_registry,
             engine: engine.clone(),
             store: self.store.clone(),
             final_session_id: session_resolution.final_session_id,
-            compaction_state: crate::agent::conversation::compaction::state::CompactionState::new(
-                context_window_max_tokens,
-                merged_compaction.proactive_threshold_pct.unwrap_or(0.80),
-                compaction_count,
-                compaction_strategy,
-            ),
-            permission_state: crate::agent::conversation::permission_state::PermissionState::new(
-                effective_permissions,
-                SessionGrantCache::default(),
-                AsyncAskHook::new(AskRuntimeConfig {
-                    interactive: mode.is_tui(),
-                    non_interactive_mode: resolve_non_interactive_ask_mode(
-                        plugin_config_value.as_ref(),
-                    )?,
-                    ..AskRuntimeConfig::default()
-                }),
-                permissions_startup_summary,
-            ),
-            memory_state: crate::agent::conversation::memory_state::MemoryState::new(
-                self.store.cache_dir().to_path_buf(),
-            ),
-            persona_state: crate::agent::conversation::persona_state::PersonaState::new(
-                persona.as_ref().map(|p| p.body.clone()),
-                agent_identity,
-                persona.as_ref().and_then(|p| p.description.clone()),
-                cached_agents_chain,
-                cached_available_skills,
-                cached_sub_agent_instruction,
-            ),
-            multi_agent_state: crate::agent::conversation::multi_agent_state::MultiAgentState::new(
-                mailbox_rx,
-                available_agents,
-                agents_config,
-            ),
-        };
+            context_window_max_tokens,
+            compaction_threshold_pct: merged_compaction.proactive_threshold_pct.unwrap_or(0.80),
+            compaction_count,
+            compaction_strategy,
+            effective_permissions,
+            ask_hook_config: AskRuntimeConfig {
+                interactive: mode.is_tui(),
+                non_interactive_mode,
+                ..AskRuntimeConfig::default()
+            },
+            permissions_startup_summary,
+            persona_body: persona.as_ref().map(|p| p.body.clone()),
+            agent_identity,
+            agent_description: persona.as_ref().and_then(|p| p.description.clone()),
+            cached_agents_chain,
+            cached_available_skills,
+            cached_sub_agent_instruction,
+            mailbox_rx,
+            available_agents,
+            agents_config,
+        });
         log::debug!(
             "runtime: agent_persona_body_len={:?}, agent_identity={:?}, agent_description={:?}",
             runtime_impl.persona_state.persona_body_len(),

@@ -519,6 +519,10 @@ fn path_b_cancelled_with_empty_text_constructs_only_user_message() {
     );
 }
 
+#[test]
+#[ignore = "TurnContext requires a concrete CompletionModel — real coverage is via turn_executor_test.rs"]
+fn turn_context_uses_sub_struct_grouping() {}
+
 /// Test that TurnResult correctly propagates the cancelled flag.
 #[test]
 fn turn_result_cancelled_flag_propagates() {

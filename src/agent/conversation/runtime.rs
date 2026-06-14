@@ -128,7 +128,8 @@ impl CoreRuntime for AgentConversationRuntime {
                 ToolInfra {
                     closure_registry: self.tool_state.closure_registry(),
                     mcp_registry: self.mcp_state.mcp_registry(),
-                    mcp_tool_server_handle: self.mcp_state.mcp_tool_server_handle(),
+                    tool_server_handle: self.mcp_state.mcp_tool_server_handle().clone(),
+                    visible_tool_definitions,
                 },
             );
 
@@ -140,7 +141,6 @@ impl CoreRuntime for AgentConversationRuntime {
                     span,
                 },
                 &cached_client,
-                visible_tool_definitions,
                 &self.engine,
                 self.final_session_id.as_deref(),
             );

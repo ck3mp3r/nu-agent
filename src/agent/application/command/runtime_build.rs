@@ -1,6 +1,7 @@
 use nu_plugin::EvaluatedCall;
 use nu_protocol::{LabeledError, Value};
 
+use crate::agent::conversation::runtime::AgentConversationRuntime;
 use crate::agent::protocol::preamble::{
     PreambleDefaults, UserPreambleInput, classify_model_family, resolve_preamble,
 };
@@ -304,4 +305,143 @@ pub(crate) fn build_compaction_params(merged: &CompactionConfig) -> CompactionPa
     }
 
     config
+}
+
+/// Cache preamble components once at startup — loaded once, reused every turn.
+/// Returns (cached_agents_chain, cached_available_skills, cached_sub_agent_instruction).
+pub(crate) fn build_preamble_cache(
+    mcp_caller_cwd: Option<&std::path::Path>,
+    parent_name: Option<&str>,
+) -> (Option<String>, Option<String>, Option<String>) {
+    let loaded_agents_result = mcp_caller_cwd
+        .map(crate::agent::protocol::agents::load_agents_chain_for_cwd)
+        .unwrap_or_default();
+
+    for warning in &loaded_agents_result.warnings {
+        log::warn!("AGENTS.md load warning: {}", warning);
+    }
+
+    let cached_agents_chain = loaded_agents_result.merged_chain;
+
+    let cached_available_skills =
+        mcp_caller_cwd.and_then(crate::agent::protocol::skills::render_available_skills_preamble);
+
+    let cached_sub_agent_instruction = parent_name.map(|parent| {
+        format!(
+            "You are a sub-agent. When you have completed your task, report your results back \
+             to your parent agent using the send_message tool with kind 'completion': \
+             send_message(to: \"{parent}\", message: \"<your results>\", kind: \"completion\"). \
+             If you are blocked and need a decision from your parent, use kind 'question': \
+             send_message(to: \"{parent}\", message: \"<your question>\", kind: \"question\"). \
+             Work autonomously — only use 'question' when truly blocked."
+        )
+    });
+
+    (
+        cached_agents_chain,
+        cached_available_skills,
+        cached_sub_agent_instruction,
+    )
+}
+
+pub(crate) struct RuntimeBuildParams {
+    pub(crate) runtime: tokio::runtime::Runtime,
+    pub(crate) config: Config,
+    pub(crate) plugin_config_value: Option<nu_protocol::Value>,
+    pub(crate) tool_definitions: Vec<crate::types::ToolDefinition>,
+    pub(crate) baseline_tool_definitions: Vec<crate::types::ToolDefinition>,
+    pub(crate) closure_registry: crate::tools::closure::ClosureRegistry,
+    pub(crate) mcp_runtime: Option<crate::tools::mcp::runtime::McpRuntime>,
+    pub(crate) tool_server_handle: rig::tool::server::ToolServerHandle,
+    pub(crate) mcp_lifecycle_projection: Vec<crate::tools::mcp::runtime::McpServerLifecycle>,
+    pub(crate) mcp_server_configs: Vec<crate::tools::mcp::config::McpServerConfig>,
+    pub(crate) mcp_caller_cwd: Option<std::path::PathBuf>,
+    pub(crate) mcp_registry: crate::agent::tools::handler::McpToolRegistry,
+    pub(crate) engine: nu_plugin::EngineInterface,
+    pub(crate) store: crate::session::SessionStore,
+    pub(crate) final_session_id: Option<String>,
+    pub(crate) context_window_max_tokens: u64,
+    pub(crate) compaction_threshold_pct: f64,
+    pub(crate) compaction_count: usize,
+    pub(crate) compaction_strategy: crate::compaction::CompactionStrategy,
+    pub(crate) effective_permissions: crate::agent::tools::authz::PermissionsConfig,
+    pub(crate) ask_hook_config: crate::agent::tools::authz::AskRuntimeConfig,
+    pub(crate) permissions_startup_summary: String,
+    pub(crate) persona_body: Option<String>,
+    pub(crate) agent_identity: Option<String>,
+    pub(crate) agent_description: Option<String>,
+    pub(crate) cached_agents_chain: Option<String>,
+    pub(crate) cached_available_skills: Option<String>,
+    pub(crate) cached_sub_agent_instruction: Option<String>,
+    pub(crate) mailbox_rx:
+        Option<std::sync::mpsc::Receiver<crate::agent::mailbox::IncomingMessage>>,
+    pub(crate) available_agents: Vec<crate::agent::protocol::persona::PersonaSummary>,
+    pub(crate) agents_config: crate::config::AgentsConfig,
+}
+
+pub(crate) fn build_runtime(params: RuntimeBuildParams) -> AgentConversationRuntime {
+    use crate::agent::conversation::{
+        compaction::state::CompactionState, mcp_state::McpState, memory_state::MemoryState,
+        multi_agent_state::MultiAgentState, permission_state::PermissionState,
+        persona_state::PersonaState, provider_state::ProviderState, tool_state::ToolState,
+    };
+    use crate::agent::tools::authz::AsyncAskHook;
+    use crate::config::PluginConfig;
+
+    // CRITICAL: extract cache_dir BEFORE moving params.store into the struct literal
+    // because params.store.cache_dir() and params.store cannot both be used after move
+    let cache_dir = params.store.cache_dir().to_path_buf();
+
+    AgentConversationRuntime {
+        runtime: params.runtime,
+        provider_state: ProviderState::new(
+            params.config,
+            params
+                .plugin_config_value
+                .as_ref()
+                .and_then(|value| PluginConfig::from_plugin_config(value).ok()),
+        ),
+        tool_state: ToolState::new(
+            params.tool_definitions,
+            params.baseline_tool_definitions,
+            params.closure_registry,
+        ),
+        mcp_state: McpState::new(
+            params.mcp_runtime,
+            params.tool_server_handle,
+            params.mcp_lifecycle_projection,
+            params.mcp_server_configs,
+            params.mcp_caller_cwd,
+            params.mcp_registry,
+        ),
+        engine: params.engine,
+        store: params.store,
+        final_session_id: params.final_session_id,
+        compaction_state: CompactionState::new(
+            params.context_window_max_tokens,
+            params.compaction_threshold_pct,
+            params.compaction_count,
+            params.compaction_strategy,
+        ),
+        permission_state: PermissionState::new(
+            params.effective_permissions,
+            crate::agent::tools::authz::SessionGrantCache::default(),
+            AsyncAskHook::new(params.ask_hook_config),
+            params.permissions_startup_summary,
+        ),
+        memory_state: MemoryState::new(cache_dir),
+        persona_state: PersonaState::new(
+            params.persona_body,
+            params.agent_identity,
+            params.agent_description,
+            params.cached_agents_chain,
+            params.cached_available_skills,
+            params.cached_sub_agent_instruction,
+        ),
+        multi_agent_state: MultiAgentState::new(
+            params.mailbox_rx,
+            params.available_agents,
+            params.agents_config,
+        ),
+    }
 }
