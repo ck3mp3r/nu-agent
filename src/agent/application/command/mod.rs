@@ -427,6 +427,11 @@ Compaction flags:
         let ui_policy = resolve_ui_policy(call)
             .map_err(|e| LabeledError::new(format!("Failed to resolve UI policy: {e}")))?;
 
+        let cwd = std::path::PathBuf::from(engine.get_current_dir().map_err(|e| {
+            LabeledError::new("Failed to resolve working directory")
+                .with_label(format!("{e}"), call.head)
+        })?);
+
         // Initialize file logging if --log-level is provided
         if let Some(log_level_str) = call.get_flag::<String>("log-level")? {
             let log_level_str = log_level_str.to_lowercase();
@@ -556,7 +561,7 @@ Compaction flags:
             agent_name,
             cli_name,
             &agents_config,
-            engine,
+            &cwd,
             call,
             &mut config,
             call_has_model_flag,
@@ -582,13 +587,7 @@ Compaction flags:
             if cfg.mcp.is_empty() {
                 None
             } else {
-                let caller_cwd = engine.get_current_dir().map_err(|e| {
-                    LabeledError::new("Failed to resolve caller cwd").with_label(
-                        format!("Unable to read current dir from Nushell engine: {e}"),
-                        call.head,
-                    )
-                })?;
-                let caller_cwd_path = std::path::Path::new(&caller_cwd);
+                let caller_cwd_path = cwd.as_path();
 
                 Some(
                     runtime
@@ -640,7 +639,7 @@ Compaction flags:
             broker_flags.is_some(),
             &agents_config,
             &discovered_mcp_tools,
-            engine,
+            &cwd,
         );
 
         let resolver = DefaultSessionResolver::new(&self.store);
@@ -660,6 +659,7 @@ Compaction flags:
             runtime: &runtime,
             tool_server_handle: &tool_server_handle,
             closure_registry: &closure_registry,
+            cwd: &cwd,
             engine,
             call,
             plugin_config_value: plugin_config_value.as_ref(),
@@ -672,12 +672,11 @@ Compaction flags:
             session: session_resolution.session.as_mut(),
         })?;
 
-        let mcp_caller_cwd: Option<std::path::PathBuf> =
-            engine.get_current_dir().ok().map(std::path::PathBuf::from);
+        let mcp_caller_cwd = cwd.clone();
 
         // ── Phase 8: Preamble cache ───────────────────────────────────────────
         let (cached_agents_chain, cached_available_skills, cached_sub_agent_instruction) =
-            runtime_build::build_preamble_cache(mcp_caller_cwd.as_deref(), parent_name.as_deref());
+            runtime_build::build_preamble_cache(&cwd, parent_name.as_deref());
 
         // ── Phase 9: Runtime construction ────────────────────────────────────
         let context_window_max_tokens = u64::from(config.resolved_max_context_tokens());
@@ -696,7 +695,7 @@ Compaction flags:
                 .as_ref()
                 .map(|cfg| cfg.mcp.clone())
                 .unwrap_or_default(),
-            mcp_caller_cwd,
+            mcp_caller_cwd: Some(mcp_caller_cwd),
             mcp_registry,
             engine: engine.clone(),
             store: self.store.clone(),

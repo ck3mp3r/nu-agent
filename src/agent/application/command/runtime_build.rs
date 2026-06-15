@@ -310,12 +310,10 @@ pub(crate) fn build_compaction_params(merged: &CompactionConfig) -> CompactionPa
 /// Cache preamble components once at startup — loaded once, reused every turn.
 /// Returns (cached_agents_chain, cached_available_skills, cached_sub_agent_instruction).
 pub(crate) fn build_preamble_cache(
-    mcp_caller_cwd: Option<&std::path::Path>,
+    cwd: &std::path::Path,
     parent_name: Option<&str>,
 ) -> (Option<String>, Option<String>, Option<String>) {
-    let loaded_agents_result = mcp_caller_cwd
-        .map(crate::agent::protocol::agents::load_agents_chain_for_cwd)
-        .unwrap_or_default();
+    let loaded_agents_result = crate::agent::protocol::agents::load_agents_chain_for_cwd(cwd);
 
     for warning in &loaded_agents_result.warnings {
         log::warn!("AGENTS.md load warning: {}", warning);
@@ -324,7 +322,7 @@ pub(crate) fn build_preamble_cache(
     let cached_agents_chain = loaded_agents_result.merged_chain;
 
     let cached_available_skills =
-        mcp_caller_cwd.and_then(crate::agent::protocol::skills::render_available_skills_preamble);
+        crate::agent::protocol::skills::render_available_skills_preamble(cwd);
 
     let cached_sub_agent_instruction = parent_name.map(|parent| {
         format!(

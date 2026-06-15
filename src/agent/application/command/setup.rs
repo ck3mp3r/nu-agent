@@ -16,6 +16,7 @@ pub(crate) struct RegisterToolsInput<'a> {
     pub(crate) runtime: &'a tokio::runtime::Runtime,
     pub(crate) tool_server_handle: &'a rig::tool::server::ToolServerHandle,
     pub(crate) closure_registry: &'a ClosureRegistry,
+    pub(crate) cwd: &'a std::path::Path,
     pub(crate) engine: &'a EngineInterface,
     pub(crate) call: &'a EvaluatedCall,
     pub(crate) plugin_config_value: Option<&'a nu_protocol::Value>,
@@ -44,6 +45,7 @@ pub(crate) fn register_tools(input: RegisterToolsInput<'_>) -> Result<SetupResul
         runtime,
         tool_server_handle,
         closure_registry,
+        cwd,
         engine,
         call,
         plugin_config_value,
@@ -89,11 +91,7 @@ pub(crate) fn register_tools(input: RegisterToolsInput<'_>) -> Result<SetupResul
     }
 
     // Register builtin FS tools (read, edit, patch, skill) with ToolServer
-    let cwd = engine.get_current_dir().map_err(|e| {
-        LabeledError::new(format!("Failed to get current directory: {}", e))
-            .with_label(format!("{}", e), call.head)
-    })?;
-    let cwd_path = std::path::PathBuf::from(cwd);
+    let cwd_path = cwd.to_path_buf();
 
     let mut builtin_defs = builtin_tool_definitions();
     if has_messaging {

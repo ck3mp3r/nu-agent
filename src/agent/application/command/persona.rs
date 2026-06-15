@@ -1,4 +1,4 @@
-use nu_plugin::{EngineInterface, EvaluatedCall};
+use nu_plugin::EvaluatedCall;
 use nu_protocol::LabeledError;
 
 use crate::agent::tools::authz::PermissionsOverlay;
@@ -15,7 +15,7 @@ pub(crate) fn resolve_persona(
     agent_name: Option<String>,
     cli_name: Option<String>,
     agents_config: &AgentsConfig,
-    engine: &EngineInterface,
+    cwd: &std::path::Path,
     call: &EvaluatedCall,
     config: &mut Config,
     call_has_model_flag: bool,
@@ -47,10 +47,6 @@ pub(crate) fn resolve_persona(
     log::debug!("effective_agent_name={effective_agent_name:?}");
 
     let persona = if let Some(ref name) = effective_agent_name {
-        let cwd = engine.get_current_dir().map_err(|e| {
-            LabeledError::new("Failed to get current directory")
-                .with_label(format!("{}", e), call.head)
-        })?;
         let cwd = std::path::PathBuf::from(cwd);
         let config_dir = crate::utils::xdg::config_dir()
             .map(|base| base.join("nu-agent"))

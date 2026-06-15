@@ -190,7 +190,7 @@ pub(crate) fn assemble_tool_definitions(
     has_broker: bool,
     agents_config: &crate::config::AgentsConfig,
     discovered_mcp_tools: &[crate::tools::mcp::client::McpToolDefinition],
-    engine: &nu_plugin::EngineInterface,
+    cwd: &std::path::Path,
 ) -> ToolAssembly {
     let mut tool_definitions: Vec<crate::types::ToolDefinition> = closure_registry
         .names()
@@ -212,10 +212,7 @@ pub(crate) fn assemble_tool_definitions(
     }
     let available_agents = if is_orchestrator {
         use crate::agent::protocol::persona::{FsPersonaResolver, PersonaLister};
-        let cwd = engine
-            .get_current_dir()
-            .map(std::path::PathBuf::from)
-            .unwrap_or_default();
+        let cwd = cwd.to_path_buf();
         let config_dir = crate::utils::xdg::config_dir()
             .map(|base| base.join("nu-agent"))
             .unwrap_or_default();
