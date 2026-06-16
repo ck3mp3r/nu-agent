@@ -4,7 +4,10 @@
   inputs,
   system,
 }: let
-  fenix = inputs.fenix.packages.${system};
+  toolchain = inputs.rustnix.lib.rust.mkToolchain {
+    inherit system;
+    extras = ["rustfmt" "clippy" "rust-analyzer"];
+  };
 
   # Development helper scripts
   check = pkgs.writeShellScriptBin "check" ''cargo check'';
@@ -17,7 +20,7 @@ in
     name = "nu-agent-dev";
 
     buildInputs = [
-      fenix.stable.toolchain
+      toolchain
 
       # Development scripts
       check

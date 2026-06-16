@@ -11,7 +11,7 @@ on:
       - "Cargo.toml"
       - "flake.lock"
       - "flake.nix"
-      - "src/**"
+      - "crates/**"
 jobs:
   build:
     runs-on: ubuntu-latest

@@ -8,14 +8,9 @@
       url = "github:hercules-ci/flake-parts";
       inputs.nixpkgs-lib.follows = "nixpkgs";
     };
-    fenix = {
-      url = "github:nix-community/fenix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
     rustnix = {
       url = "github:ck3mp3r/flakes?dir=rustnix";
       inputs.nixpkgs.follows = "nixpkgs";
-      inputs.fenix.follows = "fenix";
     };
   };
 
@@ -26,14 +21,8 @@
   }:
     flake-parts.lib.mkFlake {inherit inputs;} {
       systems = ["aarch64-darwin" "aarch64-linux" "x86_64-darwin" "x86_64-linux"];
-      perSystem = {
-        config,
-        system,
-        ...
-      }: let
-        supportedTargets = ["aarch64-darwin" "aarch64-linux" "x86_64-linux"];
+      perSystem = {system, ...}: let
         overlays = [
-          inputs.fenix.overlays.default
           inputs.base-nixpkgs.overlays.default
         ];
         pkgs = import inputs.nixpkgs {inherit system overlays;};

@@ -4,14 +4,14 @@
   inputs,
   system,
 }: let
-  fenix = inputs.fenix.packages.${system};
+  toolchain = inputs.rustnix.lib.rust.mkToolchain {inherit system;};
 in
   pkgs.mkShellNoCC {
     name = "nu-agent-ci";
 
     buildInputs = [
       # Rust toolchain (stable)
-      fenix.stable.toolchain
+      toolchain
     ];
 
     shellHook = ''

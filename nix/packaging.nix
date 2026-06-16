@@ -41,6 +41,7 @@
       ;
     nixpkgs = inputs.nixpkgs;
     src = ../.;
+    workspaceMember = "nu_plugin_agent";
     packageName = "nu-agent";
     archiveAndHash = false;
     nativeBuildInputs = [pkgs.pkg-config pkgs.gitMinimal pkgs.cacert];
@@ -59,6 +60,7 @@
       ;
     nixpkgs = inputs.nixpkgs;
     src = ../.;
+    workspaceMember = "nu_plugin_agent";
     packageName = "archive";
     archiveAndHash = true;
     nativeBuildInputs = [pkgs.pkg-config pkgs.cacert];

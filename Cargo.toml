@@ -1,7 +1,69 @@
-[package]
-name = "nu_plugin_agent"
-version = "0.1.0"
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+
+[workspace.package]
 edition = "2024"
+version = "0.1.0"
+
+[workspace.dependencies]
+# Internal crates
+nu-agent-core = { path = "crates/nu-agent-core" }
+nu-agent-tui = { path = "crates/nu-agent-tui" }
+nu-agent-tty = { path = "crates/nu-agent-tty" }
+
+# Nu ecosystem
+nu-plugin = "0.113.1"
+nu-protocol = "0.113.1"
+nu-parser = "0.113.1"
+
+# LLM / AI
+rig = { package = "rig-core", version = "0.38.1", default-features = false, features = ["derive", "rmcp"] }
+rmcp = { version = "1.7.0", default-features = false, features = [
+  "client",
+  "transport-child-process",
+  "transport-streamable-http-client",
+  "transport-streamable-http-client-reqwest",
+  "transport-io",
+] }
+
+# Async runtime
+tokio = { version = "1.52.3", features = ["full"] }
+tokio-util = "0.7"
+futures = "0.3"
+
+# Networking
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
+http = "1.4"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# TUI
+crossterm = "0.29"
+ratatui = "0.30"
+tui-widget-list = "0.15"
+
+# Utilities
+thiserror = "2.0"
+chrono = { version = "0.4", features = ["serde"] }
+tempfile = "3.27"
+log = { version = "0.4", features = ["release_max_level_trace"] }
+env_logger = "0.11"
+sha2 = "0.11"
+regex = "1"
+similar = "3.1.1"
+libc = "0.2"
+pulldown-cmark = "0.13"
+arboard = "3.6"
+syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "default-themes", "parsing", "regex-fancy", "yaml-load"] }
+noyalib = "0.0.7"
+rand = "0.10.1"
+
+# Dev/test
+serial_test = "3.4.0"
 
 [profile.release]
 opt-level = "z"
@@ -10,45 +72,3 @@ codegen-units = 1
 debug = false
 panic = "abort"
 strip = "symbols"
-
-[dependencies]
-nu-plugin = "0.113.1"
-nu-protocol = "0.113.1"
-rig = { package = "rig-core", version = "0.38.1", default-features = false, features = ["derive", "rmcp"] }
-tokio = { version = "1.52.3", features = ["full"] }
-tokio-util = "0.7"
-futures = "0.3"
-rmcp = { version = "1.7.0", default-features = false, features = [
-  "client",
-  "transport-child-process",
-  "transport-streamable-http-client",
-  "transport-streamable-http-client-reqwest",
-  "transport-io",
-] }
-thiserror = "2.0"
-chrono = { version = "0.4", features = ["serde"] }
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider"] }
-rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-tempfile = "3.27"
-log = { version = "0.4", features = ["release_max_level_trace"] }
-env_logger = "0.11"
-sha2 = "0.11"
-regex = "1"
-similar = "3.1.1"
-http = "1.4"
-crossterm = "0.29"
-ratatui = "0.30"
-tui-widget-list = "0.15"
-tui-markdown = "0.3"
-libc = "0.2"
-pulldown-cmark = "0.13"
-arboard = "3.6"
-syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "default-themes", "parsing", "regex-fancy", "yaml-load"] }
-noyalib = "0.0.7"
-rand = "0.10.1"
-
-[dev-dependencies]
-serial_test = "3.4.0"
-nu-parser = "0.113.1"

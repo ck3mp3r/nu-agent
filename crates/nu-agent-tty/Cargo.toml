@@ -1,0 +1,11 @@
+[package]
+name = "nu-agent-tty"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+nu-agent-core = { workspace = true }
+nu-protocol = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]

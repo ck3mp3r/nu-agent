@@ -1,0 +1,31 @@
+[package]
+name = "nu-agent-core"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+nu-plugin = { workspace = true }
+nu-protocol = { workspace = true }
+rig = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+futures = { workspace = true }
+rmcp = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+reqwest = { workspace = true }
+rustls = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+log = { workspace = true }
+sha2 = { workspace = true }
+regex = { workspace = true }
+similar = { workspace = true }
+http = { workspace = true }
+noyalib = { workspace = true }
+rand = { workspace = true }
+pulldown-cmark = { workspace = true }
+
+[dev-dependencies]
+serial_test = { workspace = true }
