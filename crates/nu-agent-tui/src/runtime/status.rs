@@ -478,6 +478,14 @@ fn format_lane_1(
     format!("{prefix}{inner}")
 }
 
+/// Nerd Font / Powerline branch glyph appended after the branch label
+/// to denote that the displayed text is a git branch (or detached HEAD SHA).
+/// Width: 2 cells (space + glyph). When the available branch budget is too
+/// narrow to fit even the icon plus a single label character, the icon is
+/// dropped and the raw label is ellipsized as before.
+const BRANCH_ICON_SUFFIX: &str = " \u{e0a0}";
+const BRANCH_ICON_SUFFIX_WIDTH: usize = 2;
+
 fn format_lane_1_with_branch(model: &str, branch: &str, available_width: usize) -> String {
     let fields_max = available_width;
 
@@ -491,13 +499,14 @@ fn format_lane_1_with_branch(model: &str, branch: &str, available_width: usize) 
 
     let model_chars = model.chars().count();
     let branch_chars = branch.chars().count();
+    let branch_display_chars = branch_chars.saturating_add(BRANCH_ICON_SUFFIX_WIDTH);
 
-    let (model_max, branch_max) = if model_chars + branch_chars <= fields_budget {
-        (model_chars, branch_chars)
+    let (model_max, branch_max) = if model_chars + branch_display_chars <= fields_budget {
+        (model_chars, branch_display_chars)
     } else {
-        let model_only_budget = fields_budget.saturating_sub(branch_chars);
+        let model_only_budget = fields_budget.saturating_sub(branch_display_chars);
         if model_only_budget > 3 {
-            (model_only_budget, branch_chars)
+            (model_only_budget, branch_display_chars)
         } else {
             let branch_budget = fields_budget / 2;
             (fields_budget.saturating_sub(branch_budget), branch_budget)
@@ -505,7 +514,7 @@ fn format_lane_1_with_branch(model: &str, branch: &str, available_width: usize) 
     };
 
     let model_segment = tail_ellipsize(model, model_max);
-    let branch_segment = tail_ellipsize(branch, branch_max);
+    let branch_segment = format_branch_segment(branch, branch_max);
     let padding = fields_budget
         .saturating_sub(model_segment.chars().count() + branch_segment.chars().count())
         + gap_min;
@@ -514,6 +523,20 @@ fn format_lane_1_with_branch(model: &str, branch: &str, available_width: usize) 
         "{model_segment}{model_padding}{branch_segment}",
         model_padding = " ".repeat(padding)
     )
+}
+
+/// Ellipsize the branch label to fit `branch_max` cells while preserving the
+/// trailing icon. When the budget is too small to accommodate the icon plus at
+/// least one label character (i.e. < icon_width + 1), drop the icon and fall
+/// back to plain `tail_ellipsize` on the raw label so layout stays stable in
+/// extreme-narrow viewports.
+fn format_branch_segment(branch: &str, branch_max: usize) -> String {
+    if branch_max <= BRANCH_ICON_SUFFIX_WIDTH {
+        return tail_ellipsize(branch, branch_max);
+    }
+    let label_budget = branch_max - BRANCH_ICON_SUFFIX_WIDTH;
+    let label = tail_ellipsize(branch, label_budget);
+    format!("{label}{BRANCH_ICON_SUFFIX}")
 }
 
 fn tail_ellipsize(input: &str, max_chars: usize) -> String {

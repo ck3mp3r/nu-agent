@@ -680,7 +680,7 @@ fn lane_1_wide_no_truncation() {
         40,
     );
 
-    assert_eq!(line, "○ abcdefghijklmnop            branchname");
+    assert_eq!(line, "○ abcdefghijklmnop          branchname \u{e0a0}");
     assert!(!line.contains('|'));
 }
 
@@ -693,7 +693,7 @@ fn lane_1_medium_one_side_truncation() {
         23,
     );
 
-    assert_eq!(line, "○ ...jklmnop branchname");
+    assert_eq!(line, "○ ...lmnop branchname \u{e0a0}");
     assert!(!line.contains('|'));
 }
 
@@ -706,7 +706,7 @@ fn lane_1_narrow_both_side_truncation() {
         20,
     );
 
-    assert_eq!(line, "○ ...mnop branchname");
+    assert_eq!(line, "○ ...op branchname \u{e0a0}");
     assert!(!line.contains('|'));
 }
 
@@ -722,7 +722,7 @@ fn lane_1_branch_segment_is_right_aligned_when_present() {
 
     assert_eq!(line.chars().count(), width);
     assert!(line.starts_with("○ abcdefghijklmnop"));
-    assert!(line.ends_with("branchname"));
+    assert!(line.ends_with("branchname \u{e0a0}"));
     assert!(!line.contains('|'));
 }
 
@@ -737,8 +737,8 @@ fn lane_1_narrow_truncation_keeps_branch_right_anchored() {
     );
 
     assert_eq!(line.chars().count(), width);
-    assert!(line.ends_with("branchname"));
-    assert!(line.contains("...mnop"));
+    assert!(line.ends_with("branchname \u{e0a0}"));
+    assert!(line.contains("...op"));
     assert!(!line.contains('|'));
 }
 
@@ -753,6 +753,79 @@ fn lane_1_omits_branch_when_unavailable() {
 
     assert_eq!(line, "○ openai/gpt-4o-mini");
     assert!(!line.contains('|'));
+}
+
+#[test]
+fn lane_1_with_branch_appends_branch_icon() {
+    let line = crate::runtime::status::compact_status_line_with_branch_for_test(
+        "m",
+        Some("main"),
+        None,
+        40,
+    );
+
+    assert!(
+        line.ends_with("main \u{e0a0}"),
+        "expected branch icon suffix, got: {line:?}"
+    );
+}
+
+#[test]
+fn lane_1_with_branch_ellipsizes_label_while_preserving_icon() {
+    // 30-char model + 30-char branch into a tight 32-cell viewport forces
+    // both segments to be truncated. The branch must still end with the icon.
+    let line = crate::runtime::status::compact_status_line_with_branch_for_test(
+        "the-quick-brown-fox-jumps-over",
+        Some("feature/super-long-branch-name"),
+        None,
+        32,
+    );
+
+    assert!(
+        line.ends_with("\u{e0a0}"),
+        "icon must survive ellipsization, got: {line:?}"
+    );
+    assert!(
+        line.contains("..."),
+        "branch label should have been ellipsized, got: {line:?}"
+    );
+}
+
+#[test]
+fn lane_1_with_branch_drops_icon_when_budget_below_three_cells() {
+    // Total width 4 → inner_width 2 → fields_budget 1 (gap_min 1).
+    // 1 cell cannot fit the 2-cell icon, so it falls back to raw label.
+    // The output stays stable (no panics, no partial icon).
+    let line = crate::runtime::status::compact_status_line_with_branch_for_test(
+        "abc",
+        Some("main"),
+        None,
+        4,
+    );
+
+    assert!(
+        !line.contains('\u{e0a0}'),
+        "icon must be dropped under extreme narrow budgets, got: {line:?}"
+    );
+    assert!(line.starts_with("○ "));
+}
+
+#[test]
+fn lane_1_with_detached_head_short_sha_also_gets_icon() {
+    // The tracker yields a 7-char SHA string when HEAD is detached; the
+    // formatter doesn't distinguish that from a branch name, so the icon
+    // appears in both cases. Locking that behaviour in.
+    let line = crate::runtime::status::compact_status_line_with_branch_for_test(
+        "m",
+        Some("a1b2c3d"),
+        None,
+        40,
+    );
+
+    assert!(
+        line.ends_with("a1b2c3d \u{e0a0}"),
+        "expected detached-HEAD short SHA to also carry icon, got: {line:?}"
+    );
 }
 
 #[test]
