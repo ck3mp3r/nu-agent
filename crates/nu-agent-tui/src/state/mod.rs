@@ -15,9 +15,9 @@ use nu_agent_core::protocol::event::{PermissionDecision, PermissionDecisionSubmi
 use nu_agent_core::protocol::slash::{SlashCommand, filter_inline_slash_suggestions};
 use nu_agent_core::transcript::ir::{ContentLine, DisplayLine, Role, Span, StyleHint};
 use nu_agent_core::transcript::items::{
-    AssistantChunk, Separator as TranscriptSeparator, Spacer as SpacerItem, SystemMessage,
-    ToolInvocation, ToolResult as TranscriptToolResult, TranscriptEntry, UserMessage,
-    annotate_diff_hint, parse_tool_text,
+    ProseMessage, Separator as TranscriptSeparator, Spacer as SpacerItem, SystemMessage,
+    ToolInvocation, ToolResult as TranscriptToolResult, TranscriptEntry, annotate_diff_hint,
+    parse_tool_text,
 };
 use ratatui::text::Line;
 use std::collections::HashMap;

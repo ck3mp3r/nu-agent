@@ -1061,8 +1061,9 @@ mod new_plugin_config_tests {
             "providers" => Value::test_record(providers_map.into_iter().collect()),
         });
 
-        let parsed = nu_agent_core::tools::mcp::config::McpConfig::from_plugin_config(&plugin_config)
-            .expect("mcp parse from plugin config");
+        let parsed =
+            nu_agent_core::tools::mcp::config::McpConfig::from_plugin_config(&plugin_config)
+                .expect("mcp parse from plugin config");
         assert_eq!(parsed.mcp.len(), 2);
 
         let resolved = resolve_config(
@@ -1437,8 +1438,7 @@ mod new_plugin_config_tests {
 
 #[test]
 fn docs_usage_flag_reference_excludes_removed_flags() {
-    let usage_path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/usage.md");
+    let usage_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/usage.md");
     let usage = std::fs::read_to_string(&usage_path).expect("read docs/usage.md");
 
     assert!(

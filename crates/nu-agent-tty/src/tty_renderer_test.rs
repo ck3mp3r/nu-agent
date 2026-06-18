@@ -25,9 +25,9 @@ fn ctx() -> RenderContext {
 #[test]
 fn user_message_has_user_prefix() {
     let r = plain();
-    let block = UserMessage {
-        text: "hello".to_string(),
-    }
+    let block = TranscriptEntry::User(ProseMessage {
+        lines: vec![ContentLine::single("hello".to_string(), StyleHint::Normal)],
+    })
     .to_render_block();
     let out = r.render(&block, &ctx());
     assert!(out.starts_with("[user] "), "got: {out}");
@@ -37,9 +37,9 @@ fn user_message_has_user_prefix() {
 #[test]
 fn assistant_has_no_prefix() {
     let r = plain();
-    let block = AssistantChunk {
+    let block = TranscriptEntry::Assistant(ProseMessage {
         lines: vec![ContentLine::single("hi".to_string(), StyleHint::Normal)],
-    }
+    })
     .to_render_block();
     let out = r.render(&block, &ctx());
     assert!(

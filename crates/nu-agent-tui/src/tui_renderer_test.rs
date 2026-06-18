@@ -176,9 +176,9 @@ fn separator_renders_repeated_dash_char() {
 #[test]
 fn selected_row_has_selection_bg_on_all_spans() {
     let r = make_renderer();
-    let block = UserMessage {
-        text: "hi".to_string(),
-    }
+    let block = TranscriptEntry::User(ProseMessage {
+        lines: vec![ContentLine::single("hi".to_string(), StyleHint::Normal)],
+    })
     .to_render_block();
     let mut ctx = default_ctx(80);
     ctx.selected = true;
@@ -198,9 +198,12 @@ fn selected_row_has_selection_bg_on_all_spans() {
 #[test]
 fn short_line_no_wrap() {
     let r = make_renderer();
-    let block = UserMessage {
-        text: "Short text".to_string(),
-    }
+    let block = TranscriptEntry::User(ProseMessage {
+        lines: vec![ContentLine::single(
+            "Short text".to_string(),
+            StyleHint::Normal,
+        )],
+    })
     .to_render_block();
     let lines = r.render(&block, &default_ctx(80));
     assert_eq!(lines.len(), 1, "short line should not wrap");
@@ -215,9 +218,9 @@ fn word_wrap_breaks_at_space() {
     // Total = 15 chars, fits on one line
     // But let's make it wrap: "hello world " = 12 chars
     let text = "hello world foobar";
-    let block = UserMessage {
-        text: text.to_string(),
-    }
+    let block = TranscriptEntry::User(ProseMessage {
+        lines: vec![ContentLine::single(text.to_string(), StyleHint::Normal)],
+    })
     .to_render_block();
 
     // Width = 20, prefix = 4, available = 16
@@ -245,5 +248,124 @@ fn word_wrap_breaks_at_space() {
             !first_line.ends_with("foo") || first_line.contains("foobar"),
             "should not split 'foobar' into 'foo' and 'bar'"
         );
+    }
+}
+
+// === Task 5: visual differentiation between user and assistant prose ===
+
+#[cfg(test)]
+mod task_5_visual_diff_tests {
+    use super::*;
+    use nu_agent_core::transcript::ir::{ContentLine, Span, StyleHint};
+    use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry};
+    use nu_agent_core::transcript::renderer::BlockRenderer;
+    use ratatui::style::Modifier;
+
+    fn render_block_for(
+        role_user: bool,
+        lines: Vec<ContentLine>,
+    ) -> Vec<ratatui::text::Line<'static>> {
+        let r = make_renderer();
+        let entry = if role_user {
+            TranscriptEntry::User(ProseMessage { lines })
+        } else {
+            TranscriptEntry::Assistant(ProseMessage { lines })
+        };
+        let block = entry.to_render_block();
+        r.render(&block, &default_ctx(80))
+    }
+
+    #[test]
+    fn user_prose_uses_user_lane_prefix() {
+        let lines = render_block_for(
+            true,
+            vec![ContentLine::single("hi".to_string(), StyleHint::Normal)],
+        );
+        let prefix: String = lines[0]
+            .spans
+            .iter()
+            .take(2)
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert_eq!(prefix, "  ▏ ");
+    }
+
+    #[test]
+    fn assistant_prose_uses_assistant_lane_prefix() {
+        let lines = render_block_for(
+            false,
+            vec![ContentLine::single("hi".to_string(), StyleHint::Normal)],
+        );
+        let prefix: String = lines[0]
+            .spans
+            .iter()
+            .take(2)
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert_eq!(prefix, "    ");
+    }
+
+    #[test]
+    fn user_prose_has_no_row_background() {
+        let lines = render_block_for(
+            true,
+            vec![ContentLine::single("hi".to_string(), StyleHint::Normal)],
+        );
+        for span in &lines[0].spans {
+            assert_eq!(
+                span.style.bg, None,
+                "user prose rows must have no background color; got {:?}",
+                span.style.bg
+            );
+        }
+    }
+
+    #[test]
+    fn assistant_prose_has_no_row_background() {
+        let lines = render_block_for(
+            false,
+            vec![ContentLine::single("hi".to_string(), StyleHint::Normal)],
+        );
+        for span in &lines[0].spans {
+            assert_eq!(
+                span.style.bg, None,
+                "assistant prose rows must have no background color; got {:?}",
+                span.style.bg
+            );
+        }
+    }
+
+    #[test]
+    fn user_md_bold_renders_with_bold_modifier() {
+        let lines = render_block_for(
+            true,
+            vec![ContentLine::from_spans(vec![Span::new(
+                "world".to_string(),
+                StyleHint::MdBold,
+            )])],
+        );
+        let bold = lines[0]
+            .spans
+            .iter()
+            .find(|s| s.content.contains("world"))
+            .expect("bold span");
+        assert!(bold.style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn assistant_md_bold_renders_with_bold_modifier() {
+        let lines = render_block_for(
+            false,
+            vec![ContentLine::from_spans(vec![Span::new(
+                "world".to_string(),
+                StyleHint::MdBold,
+            )])],
+        );
+        let bold = lines[0]
+            .spans
+            .iter()
+            .find(|s| s.content.contains("world"))
+            .expect("bold span");
+        assert!(bold.style.add_modifier.contains(Modifier::BOLD));
     }
 }

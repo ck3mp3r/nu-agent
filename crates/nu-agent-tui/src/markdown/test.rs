@@ -433,3 +433,95 @@ It's a **Rust project** using **Nix flakes** for development/build environment m
         "Should have separator row"
     );
 }
+
+// === render_markdown_lines tests ===
+
+use crate::markdown::render_markdown_lines;
+use nu_agent_core::transcript::ir::StyleHint as IrStyleHint;
+
+#[test]
+fn render_markdown_lines_empty_input_returns_empty_vec() {
+    assert!(render_markdown_lines("").is_empty());
+}
+
+#[test]
+fn render_markdown_lines_plain_text_yields_normal_spans() {
+    let lines = render_markdown_lines("hello");
+    assert_eq!(lines.len(), 1);
+    assert!(
+        lines[0]
+            .spans
+            .iter()
+            .all(|s| matches!(s.hint, IrStyleHint::Normal))
+    );
+    let concat: String = lines[0].spans.iter().map(|s| s.text.as_str()).collect();
+    assert!(concat.contains("hello"));
+}
+
+#[test]
+fn render_markdown_lines_bold() {
+    let lines = render_markdown_lines("**bold**");
+    let bold = lines
+        .iter()
+        .flat_map(|l| l.spans.iter())
+        .find(|s| matches!(s.hint, IrStyleHint::MdBold))
+        .expect("expected MdBold span");
+    assert_eq!(bold.text, "bold");
+}
+
+#[test]
+fn render_markdown_lines_italic() {
+    let lines = render_markdown_lines("*italic*");
+    let italic = lines
+        .iter()
+        .flat_map(|l| l.spans.iter())
+        .find(|s| matches!(s.hint, IrStyleHint::MdItalic))
+        .expect("expected MdItalic span");
+    assert_eq!(italic.text, "italic");
+}
+
+#[test]
+fn render_markdown_lines_inline_code() {
+    let lines = render_markdown_lines("a `code` b");
+    let code = lines
+        .iter()
+        .flat_map(|l| l.spans.iter())
+        .find(|s| matches!(s.hint, IrStyleHint::MdInlineCode))
+        .expect("expected MdInlineCode span");
+    assert!(code.text.contains("code"));
+}
+
+#[test]
+fn render_markdown_lines_fenced_code_block() {
+    let lines = render_markdown_lines("```rust\nfn x() {}\n```");
+    assert!(!lines.is_empty());
+    let has_code = lines.iter().flat_map(|l| l.spans.iter()).any(|s| {
+        matches!(
+            s.hint,
+            IrStyleHint::MdCodeKeyword
+                | IrStyleHint::MdCodeType
+                | IrStyleHint::MdCodeFunction
+                | IrStyleHint::MdCodeVariable
+                | IrStyleHint::MdCodeConstant
+                | IrStyleHint::MdCodeString
+                | IrStyleHint::MdCodeNumber
+                | IrStyleHint::MdCodeOperator
+                | IrStyleHint::MdCodePunctuation
+                | IrStyleHint::MdCodeComment
+                | IrStyleHint::MdCodePlain
+                | IrStyleHint::MdInlineCode
+        )
+    });
+    assert!(
+        has_code,
+        "fenced rust block must produce at least one MdCode* hint"
+    );
+}
+
+#[test]
+fn render_markdown_lines_drops_zero_width_lines() {
+    for line in render_markdown_lines("first\n\n\nlast") {
+        let w: usize = line.spans.iter().map(|s| s.text.chars().count()).sum();
+        assert!(w > 0);
+    }
+}

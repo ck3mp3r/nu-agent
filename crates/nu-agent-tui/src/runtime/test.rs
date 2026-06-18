@@ -1199,7 +1199,7 @@ fn parse_persisted_tool_status_line_supports_done_and_failed_shapes() {
 }
 
 #[test]
-fn coordinator_hydration_projects_assistant_markdown_but_preserves_user_plain_text() {
+fn coordinator_hydration_projects_both_user_and_assistant_markdown() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
     coordinator.hydrate_transcript_from_messages(
         vec![
@@ -1227,7 +1227,7 @@ fn coordinator_hydration_projects_assistant_markdown_but_preserves_user_plain_te
         })
         .collect::<Vec<_>>();
 
-    assert!(lines.contains(&(TranscriptRole::User, "# user stays literal".to_string())));
+    assert!(lines.contains(&(TranscriptRole::User, "user stays literal".to_string())));
     assert!(lines.contains(&(TranscriptRole::Assistant, "heading".to_string())));
     assert!(lines.contains(&(TranscriptRole::Assistant, "x".to_string())));
 }
@@ -3869,4 +3869,61 @@ fn hydrate_transcript_leaves_latest_total_tokens_none_when_no_value() {
     coordinator.hydrate_transcript_from_messages(Vec::<UiMessageSnapshot>::new(), None);
 
     assert_eq!(coordinator.state().latest_total_tokens, None);
+}
+
+#[test]
+fn hydrate_assistant_message_with_bold_emits_md_bold_span() {
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    coordinator.hydrate_transcript_from_messages(
+        vec![UiMessageSnapshot::new("assistant", "hello **bold**")],
+        None,
+    );
+    let has_bold = coordinator
+        .state()
+        .transcript_preview
+        .iter()
+        .filter_map(|e| {
+            if let nu_agent_core::transcript::items::TranscriptEntry::Assistant(
+                nu_agent_core::transcript::items::ProseMessage { lines },
+            ) = e
+            {
+                Some(lines)
+            } else {
+                None
+            }
+        })
+        .flat_map(|ls| ls.iter().flat_map(|l| l.spans.iter()))
+        .any(|s| {
+            s.text == "bold" && matches!(s.hint, nu_agent_core::transcript::ir::StyleHint::MdBold)
+        });
+    assert!(has_bold);
+}
+
+#[test]
+fn hydrate_compaction_message_with_italic_emits_md_italic_span() {
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    coordinator.hydrate_transcript_from_messages(
+        vec![UiMessageSnapshot::new("compaction", "summary *italic*")],
+        None,
+    );
+    let has_italic = coordinator
+        .state()
+        .transcript_preview
+        .iter()
+        .filter_map(|e| {
+            if let nu_agent_core::transcript::items::TranscriptEntry::Assistant(
+                nu_agent_core::transcript::items::ProseMessage { lines },
+            ) = e
+            {
+                Some(lines)
+            } else {
+                None
+            }
+        })
+        .flat_map(|ls| ls.iter().flat_map(|l| l.spans.iter()))
+        .any(|s| {
+            s.text == "italic"
+                && matches!(s.hint, nu_agent_core::transcript::ir::StyleHint::MdItalic)
+        });
+    assert!(has_italic);
 }

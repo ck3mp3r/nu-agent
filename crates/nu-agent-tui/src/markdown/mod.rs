@@ -1,9 +1,12 @@
 mod code_blocks;
 mod projector;
 mod sanitize;
+mod unified;
 
 #[cfg(test)]
 mod test;
+
+pub use unified::render_markdown_lines;
 
 use ratatui::text::{Line, Span};
 

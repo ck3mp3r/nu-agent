@@ -2519,3 +2519,83 @@ fn compaction_triggered_clears_streaming_state() {
         "streaming state must be cleared after CompactionTriggered"
     );
 }
+
+#[cfg(test)]
+mod task_4a_tests {
+    use super::*;
+    use nu_agent_core::protocol::event::UiEvent;
+    use nu_agent_core::transcript::ir::StyleHint;
+    use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry};
+
+    fn assistant_spans(state: &AppState) -> Vec<(String, StyleHint)> {
+        state
+            .transcript_preview
+            .iter()
+            .filter_map(|e| {
+                if let TranscriptEntry::Assistant(ProseMessage { lines }) = e {
+                    Some(lines)
+                } else {
+                    None
+                }
+            })
+            .flat_map(|lines| lines.iter().flat_map(|l| l.spans.iter()))
+            .map(|s| (s.text.clone(), s.hint.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn assistant_message_with_bold_emits_md_bold() {
+        let mut state = AppState::new();
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::Event(Box::new(UiEvent::AssistantMessage {
+                text: "hello **bold**".to_string(),
+            })),
+            None,
+        );
+        assert!(
+            assistant_spans(&state)
+                .iter()
+                .any(|(t, h)| t == "bold" && matches!(h, StyleHint::MdBold))
+        );
+    }
+
+    #[test]
+    fn assistant_streaming_truncates_prior_render() {
+        let mut state = AppState::new();
+        for text in ["hello", "hello world"] {
+            reduce_with_cancel_controller(
+                &mut state,
+                ReducerInput::Event(Box::new(UiEvent::AssistantMessage {
+                    text: text.to_string(),
+                })),
+                None,
+            );
+        }
+        let concat: String = assistant_spans(&state)
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect();
+        assert!(concat.contains("hello world"));
+        assert!(!concat.contains("hellohello"));
+    }
+
+    #[test]
+    fn compaction_chunk_with_italic_emits_md_italic() {
+        let mut state = AppState::new();
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::Event(Box::new(UiEvent::CompactionSummaryChunk {
+                source: "history".to_string(),
+                delta: "summary *italic*".to_string(),
+                aggregated: "summary *italic*".to_string(),
+            })),
+            None,
+        );
+        assert!(
+            assistant_spans(&state)
+                .iter()
+                .any(|(t, h)| t == "italic" && matches!(h, StyleHint::MdItalic))
+        );
+    }
+}

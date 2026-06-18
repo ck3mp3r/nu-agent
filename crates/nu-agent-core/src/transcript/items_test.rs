@@ -3,9 +3,9 @@ use super::items::*;
 
 #[test]
 fn user_message_produces_user_role_block() {
-    let block = UserMessage {
-        text: "hi".to_string(),
-    }
+    let block = TranscriptEntry::User(ProseMessage {
+        lines: vec![ContentLine::single("hi".to_string(), StyleHint::Normal)],
+    })
     .to_render_block();
     assert_eq!(block.role, Role::User);
     assert_eq!(block.lines.len(), 1);
@@ -16,9 +16,9 @@ fn user_message_produces_user_role_block() {
 
 #[test]
 fn assistant_chunk_produces_assistant_role_block() {
-    let block = AssistantChunk {
+    let block = TranscriptEntry::Assistant(ProseMessage {
         lines: vec![ContentLine::single("hello".to_string(), StyleHint::Normal)],
-    }
+    })
     .to_render_block();
     assert_eq!(block.role, Role::Assistant);
     assert_eq!(block.lines.len(), 1);
@@ -115,12 +115,12 @@ fn separator_has_empty_lines_vec() {
 
 #[test]
 fn transcript_entry_user_delegates_correctly() {
-    let direct = UserMessage {
-        text: "z".to_string(),
-    }
+    let direct = TranscriptEntry::User(ProseMessage {
+        lines: vec![ContentLine::single("z".to_string(), StyleHint::Normal)],
+    })
     .to_render_block();
-    let via_enum = TranscriptEntry::User(UserMessage {
-        text: "z".to_string(),
+    let via_enum = TranscriptEntry::User(ProseMessage {
+        lines: vec![ContentLine::single("z".to_string(), StyleHint::Normal)],
     })
     .to_render_block();
     assert_eq!(direct, via_enum);
@@ -129,8 +129,8 @@ fn transcript_entry_user_delegates_correctly() {
 #[test]
 fn transcript_entry_role_returns_correct_role() {
     assert_eq!(
-        TranscriptEntry::User(UserMessage {
-            text: "x".to_string()
+        TranscriptEntry::User(ProseMessage {
+            lines: vec![ContentLine::single("x".to_string(), StyleHint::Normal)],
         })
         .role(),
         Role::User
@@ -153,8 +153,8 @@ fn transcript_entry_role_returns_correct_role() {
 #[test]
 fn transcript_entry_text_returns_content() {
     assert_eq!(
-        TranscriptEntry::User(UserMessage {
-            text: "hello".to_string()
+        TranscriptEntry::User(ProseMessage {
+            lines: vec![ContentLine::single("hello".to_string(), StyleHint::Normal)],
         })
         .text(),
         "hello"
@@ -197,4 +197,34 @@ fn annotate_diff_hint_identifies_hunk_lines() {
 #[test]
 fn annotate_diff_hint_returns_normal_for_plain() {
     assert_eq!(annotate_diff_hint("plain"), StyleHint::Normal);
+}
+
+#[test]
+fn user_and_assistant_render_blocks_differ_only_in_role() {
+    let lines = vec![ContentLine::single("hi".to_string(), StyleHint::MdBold)];
+    let user_block = TranscriptEntry::User(ProseMessage {
+        lines: lines.clone(),
+    })
+    .to_render_block();
+    let assistant_block = TranscriptEntry::Assistant(ProseMessage {
+        lines: lines.clone(),
+    })
+    .to_render_block();
+    assert_eq!(user_block.lines, assistant_block.lines);
+    assert_eq!(user_block.role, Role::User);
+    assert_eq!(assistant_block.role, Role::Assistant);
+}
+
+#[test]
+fn user_message_text_accessor_concatenates_spans() {
+    let entry = TranscriptEntry::User(ProseMessage {
+        lines: vec![
+            ContentLine::from_spans(vec![
+                Span::new("hello ".to_string(), StyleHint::Normal),
+                Span::new("world".to_string(), StyleHint::MdBold),
+            ]),
+            ContentLine::single("again".to_string(), StyleHint::Normal),
+        ],
+    });
+    assert_eq!(entry.text(), "hello world\nagain");
 }

@@ -10,7 +10,6 @@ const CTP_MOCHA_MAUVE: Color = Color::Rgb(203, 166, 247);
 const CTP_MOCHA_PEACH: Color = Color::Rgb(250, 179, 135);
 const CTP_MOCHA_OVERLAY0: Color = Color::Rgb(108, 112, 134);
 const CTP_MOCHA_OVERLAY1: Color = Color::Rgb(127, 132, 156);
-const CTP_MOCHA_SURFACE0: Color = Color::Rgb(49, 50, 68);
 const CTP_MOCHA_SURFACE1: Color = Color::Rgb(69, 71, 90);
 
 #[derive(Debug, Clone)]
@@ -83,7 +82,7 @@ impl Default for TuiTheme {
             lane_prefix_assistant: fg_dim(CTP_MOCHA_LAVENDER),
             lane_prefix_tool: fg_dim(CTP_MOCHA_MAUVE),
             lane_prefix_system: fg_dim(CTP_MOCHA_YELLOW),
-            row_user: Style::default().bg(CTP_MOCHA_SURFACE0),
+            row_user: Style::default(),
             row_assistant: Style::default(),
             row_tool: Style::default(),
             row_system: Style::default(),

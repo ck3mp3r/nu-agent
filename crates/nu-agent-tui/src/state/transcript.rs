@@ -4,9 +4,11 @@ impl AppState {
     pub fn push_transcript_line(&mut self, role: TranscriptRole, line: impl Into<String>) {
         let text = line.into();
         let entry = match role {
-            TranscriptRole::User => TranscriptEntry::User(UserMessage { text }),
-            TranscriptRole::Assistant => TranscriptEntry::Assistant(AssistantChunk {
-                lines: vec![ContentLine::single(text, StyleHint::Normal)],
+            TranscriptRole::User => TranscriptEntry::User(ProseMessage {
+                lines: crate::markdown::render_markdown_lines(&text),
+            }),
+            TranscriptRole::Assistant => TranscriptEntry::Assistant(ProseMessage {
+                lines: crate::markdown::render_markdown_lines(&text),
             }),
             TranscriptRole::Tool => {
                 let (name, args) = parse_tool_text(&text);
@@ -32,7 +34,7 @@ impl AppState {
         match role {
             TranscriptRole::Assistant | TranscriptRole::Compaction => {
                 let content_line = ratatui_line_to_content_line(&line);
-                let entry = TranscriptEntry::Assistant(AssistantChunk {
+                let entry = TranscriptEntry::Assistant(ProseMessage {
                     lines: vec![content_line],
                 });
                 self.push_transcript_item(entry);
@@ -74,7 +76,7 @@ impl AppState {
         self.assistant_projection_cache_misses
     }
 
-    pub(super) fn push_transcript_item(&mut self, entry: TranscriptEntry) {
+    pub fn push_transcript_item(&mut self, entry: TranscriptEntry) {
         // Check if we should follow tail (user is at end, or nothing selected)
         let was_at_end = match self.transcript_list_state.selected {
             Some(idx) => idx + 1 >= self.transcript_preview.len(),

@@ -7,6 +7,7 @@ use nu_agent_core::protocol::event::{
     PermissionDecision, PermissionRequestContext, ToolDisplay, ToolDisplaySection, UiEvent,
 };
 use nu_agent_core::protocol::slash::{SlashParseResult, parse_slash_command};
+use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry};
 
 pub const ESC_ABORT_CONFIRM_STATUS: &str = "Hit escape again to abort.";
 const ABORT_REQUESTED_STATUS: &str = "Abort requested.";
@@ -414,12 +415,10 @@ fn reduce_ui_event(state: &mut AppState, event: UiEvent) {
                 state.transcript_preview.truncate(start);
             }
 
-            for line in state.project_assistant_markdown_lines(&body) {
-                let text = markdown::rendered_line_to_plain_text(&line);
-                if text.trim().is_empty() {
-                    continue;
-                }
-                state.push_transcript_rendered_line(TranscriptRole::Compaction, line);
+            for line in crate::markdown::render_markdown_lines(&body) {
+                state.push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
+                    lines: vec![line],
+                }));
             }
             state.compaction_streaming_start = None;
             state.push_transcript_line(TranscriptRole::Separator, String::new());
@@ -676,19 +675,21 @@ fn handle_assistant_message(state: &mut AppState, text: String) {
     }
 
     // Project the full accumulated text through markdown
-    let projected_lines = state.project_assistant_markdown_lines(trimmed);
-    if assistant_diff_regurgitation_is_redundant(state, &projected_lines) {
+    let projected_for_dedup = state.project_assistant_markdown_lines(trimmed);
+    if assistant_diff_regurgitation_is_redundant(state, &projected_for_dedup) {
         return;
     }
 
     // Always follow tail with ListState
+    let content_lines = crate::markdown::render_markdown_lines(trimmed);
+    if content_lines.is_empty() {
+        return;
+    }
     state.scroll_transcript_to_bottom();
-    for line in projected_lines {
-        let text = markdown::rendered_line_to_plain_text(&line);
-        if text.trim().is_empty() {
-            continue;
-        }
-        state.push_transcript_rendered_line(TranscriptRole::Assistant, line);
+    for line in content_lines {
+        state.push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
+            lines: vec![line],
+        }));
     }
 }
 
@@ -713,14 +714,12 @@ fn handle_compaction_summary_chunk(state: &mut AppState, source: &str, text: Str
     }
 
     // Re-project the full accumulated text through markdown
-    let projected_lines = state.project_assistant_markdown_lines(trimmed);
+    let content_lines = crate::markdown::render_markdown_lines(trimmed);
     state.scroll_transcript_to_bottom();
-    for line in projected_lines {
-        let text = markdown::rendered_line_to_plain_text(&line);
-        if text.trim().is_empty() {
-            continue;
-        }
-        state.push_transcript_rendered_line(TranscriptRole::Compaction, line);
+    for line in content_lines {
+        state.push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
+            lines: vec![line],
+        }));
     }
 }
 

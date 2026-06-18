@@ -4,13 +4,11 @@ pub trait Renderable {
     fn to_render_block(&self) -> RenderBlock;
 }
 
+/// Markdown-projected prose authored by the user or assistant.
+/// The role (and therefore lane prefix/background) is determined by which
+/// `TranscriptEntry` variant wraps this value, not by the message itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UserMessage {
-    pub text: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AssistantChunk {
+pub struct ProseMessage {
     pub lines: Vec<ContentLine>,
 }
 
@@ -49,32 +47,14 @@ pub struct Spacer;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TranscriptEntry {
-    User(UserMessage),
-    Assistant(AssistantChunk),
+    User(ProseMessage),
+    Assistant(ProseMessage),
     Tool(ToolInvocation),
     ToolResult(ToolResult),
     Compaction(CompactionNotice),
     System(SystemMessage),
     Separator(Separator),
     Spacer(Spacer),
-}
-
-impl Renderable for UserMessage {
-    fn to_render_block(&self) -> RenderBlock {
-        RenderBlock {
-            role: Role::User,
-            lines: vec![ContentLine::single(self.text.clone(), StyleHint::Normal)],
-        }
-    }
-}
-
-impl Renderable for AssistantChunk {
-    fn to_render_block(&self) -> RenderBlock {
-        RenderBlock {
-            role: Role::Assistant,
-            lines: self.lines.clone(),
-        }
-    }
 }
 
 impl Renderable for ToolInvocation {
@@ -158,8 +138,14 @@ impl Renderable for Spacer {
 impl Renderable for TranscriptEntry {
     fn to_render_block(&self) -> RenderBlock {
         match self {
-            Self::User(m) => m.to_render_block(),
-            Self::Assistant(m) => m.to_render_block(),
+            Self::User(m) => RenderBlock {
+                role: Role::User,
+                lines: m.lines.clone(),
+            },
+            Self::Assistant(m) => RenderBlock {
+                role: Role::Assistant,
+                lines: m.lines.clone(),
+            },
             Self::Tool(t) => t.to_render_block(),
             Self::ToolResult(r) => r.to_render_block(),
             Self::Compaction(c) => c.to_render_block(),
@@ -186,21 +172,17 @@ impl TranscriptEntry {
 
     pub fn text(&self) -> String {
         match self {
-            Self::User(m) => m.text.clone(),
-            Self::Assistant(m) => {
-                // Concatenate all spans from all lines
-                m.lines
-                    .iter()
-                    .map(|line| {
-                        line.spans
-                            .iter()
-                            .map(|span| span.text.as_str())
-                            .collect::<Vec<_>>()
-                            .join("")
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            }
+            Self::User(m) | Self::Assistant(m) => m
+                .lines
+                .iter()
+                .map(|line| {
+                    line.spans
+                        .iter()
+                        .map(|s| s.text.as_str())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
             Self::Tool(t) => t.name.clone(),
             Self::ToolResult(r) => r.name.clone(),
             Self::Compaction(c) => c.summary.clone(),

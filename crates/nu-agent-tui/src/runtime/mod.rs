@@ -84,7 +84,7 @@ use nu_agent_core::protocol::event::UiEvent;
 use nu_agent_core::protocol::skills::DiscoverableSkill as ProtocolDiscoverableSkill;
 use nu_agent_core::renderer::UiRenderer;
 use nu_agent_core::tools::mcp::runtime::McpServerLifecycle;
-use nu_agent_core::transcript::items::{Renderable, TranscriptEntry};
+use nu_agent_core::transcript::items::{ProseMessage, Renderable, TranscriptEntry};
 use nu_agent_core::transcript::renderer::{BlockRenderer, RenderContext};
 
 #[derive(Debug)]
@@ -158,13 +158,11 @@ impl RuntimeCoordinator {
 
                 // After Bug 2, content is just the summary body (no stats line)
                 if !message_content.trim().is_empty() {
-                    for line in self.state.project_assistant_markdown_lines(message_content) {
-                        let text = crate::markdown::rendered_line_to_plain_text(&line);
-                        if text.trim().is_empty() {
-                            continue;
-                        }
+                    for line in crate::markdown::render_markdown_lines(message_content) {
                         self.state
-                            .push_transcript_rendered_line(TranscriptRole::Compaction, line);
+                            .push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
+                                lines: vec![line],
+                            }));
                     }
                 }
                 self.state
@@ -176,10 +174,11 @@ impl RuntimeCoordinator {
                 continue;
             }
             if role == TranscriptRole::Assistant {
-                for line in self.state.project_assistant_markdown_lines(message_content) {
-                    if line.width() > 0 {
-                        self.state.push_transcript_rendered_line(role, line);
-                    }
+                for line in crate::markdown::render_markdown_lines(message_content) {
+                    self.state
+                        .push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
+                            lines: vec![line],
+                        }));
                 }
                 continue;
             }
