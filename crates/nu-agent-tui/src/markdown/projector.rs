@@ -162,9 +162,15 @@ impl Projector {
         }
         self.flush_line();
 
-        // Render separator
+        // Render separator. Each column part is `─` × (width + 2) to match the
+        // padded cell width (" cell "). Joiner is `─┼─` (3 cells) so the `┼`
+        // sits exactly under the header's `│`: the header emits a 3-cell
+        // ` │ ` between columns, and `─┼─` has matching width with the bar
+        // centered between two horizontals. Using a bare `┼` joiner (1 cell)
+        // would leave the intersection one cell left of the header's bar and
+        // the misalignment compounds with every additional column.
         let sep_parts: Vec<String> = widths.iter().map(|w| "─".repeat(w + 2)).collect();
-        let sep = sep_parts.join("┼");
+        let sep = sep_parts.join("─┼─");
         self.push_text(&sep, Style::default());
         self.flush_line();
 

@@ -354,6 +354,48 @@ fn markdown_projection_renders_table_with_aligned_columns() {
 }
 
 #[test]
+fn markdown_projection_table_separator_intersections_align_with_header_bars() {
+    // Locks in the fix for vertical-bar misalignment that compounded with each
+    // additional column. Pre-fix: header `│` and separator `┼` were off by one
+    // cell because the separator used a 1-char `┼` joiner while the header
+    // used a 3-cell ` │ ` separator. Post-fix: joiner is `─┼─` (3 cells) so
+    // both characters land on the same column for every column boundary.
+    let markdown = "| # | Hash    | Date         | Author             | Message |\n\
+                    |---|---------|--------------|--------------------|---------|\n\
+                    | 0 | 66f1401 | 2026-06-18   | Christian Kemper   | feat(tui): branch icon |";
+    let lines = project_markdown_to_lines(markdown);
+    let plain: Vec<String> = lines.iter().map(|l| plain_line(l)).collect();
+
+    let header = plain
+        .iter()
+        .find(|l| l.contains("Hash") && l.contains("Author"))
+        .expect("header row exists");
+    let separator = plain
+        .iter()
+        .find(|l| l.contains("┼"))
+        .expect("separator row exists");
+
+    let bar_positions: Vec<usize> = header
+        .char_indices()
+        .filter(|(_, c)| *c == '│')
+        .map(|(i, _)| header[..i].chars().count())
+        .collect();
+    let intersection_positions: Vec<usize> = separator
+        .char_indices()
+        .filter(|(_, c)| *c == '┼')
+        .map(|(i, _)| separator[..i].chars().count())
+        .collect();
+
+    assert_eq!(
+        bar_positions, intersection_positions,
+        "every header `│` must sit at the same column as the matching separator `┼` \
+         (got bars at {bar_positions:?}, intersections at {intersection_positions:?})\n\
+         header:    {header}\n\
+         separator: {separator}"
+    );
+}
+
+#[test]
 fn markdown_projection_renders_table_with_code_in_cells_correctly() {
     let markdown = r#"This is the **nu-agent** project directory. Here's a summary of its contents:
 
