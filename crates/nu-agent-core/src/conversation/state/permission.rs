@@ -1,11 +1,12 @@
+use std::sync::{Arc, Mutex};
+
 use crate::protocol::contracts::ProgressUi;
 use crate::protocol::event::UiEvent;
-use crate::tools::authz::{AsyncAskHook, PermissionsConfig, SessionGrantCache};
+use crate::tools::authz::{PermissionsConfig, SessionGrantCache};
 
 pub struct PermissionState {
     permissions: PermissionsConfig,
-    session_grants: SessionGrantCache,
-    ask_hook: AsyncAskHook,
+    session_grants: Arc<Mutex<SessionGrantCache>>,
     startup_summary: String,
     startup_emitted: bool,
 }
@@ -14,13 +15,11 @@ impl PermissionState {
     pub fn new(
         permissions: PermissionsConfig,
         session_grants: SessionGrantCache,
-        ask_hook: AsyncAskHook,
         startup_summary: String,
     ) -> Self {
         Self {
             permissions,
-            session_grants,
-            ask_hook,
+            session_grants: Arc::new(Mutex::new(session_grants)),
             startup_summary,
             startup_emitted: false,
         }
@@ -30,21 +29,11 @@ impl PermissionState {
         &self.permissions
     }
 
-    /// Borrow all three permission components simultaneously, avoiding the
-    /// overlapping-borrow problem that arises when calling individual accessors
-    /// within the same struct literal.
-    pub fn borrow_all_mut(
-        &mut self,
-    ) -> (
-        &PermissionsConfig,
-        &mut SessionGrantCache,
-        &mut AsyncAskHook,
-    ) {
-        (
-            &self.permissions,
-            &mut self.session_grants,
-            &mut self.ask_hook,
-        )
+    /// Returns a clone of the `Arc` — both caller and `PermissionState` share
+    /// the same underlying `SessionGrantCache`. Writes made through any clone
+    /// (e.g., `insert_allow_always`) are immediately visible everywhere.
+    pub fn session_grants_arc(&self) -> Arc<Mutex<SessionGrantCache>> {
+        Arc::clone(&self.session_grants)
     }
 
     pub fn emit_startup_summary_once<U: ProgressUi>(&mut self, ui: &mut U) {

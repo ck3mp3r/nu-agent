@@ -42,6 +42,7 @@ fn test_config_required_fields() {
         max_output_tokens: None,
         max_tool_turns: None,
         preamble: None,
+        read_timeout_secs: None,
     };
 
     assert_eq!(config.provider, "openai");
@@ -64,6 +65,7 @@ fn test_config_all_fields() {
         max_output_tokens: Some(2048),
         max_tool_turns: Some(10),
         preamble: None,
+        read_timeout_secs: None,
     };
 
     assert_eq!(config.provider, "anthropic");
@@ -356,6 +358,7 @@ fn test_merge_full_configs() {
         max_output_tokens: Some(2000),
         max_tool_turns: Some(10),
         preamble: None,
+        read_timeout_secs: None,
     };
 
     let override_config = Config {
@@ -370,6 +373,7 @@ fn test_merge_full_configs() {
         max_output_tokens: Some(4000),
         max_tool_turns: Some(25),
         preamble: None,
+        read_timeout_secs: None,
     };
 
     let merged = base.merge(override_config);
@@ -401,6 +405,7 @@ fn test_merge_with_partial_override() {
         max_output_tokens: Some(2000),
         max_tool_turns: Some(10),
         preamble: None,
+        read_timeout_secs: None,
     };
 
     let override_config = Config {
@@ -415,6 +420,7 @@ fn test_merge_with_partial_override() {
         max_output_tokens: None,
         max_tool_turns: None,
         preamble: None,
+        read_timeout_secs: None,
     };
 
     let merged = base.merge(override_config);
@@ -446,6 +452,7 @@ fn test_merge_with_empty_override() {
         max_output_tokens: Some(2000),
         max_tool_turns: Some(10),
         preamble: None,
+        read_timeout_secs: None,
     };
 
     let empty_override = Config {
@@ -460,6 +467,7 @@ fn test_merge_with_empty_override() {
         max_output_tokens: None,
         max_tool_turns: None,
         preamble: None,
+        read_timeout_secs: None,
     };
 
     let merged = base.clone().merge(empty_override);
@@ -483,6 +491,7 @@ fn test_merge_chain() {
         max_output_tokens: None,
         max_tool_turns: Some(20),
         preamble: None,
+        read_timeout_secs: None,
     };
 
     let override1 = Config {
@@ -497,6 +506,7 @@ fn test_merge_chain() {
         max_output_tokens: None,
         max_tool_turns: None,
         preamble: None,
+        read_timeout_secs: None,
     };
 
     let override2 = Config {
@@ -511,6 +521,7 @@ fn test_merge_chain() {
         max_output_tokens: None,
         max_tool_turns: None,
         preamble: None,
+        read_timeout_secs: None,
     };
 
     let merged = base.merge(override1).merge(override2);
@@ -539,6 +550,7 @@ fn test_merge_required_fields() {
         max_output_tokens: None,
         max_tool_turns: None,
         preamble: None,
+        read_timeout_secs: None,
     };
 
     let override_config = Config {
@@ -553,6 +565,7 @@ fn test_merge_required_fields() {
         max_output_tokens: None,
         max_tool_turns: None,
         preamble: None,
+        read_timeout_secs: None,
     };
 
     let merged = base.merge(override_config);
@@ -577,6 +590,7 @@ fn test_validate_valid_config() {
         max_output_tokens: Some(2048),
         max_tool_turns: Some(20),
         preamble: None,
+        read_timeout_secs: None,
     };
 
     assert!(config.validate().is_ok());
@@ -597,6 +611,7 @@ fn test_validate_minimal_config() {
         max_output_tokens: None,
         max_tool_turns: Some(20),
         preamble: None,
+        read_timeout_secs: None,
     };
 
     assert!(config.validate().is_ok());
@@ -617,6 +632,7 @@ fn test_validate_empty_provider() {
         max_output_tokens: None,
         max_tool_turns: Some(20),
         preamble: None,
+        read_timeout_secs: None,
     };
 
     let result = config.validate();
@@ -640,6 +656,7 @@ fn test_validate_empty_model() {
         max_output_tokens: None,
         max_tool_turns: Some(20),
         preamble: None,
+        read_timeout_secs: None,
     };
 
     let result = config.validate();
@@ -663,6 +680,7 @@ fn test_validate_max_output_exceeds_context() {
         max_output_tokens: Some(3000), // Exceeds context
         max_tool_turns: Some(20),
         preamble: None,
+        read_timeout_secs: None,
     };
 
     let result = config.validate();
@@ -687,6 +705,7 @@ fn test_validate_max_output_equals_context() {
         max_output_tokens: Some(4000), // Equal is OK
         max_tool_turns: Some(20),
         preamble: None,
+        read_timeout_secs: None,
     };
 
     assert!(config.validate().is_ok());
@@ -707,6 +726,7 @@ fn test_validate_zero_max_tool_turns() {
         max_output_tokens: None,
         max_tool_turns: Some(0), // Invalid
         preamble: None,
+        read_timeout_secs: None,
     };
 
     let result = config.validate();
@@ -730,6 +750,7 @@ fn test_validate_only_context_tokens_set() {
         max_output_tokens: None,
         max_tool_turns: Some(20),
         preamble: None,
+        read_timeout_secs: None,
     };
 
     assert!(config.validate().is_ok());
@@ -750,6 +771,7 @@ fn test_validate_only_output_tokens_set() {
         max_output_tokens: Some(2048),
         max_tool_turns: Some(20),
         preamble: None,
+        read_timeout_secs: None,
     };
 
     assert!(config.validate().is_ok());
@@ -1096,6 +1118,7 @@ fn test_resolve_model_basic() {
         },
         compaction: None,
         agents: AgentsConfig::default(),
+        read_timeout_secs: None,
     };
 
     let config = plugin_config
@@ -1133,6 +1156,7 @@ fn test_resolve_model_with_env_fallback() {
         },
         compaction: None,
         agents: AgentsConfig::default(),
+        read_timeout_secs: None,
     };
 
     let config = plugin_config
@@ -1154,6 +1178,7 @@ fn test_resolve_model_invalid_format() {
         providers: HashMap::new(),
         compaction: None,
         agents: AgentsConfig::default(),
+        read_timeout_secs: None,
     };
 
     // No slash separator
@@ -1179,6 +1204,7 @@ fn test_resolve_model_provider_not_found() {
         providers: HashMap::new(),
         compaction: None,
         agents: AgentsConfig::default(),
+        read_timeout_secs: None,
     };
 
     let result = plugin_config.resolve_model("unknown/model");
@@ -1210,6 +1236,7 @@ fn test_resolve_model_model_not_in_config() {
         },
         compaction: None,
         agents: AgentsConfig::default(),
+        read_timeout_secs: None,
     };
 
     let config = plugin_config
@@ -1246,6 +1273,7 @@ fn test_resolve_model_with_provider_field() {
         },
         compaction: None,
         agents: AgentsConfig::default(),
+        read_timeout_secs: None,
     };
 
     let config = plugin_config
@@ -1301,6 +1329,7 @@ fn test_resolve_model_merges_limits() {
         },
         compaction: None,
         agents: AgentsConfig::default(),
+        read_timeout_secs: None,
     };
 
     let config = plugin_config
@@ -1338,6 +1367,7 @@ fn resolve_model_handles_two_part_format() {
         },
         compaction: None,
         agents: AgentsConfig::default(),
+        read_timeout_secs: None,
     };
 
     let config = plugin_config
@@ -1358,6 +1388,7 @@ fn resolve_model_validates_empty_parts() {
         providers: HashMap::new(),
         compaction: None,
         agents: AgentsConfig::default(),
+        read_timeout_secs: None,
     };
 
     // Empty provider
@@ -1401,6 +1432,7 @@ fn resolve_model_uses_split_once_for_multi_part_models() {
         },
         compaction: None,
         agents: AgentsConfig::default(),
+        read_timeout_secs: None,
     };
 
     let config = plugin_config
@@ -1439,6 +1471,7 @@ fn resolve_model_works_with_simple_two_part() {
         },
         compaction: None,
         agents: AgentsConfig::default(),
+        read_timeout_secs: None,
     };
 
     let config = plugin_config
@@ -1477,6 +1510,7 @@ fn integration_github_copilot_with_backend_in_model() {
         },
         compaction: None,
         agents: AgentsConfig::default(),
+        read_timeout_secs: None,
     };
 
     // Test default model
@@ -1525,6 +1559,7 @@ fn test_validate_none_max_tool_turns_is_valid() {
         max_output_tokens: None,
         max_tool_turns: None, // Should be valid
         preamble: None,
+        read_timeout_secs: None,
     };
 
     assert!(config.validate().is_ok());
@@ -1545,6 +1580,7 @@ fn test_validate_zero_max_tool_turns_still_invalid() {
         max_output_tokens: None,
         max_tool_turns: Some(0), // Still invalid
         preamble: None,
+        read_timeout_secs: None,
     };
 
     let result = config.validate();

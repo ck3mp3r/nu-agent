@@ -3,9 +3,10 @@
 //! These tests verify the TurnExecutor struct can be constructed and exposes
 //! the expected API. They replace the Phase 3a RED stubs.
 
+use std::sync::Arc;
+
 use super::*;
 use crate::config::Config;
-use crate::tools::authz::{AskRuntimeConfig, AsyncAskHook, SessionGrantCache};
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
 
@@ -23,6 +24,7 @@ fn test_config() -> Config {
         max_tokens: None,
         max_tool_turns: None,
         temperature: None,
+        read_timeout_secs: None,
     }
 }
 
@@ -33,12 +35,6 @@ fn turn_executor_new_constructs_without_panic() {
     let temp_dir = tempfile::tempdir().unwrap();
     let mut memory_state =
         super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
-    let mut permission_state = super::super::super::state::permission::PermissionState::new(
-        crate::tools::authz::PermissionsConfig::safe_defaults(true),
-        SessionGrantCache::default(),
-        AsyncAskHook::new(AskRuntimeConfig::default()),
-        String::new(),
-    );
     let closure_registry = ClosureRegistry::new();
     let mcp_registry = McpToolRegistry::from_names(Vec::<String>::new());
     let mcp_tool_server_handle = rig::tool::server::ToolServer::new().run();
@@ -46,11 +42,10 @@ fn turn_executor_new_constructs_without_panic() {
     let _executor = TurnExecutor::new(
         &config,
         &rt,
-        &mut permission_state,
         &mut memory_state,
         ToolInfra {
-            closure_registry: &closure_registry,
-            mcp_registry: &mcp_registry,
+            closure_registry: Arc::new(closure_registry),
+            mcp_registry: Arc::new(mcp_registry),
             tool_server_handle: mcp_tool_server_handle,
             visible_tool_definitions: vec![],
         },
@@ -65,12 +60,6 @@ fn turn_executor_exposes_memory_state() {
     let temp_dir = tempfile::tempdir().unwrap();
     let mut memory_state =
         super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
-    let mut permission_state = super::super::super::state::permission::PermissionState::new(
-        crate::tools::authz::PermissionsConfig::safe_defaults(true),
-        SessionGrantCache::default(),
-        AsyncAskHook::new(AskRuntimeConfig::default()),
-        String::new(),
-    );
     let closure_registry = ClosureRegistry::new();
     let mcp_registry = McpToolRegistry::from_names(Vec::<String>::new());
     let mcp_tool_server_handle = rig::tool::server::ToolServer::new().run();
@@ -78,11 +67,10 @@ fn turn_executor_exposes_memory_state() {
     let executor = TurnExecutor::new(
         &config,
         &rt,
-        &mut permission_state,
         &mut memory_state,
         ToolInfra {
-            closure_registry: &closure_registry,
-            mcp_registry: &mcp_registry,
+            closure_registry: Arc::new(closure_registry),
+            mcp_registry: Arc::new(mcp_registry),
             tool_server_handle: mcp_tool_server_handle,
             visible_tool_definitions: vec![],
         },
@@ -99,12 +87,6 @@ fn turn_executor_take_response_data_returns_none_before_execute() {
     let temp_dir = tempfile::tempdir().unwrap();
     let mut memory_state =
         super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
-    let mut permission_state = super::super::super::state::permission::PermissionState::new(
-        crate::tools::authz::PermissionsConfig::safe_defaults(true),
-        SessionGrantCache::default(),
-        AsyncAskHook::new(AskRuntimeConfig::default()),
-        String::new(),
-    );
     let closure_registry = ClosureRegistry::new();
     let mcp_registry = McpToolRegistry::from_names(Vec::<String>::new());
     let mcp_tool_server_handle = rig::tool::server::ToolServer::new().run();
@@ -112,11 +94,10 @@ fn turn_executor_take_response_data_returns_none_before_execute() {
     let mut executor = TurnExecutor::new(
         &config,
         &rt,
-        &mut permission_state,
         &mut memory_state,
         ToolInfra {
-            closure_registry: &closure_registry,
-            mcp_registry: &mcp_registry,
+            closure_registry: Arc::new(closure_registry),
+            mcp_registry: Arc::new(mcp_registry),
             tool_server_handle: mcp_tool_server_handle,
             visible_tool_definitions: vec![],
         },

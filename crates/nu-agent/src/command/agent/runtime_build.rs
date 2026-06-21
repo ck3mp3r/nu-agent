@@ -65,6 +65,7 @@ pub(crate) fn extract_flag_config(call: &EvaluatedCall) -> Config {
         max_output_tokens,
         max_tool_turns,
         preamble: None,
+        read_timeout_secs: None,
     }
 }
 
@@ -364,7 +365,6 @@ pub(crate) struct RuntimeBuildParams {
     pub(crate) compaction_count: usize,
     pub(crate) compaction_strategy: nu_agent_core::compaction::CompactionStrategy,
     pub(crate) effective_permissions: nu_agent_core::tools::authz::PermissionsConfig,
-    pub(crate) ask_hook_config: nu_agent_core::tools::authz::AskRuntimeConfig,
     pub(crate) permissions_startup_summary: String,
     pub(crate) persona_body: Option<String>,
     pub(crate) agent_identity: Option<String>,
@@ -385,7 +385,6 @@ pub(crate) fn build_runtime(params: RuntimeBuildParams) -> AgentConversationRunt
         state::multi_agent::MultiAgentState, state::permission::PermissionState,
         state::persona::PersonaState, state::provider::ProviderState, state::tool::ToolState,
     };
-    use nu_agent_core::tools::authz::AsyncAskHook;
 
     // CRITICAL: extract cache_dir BEFORE moving params.store into the struct literal
     // because params.store.cache_dir() and params.store cannot both be used after move
@@ -425,7 +424,6 @@ pub(crate) fn build_runtime(params: RuntimeBuildParams) -> AgentConversationRunt
         permission_state: PermissionState::new(
             params.effective_permissions,
             nu_agent_core::tools::authz::SessionGrantCache::default(),
-            AsyncAskHook::new(params.ask_hook_config),
             params.permissions_startup_summary,
         ),
         memory_state: MemoryState::new(cache_dir),
@@ -442,5 +440,6 @@ pub(crate) fn build_runtime(params: RuntimeBuildParams) -> AgentConversationRunt
             params.available_agents,
             params.agents_config,
         ),
+        interactive_pending: None,
     }
 }

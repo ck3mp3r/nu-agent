@@ -4,16 +4,26 @@ use nu_protocol::LabeledError;
 
 use crate::config::Config;
 
-/// Build a shared HTTP client with a connect timeout.
+/// Default read timeout for HTTP streaming responses in seconds.
+///
+/// This fires only when no bytes are received for this duration —
+/// it resets on each successful read, so active long-running responses
+/// are not affected.
+const DEFAULT_READ_TIMEOUT_SECS: u64 = 30;
+
+/// Build a shared HTTP client with a connect timeout and optional read timeout.
 ///
 /// Connect timeout: 10s — fail fast if host is unreachable.
-/// No request timeout — LLM streaming responses can take arbitrarily long.
+/// Read timeout: defaults to 30s — fires only when no bytes received for the duration.
+///   Pass `Some(0)` to disable. This is safe for long active LLM responses.
 /// Uses system certificate store via rustls-native-certs (supports corporate CAs).
-fn build_http_client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(10))
-        .build()
-        .expect("failed to build HTTP client")
+fn build_http_client(read_timeout_secs: Option<u64>) -> reqwest::Client {
+    let read_timeout = read_timeout_secs.unwrap_or(DEFAULT_READ_TIMEOUT_SECS);
+    let mut builder = reqwest::Client::builder().connect_timeout(Duration::from_secs(10));
+    if read_timeout > 0 {
+        builder = builder.read_timeout(Duration::from_secs(read_timeout));
+    }
+    builder.build().expect("failed to build HTTP client")
 }
 
 /// Build a GitHub Copilot client using rig's from_env() or explicit config.
@@ -47,7 +57,8 @@ pub(super) fn build_copilot_client(
 
     // 1. Explicit api_key from --api-key flag or plugin config
     if let Some(key) = &config.api_key {
-        let mut b = rig::providers::copilot::Client::builder().http_client(build_http_client());
+        let mut b = rig::providers::copilot::Client::builder()
+            .http_client(build_http_client(config.read_timeout_secs));
         if let Some(url) = &base_url {
             b = b.base_url(url.clone());
         }
@@ -62,7 +73,8 @@ pub(super) fn build_copilot_client(
         std::env::var("GITHUB_COPILOT_API_KEY").or_else(|_| std::env::var("COPILOT_API_KEY"))
         && !key.trim().is_empty()
     {
-        let mut b = rig::providers::copilot::Client::builder().http_client(build_http_client());
+        let mut b = rig::providers::copilot::Client::builder()
+            .http_client(build_http_client(config.read_timeout_secs));
         if let Some(url) = &base_url {
             b = b.base_url(url.clone());
         }
@@ -77,7 +89,8 @@ pub(super) fn build_copilot_client(
         std::env::var("COPILOT_GITHUB_ACCESS_TOKEN").or_else(|_| std::env::var("GITHUB_TOKEN"))
         && !token.trim().is_empty()
     {
-        let mut b = rig::providers::copilot::Client::builder().http_client(build_http_client());
+        let mut b = rig::providers::copilot::Client::builder()
+            .http_client(build_http_client(config.read_timeout_secs));
         if let Some(url) = &base_url {
             b = b.base_url(url.clone());
         }
@@ -94,7 +107,8 @@ pub(super) fn build_copilot_client(
         && let Ok(token) = std::fs::read_to_string(path)
         && !token.trim().is_empty()
     {
-        let mut b = rig::providers::copilot::Client::builder().http_client(build_http_client());
+        let mut b = rig::providers::copilot::Client::builder()
+            .http_client(build_http_client(config.read_timeout_secs));
         if let Some(url) = &base_url {
             b = b.base_url(url.clone());
         }
@@ -110,83 +124,87 @@ pub(super) fn build_copilot_client(
     ))
 }
 
-/// Build an OpenAI client using rig's builder pattern or from_env().
+/// Build an OpenAI client using rig's builder pattern.
 ///
 /// If config has an explicit `api_key`, uses the builder with optional `base_url`.
-/// Otherwise, delegates to `rig::providers::openai::Client::from_env()` which reads
-/// OPENAI_API_KEY environment variable.
+/// Otherwise, reads `OPENAI_API_KEY` from the environment (also checks `OPENAI_BASE_URL`).
 pub(super) fn build_openai_client(
     config: &Config,
 ) -> Result<rig::providers::openai::Client, LabeledError> {
-    use rig::client::ProviderClient;
-
     let map_build_err = |e: rig::http_client::Error| {
         LabeledError::new(format!(
             "OpenAI client initialization failed: {e}. Ensure OPENAI_API_KEY is set."
         ))
     };
 
-    let map_env_err = |e: rig::client::ProviderClientError| {
-        LabeledError::new(format!(
-            "OpenAI client initialization failed: {e}. Ensure OPENAI_API_KEY is set."
-        ))
-    };
-
     if let Some(key) = &config.api_key {
-        let mut builder =
-            rig::providers::openai::Client::builder().http_client(build_http_client());
+        let mut builder = rig::providers::openai::Client::builder()
+            .http_client(build_http_client(config.read_timeout_secs));
         if let Some(url) = &config.base_url {
             builder = builder.base_url(url.clone());
         }
         builder.api_key(key.clone()).build().map_err(map_build_err)
     } else {
-        rig::providers::openai::Client::from_env().map_err(map_env_err)
+        let key = std::env::var("OPENAI_API_KEY").map_err(|_| {
+            LabeledError::new(
+                "OpenAI client initialization failed: OPENAI_API_KEY not set."
+                    .to_string(),
+            )
+        })?;
+        let mut builder = rig::providers::openai::Client::builder()
+            .http_client(build_http_client(config.read_timeout_secs))
+            .api_key(key);
+        if let Ok(url) = std::env::var("OPENAI_BASE_URL") {
+            builder = builder.base_url(url);
+        }
+        builder.build().map_err(map_build_err)
     }
 }
 
-/// Build an Anthropic client using rig's builder pattern or from_env().
+/// Build an Anthropic client using rig's builder pattern.
 ///
 /// If config has an explicit `api_key`, uses the builder with optional `base_url`.
-/// Otherwise, delegates to `rig::providers::anthropic::Client::from_env()` which reads
-/// ANTHROPIC_API_KEY environment variable.
+/// Otherwise, reads `ANTHROPIC_API_KEY` from the environment.
 pub(super) fn build_anthropic_client(
     config: &Config,
 ) -> Result<rig::providers::anthropic::Client, LabeledError> {
-    use rig::client::ProviderClient;
-
     let map_build_err = |e: rig::http_client::Error| {
         LabeledError::new(format!(
             "Anthropic client initialization failed: {e}. Ensure ANTHROPIC_API_KEY is set."
         ))
     };
 
-    let map_env_err = |e: rig::client::ProviderClientError| {
-        LabeledError::new(format!(
-            "Anthropic client initialization failed: {e}. Ensure ANTHROPIC_API_KEY is set."
-        ))
-    };
-
     if let Some(key) = &config.api_key {
-        let mut builder =
-            rig::providers::anthropic::Client::builder().http_client(build_http_client());
+        let mut builder = rig::providers::anthropic::Client::builder()
+            .http_client(build_http_client(config.read_timeout_secs));
         if let Some(url) = &config.base_url {
             builder = builder.base_url(url.clone());
         }
         builder.api_key(key.clone()).build().map_err(map_build_err)
     } else {
-        rig::providers::anthropic::Client::from_env().map_err(map_env_err)
+        let key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
+            LabeledError::new(
+                "Anthropic client initialization failed: ANTHROPIC_API_KEY not set."
+                    .to_string(),
+            )
+        })?;
+        rig::providers::anthropic::Client::builder()
+            .http_client(build_http_client(config.read_timeout_secs))
+            .api_key(key)
+            .build()
+            .map_err(map_build_err)
     }
 }
 
 /// Build an Ollama client.
 ///
-/// Ollama doesn't require an API key. If `config.base_url` is set, uses the builder
-/// with that URL. Otherwise falls back to `from_env()` which reads `OLLAMA_API_BASE_URL`
-/// (defaults to http://localhost:11434).
+/// Ollama doesn't require an API key. If `config.base_url` is set, uses that URL.
+/// Otherwise reads `OLLAMA_API_BASE_URL` from the environment (defaults to
+/// `http://localhost:11434`).
 pub(super) fn build_ollama_client(
     config: &Config,
 ) -> Result<rig::providers::ollama::Client, LabeledError> {
-    use rig::client::{Nothing, ProviderClient};
+    use rig::client::Nothing;
 
     let map_build_err = |e: rig::http_client::Error| {
         LabeledError::new(format!(
@@ -194,22 +212,20 @@ pub(super) fn build_ollama_client(
         ))
     };
 
-    let map_env_err = |e: rig::client::ProviderClientError| {
-        LabeledError::new(format!(
-            "Ollama client initialization failed: {e}. Ensure OLLAMA_API_BASE_URL is set or Ollama is running on default port."
-        ))
-    };
+    let base_url = config
+        .base_url
+        .clone()
+        .unwrap_or_else(|| {
+            std::env::var("OLLAMA_API_BASE_URL")
+                .unwrap_or_else(|_| "http://localhost:11434".to_string())
+        });
 
-    if let Some(url) = &config.base_url {
-        rig::providers::ollama::Client::builder()
-            .http_client(build_http_client())
-            .base_url(url.clone())
-            .api_key(Nothing)
-            .build()
-            .map_err(map_build_err)
-    } else {
-        rig::providers::ollama::Client::from_env().map_err(map_env_err)
-    }
+    rig::providers::ollama::Client::builder()
+        .http_client(build_http_client(config.read_timeout_secs))
+        .base_url(base_url)
+        .api_key(Nothing)
+        .build()
+        .map_err(map_build_err)
 }
 
 /// Resolve which provider implementation to use.
@@ -225,6 +241,9 @@ pub(super) fn resolve_provider_type<'a>(
 pub enum CachedProviderClient {
     Copilot(rig::providers::copilot::Client),
     OpenAi(rig::providers::openai::Client),
+    /// OpenAI-compatible providers that use `/chat/completions` instead of `/responses`.
+    /// Automatically selected when `base_url` is set for the `openai` provider.
+    OpenAiCompletions(rig::providers::openai::CompletionsClient),
     Anthropic(rig::providers::anthropic::Client),
     Ollama(rig::providers::ollama::Client),
 }
@@ -253,6 +272,9 @@ impl CachedProviderClient {
         match self {
             CachedProviderClient::Copilot(c) => visitor.visit(c.completion_model(model_name)),
             CachedProviderClient::OpenAi(c) => visitor.visit(c.completion_model(model_name)),
+            CachedProviderClient::OpenAiCompletions(c) => {
+                visitor.visit(c.completion_model(model_name))
+            }
             CachedProviderClient::Anthropic(c) => visitor.visit(c.completion_model(model_name)),
             CachedProviderClient::Ollama(c) => visitor.visit(c.completion_model(model_name)),
         }

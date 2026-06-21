@@ -70,6 +70,7 @@ fn model_picker_catalog_projection_from_plugin_config_is_sorted_and_marks_active
         providers,
         compaction: None,
         agents: nu_agent_core::config::AgentsConfig::default(),
+        read_timeout_secs: None,
     };
     let projected =
         build_model_picker_catalog_from_plugin_config(&plugin_config, "a-provider/a-model");
@@ -116,6 +117,7 @@ fn tui_startup_hydrates_model_picker_catalog_from_cached_plugin_config() {
         providers,
         compaction: None,
         agents: nu_agent_core::config::AgentsConfig::default(),
+        read_timeout_secs: None,
     };
 
     let catalog = model_picker_catalog_from_cached_startup_plugin_config(

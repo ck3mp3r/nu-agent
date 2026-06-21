@@ -1,10 +1,9 @@
-# Contribution guardrails (R9)
+# Contribution guardrails
 
 This page is for contributors changing tool handling, permission UX, or TUI transcript rendering.
 
 See also:
 
-- [Handler decomposition contract](./handler-decomposition-contract.md)
 - [Usage: interactive permission prompt behavior](./usage.md#interactive-permission-prompt-behavior-tui)
 
 ## 1) Permission prompt rendering model (inline, non-modal)
@@ -74,12 +73,11 @@ Keep handler dependencies one-way:
 - `result` owns output/failure shaping.
 - `types` owns shared data model types.
 
-Source + contract:
+Source:
 
-- Facade/wiring exports: `src/agent/tools/handler/mod.rs`
-- Submodules: `src/agent/tools/handler/{dispatch,authz_gate,pre_authorize,builtin_fs,result,types}.rs`
-- Contract + forbidden edges: [handler-decomposition-contract.md](./handler-decomposition-contract.md)
-- Module contract tests: `src/agent/tools/handler/test.rs`
+- Facade/wiring: `crates/nu-agent-core/src/tools/handler/mod.rs`
+- Submodules: `crates/nu-agent-core/src/tools/handler/{dispatch,authz_gate,pre_authorize,builtin_fs,result,types}.rs`
+- Module contract tests: `crates/nu-agent-core/src/tools/handler/authz_gate_test.rs`, `dispatch_test.rs`
 
 ## 4) Contributor checklist: adding new tools or permission UX
 

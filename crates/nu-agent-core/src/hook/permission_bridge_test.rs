@@ -1,68 +1,7 @@
 use super::*;
-use crate::hook::driver::PermissionResolver;
-use crate::tools::authz::{AskChoice, AutoApproveAskHook};
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::{McpToolRegistry, ToolSource};
 use nu_protocol::{BlockId, Span, Spanned, engine::Closure};
-
-/// Mock ask hook that always denies
-struct AlwaysDenyHook;
-
-impl crate::tools::authz::AskApprovalHook for AlwaysDenyHook {
-    fn choose(
-        &mut self,
-        _decision: &crate::tools::authz::PermissionDecision,
-        _tool_name: &str,
-        _args: &serde_json::Value,
-    ) -> AskChoice {
-        AskChoice::Deny
-    }
-}
-
-/// Mock ask hook that always allows once
-struct AlwaysAllowOnceHook;
-
-impl crate::tools::authz::AskApprovalHook for AlwaysAllowOnceHook {
-    fn choose(
-        &mut self,
-        _decision: &crate::tools::authz::PermissionDecision,
-        _tool_name: &str,
-        _args: &serde_json::Value,
-    ) -> AskChoice {
-        AskChoice::AllowOnce
-    }
-}
-
-#[test]
-fn resolver_type_checks_with_auto_approve_hook() {
-    // Compile-time test: verify AuthzPermissionResolver type-checks correctly.
-    // We don't instantiate or call methods because that would require a real EngineInterface.
-    fn assert_type_is_permission_resolver<H>()
-    where
-        H: crate::tools::authz::AskApprovalHook,
-    {
-        // This function asserts that AuthzPermissionResolver<H> implements PermissionResolver
-        fn _assert_impl<T: PermissionResolver>() {}
-        _assert_impl::<AuthzPermissionResolver<H>>();
-    }
-
-    assert_type_is_permission_resolver::<AutoApproveAskHook>();
-}
-
-#[test]
-fn resolver_type_checks_with_custom_hooks() {
-    // Verify AuthzPermissionResolver works with custom hook implementations
-    fn assert_type_is_permission_resolver<H>()
-    where
-        H: crate::tools::authz::AskApprovalHook,
-    {
-        fn _assert_impl<T: PermissionResolver>() {}
-        _assert_impl::<AuthzPermissionResolver<H>>();
-    }
-
-    assert_type_is_permission_resolver::<AlwaysDenyHook>();
-    assert_type_is_permission_resolver::<AlwaysAllowOnceHook>();
-}
 
 /// Helper to create a test closure for ClosureRegistry
 fn create_test_closure() -> Spanned<Closure> {

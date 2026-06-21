@@ -22,6 +22,7 @@ fn test_config() -> Config {
         max_tokens: None,
         max_tool_turns: None,
         temperature: None,
+        read_timeout_secs: None,
     }
 }
 

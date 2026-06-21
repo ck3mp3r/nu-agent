@@ -13,13 +13,6 @@ fn read_usage_docs() -> String {
         .expect("usage docs")
 }
 
-fn read_contribution_guardrails_docs() -> String {
-    fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/contribution-guardrails.md"),
-    )
-    .expect("contribution guardrails docs")
-}
-
 #[test]
 fn help_includes_compact_mcp_help_status_slash_commands() {
     let help = read_help_markdown();
@@ -197,20 +190,4 @@ fn usage_docs_describe_non_interactive_ask_default_and_override() {
     assert!(docs.contains("non_interactive_ask"));
     assert!(docs.contains("default (missing): `deny`"));
     assert!(docs.contains("supported values: `deny`, `allow`"));
-}
-
-#[test]
-fn contribution_guardrails_doc_links_handler_contract_and_usage_sections() {
-    let docs = read_contribution_guardrails_docs();
-    assert!(docs.contains("./handler-decomposition-contract.md"));
-    assert!(docs.contains("./usage.md#interactive-permission-prompt-behavior-tui"));
-}
-
-#[test]
-fn contribution_guardrails_doc_references_key_runtime_and_handler_tests() {
-    let docs = read_contribution_guardrails_docs();
-    assert!(docs.contains("src/agent/ui/tui/runtime/mod.rs"));
-    assert!(docs.contains("src/agent/ui/tui/runtime/test.rs"));
-    assert!(docs.contains("src/agent/tools/handler/test.rs"));
-    assert!(docs.contains("src/agent/protocol/permission_test.rs"));
 }

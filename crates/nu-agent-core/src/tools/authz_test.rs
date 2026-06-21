@@ -431,10 +431,10 @@ fn async_ask_waits_for_matching_decision_before_resolving() {
         let choice = hook.choose_with_sink(
             &decision,
             "nu__run",
-            &args,
             "closure",
+            &args,
             &AskContext::default(),
-            &mut sink,
+            Some(&mut sink),
         );
         let _ = choice_tx.send(choice);
     });
@@ -522,7 +522,7 @@ fn ask_event_carries_pre_authorize_display_context_when_provided() {
     let handle = thread::spawn(move || {
         let mut sink = ChannelPermissionSink { tx: event_tx };
         let choice =
-            hook.choose_with_sink(&decision, "edit", &args, "closure", &ask_context, &mut sink);
+            hook.choose_with_sink(&decision, "edit", "closure", &args, &ask_context, Some(&mut sink));
         let _ = choice_tx.send(choice);
     });
 
@@ -577,10 +577,10 @@ fn async_ask_timeout_is_deterministic_deny() {
     let choice = hook.choose_with_sink(
         &decision,
         "nu__run",
-        &args,
         "closure",
+        &args,
         &AskContext::default(),
-        &mut sink,
+        Some(&mut sink),
     );
     assert_eq!(choice, AskChoice::Deny);
     assert!(
@@ -605,10 +605,10 @@ fn non_interactive_ask_defaults_to_deny() {
     let choice = hook.choose_with_sink(
         &decision,
         "nu__run",
-        &serde_json::json!({"command": "echo denied"}),
         "closure",
+        &serde_json::json!({"command": "echo denied"}),
         &AskContext::default(),
-        &mut sink,
+        Some(&mut sink),
     );
     assert_eq!(choice, AskChoice::Deny);
     assert!(sink.events.is_empty());
@@ -629,10 +629,10 @@ fn non_interactive_ask_allow_override_returns_allow_once() {
     let choice = hook.choose_with_sink(
         &decision,
         "nu__run",
-        &serde_json::json!({"command": "echo allowed"}),
         "closure",
+        &serde_json::json!({"command": "echo allowed"}),
         &AskContext::default(),
-        &mut sink,
+        Some(&mut sink),
     );
     assert_eq!(choice, AskChoice::AllowOnce);
     assert!(sink.events.is_empty());
@@ -695,6 +695,89 @@ fn cli_permissions_overlay_rejects_unknown_nested_field_with_path() {
     .expect_err("unknown nested field must fail");
 
     assert!(err.contains("permissions.nu__run.argv"));
+}
+
+#[test]
+#[serial_test::serial]
+fn async_ask_waits_for_matching_decision_before_resolving_via_trait() {
+    crate::protocol::permission::install_active_permission_submission_sender(None);
+    let mut hook = AsyncAskHook::new(AskRuntimeConfig {
+        interactive: true,
+        non_interactive_mode: NonInteractiveAskMode::Deny,
+        timeout: Duration::from_secs(2),
+    });
+    let decision = ask_decision_fixture();
+    let args = serde_json::json!({"command": "echo hi"});
+
+    let (event_tx, event_rx) = mpsc::channel::<UiEvent>();
+    let (choice_tx, choice_rx) = mpsc::channel::<AskChoice>();
+
+    let handle = thread::spawn(move || {
+        let mut sink = ChannelPermissionSink { tx: event_tx };
+        // Call through the trait method instead of the inherent method.
+        let choice = AskApprovalHook::choose(
+            &mut hook,
+            &decision,
+            "nu__run",
+            "closure",
+            &args,
+            &AskContext::default(),
+            Some(&mut sink),
+        );
+        let _ = choice_tx.send(choice);
+    });
+
+    let (request_id, rule_identity) = match event_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("permission request event")
+    {
+        UiEvent::PermissionRequested {
+            request_id,
+            context,
+        } => {
+            assert_eq!(context.tool, "nu__run(command=echo hi)");
+            assert!(context.pre_authorize_display.is_none());
+            (request_id, context.matched_rule_identity)
+        }
+        other => panic!("unexpected event: {other:?}"),
+    };
+
+    assert!(
+        choice_rx.recv_timeout(Duration::from_millis(100)).is_err(),
+        "ask must block until a decision is submitted"
+    );
+
+    let outcome = crate::protocol::permission::submit_active_permission_decision(
+        request_id.clone(),
+        UiPermissionDecision::AllowOnce,
+        rule_identity,
+    );
+    assert_eq!(
+        outcome,
+        crate::protocol::permission::SubmitOutcome::Accepted
+    );
+
+    let choice = choice_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("resolved choice");
+    assert_eq!(choice, AskChoice::AllowOnce);
+
+    let submitted = event_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("submitted event");
+    match submitted {
+        UiEvent::PermissionDecisionSubmitted {
+            request_id: submitted_id,
+            decision,
+            ..
+        } => {
+            assert_eq!(submitted_id, request_id);
+            assert_eq!(decision, UiPermissionDecision::AllowOnce);
+        }
+        other => panic!("unexpected event: {other:?}"),
+    }
+
+    handle.join().expect("ask thread join");
 }
 
 #[test]

@@ -1,39 +1,7 @@
 use nu_plugin::EvaluatedCall;
 use nu_protocol::{LabeledError, Value};
 
-use nu_agent_core::tools::authz::{NonInteractiveAskMode, PermissionsConfig, PermissionsOverlay};
-
-pub(super) fn resolve_non_interactive_ask_mode(
-    plugin_config: Option<&Value>,
-) -> Result<NonInteractiveAskMode, LabeledError> {
-    let Some(config) = plugin_config else {
-        return Ok(NonInteractiveAskMode::Deny);
-    };
-    let Ok(record) = config.as_record() else {
-        return Ok(NonInteractiveAskMode::Deny);
-    };
-    let Some(value) = record.get("non_interactive_ask") else {
-        return Ok(NonInteractiveAskMode::Deny);
-    };
-    let raw = value.as_str().map_err(|_| {
-        LabeledError::new("Invalid non_interactive_ask type").with_label(
-            "non_interactive_ask must be 'deny' or 'allow'",
-            config.span(),
-        )
-    })?;
-    match raw {
-        "deny" => Ok(NonInteractiveAskMode::Deny),
-        "allow" => Ok(NonInteractiveAskMode::Allow),
-        other => Err(
-            LabeledError::new("Invalid non_interactive_ask value").with_label(
-                format!("unsupported value '{other}'; expected 'deny' or 'allow'"),
-                config.span(),
-            ),
-        ),
-    }
-}
-
-pub(super) fn is_builtin_enabled(name: &str, config: &nu_agent_core::config::AgentsConfig) -> bool {
+use nu_agent_core::tools::authz::{PermissionsConfig, PermissionsOverlay};pub(super) fn is_builtin_enabled(name: &str, config: &nu_agent_core::config::AgentsConfig) -> bool {
     use nu_agent_core::protocol::persona::builtins;
     match name {
         n if n == builtins::BUILTIN_PLANNER_NAME => config.planner_enabled,

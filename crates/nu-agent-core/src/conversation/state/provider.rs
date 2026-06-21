@@ -65,7 +65,14 @@ impl ProviderState {
         );
         let client = match provider_type {
             "copilot" | "github-copilot" | "github_copilot" => CachedProviderClient::Copilot(build_copilot_client(&self.config)?),
-            "openai" => CachedProviderClient::OpenAi(build_openai_client(&self.config)?),
+            "openai" => {
+                let client = build_openai_client(&self.config)?;
+                if self.config.base_url.is_some() {
+                    CachedProviderClient::OpenAiCompletions(client.completions_api())
+                } else {
+                    CachedProviderClient::OpenAi(client)
+                }
+            }
             "anthropic" => CachedProviderClient::Anthropic(build_anthropic_client(&self.config)?),
             "ollama" => CachedProviderClient::Ollama(build_ollama_client(&self.config)?),
             other => return Err(LabeledError::new(format!("Unsupported provider: '{}' (from config key '{}')", other, provider_key))

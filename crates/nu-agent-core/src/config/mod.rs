@@ -72,6 +72,11 @@ pub struct PluginConfig {
 
     /// Agent persona configuration
     pub agents: AgentsConfig,
+
+    /// Read timeout for HTTP streaming responses in seconds (default: 30).
+    /// Only fires when no bytes are received for this duration — safe for long
+    /// but active LLM responses. Set to 0 to disable.
+    pub read_timeout_secs: Option<u64>,
 }
 
 /// Configuration for conversation compaction behavior.
@@ -238,12 +243,20 @@ impl PluginConfig {
             AgentsConfig::default()
         };
 
+        // Extract optional 'read_timeout_secs' field
+        let read_timeout_secs = record.get("read_timeout_secs").and_then(|v| {
+            v.as_int()
+                .ok()
+                .and_then(|i| if i >= 0 { Some(i as u64) } else { None })
+        });
+
         Ok(Self {
             model,
             small_model,
             providers,
             compaction,
             agents,
+            read_timeout_secs,
         })
     }
 
@@ -613,6 +626,9 @@ impl PluginConfig {
             }
         }
 
+        // Populate read_timeout_secs from plugin config
+        config.read_timeout_secs = self.read_timeout_secs;
+
         Ok(config)
     }
 }
@@ -653,6 +669,11 @@ pub struct Config {
 
     /// Resolved system preamble to prepend before prompt/context
     pub preamble: Option<String>,
+
+    /// Read timeout for HTTP streaming responses in seconds (default: 30).
+    /// Only fires when no bytes are received for this duration — safe for long
+    /// but active LLM responses. Set to 0 to disable. None = use default (30s).
+    pub read_timeout_secs: Option<u64>,
 }
 
 impl Config {
@@ -713,6 +734,7 @@ impl Config {
             max_output_tokens,
             max_tool_turns,
             preamble: None,
+            read_timeout_secs: None,
         }
     }
 
@@ -814,6 +836,7 @@ impl Config {
             max_output_tokens,
             max_tool_turns,
             preamble,
+            read_timeout_secs: None,
         })
     }
 
@@ -840,6 +863,7 @@ impl Config {
             max_output_tokens: other.max_output_tokens.or(self.max_output_tokens),
             max_tool_turns: other.max_tool_turns.or(self.max_tool_turns),
             preamble: other.preamble.or(self.preamble),
+            read_timeout_secs: other.read_timeout_secs.or(self.read_timeout_secs),
         }
     }
 

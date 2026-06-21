@@ -25,9 +25,7 @@ impl ProgressUi for TestProgressUi {
 
 #[test]
 fn permissions_startup_summary_emits_once_before_first_turn() {
-    use crate::tools::authz::{
-        AskRuntimeConfig, AsyncAskHook, PermissionsConfig, SessionGrantCache,
-    };
+    use crate::tools::authz::{PermissionsConfig, SessionGrantCache};
 
     let mut ui = TestProgressUi::default();
     let summary =
@@ -36,7 +34,6 @@ fn permissions_startup_summary_emits_once_before_first_turn() {
     let mut state = super::super::state::permission::PermissionState::new(
         PermissionsConfig::safe_defaults(true),
         SessionGrantCache::default(),
-        AsyncAskHook::new(AskRuntimeConfig::default()),
         summary.to_string(),
     );
 
@@ -260,6 +257,7 @@ fn provider_dispatch_unsupported_provider_returns_error() {
         max_output_tokens: None,
         max_tool_turns: None,
         preamble: None,
+        read_timeout_secs: None,
     };
 
     // This test will compile once we add the dispatch logic
@@ -850,6 +848,7 @@ fn client_cache_key_contains_provider_and_model() {
         max_output_tokens: None,
         max_tool_turns: None,
         preamble: None,
+        read_timeout_secs: None,
     };
 
     // client_cache_key clones (provider, api_key, base_url) from config.
@@ -882,6 +881,7 @@ fn client_cache_key_includes_base_url_when_set() {
         max_output_tokens: None,
         max_tool_turns: None,
         preamble: None,
+        read_timeout_secs: None,
     };
 
     let key: ClientCacheKey = (
@@ -1108,6 +1108,7 @@ fn active_model_identity_returns_provider_slash_model() {
         max_output_tokens: None,
         max_tool_turns: None,
         preamble: None,
+        read_timeout_secs: None,
     };
 
     // Replicate the method body exactly
@@ -1139,15 +1140,12 @@ fn permission_state_startup_not_emitted_on_construction() {
     // We verify by calling emit_startup_summary_once on a freshly
     // constructed PermissionState and confirming it does emit (proving
     // the flag was false).
-    use crate::tools::authz::{
-        AskRuntimeConfig, AsyncAskHook, PermissionsConfig, SessionGrantCache,
-    };
+    use crate::tools::authz::{PermissionsConfig, SessionGrantCache};
 
     let mut ui = TestProgressUi::default();
     let mut state = super::super::state::permission::PermissionState::new(
         PermissionsConfig::safe_defaults(true),
         SessionGrantCache::default(),
-        AsyncAskHook::new(AskRuntimeConfig::default()),
         "non-empty summary".to_string(),
     );
 
@@ -1168,9 +1166,7 @@ fn permission_state_startup_not_emitted_on_construction() {
 fn permission_state_emit_startup_summary_emits_once() {
     // emit_startup_summary_once must emit exactly one Warning event, even
     // when called twice.
-    use crate::tools::authz::{
-        AskRuntimeConfig, AsyncAskHook, PermissionsConfig, SessionGrantCache,
-    };
+    use crate::tools::authz::{PermissionsConfig, SessionGrantCache};
 
     let mut ui = TestProgressUi::default();
     let summary = "test permissions summary";
@@ -1178,7 +1174,6 @@ fn permission_state_emit_startup_summary_emits_once() {
     let mut state = super::super::state::permission::PermissionState::new(
         PermissionsConfig::safe_defaults(true),
         SessionGrantCache::default(),
-        AsyncAskHook::new(AskRuntimeConfig::default()),
         summary.to_string(),
     );
 
@@ -1238,6 +1233,7 @@ fn provider_state_client_cache_key_contains_provider_and_api_key() {
         max_output_tokens: None,
         max_tool_turns: None,
         preamble: None,
+        read_timeout_secs: None,
     };
 
     // Replicate client_cache_key body
@@ -1362,6 +1358,7 @@ fn accessor_provider_returns_provider_string() {
         max_output_tokens: None,
         max_tool_turns: None,
         preamble: None,
+        read_timeout_secs: None,
     };
 
     // Verify the accessor delegation chain: provider() -> provider_state.config().provider
@@ -1386,6 +1383,7 @@ fn accessor_model_returns_model_string() {
         max_output_tokens: None,
         max_tool_turns: None,
         preamble: None,
+        read_timeout_secs: None,
     };
 
     let provider_state = super::super::state::provider::ProviderState::new(config, None);
@@ -1408,6 +1406,7 @@ fn accessor_max_context_tokens_returns_none_when_unset() {
         max_output_tokens: None,
         max_tool_turns: None,
         preamble: None,
+        read_timeout_secs: None,
     };
 
     let provider_state = super::super::state::provider::ProviderState::new(config, None);
@@ -1433,6 +1432,7 @@ fn accessor_max_context_tokens_returns_value_when_set() {
         max_output_tokens: None,
         max_tool_turns: None,
         preamble: None,
+        read_timeout_secs: None,
     };
 
     let provider_state = super::super::state::provider::ProviderState::new(config, None);
@@ -1458,6 +1458,7 @@ fn accessor_startup_plugin_config_returns_none_when_default() {
         max_output_tokens: None,
         max_tool_turns: None,
         preamble: None,
+        read_timeout_secs: None,
     };
 
     let provider_state = super::super::state::provider::ProviderState::new(config, None);

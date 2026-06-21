@@ -2,6 +2,7 @@ use super::ResolvedClosure;
 use std::collections::HashMap;
 
 /// Registry for storing and managing tool closures.
+#[derive(Clone)]
 pub struct ClosureRegistry {
     closures: HashMap<String, ResolvedClosure>,
 }

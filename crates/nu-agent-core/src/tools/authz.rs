@@ -110,14 +110,14 @@ impl AsyncAskHook {
         self.active_request_id.as_deref()
     }
 
-    pub fn choose_with_sink(
+    pub fn choose_with_sink<S: PermissionEventSink>(
         &mut self,
         decision: &PermissionDecision,
         tool_name: &str,
-        args: &JsonValue,
         source: &str,
+        args: &JsonValue,
         ask_context: &AskContext,
-        sink: &mut impl PermissionEventSink,
+        mut sink: Option<&mut S>,
     ) -> AskChoice {
         if !self.config.interactive {
             return match self.config.non_interactive_mode {
@@ -155,13 +155,17 @@ impl AsyncAskHook {
         ));
         self.active_request_id = Some(request_id);
         self.current_token = Some(token);
-        sink.emit(requested_event);
+        if let Some(s) = &mut sink {
+            s.emit(requested_event);
+        }
 
         let (resolution, events) = self
             .controller
             .await_resolution(self.current_token.as_ref().expect("token set"));
-        for event in events {
-            sink.emit(event);
+        if let Some(s) = &mut sink {
+            for event in events {
+                s.emit(event);
+            }
         }
 
         crate::protocol::permission::install_active_permission_submission_sender(None);
@@ -267,59 +271,28 @@ fn format_arg_value(value: &JsonValue) -> String {
 }
 
 pub trait AskApprovalHook {
-    fn choose(
+    fn choose<S: PermissionEventSink>(
         &mut self,
         decision: &PermissionDecision,
         tool_name: &str,
+        source: &str,
         args: &JsonValue,
+        ask_context: &AskContext,
+        sink: Option<&mut S>,
     ) -> AskChoice;
-
-    fn choose_with_sink(
-        &mut self,
-        decision: &PermissionDecision,
-        tool_name: &str,
-        args: &JsonValue,
-        _source: &str,
-        _ask_context: &AskContext,
-        _sink: &mut impl PermissionEventSink,
-    ) -> AskChoice {
-        self.choose(decision, tool_name, args)
-    }
 }
 
 impl AskApprovalHook for AsyncAskHook {
-    fn choose(
+    fn choose<S: PermissionEventSink>(
         &mut self,
         decision: &PermissionDecision,
         tool_name: &str,
-        args: &JsonValue,
-    ) -> AskChoice {
-        struct NoopSink;
-        impl PermissionEventSink for NoopSink {
-            fn emit(&mut self, _event: crate::protocol::event::UiEvent) {}
-        }
-        let mut sink = NoopSink;
-        AsyncAskHook::choose_with_sink(
-            self,
-            decision,
-            tool_name,
-            args,
-            "unknown",
-            &AskContext::default(),
-            &mut sink,
-        )
-    }
-
-    fn choose_with_sink(
-        &mut self,
-        decision: &PermissionDecision,
-        tool_name: &str,
-        args: &JsonValue,
         source: &str,
+        args: &JsonValue,
         ask_context: &AskContext,
-        sink: &mut impl PermissionEventSink,
+        sink: Option<&mut S>,
     ) -> AskChoice {
-        AsyncAskHook::choose_with_sink(self, decision, tool_name, args, source, ask_context, sink)
+        AsyncAskHook::choose_with_sink(self, decision, tool_name, source, args, ask_context, sink)
     }
 }
 
@@ -327,11 +300,14 @@ impl AskApprovalHook for AsyncAskHook {
 pub struct AutoApproveAskHook;
 
 impl AskApprovalHook for AutoApproveAskHook {
-    fn choose(
+    fn choose<S: PermissionEventSink>(
         &mut self,
         _decision: &PermissionDecision,
         _tool_name: &str,
+        _source: &str,
         _args: &JsonValue,
+        _ask_context: &AskContext,
+        _sink: Option<&mut S>,
     ) -> AskChoice {
         AskChoice::AllowOnce
     }
@@ -763,7 +739,7 @@ impl PermissionsOverlay {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct SessionGrantCache {
     grants_by_scope: HashMap<SessionGrantScopedKey, PermissionAction>,
 }

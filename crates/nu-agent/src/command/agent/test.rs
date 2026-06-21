@@ -91,6 +91,7 @@ mod max_tool_turns_mode_defaults {
             max_output_tokens: None,
             max_tool_turns: None, // Not configured
             preamble: None,
+            read_timeout_secs: None,
         };
 
         // Simulate the mode-specific default logic from mod.rs
@@ -118,6 +119,7 @@ mod max_tool_turns_mode_defaults {
             max_output_tokens: None,
             max_tool_turns: None, // Not configured
             preamble: None,
+            read_timeout_secs: None,
         };
 
         // Simulate the mode-specific default logic from mod.rs
@@ -145,6 +147,7 @@ mod max_tool_turns_mode_defaults {
                 max_output_tokens: None,
                 max_tool_turns: Some(10), // Explicitly set
                 preamble: None,
+                read_timeout_secs: None,
             };
 
             // Simulate the mode-specific default logic from mod.rs
@@ -683,6 +686,7 @@ fn create_minimal_flag_config() -> Config {
         max_output_tokens: None,
         max_tool_turns: None, // Default is None - runtime decides based on mode
         preamble: None,
+        read_timeout_secs: None,
     }
 }
 

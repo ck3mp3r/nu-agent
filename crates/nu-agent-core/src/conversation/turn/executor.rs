@@ -4,22 +4,22 @@
 //! Extracted from `AgentConversationRuntime::execute_turn` to give it a single
 //! responsibility. `AgentConversationRuntime` constructs a `TurnExecutor` and delegates.
 
+use std::sync::Arc;
+
 use nu_protocol::{LabeledError, Span, Value};
 use rig::memory::ConversationMemory;
+use tokio::sync::mpsc;
 
 use crate::config::Config;
 use crate::conversation::providers::{CachedProviderClient, ModelVisitor};
-use crate::conversation::turn::{TurnContext, TurnResult, execute_turn};
-use crate::hook::AuthzPermissionResolver;
+use crate::conversation::turn::{TurnContext, TurnResult, execute_turn, execute_turn_with_channel};
+use crate::hook::permission_resolver::AsyncPermissionResolver;
 use crate::protocol::contracts::ProgressUi;
 use crate::protocol::event::UiEvent;
 use crate::session::ConversationStore;
-use crate::tools::authz::{AsyncAskHook, PermissionsConfig, SessionGrantCache};
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
 use crate::types::{InMemoryConversationMemory, Message, ToolDefinition};
-
-use nu_plugin::EngineInterface;
 
 /// Outcome of `TurnExecutor::execute` — either a completed turn whose results
 /// have been persisted and whose UI events have been emitted, or an early-exit
@@ -50,9 +50,9 @@ pub struct TurnResponseData {
 }
 
 /// Groups the tool infrastructure fields always passed through to TurnContext.
-pub struct ToolInfra<'a> {
-    pub closure_registry: &'a ClosureRegistry,
-    pub mcp_registry: &'a McpToolRegistry,
+pub struct ToolInfra {
+    pub closure_registry: Arc<ClosureRegistry>,
+    pub mcp_registry: Arc<McpToolRegistry>,
     pub tool_server_handle: rig::tool::server::ToolServerHandle,
     pub visible_tool_definitions: Vec<ToolDefinition>,
 }
@@ -60,9 +60,8 @@ pub struct ToolInfra<'a> {
 pub struct TurnExecutor<'a> {
     pub config: &'a Config,
     pub runtime: &'a tokio::runtime::Runtime,
-    pub permission_state: &'a mut super::super::state::permission::PermissionState,
     pub memory_state: &'a mut super::super::state::memory::MemoryState,
-    pub tool_infra: ToolInfra<'a>,
+    pub tool_infra: ToolInfra,
     /// Stored after a completed turn so the delegate can extract it for response formatting.
     response_data: Option<TurnResponseData>,
 }
@@ -71,14 +70,12 @@ impl<'a> TurnExecutor<'a> {
     pub fn new(
         config: &'a Config,
         runtime: &'a tokio::runtime::Runtime,
-        permission_state: &'a mut super::super::state::permission::PermissionState,
         memory_state: &'a mut super::super::state::memory::MemoryState,
-        tool_infra: ToolInfra<'a>,
+        tool_infra: ToolInfra,
     ) -> Self {
         Self {
             config,
             runtime,
-            permission_state,
             memory_state,
             tool_infra,
             response_data: None,
@@ -95,13 +92,23 @@ impl<'a> TurnExecutor<'a> {
     /// paths, persist messages, and emit UI events. Returns `TurnOutcome::Completed`
     /// on success (caller should then evaluate compaction and call `build_response`),
     /// or `TurnOutcome::EarlyReturn(value)` for cancellation paths.
-    pub fn execute<U: ProgressUi>(
+    ///
+    /// The optional `ui_channel` is used when `InteractivePermissionResolver` is the
+    /// permission resolver: the caller creates `(ui_tx, ui_rx)` first, gives a clone
+    /// of `ui_tx` to the resolver, then passes the original pair here so the drain
+    /// loop uses the same channel that the resolver writes `PermissionRequested` events
+    /// to. Pass `None` for TTY/policy mode (the channel is created internally).
+    pub fn execute<U: ProgressUi, P: AsyncPermissionResolver>(
         &mut self,
         ui: &mut U,
         input: ExecuteInput,
         cached_client: &CachedProviderClient,
-        engine: &EngineInterface,
+        permission_resolver: P,
         final_session_id: Option<&str>,
+        ui_channel: Option<(
+            mpsc::UnboundedSender<UiEvent>,
+            mpsc::UnboundedReceiver<UiEvent>,
+        )>,
     ) -> Result<TurnOutcome, LabeledError> {
         let prompt = input.prompt;
         let preamble = input.preamble;
@@ -121,80 +128,15 @@ impl<'a> TurnExecutor<'a> {
 
         let model_name = self.config.model.clone();
 
-        // Visitor that executes a conversation turn with the provider's completion model.
-        struct TurnVisitor<'a, 'b, U> {
-            runtime: &'a tokio::runtime::Runtime,
-            memory: &'b InMemoryConversationMemory,
-            config: &'a Config,
-            permissions: &'a PermissionsConfig,
-            session_grants: &'a mut SessionGrantCache,
-            ask_hook: &'a mut AsyncAskHook,
-            engine: &'a EngineInterface,
-            closure_registry: &'a ClosureRegistry,
-            mcp_registry: &'a McpToolRegistry,
-            mcp_tool_server_handle: &'a rig::tool::server::ToolServerHandle,
-            ui: &'a mut U,
-            prompt: String,
-            conversation_id: String,
-            preamble: Option<String>,
-            visible_tool_definitions: Vec<ToolDefinition>,
-        }
-
-        impl<U: ProgressUi> ModelVisitor for TurnVisitor<'_, '_, U> {
-            type Output = Result<TurnResult, crate::conversation::turn::TurnError>;
-
-            fn visit<M>(self, model: M) -> Self::Output
-            where
-                M: rig::completion::CompletionModel + Clone + 'static,
-            {
-                let mut permission_resolver = AuthzPermissionResolver {
-                    permissions: self.permissions,
-                    grant_cache: self.session_grants,
-                    ask_hook: self.ask_hook,
-                    engine: self.engine,
-                    closure_registry: self.closure_registry,
-                    mcp_registry: self.mcp_registry,
-                };
-                execute_turn(
-                    TurnContext::new(
-                        self.runtime.handle(),
-                        model,
-                        super::TurnConversation {
-                            memory: self.memory.clone(),
-                            conversation_id: self.conversation_id,
-                        },
-                        super::TurnInput {
-                            prompt: self.prompt,
-                            preamble: self.preamble.as_deref(),
-                            max_turns: self.config.max_tool_turns,
-                        },
-                        ToolInfra {
-                            closure_registry: self.closure_registry,
-                            mcp_registry: self.mcp_registry,
-                            tool_server_handle: self.mcp_tool_server_handle.clone(),
-                            visible_tool_definitions: self.visible_tool_definitions,
-                        },
-                    ),
-                    self.ui,
-                    &mut permission_resolver,
-                )
-            }
-        }
-
-        let (permissions, session_grants, ask_hook) = self.permission_state.borrow_all_mut();
-
         let visitor_result = cached_client.with_model(
             &model_name,
             TurnVisitor {
                 runtime: self.runtime,
                 memory: self.memory_state.memory(),
                 config: self.config,
-                permissions,
-                session_grants,
-                ask_hook,
-                engine,
-                closure_registry: self.tool_infra.closure_registry,
-                mcp_registry: self.tool_infra.mcp_registry,
+                permission_resolver,
+                closure_registry: self.tool_infra.closure_registry.clone(),
+                mcp_registry: self.tool_infra.mcp_registry.clone(),
                 mcp_tool_server_handle: &self.tool_infra.tool_server_handle,
                 ui,
                 prompt: prompt.clone(),
@@ -203,6 +145,7 @@ impl<'a> TurnExecutor<'a> {
                 visible_tool_definitions: std::mem::take(
                     &mut self.tool_infra.visible_tool_definitions,
                 ),
+                ui_channel,
             },
         );
 
@@ -259,8 +202,10 @@ impl<'a> TurnExecutor<'a> {
             }
         };
 
-        // Path B: cancel_token fired — FinalResponse never arrived so messages is None.
-        // Construct user + optional partial assistant message and persist manually.
+        // Defensive fallback: if rig ever yields cancelled=true without providing chat_history.
+        // Under v0.39+ semantics, cancellation always flows through PromptCancelled { chat_history }
+        // (Path A above), so this block is not expected to trigger. Kept as a safety net in case
+        // a future rig version changes that behaviour.
         if turn_result.cancelled
             && turn_result.messages.is_none()
             && let Some(session_id) = final_session_id
@@ -326,6 +271,66 @@ impl<'a> TurnExecutor<'a> {
         });
 
         Ok(TurnOutcome::Completed)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TurnVisitor — module-level so it can be generic over P: AsyncPermissionResolver
+// ---------------------------------------------------------------------------
+
+struct TurnVisitor<'a, 'b, U, P> {
+    runtime: &'a tokio::runtime::Runtime,
+    memory: &'b InMemoryConversationMemory,
+    config: &'a Config,
+    permission_resolver: P,
+    closure_registry: Arc<ClosureRegistry>,
+    mcp_registry: Arc<McpToolRegistry>,
+    mcp_tool_server_handle: &'a rig::tool::server::ToolServerHandle,
+    ui: &'a mut U,
+    prompt: String,
+    conversation_id: String,
+    preamble: Option<String>,
+    visible_tool_definitions: Vec<ToolDefinition>,
+    /// Pre-built channel for interactive (TUI) mode so the resolver's `ui_tx`
+    /// and the drain loop's `ui_rx` share the same tokio unbounded channel.
+    /// `None` for TTY/policy mode (channel created internally by `execute_turn`).
+    ui_channel: Option<(
+        mpsc::UnboundedSender<UiEvent>,
+        mpsc::UnboundedReceiver<UiEvent>,
+    )>,
+}
+
+impl<U: ProgressUi, P: AsyncPermissionResolver> ModelVisitor for TurnVisitor<'_, '_, U, P> {
+    type Output = Result<TurnResult, crate::conversation::turn::TurnError>;
+
+    fn visit<M>(self, model: M) -> Self::Output
+    where
+        M: rig::completion::CompletionModel + Clone + 'static,
+    {
+        let ctx = TurnContext::new(
+            self.runtime.handle(),
+            model,
+            super::TurnConversation {
+                memory: self.memory.clone(),
+                conversation_id: self.conversation_id,
+            },
+            super::TurnInput {
+                prompt: self.prompt,
+                preamble: self.preamble.as_deref(),
+                max_turns: self.config.max_tool_turns,
+            },
+            ToolInfra {
+                closure_registry: self.closure_registry.clone(),
+                mcp_registry: self.mcp_registry.clone(),
+                tool_server_handle: self.mcp_tool_server_handle.clone(),
+                visible_tool_definitions: self.visible_tool_definitions,
+            },
+        );
+        if let Some((ui_tx, ui_rx)) = self.ui_channel {
+            execute_turn_with_channel(ctx, self.ui, self.permission_resolver, ui_tx, ui_rx)
+        } else {
+            execute_turn(ctx, self.ui, self.permission_resolver)
+        }
     }
 }
 

@@ -1,15 +1,18 @@
-//! Conversation turn execution using agent hooks and HookDriver bridge.
+//! Conversation turn execution using agent hooks.
 //!
 //! This module provides `execute_turn` which handles a single conversation turn:
 //! sending user input to the LLM, executing tool calls via hooks, and returning
-//! the final response. Uses `CopilotPromptHook` + `HookDriver` to bridge async
+//! the final response. Uses `AgentHook<P>` + a tokio MPSC channel to bridge async
 //! events to the sync UI.
 
 use futures::StreamExt;
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::hook::{driver::HookDriver, driver::PermissionResolver, prompt_hook::CopilotPromptHook};
+use crate::hook::agent_hook::AgentHook;
+use crate::hook::permission_resolver::AsyncPermissionResolver;
 use crate::protocol::contracts::ProgressUi;
+use crate::protocol::event::UiEvent;
 use crate::types::{InMemoryConversationMemory, Message, Text, ToolDefinition, UserContent};
 use rig::streaming::StreamingPrompt;
 use rig::tool::{ToolDyn, ToolError};
@@ -132,7 +135,7 @@ where
     model: M,
     conversation: TurnConversation,
     input: TurnInput<'a>,
-    tool_infra: executor::ToolInfra<'a>,
+    tool_infra: executor::ToolInfra,
 }
 
 impl<'a, M> TurnContext<'a, M>
@@ -145,7 +148,7 @@ where
         model: M,
         conversation: TurnConversation,
         input: TurnInput<'a>,
-        tool_infra: executor::ToolInfra<'a>,
+        tool_infra: executor::ToolInfra,
     ) -> Self {
         Self {
             runtime,
@@ -160,9 +163,9 @@ where
 /// Execute a conversation turn using the agent loop with hooks.
 ///
 /// This handles a single conversation turn: sends user input through the agent,
-/// which manages tool calls and LLM interactions internally. The `CopilotPromptHook`
-/// intercepts events (tool calls, LLM calls) and forwards them via channels to
-/// the `HookDriver`, which runs on the main thread and bridges to the sync UI.
+/// which manages tool calls and LLM interactions internally. The `AgentHook<P>`
+/// intercepts events (tool calls, LLM calls) and forwards them via an MPSC channel
+/// to this function, which runs on the main thread and bridges to the sync UI.
 ///
 /// # Architecture
 ///
@@ -170,9 +173,9 @@ where
 /// Main thread (blocking):          Tokio runtime (async):
 /// ┌─────────────────────┐         ┌──────────────────────┐
 /// │ execute_turn        │ spawn → │ agent completion     │
-/// │   driver.run()      │ ← ch ← │   CopilotPromptHook  │
+/// │   ui_rx drain loop  │ ← ch ← │   AgentHook<P>       │
 /// │     ui.emit(...)    │         │     on_tool_call     │
-/// │     perms.resolve() │         │     on_llm_start     │
+/// │     cancel_token    │         │     on_llm_start     │
 /// └─────────────────────┘         └──────────────────────┘
 /// ```
 ///
@@ -185,23 +188,54 @@ where
 /// Returns `TurnError` if:
 /// - The agent completion fails (LLM error, network, etc.)
 /// - User cancels via UI
-/// - Hook driver encounters an error
 pub fn execute_turn<M, U, P>(
     ctx: TurnContext<'_, M>,
     ui: &mut U,
-    permissions: &mut P,
+    permission_resolver: P,
 ) -> Result<TurnResult, TurnError>
 where
     M: rig::completion::CompletionModel + Clone + 'static,
     M::StreamingResponse: rig::completion::request::GetTokenUsage,
     U: ProgressUi,
-    P: PermissionResolver,
+    P: AsyncPermissionResolver,
+{
+    let (ui_tx, ui_rx) = mpsc::unbounded_channel::<UiEvent>();
+    execute_turn_with_channel(ctx, ui, permission_resolver, ui_tx, ui_rx)
+}
+
+/// Execute a conversation turn with a pre-built UI event channel.
+///
+/// This variant is used by TUI mode where the caller creates `(ui_tx, ui_rx)` first
+/// so that a clone of `ui_tx` can be given to `InteractivePermissionResolver` before
+/// the channel is consumed by the hook and drain loop.
+///
+/// For non-interactive (TTY/policy) mode, use `execute_turn` which creates its own channel.
+pub(crate) fn execute_turn_with_channel<M, U, P>(
+    ctx: TurnContext<'_, M>,
+    ui: &mut U,
+    permission_resolver: P,
+    ui_tx: mpsc::UnboundedSender<UiEvent>,
+    mut ui_rx: mpsc::UnboundedReceiver<UiEvent>,
+) -> Result<TurnResult, TurnError>
+where
+    M: rig::completion::CompletionModel + Clone + 'static,
+    M::StreamingResponse: rig::completion::request::GetTokenUsage,
+    U: ProgressUi,
+    P: AsyncPermissionResolver,
 {
     log::info!("execute_turn: starting turn");
 
-    // Create cancel token and hook+driver pair
+    // Create cancel token
     let cancel_token = CancellationToken::new();
-    let (hook, mut driver) = HookDriver::new(cancel_token.clone());
+
+    // Build the hook using AgentHook<P> — no HookDriver needed
+    let hook = AgentHook::new(
+        cancel_token.clone(),
+        ui_tx,
+        permission_resolver,
+        ctx.tool_infra.closure_registry.clone(),
+        ctx.tool_infra.mcp_registry.clone(),
+    );
 
     // Build the prompt message
     let user_message = Message::User {
@@ -217,7 +251,6 @@ where
     // Build and execute agent with hook
     let config = AgentPromptConfig {
         hook,
-        cancel_token: cancel_token.clone(),
         preamble: preamble_owned,
         prompt: user_message,
         memory: ctx.conversation.memory,
@@ -230,29 +263,31 @@ where
     let model = ctx.model.clone();
     let prompt_future = Box::pin(build_agent_and_stream(model, config));
 
-    // Spawn the completion on the tokio runtime
+    // Spawn the completion on the tokio runtime.
+    // Cancellation note: cancel_token fires Terminate on the next hook entry (on_completion_call,
+    // on_text_delta, or on_tool_call), causing rig to yield PromptCancelled { chat_history }.
+    // If the HTTP request hangs before any hook fires (e.g. dead network), the stream blocks
+    // until the provider's own HTTP client timeout. Ensure timeouts are configured on the client.
     let prompt_handle = ctx.runtime.spawn(prompt_future);
 
-    // Run the driver on the main thread until the completion finishes
-    // The driver polls for events and handles cancellation
-    driver.run_until_complete(
-        ui,
-        permissions,
-        ctx.tool_infra.closure_registry,
-        ctx.tool_infra.mcp_registry,
-        &cancel_token,
-    );
+    // Main-thread drain loop: forward UiEvents from the hook to the UI,
+    // and propagate cancel requests from the UI to the cancel token.
+    loop {
+        if ui.take_cancel_requested() {
+            cancel_token.cancel();
+        }
+        match ui_rx.try_recv() {
+            Ok(event) => ui.emit(&event),
+            Err(mpsc::error::TryRecvError::Empty) => {
+                ui.emit(&UiEvent::Tick);
+                std::thread::sleep(std::time::Duration::from_millis(16));
+            }
+            Err(mpsc::error::TryRecvError::Disconnected) => break,
+        }
+    }
+    ui.flush();
 
-    // Capture tool call count and deltas flag from the driver
-    let tool_call_count = driver.tool_call_count();
-    let deltas_emitted = driver.deltas_emitted();
-    let last_total_tokens = driver.last_total_tokens();
-
-    log::info!(
-        "execute_turn: complete, tool_calls={} deltas_emitted={}",
-        tool_call_count,
-        deltas_emitted
-    );
+    log::info!("execute_turn: ui_rx drained, joining spawn handle");
 
     // Collect the result from the spawned task
     let join_result = ctx.runtime.block_on(prompt_handle).map_err(|e| TurnError {
@@ -263,21 +298,26 @@ where
 
     let response = join_result.map_err(TurnError::from)?;
 
+    log::info!(
+        "execute_turn: complete, tool_calls={} deltas_emitted={}",
+        response.tool_call_count,
+        response.deltas_emitted,
+    );
+
     Ok(TurnResult {
         text: response.text,
         usage: response.usage,
         messages: response.messages,
-        tool_call_count,
-        deltas_emitted,
+        tool_call_count: response.tool_call_count,
+        deltas_emitted: response.deltas_emitted,
         cancelled: response.cancelled,
-        last_total_tokens,
+        last_total_tokens: response.last_total_tokens,
     })
 }
 
 /// Configuration for building and prompting an agent.
-struct AgentPromptConfig {
-    hook: CopilotPromptHook,
-    cancel_token: CancellationToken,
+struct AgentPromptConfig<P: AsyncPermissionResolver> {
+    hook: AgentHook<P>,
     preamble: Option<String>,
     prompt: Message,
     memory: InMemoryConversationMemory,
@@ -294,6 +334,12 @@ struct StreamingTurnResult {
     messages: Option<Vec<Message>>,
     /// Whether the stream was cancelled via cancel_token
     cancelled: bool,
+    /// Number of complete tool calls seen in the stream
+    tool_call_count: usize,
+    /// Whether any text deltas were emitted (i.e. streaming was active)
+    deltas_emitted: bool,
+    /// Total tokens from the most recent CompletionCall event
+    last_total_tokens: u64,
 }
 
 /// A proxy tool that forwards `call` to an existing `ToolServerHandle`
@@ -329,17 +375,17 @@ impl ToolDyn for FilteredToolProxy {
 }
 
 /// Build an agent with a hook and execute a multi-turn streaming prompt loop.
-async fn build_agent_and_stream<M>(
+async fn build_agent_and_stream<M, P>(
     model: M,
-    config: AgentPromptConfig,
+    config: AgentPromptConfig<P>,
 ) -> Result<StreamingTurnResult, rig::agent::StreamingError>
 where
     M: rig::completion::CompletionModel + Clone + 'static,
     M::StreamingResponse: rig::completion::request::GetTokenUsage,
+    P: AsyncPermissionResolver,
 {
     let AgentPromptConfig {
         hook,
-        cancel_token,
         preamble,
         prompt,
         memory,
@@ -385,34 +431,83 @@ where
     let mut text = String::new();
     let mut usage = rig::completion::request::Usage::default();
     let mut messages: Option<Vec<Message>> = None;
+    let mut tool_call_count: usize = 0;
+    let mut last_total_tokens: u64 = 0;
     let mut cancelled = false;
+    let mut deltas_emitted = false;
 
     loop {
-        tokio::select! {
-            item = stream.next() => {
-                match item {
-                    Some(Ok(event)) => match event {
-                        rig::agent::MultiTurnStreamItem::StreamAssistantItem(
-                            rig::streaming::StreamedAssistantContent::Text(delta)
-                        ) => {
-                            text.push_str(&delta.text);
+        let item = stream.next().await;
+        match item {
+            Some(Ok(event)) => match event {
+                        // --- STREAMED ASSISTANT CONTENT ---
+                        rig::agent::MultiTurnStreamItem::StreamAssistantItem(content) => {
+                            match content {
+                                // TEXT DELTA
+                                rig::streaming::StreamedAssistantContent::Text(delta) => {
+                                    text.push_str(&delta.text);
+                                    deltas_emitted = true;
+                                }
+                                // TOOL CALL (complete, post-assembly)
+                                // Hook's on_tool_call has already resolved. The hook already
+                                // emitted ToolStart + permission events.
+                                rig::streaming::StreamedAssistantContent::ToolCall { .. } => {
+                                    tool_call_count += 1;
+                                }
+                                // TOOL CALL DELTA (streaming args)
+                                // Hook's on_tool_call_delta already fired — no-op here.
+                                rig::streaming::StreamedAssistantContent::ToolCallDelta { .. } => {}
+                                // REASONING block — ignore for now
+                                rig::streaming::StreamedAssistantContent::Reasoning(_) => {}
+                                // REASONING DELTA — ignore for now
+                                rig::streaming::StreamedAssistantContent::ReasoningDelta { .. } => {}
+                                // Raw provider final response object — not needed here
+                                rig::streaming::StreamedAssistantContent::Final(_) => {}
+                            }
                         }
+
+                        // --- TOOL RESULT (user content fed back to model) ---
+                        // The hook's on_tool_result already fired and emitted ToolEnd.
+                        rig::agent::MultiTurnStreamItem::StreamUserItem(
+                            rig::streaming::StreamedUserContent::ToolResult { .. }
+                        ) => {}
+
+                        // --- PER-SUBCALL USAGE ---
+                        rig::agent::MultiTurnStreamItem::CompletionCall(call) => {
+                            last_total_tokens = call.usage.total_tokens;
+                        }
+
+                        // --- FINAL RESPONSE ---
                         rig::agent::MultiTurnStreamItem::FinalResponse(fin) => {
                             text = fin.response().to_string();
                             usage = fin.usage();
                             messages = fin.history().map(|h| h.to_vec());
                         }
+
+                        // MultiTurnStreamItem is #[non_exhaustive] — required wildcard arm.
+                        // Future rig versions may add new variants; we ignore them here.
                         _ => {}
                     },
-                    Some(Err(e)) => return Err(e),
+                    Some(Err(e)) => {
+                        // Check whether rig cancelled the agent loop via the hook's Terminate action.
+                        match e {
+                            rig::agent::StreamingError::Prompt(boxed) => match *boxed {
+                                rig::completion::PromptError::PromptCancelled {
+                                    chat_history, ..
+                                } => {
+                                    messages = Some(chat_history);
+                                    cancelled = true;
+                                    break;
+                                }
+                                other => {
+                                    return Err(rig::agent::StreamingError::Prompt(Box::new(other)));
+                                }
+                            },
+                            other => return Err(other),
+                        }
+                    },
                     None => break,
                 }
-            }
-            _ = cancel_token.cancelled() => {
-                cancelled = true;
-                break;
-            }
-        }
     }
 
     Ok(StreamingTurnResult {
@@ -420,11 +515,16 @@ where
         usage,
         messages,
         cancelled,
+        tool_call_count,
+        deltas_emitted,
+        last_total_tokens,
     })
 }
 
 pub mod executor;
 
 #[cfg(test)]
-#[path = "mod_test.rs"]
-mod turn_test;
+mod test;
+
+#[cfg(test)]
+mod cancel;

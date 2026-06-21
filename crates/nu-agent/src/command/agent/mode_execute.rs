@@ -1,4 +1,5 @@
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -8,7 +9,10 @@ use nu_agent_core::{
     conversation::runtime::AgentConversationRuntime,
     orchestrator::{run_hydrated_interactive_loop, run_interactive_loop, run_single_turn},
     policy::UiPolicy,
-    protocol::contracts::{ExtendedRuntime, UiMessageSnapshot},
+    protocol::{
+        contracts::{ExtendedRuntime, UiMessageSnapshot},
+        event::PermissionDecision,
+    },
 };
 use nu_agent_tty::StderrProgressUi;
 use nu_agent_tty::{StderrUiFactory, UiRendererFactory};
@@ -34,6 +38,13 @@ pub(crate) fn run_tui_mode(
     ui_policy: UiPolicy,
     hydration: TuiHydrationInput,
 ) -> Result<Value, LabeledError> {
+    // Set up the interactive permission pending map for TUI mode.
+    // This Arc is shared between the worker thread (via InteractivePermissionResolver)
+    // and the main thread (via the orchestrator's permission poll loop).
+    let pending: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<PermissionDecision>>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+    runtime_impl.interactive_pending = Some(Arc::clone(&pending));
+
     let mut terminal_lifecycle =
         TerminalLifecycle::new(AnsiTerminalBackend::new(std::io::stderr()));
 
@@ -98,9 +109,10 @@ pub(crate) fn run_tui_mode(
                     hydration.last_total_tokens,
                     mailbox_rx,
                     span,
+                    Some(Arc::clone(&pending)),
                 )
             } else {
-                run_interactive_loop(runtime_impl, &mut tui_ui, mailbox_rx, span)
+                run_interactive_loop(runtime_impl, &mut tui_ui, mailbox_rx, span, Some(Arc::clone(&pending)))
             }
         } else {
             let (prompt, context) = super::input::extract_prompt_and_context(input)?;

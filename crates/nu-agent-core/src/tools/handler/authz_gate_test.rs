@@ -10,11 +10,14 @@ use crate::tools::authz::{
 struct AlwaysDenyHook;
 
 impl crate::tools::authz::AskApprovalHook for AlwaysDenyHook {
-    fn choose(
+    fn choose<S: crate::tools::authz::PermissionEventSink>(
         &mut self,
         _decision: &PermissionDecision,
         _tool_name: &str,
+        _source: &str,
         _args: &serde_json::Value,
+        _ask_context: &AskContext,
+        _sink: Option<&mut S>,
     ) -> AskChoice {
         AskChoice::Deny
     }

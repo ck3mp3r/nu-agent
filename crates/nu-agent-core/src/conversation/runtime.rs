@@ -1,13 +1,22 @@
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::Ordering;
 
 use nu_plugin::EngineInterface;
 use nu_protocol::{LabeledError, Span, Value};
+use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 
 use crate::session::SessionStore;
 
 use super::compaction::CompactionGuard;
 use super::compaction::executor::CompactionExecutor;
+use crate::protocol::event::PermissionDecision as ProtocolPermissionDecision;
+
+/// Shared pending-permission map for TUI mode: maps request IDs to oneshot senders
+/// that unblock the `InteractivePermissionResolver` awaiting a user decision.
+pub type PendingPermissions =
+    Arc<Mutex<HashMap<String, oneshot::Sender<ProtocolPermissionDecision>>>>;
 use crate::protocol::{
     compaction::{CompactionTriggerDecision, CompactionTriggerSource},
     contracts::{CoreRuntime, ExtendedRuntime, McpUsabilityState, ProgressUi},
@@ -71,6 +80,15 @@ pub struct AgentConversationRuntime {
     pub memory_state: super::state::memory::MemoryState,
     pub persona_state: super::state::persona::PersonaState,
     pub multi_agent_state: super::state::multi_agent::MultiAgentState,
+    /// Shared pending-decision map for interactive (TUI) mode.
+    ///
+    /// When `Some`, `execute_turn` constructs an `InteractivePermissionResolver` instead
+    /// of the default `PolicyPermissionResolver`. The main thread (orchestrator) holds
+    /// a clone of this Arc and calls the map's `remove` + oneshot `send` to unblock the
+    /// resolver's awaiting future after the user makes a permission decision.
+    ///
+    /// Set to `None` in TTY mode (default from `build_runtime`).
+    pub interactive_pending: Option<PendingPermissions>,
 }
 
 impl CoreRuntime for AgentConversationRuntime {
@@ -84,6 +102,7 @@ impl CoreRuntime for AgentConversationRuntime {
         use super::turn::executor::{
             ExecuteInput, ToolInfra, TurnExecutor, TurnOutcome, build_response,
         };
+        use crate::hook::{InteractivePermissionResolver, PolicyPermissionResolver};
 
         self.permission_state.emit_startup_summary_once(ui);
 
@@ -115,6 +134,11 @@ impl CoreRuntime for AgentConversationRuntime {
             self.permission_state.permissions(),
         );
 
+        let closure_registry = Arc::new(self.tool_state.closure_registry().clone());
+        let mcp_registry = Arc::new(self.mcp_state.mcp_registry().clone());
+        let permissions = Arc::new(self.permission_state.permissions().clone());
+        let session_grants = self.permission_state.session_grants_arc();
+
         // Take the client temporarily to avoid overlapping borrows with `self`.
         let cached_client = self.provider_state.take_client().unwrap();
 
@@ -123,27 +147,64 @@ impl CoreRuntime for AgentConversationRuntime {
             let mut executor = TurnExecutor::new(
                 self.provider_state.config(),
                 &self.runtime,
-                &mut self.permission_state,
                 &mut self.memory_state,
                 ToolInfra {
-                    closure_registry: self.tool_state.closure_registry(),
-                    mcp_registry: self.mcp_state.mcp_registry(),
+                    closure_registry: Arc::clone(&closure_registry),
+                    mcp_registry: Arc::clone(&mcp_registry),
                     tool_server_handle: self.mcp_state.mcp_tool_server_handle().clone(),
                     visible_tool_definitions,
                 },
             );
 
-            let outcome = executor.execute(
-                ui,
-                ExecuteInput {
-                    prompt,
-                    preamble,
-                    span,
-                },
-                &cached_client,
-                &self.engine,
-                self.final_session_id.as_deref(),
-            );
+            let outcome = if let Some(pending) = self.interactive_pending.as_ref() {
+                // TUI mode: construct InteractivePermissionResolver.
+                //
+                // Create the tokio UI event channel here so that we can:
+                //   1. Clone ui_tx for InteractivePermissionResolver (it sends PermissionRequested).
+                //   2. Pass the original (ui_tx, ui_rx) to the executor so the drain loop uses
+                //      the same channel that the resolver writes events to.
+                let (ui_tx, ui_rx) = mpsc::unbounded_channel::<UiEvent>();
+                let resolver = InteractivePermissionResolver::new(
+                    ui_tx.clone(),
+                    Arc::clone(pending),
+                    Arc::clone(&permissions),
+                    Arc::clone(&session_grants),
+                    Arc::clone(&closure_registry),
+                    Arc::clone(&mcp_registry),
+                );
+                executor.execute(
+                    ui,
+                    ExecuteInput {
+                        prompt,
+                        preamble,
+                        span,
+                    },
+                    &cached_client,
+                    resolver,
+                    self.final_session_id.as_deref(),
+                    Some((ui_tx, ui_rx)),
+                )
+            } else {
+                // TTY mode: use PolicyPermissionResolver (immediate Allow/Deny from config).
+                let permission_resolver = PolicyPermissionResolver {
+                    permissions: Arc::clone(&permissions),
+                    session_grants: Arc::clone(&session_grants),
+                    closure_registry: Arc::clone(&closure_registry),
+                    mcp_registry: Arc::clone(&mcp_registry),
+                };
+                executor.execute(
+                    ui,
+                    ExecuteInput {
+                        prompt,
+                        preamble,
+                        span,
+                    },
+                    &cached_client,
+                    permission_resolver,
+                    self.final_session_id.as_deref(),
+                    None,
+                )
+            };
 
             // Extract response data before executor is dropped
             let response_data = executor.take_response_data();
@@ -284,6 +345,17 @@ impl AgentConversationRuntime {
         F::Output: Send + 'static,
     {
         self.runtime.spawn(future)
+    }
+
+    /// Return a clone of the interactive-mode pending-decision map.
+    ///
+    /// The orchestrator's main thread calls this before spawning the worker so it
+    /// can hold its own `Arc` clone and call `submit_decision` (or directly manipulate
+    /// the map) when the user delivers a permission decision through the TUI.
+    ///
+    /// Returns `None` in TTY mode.
+    pub fn interactive_pending_arc(&self) -> Option<PendingPermissions> {
+        self.interactive_pending.as_ref().map(Arc::clone)
     }
 
     pub fn provider(&self) -> &str {

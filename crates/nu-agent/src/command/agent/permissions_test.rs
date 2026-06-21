@@ -1,24 +1,6 @@
 use super::test_helpers::create_test_call;
-use nu_agent_core::tools::authz::{NonInteractiveAskMode, PermissionAction};
-use nu_protocol::{Value, record};
-
-#[test]
-fn resolve_non_interactive_ask_mode_defaults_to_deny_when_missing() {
-    let mode = super::permissions::resolve_non_interactive_ask_mode(None).expect("mode");
-    assert_eq!(mode, NonInteractiveAskMode::Deny);
-}
-
-#[test]
-fn resolve_non_interactive_ask_mode_rejects_invalid_value() {
-    let invalid = Value::test_record(record! {
-        "non_interactive_ask" => Value::test_string("ask")
-    });
-    let error = super::permissions::resolve_non_interactive_ask_mode(Some(&invalid))
-        .expect_err("invalid value should fail");
-    assert!(error.msg.contains("Invalid non_interactive_ask value"));
-}
-
-#[test]
+use nu_agent_core::tools::authz::PermissionAction;
+use nu_protocol::{Value, record};#[test]
 fn resolve_effective_permissions_merges_cli_overlay_additively() {
     let plugin = Value::test_record(record! {
         "permissions" => Value::test_record(record! {

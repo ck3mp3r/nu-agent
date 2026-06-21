@@ -17,6 +17,8 @@ use std::sync::{
 
 use nu_protocol::{LabeledError, Span, Value};
 
+use crate::conversation::runtime::PendingPermissions;
+
 use crate::orchestrator::{
     pending::PendingOps,
     poll::{PollOutcome, poll_pending},
@@ -120,6 +122,7 @@ pub fn run_interactive_loop<R, U>(
     ui: &mut U,
     mailbox_rx: Option<std::sync::mpsc::Receiver<crate::mailbox::IncomingMessage>>,
     span: Span,
+    interactive_pending: Option<PendingPermissions>,
 ) -> Result<Value, LabeledError>
 where
     R: ExtendedRuntime + Send,
@@ -422,10 +425,18 @@ where
                     crate::protocol::permission::SubmitOutcome::Accepted => {}
                     crate::protocol::permission::SubmitOutcome::Ignored { reason } => {
                         ui.emit(&UiEvent::PermissionDecisionIgnored {
-                            request_id: submission.request_id,
+                            request_id: submission.request_id.clone(),
                             reason: reason.to_string(),
                         });
                     }
+                }
+
+                // Wire the decision into InteractivePermissionResolver's pending map
+                // so the agent's `resolve()` future is unblocked.
+                if let Some(ref pending) = interactive_pending
+                    && let Some(tx) = pending.lock().unwrap().remove(&submission.request_id)
+                {
+                    let _ = tx.send(submission.decision);
                 }
             }
 
@@ -607,13 +618,14 @@ pub fn run_hydrated_interactive_loop<R, U>(
     last_total_tokens: Option<u64>,
     mailbox_rx: Option<std::sync::mpsc::Receiver<crate::mailbox::IncomingMessage>>,
     span: Span,
+    interactive_pending: Option<PendingPermissions>,
 ) -> Result<Value, LabeledError>
 where
     R: ExtendedRuntime + Send,
     U: ProgressUi + UserInputUi + DisplayStateUi + LifecycleUi + TranscriptUi,
 {
     ui.hydrate_transcript_from_messages(messages, last_total_tokens);
-    run_interactive_loop(runtime, ui, mailbox_rx, span)
+    run_interactive_loop(runtime, ui, mailbox_rx, span, interactive_pending)
 }
 
 pub fn run_single_turn<R, U>(

@@ -41,10 +41,7 @@ Use it:
 - `docs/configuration.md` - config structure, env vars, precedence
 - `docs/mcp.md` - MCP servers, discovery, filtering
 - `docs/usage.md` - commands, examples, and TUI transcript rendering behavior
-- `docs/development.md` - build, test, lint, architecture references
-- `docs/event-architecture.md` - typed event-driven harness enforcement (checkpoints, subscribers, policy modes)
-- `docs/handler-decomposition-contract.md` - handler module boundaries and migration plan (R1)
-- `docs/contribution-guardrails.md` - R7/R8/R9 contributor guardrails for permission/TUI/tool-handler changes
+- `docs/contribution-guardrails.md` - contributor guardrails for permission/TUI/tool-handler changes
 
 ## Module/Test Layout Convention
 
@@ -58,5 +55,3 @@ In TUI mode, assistant markdown is projected into readable transcript lines.
 Fenced code blocks use syntax highlighting when the fence language is recognized.
 If the language is unknown (or unsupported by the highlighter adapter), rendering
 falls back to stable plain code text so transcript readability is preserved.
-
-For development commands, see `docs/development.md`.

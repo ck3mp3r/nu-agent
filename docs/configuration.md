@@ -29,6 +29,7 @@ Optional top-level fields:
 - `small_model`
 - `mcp`
 - `compaction`
+- `read_timeout_secs` — HTTP read timeout in seconds (default: 30, set to 0 to disable)
 
 ## Model Format
 
@@ -126,6 +127,41 @@ $env.config.plugins.agent = {
 }
 ```
 
+### OpenAI-compatible providers
+
+Any provider that implements the OpenAI Chat Completions API (`POST /chat/completions`) works with `provider: "openai"` and a custom `base_url`. Setting `base_url` automatically routes through the Chat Completions API — no additional config needed.
+
+```nu
+$env.config.plugins.agent = {
+  model: "together/meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"
+  providers: {
+    together: {
+      provider: "openai"
+      api_key: $env.TOGETHER_API_KEY
+      base_url: "https://api.together.xyz/v1"
+      models: {
+        "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo": {}
+      }
+    }
+  }
+}
+```
+
+This works for Together AI, Groq, OpenRouter, vLLM, LiteLLM, and any other OpenAI-compatible endpoint.
+
+### HTTP timeout
+
+By default the HTTP client uses a 30-second read timeout (fires only when no bytes are received — safe for long but active streaming responses). Override at the top level:
+
+```nu
+$env.config.plugins.agent = {
+  read_timeout_secs: 60   # increase for slow providers
+  # read_timeout_secs: 0  # disable entirely
+  model: "..."
+  providers: { ... }
+}
+```
+
 ## Compaction
 
 Configure conversation compaction via the optional `compaction` block:
@@ -135,11 +171,9 @@ $env.config.plugins.agent = {
   # ...existing config...
   compaction: {
     strategy: "sliding_summary"              # or sliding_window, token_truncate
-    threshold: 100                           # message count for auto-compaction
-    keep_recent: 10                          # messages to keep
+    keep_recent: 10                          # messages to keep (default: 10)
     token_budget: 4000                       # for token_truncate only
-    proactive_threshold_pct: 0.80            # 0.0-1.0, proactive trigger
-    fallback_strategies: ["sliding_window"]  # ordered fallback list
+    proactive_threshold_pct: 0.80            # 0.0-1.0, proactive trigger (default: 0.80)
   }
 }
 ```
@@ -155,9 +189,7 @@ All fields are optional — defaults are used when omitted.
 ### Validation rules
 
 - `proactive_threshold_pct` must be between 0.0 and 1.0.
-- `threshold` must be greater than 0.
 - `keep_recent` must be greater than 0.
-- `fallback_strategies` must not be empty if set.
 
 ### Precedence
 

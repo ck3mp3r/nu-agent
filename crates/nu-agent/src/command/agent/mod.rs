@@ -13,7 +13,7 @@ mod runtime_build;
 mod setup;
 pub(crate) mod tool_defs;
 
-use permissions::{resolve_effective_permissions_config, resolve_non_interactive_ask_mode};
+use permissions::resolve_effective_permissions_config;
 use resolve_policy::resolve_ui_policy;
 use tool_defs::{ToolAssembly, assemble_tool_definitions};
 
@@ -23,7 +23,7 @@ use nu_agent_core::{
     conversation::runtime::AgentConversationRuntime,
     policy::UiPolicy,
     session::resolver::{DefaultSessionResolver, SessionResolutionInput, SessionResolver},
-    tools::{authz::AskRuntimeConfig, handler::McpToolRegistry},
+    tools::{handler::McpToolRegistry},
 };
 use nu_agent_tui::RuntimeRunError;
 use nu_agent_tui::platform::safety::RestoreRunError;
@@ -672,7 +672,6 @@ Compaction flags:
 
         // ── Phase 9: Runtime construction ────────────────────────────────────
         let context_window_max_tokens = u64::from(config.resolved_max_context_tokens());
-        let non_interactive_mode = resolve_non_interactive_ask_mode(plugin_config_value.as_ref())?;
         let mut runtime_impl = runtime_build::build_runtime(runtime_build::RuntimeBuildParams {
             runtime,
             config,
@@ -697,11 +696,6 @@ Compaction flags:
             compaction_count,
             compaction_strategy,
             effective_permissions,
-            ask_hook_config: AskRuntimeConfig {
-                interactive: mode.is_tui(),
-                non_interactive_mode,
-                ..AskRuntimeConfig::default()
-            },
             permissions_startup_summary,
             persona_body: persona.as_ref().map(|p| p.body.clone()),
             agent_identity,

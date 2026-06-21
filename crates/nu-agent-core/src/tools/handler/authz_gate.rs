@@ -38,13 +38,13 @@ pub fn enforce_authorization_for_tool_call(
         &tool_call.function.arguments,
     );
     if auth_decision.action == PermissionAction::Ask {
-        let choice = ask_hook.choose_with_sink(
+        let choice = ask_hook.choose(
             &auth_decision,
             &tool_call.function.name,
-            &tool_call.function.arguments,
             source.as_str(),
+            &tool_call.function.arguments,
             &flow_context.ask_context,
-            event_sink,
+            Some(event_sink),
         );
         auth_decision = apply_ask_choice(
             auth_decision,

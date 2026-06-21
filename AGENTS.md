@@ -1,5 +1,14 @@
 # Development Rules for nu-agent
 
+## Commands
+
+```bash
+cargo build
+cargo test
+cargo clippy --workspace --tests -- -D warnings   # warnings are errors
+cargo fmt -- --check
+```
+
 ## Testing Philosophy
 
 ### Test-Driven Development (TDD)
@@ -50,6 +59,62 @@ src/
 - Use meaningful names for tests (describe what they verify)
 - Each test should verify one behavior
 - Refactor only when tests are green
+- No hidden global mutable state — use explicit state via structs
+
+### Review Before Commit
+
+**Always run a review before `git commit`. No exceptions.**
+
+```bash
+cargo clippy --workspace --tests -- -D warnings
+cargo test --workspace
+```
+
+A reviewer subagent must sign off before committing. Clippy warnings are
+build failures. `#[allow(...)]` is never acceptable — fix the code instead.
+
+### `unwrap()` Policy
+
+- ❌ NO: `unwrap()` in production code
+- ✅ YES: `unwrap_or`, `unwrap_or_else`, `if let`, `?`, `expect("reason")`
+- ✅ EXCEPTION: `mutex.lock().unwrap()` — mutex poison is a fatal internal
+  inconsistency and panicking is correct
+
+### Nested `if` Statements
+
+Flatten nested conditions. Never nest `if` inside `if` when they can be combined.
+
+```rust
+// ❌ WRONG
+if let Some(x) = foo {
+    if x > 0 {
+        do_thing();
+    }
+}
+
+// ✅ CORRECT
+if let Some(x) = foo && x > 0 {
+    do_thing();
+}
+
+// ✅ ALSO CORRECT — early return
+let Some(x) = foo else { return; };
+if x > 0 {
+    do_thing();
+}
+```
+
+### Scope Discipline
+
+Do NOT refactor adjacent code "while you're at it." Every change must be
+scoped to the task at hand. If something else needs fixing, create a new task.
+
+### `#[allow(...)]` Is Never a Fix
+
+Suppressing a clippy warning is not fixing it. If clippy flags something,
+fix the underlying code. The only exception is `#[allow(dead_code)]` on
+test helpers that are intentionally unused — and even then, prefer deleting
+the dead code.
 
 ## SOLID Principles
 
@@ -64,6 +129,36 @@ src/
   - **L**iskov Substitution: Subtypes must be substitutable
   - **I**nterface Segregation: Many specific interfaces over one general
   - **D**ependency Inversion: Depend on abstractions, not concretions
+
+### Trait Design
+
+Every required trait method must be callable by at least one production code
+path. If a method only exists to satisfy the compiler, the trait is designed
+wrong — make it optional (provide a default implementation) or redesign the
+interface.
+
+```rust
+// ❌ WRONG — choose() is required but never called in production
+pub trait AskApprovalHook {
+    fn choose(&mut self, ...) -> AskChoice;           // required, never called
+    fn choose_with_sink(&mut self, ...) -> AskChoice { // optional, always called
+        self.choose(...)
+    }
+}
+
+// ✅ CORRECT — single method, covers all call sites
+pub trait AskApprovalHook {
+    fn choose<S: Sink>(&mut self, ..., sink: Option<&mut S>) -> AskChoice;
+}
+```
+
+## Streaming HTTP
+
+When working with LLM streaming responses:
+
+- ✅ Use `read_timeout()` — fires only when no bytes received; resets on each chunk
+- ❌ Never use `timeout()` — kills the entire request after a fixed deadline,
+  breaking long but active streaming responses
 
 ## Examples
 
@@ -107,6 +202,5 @@ mod tests {
 
 When changing tool handler modules, permission UX, or TUI transcript rendering:
 
-- Read `docs/handler-decomposition-contract.md` first (dependency direction + module ownership)
 - Follow `docs/contribution-guardrails.md` checklist (inline permission card, viewport invariants, sticky controls)
 - Keep `docs/usage.md` aligned with user-visible behavior changes
