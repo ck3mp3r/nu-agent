@@ -127,7 +127,7 @@ fn adapter_calls_skill_tool() {
 
 // Note: Testing `read` tool would require actual files, which is more of an integration test.
 // We verify the critical trait bounds (Send + Sync) and basic functionality here.
-// The dispatch_builtin_fs_tool function is already tested elsewhere.
+// The dispatch_fs_tool function is already tested elsewhere.
 
 #[test]
 fn adapter_stores_agent_name() {

@@ -4,9 +4,10 @@ use tokio::sync::RwLock;
 use crate::mailbox::AgentRegistry;
 
 use super::spawn_agent::{
-    OrchestratorState, TmuxRunner, ToolExecError, generate_hex_token, handle_spawn_agent,
+    OrchestratorState, TmuxRunner, generate_hex_token, handle_spawn_agent,
     handle_terminate_agent,
 };
+use super::ToolHandlerError;
 
 /// Mock TmuxRunner for testing - thread-safe version
 /// Returns `pane_response` for new-window/split-window and `shell_response` for display-message.
@@ -64,7 +65,7 @@ impl MockTmuxRunner {
 }
 
 impl TmuxRunner for MockTmuxRunner {
-    fn run(&self, args: &[&str]) -> Result<String, ToolExecError> {
+    fn run(&self, args: &[&str]) -> Result<String, ToolHandlerError> {
         let args_owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
         self.calls.lock().unwrap().push(args_owned.clone());
         if args_owned.contains(&"display-message".to_string()) {
@@ -425,15 +426,12 @@ impl StaleTmuxRunner {
 }
 
 impl TmuxRunner for StaleTmuxRunner {
-    fn run(&self, args: &[&str]) -> Result<String, ToolExecError> {
+    fn run(&self, args: &[&str]) -> Result<String, ToolHandlerError> {
         let args_owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
         self.calls.lock().unwrap().push(args_owned.clone());
 
         if args_owned.contains(&"split-window".to_string()) {
-            return Err(ToolExecError {
-                message: "can't find window: @dead".to_string(),
-                details: None,
-            });
+            return Err(ToolHandlerError::runtime("can't find window: @dead"));
         }
         if args_owned.contains(&"new-window".to_string()) {
             return Ok(format!("{}\t%2\n", self.new_window_id));
@@ -545,7 +543,7 @@ async fn shell_never_ready_timeout() {
         calls: Arc<std::sync::Mutex<Vec<Vec<String>>>>,
     }
     impl TmuxRunner for NeverReadyRunner {
-        fn run(&self, args: &[&str]) -> Result<String, ToolExecError> {
+        fn run(&self, args: &[&str]) -> Result<String, ToolHandlerError> {
             let args_owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
             self.calls.lock().unwrap().push(args_owned.clone());
             if args_owned.contains(&"display-message".to_string()) {
@@ -861,7 +859,7 @@ async fn handle_spawn_agent_fallsthrough_when_discovered_split_fails() {
     }
 
     impl TmuxRunner for DiscoverySplitFailRunner {
-        fn run(&self, args: &[&str]) -> Result<String, ToolExecError> {
+        fn run(&self, args: &[&str]) -> Result<String, ToolHandlerError> {
             let args_owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
             self.calls.lock().unwrap().push(args_owned.clone());
 
@@ -869,10 +867,7 @@ async fn handle_spawn_agent_fallsthrough_when_discovered_split_fails() {
                 return Ok("@99\tagents\n".to_string());
             }
             if args_owned.contains(&"split-window".to_string()) {
-                return Err(ToolExecError {
-                    message: "can't find window: @99".to_string(),
-                    details: None,
-                });
+                return Err(ToolHandlerError::runtime("can't find window: @99"));
             }
             if args_owned.contains(&"new-window".to_string()) {
                 return Ok("@new\t%60\n".to_string());

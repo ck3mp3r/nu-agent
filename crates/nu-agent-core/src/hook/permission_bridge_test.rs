@@ -165,3 +165,14 @@ fn resolve_tool_source_returns_builtin_for_spawn_agent() {
     let source = resolve_tool_source("spawn_agent", &closure_registry, &mcp_registry);
     assert_eq!(source, ToolSource::Builtin);
 }
+
+#[test]
+fn resolve_tool_source_returns_builtin_for_http() {
+    // http is ToolSource::Builtin — it bypasses the permission system entirely,
+    // same as read/skill/send_message. This test pins that contract explicitly.
+    let closure_registry = ClosureRegistry::new();
+    let mcp_registry = McpToolRegistry::from_names::<[&str; 0], &str>([]);
+
+    let source = resolve_tool_source("http", &closure_registry, &mcp_registry);
+    assert_eq!(source, ToolSource::Builtin);
+}

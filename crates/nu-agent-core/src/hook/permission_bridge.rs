@@ -2,7 +2,7 @@
 
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::{
-    McpToolRegistry, ToolSource, is_builtin_fs_tool_name, is_builtin_tool_name,
+    McpToolRegistry, ToolSource, is_fs_tool_name, is_builtin_tool_name,
 };
 
 /// Resolve the source of a tool by checking the closure and MCP registries.
@@ -13,7 +13,7 @@ pub fn resolve_tool_source(
 ) -> ToolSource {
     if closures.get(name).is_some() {
         ToolSource::Closure
-    } else if is_builtin_fs_tool_name(name) {
+    } else if is_fs_tool_name(name) {
         ToolSource::BuiltinFs
     } else if is_builtin_tool_name(name) {
         ToolSource::Builtin

@@ -2,13 +2,13 @@ use nu_plugin::EngineInterface;
 use serde_json::Value as JsonValue;
 
 use super::{
-    ToolErrorKind,
+    ToolErrorKind, ToolHandlerError,
     result::{attach_display_payload, build_edit_preview_display},
     types::EditPreviewDisplayPayload,
 };
 
 #[derive(Debug, serde::Deserialize)]
-pub struct BuiltinReadArgs {
+pub struct ReadArgs {
     path: String,
     #[serde(default)]
     offset: Option<usize>,
@@ -17,7 +17,7 @@ pub struct BuiltinReadArgs {
 }
 
 #[derive(Debug, serde::Deserialize)]
-pub struct BuiltinEditArgs {
+pub struct EditArgs {
     pub path: String,
     #[serde(default)]
     pub search: Option<String>,
@@ -32,11 +32,11 @@ pub struct BuiltinEditArgs {
     #[serde(default)]
     pub mode: Option<String>,
     #[serde(default)]
-    pub operation: Option<BuiltinEditOperationArgs>,
+    pub operation: Option<EditOperationArgs>,
 }
 
 #[derive(Debug, serde::Deserialize, Clone)]
-pub struct BuiltinEditOperationArgs {
+pub struct EditOperationArgs {
     #[serde(default)]
     #[serde(rename = "type")]
     operation_type: Option<String>,
@@ -49,35 +49,28 @@ pub struct BuiltinEditOperationArgs {
 }
 
 #[derive(Debug, serde::Deserialize)]
-struct BuiltinPatchRangeArgs {
+struct PatchRangeArgs {
     start: usize,
     end: usize,
 }
 
 #[derive(Debug, serde::Deserialize)]
-struct BuiltinPatchOpArgs {
-    range: BuiltinPatchRangeArgs,
+struct PatchOpArgs {
+    range: PatchRangeArgs,
     replacement: String,
 }
 
 #[derive(Debug, serde::Deserialize)]
-struct BuiltinPatchArgs {
+struct PatchArgs {
     path: String,
     #[serde(default)]
     expected_version: Option<String>,
-    operations: Vec<BuiltinPatchOpArgs>,
+    operations: Vec<PatchOpArgs>,
 }
 
 #[derive(Debug, serde::Deserialize)]
-struct BuiltinSkillArgs {
+struct SkillArgs {
     name: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct BuiltinFsToolError {
-    pub kind: ToolErrorKind,
-    pub message: String,
-    pub details: Option<JsonValue>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,11 +90,11 @@ impl EditToolMode {
 
 fn parse_edit_match_mode(
     value: Option<&str>,
-) -> Result<crate::tools::fs::core::EditMatchMode, BuiltinFsToolError> {
+) -> Result<crate::tools::fs::core::EditMatchMode, ToolHandlerError> {
     match value.unwrap_or("literal") {
         "literal" => Ok(crate::tools::fs::core::EditMatchMode::Literal),
         "regex" => Ok(crate::tools::fs::core::EditMatchMode::Regex),
-        other => Err(BuiltinFsToolError {
+        other => Err(ToolHandlerError {
             kind: ToolErrorKind::Validation,
             message: format!("Invalid edit.match_mode '{other}': expected 'literal' or 'regex'"),
             details: None,
@@ -111,11 +104,11 @@ fn parse_edit_match_mode(
 
 fn parse_edit_occurrence(
     value: Option<&str>,
-) -> Result<crate::tools::fs::core::EditOccurrence, BuiltinFsToolError> {
+) -> Result<crate::tools::fs::core::EditOccurrence, ToolHandlerError> {
     match value.unwrap_or("first") {
         "first" => Ok(crate::tools::fs::core::EditOccurrence::First),
         "all" => Ok(crate::tools::fs::core::EditOccurrence::All),
-        other => Err(BuiltinFsToolError {
+        other => Err(ToolHandlerError {
             kind: ToolErrorKind::Validation,
             message: format!("Invalid edit.occurrence '{other}': expected 'first' or 'all'"),
             details: None,
@@ -123,11 +116,11 @@ fn parse_edit_occurrence(
     }
 }
 
-pub fn parse_edit_mode(value: Option<&str>) -> Result<EditToolMode, BuiltinFsToolError> {
+pub fn parse_edit_mode(value: Option<&str>) -> Result<EditToolMode, ToolHandlerError> {
     match value.unwrap_or("apply") {
         "preview" => Ok(EditToolMode::Preview),
         "apply" => Ok(EditToolMode::Apply),
-        other => Err(BuiltinFsToolError {
+        other => Err(ToolHandlerError {
             kind: ToolErrorKind::Validation,
             message: format!("Invalid edit.mode '{other}': expected 'preview' or 'apply'"),
             details: None,
@@ -167,13 +160,13 @@ pub fn build_edit_preview_display_payload(
 }
 
 pub fn resolve_edit_operation(
-    args: &BuiltinEditArgs,
-) -> Result<crate::tools::fs::core::EditOperation, BuiltinFsToolError> {
+    args: &EditArgs,
+) -> Result<crate::tools::fs::core::EditOperation, ToolHandlerError> {
     if let Some(operation) = &args.operation {
         if let Some(operation_type) = operation.operation_type.as_deref()
             && operation_type != "search_replace"
         {
-            return Err(BuiltinFsToolError {
+            return Err(ToolHandlerError {
                 kind: ToolErrorKind::Validation,
                 message: format!(
                     "Invalid edit.operation.type '{operation_type}': expected 'search_replace'"
@@ -192,12 +185,12 @@ pub fn resolve_edit_operation(
         });
     }
 
-    let search = args.search.clone().ok_or(BuiltinFsToolError {
+    let search = args.search.clone().ok_or(ToolHandlerError {
         kind: ToolErrorKind::Validation,
         message: "Invalid edit arguments: missing field `search`".to_string(),
         details: None,
     })?;
-    let replacement = args.replacement.clone().ok_or(BuiltinFsToolError {
+    let replacement = args.replacement.clone().ok_or(ToolHandlerError {
         kind: ToolErrorKind::Validation,
         message: "Invalid edit arguments: missing field `replacement`".to_string(),
         details: None,
@@ -213,7 +206,7 @@ pub fn resolve_edit_operation(
     })
 }
 
-pub fn map_edit_contract_error(error: &BuiltinFsToolError) -> &'static str {
+pub fn map_edit_contract_error(error: &ToolHandlerError) -> &'static str {
     if let Some(class) = error
         .details
         .as_ref()
@@ -322,11 +315,11 @@ fn build_edit_contract_error_response(
     })
 }
 
-fn map_mutate_error(error: crate::tools::fs::core::MutateError) -> BuiltinFsToolError {
+fn map_mutate_error(error: crate::tools::fs::core::MutateError) -> ToolHandlerError {
     use crate::tools::fs::core::MutateError;
 
     match error {
-        MutateError::Io(io_error) => BuiltinFsToolError {
+        MutateError::Io(io_error) => ToolHandlerError {
             kind: ToolErrorKind::Runtime,
             message: io_error.to_string(),
             details: Some(serde_json::json!({
@@ -338,14 +331,14 @@ fn map_mutate_error(error: crate::tools::fs::core::MutateError) -> BuiltinFsTool
                 }
             })),
         },
-        MutateError::Conflict(_) => BuiltinFsToolError {
+        MutateError::Conflict(_) => ToolHandlerError {
             kind: ToolErrorKind::Validation,
             message: error.to_string(),
             details: Some(serde_json::json!({
                 "diagnostic_class": "stale"
             })),
         },
-        other => BuiltinFsToolError {
+        other => ToolHandlerError {
             kind: ToolErrorKind::Validation,
             message: other.to_string(),
             details: Some(serde_json::json!({
@@ -355,7 +348,7 @@ fn map_mutate_error(error: crate::tools::fs::core::MutateError) -> BuiltinFsTool
     }
 }
 
-pub fn resolve_builtin_fs_path_for_cwd(path: &str, cwd: &std::path::Path) -> std::path::PathBuf {
+pub fn resolve_fs_path_for_cwd(path: &str, cwd: &std::path::Path) -> std::path::PathBuf {
     let raw = std::path::Path::new(path);
     if raw.is_absolute() {
         raw.to_path_buf()
@@ -364,26 +357,26 @@ pub fn resolve_builtin_fs_path_for_cwd(path: &str, cwd: &std::path::Path) -> std
     }
 }
 
-pub fn resolve_builtin_fs_path(
+pub fn resolve_fs_path(
     path: &str,
     engine: &EngineInterface,
-) -> Result<std::path::PathBuf, BuiltinFsToolError> {
-    let cwd = engine.get_current_dir().map_err(|e| BuiltinFsToolError {
+) -> Result<std::path::PathBuf, ToolHandlerError> {
+    let cwd = engine.get_current_dir().map_err(|e| ToolHandlerError {
         kind: ToolErrorKind::Runtime,
         message: format!("Unable to resolve current working directory: {e}"),
         details: None,
     })?;
-    Ok(resolve_builtin_fs_path_for_cwd(
+    Ok(resolve_fs_path_for_cwd(
         path,
         std::path::Path::new(&cwd),
     ))
 }
 
-pub fn dispatch_builtin_fs_tool(
+pub fn dispatch_fs_tool(
     tool_name: &str,
     arguments: &JsonValue,
     cwd: &std::path::Path,
-) -> Result<Option<JsonValue>, BuiltinFsToolError> {
+) -> Result<Option<JsonValue>, ToolHandlerError> {
     use crate::tools::fs::core::{
         PatchOp, PatchRange, ReadRequest, apply_line_range_patch_batch, apply_search_replace_edit,
         read_file,
@@ -391,14 +384,14 @@ pub fn dispatch_builtin_fs_tool(
 
     match tool_name {
         "read" => {
-            let args: BuiltinReadArgs =
-                serde_json::from_value(arguments.clone()).map_err(|e| BuiltinFsToolError {
+            let args: ReadArgs =
+                serde_json::from_value(arguments.clone()).map_err(|e| ToolHandlerError {
                     kind: ToolErrorKind::Validation,
                     message: format!("Invalid read arguments: {e}"),
                     details: None,
                 })?;
 
-            let resolved_path = resolve_builtin_fs_path_for_cwd(&args.path, cwd);
+            let resolved_path = resolve_fs_path_for_cwd(&args.path, cwd);
             let response = read_file(
                 &resolved_path,
                 ReadRequest {
@@ -406,7 +399,7 @@ pub fn dispatch_builtin_fs_tool(
                     limit: args.limit,
                 },
             )
-            .map_err(|e| BuiltinFsToolError {
+            .map_err(|e| ToolHandlerError {
                 kind: ToolErrorKind::Runtime,
                 message: format!("read failed: {e}"),
                 details: None,
@@ -422,14 +415,14 @@ pub fn dispatch_builtin_fs_tool(
             })))
         }
         "edit" => {
-            let args: BuiltinEditArgs =
-                serde_json::from_value(arguments.clone()).map_err(|e| BuiltinFsToolError {
+            let args: EditArgs =
+                serde_json::from_value(arguments.clone()).map_err(|e| ToolHandlerError {
                     kind: ToolErrorKind::Validation,
                     message: format!("Invalid edit arguments: {e}"),
                     details: None,
                 })?;
 
-            let resolved_path = resolve_builtin_fs_path_for_cwd(&args.path, cwd);
+            let resolved_path = resolve_fs_path_for_cwd(&args.path, cwd);
             let mode = match parse_edit_mode(args.mode.as_deref()) {
                 Ok(mode) => mode,
                 Err(err) => {
@@ -476,7 +469,7 @@ pub fn dispatch_builtin_fs_tool(
                     &args.path, mode, plan, false,
                 ))),
                 EditToolMode::Apply => {
-                    let preview_display = super::pre_authorize::pre_authorize_builtin_fs_tool(
+                    let preview_display = super::pre_authorize::pre_authorize_fs_tool(
                         tool_name, arguments, cwd,
                     )
                     .and_then(|output| output.display)
@@ -592,14 +585,14 @@ pub fn dispatch_builtin_fs_tool(
             }
         }
         "patch" => {
-            let args: BuiltinPatchArgs =
-                serde_json::from_value(arguments.clone()).map_err(|e| BuiltinFsToolError {
+            let args: PatchArgs =
+                serde_json::from_value(arguments.clone()).map_err(|e| ToolHandlerError {
                     kind: ToolErrorKind::Validation,
                     message: format!("Invalid patch arguments: {e}"),
                     details: None,
                 })?;
 
-            let resolved_path = resolve_builtin_fs_path_for_cwd(&args.path, cwd);
+            let resolved_path = resolve_fs_path_for_cwd(&args.path, cwd);
             let operations = args
                 .operations
                 .into_iter()
@@ -636,8 +629,8 @@ pub fn dispatch_builtin_fs_tool(
             })))
         }
         "skill" => {
-            let args: BuiltinSkillArgs =
-                serde_json::from_value(arguments.clone()).map_err(|e| BuiltinFsToolError {
+            let args: SkillArgs =
+                serde_json::from_value(arguments.clone()).map_err(|e| ToolHandlerError {
                     kind: ToolErrorKind::Validation,
                     message: format!("Invalid skill arguments: {e}"),
                     details: None,
@@ -645,7 +638,7 @@ pub fn dispatch_builtin_fs_tool(
 
             let resolved =
                 crate::protocol::skills::resolve_explicit_skill_request_for_cwd(cwd, &args.name)
-                    .map_err(|e| BuiltinFsToolError {
+                    .map_err(|e| ToolHandlerError {
                         kind: ToolErrorKind::Validation,
                         message: format!("skill resolution failed: {e}"),
                         details: None,

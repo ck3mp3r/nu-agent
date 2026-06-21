@@ -86,6 +86,32 @@ pub(crate) fn builtin_tool_definitions() -> Vec<ToolDefinition> {
                 "required": ["name"]
             }),
         },
+        ToolDefinition {
+            name: "http".to_string(),
+            description: "Fetch content from a URL. Returns markdown extracted from HTML pages, \
+                preserving structure (headings, lists, links, code blocks, tables). \
+                Raw mode returns the unmodified response body. \
+                Respects max_length to avoid context overflow.".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "URL to fetch"
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["markdown", "raw"],
+                        "description": "Response format. markdown (default): converts HTML to markdown. raw: returns body as-is."
+                    },
+                    "max_length": {
+                        "type": "integer",
+                        "description": "Maximum response length in characters (default: 12000). Responses are truncated if longer."
+                    }
+                },
+                "required": ["url"]
+            }),
+        },
     ]
 }
 

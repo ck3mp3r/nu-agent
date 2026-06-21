@@ -6,29 +6,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::mailbox::{AgentRegistry, Broker};
-
-/// Error type for spawn_agent tool execution
-#[derive(Debug, Clone)]
-pub struct ToolExecError {
-    pub message: String,
-    pub details: Option<serde_json::Value>,
-}
-
-impl ToolExecError {
-    fn validation(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            details: None,
-        }
-    }
-
-    fn execution(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            details: None,
-        }
-    }
-}
+use crate::tools::handler::ToolHandlerError;
 
 /// Orchestrator state for multi-agent spawning
 pub struct OrchestratorState {
@@ -59,22 +37,22 @@ impl OrchestratorState {
 
 /// Trait for tmux command execution (enables testing with mocks)
 pub trait TmuxRunner {
-    fn run(&self, args: &[&str]) -> Result<String, ToolExecError>;
+    fn run(&self, args: &[&str]) -> Result<String, ToolHandlerError>;
 }
 
 /// Real tmux runner using std::process::Command
 pub struct RealTmuxRunner;
 
 impl TmuxRunner for RealTmuxRunner {
-    fn run(&self, args: &[&str]) -> Result<String, ToolExecError> {
+    fn run(&self, args: &[&str]) -> Result<String, ToolHandlerError> {
         let output = std::process::Command::new("tmux")
             .args(args)
             .output()
-            .map_err(|e| ToolExecError::execution(format!("Failed to execute tmux: {}", e)))?;
+            .map_err(|e| ToolHandlerError::runtime(format!("Failed to execute tmux: {}", e)))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(ToolExecError::execution(format!(
+            return Err(ToolHandlerError::runtime(format!(
                 "tmux command failed: {}",
                 stderr
             )));
@@ -105,7 +83,7 @@ fn wait_for_shell_ready<T: TmuxRunner>(
     tmux: &T,
     pane_id: &str,
     timeout: std::time::Duration,
-) -> Result<(), ToolExecError> {
+) -> Result<(), ToolHandlerError> {
     let known_shells = ["bash", "zsh", "nu", "fish", "sh", "dash"];
     let start = std::time::Instant::now();
     let poll_interval = std::time::Duration::from_millis(200);
@@ -122,7 +100,7 @@ fn wait_for_shell_ready<T: TmuxRunner>(
             return Ok(());
         }
         if start.elapsed() > timeout {
-            return Err(ToolExecError::execution(format!(
+            return Err(ToolHandlerError::runtime(format!(
                 "Shell not ready after {}s (current: '{}')",
                 timeout.as_secs(),
                 cmd
@@ -137,7 +115,7 @@ pub fn wait_for_shell_ready_pub<T: TmuxRunner>(
     tmux: &T,
     pane_id: &str,
     timeout: std::time::Duration,
-) -> Result<(), ToolExecError> {
+) -> Result<(), ToolHandlerError> {
     wait_for_shell_ready(tmux, pane_id, timeout)
 }
 
@@ -146,18 +124,18 @@ pub fn handle_spawn_agent<T: TmuxRunner>(
     args: &serde_json::Value,
     state: &mut OrchestratorState,
     tmux: &T,
-) -> Result<serde_json::Value, ToolExecError> {
+) -> Result<serde_json::Value, ToolHandlerError> {
     // 1. Parse arguments
     let agent = args["agent"]
         .as_str()
-        .ok_or_else(|| ToolExecError::validation("Missing required 'agent' parameter"))?;
+        .ok_or_else(|| ToolHandlerError::validation("Missing required 'agent' parameter"))?;
     let name = args.get("name").and_then(|v| v.as_str());
 
     // 2. Lazy broker initialization
     if state.broker.is_none() {
         log::debug!("Initializing broker for first spawn");
         let broker = Broker::start(Arc::clone(&state.registry))
-            .map_err(|e| ToolExecError::execution(format!("Failed to start broker: {}", e)))?;
+            .map_err(|e| ToolHandlerError::runtime(format!("Failed to start broker: {}", e)))?;
         state.socket_path = Some(broker.socket_path().to_path_buf());
         state.broker = Some(broker);
     }
@@ -175,7 +153,7 @@ pub fn handle_spawn_agent<T: TmuxRunner>(
     state
         .registry
         .try_write()
-        .map_err(|_| ToolExecError::execution("Failed to acquire registry lock"))?
+        .map_err(|_| ToolHandlerError::runtime("Failed to acquire registry lock"))?
         .register_pending(token.clone(), assigned_name.clone());
 
     // 5. Tmux pane management — with stale window recovery
@@ -303,7 +281,7 @@ pub fn handle_spawn_agent<T: TmuxRunner>(
 pub fn dispatch_spawn_agent(
     arguments: &serde_json::Value,
     state: &mut OrchestratorState,
-) -> Result<Option<serde_json::Value>, ToolExecError> {
+) -> Result<Option<serde_json::Value>, ToolHandlerError> {
     let tmux = RealTmuxRunner;
     handle_spawn_agent(arguments, state, &tmux).map(Some)
 }
@@ -313,16 +291,16 @@ pub fn handle_terminate_agent<T: TmuxRunner>(
     args: &serde_json::Value,
     state: &mut OrchestratorState,
     tmux: &T,
-) -> Result<serde_json::Value, ToolExecError> {
+) -> Result<serde_json::Value, ToolHandlerError> {
     // 1. Extract name
     let name = args["name"]
         .as_str()
-        .ok_or_else(|| ToolExecError::validation("Missing required 'name' parameter"))?;
+        .ok_or_else(|| ToolHandlerError::validation("Missing required 'name' parameter"))?;
 
     // 2. Look up pane_id
     let pane_id =
         state.agent_panes.get(name).cloned().ok_or_else(|| {
-            ToolExecError::execution(format!("No agent named '{}' is running", name))
+            ToolHandlerError::runtime(format!("No agent named '{}' is running", name))
         })?;
 
     // 3. Kill the pane (ignore errors — pane may already be dead)
@@ -349,7 +327,7 @@ pub fn handle_terminate_agent<T: TmuxRunner>(
 pub fn dispatch_terminate_agent(
     arguments: &serde_json::Value,
     state: &mut OrchestratorState,
-) -> Result<Option<serde_json::Value>, ToolExecError> {
+) -> Result<Option<serde_json::Value>, ToolHandlerError> {
     let tmux = RealTmuxRunner;
     handle_terminate_agent(arguments, state, &tmux).map(Some)
 }

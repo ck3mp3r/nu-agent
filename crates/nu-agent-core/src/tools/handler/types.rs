@@ -57,6 +57,26 @@ impl ToolErrorKind {
 }
 
 #[derive(Debug, Clone)]
+pub struct ToolHandlerError {
+    pub kind: ToolErrorKind,
+    pub message: String,
+    pub details: Option<serde_json::Value>,
+}
+
+impl ToolHandlerError {
+    pub fn validation(message: impl Into<String>) -> Self {
+        Self { kind: ToolErrorKind::Validation, message: message.into(), details: None }
+    }
+    pub fn runtime(message: impl Into<String>) -> Self {
+        Self { kind: ToolErrorKind::Runtime, message: message.into(), details: None }
+    }
+    pub fn with_details(mut self, details: serde_json::Value) -> Self {
+        self.details = Some(details);
+        self
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct ToolFailureOutcome {
     pub tool_name: String,
     pub tool_call_id: String,

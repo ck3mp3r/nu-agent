@@ -26,6 +26,7 @@ http = { workspace = true }
 noyalib = { workspace = true }
 rand = { workspace = true }
 pulldown-cmark = { workspace = true }
+htmd = { workspace = true }
 
 [dev-dependencies]
 serial_test = { workspace = true }

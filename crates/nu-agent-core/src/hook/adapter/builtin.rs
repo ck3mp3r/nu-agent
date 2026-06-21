@@ -4,7 +4,7 @@ use rig::wasm_compat::WasmBoxedFuture;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::tools::handler::builtin_fs::dispatch_builtin_fs_tool;
+use crate::tools::handler::fs::dispatch_fs_tool;
 
 /// Error type for builtin tool execution failures.
 ///
@@ -187,9 +187,21 @@ impl ToolDyn for BuiltinToolAdapter {
                         ))))
                     },
                 )?
+            } else if self.tool_def.name == "http" {
+                crate::tools::handler::http::dispatch_http_tool(&args_json)
+                    .await
+                    .map_err(|e| {
+                        ToolError::ToolCallError(Box::new(BuiltinExecError::Execution(format!(
+                            "{}: {}",
+                            e.message,
+                            e.details
+                                .map(|d| d.to_string())
+                                .unwrap_or_else(|| "no details".to_string())
+                        ))))
+                    })?
             } else {
                 // Call the builtin FS tool dispatcher
-                dispatch_builtin_fs_tool(&self.tool_def.name, &args_json, &self.cwd).map_err(
+                dispatch_fs_tool(&self.tool_def.name, &args_json, &self.cwd).map_err(
                     |e| {
                         ToolError::ToolCallError(Box::new(BuiltinExecError::Execution(format!(
                             "{}: {}",

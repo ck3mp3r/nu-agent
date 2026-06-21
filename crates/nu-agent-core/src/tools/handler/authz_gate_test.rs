@@ -73,7 +73,7 @@ fn builtin_tools_bypass_permission_flow() {
 }
 
 #[test]
-fn builtin_fs_tools_go_through_permission_flow() {
+fn fs_tools_go_through_permission_flow() {
     let permissions = PermissionsConfig::safe_defaults(true);
     let mut grant_cache = SessionGrantCache::default();
     let flow_context = AuthorizationFlowContext {

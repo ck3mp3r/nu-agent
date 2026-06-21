@@ -13,7 +13,7 @@ pub struct PreAuthorizeOutput {
     pub display: Option<ToolDisplay>,
 }
 
-pub fn pre_authorize_builtin_fs_tool(
+pub fn pre_authorize_fs_tool(
     tool_name: &str,
     arguments: &JsonValue,
     cwd: &std::path::Path,
@@ -22,15 +22,15 @@ pub fn pre_authorize_builtin_fs_tool(
         return None;
     }
 
-    let args: super::builtin_fs::BuiltinEditArgs =
+    let args: super::fs::EditArgs =
         serde_json::from_value(arguments.clone()).ok()?;
-    let mode = super::builtin_fs::parse_edit_mode(args.mode.as_deref()).ok()?;
-    if mode != super::builtin_fs::EditToolMode::Apply {
+    let mode = super::fs::parse_edit_mode(args.mode.as_deref()).ok()?;
+    if mode != super::fs::EditToolMode::Apply {
         return None;
     }
 
-    let operation = super::builtin_fs::resolve_edit_operation(&args).ok()?;
-    let resolved_path = super::builtin_fs::resolve_builtin_fs_path_for_cwd(&args.path, cwd);
+    let operation = super::fs::resolve_edit_operation(&args).ok()?;
+    let resolved_path = super::fs::resolve_fs_path_for_cwd(&args.path, cwd);
     let plan = crate::tools::fs::core::plan_search_replace_edit(
         &resolved_path,
         args.expected_version.as_deref(),
@@ -39,7 +39,7 @@ pub fn pre_authorize_builtin_fs_tool(
     .ok()?;
 
     let preview_display = super::result::build_edit_preview_display(
-        super::builtin_fs::build_edit_preview_display_payload(&args.path, &plan),
+        super::fs::build_edit_preview_display_payload(&args.path, &plan),
     );
     Some(PreAuthorizeOutput {
         ask_context: AskContext {
@@ -56,12 +56,12 @@ pub fn pre_authorize_tool_call(
 ) -> PreAuthorizeOutput {
     match source {
         ToolSource::Closure | ToolSource::Builtin | ToolSource::BuiltinFs => {
-            let builtin_cwd = match super::builtin_fs::resolve_builtin_fs_path(".", engine) {
+            let builtin_cwd = match super::fs::resolve_fs_path(".", engine) {
                 Ok(path) => path,
                 Err(_) => return PreAuthorizeOutput::default(),
             };
 
-            pre_authorize_builtin_fs_tool(
+            pre_authorize_fs_tool(
                 &tool_call.function.name,
                 &tool_call.function.arguments,
                 &builtin_cwd,
