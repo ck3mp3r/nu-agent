@@ -1,7 +1,7 @@
 use super::*;
 use crate::protocol::event::UiEvent;
 use crate::types::{Text, UserContent};
-use rig::agent::PromptHook;
+use rig::agent::{InvalidToolCallContext, InvalidToolCallHookAction, PromptHook};
 use rig::one_or_many::OneOrMany;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -190,33 +190,6 @@ async fn on_tool_call_cancelled_returns_terminate() {
 }
 
 #[tokio::test]
-async fn doom_loop_triggers_terminate() {
-    let (hook, _rx) = make_hook_with_resolver(MockResolver(PermissionDecision::Allow));
-
-    for i in 0..DOOM_LOOP_THRESHOLD {
-        let result = PromptHook::<DummyModel>::on_tool_call(
-            &hook,
-            "read_file",
-            None,
-            &format!("id{i}"),
-            "{\"path\": \"same\"}",
-        )
-        .await;
-        if i < DOOM_LOOP_THRESHOLD - 1 {
-            assert!(
-                matches!(result, ToolCallHookAction::Continue),
-                "iteration {i} should Continue"
-            );
-        } else {
-            assert!(
-                matches!(result, ToolCallHookAction::Terminate { .. }),
-                "iteration {i} should Terminate"
-            );
-        }
-    }
-}
-
-#[tokio::test]
 async fn on_text_delta_emits_assistant_message() {
     let (hook, mut rx) = make_hook_with_resolver(MockResolver(PermissionDecision::Allow));
 
@@ -303,5 +276,113 @@ async fn on_stream_completion_response_finish_emits_llm_end() {
             assert_eq!(total_tokens, 150);
         }
         other => panic!("expected LlmEnd, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn on_invalid_tool_call_emits_warning_and_returns_skip() {
+    let (hook, mut ui_rx) = make_hook_with_resolver(MockResolver(PermissionDecision::Allow));
+
+    let context = InvalidToolCallContext {
+        tool_name: "nonexistent_tool".to_string(),
+        tool_call_id: None,
+        internal_call_id: None,
+        args: None,
+        available_tools: vec!["nu__run".to_string(), "nu__fs_read".to_string()],
+        allowed_tools: vec![],
+        tool_choice: None,
+        chat_history: vec![],
+        is_streaming: true,
+    };
+
+    let action = PromptHook::<DummyModel>::on_invalid_tool_call(&hook, &context).await;
+
+    match action {
+        InvalidToolCallHookAction::Skip { reason } => {
+            assert!(reason.contains("nonexistent_tool"));
+            assert!(reason.contains("nu__run"));
+        }
+        other => panic!("expected Skip, got {:?}", other),
+    }
+
+    let event = ui_rx.try_recv().expect("expected a UiEvent");
+    match event {
+        UiEvent::Warning { .. } => {}
+        other => panic!("expected Warning, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn on_tool_result_emits_success_false_for_toolset_error() {
+    let (hook, mut rx) = make_hook_with_resolver(MockResolver(PermissionDecision::Allow));
+
+    let result = PromptHook::<DummyModel>::on_tool_result(
+        &hook,
+        "some_tool",
+        None,
+        "id1",
+        "{}",
+        "Toolset error: ToolCallError: connection refused",
+    )
+    .await;
+    assert!(matches!(result, HookAction::Continue));
+
+    let event = rx.try_recv().expect("expected ToolEnd event");
+    match event {
+        UiEvent::ToolEnd { success, .. } => {
+            assert!(!success, "expected success=false for Toolset error prefix");
+        }
+        other => panic!("expected ToolEnd, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn on_tool_result_emits_success_true_for_normal_result() {
+    let (hook, mut rx) = make_hook_with_resolver(MockResolver(PermissionDecision::Allow));
+
+    let result = PromptHook::<DummyModel>::on_tool_result(
+        &hook,
+        "some_tool",
+        None,
+        "id1",
+        "{}",
+        "{\"output\": \"hello\"}",
+    )
+    .await;
+    assert!(matches!(result, HookAction::Continue));
+
+    let event = rx.try_recv().expect("expected ToolEnd event");
+    match event {
+        UiEvent::ToolEnd { success, .. } => {
+            assert!(success, "expected success=true for normal result");
+        }
+        other => panic!("expected ToolEnd, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn doom_loop_returns_skip_not_terminate() {
+    let (hook, _rx) = make_hook_with_resolver(MockResolver(PermissionDecision::Allow));
+
+    for i in 0..DOOM_LOOP_THRESHOLD {
+        let result = PromptHook::<DummyModel>::on_tool_call(
+            &hook,
+            "read_file",
+            None,
+            &format!("id{i}"),
+            "{\"path\": \"same\"}",
+        )
+        .await;
+        if i < DOOM_LOOP_THRESHOLD - 1 {
+            assert!(
+                matches!(result, ToolCallHookAction::Continue),
+                "iteration {i} should Continue"
+            );
+        } else {
+            assert!(
+                matches!(result, ToolCallHookAction::Skip { .. }),
+                "iteration {i} should be Skip (not Terminate)"
+            );
+        }
     }
 }

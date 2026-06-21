@@ -61,6 +61,17 @@ src/
 - Refactor only when tests are green
 - No hidden global mutable state — use explicit state via structs
 
+### No Parallel Developer Agents
+
+**NEVER run two developer agents concurrently on the same repository.**
+
+Compiled projects share a build cache, lock files, and the working tree.
+Parallel agents will corrupt each other's builds and produce interleaved file edits.
+
+- Delegate one developer task at a time
+- Wait for it to complete before delegating the next
+- Researcher and reviewer agents may run in parallel with each other, but never alongside a developer
+
 ### Review Before Commit
 
 **Always run a review before `git commit`. No exceptions.**

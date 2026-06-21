@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use rig::agent::{HookAction, PromptHook, ToolCallHookAction};
+use rig::agent::{HookAction, InvalidToolCallContext, InvalidToolCallHookAction, PromptHook, ToolCallHookAction};
 use rig::completion::GetTokenUsage;
 use rig::completion::request::CompletionModel;
 use rig::message::Message;
@@ -136,7 +136,7 @@ where
                 let _ = self.ui_tx.send(UiEvent::Warning {
                     message: message.clone(),
                 });
-                return ToolCallHookAction::Terminate { reason: message };
+                return ToolCallHookAction::Skip { reason: message };
             }
         }
 
@@ -200,11 +200,15 @@ where
                 .to_string();
 
         // 3. Emit ToolEnd
+        // Errors from rig's tool execution chain always start with "Toolset error: ".
+        // Successful results never do.
+        let success = !result.starts_with("Toolset error: ");
+
         let _ = self.ui_tx.send(UiEvent::ToolEnd {
             name: tool_name.to_string(),
             source,
             arguments: args.to_string(),
-            success: true,
+            success,
             result: result.to_string(),
             display,
             error_kind: None,
@@ -233,6 +237,24 @@ where
     }
 
     // on_tool_call_delta: use default impl
+
+    fn on_invalid_tool_call(
+        &self,
+        context: &InvalidToolCallContext,
+    ) -> impl std::future::Future<Output = InvalidToolCallHookAction> + Send {
+        let reason = format!(
+            "Tool '{}' is not available. Available tools: [{}]",
+            context.tool_name,
+            context.available_tools.join(", ")
+        );
+        let ui_tx = self.ui_tx.clone();
+        async move {
+            let _ = ui_tx.send(UiEvent::Warning {
+                message: reason.clone(),
+            });
+            InvalidToolCallHookAction::Skip { reason }
+        }
+    }
 }
 
 #[cfg(test)]
