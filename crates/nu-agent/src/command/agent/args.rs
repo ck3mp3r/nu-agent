@@ -57,7 +57,7 @@ pub(crate) fn extract_broker_flags(
 ///
 /// # Errors
 /// Returns an error if flags are invalid.
-pub(crate) fn extract_and_validate_session_flags(
+pub fn extract_and_validate_session_flags(
     call: &EvaluatedCall,
 ) -> Result<Option<String>, LabeledError> {
     // Extract flags
@@ -76,7 +76,7 @@ pub(crate) fn extract_and_validate_session_flags(
 ///
 /// # Returns
 /// HashMap of tool names to spanned closures
-pub(crate) fn extract_tools_from_call(
+pub fn extract_tools_from_call(
     call: &EvaluatedCall,
 ) -> Result<
     std::collections::HashMap<String, nu_protocol::Spanned<nu_protocol::engine::Closure>>,
@@ -134,7 +134,7 @@ pub(crate) fn extract_tools_from_call(
 ///
 /// # Returns
 /// Duration for tool execution timeout
-pub(crate) fn extract_tool_timeout(call: &EvaluatedCall) -> std::time::Duration {
+pub fn extract_tool_timeout(call: &EvaluatedCall) -> std::time::Duration {
     // Extract the flag value (i64 nanoseconds)
     let timeout_nanos: Option<i64> = call.get_flag("tool-timeout").ok().flatten();
 

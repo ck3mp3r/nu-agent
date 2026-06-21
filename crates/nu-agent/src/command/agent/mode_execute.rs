@@ -23,6 +23,37 @@ use nu_agent_tui::runtime::{
     open_tty_reader, run_with_terminal_restore,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AgentMode {
+    Tui,
+    Stderr,
+}
+
+impl AgentMode {
+    pub(crate) fn is_tui(self) -> bool {
+        matches!(self, Self::Tui)
+    }
+}
+
+/// Whether the plugin should call `enter_foreground()` to receive SIGINT.
+/// True for TUI (always needs it) and for stderr mode when stderr is a TTY
+/// (user has a terminal and may press Ctrl+C).
+pub(crate) fn should_enter_foreground(mode: AgentMode, stderr_is_tty: bool) -> bool {
+    mode.is_tui() || stderr_is_tty
+}
+
+pub(crate) fn resolve_agent_mode(
+    input_is_nothing: bool,
+    stdin_is_tty: bool,
+    stderr_is_tty: bool,
+) -> AgentMode {
+    if input_is_nothing && stdin_is_tty && stderr_is_tty {
+        AgentMode::Tui
+    } else {
+        AgentMode::Stderr
+    }
+}
+
 /// Hydration context for TUI transcript replay on session attach.
 pub(crate) struct TuiHydrationInput {
     pub should_hydrate: bool,
@@ -120,7 +151,7 @@ pub(crate) fn run_tui_mode(
         }
     });
 
-    super::map_tui_run_result(result)
+    super::run_command::map_tui_run_result(result)
 }
 
 pub(crate) fn run_stderr_mode(

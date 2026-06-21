@@ -1,4 +1,4 @@
-use nu_plugin::EvaluatedCall;
+use nu_plugin::{EngineInterface, EvaluatedCall};
 use nu_protocol::{LabeledError, Value};
 
 use nu_agent_core::compaction::CompactionParams;
@@ -7,6 +7,66 @@ use nu_agent_core::conversation::runtime::AgentConversationRuntime;
 use nu_agent_core::protocol::preamble::{
     PreambleDefaults, UserPreambleInput, classify_model_family, resolve_preamble,
 };
+
+/// Trait abstracting the engine interface functionality needed for config resolution.
+///
+/// This allows us to mock the EngineInterface for testing without needing
+/// a real Nushell engine instance.
+pub trait EngineConfigInterface {
+    fn get_plugin_config(&self) -> Result<Option<Value>, LabeledError>;
+}
+
+impl EngineConfigInterface for EngineInterface {
+    fn get_plugin_config(&self) -> Result<Option<Value>, LabeledError> {
+        // Convert ShellError to LabeledError
+        self.get_plugin_config()
+            .map_err(|e| LabeledError::new(format!("Failed to get plugin config: {}", e)))
+    }
+}
+
+/// Resolve configuration from all sources with proper precedence.
+///
+/// NEW Resolution pipeline:
+/// 1. Parse PluginConfig from $env.config.plugins.agent (if present)
+/// 2. Determine active model:
+///    - If --model flag provided: use it (provider/model format)
+///    - Else if --small flag provided: use small_model from PluginConfig
+///    - Else use config.model (default)
+/// 3. Call PluginConfig::resolve_model() to get base Config
+/// 4. Merge with flag overrides (temperature, max-context/output-tokens, etc.)
+/// 5. Validate and return
+///
+/// FALLBACK for backward compatibility:
+/// - If plugin config doesn't have new structure (no "providers" field)
+/// - Fall back to OLD Config::from_plugin_config() behavior
+/// - Model override remains authoritative via --model (provider/model format)
+///
+/// # Arguments
+/// * `engine` - Engine interface for accessing plugin config
+/// * `call` - The EvaluatedCall containing command flags
+///
+/// # Returns
+/// Fully resolved and validated Config, or error if validation fails
+pub fn resolve_config<E: EngineConfigInterface>(
+    engine: &E,
+    call: &EvaluatedCall,
+) -> Result<Config, LabeledError> {
+    // Step 1: Get plugin config value (if present)
+    let plugin_config_opt = engine.get_plugin_config()?;
+
+    // Step 2: Try NEW plugin config structure first
+    if let Some(ref plugin_value) = plugin_config_opt {
+        // Try to parse as NEW PluginConfig structure
+        if let Ok(plugin_config) = PluginConfig::from_plugin_config(plugin_value) {
+            // NEW FLOW: Use PluginConfig
+            return resolve_with_new_config(plugin_config, call);
+        }
+        // If parsing failed, fall through to OLD flow
+    }
+
+    // Step 3: FALLBACK to OLD flow for backward compatibility
+    resolve_with_old_config(plugin_config_opt, call)
+}
 
 /// Extract configuration from command-line flags.
 ///
@@ -18,7 +78,7 @@ use nu_agent_core::protocol::preamble::{
 ///
 /// # Returns
 /// Config with values from flags or Config::default() fields for unprovided flags
-pub(crate) fn extract_flag_config(call: &EvaluatedCall) -> Config {
+pub fn extract_flag_config(call: &EvaluatedCall) -> Config {
     // Helper to safely extract string flag
     fn get_string_flag(call: &EvaluatedCall, name: &str) -> Option<String> {
         call.get_flag(name)
@@ -70,7 +130,7 @@ pub(crate) fn extract_flag_config(call: &EvaluatedCall) -> Config {
 }
 
 /// NEW resolution flow using PluginConfig structure
-pub(crate) fn resolve_with_new_config(
+pub fn resolve_with_new_config(
     plugin_config: PluginConfig,
     call: &EvaluatedCall,
 ) -> Result<Config, LabeledError> {
@@ -179,7 +239,7 @@ pub(crate) fn resolve_with_new_config(
 }
 
 /// OLD resolution flow for backward compatibility
-pub(crate) fn resolve_with_old_config(
+pub fn resolve_with_old_config(
     plugin_config_opt: Option<Value>,
     call: &EvaluatedCall,
 ) -> Result<Config, LabeledError> {
