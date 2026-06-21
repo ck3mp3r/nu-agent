@@ -140,7 +140,7 @@ pub fn resolve_session_request(use_tui: bool, session_id: Option<String>) -> Ses
 ///
 /// This function maps store entry types to transcript display items:
 /// - `StoreEntry::Message` → delegated to `hydrate_single_message`
-/// - `StoreEntry::Marker` → compaction snapshot with summary text directly
+/// - `StoreEntry::Marker` → compaction snapshot with strategy, counts, and summary text
 ///
 /// # Arguments
 /// * `entries` - Slice of StoreEntry from ConversationStore::load_all()
@@ -165,10 +165,46 @@ fn hydrate_transcript_from_store_entries(entries: &[StoreEntry]) -> Vec<UiMessag
         .flat_map(|entry| match entry {
             StoreEntry::Message(msg) => hydrate_single_message(msg, &tool_names),
             StoreEntry::Marker(marker) => {
-                vec![UiMessageSnapshot::new("compaction", marker.summary.clone())]
+                vec![UiMessageSnapshot::new(
+                    "compaction",
+                    format_compaction_content(marker),
+                )]
             }
         })
         .collect()
+}
+
+/// Maximum character length for the summary body in a hydrated compaction entry.
+const COMPACTION_SUMMARY_MAX_CHARS: usize = 500;
+
+/// Format a `CompactionMarker` into display content for the TUI transcript.
+///
+/// Produces a stats header line followed by the (optionally truncated) summary body:
+/// ```text
+/// 10 summarized · 3 kept · strategy: sliding_summary
+///
+/// Summary text here...
+/// ```
+///
+/// If the summary is empty, only the stats header is emitted.
+fn format_compaction_content(marker: &crate::session::CompactionMarker) -> String {
+    let stats = format!(
+        "{} summarized · {} kept · strategy: {}",
+        marker.summarized_count, marker.kept_recent_count, marker.strategy
+    );
+
+    let body = marker.summary.trim();
+    if body.is_empty() {
+        stats
+    } else {
+        let truncated: String = body.chars().take(COMPACTION_SUMMARY_MAX_CHARS).collect();
+        let ellipsis = if body.chars().count() > COMPACTION_SUMMARY_MAX_CHARS {
+            "…"
+        } else {
+            ""
+        };
+        format!("{stats}\n\n{truncated}{ellipsis}")
+    }
 }
 
 /// Converts a single rig Message into UiMessageSnapshots.

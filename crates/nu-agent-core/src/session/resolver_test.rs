@@ -338,9 +338,23 @@ fn hydrate_store_entries_marker_format() {
     assert_eq!(snapshots[0].role(), "compaction");
 
     let content = snapshots[0].content();
-    assert_eq!(
-        content, "The user asked about weather and got a response.",
-        "Expected content to be the marker's summary text directly, got: {content}"
+    // Content must include stats header (summarized_count, kept_recent_count, strategy)
+    assert!(
+        content.contains("10 summarized"),
+        "Expected summarized_count in content, got: {content}"
+    );
+    assert!(
+        content.contains("3 kept"),
+        "Expected kept_recent_count in content, got: {content}"
+    );
+    assert!(
+        content.contains("SummarizeOldest"),
+        "Expected strategy in content, got: {content}"
+    );
+    // Content must also include the summary body
+    assert!(
+        content.contains("The user asked about weather and got a response."),
+        "Expected summary body in content, got: {content}"
     );
 }
 
@@ -401,9 +415,23 @@ fn hydrate_store_entries_empty_summary_marker() {
     assert_eq!(snapshots[0].role(), "compaction");
 
     let content = snapshots[0].content();
-    assert_eq!(
-        content, "",
-        "Empty summary should render as empty string, got: {content}"
+    // Even with empty summary, stats header must appear
+    assert!(
+        content.contains("8 summarized"),
+        "Expected summarized_count in content for empty-summary marker, got: {content}"
+    );
+    assert!(
+        content.contains("5 kept"),
+        "Expected kept_recent_count in content for empty-summary marker, got: {content}"
+    );
+    assert!(
+        content.contains("SlidingWindow"),
+        "Expected strategy in content for empty-summary marker, got: {content}"
+    );
+    // No body separator when summary is empty
+    assert!(
+        !content.contains("\n\n"),
+        "Empty summary should not produce a body separator, got: {content}"
     );
 }
 
@@ -544,4 +572,133 @@ fn test_tool_result_with_explicit_display_key() {
     );
     let display = display.unwrap();
     assert_eq!(display.title, "custom output");
+}
+
+// --- Compaction marker with stats test (task spec) ---
+
+/// Verifies that a Vec<StoreEntry> containing pre-compaction messages, a Marker, and
+/// post-compaction messages produces a transcript where:
+/// - The compaction entry appears at the correct position
+/// - The compaction entry has role "compaction"
+/// - The compaction entry content includes strategy, summarized_count, kept_recent_count,
+///   and the summary body
+#[test]
+fn hydrate_store_entries_marker_shows_strategy_and_counts() {
+    let entries = vec![
+        StoreEntry::Message(Message::User {
+            content: OneOrMany::one(UserContent::Text(Text {
+                text: "pre-compaction message 1".to_string(),
+                additional_params: None,
+            })),
+        }),
+        StoreEntry::Message(Message::Assistant {
+            id: None,
+            content: OneOrMany::one(AssistantContent::Text(Text {
+                text: "pre-compaction reply".to_string(),
+                additional_params: None,
+            })),
+        }),
+        StoreEntry::Marker(CompactionMarker::new(
+            "History summarized: user asked about Rust, assistant explained ownership.".to_string(),
+            2,
+            7,
+            "sliding_summary",
+        )),
+        StoreEntry::Message(Message::User {
+            content: OneOrMany::one(UserContent::Text(Text {
+                text: "post-compaction question".to_string(),
+                additional_params: None,
+            })),
+        }),
+        StoreEntry::Message(Message::Assistant {
+            id: None,
+            content: OneOrMany::one(AssistantContent::Text(Text {
+                text: "post-compaction answer".to_string(),
+                additional_params: None,
+            })),
+        }),
+    ];
+
+    let snapshots = super::hydrate_transcript_from_store_entries(&entries);
+
+    // There are 5 entries: 2 pre-compaction messages, 1 marker, 2 post-compaction messages
+    assert_eq!(snapshots.len(), 5, "expected 5 snapshots, got: {snapshots:?}");
+
+    // Pre-compaction messages come first
+    assert_eq!(snapshots[0].role(), "user");
+    assert_eq!(snapshots[0].content(), "pre-compaction message 1");
+    assert_eq!(snapshots[1].role(), "assistant");
+    assert_eq!(snapshots[1].content(), "pre-compaction reply");
+
+    // Compaction marker is at index 2
+    assert_eq!(
+        snapshots[2].role(),
+        "compaction",
+        "expected compaction role at index 2"
+    );
+    let compaction_content = snapshots[2].content();
+
+    // Stats must be present
+    assert!(
+        compaction_content.contains("7 summarized"),
+        "expected summarized_count=7 in compaction content, got: {compaction_content}"
+    );
+    assert!(
+        compaction_content.contains("2 kept"),
+        "expected kept_recent_count=2 in compaction content, got: {compaction_content}"
+    );
+    assert!(
+        compaction_content.contains("sliding_summary"),
+        "expected strategy in compaction content, got: {compaction_content}"
+    );
+    // Summary body must be present
+    assert!(
+        compaction_content.contains("History summarized"),
+        "expected summary body in compaction content, got: {compaction_content}"
+    );
+
+    // Post-compaction messages follow
+    assert_eq!(snapshots[3].role(), "user");
+    assert_eq!(snapshots[3].content(), "post-compaction question");
+    assert_eq!(snapshots[4].role(), "assistant");
+    assert_eq!(snapshots[4].content(), "post-compaction answer");
+}
+
+/// Verifies that long summary text is truncated in the compaction content.
+#[test]
+fn hydrate_store_entries_marker_truncates_long_summary() {
+    // Create a summary longer than COMPACTION_SUMMARY_MAX_CHARS (500)
+    let long_summary = "x".repeat(600);
+    let entries = vec![StoreEntry::Marker(CompactionMarker::new(
+        long_summary,
+        1,
+        5,
+        "sliding_summary",
+    ))];
+
+    let snapshots = super::hydrate_transcript_from_store_entries(&entries);
+
+    assert_eq!(snapshots.len(), 1);
+    let content = snapshots[0].content();
+
+    // Stats header must be present
+    assert!(
+        content.contains("5 summarized"),
+        "expected summarized_count in truncated content, got len={}",
+        content.len()
+    );
+
+    // Content must be shorter than 600 + stats overhead — truncation occurred
+    // 500 summary chars + "…" + stats line + "\n\n" separator
+    assert!(
+        content.len() < 600,
+        "expected truncation: content.len()={} should be < 600",
+        content.len()
+    );
+
+    // Truncation ellipsis must be present
+    assert!(
+        content.contains('…'),
+        "expected ellipsis in truncated content, got: {content}"
+    );
 }

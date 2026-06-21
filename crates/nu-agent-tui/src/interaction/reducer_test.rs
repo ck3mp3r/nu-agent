@@ -2315,6 +2315,30 @@ fn compaction_triggered_clears_status_line() {
 }
 
 #[test]
+fn compaction_triggered_resets_latest_total_tokens() {
+    let mut state = busy_state_with_clean_transcript();
+    // Simulate pre-compaction state: token usage is known
+    state.latest_total_tokens = Some(50_000);
+
+    reduce_with_cancel_controller(
+        &mut state,
+        event_input(UiEvent::CompactionTriggered {
+            source: "test".into(),
+            summarized_count: 5,
+            kept_recent_count: 3,
+            summary_preview: "...".into(),
+            summary_body: "summary".into(),
+        }),
+        None,
+    );
+
+    assert_eq!(
+        state.latest_total_tokens, None,
+        "latest_total_tokens should be reset to None after CompactionTriggered"
+    );
+}
+
+#[test]
 fn compaction_failed_clears_status_line() {
     let mut state = busy_state_with_clean_transcript();
     state.status_line = "Thinking...".to_string();

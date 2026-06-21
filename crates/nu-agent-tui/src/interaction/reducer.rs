@@ -423,6 +423,8 @@ fn reduce_ui_event(state: &mut AppState, event: UiEvent) {
             state.compaction_streaming_start = None;
             state.push_transcript_line(TranscriptRole::Separator, String::new());
             state.status_line.clear();
+            // Reset displayed token % — context was freed; wait for next LlmEnd to update.
+            state.latest_total_tokens = None;
         }
         UiEvent::CompactionFailed { source, message } => {
             state.start_compaction_block(&source);
