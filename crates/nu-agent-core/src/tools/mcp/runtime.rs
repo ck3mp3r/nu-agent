@@ -236,6 +236,22 @@ impl McpRuntime {
     ) -> Vec<McpServerLifecycle> {
         project_server_lifecycle(configured_servers, &self.connected_servers)
     }
+
+    /// Returns true if a session for `server_name` was established (i.e. the server
+    /// was connected at some point and its session is still alive).
+    pub fn has_server(&self, server_name: &str) -> bool {
+        self.connected_servers.contains(server_name)
+    }
+
+    /// Merge a newly-connected runtime into this one.
+    ///
+    /// Adds the new runtime's sessions, connected-server names, and discovered tools
+    /// to this runtime. Used when enabling a previously-unconfigured server.
+    pub fn merge(&mut self, other: McpRuntime) {
+        self.sessions.extend(other.sessions);
+        self.connected_servers.extend(other.connected_servers);
+        self.discovered_tools.extend(other.discovered_tools);
+    }
 }
 
 pub async fn connect_servers(
@@ -268,7 +284,7 @@ pub async fn connect_servers(
     })
 }
 
-async fn connect_server(
+pub(crate) async fn connect_server(
     tool_server_handle: &rig::tool::server::ToolServerHandle,
     server: &McpServerConfig,
     caller_cwd: Option<&std::path::Path>,

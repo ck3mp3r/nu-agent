@@ -7,7 +7,7 @@ use crate::tools::mcp::{
 use crate::types::ToolDefinition;
 
 use super::super::mcp_helpers::{
-    mcp_enable_runtime_config, rebuild_mcp_lifecycle_projection, stage_enabled_mcp_runtime_state,
+    rebuild_mcp_lifecycle_projection, stage_enabled_mcp_runtime_state,
 };
 
 pub struct McpState {
@@ -54,26 +54,10 @@ impl McpState {
         runtime: &tokio::runtime::Handle,
     ) -> Result<McpUsabilityState, String> {
         if !enabled {
-            // Remove this server's tools from the handle so they are no longer executable.
-            // This also prevents duplicate add_tool errors on re-enable.
-            let tool_names_to_remove: Vec<String> = tool_definitions
-                .iter()
-                .filter(|t| {
-                    self.mcp_registry
-                        .server_name_for(t.name.as_str())
-                        == Some(server_name)
-                })
-                .map(|t| t.name.clone())
-                .collect();
-
-            for name in &tool_names_to_remove {
-                if let Err(e) =
-                    runtime.block_on(async { tool_server_handle.remove_tool(name).await })
-                {
-                    log::warn!("Failed to remove tool '{name}' on MCP server disable: {e}");
-                }
-            }
-
+            // Disable path: just toggle visibility in the registry.
+            // Sessions stay alive and tools remain registered on the handle —
+            // McpToolRegistry.contains() gates LLM visibility, so tools are hidden
+            // without any disconnection or remove_tool calls.
             self.mcp_registry.set_server_enabled(server_name, false)?;
             self.mcp_lifecycle_projection = rebuild_mcp_lifecycle_projection(
                 self.mcp_runtime.as_ref(),
@@ -99,16 +83,42 @@ impl McpState {
             return Ok(McpUsabilityState::Failed);
         }
 
-        let runtime_config =
-            mcp_enable_runtime_config(&self.mcp_server_configs, &self.mcp_registry, server_name);
+        // Enable path: check if a session already exists for this server.
+        let already_connected = self
+            .mcp_runtime
+            .as_ref()
+            .is_some_and(|rt| rt.has_server(server_name));
+
+        if already_connected {
+            // Case A: Session is alive, tools are registered on the handle.
+            // Just re-enable visibility in the registry — no reconnection needed.
+            self.mcp_registry.set_server_enabled(server_name, true)?;
+            self.mcp_lifecycle_projection = rebuild_mcp_lifecycle_projection(
+                self.mcp_runtime.as_ref(),
+                &self.mcp_server_configs,
+                &self.mcp_registry,
+                tool_definitions,
+            );
+            return Ok(McpUsabilityState::Enabled);
+        }
+
+        // Case B: Server has never been connected (configured with enabled: false at
+        // startup, or first-time enable). Connect only this single server.
+        // Force enabled: true so select_enabled_servers() doesn't filter it out.
+        let single_server_config: Vec<McpServerConfig> = self
+            .mcp_server_configs
+            .iter()
+            .filter(|s| s.name == server_name)
+            .map(|s| McpServerConfig { enabled: true, ..s.clone() })
+            .collect();
 
         match runtime.block_on(crate::tools::mcp::runtime::connect_servers(
             tool_server_handle,
-            &runtime_config,
+            &single_server_config,
             self.mcp_caller_cwd.as_deref(),
         )) {
-            Ok(rt) if rt.has_sessions() => {
-                let discovered = rt.discovered_tools().to_vec();
+            Ok(new_rt) if new_rt.has_sessions() => {
+                let discovered = new_rt.discovered_tools().to_vec();
 
                 let (staged_tool_definitions, staged_registry) = stage_enabled_mcp_runtime_state(
                     tool_definitions,
@@ -119,7 +129,13 @@ impl McpState {
 
                 *tool_definitions = staged_tool_definitions;
                 self.mcp_registry = staged_registry;
-                self.mcp_runtime = Some(rt);
+
+                // Merge the new sessions into the existing runtime (or set it if None).
+                match self.mcp_runtime.as_mut() {
+                    Some(existing) => existing.merge(new_rt),
+                    None => self.mcp_runtime = Some(new_rt),
+                }
+
                 self.mcp_lifecycle_projection = rebuild_mcp_lifecycle_projection(
                     self.mcp_runtime.as_ref(),
                     &self.mcp_server_configs,

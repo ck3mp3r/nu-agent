@@ -73,24 +73,6 @@ pub(super) fn stage_enabled_mcp_runtime_state(
     Ok((staged_tool_definitions, staged_registry))
 }
 
-pub(super) fn mcp_enable_runtime_config(
-    mcp_server_configs: &[McpServerConfig],
-    mcp_registry: &McpToolRegistry,
-    server_to_enable: &str,
-) -> Vec<McpServerConfig> {
-    mcp_server_configs
-        .iter()
-        .map(|server| {
-            let enable =
-                server.name == server_to_enable || mcp_registry.is_server_enabled(&server.name);
-            McpServerConfig {
-                enabled: enable,
-                ..server.clone()
-            }
-        })
-        .collect()
-}
-
 pub(super) fn rebuild_mcp_lifecycle_projection(
     mcp_runtime: Option<&McpRuntime>,
     mcp_server_configs: &[McpServerConfig],
