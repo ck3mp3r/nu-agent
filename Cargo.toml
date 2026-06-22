@@ -60,7 +60,7 @@ pulldown-cmark = "0.13"
 htmd = "0.5"
 arboard = "3.6"
 syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "default-themes", "parsing", "regex-fancy", "yaml-load"] }
-noyalib = "0.0.7"
+noyalib = "0.0.8"
 rand = "0.10.1"
 
 # Dev/test
