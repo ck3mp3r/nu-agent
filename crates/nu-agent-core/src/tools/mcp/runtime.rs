@@ -1,5 +1,4 @@
 use http::{HeaderName, HeaderValue};
-use rig::tool::server::ToolServer;
 
 use crate::tools::mcp::{
     MCP_TOOL_NAMESPACE_DELIMITER,
@@ -9,7 +8,6 @@ use crate::tools::mcp::{
 };
 
 pub struct McpRuntime {
-    tool_server_handle: rig::tool::server::ToolServerHandle,
     sessions: Vec<McpSessionHandle>,
     connected_servers: std::collections::BTreeSet<String>,
     discovered_tools: Vec<McpToolDefinition>,
@@ -224,10 +222,6 @@ fn build_http_transport_config(
 }
 
 impl McpRuntime {
-    pub fn tool_server_handle(&self) -> rig::tool::server::ToolServerHandle {
-        self.tool_server_handle.clone()
-    }
-
     pub fn has_sessions(&self) -> bool {
         !self.sessions.is_empty()
     }
@@ -245,11 +239,10 @@ impl McpRuntime {
 }
 
 pub async fn connect_servers(
+    tool_server_handle: &rig::tool::server::ToolServerHandle,
     servers: &[McpServerConfig],
     caller_cwd: Option<&std::path::Path>,
 ) -> Result<McpRuntime, String> {
-    let tool_server_handle = ToolServer::new().run();
-
     let mut sessions = Vec::new();
     let mut connected_servers = std::collections::BTreeSet::new();
     let mut discovered_tools = Vec::new();
@@ -257,7 +250,7 @@ pub async fn connect_servers(
         std::collections::HashMap::new();
     for server in select_enabled_servers(servers) {
         let (service, server_tools) =
-            connect_server(&tool_server_handle, server, caller_cwd).await?;
+            connect_server(tool_server_handle, server, caller_cwd).await?;
 
         for tool in &server_tools {
             register_exposed_name(&mut exposed_name_owner, &tool.name, &server.name)?;
@@ -269,7 +262,6 @@ pub async fn connect_servers(
     }
 
     Ok(McpRuntime {
-        tool_server_handle,
         sessions,
         connected_servers,
         discovered_tools,

@@ -185,6 +185,9 @@ pub(super) fn run_command(
     let runtime = tokio::runtime::Runtime::new()
         .map_err(|e| LabeledError::new(format!("Failed to create async runtime: {}", e)))?;
 
+    // Create the tool server handle ONCE — both builtins and MCP servers register into it
+    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+
     let mcp_runtime = if let Some(cfg) = mcp_config.as_ref() {
         if cfg.mcp.is_empty() {
             None
@@ -194,6 +197,7 @@ pub(super) fn run_command(
             Some(
                 runtime
                     .block_on(nu_agent_core::tools::mcp::runtime::connect_servers(
+                        &tool_server_handle,
                         &cfg.mcp,
                         Some(caller_cwd_path),
                     ))
@@ -212,11 +216,6 @@ pub(super) fn run_command(
     } else {
         Vec::new()
     };
-
-    let tool_server_handle = mcp_runtime
-        .as_ref()
-        .map(|r| r.tool_server_handle())
-        .unwrap_or_else(|| rig::tool::server::ToolServer::new().run());
 
     let mcp_lifecycle_projection =
         if let (Some(runtime), Some(cfg)) = (mcp_runtime.as_ref(), mcp_config.as_ref()) {

@@ -452,6 +452,7 @@ pub(crate) fn build_runtime(params: RuntimeBuildParams) -> AgentConversationRunt
 
     AgentConversationRuntime {
         runtime: params.runtime,
+        tool_server_handle: params.tool_server_handle,
         provider_state: ProviderState::new(
             params.config,
             params
@@ -466,7 +467,6 @@ pub(crate) fn build_runtime(params: RuntimeBuildParams) -> AgentConversationRunt
         ),
         mcp_state: McpState::new(
             params.mcp_runtime,
-            params.tool_server_handle,
             params.mcp_lifecycle_projection,
             params.mcp_server_configs,
             params.mcp_caller_cwd,

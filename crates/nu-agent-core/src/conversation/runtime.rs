@@ -69,6 +69,7 @@ fn build_system_preamble(
 
 pub struct AgentConversationRuntime {
     pub runtime: tokio::runtime::Runtime,
+    pub tool_server_handle: rig::tool::server::ToolServerHandle,
     pub provider_state: super::state::provider::ProviderState,
     pub tool_state: super::state::tool::ToolState,
     pub mcp_state: super::state::mcp::McpState,
@@ -151,7 +152,7 @@ impl CoreRuntime for AgentConversationRuntime {
                 ToolInfra {
                     closure_registry: Arc::clone(&closure_registry),
                     mcp_registry: Arc::clone(&mcp_registry),
-                    tool_server_handle: self.mcp_state.mcp_tool_server_handle().clone(),
+                    tool_server_handle: self.tool_server_handle.clone(),
                     visible_tool_definitions,
                 },
             );
@@ -247,11 +248,13 @@ impl ExtendedRuntime for AgentConversationRuntime {
         server_name: &str,
         enabled: bool,
     ) -> Result<McpUsabilityState, String> {
+        let handle = self.tool_server_handle.clone();
         self.mcp_state.set_mcp_server_enabled(
+            &handle,
             server_name,
             enabled,
-            &self.runtime,
             self.tool_state.tool_definitions_mut(),
+            &self.runtime.handle().clone(),
         )
     }
 

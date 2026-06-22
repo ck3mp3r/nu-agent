@@ -12,7 +12,6 @@ use super::super::mcp_helpers::{
 
 pub struct McpState {
     mcp_runtime: Option<McpRuntime>,
-    mcp_tool_server_handle: rig::tool::server::ToolServerHandle,
     mcp_lifecycle_projection: Vec<McpServerLifecycle>,
     mcp_server_configs: Vec<McpServerConfig>,
     mcp_caller_cwd: Option<std::path::PathBuf>,
@@ -22,7 +21,6 @@ pub struct McpState {
 impl McpState {
     pub fn new(
         mcp_runtime: Option<McpRuntime>,
-        mcp_tool_server_handle: rig::tool::server::ToolServerHandle,
         mcp_lifecycle_projection: Vec<McpServerLifecycle>,
         mcp_server_configs: Vec<McpServerConfig>,
         mcp_caller_cwd: Option<std::path::PathBuf>,
@@ -30,7 +28,6 @@ impl McpState {
     ) -> Self {
         Self {
             mcp_runtime,
-            mcp_tool_server_handle,
             mcp_lifecycle_projection,
             mcp_server_configs,
             mcp_caller_cwd,
@@ -41,9 +38,6 @@ impl McpState {
     pub fn mcp_registry(&self) -> &McpToolRegistry {
         &self.mcp_registry
     }
-    pub fn mcp_tool_server_handle(&self) -> &rig::tool::server::ToolServerHandle {
-        &self.mcp_tool_server_handle
-    }
     pub fn mcp_caller_cwd(&self) -> Option<&std::path::Path> {
         self.mcp_caller_cwd.as_deref()
     }
@@ -53,12 +47,33 @@ impl McpState {
 
     pub fn set_mcp_server_enabled(
         &mut self,
+        tool_server_handle: &rig::tool::server::ToolServerHandle,
         server_name: &str,
         enabled: bool,
-        runtime: &tokio::runtime::Runtime,
         tool_definitions: &mut Vec<ToolDefinition>,
+        runtime: &tokio::runtime::Handle,
     ) -> Result<McpUsabilityState, String> {
         if !enabled {
+            // Remove this server's tools from the handle so they are no longer executable.
+            // This also prevents duplicate add_tool errors on re-enable.
+            let tool_names_to_remove: Vec<String> = tool_definitions
+                .iter()
+                .filter(|t| {
+                    self.mcp_registry
+                        .server_name_for(t.name.as_str())
+                        == Some(server_name)
+                })
+                .map(|t| t.name.clone())
+                .collect();
+
+            for name in &tool_names_to_remove {
+                if let Err(e) =
+                    runtime.block_on(async { tool_server_handle.remove_tool(name).await })
+                {
+                    log::warn!("Failed to remove tool '{name}' on MCP server disable: {e}");
+                }
+            }
+
             self.mcp_registry.set_server_enabled(server_name, false)?;
             self.mcp_lifecycle_projection = rebuild_mcp_lifecycle_projection(
                 self.mcp_runtime.as_ref(),
@@ -88,6 +103,7 @@ impl McpState {
             mcp_enable_runtime_config(&self.mcp_server_configs, &self.mcp_registry, server_name);
 
         match runtime.block_on(crate::tools::mcp::runtime::connect_servers(
+            tool_server_handle,
             &runtime_config,
             self.mcp_caller_cwd.as_deref(),
         )) {
@@ -104,11 +120,6 @@ impl McpState {
                 *tool_definitions = staged_tool_definitions;
                 self.mcp_registry = staged_registry;
                 self.mcp_runtime = Some(rt);
-                self.mcp_tool_server_handle = self
-                    .mcp_runtime
-                    .as_ref()
-                    .map(McpRuntime::tool_server_handle)
-                    .unwrap_or_else(|| rig::tool::server::ToolServer::new().run());
                 self.mcp_lifecycle_projection = rebuild_mcp_lifecycle_projection(
                     self.mcp_runtime.as_ref(),
                     &self.mcp_server_configs,
@@ -180,3 +191,7 @@ impl McpState {
             .collect()
     }
 }
+
+#[cfg(test)]
+#[path = "mcp_test.rs"]
+mod mcp_test;
