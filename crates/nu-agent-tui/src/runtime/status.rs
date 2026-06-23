@@ -391,7 +391,7 @@ fn emoji_for_agent(name: &str) -> &'static str {
 }
 
 fn token_string_for_state(state: &AppState) -> Option<String> {
-    let current = state.latest_total_tokens?;
+    let current = state.latest_total_tokens.unwrap_or(0);
     let s = match state.context_window_max_tokens() {
         Some(max) if max > 0 => {
             let pct = ((current as u128).saturating_mul(100) / (max as u128)).min(100) as u64;
@@ -485,7 +485,9 @@ pub(super) fn status_right_content(
     }
 
     if let Some(token_str) = token_opt {
-        spans.push(Span::styled(SEP.to_string(), theme.role_separator));
+        if branch_opt.is_some() {
+            spans.push(Span::styled(SEP.to_string(), theme.role_separator));
+        }
         spans.push(Span::styled(token_str, theme.subtle_meta));
     }
 
