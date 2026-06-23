@@ -11,9 +11,10 @@ use serde_json::json;
 /// Delegates to the actual hydrate_single_message function in resolver.rs.
 fn convert_rig_messages_to_snapshots(messages: &[Message]) -> Vec<UiMessageSnapshot> {
     let tool_names = std::collections::HashMap::new();
+    let tool_success_map = std::collections::HashMap::new();
     messages
         .iter()
-        .flat_map(|m| super::hydrate_single_message(m, &tool_names))
+        .flat_map(|m| super::hydrate_single_message(m, &tool_names, &tool_success_map))
         .collect()
 }
 
@@ -666,6 +667,91 @@ fn hydrate_store_entries_marker_shows_strategy_and_counts() {
     assert_eq!(snapshots[3].content(), "post-compaction question");
     assert_eq!(snapshots[4].role(), "assistant");
     assert_eq!(snapshots[4].content(), "post-compaction answer");
+}
+
+// --- tool_success rehydration tests ---
+
+/// A failed tool call (result text starts with "Toolset error: ") must rehydrate
+/// as tool_success == Some(false).
+#[test]
+fn hydrate_tool_call_failure_rehydrates_as_false() {
+    let entries = vec![
+        StoreEntry::Message(Message::Assistant {
+            id: None,
+            content: OneOrMany::one(AssistantContent::ToolCall(ToolCall {
+                id: "call_fail_1".to_string(),
+                call_id: None,
+                signature: None,
+                additional_params: None,
+                function: ToolFunction {
+                    name: "bash".to_string(),
+                    arguments: json!({"command": "exit 1"}),
+                },
+            })),
+        }),
+        StoreEntry::Message(Message::User {
+            content: OneOrMany::one(UserContent::ToolResult(ToolResult {
+                id: "call_fail_1".to_string(),
+                call_id: None,
+                content: OneOrMany::one(ToolResultContent::Text(Text {
+                    text: "Toolset error: command exited with code 1".to_string(),
+                    additional_params: None,
+                })),
+            })),
+        }),
+    ];
+
+    let snapshots = super::hydrate_transcript_from_store_entries(&entries);
+
+    // Should produce 1 snapshot: the tool call (tool result is skipped in TUI)
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].role(), "tool");
+    assert_eq!(
+        snapshots[0].tool_success(),
+        Some(false),
+        "Failed tool call (Toolset error: ...) must rehydrate as tool_success=false"
+    );
+}
+
+/// A successful tool call (result text does NOT start with "Toolset error: ") must
+/// rehydrate as tool_success == Some(true).
+#[test]
+fn hydrate_tool_call_success_rehydrates_as_true() {
+    let entries = vec![
+        StoreEntry::Message(Message::Assistant {
+            id: None,
+            content: OneOrMany::one(AssistantContent::ToolCall(ToolCall {
+                id: "call_ok_1".to_string(),
+                call_id: None,
+                signature: None,
+                additional_params: None,
+                function: ToolFunction {
+                    name: "read_file".to_string(),
+                    arguments: json!({"path": "/tmp/test.txt"}),
+                },
+            })),
+        }),
+        StoreEntry::Message(Message::User {
+            content: OneOrMany::one(UserContent::ToolResult(ToolResult {
+                id: "call_ok_1".to_string(),
+                call_id: None,
+                content: OneOrMany::one(ToolResultContent::Text(Text {
+                    text: "file contents here".to_string(),
+                    additional_params: None,
+                })),
+            })),
+        }),
+    ];
+
+    let snapshots = super::hydrate_transcript_from_store_entries(&entries);
+
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].role(), "tool");
+    assert_eq!(
+        snapshots[0].tool_success(),
+        Some(true),
+        "Successful tool call must rehydrate as tool_success=true"
+    );
 }
 
 /// Verifies that long summary text is truncated in the compaction content.

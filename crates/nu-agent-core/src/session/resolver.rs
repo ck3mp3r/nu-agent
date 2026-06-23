@@ -148,22 +148,40 @@ pub fn resolve_session_request(use_tui: bool, session_id: Option<String>) -> Ses
 /// # Returns
 /// Iterator of UiMessageSnapshot ready for transcript hydration
 fn hydrate_transcript_from_store_entries(entries: &[StoreEntry]) -> Vec<UiMessageSnapshot> {
-    // Pass 1: collect call_id → tool_name from all ToolCalls
+    // Pass 1: collect call_id → tool_name from all ToolCalls and
+    //         call_id → success from all ToolResults (failure = starts with "Toolset error: ")
     let mut tool_names: HashMap<String, String> = HashMap::new();
+    let mut tool_success_map: HashMap<String, bool> = HashMap::new();
     for entry in entries {
-        if let StoreEntry::Message(Message::Assistant { content, .. }) = entry {
-            for item in content.iter() {
-                if let AssistantContent::ToolCall(tc) = item {
-                    tool_names.insert(tc.id.clone(), tc.function.name.clone());
+        match entry {
+            StoreEntry::Message(Message::Assistant { content, .. }) => {
+                for item in content.iter() {
+                    if let AssistantContent::ToolCall(tc) = item {
+                        tool_names.insert(tc.id.clone(), tc.function.name.clone());
+                    }
                 }
             }
+            StoreEntry::Message(Message::User { content }) => {
+                for item in content.iter() {
+                    if let UserContent::ToolResult(tr) = item {
+                        for c in tr.content.iter() {
+                            if let ToolResultContent::Text(t) = c {
+                                let success = !t.text.starts_with("Toolset error: ");
+                                tool_success_map.insert(tr.id.clone(), success);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
     }
     // Pass 2: generate snapshots with tool display reconstruction
     entries
         .iter()
         .flat_map(|entry| match entry {
-            StoreEntry::Message(msg) => hydrate_single_message(msg, &tool_names),
+            StoreEntry::Message(msg) => hydrate_single_message(msg, &tool_names, &tool_success_map),
             StoreEntry::Marker(marker) => {
                 vec![UiMessageSnapshot::new(
                     "compaction",
@@ -218,6 +236,7 @@ fn format_compaction_content(marker: &crate::session::CompactionMarker) -> Strin
 fn hydrate_single_message(
     msg: &Message,
     tool_names: &HashMap<String, String>,
+    tool_success_map: &HashMap<String, bool>,
 ) -> Vec<UiMessageSnapshot> {
     let mut snapshots = Vec::new();
 
@@ -274,7 +293,7 @@ fn hydrate_single_message(
                             UiMessageSnapshot::new("tool", display_content).with_tool_details(
                                 Some(args_json),
                                 None,
-                                Some(true),
+                                Some(*tool_success_map.get(&tool_call.id).unwrap_or(&true)),
                             ),
                         );
                     }
