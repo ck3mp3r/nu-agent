@@ -123,6 +123,8 @@ fn typing_remains_available_while_prompt_is_active() {
         &TerminalEvent::Key(TerminalKey::Enter),
         Some(&cancel_controller),
     );
+    // Activate the prompt so the transcript entry is written
+    let _ = state.take_next_prompt_for_execution();
 
     let changed = dispatch_terminal_event(
         &mut state,
@@ -153,6 +155,7 @@ fn submit_path_appends_prompt_and_keeps_input_editable() {
     assert_eq!(state.phase, UiPhase::Busy);
     assert!(!state.input.locked);
     assert!(state.input.buffer.is_empty());
+    let _ = state.take_next_prompt_for_execution();
     assert_eq!(state.transcript_preview.len(), 1);
     assert_eq!(state.transcript_preview[0].role(), Role::User);
     assert_eq!(state.transcript_preview[0].text(), "s");
@@ -570,6 +573,7 @@ fn insert_mode_alt_and_shift_enter_insert_newline_while_enter_submits() {
         dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
     assert!(changed);
     assert_eq!(state.phase, UiPhase::Busy);
+    let _ = state.take_next_prompt_for_execution();
     assert_eq!(state.transcript_preview.len(), 1);
     assert_eq!(state.transcript_preview[0].text(), "h");
 }

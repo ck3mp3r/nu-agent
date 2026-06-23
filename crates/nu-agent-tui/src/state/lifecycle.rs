@@ -9,7 +9,6 @@ impl AppState {
         self.active_cycle
     }
 
-    #[cfg(test)]
     pub fn prompt_items(&self) -> &[QueuedPrompt] {
         &self.prompt_items
     }
@@ -35,7 +34,12 @@ impl AppState {
         self.prompt_items
             .iter()
             .rev()
-            .find(|prompt| prompt.transcript_line_index == transcript_line_index)
+            .find(|prompt| {
+                if prompt.transcript_line_index == usize::MAX {
+                    return false;
+                }
+                prompt.transcript_line_index == transcript_line_index
+            })
             .map(|prompt| prompt.status)
     }
 
@@ -154,15 +158,13 @@ impl AppState {
     }
 
     pub fn enqueue_prompt(&mut self, submitted_text: String) -> u64 {
-        self.push_transcript_line(TranscriptRole::User, submitted_text.clone());
-        let transcript_line_index = self.transcript_preview.len().saturating_sub(1);
         let id = prompt_queue::PromptQueueLifecycle::new(
             &mut self.prompt_items,
             &mut self.pending_prompt_ids,
             &mut self.active_prompt_id,
             &mut self.next_prompt_id,
         )
-        .enqueue_prompt(submitted_text, transcript_line_index);
+        .enqueue_prompt(submitted_text, usize::MAX);
         self.accept_submit();
         id
     }
@@ -189,11 +191,24 @@ impl AppState {
             return None;
         }
 
+        let active_id = maybe_id?;
+        let prompt_text = self
+            .prompt_items
+            .iter()
+            .find(|p| p.id == active_id)
+            .map(|p| p.prompt_text.clone())
+            .unwrap_or_default();
+        self.push_transcript_line(TranscriptRole::User, prompt_text);
+        let real_index = self.transcript_preview.len().saturating_sub(1);
+        if let Some(prompt) = self.prompt_items.iter_mut().find(|p| p.id == active_id) {
+            prompt.transcript_line_index = real_index;
+        }
+
         self.phase = UiPhase::Busy;
         self.active_cycle = true;
         self.abort.pending = false;
         self.ensure_invariants();
-        maybe_id
+        Some(active_id)
     }
 
     pub fn take_next_prompt_for_execution(&mut self) -> Option<String> {

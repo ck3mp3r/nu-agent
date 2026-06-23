@@ -3,11 +3,10 @@ use tokio::sync::RwLock;
 
 use crate::mailbox::AgentRegistry;
 
-use super::spawn_agent::{
-    OrchestratorState, TmuxRunner, generate_hex_token, handle_spawn_agent,
-    handle_terminate_agent,
-};
 use super::ToolHandlerError;
+use super::spawn_agent::{
+    OrchestratorState, TmuxRunner, generate_hex_token, handle_spawn_agent, handle_terminate_agent,
+};
 
 /// Mock TmuxRunner for testing - thread-safe version
 /// Returns `pane_response` for new-window/split-window and `shell_response` for display-message.

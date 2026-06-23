@@ -9,7 +9,9 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use rig::agent::{HookAction, InvalidToolCallContext, InvalidToolCallHookAction, PromptHook, ToolCallHookAction};
+use rig::agent::{
+    HookAction, InvalidToolCallContext, InvalidToolCallHookAction, PromptHook, ToolCallHookAction,
+};
 use rig::completion::GetTokenUsage;
 use rig::completion::request::CompletionModel;
 use rig::message::Message;
@@ -103,11 +105,9 @@ where
                 reason: "Cancelled by user".into(),
             };
         }
-        let _ = self
-            .ui_tx
-            .send(UiEvent::AssistantMessage {
-                text: aggregated.to_string(),
-            });
+        let _ = self.ui_tx.send(UiEvent::AssistantMessage {
+            text: aggregated.to_string(),
+        });
         HookAction::Continue
     }
 
@@ -141,10 +141,9 @@ where
         }
 
         // 3. Resolve tool source
-        let source =
-            resolve_tool_source(tool_name, &self.closure_registry, &self.mcp_registry)
-                .as_str()
-                .to_string();
+        let source = resolve_tool_source(tool_name, &self.closure_registry, &self.mcp_registry)
+            .as_str()
+            .to_string();
 
         // 4. Announce tool call
         let _ = self.ui_tx.send(UiEvent::ToolStart {
@@ -194,10 +193,9 @@ where
             .and_then(|json| crate::tools::handler::build_direct_tool_display(tool_name, &json));
 
         // 2. Resolve source
-        let source =
-            resolve_tool_source(tool_name, &self.closure_registry, &self.mcp_registry)
-                .as_str()
-                .to_string();
+        let source = resolve_tool_source(tool_name, &self.closure_registry, &self.mcp_registry)
+            .as_str()
+            .to_string();
 
         // 3. Emit ToolEnd
         // Errors from rig's tool execution chain always start with "Toolset error: ".

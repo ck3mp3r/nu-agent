@@ -23,7 +23,10 @@ use super::{
 /// Build a resolver pair for interactive tests: resolver + event receiver.
 fn make_interactive(
     permissions: PermissionsConfig,
-) -> (InteractivePermissionResolver, mpsc::UnboundedReceiver<UiEvent>) {
+) -> (
+    InteractivePermissionResolver,
+    mpsc::UnboundedReceiver<UiEvent>,
+) {
     let (ui_tx, ui_rx) = mpsc::unbounded_channel();
     let resolver = InteractivePermissionResolver {
         ui_tx,
@@ -134,12 +137,13 @@ async fn interactive_resolver_ask_config_submit_allow_returns_allow() {
     let resolver_clone = resolver.clone();
 
     // Spawn resolve() — it will block waiting for submit_decision
-    let resolve_fut = tokio::spawn(async move {
-        resolver.resolve(ASK_TOOL, "{}", None).await
-    });
+    let resolve_fut = tokio::spawn(async move { resolver.resolve(ASK_TOOL, "{}", None).await });
 
     // Wait for the PermissionRequested event
-    let event = ui_rx.recv().await.expect("Expected PermissionRequested event");
+    let event = ui_rx
+        .recv()
+        .await
+        .expect("Expected PermissionRequested event");
     let request_id = match event {
         UiEvent::PermissionRequested { request_id, .. } => request_id,
         other => panic!("Expected PermissionRequested, got {:?}", other),
@@ -160,12 +164,13 @@ async fn interactive_resolver_ask_config_submit_deny_returns_deny() {
 
     let resolver_clone = resolver.clone();
 
-    let resolve_fut = tokio::spawn(async move {
-        resolver.resolve(ASK_TOOL, "{}", None).await
-    });
+    let resolve_fut = tokio::spawn(async move { resolver.resolve(ASK_TOOL, "{}", None).await });
 
     // Wait for the PermissionRequested event
-    let event = ui_rx.recv().await.expect("Expected PermissionRequested event");
+    let event = ui_rx
+        .recv()
+        .await
+        .expect("Expected PermissionRequested event");
     let request_id = match event {
         UiEvent::PermissionRequested { request_id, .. } => request_id,
         other => panic!("Expected PermissionRequested, got {:?}", other),
@@ -195,7 +200,10 @@ async fn interactive_allow_always_writes_grant_and_auto_allows_subsequent_call()
     });
 
     // Wait for the PermissionRequested event
-    let event = ui_rx.recv().await.expect("Expected PermissionRequested event");
+    let event = ui_rx
+        .recv()
+        .await
+        .expect("Expected PermissionRequested event");
     let request_id = match event {
         UiEvent::PermissionRequested { request_id, .. } => request_id,
         other => panic!("Expected PermissionRequested, got {:?}", other),
@@ -206,7 +214,11 @@ async fn interactive_allow_always_writes_grant_and_auto_allows_subsequent_call()
 
     // First resolve() must return Allow
     let decision = resolve_fut.await.expect("resolve task panicked");
-    assert_eq!(decision, PermissionDecision::Allow, "AllowAlways should return Allow");
+    assert_eq!(
+        decision,
+        PermissionDecision::Allow,
+        "AllowAlways should return Allow"
+    );
 
     // --- Second call: must return Allow WITHOUT emitting another PermissionRequested ---
     let decision2 = tokio::time::timeout(
@@ -288,7 +300,12 @@ async fn session_grant_arc_is_shared_across_resolver_instances() {
             diagnostics: Vec::new(),
         };
         // insert_allow_always writes the grant keyed by (identity, tool_name, source, mode, target_field).
-        cache.insert_allow_always(&synthetic_decision, ASK_TOOL, "unknown", &serde_json::json!({}));
+        cache.insert_allow_always(
+            &synthetic_decision,
+            ASK_TOOL,
+            "unknown",
+            &serde_json::json!({}),
+        );
     }
 
     // resolver2 must now return Allow — the cache hit via apply_session_grant_override
@@ -339,7 +356,6 @@ async fn session_grant_arc_is_shared_across_resolver_instances() {
 //     confirms the grant IS written correctly and the cache hit works end-to-end)
 //
 // A redundant test is omitted to avoid false assurance.
-
 
 #[test]
 fn policy_resolver_satisfies_async_permission_resolver_bounds() {

@@ -1,9 +1,7 @@
 //! Bridges the PermissionResolver trait to the existing authorization system.
 
 use crate::tools::closure::ClosureRegistry;
-use crate::tools::handler::{
-    McpToolRegistry, ToolSource, is_fs_tool_name, is_builtin_tool_name,
-};
+use crate::tools::handler::{McpToolRegistry, ToolSource, is_builtin_tool_name, is_fs_tool_name};
 
 /// Resolve the source of a tool by checking the closure and MCP registries.
 pub fn resolve_tool_source(

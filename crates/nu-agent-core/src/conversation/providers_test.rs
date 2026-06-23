@@ -381,8 +381,7 @@ fn plugin_config_without_read_timeout_secs_resolves_to_none() {
         .expect("should resolve");
 
     assert_eq!(
-        resolved.read_timeout_secs,
-        None,
+        resolved.read_timeout_secs, None,
         "read_timeout_secs should be None when not configured"
     );
 }

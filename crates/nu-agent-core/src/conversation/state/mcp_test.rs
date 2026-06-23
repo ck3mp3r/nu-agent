@@ -19,13 +19,7 @@ fn mcp_state_with_k8s_tools() -> (McpState, Vec<ToolDefinition>) {
         tool_definition_named("k8s__delete_pod"),
     ];
 
-    let state = McpState::new(
-        None,
-        vec![],
-        configs,
-        None,
-        registry,
-    );
+    let state = McpState::new(None, vec![], configs, None, registry);
 
     (state, tool_definitions)
 }
@@ -146,4 +140,3 @@ fn disable_then_reenable_via_registry_toggle_restores_visibility() {
     // Registry should still have k8s disabled (connection failed).
     assert!(!mcp_state.mcp_registry().is_server_enabled("k8s"));
 }
-

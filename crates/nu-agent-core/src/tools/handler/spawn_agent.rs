@@ -298,10 +298,9 @@ pub fn handle_terminate_agent<T: TmuxRunner>(
         .ok_or_else(|| ToolHandlerError::validation("Missing required 'name' parameter"))?;
 
     // 2. Look up pane_id
-    let pane_id =
-        state.agent_panes.get(name).cloned().ok_or_else(|| {
-            ToolHandlerError::runtime(format!("No agent named '{}' is running", name))
-        })?;
+    let pane_id = state.agent_panes.get(name).cloned().ok_or_else(|| {
+        ToolHandlerError::runtime(format!("No agent named '{}' is running", name))
+    })?;
 
     // 3. Kill the pane (ignore errors — pane may already be dead)
     let _ = tmux.run(&["kill-pane", "-t", &pane_id]);

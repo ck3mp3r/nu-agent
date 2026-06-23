@@ -7,8 +7,6 @@ pub use adapter::{BuiltinToolAdapter, ClosureToolAdapter, adapt_builtins, adapt_
 pub use agent_hook::AgentHook;
 pub use permission_bridge::resolve_tool_source;
 pub use permission_resolver::{
-    AsyncPermissionResolver,
-    InteractivePermissionResolver,
+    AsyncPermissionResolver, InteractivePermissionResolver, PermissionDecision,
     PolicyPermissionResolver,
-    PermissionDecision,
 };

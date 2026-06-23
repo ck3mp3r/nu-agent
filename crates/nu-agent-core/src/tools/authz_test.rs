@@ -521,8 +521,14 @@ fn ask_event_carries_pre_authorize_display_context_when_provided() {
 
     let handle = thread::spawn(move || {
         let mut sink = ChannelPermissionSink { tx: event_tx };
-        let choice =
-            hook.choose_with_sink(&decision, "edit", "closure", &args, &ask_context, Some(&mut sink));
+        let choice = hook.choose_with_sink(
+            &decision,
+            "edit",
+            "closure",
+            &args,
+            &ask_context,
+            Some(&mut sink),
+        );
         let _ = choice_tx.send(choice);
     });
 

@@ -23,11 +23,13 @@ pub struct LayoutInput {
     pub rows: u16,
     pub side_pane_visible: Option<bool>,
     pub input_height: Option<u16>,
+    pub queue_height: u16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LayoutOutput {
     pub transcript: PaneGeometry,
+    pub queue: PaneGeometry,
     pub status_event: PaneGeometry,
     pub input: PaneGeometry,
     pub side_pane: Option<PaneGeometry>,
@@ -36,8 +38,8 @@ pub struct LayoutOutput {
 pub fn recompute_layout(input: LayoutInput) -> LayoutOutput {
     let (main_width, side_pane) =
         compute_columns(input.columns, input.rows, input.side_pane_visible);
-    let (transcript_height, status_height, input_height) =
-        compute_rows(input.rows, input.input_height);
+    let (transcript_height, queue_height, input_height, status_height) =
+        compute_rows(input.rows, input.input_height, input.queue_height);
     let margin = side_margin_for_main_width(main_width);
     let inner_width = main_width.saturating_sub(margin.saturating_mul(2));
 
@@ -52,12 +54,12 @@ pub fn recompute_layout(input: LayoutInput) -> LayoutOutput {
         input.rows,
     );
 
-    let status_event = clip(
+    let queue_pane = clip(
         PaneGeometry {
             x: margin,
             y: transcript.height,
             width: inner_width,
-            height: status_height,
+            height: queue_height,
         },
         input.columns,
         input.rows,
@@ -66,9 +68,23 @@ pub fn recompute_layout(input: LayoutInput) -> LayoutOutput {
     let input_pane = clip(
         PaneGeometry {
             x: margin,
-            y: transcript.height.saturating_add(status_event.height),
+            y: transcript.height.saturating_add(queue_pane.height),
             width: inner_width,
             height: input_height,
+        },
+        input.columns,
+        input.rows,
+    );
+
+    let status_event = clip(
+        PaneGeometry {
+            x: margin,
+            y: transcript
+                .height
+                .saturating_add(queue_pane.height)
+                .saturating_add(input_pane.height),
+            width: inner_width,
+            height: status_height,
         },
         input.columns,
         input.rows,
@@ -89,6 +105,7 @@ pub fn recompute_layout(input: LayoutInput) -> LayoutOutput {
 
     LayoutOutput {
         transcript,
+        queue: queue_pane,
         status_event,
         input: input_pane,
         side_pane,
@@ -115,15 +132,26 @@ fn compute_columns(columns: u16, rows: u16, side_pane_visible: Option<bool>) -> 
     (main_width, Some(side_width))
 }
 
-fn compute_rows(rows: u16, preferred_input_height: Option<u16>) -> (u16, u16, u16) {
+fn compute_rows(
+    rows: u16,
+    preferred_input_height: Option<u16>,
+    queue_height: u16,
+) -> (u16, u16, u16, u16) {
     let status_height = if rows >= 2 { STATUS_HEIGHT } else { 0 };
 
     let rows_after_status = rows.saturating_sub(status_height);
     let requested_input_height = preferred_input_height.unwrap_or(INPUT_HEIGHT).max(1);
     let input_height = rows_after_status.min(requested_input_height);
-    let transcript_height = rows_after_status.saturating_sub(input_height);
+    let rows_after_input = rows_after_status.saturating_sub(input_height);
+    let actual_queue_h = rows_after_input.min(queue_height);
+    let transcript_height = rows_after_input.saturating_sub(actual_queue_h);
 
-    (transcript_height, status_height, input_height)
+    (
+        transcript_height,
+        actual_queue_h,
+        input_height,
+        status_height,
+    )
 }
 
 fn clip(geometry: PaneGeometry, columns: u16, rows: u16) -> PaneGeometry {

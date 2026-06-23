@@ -1,8 +1,8 @@
 mod authz_gate;
-pub mod fs;
-pub mod http;
 mod conversion;
 mod dispatch;
+pub mod fs;
+pub mod http;
 pub mod messaging;
 pub mod pre_authorize;
 mod result;

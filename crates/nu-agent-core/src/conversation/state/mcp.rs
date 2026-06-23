@@ -109,7 +109,10 @@ impl McpState {
             .mcp_server_configs
             .iter()
             .filter(|s| s.name == server_name)
-            .map(|s| McpServerConfig { enabled: true, ..s.clone() })
+            .map(|s| McpServerConfig {
+                enabled: true,
+                ..s.clone()
+            })
             .collect();
 
         match runtime.block_on(crate::tools::mcp::runtime::connect_servers(

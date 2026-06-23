@@ -520,6 +520,8 @@ fn user_then_assistant_inserts_turn_separator_in_runtime_transcript() {
         next: Some(TerminalEvent::Key(TerminalKey::Enter)),
     };
     coordinator.pump_once(&mut source);
+    // Activate the queued prompt so the User transcript entry is written
+    let _ = coordinator.take_submitted_prompt();
 
     coordinator.enqueue_ui_event(UiEvent::AssistantMessage {
         text: "world".to_string(),
@@ -665,7 +667,8 @@ fn status_lines_do_not_report_input_mode() {
 
 #[test]
 fn compact_status_line_matches_lane_1_contract() {
-    let status_line = crate::runtime::compact_status_line_for_test("openai/gpt-4o-mini", None);
+    let line = crate::runtime::compact_status_line_for_test("openai/gpt-4o-mini", None);
+    let status_line: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
 
     assert!(status_line.starts_with("○ openai/gpt-4o-mini"));
     assert!(!status_line.contains('|'));
@@ -679,9 +682,10 @@ fn lane_1_wide_no_truncation() {
         None,
         40,
     );
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
 
-    assert_eq!(line, "○ abcdefghijklmnop          branchname \u{e0a0}");
-    assert!(!line.contains('|'));
+    assert_eq!(text, "○ abcdefghijklmnop          branchname \u{e0a0}");
+    assert!(!text.contains('|'));
 }
 
 #[test]
@@ -692,9 +696,10 @@ fn lane_1_medium_one_side_truncation() {
         None,
         23,
     );
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
 
-    assert_eq!(line, "○ ...lmnop branchname \u{e0a0}");
-    assert!(!line.contains('|'));
+    assert_eq!(text, "○ ...lmnop branchname \u{e0a0}");
+    assert!(!text.contains('|'));
 }
 
 #[test]
@@ -705,9 +710,10 @@ fn lane_1_narrow_both_side_truncation() {
         None,
         20,
     );
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
 
-    assert_eq!(line, "○ ...op branchname \u{e0a0}");
-    assert!(!line.contains('|'));
+    assert_eq!(text, "○ ...op branchname \u{e0a0}");
+    assert!(!text.contains('|'));
 }
 
 #[test]
@@ -719,11 +725,12 @@ fn lane_1_branch_segment_is_right_aligned_when_present() {
         None,
         width,
     );
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
 
-    assert_eq!(line.chars().count(), width);
-    assert!(line.starts_with("○ abcdefghijklmnop"));
-    assert!(line.ends_with("branchname \u{e0a0}"));
-    assert!(!line.contains('|'));
+    assert_eq!(text.chars().count(), width);
+    assert!(text.starts_with("○ abcdefghijklmnop"));
+    assert!(text.ends_with("branchname \u{e0a0}"));
+    assert!(!text.contains('|'));
 }
 
 #[test]
@@ -735,11 +742,12 @@ fn lane_1_narrow_truncation_keeps_branch_right_anchored() {
         None,
         width,
     );
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
 
-    assert_eq!(line.chars().count(), width);
-    assert!(line.ends_with("branchname \u{e0a0}"));
-    assert!(line.contains("...op"));
-    assert!(!line.contains('|'));
+    assert_eq!(text.chars().count(), width);
+    assert!(text.ends_with("branchname \u{e0a0}"));
+    assert!(text.contains("...op"));
+    assert!(!text.contains('|'));
 }
 
 #[test]
@@ -750,9 +758,10 @@ fn lane_1_omits_branch_when_unavailable() {
         None,
         80,
     );
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
 
-    assert_eq!(line, "○ openai/gpt-4o-mini");
-    assert!(!line.contains('|'));
+    assert_eq!(text, "○ openai/gpt-4o-mini");
+    assert!(!text.contains('|'));
 }
 
 #[test]
@@ -763,10 +772,11 @@ fn lane_1_with_branch_appends_branch_icon() {
         None,
         40,
     );
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
 
     assert!(
-        line.ends_with("main \u{e0a0}"),
-        "expected branch icon suffix, got: {line:?}"
+        text.ends_with("main \u{e0a0}"),
+        "expected branch icon suffix, got: {text:?}"
     );
 }
 
@@ -780,14 +790,15 @@ fn lane_1_with_branch_ellipsizes_label_while_preserving_icon() {
         None,
         32,
     );
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
 
     assert!(
-        line.ends_with("\u{e0a0}"),
-        "icon must survive ellipsization, got: {line:?}"
+        text.ends_with("\u{e0a0}"),
+        "icon must survive ellipsization, got: {text:?}"
     );
     assert!(
-        line.contains("..."),
-        "branch label should have been ellipsized, got: {line:?}"
+        text.contains("..."),
+        "branch label should have been ellipsized, got: {text:?}"
     );
 }
 
@@ -802,12 +813,13 @@ fn lane_1_with_branch_drops_icon_when_budget_below_three_cells() {
         None,
         4,
     );
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
 
     assert!(
-        !line.contains('\u{e0a0}'),
-        "icon must be dropped under extreme narrow budgets, got: {line:?}"
+        !text.contains('\u{e0a0}'),
+        "icon must be dropped under extreme narrow budgets, got: {text:?}"
     );
-    assert!(line.starts_with("○ "));
+    assert!(text.starts_with("○ "));
 }
 
 #[test]
@@ -821,10 +833,11 @@ fn lane_1_with_detached_head_short_sha_also_gets_icon() {
         None,
         40,
     );
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
 
     assert!(
-        line.ends_with("a1b2c3d \u{e0a0}"),
-        "expected detached-HEAD short SHA to also carry icon, got: {line:?}"
+        text.ends_with("a1b2c3d \u{e0a0}"),
+        "expected detached-HEAD short SHA to also carry icon, got: {text:?}"
     );
 }
 
@@ -950,16 +963,31 @@ fn repo_branch_tracker_does_not_leak_between_repositories() {
 fn lane_1_has_no_mode_token_in_any_input_mode() {
     let insert_line =
         crate::runtime::status::compact_status_line_with_branch_for_test("model", None, None, 80);
+    let insert_text: String = insert_line
+        .spans
+        .iter()
+        .map(|s| s.content.as_ref())
+        .collect();
 
     let normal_line =
         crate::runtime::status::compact_status_line_with_branch_for_test("model", None, None, 80);
+    let normal_text: String = normal_line
+        .spans
+        .iter()
+        .map(|s| s.content.as_ref())
+        .collect();
 
     let visual_line =
         crate::runtime::status::compact_status_line_with_branch_for_test("model", None, None, 80);
+    let visual_text: String = visual_line
+        .spans
+        .iter()
+        .map(|s| s.content.as_ref())
+        .collect();
 
-    assert_eq!(insert_line, "○ model");
-    assert_eq!(normal_line, "○ model");
-    assert_eq!(visual_line, "○ model");
+    assert_eq!(insert_text, "○ model");
+    assert_eq!(normal_text, "○ model");
+    assert_eq!(visual_text, "○ model");
 }
 
 #[test]
@@ -1872,16 +1900,22 @@ fn status_contract_f_narrow_layout_is_compact_and_ellipsizes_deterministically()
         "provider/super-long-model-name-that-needs-truncation",
         None,
     );
+    let compact_text: String = compact.spans.iter().map(|s| s.content.as_ref()).collect();
     let compact_narrow = crate::runtime::status::compact_status_line_with_branch_for_test(
         "provider/super-long-model-name-that-needs-truncation",
         Some("feature/very-long-branch-name-that-needs-truncation"),
         None,
         24,
     );
-    assert!(!compact.starts_with("❯ "));
-    assert!(!compact.contains('|'));
-    assert!(compact_narrow.contains("..."));
-    assert!(!compact_narrow.contains('|'));
+    let compact_narrow_text: String = compact_narrow
+        .spans
+        .iter()
+        .map(|s| s.content.as_ref())
+        .collect();
+    assert!(!compact_text.starts_with("❯ "));
+    assert!(!compact_text.contains('|'));
+    assert!(compact_narrow_text.contains("..."));
+    assert!(!compact_narrow_text.contains('|'));
 }
 
 #[test]
@@ -2922,9 +2956,14 @@ fn compact_status_line_reports_lane_1_only() {
     state.session_total_tokens = 27;
 
     let status_line = crate::runtime::compact_status_line_for_test("openai/gpt-4o-mini", None);
+    let text: String = status_line
+        .spans
+        .iter()
+        .map(|s| s.content.as_ref())
+        .collect();
 
-    assert!(status_line.starts_with("○ openai/gpt-4o-mini"));
-    assert!(!status_line.contains('|'));
+    assert!(text.starts_with("○ openai/gpt-4o-mini"));
+    assert!(!text.contains('|'));
 }
 
 #[test]
@@ -2934,14 +2973,15 @@ fn lane_2_context_line_uses_exact_usage_format_without_extra_text() {
     state.set_context_window_max_tokens(Some(1000));
 
     let line = crate::runtime::lane_2_status_line_for_test(&state, 120);
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
 
     assert_eq!(
-        line,
+        text,
         "                                                                                                               250 (25%)"
     );
-    assert!(!line.contains("Context"));
-    assert!(!line.contains("Ctrl-P"));
-    assert!(!line.contains('|'));
+    assert!(!text.contains("Context"));
+    assert!(!text.contains("Ctrl-P"));
+    assert!(!text.contains('|'));
 }
 
 #[test]
@@ -2951,14 +2991,15 @@ fn lane_2_context_line_falls_back_to_used_only_when_max_unavailable() {
     state.set_context_window_max_tokens(None);
 
     let line = crate::runtime::lane_2_status_line_for_test(&state, 120);
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
 
     assert_eq!(
-        line,
+        text,
         "                                                                                                                      42"
     );
-    assert!(!line.contains("Context"));
-    assert!(!line.contains("Ctrl-P"));
-    assert!(!line.contains('|'));
+    assert!(!text.contains("Context"));
+    assert!(!text.contains("Ctrl-P"));
+    assert!(!text.contains('|'));
 }
 
 #[test]
@@ -2968,11 +3009,13 @@ fn footer_two_lane_contract_exposes_lane_1_and_lane_2_simultaneously() {
     state.set_context_window_max_tokens(Some(1000));
 
     let lane_1 = crate::runtime::compact_status_line_for_test("openai/gpt-4o-mini", None);
+    let lane_1_text: String = lane_1.spans.iter().map(|s| s.content.as_ref()).collect();
     let lane_2 = crate::runtime::lane_2_status_line_for_test(&state, 120);
+    let lane_2_text: String = lane_2.spans.iter().map(|s| s.content.as_ref()).collect();
 
-    assert!(lane_1.starts_with("○ openai/gpt-4o-mini"));
-    assert!(!lane_1.contains('|'));
-    assert!(lane_2.ends_with("250 (25%)"));
+    assert!(lane_1_text.starts_with("○ openai/gpt-4o-mini"));
+    assert!(!lane_1_text.contains('|'));
+    assert!(lane_2_text.ends_with("250 (25%)"));
 }
 
 #[test]
@@ -2989,9 +3032,10 @@ fn configured_path_resolves_context_max_without_fallback_format() {
     coordinator.drain_transport();
 
     let lane_2 = crate::runtime::lane_2_status_line_for_test(coordinator.state(), 120);
+    let lane_2_text: String = lane_2.spans.iter().map(|s| s.content.as_ref()).collect();
 
-    assert!(lane_2.ends_with("3k (2%)"));
-    assert!(!lane_2.contains('/'));
+    assert!(lane_2_text.ends_with("3k (2%)"));
+    assert!(!lane_2_text.contains('/'));
 }
 
 #[test]
@@ -3008,7 +3052,8 @@ fn lane_2_context_line_updates_after_each_turn_and_does_not_stale() {
     });
     coordinator.drain_transport();
     let first = crate::runtime::lane_2_status_line_for_test(coordinator.state(), 120);
-    assert!(first.ends_with("10 (10%)"));
+    let first_text: String = first.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert!(first_text.ends_with("10 (10%)"));
 
     coordinator.enqueue_ui_event(UiEvent::LlmEnd {
         response_chars: 20,
@@ -3019,7 +3064,8 @@ fn lane_2_context_line_updates_after_each_turn_and_does_not_stale() {
     });
     coordinator.drain_transport();
     let second = crate::runtime::lane_2_status_line_for_test(coordinator.state(), 120);
-    assert!(second.ends_with("40 (40%)"));
+    let second_text: String = second.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert!(second_text.ends_with("40 (40%)"));
 }
 
 #[test]
@@ -3029,11 +3075,12 @@ fn lane_2_context_line_truncation_removes_any_extra_labels_or_hints() {
     state.set_context_window_max_tokens(Some(128000));
 
     let line = crate::runtime::lane_2_status_line_for_test(&state, 30);
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
 
-    assert_eq!(line, "                    12.3k (9%)");
-    assert!(!line.contains("Context"));
-    assert!(!line.contains("Ctrl-P"));
-    assert!(!line.contains('|'));
+    assert_eq!(text, "                    12.3k (9%)");
+    assert!(!text.contains("Context"));
+    assert!(!text.contains("Ctrl-P"));
+    assert!(!text.contains('|'));
 }
 
 #[test]
@@ -3053,8 +3100,9 @@ fn lane_2_rehydrates_used_tokens_from_hydrated_history_metadata() {
     );
 
     let lane_2 = crate::runtime::lane_2_status_line_for_test(coordinator.state(), 120);
-    assert_eq!(lane_2.chars().count(), 120);
-    assert!(lane_2.ends_with("444"));
+    let text: String = lane_2.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert_eq!(text.chars().count(), 120);
+    assert!(text.ends_with("444"));
 }
 
 #[test]
@@ -3075,7 +3123,8 @@ fn lane_2_rehydrate_with_known_max_shows_ratio_immediately() {
     );
 
     let lane_2 = crate::runtime::lane_2_status_line_for_test(coordinator.state(), 120);
-    assert!(lane_2.ends_with("250 (25%)"));
+    let text: String = lane_2.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert!(text.ends_with("250 (25%)"));
 }
 
 #[test]
@@ -3087,8 +3136,9 @@ fn lane_2_rehydrate_without_usage_metadata_and_without_max_uses_fallback() {
     );
 
     let lane_2 = crate::runtime::lane_2_status_line_for_test(coordinator.state(), 120);
-    assert_eq!(lane_2.chars().count(), 120);
-    assert!(lane_2.ends_with("0"));
+    let text: String = lane_2.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert_eq!(text.chars().count(), 120);
+    assert!(text.ends_with("0"));
 }
 
 #[test]
@@ -3101,7 +3151,8 @@ fn lane_2_rehydrate_without_usage_metadata_with_known_max_shows_ratio_not_fallba
     );
 
     let lane_2 = crate::runtime::lane_2_status_line_for_test(coordinator.state(), 120);
-    assert!(lane_2.ends_with("0 (0%)"));
+    let text: String = lane_2.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert!(text.ends_with("0 (0%)"));
 }
 
 #[test]
@@ -3122,7 +3173,8 @@ fn lane_2_rehydrate_is_replaced_by_live_turn_usage() {
     );
 
     let hydrated = crate::runtime::lane_2_status_line_for_test(coordinator.state(), 120);
-    assert!(hydrated.ends_with("7 (7%)"));
+    let hydrated_text: String = hydrated.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert!(hydrated_text.ends_with("7 (7%)"));
 
     coordinator.enqueue_ui_event(UiEvent::LlmEnd {
         response_chars: 20,
@@ -3134,7 +3186,8 @@ fn lane_2_rehydrate_is_replaced_by_live_turn_usage() {
     coordinator.drain_transport();
 
     let live = crate::runtime::lane_2_status_line_for_test(coordinator.state(), 120);
-    assert!(live.ends_with("40 (40%)"));
+    let live_text: String = live.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert!(live_text.ends_with("40 (40%)"));
 }
 
 #[test]
@@ -3144,15 +3197,30 @@ fn lane_2_threshold_formatting_contract_100_and_1000_and_11657() {
 
     state.latest_total_tokens = Some(100);
     let one_hundred = crate::runtime::lane_2_status_line_for_test(&state, 40);
-    assert!(one_hundred.ends_with("100 (0%)"));
+    let one_hundred_text: String = one_hundred
+        .spans
+        .iter()
+        .map(|s| s.content.as_ref())
+        .collect();
+    assert!(one_hundred_text.ends_with("100 (0%)"));
 
     state.latest_total_tokens = Some(1_000);
     let one_thousand = crate::runtime::lane_2_status_line_for_test(&state, 40);
-    assert!(one_thousand.ends_with("1k (0%)"));
+    let one_thousand_text: String = one_thousand
+        .spans
+        .iter()
+        .map(|s| s.content.as_ref())
+        .collect();
+    assert!(one_thousand_text.ends_with("1k (0%)"));
 
     state.latest_total_tokens = Some(11_657);
     let eleven_point_six = crate::runtime::lane_2_status_line_for_test(&state, 40);
-    assert!(eleven_point_six.ends_with("11.6k (5%)"));
+    let eleven_text: String = eleven_point_six
+        .spans
+        .iter()
+        .map(|s| s.content.as_ref())
+        .collect();
+    assert!(eleven_text.ends_with("11.6k (5%)"));
 }
 
 #[test]
@@ -3163,10 +3231,11 @@ fn lane_2_is_right_aligned_in_wide_layout() {
 
     let width = 40usize;
     let line = crate::runtime::lane_2_status_line_for_test(&state, width);
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
 
-    assert_eq!(line.chars().count(), width);
-    assert!(line.ends_with("11.6k (5%)"));
-    assert!(line.starts_with(" "));
+    assert_eq!(text.chars().count(), width);
+    assert!(text.ends_with("11.6k (5%)"));
+    assert!(text.starts_with(" "));
 }
 
 #[test]
@@ -3176,8 +3245,9 @@ fn lane_2_narrow_width_uses_deterministic_right_anchored_truncation() {
     state.set_context_window_max_tokens(Some(200_000));
 
     let line = crate::runtime::lane_2_status_line_for_test(&state, 8);
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
 
-    assert_eq!(line, "... (5%)");
+    assert_eq!(text, "... (5%)");
 }
 
 /// NOTE: This test is currently disabled because we've migrated to rig messages for persistence,
@@ -3535,7 +3605,8 @@ fn status_indicator_busy_cycles_through_four_frames() {
 fn lane_1_idle_shows_empty_circle_prefix() {
     let line =
         crate::runtime::status::compact_status_line_with_branch_for_test("mymodel", None, None, 40);
-    assert!(line.starts_with("○ mymodel"));
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert!(text.starts_with("○ mymodel"));
 }
 
 #[test]
@@ -3546,7 +3617,8 @@ fn lane_1_busy_shows_spinner_prefix() {
         Some(0),
         40,
     );
-    assert!(line.starts_with("◐ mymodel"));
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert!(text.starts_with("◐ mymodel"));
 }
 
 #[test]
@@ -3557,8 +3629,9 @@ fn lane_1_prefix_does_not_exceed_available_width() {
         None,
         40,
     );
-    assert!(line.chars().count() <= 40);
-    assert!(line.starts_with("○ "));
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert!(text.chars().count() <= 40);
+    assert!(text.starts_with("○ "));
 }
 
 #[test]
@@ -3897,10 +3970,11 @@ fn lane_2_shows_agent_when_active() {
     state.set_active_agent_identity("coder");
 
     let line = crate::runtime::lane_2_status_line_for_test(&state, 60);
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
 
-    assert!(line.contains("coder")); // name is present
-    assert!(!line.contains("agent:")); // old prefix is gone
-    assert!(line.ends_with("42.3k (33%)"));
+    assert!(text.contains("coder")); // name is present
+    assert!(!text.contains("agent:")); // old prefix is gone
+    assert!(text.ends_with("42.3k (33%)"));
 }
 
 #[test]
@@ -3910,9 +3984,10 @@ fn lane_2_shows_only_tokens_when_no_agent() {
     state.set_context_window_max_tokens(Some(1000));
 
     let line = crate::runtime::lane_2_status_line_for_test(&state, 40);
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
 
-    assert!(line.ends_with("250 (25%)"));
-    assert!(!line.contains("agent"));
+    assert!(text.ends_with("250 (25%)"));
+    assert!(!text.contains("agent"));
 }
 
 #[test]
@@ -3921,11 +3996,12 @@ fn lane_1_no_longer_shows_agent() {
     state.set_active_agent_identity("coder");
 
     let lane_1 = crate::runtime::compact_status_line_for_test("openai/gpt-4o-mini", None);
+    let text: String = lane_1.spans.iter().map(|s| s.content.as_ref()).collect();
 
-    assert!(lane_1.starts_with("○ openai/gpt-4o-mini"));
-    assert!(!lane_1.contains("coder"));
-    assert!(!lane_1.contains("agent"));
-    assert!(!lane_1.contains('|'));
+    assert!(text.starts_with("○ openai/gpt-4o-mini"));
+    assert!(!text.contains("coder"));
+    assert!(!text.contains("agent"));
+    assert!(!text.contains('|'));
 }
 
 #[test]
@@ -3999,4 +4075,43 @@ fn hydrate_compaction_message_with_italic_emits_md_italic_span() {
                 && matches!(s.hint, nu_agent_core::transcript::ir::StyleHint::MdItalic)
         });
     assert!(has_italic);
+}
+
+#[test]
+fn compact_status_line_busy_has_at_least_one_styled_span() {
+    // RED: compact_status_line_for_test must return Line<'static> whose spans
+    // carry explicit fg colours when the spinner is active (now_millis = Some(0)).
+    let line = crate::runtime::compact_status_line_for_test("openai/gpt-4o-mini", Some(0));
+    let has_styled = line.spans.iter().any(|s| s.style.fg.is_some());
+    assert!(
+        has_styled,
+        "expected at least one span with explicit fg colour, got: {line:?}"
+    );
+}
+
+#[test]
+fn render_modal_frame_inner_is_inset_by_one_cell() {
+    let area = ratatui::layout::Rect {
+        x: 0,
+        y: 0,
+        width: 10,
+        height: 5,
+    };
+    let inner = area.inner(ratatui::layout::Margin {
+        vertical: 1,
+        horizontal: 1,
+    });
+    assert_eq!(inner.width, 8);
+    assert_eq!(inner.height, 3);
+}
+
+#[test]
+fn scrollbar_state_does_not_panic_on_empty_transcript() {
+    let mut state = ratatui::widgets::ScrollbarState::new(0).position(0);
+    let _ = &mut state;
+}
+#[test]
+fn scrollbar_state_does_not_panic_on_single_entry() {
+    let mut state = ratatui::widgets::ScrollbarState::new(1).position(0);
+    let _ = &mut state;
 }

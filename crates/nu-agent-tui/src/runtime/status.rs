@@ -6,7 +6,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::state::AppState;
+use ratatui::text::{Line, Span};
+
+use crate::{rendering::theme::TuiTheme, state::AppState};
 
 const BUSY_SPINNER_FRAMES: &[&str] = &["◐", "◓", "◑", "◒"];
 const IDLE_INDICATOR: &str = "○";
@@ -46,12 +48,14 @@ pub(super) fn compact_status_line(
     repo_branch: Option<&str>,
     now_millis: Option<u128>,
     available_width: usize,
-) -> String {
+    theme: &TuiTheme,
+) -> Line<'static> {
     format_lane_1(
         active_model_identity,
         repo_branch,
         now_millis,
         available_width,
+        theme,
     )
 }
 
@@ -385,7 +389,11 @@ fn emoji_for_agent(name: &str) -> &'static str {
     }
 }
 
-pub(super) fn lane_2_status_line(state: &AppState, available_width: usize) -> String {
+pub(super) fn lane_2_status_line(
+    state: &AppState,
+    available_width: usize,
+    theme: &TuiTheme,
+) -> Line<'static> {
     let current = state.latest_total_tokens.unwrap_or(0);
     let token_str = match state.context_window_max_tokens() {
         Some(max) if max > 0 => {
@@ -402,19 +410,24 @@ pub(super) fn lane_2_status_line(state: &AppState, available_width: usize) -> St
             let left_cells = 2 + 1 + agent.len(); // emoji(2 cells) + " "(1) + name
             let right = &token_str;
             let padding = available_width.saturating_sub(left_cells + right.len());
-            format!("{left}{}{right}", " ".repeat(padding))
+            Line::from(vec![
+                Span::styled(left, theme.role_assistant),
+                Span::raw(" ".repeat(padding)),
+                Span::styled(token_str, theme.subtle_meta),
+            ])
         }
-        None => align_right_lane_2(&token_str, available_width),
+        None => align_right_lane_2_line(&token_str, available_width, theme),
     }
 }
 
-fn align_right_lane_2(line: &str, available_width: usize) -> String {
-    if line.chars().count() <= available_width {
+fn align_right_lane_2_line(line: &str, available_width: usize, theme: &TuiTheme) -> Line<'static> {
+    let content = if line.chars().count() <= available_width {
         let pad = available_width.saturating_sub(line.chars().count());
-        return format!("{}{line}", " ".repeat(pad));
-    }
-
-    tail_ellipsize(line, available_width)
+        format!("{}{line}", " ".repeat(pad))
+    } else {
+        tail_ellipsize(line, available_width)
+    };
+    Line::from(vec![Span::styled(content, theme.subtle_meta)])
 }
 
 fn compact_token_count(value: u64) -> String {
@@ -451,12 +464,13 @@ pub(super) fn compact_status_line_with_branch_for_test(
     repo_branch: Option<&str>,
     now_millis: Option<u128>,
     available_width: usize,
-) -> String {
+) -> Line<'static> {
     compact_status_line(
         active_model_identity,
         repo_branch,
         now_millis,
         available_width,
+        &TuiTheme::default(),
     )
 }
 
@@ -465,17 +479,41 @@ fn format_lane_1(
     repo_branch: Option<&str>,
     now_millis: Option<u128>,
     available_width: usize,
-) -> String {
+    theme: &TuiTheme,
+) -> Line<'static> {
     let indicator = status_indicator(now_millis);
-    let prefix = format!("{indicator} ");
-    let prefix_width = prefix.chars().count(); // always 2
+    let prefix_width = 2usize; // indicator(1) + " "(1)
     let inner_width = available_width.saturating_sub(prefix_width);
     let display_model = model.to_string();
-    let inner = match repo_branch.filter(|branch| !branch.is_empty()) {
-        Some(branch) => format_lane_1_with_branch(&display_model, branch, inner_width),
-        None => tail_ellipsize(&display_model, inner_width),
+
+    // Determine indicator style: use status_running when busy, status_done when idle.
+    let indicator_style = if now_millis.is_some() {
+        theme.status_running
+    } else {
+        theme.status_done
     };
-    format!("{prefix}{inner}")
+
+    match repo_branch.filter(|branch| !branch.is_empty()) {
+        Some(branch) => {
+            let (model_segment, padding_str, branch_segment) =
+                format_lane_1_parts(&display_model, branch, inner_width);
+            Line::from(vec![
+                Span::styled(indicator.to_string(), indicator_style),
+                Span::raw(" "),
+                Span::styled(model_segment, theme.subtle_meta),
+                Span::raw(padding_str),
+                Span::styled(branch_segment, theme.focus),
+            ])
+        }
+        None => {
+            let model_segment = tail_ellipsize(&display_model, inner_width);
+            Line::from(vec![
+                Span::styled(indicator.to_string(), indicator_style),
+                Span::raw(" "),
+                Span::styled(model_segment, theme.subtle_meta),
+            ])
+        }
+    }
 }
 
 /// Nerd Font / Powerline branch glyph appended after the branch label
@@ -486,11 +524,17 @@ fn format_lane_1(
 const BRANCH_ICON_SUFFIX: &str = " \u{e0a0}";
 const BRANCH_ICON_SUFFIX_WIDTH: usize = 2;
 
-fn format_lane_1_with_branch(model: &str, branch: &str, available_width: usize) -> String {
+/// Returns (model_segment, padding_str, branch_segment) for assembling into
+/// span-based `Line<'static>`.
+fn format_lane_1_parts(
+    model: &str,
+    branch: &str,
+    available_width: usize,
+) -> (String, String, String) {
     let fields_max = available_width;
 
     if fields_max == 0 {
-        return String::new();
+        return (String::new(), String::new(), String::new());
     }
 
     // Keep a minimum visual gap between left and right segments when possible.
@@ -519,10 +563,7 @@ fn format_lane_1_with_branch(model: &str, branch: &str, available_width: usize) 
         .saturating_sub(model_segment.chars().count() + branch_segment.chars().count())
         + gap_min;
 
-    format!(
-        "{model_segment}{model_padding}{branch_segment}",
-        model_padding = " ".repeat(padding)
-    )
+    (model_segment, " ".repeat(padding), branch_segment)
 }
 
 /// Ellipsize the branch label to fit `branch_max` cells while preserving the

@@ -43,10 +43,10 @@ pub fn process_body(
 
     let char_count = converted.chars().count();
     if char_count > max_length {
-        let truncated_str = converted
-            .char_indices()
-            .nth(max_length)
-            .map_or_else(|| converted.clone(), |(idx, _)| converted[..idx].to_string());
+        let truncated_str = converted.char_indices().nth(max_length).map_or_else(
+            || converted.clone(),
+            |(idx, _)| converted[..idx].to_string(),
+        );
         (truncated_str, true)
     } else {
         (converted, false)

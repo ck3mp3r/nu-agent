@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use nu_protocol::{LabeledError, Value};
@@ -143,7 +143,13 @@ pub(crate) fn run_tui_mode(
                     Some(Arc::clone(&pending)),
                 )
             } else {
-                run_interactive_loop(runtime_impl, &mut tui_ui, mailbox_rx, span, Some(Arc::clone(&pending)))
+                run_interactive_loop(
+                    runtime_impl,
+                    &mut tui_ui,
+                    mailbox_rx,
+                    span,
+                    Some(Arc::clone(&pending)),
+                )
             }
         } else {
             let (prompt, context) = super::input::extract_prompt_and_context(input)?;

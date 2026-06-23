@@ -366,10 +366,7 @@ pub fn resolve_fs_path(
         message: format!("Unable to resolve current working directory: {e}"),
         details: None,
     })?;
-    Ok(resolve_fs_path_for_cwd(
-        path,
-        std::path::Path::new(&cwd),
-    ))
+    Ok(resolve_fs_path_for_cwd(path, std::path::Path::new(&cwd)))
 }
 
 pub fn dispatch_fs_tool(
@@ -469,15 +466,14 @@ pub fn dispatch_fs_tool(
                     &args.path, mode, plan, false,
                 ))),
                 EditToolMode::Apply => {
-                    let preview_display = super::pre_authorize::pre_authorize_fs_tool(
-                        tool_name, arguments, cwd,
-                    )
-                    .and_then(|output| output.display)
-                    .unwrap_or_else(|| {
-                        build_edit_preview_display(build_edit_preview_display_payload(
-                            &args.path, &plan,
-                        ))
-                    });
+                    let preview_display =
+                        super::pre_authorize::pre_authorize_fs_tool(tool_name, arguments, cwd)
+                            .and_then(|output| output.display)
+                            .unwrap_or_else(|| {
+                                build_edit_preview_display(build_edit_preview_display_payload(
+                                    &args.path, &plan,
+                                ))
+                            });
 
                     if plan.conflict || !plan.would_change {
                         let mut response =

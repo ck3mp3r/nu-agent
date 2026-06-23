@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
 
 use nu_plugin::EngineInterface;
 use nu_protocol::{LabeledError, Span, Value};

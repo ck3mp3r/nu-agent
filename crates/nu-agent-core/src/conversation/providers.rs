@@ -147,8 +147,7 @@ pub(super) fn build_openai_client(
     } else {
         let key = std::env::var("OPENAI_API_KEY").map_err(|_| {
             LabeledError::new(
-                "OpenAI client initialization failed: OPENAI_API_KEY not set."
-                    .to_string(),
+                "OpenAI client initialization failed: OPENAI_API_KEY not set.".to_string(),
             )
         })?;
         let mut builder = rig::providers::openai::Client::builder()
@@ -184,8 +183,7 @@ pub(super) fn build_anthropic_client(
     } else {
         let key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
             LabeledError::new(
-                "Anthropic client initialization failed: ANTHROPIC_API_KEY not set."
-                    .to_string(),
+                "Anthropic client initialization failed: ANTHROPIC_API_KEY not set.".to_string(),
             )
         })?;
         rig::providers::anthropic::Client::builder()
@@ -212,13 +210,10 @@ pub(super) fn build_ollama_client(
         ))
     };
 
-    let base_url = config
-        .base_url
-        .clone()
-        .unwrap_or_else(|| {
-            std::env::var("OLLAMA_API_BASE_URL")
-                .unwrap_or_else(|_| "http://localhost:11434".to_string())
-        });
+    let base_url = config.base_url.clone().unwrap_or_else(|| {
+        std::env::var("OLLAMA_API_BASE_URL")
+            .unwrap_or_else(|_| "http://localhost:11434".to_string())
+    });
 
     rig::providers::ollama::Client::builder()
         .http_client(build_http_client(config.read_timeout_secs))

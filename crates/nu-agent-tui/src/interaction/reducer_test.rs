@@ -71,6 +71,7 @@ fn submit_transition_is_deterministic_and_keeps_input_editable() {
     assert_eq!(state.phase, UiPhase::Busy);
     assert!(!state.input.locked);
     assert!(state.input.buffer.is_empty());
+    let _ = state.take_next_prompt_for_execution();
     assert_eq!(state.transcript_preview.len(), 1);
     assert_eq!(state.transcript_preview[0].role(), Role::User);
     assert_eq!(state.transcript_preview[0].text(), "status pods");
@@ -230,9 +231,15 @@ fn locked_input_prevents_typing_and_submission() {
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
 
     assert!(state.input.buffer.is_empty());
-    assert_eq!(state.transcript_preview.len(), 2);
+    // Activate first prompt — transcript entry for "first" is deferred to activation
+    let _ = state.take_next_prompt_for_execution();
+    assert_eq!(state.transcript_preview.len(), 1);
     assert_eq!(state.transcript_preview[0].role(), Role::User);
     assert_eq!(state.transcript_preview[0].text(), "first");
+    // Complete first and activate second
+    state.complete_active_prompt();
+    let _ = state.take_next_prompt_for_execution();
+    assert_eq!(state.transcript_preview.len(), 2);
     assert_eq!(state.transcript_preview[1].role(), Role::User);
     assert_eq!(state.transcript_preview[1].text(), "second");
 }
@@ -2279,6 +2286,8 @@ fn turn_error_leaves_ui_in_recoverable_state() {
     }
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
     assert_eq!(state.phase, UiPhase::Busy);
+    // Transcript entry for "retry" is deferred to activation
+    let _ = state.take_next_prompt_for_execution();
     assert!(
         state
             .transcript_preview

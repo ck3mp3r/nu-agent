@@ -149,7 +149,10 @@ fn execute_turn_text_only_response() {
         "TurnResult.text should be populated; got: {:?}",
         result.text
     );
-    assert_eq!(result.tool_call_count, 0, "No tools should have been called");
+    assert_eq!(
+        result.tool_call_count, 0,
+        "No tools should have been called"
+    );
     assert!(!result.cancelled, "Turn should not be cancelled");
 }
 
@@ -257,7 +260,11 @@ fn prompt_cancelled_error_is_detected_as_cancellation() {
     let messages = turn_err
         .messages
         .expect("PromptCancelled should capture chat_history as messages");
-    assert_eq!(messages.len(), 1, "Should have one message from chat_history");
+    assert_eq!(
+        messages.len(),
+        1,
+        "Should have one message from chat_history"
+    );
 }
 
 #[test]

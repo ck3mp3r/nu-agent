@@ -622,7 +622,11 @@ fn hydrate_store_entries_marker_shows_strategy_and_counts() {
     let snapshots = super::hydrate_transcript_from_store_entries(&entries);
 
     // There are 5 entries: 2 pre-compaction messages, 1 marker, 2 post-compaction messages
-    assert_eq!(snapshots.len(), 5, "expected 5 snapshots, got: {snapshots:?}");
+    assert_eq!(
+        snapshots.len(),
+        5,
+        "expected 5 snapshots, got: {snapshots:?}"
+    );
 
     // Pre-compaction messages come first
     assert_eq!(snapshots[0].role(), "user");

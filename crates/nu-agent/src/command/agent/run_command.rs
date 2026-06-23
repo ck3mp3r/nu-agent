@@ -2,13 +2,13 @@ use nu_plugin::{EngineInterface, EvaluatedCall};
 use nu_protocol::{LabeledError, Value};
 use std::io::IsTerminal;
 
+use super::permissions::resolve_effective_permissions_config;
+use super::resolve_policy::resolve_ui_policy;
+use super::tool_defs::{ToolAssembly, assemble_tool_definitions};
 use super::{
     AgentMode, extract_and_validate_session_flags, extract_tool_timeout, extract_tools_from_call,
     resolve_agent_mode, resolve_config, should_enter_foreground,
 };
-use super::permissions::resolve_effective_permissions_config;
-use super::resolve_policy::resolve_ui_policy;
-use super::tool_defs::{ToolAssembly, assemble_tool_definitions};
 
 use nu_agent_core::{
     config::PluginConfig,
@@ -148,8 +148,7 @@ pub(super) fn run_command(
         .map(nu_agent_core::tools::mcp::config::McpConfig::from_plugin_config)
         .transpose()
         .map_err(|err| {
-            LabeledError::new("Failed to load MCP config")
-                .with_label(err.to_string(), call.head)
+            LabeledError::new("Failed to load MCP config").with_label(err.to_string(), call.head)
         })?;
 
     // Load agent persona and resolve identity

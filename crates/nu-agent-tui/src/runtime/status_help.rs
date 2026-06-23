@@ -170,13 +170,19 @@ pub(super) fn inline_slash_lines_for_test(state: &AppState) -> Vec<String> {
 pub(super) fn compact_status_line_for_test(
     active_model_identity: &str,
     now_millis: Option<u128>,
-) -> String {
-    compact_status_line(active_model_identity, None, now_millis, 120)
+) -> Line<'static> {
+    compact_status_line(
+        active_model_identity,
+        None,
+        now_millis,
+        120,
+        &crate::rendering::theme::TuiTheme::default(),
+    )
 }
 
 #[cfg(test)]
-pub(super) fn lane_2_status_line_for_test(state: &AppState, width: usize) -> String {
-    lane_2_status_line(state, width)
+pub(super) fn lane_2_status_line_for_test(state: &AppState, width: usize) -> Line<'static> {
+    lane_2_status_line(state, width, &crate::rendering::theme::TuiTheme::default())
 }
 
 #[cfg(test)]

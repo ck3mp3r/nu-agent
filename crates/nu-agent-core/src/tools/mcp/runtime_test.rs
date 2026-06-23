@@ -359,16 +359,17 @@ async fn connect_servers_does_not_replace_existing_handle_contents() {
     let handle = ToolServer::new().run();
 
     // Connect with no servers — should succeed and return empty runtime
-    let result = crate::tools::mcp::runtime::connect_servers(
-        &handle,
-        &[],
-        None,
-    )
-    .await;
+    let result = crate::tools::mcp::runtime::connect_servers(&handle, &[], None).await;
 
-    assert!(result.is_ok(), "connect_servers with empty config should succeed");
+    assert!(
+        result.is_ok(),
+        "connect_servers with empty config should succeed"
+    );
     let mcp_runtime = result.unwrap();
-    assert!(!mcp_runtime.has_sessions(), "no sessions expected with empty config");
+    assert!(
+        !mcp_runtime.has_sessions(),
+        "no sessions expected with empty config"
+    );
 
     // Structural proof: if McpRuntime had a tool_server_handle field,
     // this line would not compile (field access would exist but not here).

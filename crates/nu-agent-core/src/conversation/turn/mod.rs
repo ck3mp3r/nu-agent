@@ -440,74 +440,72 @@ where
         let item = stream.next().await;
         match item {
             Some(Ok(event)) => match event {
-                        // --- STREAMED ASSISTANT CONTENT ---
-                        rig::agent::MultiTurnStreamItem::StreamAssistantItem(content) => {
-                            match content {
-                                // TEXT DELTA
-                                rig::streaming::StreamedAssistantContent::Text(delta) => {
-                                    text.push_str(&delta.text);
-                                    deltas_emitted = true;
-                                }
-                                // TOOL CALL (complete, post-assembly)
-                                // Hook's on_tool_call has already resolved. The hook already
-                                // emitted ToolStart + permission events.
-                                rig::streaming::StreamedAssistantContent::ToolCall { .. } => {
-                                    tool_call_count += 1;
-                                }
-                                // TOOL CALL DELTA (streaming args)
-                                // Hook's on_tool_call_delta already fired — no-op here.
-                                rig::streaming::StreamedAssistantContent::ToolCallDelta { .. } => {}
-                                // REASONING block — ignore for now
-                                rig::streaming::StreamedAssistantContent::Reasoning(_) => {}
-                                // REASONING DELTA — ignore for now
-                                rig::streaming::StreamedAssistantContent::ReasoningDelta { .. } => {}
-                                // Raw provider final response object — not needed here
-                                rig::streaming::StreamedAssistantContent::Final(_) => {}
-                            }
+                // --- STREAMED ASSISTANT CONTENT ---
+                rig::agent::MultiTurnStreamItem::StreamAssistantItem(content) => {
+                    match content {
+                        // TEXT DELTA
+                        rig::streaming::StreamedAssistantContent::Text(delta) => {
+                            text.push_str(&delta.text);
+                            deltas_emitted = true;
                         }
-
-                        // --- TOOL RESULT (user content fed back to model) ---
-                        // The hook's on_tool_result already fired and emitted ToolEnd.
-                        rig::agent::MultiTurnStreamItem::StreamUserItem(
-                            rig::streaming::StreamedUserContent::ToolResult { .. }
-                        ) => {}
-
-                        // --- PER-SUBCALL USAGE ---
-                        rig::agent::MultiTurnStreamItem::CompletionCall(call) => {
-                            last_total_tokens = call.usage.total_tokens;
+                        // TOOL CALL (complete, post-assembly)
+                        // Hook's on_tool_call has already resolved. The hook already
+                        // emitted ToolStart + permission events.
+                        rig::streaming::StreamedAssistantContent::ToolCall { .. } => {
+                            tool_call_count += 1;
                         }
-
-                        // --- FINAL RESPONSE ---
-                        rig::agent::MultiTurnStreamItem::FinalResponse(fin) => {
-                            text = fin.response().to_string();
-                            usage = fin.usage();
-                            messages = fin.history().map(|h| h.to_vec());
-                        }
-
-                        // MultiTurnStreamItem is #[non_exhaustive] — required wildcard arm.
-                        // Future rig versions may add new variants; we ignore them here.
-                        _ => {}
-                    },
-                    Some(Err(e)) => {
-                        // Check whether rig cancelled the agent loop via the hook's Terminate action.
-                        match e {
-                            rig::agent::StreamingError::Prompt(boxed) => match *boxed {
-                                rig::completion::PromptError::PromptCancelled {
-                                    chat_history, ..
-                                } => {
-                                    messages = Some(chat_history);
-                                    cancelled = true;
-                                    break;
-                                }
-                                other => {
-                                    return Err(rig::agent::StreamingError::Prompt(Box::new(other)));
-                                }
-                            },
-                            other => return Err(other),
-                        }
-                    },
-                    None => break,
+                        // TOOL CALL DELTA (streaming args)
+                        // Hook's on_tool_call_delta already fired — no-op here.
+                        rig::streaming::StreamedAssistantContent::ToolCallDelta { .. } => {}
+                        // REASONING block — ignore for now
+                        rig::streaming::StreamedAssistantContent::Reasoning(_) => {}
+                        // REASONING DELTA — ignore for now
+                        rig::streaming::StreamedAssistantContent::ReasoningDelta { .. } => {}
+                        // Raw provider final response object — not needed here
+                        rig::streaming::StreamedAssistantContent::Final(_) => {}
+                    }
                 }
+
+                // --- TOOL RESULT (user content fed back to model) ---
+                // The hook's on_tool_result already fired and emitted ToolEnd.
+                rig::agent::MultiTurnStreamItem::StreamUserItem(
+                    rig::streaming::StreamedUserContent::ToolResult { .. },
+                ) => {}
+
+                // --- PER-SUBCALL USAGE ---
+                rig::agent::MultiTurnStreamItem::CompletionCall(call) => {
+                    last_total_tokens = call.usage.total_tokens;
+                }
+
+                // --- FINAL RESPONSE ---
+                rig::agent::MultiTurnStreamItem::FinalResponse(fin) => {
+                    text = fin.response().to_string();
+                    usage = fin.usage();
+                    messages = fin.history().map(|h| h.to_vec());
+                }
+
+                // MultiTurnStreamItem is #[non_exhaustive] — required wildcard arm.
+                // Future rig versions may add new variants; we ignore them here.
+                _ => {}
+            },
+            Some(Err(e)) => {
+                // Check whether rig cancelled the agent loop via the hook's Terminate action.
+                match e {
+                    rig::agent::StreamingError::Prompt(boxed) => match *boxed {
+                        rig::completion::PromptError::PromptCancelled { chat_history, .. } => {
+                            messages = Some(chat_history);
+                            cancelled = true;
+                            break;
+                        }
+                        other => {
+                            return Err(rig::agent::StreamingError::Prompt(Box::new(other)));
+                        }
+                    },
+                    other => return Err(other),
+                }
+            }
+            None => break,
+        }
     }
 
     Ok(StreamingTurnResult {

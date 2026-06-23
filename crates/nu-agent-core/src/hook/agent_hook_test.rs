@@ -115,13 +115,7 @@ fn make_hook_with_token(
     let mcp_registry = Arc::new(crate::tools::handler::McpToolRegistry::from_names(
         std::iter::empty::<String>(),
     ));
-    let hook = AgentHook::new(
-        token.clone(),
-        tx,
-        resolver,
-        closure_registry,
-        mcp_registry,
-    );
+    let hook = AgentHook::new(token.clone(), tx, resolver, closure_registry, mcp_registry);
     (hook, rx, token)
 }
 

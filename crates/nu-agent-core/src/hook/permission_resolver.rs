@@ -5,8 +5,8 @@
 //!   and awaits the user's decision via a oneshot channel.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use serde_json::Value as JsonValue;
 use tokio::sync::mpsc;
@@ -144,10 +144,7 @@ impl AsyncPermissionResolver for PolicyPermissionResolver {
             let args_json: JsonValue = serde_json::from_str(&arguments)
                 .unwrap_or(JsonValue::Object(serde_json::Map::new()));
             let call_id = tool_call_id.unwrap_or_else(|| "synthetic".to_string());
-            let tool_call = ToolCall::new(
-                call_id,
-                ToolFunction::new(tool_name.clone(), args_json),
-            );
+            let tool_call = ToolCall::new(call_id, ToolFunction::new(tool_name.clone(), args_json));
 
             let source = resolve_tool_source(&tool_name, &closure_registry, &mcp_registry);
             let flow_context = AuthorizationFlowContext {
@@ -293,10 +290,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
             let args_json: JsonValue = serde_json::from_str(&arguments)
                 .unwrap_or(JsonValue::Object(serde_json::Map::new()));
             let call_id = tool_call_id.unwrap_or_else(|| "synthetic".to_string());
-            let tool_call = ToolCall::new(
-                call_id,
-                ToolFunction::new(tool_name.clone(), args_json),
-            );
+            let tool_call = ToolCall::new(call_id, ToolFunction::new(tool_name.clone(), args_json));
 
             let source = resolve_tool_source(&tool_name, &closure_registry, &mcp_registry);
             let flow_context = AuthorizationFlowContext {
@@ -332,19 +326,20 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
             } else {
                 // Policy said Ask — send event to TUI and await user decision.
                 let request_id = next_request_id();
-                let context = capture_hook.captured_context.unwrap_or_else(|| {
-                    PermissionRequestContext {
-                        tool: tool_name.clone(),
-                        source: "unknown".to_string(),
-                        mode: None,
-                        matched_rule_identity: "unknown".to_string(),
-                        scope: "unknown".to_string(),
-                        target_field: None,
-                        pattern: "*".to_string(),
-                        summary: format!("tool[{tool_name}]"),
-                        pre_authorize_display: None,
-                    }
-                });
+                let context =
+                    capture_hook
+                        .captured_context
+                        .unwrap_or_else(|| PermissionRequestContext {
+                            tool: tool_name.clone(),
+                            source: "unknown".to_string(),
+                            mode: None,
+                            matched_rule_identity: "unknown".to_string(),
+                            scope: "unknown".to_string(),
+                            target_field: None,
+                            pattern: "*".to_string(),
+                            summary: format!("tool[{tool_name}]"),
+                            pre_authorize_display: None,
+                        });
 
                 let (tx, rx) = oneshot::channel::<ProtocolPermissionDecision>();
                 pending.lock().unwrap().insert(request_id.clone(), tx);

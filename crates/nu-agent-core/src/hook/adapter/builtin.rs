@@ -201,17 +201,15 @@ impl ToolDyn for BuiltinToolAdapter {
                     })?
             } else {
                 // Call the builtin FS tool dispatcher
-                dispatch_fs_tool(&self.tool_def.name, &args_json, &self.cwd).map_err(
-                    |e| {
-                        ToolError::ToolCallError(Box::new(BuiltinExecError::Execution(format!(
-                            "{}: {}",
-                            e.message,
-                            e.details
-                                .map(|d| d.to_string())
-                                .unwrap_or_else(|| "no details".to_string())
-                        ))))
-                    },
-                )?
+                dispatch_fs_tool(&self.tool_def.name, &args_json, &self.cwd).map_err(|e| {
+                    ToolError::ToolCallError(Box::new(BuiltinExecError::Execution(format!(
+                        "{}: {}",
+                        e.message,
+                        e.details
+                            .map(|d| d.to_string())
+                            .unwrap_or_else(|| "no details".to_string())
+                    ))))
+                })?
             };
 
             // The dispatcher returns Option<JsonValue>. If None, the tool wasn't recognized.

@@ -65,10 +65,18 @@ pub struct ToolHandlerError {
 
 impl ToolHandlerError {
     pub fn validation(message: impl Into<String>) -> Self {
-        Self { kind: ToolErrorKind::Validation, message: message.into(), details: None }
+        Self {
+            kind: ToolErrorKind::Validation,
+            message: message.into(),
+            details: None,
+        }
     }
     pub fn runtime(message: impl Into<String>) -> Self {
-        Self { kind: ToolErrorKind::Runtime, message: message.into(), details: None }
+        Self {
+            kind: ToolErrorKind::Runtime,
+            message: message.into(),
+            details: None,
+        }
     }
     pub fn with_details(mut self, details: serde_json::Value) -> Self {
         self.details = Some(details);

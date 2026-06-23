@@ -6,13 +6,16 @@ use std::{
 
 use ratatui::symbols;
 use ratatui::{
-    Terminal,
+    Frame, Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
     layout::{Margin, Position, Rect},
     style::Style,
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, TableState, Wrap},
+    widgets::{
+        Block, Borders, Cell, Clear, Paragraph, Row, Scrollbar, ScrollbarOrientation,
+        ScrollbarState, Table, TableState, Wrap,
+    },
 };
 mod backend;
 mod panels;
@@ -75,7 +78,7 @@ use crate::{
     },
     state::{
         AppState, CompactionStatus, InfoPanel, McpServerState, McpServerUsabilityState,
-        McpToggleRequest, ModelPickerOption, TranscriptLineStatus, TranscriptRole,
+        McpToggleRequest, ModelPickerOption, PromptStatus, TranscriptLineStatus, TranscriptRole,
     },
 };
 use nu_agent_core::protocol::contracts::{SharedUiAction, UiMessageSnapshot};
@@ -228,6 +231,7 @@ impl RuntimeCoordinator {
             rows,
             side_pane_visible,
             input_height: None,
+            queue_height: 0,
         });
         let mut coordinator = Self {
             state: AppState::new(),
@@ -506,6 +510,7 @@ impl RuntimeCoordinator {
                 rows: resize.rows,
                 side_pane_visible: self.side_pane_visible,
                 input_height: Some(input_height),
+                queue_height: (self.state.pending_prompt_count() as u16).saturating_mul(2),
             });
         }
 
@@ -558,6 +563,7 @@ impl RuntimeCoordinator {
             rows: self.terminal_rows,
             side_pane_visible: self.side_pane_visible,
             input_height: Some(input_height),
+            queue_height: (self.state.pending_prompt_count() as u16).saturating_mul(2),
         });
     }
 
@@ -765,15 +771,18 @@ impl RuntimeCoordinator {
                     horizontal: side_margin,
                 });
                 let input_h = self.layout.input.height;
+                let queue_h = (self.state.pending_prompt_count() as u16).saturating_mul(2);
                 let vertical = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
                         Constraint::Length(0),
                         Constraint::Min(1),
+                        Constraint::Length(queue_h),
                         Constraint::Length(input_h),
                         Constraint::Length(STATUS_TARGET_HEIGHT),
                     ])
                     .split(content_main);
+                // vertical[0]=unused [1]=transcript [2]=queue [3]=input [4]=status
 
                 let entries_for_render = transcript_entries_for_render(&self.state);
                 let transcript_line_statuses =
@@ -858,7 +867,53 @@ impl RuntimeCoordinator {
                             transcript_content_area,
                             &mut list_state_clone,
                         );
+                        let content_count = entries_for_render.len();
+                        if content_count > 0 {
+                            let scroll_pos = list_state_clone.selected.unwrap_or(0);
+                            let mut scrollbar_state =
+                                ScrollbarState::new(content_count).position(scroll_pos);
+                            frame.render_stateful_widget(
+                                Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                                    .begin_symbol(None)
+                                    .end_symbol(None),
+                                transcript_content_area,
+                                &mut scrollbar_state,
+                            );
+                        }
                     }
+                }
+
+                if vertical[2].height > 0 {
+                    let pane_width = vertical[2].width as usize;
+                    let separator = "─".repeat(pane_width);
+                    let queued_lines: Vec<Line> = self
+                        .state
+                        .prompt_items()
+                        .iter()
+                        .filter(|p| p.status == PromptStatus::Queued)
+                        .flat_map(|p| {
+                            let raw = format!("• {}", p.prompt_text);
+                            let display = if raw.chars().count() > pane_width {
+                                format!(
+                                    "{}…",
+                                    raw.chars()
+                                        .take(pane_width.saturating_sub(1))
+                                        .collect::<String>()
+                                )
+                            } else {
+                                raw
+                            };
+                            [
+                                Line::from(Span::styled(
+                                    separator.clone(),
+                                    self.theme.role_separator,
+                                )),
+                                Line::from(Span::styled(display, self.theme.role_user)),
+                            ]
+                        })
+                        .collect();
+                    frame.render_widget(Clear, vertical[2]);
+                    frame.render_widget(Paragraph::new(Text::from(queued_lines)), vertical[2]);
                 }
 
                 let busy_millis = if model_activity_label(&self.state) == "busy" {
@@ -872,25 +927,26 @@ impl RuntimeCoordinator {
                         .as_ref()
                         .and_then(|tracker| tracker.branch()),
                     busy_millis,
-                    vertical[3].width as usize,
+                    vertical[4].width as usize,
+                    &self.theme,
                 );
-                let lane_2 = lane_2_status_line(&self.state, vertical[3].width as usize);
+                let lane_2 =
+                    lane_2_status_line(&self.state, vertical[4].width as usize, &self.theme);
                 let _status_lines = build_status_lines(&self.state, &self.active_model_identity);
-                let status_widget =
-                    Paragraph::new(Text::from(vec![Line::from(lane_1), Line::from(lane_2)]))
-                        .block(Block::default())
-                        .wrap(Wrap { trim: false });
-                if vertical[3].height > 0 {
-                    frame.render_widget(Clear, vertical[3]);
-                    frame.render_widget(status_widget, vertical[3]);
+                let status_widget = Paragraph::new(Text::from(vec![lane_1, lane_2]))
+                    .block(Block::default())
+                    .wrap(Wrap { trim: false });
+                if vertical[4].height > 0 {
+                    frame.render_widget(Clear, vertical[4]);
+                    frame.render_widget(status_widget, vertical[4]);
                 }
 
                 if self.state.permission_prompt.is_some() {
-                    render_permission_controls(frame, vertical[2], &self.theme);
+                    render_permission_controls(frame, vertical[3], &self.theme);
                 } else {
                     let input_rows = wrapped_input_rows(
                         &self.state.input.buffer,
-                        vertical[2].width.saturating_sub(2) as usize,
+                        vertical[3].width.saturating_sub(2) as usize,
                     );
                     let input_border_style =
                         if self.state.pane_focus == crate::state::PaneFocus::Input {
@@ -918,34 +974,34 @@ impl RuntimeCoordinator {
                                 .border_style(input_border_style),
                         )
                         .wrap(Wrap { trim: false });
-                    if vertical[2].height > 0 {
-                        frame.render_widget(Clear, vertical[2]);
-                        frame.render_widget(input_widget, vertical[2]);
+                    if vertical[3].height > 0 {
+                        frame.render_widget(Clear, vertical[3]);
+                        frame.render_widget(input_widget, vertical[3]);
                     }
 
                     if !self.state.input.locked
                         && !self.state.command_palette_open
                         && self.state.info_panel.is_none()
-                        && vertical[2].height >= 2
-                        && vertical[2].width >= 1
+                        && vertical[3].height >= 2
+                        && vertical[3].width >= 1
                     {
                         let (cursor_row, cursor_col) = input_cursor_row_col(
                             &self.state.input.buffer,
                             self.state.input.cursor,
-                            vertical[2].width.saturating_sub(2) as usize,
+                            vertical[3].width.saturating_sub(2) as usize,
                         );
-                        let x = vertical[2].x.saturating_add(2).saturating_add(cursor_col);
-                        let max_x = vertical[2]
+                        let x = vertical[3].x.saturating_add(2).saturating_add(cursor_col);
+                        let max_x = vertical[3]
                             .x
-                            .saturating_add(vertical[2].width.saturating_sub(1));
-                        let y = vertical[2]
+                            .saturating_add(vertical[3].width.saturating_sub(1));
+                        let y = vertical[3]
                             .y
                             .saturating_add(1)
                             .saturating_add(cursor_row)
                             .min(
-                                vertical[2]
+                                vertical[3]
                                     .y
-                                    .saturating_add(vertical[2].height.saturating_sub(1)),
+                                    .saturating_add(vertical[3].height.saturating_sub(1)),
                             );
                         frame.set_cursor_position(Position { x: x.min(max_x), y });
                     }
@@ -965,17 +1021,11 @@ impl RuntimeCoordinator {
 
                     let model = command_palette_table_model(&self.state, popup_width, popup_height);
 
-                    frame.render_widget(Clear, popup);
-                    let outer = Block::default()
-                        .borders(Borders::ALL)
-                        .border_set(symbols::border::ROUNDED)
-                        .title(command_palette_title(model.overflow_cue.as_deref()));
-                    frame.render_widget(outer, popup);
-
-                    let inner = popup.inner(Margin {
-                        vertical: 1,
-                        horizontal: 1,
-                    });
+                    let inner = render_modal_frame(
+                        frame,
+                        popup,
+                        command_palette_title(model.overflow_cue.as_deref()),
+                    );
                     let rows = Layout::default()
                         .direction(Direction::Vertical)
                         .constraints([Constraint::Length(1), Constraint::Min(0)])
@@ -1016,13 +1066,29 @@ impl RuntimeCoordinator {
 
                     match panel {
                         InfoPanel::Mcps => {
-                            frame.render_widget(Clear, popup);
-                            let inner = popup.inner(Margin {
+                            let pre_inner = popup.inner(Margin {
                                 vertical: 1,
                                 horizontal: 1,
                             });
-                            let details_height = mcp_details_height_for_inner_height(inner.height);
+                            let details_height =
+                                mcp_details_height_for_inner_height(pre_inner.height);
 
+                            let pre_rows = Layout::default()
+                                .direction(Direction::Vertical)
+                                .constraints([
+                                    Constraint::Length(1),
+                                    Constraint::Min(1),
+                                    Constraint::Length(details_height),
+                                ])
+                                .split(pre_inner);
+
+                            let model = mcp_table_model(&self.state, pre_rows[1].height);
+                            let title = if let Some(cue) = model.overflow_cue.as_deref() {
+                                format!("MCPs ({cue})")
+                            } else {
+                                "MCPs".to_string()
+                            };
+                            let inner = render_modal_frame(frame, popup, title);
                             let rows = Layout::default()
                                 .direction(Direction::Vertical)
                                 .constraints([
@@ -1031,20 +1097,6 @@ impl RuntimeCoordinator {
                                     Constraint::Length(details_height),
                                 ])
                                 .split(inner);
-
-                            let model = mcp_table_model(&self.state, rows[1].height);
-                            let title = if let Some(cue) = model.overflow_cue.as_deref() {
-                                format!("MCPs ({cue})")
-                            } else {
-                                "MCPs".to_string()
-                            };
-                            frame.render_widget(
-                                Block::default()
-                                    .borders(Borders::ALL)
-                                    .border_set(symbols::border::ROUNDED)
-                                    .title(title),
-                                popup,
-                            );
 
                             frame.render_widget(
                                 Paragraph::new(Line::from(mcp_panel_controls_line())),
@@ -1119,18 +1171,12 @@ impl RuntimeCoordinator {
                                 _ => title.to_string(),
                             };
 
-                            frame.render_widget(Clear, popup);
+                            let inner = render_modal_frame(frame, popup, panel_title);
                             frame.render_widget(
                                 Paragraph::new(lines)
-                                    .block(
-                                        Block::default()
-                                            .borders(Borders::ALL)
-                                            .border_set(symbols::border::ROUNDED)
-                                            .title(panel_title),
-                                    )
                                     .wrap(Wrap { trim: false })
                                     .scroll((panel_scroll.min(u16::MAX as usize) as u16, 0)),
-                                popup,
+                                inner,
                             );
                         }
                     }
@@ -1138,19 +1184,8 @@ impl RuntimeCoordinator {
 
                 if self.state.model_picker_open {
                     let popup = modal_rect_for_panel(area, ModalPanelKind::Models);
-                    frame.render_widget(Clear, popup);
-                    frame.render_widget(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .border_set(symbols::border::ROUNDED)
-                            .title("Models (↑/↓ or Ctrl-N · Enter · Esc)"),
-                        popup,
-                    );
-
-                    let inner = popup.inner(Margin {
-                        vertical: 1,
-                        horizontal: 1,
-                    });
+                    let inner =
+                        render_modal_frame(frame, popup, "Models (↑/↓ or Ctrl-N · Enter · Esc)");
                     let rows = Layout::default()
                         .direction(Direction::Vertical)
                         .constraints([Constraint::Length(1), Constraint::Min(0)])
@@ -1194,19 +1229,7 @@ impl RuntimeCoordinator {
 
                 if self.state.agent_picker_open {
                     let popup = modal_rect_for_panel(area, ModalPanelKind::Agents);
-                    frame.render_widget(Clear, popup);
-                    frame.render_widget(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .border_set(symbols::border::ROUNDED)
-                            .title("Agent (↑/↓ · Enter · Esc)"),
-                        popup,
-                    );
-
-                    let inner = popup.inner(Margin {
-                        vertical: 1,
-                        horizontal: 1,
-                    });
+                    let inner = render_modal_frame(frame, popup, "Agent (↑/↓ · Enter · Esc)");
                     let rows = Layout::default()
                         .direction(Direction::Vertical)
                         .constraints([Constraint::Length(1), Constraint::Min(0)])
@@ -1285,6 +1308,21 @@ impl RuntimeCoordinator {
         self.poll_terminal_event(event_source);
         self.drain_transport();
     }
+}
+
+fn render_modal_frame(frame: &mut Frame, area: Rect, title: impl Into<Line<'static>>) -> Rect {
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_set(symbols::border::ROUNDED)
+            .title(title),
+        area,
+    );
+    area.inner(Margin {
+        vertical: 1,
+        horizontal: 1,
+    })
 }
 
 #[cfg(test)]

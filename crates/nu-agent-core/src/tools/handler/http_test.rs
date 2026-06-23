@@ -71,7 +71,8 @@ fn truncation_applied() {
 #[test]
 fn no_truncation_when_short() {
     let short_body = "hello world".to_string();
-    let (content, truncated) = process_body(short_body.clone(), "text/plain", "raw", DEFAULT_MAX_LENGTH);
+    let (content, truncated) =
+        process_body(short_body.clone(), "text/plain", "raw", DEFAULT_MAX_LENGTH);
 
     assert!(!truncated, "should not be truncated");
     assert_eq!(content, short_body);
@@ -79,8 +80,12 @@ fn no_truncation_when_short() {
 
 #[test]
 fn html_triggers_markdown_conversion() {
-    let (content, _truncated) =
-        process_body("<h1>Hello</h1>".to_string(), "text/html", "markdown", DEFAULT_MAX_LENGTH);
+    let (content, _truncated) = process_body(
+        "<h1>Hello</h1>".to_string(),
+        "text/html",
+        "markdown",
+        DEFAULT_MAX_LENGTH,
+    );
 
     assert!(
         content.contains("# Hello"),
@@ -94,8 +99,12 @@ fn html_triggers_markdown_conversion() {
 
 #[test]
 fn raw_mode_skips_conversion() {
-    let (content, _truncated) =
-        process_body("<h1>Hello</h1>".to_string(), "text/html", "raw", DEFAULT_MAX_LENGTH);
+    let (content, _truncated) = process_body(
+        "<h1>Hello</h1>".to_string(),
+        "text/html",
+        "raw",
+        DEFAULT_MAX_LENGTH,
+    );
 
     assert!(
         content.contains("<h1>"),
@@ -130,12 +139,7 @@ async fn empty_url_is_invalid() {
 fn truncation_respects_char_boundary_multibyte() {
     // 🦀 is 4 bytes — byte count >> char count
     let emoji_body = "🦀".repeat(DEFAULT_MAX_LENGTH + 10);
-    let (content, truncated) = process_body(
-        emoji_body,
-        "text/plain",
-        "raw",
-        DEFAULT_MAX_LENGTH,
-    );
+    let (content, truncated) = process_body(emoji_body, "text/plain", "raw", DEFAULT_MAX_LENGTH);
     assert!(truncated, "should be truncated");
     assert_eq!(content.chars().count(), DEFAULT_MAX_LENGTH);
 }

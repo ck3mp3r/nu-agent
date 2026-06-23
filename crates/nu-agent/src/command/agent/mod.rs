@@ -19,15 +19,8 @@ pub(crate) use mode_execute::{AgentMode, resolve_agent_mode, should_enter_foregr
 
 pub use runtime_build::EngineConfigInterface;
 
-pub use args::{
-    extract_and_validate_session_flags,
-    extract_tools_from_call,
-    extract_tool_timeout,
-};
-pub use runtime_build::{
-    extract_flag_config,
-    resolve_config,
-};
+pub use args::{extract_and_validate_session_flags, extract_tool_timeout, extract_tools_from_call};
+pub use runtime_build::{extract_flag_config, resolve_config};
 
 pub struct Agent {
     store: nu_agent_core::session::SessionStore,

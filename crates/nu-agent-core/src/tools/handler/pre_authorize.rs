@@ -22,8 +22,7 @@ pub fn pre_authorize_fs_tool(
         return None;
     }
 
-    let args: super::fs::EditArgs =
-        serde_json::from_value(arguments.clone()).ok()?;
+    let args: super::fs::EditArgs = serde_json::from_value(arguments.clone()).ok()?;
     let mode = super::fs::parse_edit_mode(args.mode.as_deref()).ok()?;
     if mode != super::fs::EditToolMode::Apply {
         return None;

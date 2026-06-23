@@ -54,14 +54,16 @@ fn prompt_cancelled_preserves_tool_call_history() {
     // 3) User message with a ToolResult (LLM's prior tool_call result, completed before next
     //    iteration got cancelled mid-stream)
     chat_history.push(Message::User {
-        content: OneOrMany::one(UserContent::ToolResult(rig::completion::message::ToolResult {
-            id: "call_abc123".to_string(),
-            call_id: None,
-            content: OneOrMany::one(ToolResultContent::Text(Text {
-                text: "127.0.0.1 localhost\n::1 localhost".to_string(),
-                additional_params: None,
-            })),
-        })),
+        content: OneOrMany::one(UserContent::ToolResult(
+            rig::completion::message::ToolResult {
+                id: "call_abc123".to_string(),
+                call_id: None,
+                content: OneOrMany::one(ToolResultContent::Text(Text {
+                    text: "127.0.0.1 localhost\n::1 localhost".to_string(),
+                    additional_params: None,
+                })),
+            },
+        )),
     });
 
     // Simulate the AgentSession being cancelled (e.g., user pressed Esc) while another tool
@@ -82,8 +84,7 @@ fn prompt_cancelled_preserves_tool_call_history() {
 
     // VERIFY: msg should match the cancellation reason
     assert_eq!(
-        turn_err.msg,
-        "User pressed Esc during read_file",
+        turn_err.msg, "User pressed Esc during read_file",
         "TurnError msg should be the cancellation reason"
     );
 

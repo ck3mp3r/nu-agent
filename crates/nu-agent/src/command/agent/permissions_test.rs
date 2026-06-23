@@ -1,6 +1,7 @@
 use super::test_helpers::create_test_call;
 use nu_agent_core::tools::authz::PermissionAction;
-use nu_protocol::{Value, record};#[test]
+use nu_protocol::{Value, record};
+#[test]
 fn resolve_effective_permissions_merges_cli_overlay_additively() {
     let plugin = Value::test_record(record! {
         "permissions" => Value::test_record(record! {

@@ -1574,3 +1574,55 @@ fn push_transcript_line_user_fenced_code_block_produces_multiple_lines() {
     };
     assert!(m.lines.len() >= 2);
 }
+
+#[test]
+fn enqueue_prompt_does_not_add_transcript_entry() {
+    let mut state = AppState::new();
+    state.enqueue_external_prompt("first".to_string());
+    let before = state.transcript_preview.len();
+    state.enqueue_prompt("second".to_string());
+    assert_eq!(state.transcript_preview.len(), before);
+}
+
+#[test]
+fn queued_prompt_has_sentinel_transcript_line_index() {
+    let mut state = AppState::new();
+    state.enqueue_external_prompt("first".to_string());
+    state.enqueue_prompt("second".to_string());
+    let queued = state
+        .prompt_items()
+        .iter()
+        .find(|p| p.status == PromptStatus::Queued)
+        .unwrap();
+    assert_eq!(queued.transcript_line_index, usize::MAX);
+}
+
+#[test]
+fn activate_next_prompt_adds_user_entry_to_transcript() {
+    let mut state = AppState::new();
+    state.enqueue_external_prompt("first".to_string());
+    state.enqueue_prompt("second".to_string());
+    state.complete_active_prompt();
+    let before = state.transcript_preview.len();
+    state.activate_next_prompt();
+    assert_eq!(state.transcript_preview.len(), before + 1);
+    assert!(matches!(
+        state.transcript_preview.last().unwrap(),
+        TranscriptEntry::User(_)
+    ));
+}
+
+#[test]
+fn activated_prompt_has_real_transcript_line_index() {
+    let mut state = AppState::new();
+    state.enqueue_external_prompt("first".to_string());
+    state.enqueue_prompt("second".to_string());
+    state.complete_active_prompt();
+    state.activate_next_prompt();
+    let active = state
+        .prompt_items()
+        .iter()
+        .find(|p| p.status == PromptStatus::InProgress)
+        .unwrap();
+    assert_ne!(active.transcript_line_index, usize::MAX);
+}

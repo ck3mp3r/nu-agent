@@ -10,6 +10,7 @@ fn narrow_size_class_collapses_side_pane_even_if_preferred_visible() {
         rows: 24,
         side_pane_visible: Some(true),
         input_height: None,
+        queue_height: 0,
     });
 
     assert!(layout.side_pane.is_none());
@@ -24,6 +25,7 @@ fn normal_size_class_uses_single_column_when_side_not_requested() {
         rows: 30,
         side_pane_visible: None,
         input_height: None,
+        queue_height: 0,
     });
 
     assert!(layout.side_pane.is_none());
@@ -42,6 +44,7 @@ fn wide_size_class_shows_side_pane_when_requested() {
         rows: 40,
         side_pane_visible: Some(true),
         input_height: None,
+        queue_height: 0,
     });
 
     let side = layout
@@ -63,12 +66,14 @@ fn collapse_threshold_boundary_is_deterministic() {
         rows: 20,
         side_pane_visible: Some(true),
         input_height: None,
+        queue_height: 0,
     });
     let at_threshold = recompute_layout(LayoutInput {
         columns: SIDE_PANE_COLLAPSE_COLUMNS,
         rows: 20,
         side_pane_visible: Some(true),
         input_height: None,
+        queue_height: 0,
     });
 
     assert!(just_below.side_pane.is_none());
@@ -84,6 +89,7 @@ fn geometry_is_always_non_negative_and_clipped_to_terminal() {
                 rows,
                 side_pane_visible: Some(true),
                 input_height: None,
+                queue_height: 0,
             });
 
             let panes = [
@@ -103,7 +109,10 @@ fn geometry_is_always_non_negative_and_clipped_to_terminal() {
             assert_eq!(layout.transcript.width, layout.input.width);
             assert_eq!(layout.transcript.width, layout.status_event.width);
             assert_eq!(
-                layout.transcript.height + layout.status_event.height + layout.input.height,
+                layout.transcript.height
+                    + layout.queue.height
+                    + layout.status_event.height
+                    + layout.input.height,
                 rows
             );
         }
@@ -118,6 +127,7 @@ fn narrow_width_degrades_gracefully_without_negative_or_overlapping_margins() {
             rows: 5,
             side_pane_visible: Some(false),
             input_height: None,
+            queue_height: 0,
         });
 
         assert_eq!(layout.transcript.x, 0);
@@ -136,6 +146,7 @@ fn minimum_size_fallback_prioritizes_input_and_clips_status() {
         rows: 1,
         side_pane_visible: Some(true),
         input_height: None,
+        queue_height: 0,
     });
     assert_eq!(one_row.status_event.height, 0);
     assert_eq!(one_row.input.height, 1);
@@ -146,6 +157,7 @@ fn minimum_size_fallback_prioritizes_input_and_clips_status() {
         rows: 2,
         side_pane_visible: Some(true),
         input_height: None,
+        queue_height: 0,
     });
     assert_eq!(two_rows.status_event.height, 1);
     assert_eq!(two_rows.input.height, 1);
@@ -190,6 +202,7 @@ fn layout_honors_requested_input_height_while_keeping_status_visible() {
         rows: 10,
         side_pane_visible: Some(false),
         input_height: Some(6),
+        queue_height: 0,
     });
 
     assert_eq!(layout.input.height, 6);
@@ -197,5 +210,80 @@ fn layout_honors_requested_input_height_while_keeping_status_visible() {
     assert_eq!(
         layout.transcript.height + layout.status_event.height + layout.input.height,
         10
+    );
+}
+
+#[test]
+fn status_event_is_below_input_in_layout_output() {
+    let layout = recompute_layout(LayoutInput {
+        columns: 80,
+        rows: 24,
+        side_pane_visible: None,
+        input_height: None,
+        queue_height: 0,
+    });
+    assert_eq!(layout.input.y, layout.transcript.height);
+    assert_eq!(
+        layout.status_event.y,
+        layout.transcript.height + layout.input.height
+    );
+}
+
+#[test]
+fn queue_height_zero_collapses_queue_pane() {
+    let layout = recompute_layout(LayoutInput {
+        columns: 80,
+        rows: 24,
+        side_pane_visible: None,
+        input_height: None,
+        queue_height: 0,
+    });
+    assert_eq!(layout.queue.height, 0);
+}
+
+#[test]
+fn queue_height_nonzero_allocates_queue_pane() {
+    let layout = recompute_layout(LayoutInput {
+        columns: 80,
+        rows: 24,
+        side_pane_visible: None,
+        input_height: None,
+        queue_height: 3,
+    });
+    assert_eq!(layout.queue.height, 3);
+}
+
+#[test]
+fn queue_pane_reduces_transcript_height() {
+    let base = recompute_layout(LayoutInput {
+        columns: 80,
+        rows: 24,
+        side_pane_visible: None,
+        input_height: None,
+        queue_height: 0,
+    });
+    let with_queue = recompute_layout(LayoutInput {
+        columns: 80,
+        rows: 24,
+        side_pane_visible: None,
+        input_height: None,
+        queue_height: 2,
+    });
+    assert_eq!(with_queue.transcript.height, base.transcript.height - 2);
+}
+
+#[test]
+fn queue_pane_is_between_transcript_and_input() {
+    let layout = recompute_layout(LayoutInput {
+        columns: 80,
+        rows: 24,
+        side_pane_visible: None,
+        input_height: None,
+        queue_height: 2,
+    });
+    assert_eq!(layout.queue.y, layout.transcript.height);
+    assert_eq!(
+        layout.input.y,
+        layout.transcript.height + layout.queue.height
     );
 }
