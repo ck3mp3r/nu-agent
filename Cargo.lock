@@ -2270,6 +2270,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tui-widget-list",
+ "unicode-width 0.2.2",
 ]
 
 [[package]]

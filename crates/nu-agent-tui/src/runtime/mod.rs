@@ -495,11 +495,6 @@ impl RuntimeCoordinator {
             self.state.status_line = "Esc pressed. Press Ctrl+C to quit.".to_string();
         }
 
-        if let TerminalEvent::Key(TerminalKey::CtrlC) = event {
-            self.quit_requested = true;
-            self.cancel_controller.request_cancel();
-        }
-
         if let TerminalEvent::Resize(resize) = event {
             self.terminal_columns = resize.columns;
             self.terminal_rows = resize.rows;
@@ -889,9 +884,64 @@ impl RuntimeCoordinator {
                     }
                 }
 
+                // ── Unified bottom box ──────────────────────────────────────────────
+                // Combine queue (vertical[2]), input (vertical[3]), and status
+                // (vertical[4]) into one rounded box with ├─┤ dividers.
+                let bottom_box_rect = Rect {
+                    x: vertical[2].x,
+                    y: vertical[2].y,
+                    width: vertical[2].width,
+                    height: vertical[2]
+                        .height
+                        .saturating_add(vertical[3].height)
+                        .saturating_add(vertical[4].height),
+                };
+
+                let box_border_style = if self.state.pane_focus == crate::state::PaneFocus::Input {
+                    self.theme.focus
+                } else {
+                    self.theme.subtle_meta
+                };
+                frame.render_widget(Clear, bottom_box_rect);
+                frame.render_widget(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_set(symbols::border::ROUNDED)
+                        .border_style(box_border_style),
+                    bottom_box_rect,
+                );
+                let inner = bottom_box_rect.inner(Margin {
+                    vertical: 1,
+                    horizontal: 1,
+                });
+
+                // Helper: draw ├────────────────┤ divider at absolute y
+                let draw_divider = |frame: &mut ratatui::Frame, div_y: u16| {
+                    let divider_line = Line::from(vec![
+                        Span::styled("├", box_border_style),
+                        Span::styled("─".repeat(inner.width as usize), box_border_style),
+                        Span::styled("┤", box_border_style),
+                    ]);
+                    frame.render_widget(
+                        Paragraph::new(divider_line),
+                        Rect {
+                            x: bottom_box_rect.x,
+                            y: div_y,
+                            width: bottom_box_rect.width,
+                            height: 1,
+                        },
+                    );
+                };
+
+                // ── Queue section ────────────────────────────────────────────────
                 if vertical[2].height > 0 {
-                    let pane_width = vertical[2].width as usize;
-                    let separator = "─".repeat(pane_width);
+                    let queue_inner = Rect {
+                        x: inner.x,
+                        y: inner.y,
+                        width: inner.width,
+                        height: vertical[2].height,
+                    };
+                    let pane_width = inner.width as usize;
                     let queued_lines: Vec<Line> = self
                         .state
                         .prompt_items()
@@ -909,19 +959,88 @@ impl RuntimeCoordinator {
                             } else {
                                 raw
                             };
-                            [
-                                Line::from(Span::styled(
-                                    separator.clone(),
-                                    self.theme.role_separator,
-                                )),
-                                Line::from(Span::styled(display, self.theme.role_user)),
-                            ]
+                            [Line::from(Span::styled(display, self.theme.role_user))]
                         })
                         .collect();
-                    frame.render_widget(Clear, vertical[2]);
-                    frame.render_widget(Paragraph::new(Text::from(queued_lines)), vertical[2]);
+                    frame.render_widget(Paragraph::new(Text::from(queued_lines)), queue_inner);
+
+                    // Divider after queue
+                    let div_y = bottom_box_rect
+                        .y
+                        .saturating_add(1)
+                        .saturating_add(vertical[2].height);
+                    draw_divider(frame, div_y);
                 }
 
+                // ── Input / Permission section ────────────────────────────────────
+                let input_inner_h = vertical[3].height.saturating_sub(2);
+                let input_inner = Rect {
+                    x: inner.x,
+                    y: inner.y.saturating_add(vertical[2].height),
+                    width: inner.width,
+                    height: input_inner_h,
+                };
+
+                // Divider after input
+                let input_div_y = bottom_box_rect
+                    .y
+                    .saturating_add(1)
+                    .saturating_add(vertical[2].height)
+                    .saturating_add(input_inner_h);
+                draw_divider(frame, input_div_y);
+
+                if self.state.permission_prompt.is_some() {
+                    render_permission_controls(frame, input_inner, &self.theme);
+                } else {
+                    let content_width = inner.width.saturating_sub(2) as usize;
+                    let input_rows = wrapped_input_rows(&self.state.input.buffer, content_width);
+                    let mut input_lines = Vec::new();
+                    let prompt_prefix = input_prompt_prefix(self.state.input_mode);
+                    if let Some((first, rest)) = input_rows.split_first() {
+                        input_lines.push(Line::from(vec![
+                            Span::styled(prompt_prefix, self.theme.input_prompt),
+                            Span::raw(first.clone()),
+                        ]));
+                        for row in rest {
+                            input_lines
+                                .push(Line::from(vec![Span::raw("  "), Span::raw(row.clone())]));
+                        }
+                    }
+                    input_lines.extend(inline_slash_lines_for_render(&self.state));
+                    let input_widget =
+                        Paragraph::new(Text::from(input_lines)).wrap(Wrap { trim: false });
+                    if input_inner.height > 0 {
+                        frame.render_widget(input_widget, input_inner);
+                    }
+
+                    if !self.state.input.locked
+                        && !self.state.command_palette_open
+                        && self.state.info_panel.is_none()
+                        && bottom_box_rect.height >= 4
+                    {
+                        let (cursor_row, cursor_col) = input_cursor_row_col(
+                            &self.state.input.buffer,
+                            self.state.input.cursor,
+                            content_width,
+                        );
+                        let x = bottom_box_rect
+                            .x
+                            .saturating_add(3)
+                            .saturating_add(cursor_col);
+                        let max_x = bottom_box_rect
+                            .x
+                            .saturating_add(bottom_box_rect.width.saturating_sub(2));
+                        let y = bottom_box_rect
+                            .y
+                            .saturating_add(1) // top border
+                            .saturating_add(vertical[2].height) // queue section
+                            .saturating_add(cursor_row)
+                            .min(input_div_y.saturating_sub(1)); // clamp to last input row
+                        frame.set_cursor_position(Position { x: x.min(max_x), y });
+                    }
+                }
+
+                // ── Status section ───────────────────────────────────────────────
                 let busy_millis = if model_activity_label(&self.state) == "busy" {
                     Some(now_millis)
                 } else {
@@ -937,103 +1056,39 @@ impl RuntimeCoordinator {
                     .map(|line| {
                         line.spans
                             .iter()
-                            .map(|s| s.content.chars().count())
+                            .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
                             .sum::<usize>()
                     })
                     .unwrap_or(0) as u16;
+
+                let status_inner = Rect {
+                    x: inner.x.saturating_add(1),
+                    y: input_div_y.saturating_add(1),
+                    width: inner.width.saturating_sub(2),
+                    height: 1,
+                };
 
                 let left_content = status_left_content(
                     &self.active_model_identity,
                     busy_millis,
                     &self.state,
                     &self.theme,
-                    vertical[4].width.saturating_sub(right_width) as usize,
+                    status_inner.width.saturating_sub(right_width) as usize,
                 );
 
-                if vertical[4].height > 0 {
-                    frame.render_widget(Clear, vertical[4]);
-                    if right_width > 0 && right_width < vertical[4].width {
-                        let [left_area, right_area] = Layout::horizontal([
-                            Constraint::Fill(1),
-                            Constraint::Length(right_width),
-                        ])
-                        .areas(vertical[4]);
-                        frame.render_widget(Paragraph::new(left_content), left_area);
-                        if let Some(right_line) = right_content {
-                            frame.render_widget(
-                                Paragraph::new(right_line).alignment(Alignment::Right),
-                                right_area,
-                            );
-                        }
-                    } else {
-                        frame.render_widget(Paragraph::new(left_content), vertical[4]);
-                    }
-                }
-
-                if self.state.permission_prompt.is_some() {
-                    render_permission_controls(frame, vertical[3], &self.theme);
-                } else {
-                    let input_rows = wrapped_input_rows(
-                        &self.state.input.buffer,
-                        vertical[3].width.saturating_sub(4) as usize,
-                    );
-                    let input_border_style =
-                        if self.state.pane_focus == crate::state::PaneFocus::Input {
-                            self.theme.focus
-                        } else {
-                            self.theme.subtle_meta
-                        };
-                    let mut input_lines = Vec::new();
-                    let prompt_prefix = input_prompt_prefix(self.state.input_mode);
-                    if let Some((first, rest)) = input_rows.split_first() {
-                        input_lines.push(Line::from(vec![
-                            Span::styled(prompt_prefix, self.theme.input_prompt),
-                            Span::raw(first.clone()),
-                        ]));
-                        for row in rest {
-                            input_lines
-                                .push(Line::from(vec![Span::raw("  "), Span::raw(row.clone())]));
-                        }
-                    }
-                    input_lines.extend(inline_slash_lines_for_render(&self.state));
-                    let input_widget = Paragraph::new(Text::from(input_lines))
-                        .block(
-                            Block::default()
-                                .borders(Borders::ALL)
-                                .border_style(input_border_style),
-                        )
-                        .wrap(Wrap { trim: false });
-                    if vertical[3].height > 0 {
-                        frame.render_widget(Clear, vertical[3]);
-                        frame.render_widget(input_widget, vertical[3]);
-                    }
-
-                    if !self.state.input.locked
-                        && !self.state.command_palette_open
-                        && self.state.info_panel.is_none()
-                        && vertical[3].height >= 3
-                        && vertical[3].width >= 1
-                    {
-                        let (cursor_row, cursor_col) = input_cursor_row_col(
-                            &self.state.input.buffer,
-                            self.state.input.cursor,
-                            vertical[3].width.saturating_sub(4) as usize,
+                if right_width > 0 && right_width < status_inner.width {
+                    let [left_area, right_area] =
+                        Layout::horizontal([Constraint::Fill(1), Constraint::Length(right_width)])
+                            .areas(status_inner);
+                    frame.render_widget(Paragraph::new(left_content), left_area);
+                    if let Some(right_line) = right_content {
+                        frame.render_widget(
+                            Paragraph::new(right_line).alignment(Alignment::Right),
+                            right_area,
                         );
-                        let x = vertical[3].x.saturating_add(3).saturating_add(cursor_col);
-                        let max_x = vertical[3]
-                            .x
-                            .saturating_add(vertical[3].width.saturating_sub(2));
-                        let y = vertical[3]
-                            .y
-                            .saturating_add(1)
-                            .saturating_add(cursor_row)
-                            .min(
-                                vertical[3]
-                                    .y
-                                    .saturating_add(vertical[3].height.saturating_sub(2)),
-                            );
-                        frame.set_cursor_position(Position { x: x.min(max_x), y });
                     }
+                } else {
+                    frame.render_widget(Paragraph::new(left_content), status_inner);
                 }
 
                 if has_side {
@@ -1380,6 +1435,6 @@ pub(super) fn model_picker_empty_state_message_for_test() -> &'static str {
 }
 
 #[cfg(test)]
-pub(super) fn input_pane_content_width_for_test(pane_width: u16) -> usize {
-    pane_width.saturating_sub(4) as usize
+pub(super) fn input_pane_content_width_for_test(inner_width: u16) -> usize {
+    inner_width.saturating_sub(2) as usize
 }

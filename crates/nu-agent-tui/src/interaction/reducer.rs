@@ -131,7 +131,7 @@ fn reduce_user_action(
         | UserAction::CompleteBackward => {}
         UserAction::ScrollPageUp => handle_scroll_page_up(state),
         UserAction::ScrollPageDown => handle_scroll_page_down(state),
-        UserAction::Quit => handle_quit(state),
+        UserAction::Quit => handle_quit(state, cancel_controller),
         UserAction::Esc => handle_escape(state),
         UserAction::EscConfirm => {
             handle_escape_confirm(state, cancel_controller);
@@ -309,8 +309,21 @@ fn handle_scroll_page_down(state: &mut AppState) {
     state.scroll_transcript_page_down(TRANSCRIPT_PAGE_LINES);
 }
 
-fn handle_quit(state: &mut AppState) {
-    state.request_quit_if_idle();
+fn handle_quit(state: &mut AppState, cancel_controller: Option<&CancelController>) {
+    if state.phase != crate::state::UiPhase::Idle {
+        // Busy: cancel the running turn and quit
+        if let Some(controller) = cancel_controller {
+            controller.request_cancel();
+        }
+        state.quit_requested = true;
+    } else if !state.input.buffer.is_empty() {
+        // Idle, non-empty input: clear the buffer
+        state.input.buffer.clear();
+        state.input.cursor = 0;
+    } else {
+        // Idle, empty input: quit
+        state.request_quit_if_idle();
+    }
 }
 
 fn handle_escape(state: &mut AppState) {

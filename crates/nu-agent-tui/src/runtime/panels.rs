@@ -20,7 +20,6 @@ pub(super) fn transcript_line_status_to_item_status(
 }
 
 pub(super) fn render_permission_controls(frame: &mut ratatui::Frame, area: Rect, theme: &TuiTheme) {
-    frame.render_widget(Clear, area);
     let controls = Line::from(vec![
         Span::styled("[a]", theme.status_running),
         Span::raw(" allow once  "),
@@ -29,11 +28,7 @@ pub(super) fn render_permission_controls(frame: &mut ratatui::Frame, area: Rect,
         Span::styled("[d/Esc]", theme.status_running),
         Span::raw(" deny"),
     ]);
-    let widget = Paragraph::new(Text::from(vec![controls])).block(
-        Block::default()
-            .borders(Borders::TOP)
-            .border_style(theme.role_system),
-    );
+    let widget = Paragraph::new(Text::from(vec![controls]));
     frame.render_widget(widget, area);
 }
 

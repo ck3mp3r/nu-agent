@@ -1331,7 +1331,7 @@ fn table_driven_user_action_noop_and_contract_matrix() {
             pre: idle_with_text,
         },
         Case {
-            name: "quit_busy_is_noop",
+            name: "quit_busy_cancels_and_quits",
             action: UserAction::Quit,
             pre: busy,
         },
@@ -1357,10 +1357,16 @@ fn table_driven_user_action_noop_and_contract_matrix() {
             | "history_down_noop"
             | "complete_forward_noop"
             | "complete_backward_noop"
-            | "resize_noop"
-            | "quit_idle_with_text_is_noop"
-            | "quit_busy_is_noop" => {
+            | "resize_noop" => {
                 assert_eq!(state, before);
+            }
+            "quit_busy_cancels_and_quits" => {
+                assert!(state.quit_requested);
+            }
+            "quit_idle_with_text_is_noop" => {
+                assert!(state.input.buffer.is_empty());
+                assert_eq!(state.input.cursor, 0);
+                assert!(!state.quit_requested);
             }
             "esc_idle_enters_normal_mode" => {
                 assert_eq!(state.input_mode, InputMode::Normal);

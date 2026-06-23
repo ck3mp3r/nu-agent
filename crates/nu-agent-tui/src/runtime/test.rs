@@ -1681,8 +1681,8 @@ fn main_pane_vertical_split_has_no_overlap_or_bottom_cutoff() {
         "transcript pane should remain visible"
     );
     assert_eq!(
-        status.height, 1,
-        "footer must reserve one row for the segmented status line"
+        status.height, 2,
+        "footer must reserve 2 rows: one for divider, one for status content"
     );
     assert_eq!(transcript.y + transcript.height, input.y);
     assert_eq!(input.y + input.height, status.y);
@@ -4120,30 +4120,31 @@ fn scrollbar_state_does_not_panic_on_single_entry() {
 
 #[test]
 fn input_content_width_accounts_for_borders() {
-    // With Borders::ALL the input pane has a 1-cell left border + 1-cell right
-    // border on top of the existing 2-char prompt prefix ("❯ "). The call site
-    // in render_frame must therefore pass `pane_width - 4` (not `pane_width - 2`)
-    // to wrapped_input_rows and input_cursor_row_col.
-    let pane_width: u16 = 10;
+    // The input area sits inside the outer unified rounded box. The outer box
+    // already provides the enclosing border, so only the 2-char prompt prefix
+    // ("❯ ") is subtracted from the inner width. The call site must therefore
+    // pass `inner_width - 2` (not `pane_width - 4`) to wrapped_input_rows and
+    // input_cursor_row_col.
+    let inner_width: u16 = 10;
     assert_eq!(
-        input_pane_content_width_for_test(pane_width),
-        6,
-        "content_width must be pane_width - 4 (borders add 2 to the existing prompt-prefix 2)"
+        input_pane_content_width_for_test(inner_width),
+        8,
+        "content_width must be inner_width - 2 (prompt-prefix only, no inner border)"
     );
 
-    // Also verify that wrapping at the correct width splits a 7-char string.
-    let rows = wrapped_input_rows("abcdefg", input_pane_content_width_for_test(pane_width));
+    // Also verify that wrapping at the correct width splits a 9-char string.
+    let rows = wrapped_input_rows("abcdefghi", input_pane_content_width_for_test(inner_width));
     assert_eq!(
         rows,
-        vec!["abcdef", "g"],
-        "7-char input must wrap into 2 rows when content_width is 6"
+        vec!["abcdefgh", "i"],
+        "9-char input must wrap into 2 rows when content_width is 8"
     );
 }
 
 #[test]
-fn status_target_height_is_one() {
+fn status_target_height_is_two() {
     use crate::runtime::render_frame::STATUS_TARGET_HEIGHT;
-    assert_eq!(STATUS_TARGET_HEIGHT, 1);
+    assert_eq!(STATUS_TARGET_HEIGHT, 2);
 }
 
 #[test]

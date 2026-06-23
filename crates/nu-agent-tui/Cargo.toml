@@ -8,6 +8,7 @@ nu-agent-core = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
 tui-widget-list = { workspace = true }
+unicode-width = { workspace = true }
 syntect = { workspace = true }
 arboard = { workspace = true }
 pulldown-cmark = { workspace = true }
