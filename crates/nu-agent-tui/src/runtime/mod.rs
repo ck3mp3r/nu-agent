@@ -8,7 +8,7 @@ use ratatui::symbols;
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
+    layout::{Alignment, Constraint, Direction, Layout},
     layout::{Margin, Position, Rect},
     style::Style,
     text::{Line, Span, Text},
@@ -36,9 +36,11 @@ use render_frame::{
     ModalPanelKind, STATUS_TARGET_HEIGHT, current_time_millis, modal_rect_for_panel,
 };
 use status::{
-    availability_label, build_status_lines, compact_status_line, lane_2_status_line,
-    model_activity_label,
+    availability_label, build_status_lines, model_activity_label, status_left_content,
+    status_right_content,
 };
+#[cfg(test)]
+use status::{compact_status_line, lane_2_status_line};
 #[cfg(test)]
 pub use terminal_events::ScriptedTerminalEvents;
 #[cfg(test)]
@@ -921,24 +923,47 @@ impl RuntimeCoordinator {
                 } else {
                     None
                 };
-                let lane_1 = compact_status_line(
-                    &self.active_model_identity,
-                    self.repo_branch_tracker
-                        .as_ref()
-                        .and_then(|tracker| tracker.branch()),
-                    busy_millis,
-                    vertical[4].width as usize,
+                let right_content = status_right_content(
+                    self.repo_branch_tracker.as_ref().and_then(|t| t.branch()),
+                    &self.state,
                     &self.theme,
                 );
-                let lane_2 =
-                    lane_2_status_line(&self.state, vertical[4].width as usize, &self.theme);
-                let _status_lines = build_status_lines(&self.state, &self.active_model_identity);
-                let status_widget = Paragraph::new(Text::from(vec![lane_1, lane_2]))
-                    .block(Block::default())
-                    .wrap(Wrap { trim: false });
+                let right_width = right_content
+                    .as_ref()
+                    .map(|line| {
+                        line.spans
+                            .iter()
+                            .map(|s| s.content.chars().count())
+                            .sum::<usize>()
+                    })
+                    .unwrap_or(0) as u16;
+
+                let left_content = status_left_content(
+                    &self.active_model_identity,
+                    busy_millis,
+                    &self.state,
+                    &self.theme,
+                    vertical[4].width.saturating_sub(right_width) as usize,
+                );
+
                 if vertical[4].height > 0 {
                     frame.render_widget(Clear, vertical[4]);
-                    frame.render_widget(status_widget, vertical[4]);
+                    if right_width > 0 && right_width < vertical[4].width {
+                        let [left_area, right_area] = Layout::horizontal([
+                            Constraint::Fill(1),
+                            Constraint::Length(right_width),
+                        ])
+                        .areas(vertical[4]);
+                        frame.render_widget(Paragraph::new(left_content), left_area);
+                        if let Some(right_line) = right_content {
+                            frame.render_widget(
+                                Paragraph::new(right_line).alignment(Alignment::Right),
+                                right_area,
+                            );
+                        }
+                    } else {
+                        frame.render_widget(Paragraph::new(left_content), vertical[4]);
+                    }
                 }
 
                 if self.state.permission_prompt.is_some() {
@@ -946,13 +971,13 @@ impl RuntimeCoordinator {
                 } else {
                     let input_rows = wrapped_input_rows(
                         &self.state.input.buffer,
-                        vertical[3].width.saturating_sub(2) as usize,
+                        vertical[3].width.saturating_sub(4) as usize,
                     );
                     let input_border_style =
                         if self.state.pane_focus == crate::state::PaneFocus::Input {
                             self.theme.focus
                         } else {
-                            Style::default()
+                            self.theme.subtle_meta
                         };
                     let mut input_lines = Vec::new();
                     let prompt_prefix = input_prompt_prefix(self.state.input_mode);
@@ -970,7 +995,7 @@ impl RuntimeCoordinator {
                     let input_widget = Paragraph::new(Text::from(input_lines))
                         .block(
                             Block::default()
-                                .borders(Borders::TOP)
+                                .borders(Borders::ALL)
                                 .border_style(input_border_style),
                         )
                         .wrap(Wrap { trim: false });
@@ -982,18 +1007,18 @@ impl RuntimeCoordinator {
                     if !self.state.input.locked
                         && !self.state.command_palette_open
                         && self.state.info_panel.is_none()
-                        && vertical[3].height >= 2
+                        && vertical[3].height >= 3
                         && vertical[3].width >= 1
                     {
                         let (cursor_row, cursor_col) = input_cursor_row_col(
                             &self.state.input.buffer,
                             self.state.input.cursor,
-                            vertical[3].width.saturating_sub(2) as usize,
+                            vertical[3].width.saturating_sub(4) as usize,
                         );
-                        let x = vertical[3].x.saturating_add(2).saturating_add(cursor_col);
+                        let x = vertical[3].x.saturating_add(3).saturating_add(cursor_col);
                         let max_x = vertical[3]
                             .x
-                            .saturating_add(vertical[3].width.saturating_sub(1));
+                            .saturating_add(vertical[3].width.saturating_sub(2));
                         let y = vertical[3]
                             .y
                             .saturating_add(1)
@@ -1001,7 +1026,7 @@ impl RuntimeCoordinator {
                             .min(
                                 vertical[3]
                                     .y
-                                    .saturating_add(vertical[3].height.saturating_sub(1)),
+                                    .saturating_add(vertical[3].height.saturating_sub(2)),
                             );
                         frame.set_cursor_position(Position { x: x.min(max_x), y });
                     }
@@ -1348,4 +1373,9 @@ pub(super) fn inline_model_picker_modal_respects_border_and_backdrop_policy_for_
 #[cfg(test)]
 pub(super) fn model_picker_empty_state_message_for_test() -> &'static str {
     MODEL_PICKER_EMPTY_STATE_MESSAGE
+}
+
+#[cfg(test)]
+pub(super) fn input_pane_content_width_for_test(pane_width: u16) -> usize {
+    pane_width.saturating_sub(4) as usize
 }

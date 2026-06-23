@@ -43,6 +43,7 @@ pub(super) fn build_status_lines(state: &AppState, active_model_identity: &str) 
     ]
 }
 
+#[cfg(test)]
 pub(super) fn compact_status_line(
     active_model_identity: &str,
     repo_branch: Option<&str>,
@@ -389,6 +390,109 @@ fn emoji_for_agent(name: &str) -> &'static str {
     }
 }
 
+fn token_string_for_state(state: &AppState) -> Option<String> {
+    let current = state.latest_total_tokens?;
+    let s = match state.context_window_max_tokens() {
+        Some(max) if max > 0 => {
+            let pct = ((current as u128).saturating_mul(100) / (max as u128)).min(100) as u64;
+            format!("{} ({pct}%)", compact_token_count(current))
+        }
+        _ => compact_token_count(current),
+    };
+    Some(s)
+}
+
+pub(super) fn status_left_content(
+    model: &str,
+    busy_millis: Option<u128>,
+    state: &AppState,
+    theme: &TuiTheme,
+    available_width: usize,
+) -> Line<'static> {
+    const SEP: &str = " ┃ ";
+    const SEP_WIDTH: usize = 3;
+
+    let indicator = status_indicator(busy_millis);
+    let indicator_style = if busy_millis.is_some() {
+        theme.status_running
+    } else {
+        theme.status_done
+    };
+
+    // Prefix: indicator(1) + " "(1) = 2 chars
+    let prefix_width = 2usize;
+    let budget = available_width.saturating_sub(prefix_width);
+
+    let agent_opt = state.active_agent_identity().filter(|a| !a.is_empty());
+    let agent_str: Option<String> = agent_opt.map(|agent| {
+        let emoji = emoji_for_agent(agent);
+        format!("{emoji} {agent}")
+    });
+
+    let agent_width = agent_str.as_ref().map(|s| SEP_WIDTH + s.chars().count());
+
+    // Model gets remaining budget after agent
+    let model_budget = if let Some(aw) = agent_width {
+        // only show agent if model_len + agent fits; keep at least 1 char for model
+        let min_model = 1usize;
+        if budget.saturating_sub(aw) >= min_model {
+            budget.saturating_sub(aw)
+        } else {
+            budget
+        }
+    } else {
+        budget
+    };
+    let model_display = tail_ellipsize(model, model_budget);
+    let model_len_used = model_display.chars().count();
+
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    spans.push(Span::styled(indicator.to_string(), indicator_style));
+    spans.push(Span::raw(" "));
+    spans.push(Span::styled(model_display, theme.subtle_meta));
+
+    // Agent: only if present AND fits
+    if let Some(agent_display) = agent_str {
+        let needed = prefix_width + model_len_used + SEP_WIDTH + agent_display.chars().count();
+        if needed <= available_width {
+            spans.push(Span::styled(SEP.to_string(), theme.role_separator));
+            spans.push(Span::styled(agent_display, theme.role_assistant));
+        }
+    }
+
+    Line::from(spans)
+}
+
+pub(super) fn status_right_content(
+    repo_branch: Option<&str>,
+    state: &AppState,
+    theme: &TuiTheme,
+) -> Option<Line<'static>> {
+    const SEP: &str = " ┃ ";
+
+    let branch_opt = repo_branch.filter(|b| !b.is_empty());
+    let token_opt = token_string_for_state(state);
+
+    if branch_opt.is_none() && token_opt.is_none() {
+        return None;
+    }
+
+    let mut spans: Vec<Span<'static>> = Vec::new();
+
+    if let Some(branch) = branch_opt {
+        let branch_str = format!("{branch} \u{e0a0}");
+        spans.push(Span::styled(branch_str, theme.focus));
+    }
+
+    if let Some(token_str) = token_opt {
+        spans.push(Span::styled(SEP.to_string(), theme.role_separator));
+        spans.push(Span::styled(token_str, theme.subtle_meta));
+    }
+
+    Some(Line::from(spans))
+}
+
+#[cfg(test)]
 pub(super) fn lane_2_status_line(
     state: &AppState,
     available_width: usize,
@@ -420,6 +524,7 @@ pub(super) fn lane_2_status_line(
     }
 }
 
+#[cfg(test)]
 fn align_right_lane_2_line(line: &str, available_width: usize, theme: &TuiTheme) -> Line<'static> {
     let content = if line.chars().count() <= available_width {
         let pad = available_width.saturating_sub(line.chars().count());
@@ -474,6 +579,7 @@ pub(super) fn compact_status_line_with_branch_for_test(
     )
 }
 
+#[cfg(test)]
 fn format_lane_1(
     model: &str,
     repo_branch: Option<&str>,
@@ -521,11 +627,14 @@ fn format_lane_1(
 /// Width: 2 cells (space + glyph). When the available branch budget is too
 /// narrow to fit even the icon plus a single label character, the icon is
 /// dropped and the raw label is ellipsized as before.
+#[cfg(test)]
 const BRANCH_ICON_SUFFIX: &str = " \u{e0a0}";
+#[cfg(test)]
 const BRANCH_ICON_SUFFIX_WIDTH: usize = 2;
 
 /// Returns (model_segment, padding_str, branch_segment) for assembling into
 /// span-based `Line<'static>`.
+#[cfg(test)]
 fn format_lane_1_parts(
     model: &str,
     branch: &str,
@@ -571,6 +680,7 @@ fn format_lane_1_parts(
 /// least one label character (i.e. < icon_width + 1), drop the icon and fall
 /// back to plain `tail_ellipsize` on the raw label so layout stays stable in
 /// extreme-narrow viewports.
+#[cfg(test)]
 fn format_branch_segment(branch: &str, branch_max: usize) -> String {
     if branch_max <= BRANCH_ICON_SUFFIX_WIDTH {
         return tail_ellipsize(branch, branch_max);

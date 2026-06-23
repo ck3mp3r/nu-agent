@@ -167,7 +167,7 @@ fn minimum_size_fallback_prioritizes_input_and_clips_status() {
 #[test]
 fn input_height_grows_with_newlines_and_wrap_and_is_clamped() {
     let h_short = input_pane_height_for_content("x", 80);
-    assert_eq!(h_short, 2);
+    assert_eq!(h_short, 3);
 
     let h_multiline = input_pane_height_for_content("a\nb\nc", 80);
     assert!(h_multiline > h_short);
@@ -286,4 +286,16 @@ fn queue_pane_is_between_transcript_and_input() {
         layout.input.y,
         layout.transcript.height + layout.queue.height
     );
+}
+
+#[test]
+fn input_pane_height_includes_both_borders() {
+    let h = input_pane_height_for_content("hello", 80);
+    assert_eq!(h, 3);
+}
+
+#[test]
+fn input_pane_min_height_is_three() {
+    let h = input_pane_height_for_content("", 80);
+    assert_eq!(h, 3);
 }

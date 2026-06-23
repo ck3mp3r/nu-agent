@@ -8,6 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::rendering::layout::wrapped_input_rows;
 use crate::test_support::markdown_fixture;
 use crate::{
     interaction::input::{TerminalEvent, TerminalKey},
@@ -21,9 +22,10 @@ use crate::{
         cursor_style_for_test, help_panel_lines_for_test, help_panel_max_scroll_for_test,
         help_panel_overflow_cue_for_test, help_panel_visible_window_for_test,
         inline_slash_lines_for_test, input_line_for_test, input_line_for_test_at_millis,
-        input_rows_with_prompt_for_test, mcp_table_model_for_test,
-        parse_persisted_tool_status_line_for_test, run_with_terminal_restore,
-        status_panel_lines_for_test, transition_spacer_for_roles_for_test,
+        input_pane_content_width_for_test, input_rows_with_prompt_for_test,
+        mcp_table_model_for_test, parse_persisted_tool_status_line_for_test,
+        run_with_terminal_restore, status_panel_lines_for_test,
+        transition_spacer_for_roles_for_test,
     },
     state::{
         AppState, InputMode, McpServerUsabilityState, PromptStatus, ToolCallStatus,
@@ -1679,8 +1681,8 @@ fn main_pane_vertical_split_has_no_overlap_or_bottom_cutoff() {
         "transcript pane should remain visible"
     );
     assert_eq!(
-        status.height, 2,
-        "footer must reserve two rows for two lanes"
+        status.height, 1,
+        "footer must reserve one row for the segmented status line"
     );
     assert_eq!(transcript.y + transcript.height, input.y);
     assert_eq!(input.y + input.height, status.y);
@@ -4114,4 +4116,61 @@ fn scrollbar_state_does_not_panic_on_empty_transcript() {
 fn scrollbar_state_does_not_panic_on_single_entry() {
     let mut state = ratatui::widgets::ScrollbarState::new(1).position(0);
     let _ = &mut state;
+}
+
+#[test]
+fn input_content_width_accounts_for_borders() {
+    // With Borders::ALL the input pane has a 1-cell left border + 1-cell right
+    // border on top of the existing 2-char prompt prefix ("❯ "). The call site
+    // in render_frame must therefore pass `pane_width - 4` (not `pane_width - 2`)
+    // to wrapped_input_rows and input_cursor_row_col.
+    let pane_width: u16 = 10;
+    assert_eq!(
+        input_pane_content_width_for_test(pane_width),
+        6,
+        "content_width must be pane_width - 4 (borders add 2 to the existing prompt-prefix 2)"
+    );
+
+    // Also verify that wrapping at the correct width splits a 7-char string.
+    let rows = wrapped_input_rows("abcdefg", input_pane_content_width_for_test(pane_width));
+    assert_eq!(
+        rows,
+        vec!["abcdef", "g"],
+        "7-char input must wrap into 2 rows when content_width is 6"
+    );
+}
+
+#[test]
+fn status_target_height_is_one() {
+    use crate::runtime::render_frame::STATUS_TARGET_HEIGHT;
+    assert_eq!(STATUS_TARGET_HEIGHT, 1);
+}
+
+#[test]
+fn status_left_content_contains_model() {
+    let state = AppState::new();
+    let line = crate::runtime::status_left_content_for_test("openai/gpt-4", None, &state, 80);
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert!(text.contains("openai/gpt-4"));
+}
+
+#[test]
+fn status_right_content_contains_branch() {
+    let state = AppState::new();
+    let line = crate::runtime::status_right_content_for_test(Some("main"), &state);
+    assert!(line.is_some());
+    let text: String = line
+        .unwrap()
+        .spans
+        .iter()
+        .map(|s| s.content.as_ref())
+        .collect();
+    assert!(text.contains("main"));
+}
+
+#[test]
+fn status_right_content_is_none_when_no_branch_and_no_tokens() {
+    let state = AppState::new();
+    let line = crate::runtime::status_right_content_for_test(None, &state);
+    assert!(line.is_none());
 }

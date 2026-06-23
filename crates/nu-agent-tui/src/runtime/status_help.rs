@@ -186,6 +186,34 @@ pub(super) fn lane_2_status_line_for_test(state: &AppState, width: usize) -> Lin
 }
 
 #[cfg(test)]
+pub(super) fn status_left_content_for_test(
+    model: &str,
+    busy_millis: Option<u128>,
+    state: &AppState,
+    width: usize,
+) -> Line<'static> {
+    status::status_left_content(
+        model,
+        busy_millis,
+        state,
+        &crate::rendering::theme::TuiTheme::default(),
+        width,
+    )
+}
+
+#[cfg(test)]
+pub(super) fn status_right_content_for_test(
+    repo_branch: Option<&str>,
+    state: &AppState,
+) -> Option<Line<'static>> {
+    status::status_right_content(
+        repo_branch,
+        state,
+        &crate::rendering::theme::TuiTheme::default(),
+    )
+}
+
+#[cfg(test)]
 pub(super) fn status_lines_for_test(state: &AppState, active_model_identity: &str) -> Vec<String> {
     build_status_lines(state, active_model_identity)
 }
