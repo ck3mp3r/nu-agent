@@ -380,3 +380,20 @@ async fn doom_loop_returns_skip_not_terminate() {
         }
     }
 }
+
+#[test]
+fn is_tool_failure_detects_all_failure_variants() {
+    assert!(is_tool_failure("Toolset error: something went wrong"));
+    assert!(is_tool_failure("Permission denied"));
+    assert!(is_tool_failure(
+        "Doom loop detected: 'nu__run' called 3 times"
+    ));
+    assert!(is_tool_failure("Tool 'nonexistent' is not available."));
+}
+
+#[test]
+fn is_tool_failure_does_not_flag_success() {
+    assert!(!is_tool_failure("ok"));
+    assert!(!is_tool_failure(""));
+    assert!(!is_tool_failure("ls output here"));
+}

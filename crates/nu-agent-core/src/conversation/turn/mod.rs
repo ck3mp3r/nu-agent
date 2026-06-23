@@ -258,6 +258,7 @@ where
         tool_server_handle: ctx.tool_infra.tool_server_handle,
         visible_tool_definitions: ctx.tool_infra.visible_tool_definitions,
         max_turns: ctx.input.max_turns,
+        cancel_token: cancel_token.clone(),
     };
 
     let model = ctx.model.clone();
@@ -325,6 +326,7 @@ struct AgentPromptConfig<P: AsyncPermissionResolver> {
     tool_server_handle: rig::tool::server::ToolServerHandle,
     visible_tool_definitions: Vec<ToolDefinition>,
     max_turns: Option<u32>,
+    cancel_token: CancellationToken,
 }
 
 /// Result from streaming agent execution
@@ -352,6 +354,7 @@ struct FilteredToolProxy {
     tool_name: String,
     tool_definition: ToolDefinition,
     handle: rig::tool::server::ToolServerHandle,
+    cancel_token: CancellationToken,
 }
 
 impl ToolDyn for FilteredToolProxy {
@@ -365,11 +368,18 @@ impl ToolDyn for FilteredToolProxy {
     }
 
     fn call<'a>(&'a self, args: String) -> WasmBoxedFuture<'a, Result<String, ToolError>> {
+        let cancel_token = self.cancel_token.clone();
         Box::pin(async move {
-            self.handle
-                .call_tool(&self.tool_name, &args)
-                .await
-                .map_err(|e| ToolError::ToolCallError(Box::new(e)))
+            tokio::select! {
+                result = self.handle.call_tool(&self.tool_name, &args) => {
+                    result.map_err(|e| ToolError::ToolCallError(Box::new(e)))
+                }
+                _ = cancel_token.cancelled() => {
+                    Err(ToolError::ToolCallError(
+                        "tool call cancelled".to_string().into()
+                    ))
+                }
+            }
         })
     }
 }
@@ -393,6 +403,7 @@ where
         tool_server_handle,
         visible_tool_definitions,
         max_turns,
+        cancel_token,
     } = config;
 
     // Create proxy tools that expose only the filtered definitions to the LLM
@@ -404,6 +415,7 @@ where
                 tool_name: def.name.clone(),
                 tool_definition: def,
                 handle: tool_server_handle.clone(),
+                cancel_token: cancel_token.clone(),
             };
             Box::new(proxy) as Box<dyn ToolDyn>
         })

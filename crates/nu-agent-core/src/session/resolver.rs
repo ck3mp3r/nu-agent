@@ -1,5 +1,6 @@
 use nu_protocol::LabeledError;
 
+use crate::hook::agent_hook::is_tool_failure;
 use crate::protocol::contracts::UiMessageSnapshot;
 use crate::session::{
     ConversationStore, JsonlConversationStore, Session, SessionStore, StoreEntry,
@@ -149,7 +150,7 @@ pub fn resolve_session_request(use_tui: bool, session_id: Option<String>) -> Ses
 /// Iterator of UiMessageSnapshot ready for transcript hydration
 fn hydrate_transcript_from_store_entries(entries: &[StoreEntry]) -> Vec<UiMessageSnapshot> {
     // Pass 1: collect call_id → tool_name from all ToolCalls and
-    //         call_id → success from all ToolResults (failure = starts with "Toolset error: ")
+    //         call_id → success from all ToolResults (failure = is_tool_failure())
     let mut tool_names: HashMap<String, String> = HashMap::new();
     let mut tool_success_map: HashMap<String, bool> = HashMap::new();
     for entry in entries {
@@ -166,7 +167,7 @@ fn hydrate_transcript_from_store_entries(entries: &[StoreEntry]) -> Vec<UiMessag
                     if let UserContent::ToolResult(tr) = item {
                         for c in tr.content.iter() {
                             if let ToolResultContent::Text(t) = c {
-                                let success = !t.text.starts_with("Toolset error: ");
+                                let success = !is_tool_failure(&t.text);
                                 tool_success_map.insert(tr.id.clone(), success);
                                 break;
                             }

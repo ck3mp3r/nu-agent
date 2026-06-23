@@ -790,6 +790,10 @@ impl RuntimeCoordinator {
                 let transcript_line_statuses =
                     transcript_line_statuses_for_render(&self.state, entries_for_render);
                 let transcript_content_area = vertical[1];
+                let transcript_list_area = Rect {
+                    width: transcript_content_area.width.saturating_sub(2),
+                    ..transcript_content_area
+                };
 
                 let now_millis = current_time_millis();
                 let renderer = TuiRenderer {
@@ -866,7 +870,7 @@ impl RuntimeCoordinator {
                         }
                         frame.render_stateful_widget(
                             list_view,
-                            transcript_content_area,
+                            transcript_list_area,
                             &mut list_state_clone,
                         );
                         let content_count = entries_for_render.len();

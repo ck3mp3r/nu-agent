@@ -25,6 +25,21 @@ use super::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
 
 const DOOM_LOOP_THRESHOLD: usize = 5;
 
+/// Returns `true` if a tool result string represents a failure injected by any
+/// code path in the agent hook.
+///
+/// The following strings are failure indicators:
+/// - `"Toolset error: "` — rig toolset execution errors
+/// - `"Permission denied"` — permission denial from `on_tool_call`
+/// - `"Doom loop detected: "` — doom loop guard in `on_tool_call`
+/// - `"Tool '"` — invalid/unavailable tool skip from `on_invalid_tool_call`
+pub(crate) fn is_tool_failure(result_text: &str) -> bool {
+    result_text.starts_with("Toolset error: ")
+        || result_text == "Permission denied"
+        || result_text.starts_with("Doom loop detected: ")
+        || result_text.starts_with("Tool '")
+}
+
 /// Tracks recent tool call signatures for doom loop detection.
 #[derive(Debug, Clone, Default)]
 struct DoomLoopState {
@@ -200,7 +215,7 @@ where
         // 3. Emit ToolEnd
         // Errors from rig's tool execution chain always start with "Toolset error: ".
         // Successful results never do.
-        let success = !result.starts_with("Toolset error: ");
+        let success = !is_tool_failure(result);
 
         let _ = self.ui_tx.send(UiEvent::ToolEnd {
             name: tool_name.to_string(),

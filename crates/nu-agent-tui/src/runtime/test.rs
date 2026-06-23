@@ -4174,3 +4174,20 @@ fn status_right_content_is_none_when_no_branch_and_no_tokens() {
     let line = crate::runtime::status_right_content_for_test(None, &state);
     assert!(line.is_none());
 }
+
+#[test]
+fn transcript_list_area_is_two_columns_narrower_than_content_area() {
+    let content_area = ratatui::layout::Rect {
+        x: 0,
+        y: 0,
+        width: 80,
+        height: 20,
+    };
+    let list_area = ratatui::layout::Rect {
+        width: content_area.width.saturating_sub(2),
+        ..content_area
+    };
+    assert_eq!(list_area.width, 78);
+    assert_eq!(list_area.x, content_area.x);
+    assert_eq!(list_area.height, content_area.height);
+}

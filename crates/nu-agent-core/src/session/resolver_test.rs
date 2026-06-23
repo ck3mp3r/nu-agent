@@ -792,3 +792,86 @@ fn hydrate_store_entries_marker_truncates_long_summary() {
         "expected ellipsis in truncated content, got: {content}"
     );
 }
+
+/// A failed tool call with "Permission denied" result must rehydrate as tool_success == Some(false).
+#[test]
+fn hydrate_permission_denied_rehydrates_as_false() {
+    let entries = vec![
+        StoreEntry::Message(Message::Assistant {
+            id: None,
+            content: OneOrMany::one(AssistantContent::ToolCall(ToolCall {
+                id: "call_perm_1".to_string(),
+                call_id: None,
+                signature: None,
+                additional_params: None,
+                function: ToolFunction {
+                    name: "write_file".to_string(),
+                    arguments: json!({"path": "/etc/passwd", "content": "evil"}),
+                },
+            })),
+        }),
+        StoreEntry::Message(Message::User {
+            content: OneOrMany::one(UserContent::ToolResult(ToolResult {
+                id: "call_perm_1".to_string(),
+                call_id: None,
+                content: OneOrMany::one(ToolResultContent::Text(Text {
+                    text: "Permission denied".to_string(),
+                    additional_params: None,
+                })),
+            })),
+        }),
+    ];
+
+    let snapshots = super::hydrate_transcript_from_store_entries(&entries);
+
+    // Should produce 1 snapshot: the tool call (tool result is skipped in TUI)
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].role(), "tool");
+    assert_eq!(
+        snapshots[0].tool_success(),
+        Some(false),
+        "Permission denied result must rehydrate as tool_success=false"
+    );
+}
+
+/// A failed tool call with "Doom loop detected: ..." result must rehydrate as tool_success == Some(false).
+#[test]
+fn hydrate_doom_loop_rehydrates_as_false() {
+    let entries = vec![
+        StoreEntry::Message(Message::Assistant {
+            id: None,
+            content: OneOrMany::one(AssistantContent::ToolCall(ToolCall {
+                id: "call_doom_1".to_string(),
+                call_id: None,
+                signature: None,
+                additional_params: None,
+                function: ToolFunction {
+                    name: "nu__run".to_string(),
+                    arguments: json!({"command": "ls"}),
+                },
+            })),
+        }),
+        StoreEntry::Message(Message::User {
+            content: OneOrMany::one(UserContent::ToolResult(ToolResult {
+                id: "call_doom_1".to_string(),
+                call_id: None,
+                content: OneOrMany::one(ToolResultContent::Text(Text {
+                    text: "Doom loop detected: 'nu__run' called 5 times with identical arguments"
+                        .to_string(),
+                    additional_params: None,
+                })),
+            })),
+        }),
+    ];
+
+    let snapshots = super::hydrate_transcript_from_store_entries(&entries);
+
+    // Should produce 1 snapshot: the tool call (tool result is skipped in TUI)
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].role(), "tool");
+    assert_eq!(
+        snapshots[0].tool_success(),
+        Some(false),
+        "Doom loop result must rehydrate as tool_success=false"
+    );
+}

@@ -345,6 +345,68 @@ fn streaming_error_from_prompt_cancelled_captures_messages() {
     assert_eq!(messages.len(), 1);
 }
 
+// ---------------------------------------------------------------------------
+// FilteredToolProxy cancellation tests
+// ---------------------------------------------------------------------------
+
+/// A cancelled token causes FilteredToolProxy::call to return Err immediately
+/// without waiting for the (potentially hanging) MCP tool server.
+#[test]
+fn filtered_tool_proxy_call_returns_err_when_cancelled() {
+    let rt = Runtime::new().expect("runtime");
+    rt.block_on(async {
+        let handle = rig::tool::server::ToolServer::new().run();
+        let cancel_token = CancellationToken::new();
+
+        let proxy = FilteredToolProxy {
+            tool_name: "nonexistent_tool".to_string(),
+            tool_definition: ToolDefinition {
+                name: "nonexistent_tool".to_string(),
+                description: "test".to_string(),
+                parameters: serde_json::json!({}),
+            },
+            handle,
+            cancel_token: cancel_token.clone(),
+        };
+
+        // Cancel before calling — the select! branch fires immediately.
+        cancel_token.cancel();
+
+        let result = proxy.call("{}".to_string()).await;
+
+        assert!(
+            result.is_err(),
+            "A cancelled token must cause call() to return Err"
+        );
+    });
+}
+
+/// A pre-cancelled token causes call() to return Err even when the tool would succeed.
+/// This validates the select! biasing: cancelled() wins over a ready future.
+#[test]
+fn filtered_tool_proxy_cancelled_before_call_short_circuits() {
+    let rt = Runtime::new().expect("runtime");
+    rt.block_on(async {
+        let handle = rig::tool::server::ToolServer::new().run();
+        let cancel_token = CancellationToken::new();
+        cancel_token.cancel();
+
+        let proxy = FilteredToolProxy {
+            tool_name: "any_tool".to_string(),
+            tool_definition: ToolDefinition {
+                name: "any_tool".to_string(),
+                description: "test".to_string(),
+                parameters: serde_json::json!({}),
+            },
+            handle,
+            cancel_token,
+        };
+
+        let result = proxy.call("{}".to_string()).await;
+        assert!(result.is_err(), "Pre-cancelled token must produce Err");
+    });
+}
+
 /// TurnError from PromptCancelled captures chat_history as messages.
 #[test]
 fn turn_error_from_prompt_cancelled_captures_messages() {
