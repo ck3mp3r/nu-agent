@@ -240,6 +240,9 @@ pub enum CachedProviderClient {
     OpenAiCompletions(rig::providers::openai::CompletionsClient),
     Anthropic(rig::providers::anthropic::Client),
     Ollama(rig::providers::ollama::Client),
+    /// Scripted mock model for unit tests — bypasses all HTTP/auth.
+    #[cfg(test)]
+    Mock(rig::test_utils::MockCompletionModel),
 }
 
 /// Visitor pattern for dispatching over cached provider clients.
@@ -271,6 +274,8 @@ impl CachedProviderClient {
             }
             CachedProviderClient::Anthropic(c) => visitor.visit(c.completion_model(model_name)),
             CachedProviderClient::Ollama(c) => visitor.visit(c.completion_model(model_name)),
+            #[cfg(test)]
+            CachedProviderClient::Mock(m) => visitor.visit(m.clone()),
         }
     }
 }

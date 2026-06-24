@@ -202,35 +202,83 @@ impl<'a> TurnExecutor<'a> {
             }
         };
 
-        // Defensive fallback: if rig ever yields cancelled=true without providing chat_history.
-        // Under v0.39+ semantics, cancellation always flows through PromptCancelled { chat_history }
-        // (Path A above), so this block is not expected to trigger. Kept as a safety net in case
-        // a future rig version changes that behaviour.
-        if turn_result.cancelled
-            && turn_result.messages.is_none()
-            && let Some(session_id) = final_session_id
-        {
-            let mut cancelled_messages = vec![Message::user(prompt.clone())];
-            if !turn_result.text.is_empty() {
-                cancelled_messages.push(Message::assistant(turn_result.text.clone()));
+        // Path C: PromptCancelled was caught inside build_agent_and_stream and returned
+        // as Ok(cancelled=true). Treat identically to Path A.
+        //
+        // Path B (defensive fallback) is folded into Path C: Ok(cancelled=true, messages=None).
+        // Under rig v0.39+ semantics this branch is not expected to trigger — PromptCancelled
+        // always carries chat_history. Kept as a safety net for future rig version changes.
+        if turn_result.cancelled {
+            if let Some(session_id) = final_session_id {
+                if let Some(ref messages) = turn_result.messages {
+                    // Normal path: rig provided chat_history via PromptCancelled
+                    if let Err(e) = self
+                        .memory_state
+                        .conversation_store()
+                        .append(session_id, messages, None)
+                    {
+                        log::warn!("Failed to persist cancelled turn messages (path C): {}", e);
+                    }
+                    if let Err(e) = self.runtime.block_on(
+                        self.memory_state
+                            .memory_mut()
+                            .append(session_id, messages.clone()),
+                    ) {
+                        log::warn!(
+                            "Failed to update in-memory context for cancelled turn (path C): {}",
+                            e
+                        );
+                    }
+                } else {
+                    // Defensive fallback: no chat_history provided — synthesise from prompt+text
+                    let mut cancelled_messages = vec![Message::user(prompt.clone())];
+                    if !turn_result.text.is_empty() {
+                        cancelled_messages.push(Message::assistant(turn_result.text.clone()));
+                    }
+                    if let Err(e) = self
+                        .memory_state
+                        .conversation_store()
+                        .append(session_id, &cancelled_messages, None)
+                    {
+                        log::warn!(
+                            "Failed to persist cancelled turn messages (path B fallback): {}",
+                            e
+                        );
+                    }
+                    if let Err(e) = self.runtime.block_on(
+                        self.memory_state
+                            .memory_mut()
+                            .append(session_id, cancelled_messages.clone()),
+                    ) {
+                        log::warn!(
+                            "Failed to update in-memory context for cancelled turn (path B fallback): {}",
+                            e
+                        );
+                    }
+                }
             }
-            if let Err(e) =
-                self.memory_state
-                    .conversation_store()
-                    .append(session_id, &cancelled_messages, None)
-            {
-                log::warn!("Failed to persist cancelled turn messages (path B): {}", e);
-            }
-            if let Err(e) = self.runtime.block_on(
-                self.memory_state
-                    .memory_mut()
-                    .append(session_id, cancelled_messages.clone()),
-            ) {
-                log::warn!(
-                    "Failed to update in-memory context for cancelled turn (path B): {}",
-                    e
-                );
-            }
+            ui.emit(&UiEvent::Completed {
+                tool_calls: turn_result.tool_call_count,
+            });
+            ui.flush();
+            return Ok(TurnOutcome::EarlyReturn(crate::llm::format_response(
+                &crate::llm::LlmResponse {
+                    text: String::new(),
+                    usage: crate::llm::LlmUsage {
+                        input_tokens: 0,
+                        output_tokens: 0,
+                        total_tokens: 0,
+                        cached_input_tokens: 0,
+                        cache_creation_input_tokens: 0,
+                    },
+                    tool_calls: Vec::new(),
+                    tool_call_metadata: Vec::new(),
+                },
+                self.config,
+                final_session_id,
+                0,
+                span,
+            )));
         }
 
         // Persist new messages to conversation store if session exists
