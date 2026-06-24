@@ -13,13 +13,12 @@ const DEFAULT_READ_TIMEOUT_SECS: u64 = 30;
 
 /// Build a shared HTTP client with a connect timeout and optional read timeout.
 ///
-/// Connect timeout: 10s — fail fast if host is unreachable.
 /// Read timeout: defaults to 30s — fires only when no bytes received for the duration.
 ///   Pass `Some(0)` to disable. This is safe for long active LLM responses.
 /// Uses system certificate store via rustls-native-certs (supports corporate CAs).
 fn build_http_client(read_timeout_secs: Option<u64>) -> reqwest::Client {
     let read_timeout = read_timeout_secs.unwrap_or(DEFAULT_READ_TIMEOUT_SECS);
-    let mut builder = reqwest::Client::builder().connect_timeout(Duration::from_secs(10));
+    let mut builder = reqwest::Client::builder();
     if read_timeout > 0 {
         builder = builder.read_timeout(Duration::from_secs(read_timeout));
     }
