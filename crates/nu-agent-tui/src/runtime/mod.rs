@@ -507,7 +507,10 @@ impl RuntimeCoordinator {
                 rows: resize.rows,
                 side_pane_visible: self.side_pane_visible,
                 input_height: Some(input_height),
-                queue_height: (self.state.pending_prompt_count() as u16).saturating_mul(2),
+                queue_height: {
+                    let queue_count = self.state.pending_prompt_count() as u16;
+                    queue_count + if queue_count > 0 { 1 } else { 0 }
+                },
             });
         }
 
@@ -560,7 +563,10 @@ impl RuntimeCoordinator {
             rows: self.terminal_rows,
             side_pane_visible: self.side_pane_visible,
             input_height: Some(input_height),
-            queue_height: (self.state.pending_prompt_count() as u16).saturating_mul(2),
+            queue_height: {
+                let queue_count = self.state.pending_prompt_count() as u16;
+                queue_count + if queue_count > 0 { 1 } else { 0 }
+            },
         });
     }
 
@@ -768,7 +774,8 @@ impl RuntimeCoordinator {
                     horizontal: side_margin,
                 });
                 let input_h = self.layout.input.height;
-                let queue_h = (self.state.pending_prompt_count() as u16).saturating_mul(2);
+                let queue_count = self.state.pending_prompt_count() as u16;
+                let queue_h = queue_count + if queue_count > 0 { 1 } else { 0 };
                 let vertical = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
@@ -964,11 +971,10 @@ impl RuntimeCoordinator {
                         .collect();
                     frame.render_widget(Paragraph::new(Text::from(queued_lines)), queue_inner);
 
-                    // Divider after queue
-                    let div_y = bottom_box_rect
-                        .y
-                        .saturating_add(1)
-                        .saturating_add(vertical[2].height);
+                    // Divider after queue — drawn at the last row of the queue
+                    // region (inner.y + queue_count), so input starts one row
+                    // below the divider instead of on top of it.
+                    let div_y = inner.y.saturating_add(queue_count);
                     draw_divider(frame, div_y);
                 }
 
