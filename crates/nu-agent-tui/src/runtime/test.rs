@@ -4174,9 +4174,17 @@ fn status_right_content_shows_zero_tokens_when_no_branch() {
     let state = AppState::new();
     let line = crate::runtime::status_right_content_for_test(None, &state);
     assert!(line.is_some());
-    let text: String = line.unwrap().spans.iter().map(|s| s.content.as_ref()).collect();
+    let text: String = line
+        .unwrap()
+        .spans
+        .iter()
+        .map(|s| s.content.as_ref())
+        .collect();
     assert!(text.contains('0'), "expected '0' token count, got: {text}");
-    assert!(!text.contains('┃'), "expected no separator when no branch, got: {text}");
+    assert!(
+        !text.contains('┃'),
+        "expected no separator when no branch, got: {text}"
+    );
 }
 
 #[test]

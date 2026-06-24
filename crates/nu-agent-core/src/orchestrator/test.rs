@@ -339,12 +339,12 @@ impl ExtendedRuntime for FakeRuntime {
         Ok(())
     }
 
-    fn switch_model(&mut self, model_spec: &str) -> Result<String, String> {
+    fn switch_model(&mut self, model_spec: &str) -> Result<(String, Option<u64>), String> {
         self.switched_models.push(model_spec.to_string());
         if let Some(result) = self.switch_model_result.clone() {
-            return result;
+            return result.map(|identity| (identity, None));
         }
-        Ok(model_spec.to_string())
+        Ok((model_spec.to_string(), None))
     }
 
     fn active_model_identity(&self) -> String {
@@ -1222,7 +1222,7 @@ impl ExtendedRuntime for LongRunningRuntime {
         })
     }
 
-    fn switch_model(&mut self, model_spec: &str) -> Result<String, String> {
+    fn switch_model(&mut self, model_spec: &str) -> Result<(String, Option<u64>), String> {
         self.action_log
             .lock()
             .expect("action log lock")
@@ -1233,12 +1233,12 @@ impl ExtendedRuntime for LongRunningRuntime {
             .push(model_spec.to_string());
 
         if let Some(result) = self.switch_model_result.clone() {
-            return result;
+            return result.map(|identity| (identity, None));
         }
 
         let mut identity = self.active_identity.lock().expect("identity lock");
         *identity = model_spec.to_string();
-        Ok(model_spec.to_string())
+        Ok((model_spec.to_string(), None))
     }
 
     fn active_model_identity(&self) -> String {
@@ -3039,4 +3039,182 @@ fn _assert_interactive_loop_accepts_extended_runtime<
     _u: U,
 ) {
     // if this compiles, the bound is correct
+}
+
+// ── context_window_max_tokens tests ─────────────────────────────────────────
+
+/// A fake runtime that returns a known max_context_tokens on model switch.
+struct ContextWindowRuntime {
+    switched_models: Vec<String>,
+    max_context_tokens: Option<u64>,
+}
+
+impl Default for ContextWindowRuntime {
+    fn default() -> Self {
+        Self {
+            switched_models: Vec::new(),
+            max_context_tokens: Some(128_000),
+        }
+    }
+}
+
+impl CoreRuntime for ContextWindowRuntime {
+    fn execute_turn<U: ProgressUi>(
+        &mut self,
+        _ui: &mut U,
+        _prompt: String,
+        _context: Option<String>,
+        span: Span,
+    ) -> Result<Value, LabeledError> {
+        Ok(Value::nothing(span))
+    }
+}
+
+impl ExtendedRuntime for ContextWindowRuntime {
+    fn switch_model(&mut self, model_spec: &str) -> Result<(String, Option<u64>), String> {
+        self.switched_models.push(model_spec.to_string());
+        Ok((model_spec.to_string(), self.max_context_tokens))
+    }
+
+    fn active_model_identity(&self) -> String {
+        "openai/gpt-4o-mini".to_string()
+    }
+
+    fn max_context_tokens(&self) -> Option<u64> {
+        self.max_context_tokens
+    }
+}
+
+/// A fake UI that also tracks context_window_max_tokens updates.
+struct ContextWindowUi {
+    submitted: std::collections::VecDeque<String>,
+    model_switch_requests: std::collections::VecDeque<String>,
+    quit: bool,
+    pump_count: usize,
+    warnings: Vec<String>,
+    active_model_identity: Option<String>,
+    context_window_max_tokens: Option<Option<u64>>, // outer Option = "was it set?", inner = value
+}
+
+impl ContextWindowUi {
+    fn new(model_switch_requests: &[&str]) -> Self {
+        Self {
+            submitted: std::collections::VecDeque::new(),
+            model_switch_requests: model_switch_requests
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            quit: false,
+            pump_count: 0,
+            warnings: Vec::new(),
+            active_model_identity: None,
+            context_window_max_tokens: None,
+        }
+    }
+}
+
+impl ProgressUi for ContextWindowUi {
+    fn emit(&mut self, event: &UiEvent) {
+        if let UiEvent::Warning { message } = event {
+            self.warnings.push(message.clone());
+        }
+    }
+
+    fn flush(&mut self) {}
+
+    fn take_cancel_requested(&self) -> bool {
+        false
+    }
+}
+
+impl LifecycleUi for ContextWindowUi {
+    fn pump_once(&mut self) {
+        self.pump_count = self.pump_count.saturating_add(1);
+        if self.model_switch_requests.is_empty() && self.pump_count > 1 {
+            self.quit = true;
+        }
+    }
+
+    fn quit_requested(&self) -> bool {
+        self.quit
+    }
+
+    fn fatal_error(&self) -> Option<&str> {
+        None
+    }
+}
+
+impl UserInputUi for ContextWindowUi {
+    fn take_submitted_prompt(&mut self) -> Option<String> {
+        self.submitted.pop_front()
+    }
+
+    fn take_next_model_switch_request(&mut self) -> Option<String> {
+        self.model_switch_requests.pop_front()
+    }
+}
+
+impl DisplayStateUi for ContextWindowUi {
+    fn set_active_model_identity(&mut self, active_model_identity: &str) {
+        self.active_model_identity = Some(active_model_identity.to_string());
+    }
+
+    fn set_context_window_max_tokens(&mut self, max_tokens: Option<u64>) {
+        self.context_window_max_tokens = Some(max_tokens);
+    }
+
+    fn set_mcp_server_state(&mut self, _server_name: &str, _state: McpUsabilityState) {}
+
+    fn execute_shared_ui_action(&mut self, _action: SharedUiAction) -> bool {
+        true
+    }
+}
+
+impl TranscriptUi for ContextWindowUi {
+    fn hydrate_transcript_from_messages(
+        &mut self,
+        _messages: impl IntoIterator<Item = UiMessageSnapshot>,
+        _last_total_tokens: Option<u64>,
+    ) {
+    }
+}
+
+#[test]
+fn model_switch_updates_context_window_max_tokens_in_ui() {
+    let mut runtime = ContextWindowRuntime::default(); // max_context_tokens = Some(128_000)
+    let mut ui = ContextWindowUi::new(&["openai/gpt-4o-mini"]);
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+        .expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(
+        runtime.switched_models,
+        vec!["openai/gpt-4o-mini".to_string()]
+    );
+    // context_window_max_tokens must have been set on the UI
+    assert_eq!(
+        ui.context_window_max_tokens,
+        Some(Some(128_000)),
+        "expected context_window_max_tokens to be updated with 128_000 after model switch"
+    );
+}
+
+#[test]
+fn model_switch_updates_context_window_max_tokens_none_when_unset() {
+    let mut runtime = ContextWindowRuntime {
+        max_context_tokens: None,
+        ..Default::default()
+    };
+    let mut ui = ContextWindowUi::new(&["openai/gpt-4o-mini"]);
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+        .expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(
+        ui.context_window_max_tokens,
+        Some(None),
+        "expected context_window_max_tokens to be set to None when model has no limit"
+    );
 }

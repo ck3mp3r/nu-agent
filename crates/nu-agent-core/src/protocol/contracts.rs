@@ -175,6 +175,7 @@ pub trait DisplayStateUi {
     }
     fn set_active_model_identity(&mut self, _active_model_identity: &str) {}
     fn set_active_agent_identity(&mut self, _name: &str) {}
+    fn set_context_window_max_tokens(&mut self, _max_tokens: Option<u64>) {}
     fn display_incoming_message(&mut self, _text: &str) {}
 }
 
@@ -227,7 +228,7 @@ pub trait ExtendedRuntime: CoreRuntime {
         Vec::new()
     }
 
-    fn switch_model(&mut self, _model_spec: &str) -> Result<String, String> {
+    fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
         Err("model switching not supported".to_string())
     }
 
@@ -237,6 +238,10 @@ pub trait ExtendedRuntime: CoreRuntime {
 
     fn active_model_identity(&self) -> String {
         "unknown/unknown".to_string()
+    }
+
+    fn max_context_tokens(&self) -> Option<u64> {
+        None
     }
 
     fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {

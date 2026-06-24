@@ -195,6 +195,10 @@ where
         self.renderer.set_active_agent_identity(name);
     }
 
+    fn set_context_window_max_tokens(&mut self, max_tokens: Option<u64>) {
+        self.renderer.set_context_window_max_tokens(max_tokens);
+    }
+
     fn display_incoming_message(&mut self, text: &str) {
         self.renderer.display_incoming_message(text);
     }

@@ -284,8 +284,10 @@ impl ExtendedRuntime for AgentConversationRuntime {
             ))
     }
 
-    fn switch_model(&mut self, model_spec: &str) -> Result<String, String> {
-        self.provider_state.switch_model(model_spec)
+    fn switch_model(&mut self, model_spec: &str) -> Result<(String, Option<u64>), String> {
+        let identity = self.provider_state.switch_model(model_spec)?;
+        let max_tokens = self.max_context_tokens();
+        Ok((identity, max_tokens))
     }
 
     fn switch_agent(&mut self, agent_name: &str) -> Result<String, String> {
@@ -318,6 +320,10 @@ impl ExtendedRuntime for AgentConversationRuntime {
     fn active_model_identity(&self) -> String {
         self.persona_state
             .active_model_identity(self.provider_state.config())
+    }
+
+    fn max_context_tokens(&self) -> Option<u64> {
+        AgentConversationRuntime::max_context_tokens(self)
     }
 
     fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {

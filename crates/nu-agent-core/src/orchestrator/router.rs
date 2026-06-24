@@ -106,7 +106,8 @@ impl<'a, R: ExtendedRuntime + Send> CommandRouter<'a, R> {
                 let result = self.runtime.switch_agent(&agent_name);
                 let response = result.map(|agent_identity| {
                     let model_identity = self.runtime.active_model_identity();
-                    (agent_identity, model_identity)
+                    let max_tokens = self.runtime.max_context_tokens();
+                    (agent_identity, model_identity, max_tokens)
                 });
                 let _ = response_tx.send(response);
                 true

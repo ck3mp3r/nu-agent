@@ -45,8 +45,8 @@ pub type McpToggleResult = (
     Vec<(String, Vec<String>)>,
 );
 type PendingMcpToggle = (String, mpsc::Receiver<McpToggleResult>);
-pub type ModelSwitchResult = Result<String, String>;
-pub type AgentSwitchResult = Result<(String, String), String>;
+pub type ModelSwitchResult = Result<(String, Option<u64>), String>;
+pub type AgentSwitchResult = Result<(String, String, Option<u64>), String>;
 type PendingModelSwitch = mpsc::Receiver<ModelSwitchResult>;
 type PendingAgentSwitch = mpsc::Receiver<AgentSwitchResult>;
 type PendingAutoCompaction = mpsc::Receiver<Option<String>>;
@@ -196,8 +196,9 @@ where
 
             if let Some(response_rx) = pending_model_switch.take() {
                 match poll_pending(response_rx) {
-                    PollOutcome::Ready(Ok(active_identity)) => {
+                    PollOutcome::Ready(Ok((active_identity, max_tokens))) => {
                         ui.set_active_model_identity(active_identity.as_str());
+                        ui.set_context_window_max_tokens(max_tokens);
                         ui.emit(&UiEvent::Warning {
                             message: format!("Model switched: {active_identity}"),
                         });
@@ -216,9 +217,10 @@ where
 
             if let Some(response_rx) = pending_agent_switch.take() {
                 match poll_pending(response_rx) {
-                    PollOutcome::Ready(Ok((agent_identity, model_identity))) => {
+                    PollOutcome::Ready(Ok((agent_identity, model_identity, max_tokens))) => {
                         ui.set_active_agent_identity(&agent_identity);
                         ui.set_active_model_identity(&model_identity);
+                        ui.set_context_window_max_tokens(max_tokens);
                         ui.emit(&UiEvent::Warning {
                             message: format!("Agent switched to: {agent_identity}"),
                         });
