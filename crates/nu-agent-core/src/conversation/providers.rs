@@ -25,11 +25,13 @@ fn build_http_client(read_timeout_secs: Option<u64>) -> reqwest::Client {
     builder.build().expect("failed to build HTTP client")
 }
 
-/// Build a GitHub Copilot client using rig's from_env() or explicit config.
+/// Build a GitHub Copilot client, resolving credentials in priority order:
 ///
-/// If config has an explicit `api_key`, uses the builder pattern with optional `base_url`.
-/// Otherwise, delegates to `rig::providers::copilot::Client::from_env()` which handles
-/// environment variable resolution (GITHUB_COPILOT_API_KEY → GITHUB_TOKEN → OAuth).
+/// 1. Explicit `api_key` from plugin config or `--api-key` flag
+/// 2. `GITHUB_COPILOT_API_KEY` / `COPILOT_API_KEY` environment variable
+/// 3. `COPILOT_GITHUB_ACCESS_TOKEN` / `GITHUB_TOKEN` environment variable
+/// 4. OAuth — rig-core owns the full lifecycle: reads cached access-token,
+///    checks api-key.json expiry, retries on 401/403, device-code re-auth.
 pub(super) fn build_copilot_client(
     config: &Config,
 ) -> Result<rig::providers::copilot::Client, LabeledError> {
@@ -96,31 +98,14 @@ pub(super) fn build_copilot_client(
         return b.github_access_token(token).build().map_err(auth_err);
     }
 
-    // 4. Cached OAuth access token from prior `agent auth login`
-    //    rig caches at: <config_dir>/github_copilot/access-token (plain text)
-    let token_path = crate::utils::xdg::config_dir()
-        .ok()
-        .map(|d| d.join("github_copilot").join("access-token"));
-
-    if let Some(path) = &token_path
-        && let Ok(token) = std::fs::read_to_string(path)
-        && !token.trim().is_empty()
-    {
-        let mut b = rig::providers::copilot::Client::builder()
-            .http_client(build_http_client(config.read_timeout_secs));
-        if let Some(url) = &base_url {
-            b = b.base_url(url.clone());
-        }
-        return b
-            .github_access_token(token.trim())
-            .build()
-            .map_err(auth_err);
+    // 4. OAuth — delegate the full lifecycle to rig-core: reads cached access-token,
+    //    checks api-key.json expiry, retries on 401/403 with device-code re-auth.
+    let mut b = rig::providers::copilot::Client::builder()
+        .http_client(build_http_client(config.read_timeout_secs));
+    if let Some(url) = &base_url {
+        b = b.base_url(url.clone());
     }
-
-    // 5. No auth available
-    Err(LabeledError::new(
-        "Not authenticated. Run `agent auth login` or set GITHUB_COPILOT_API_KEY / GITHUB_TOKEN environment variable.".to_string()
-    ))
+    b.oauth().build().map_err(auth_err)
 }
 
 /// Build an OpenAI client using rig's builder pattern.

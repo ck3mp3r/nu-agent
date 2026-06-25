@@ -15,9 +15,13 @@ fn build_copilot_client_function_signature_exists() {
 
 #[test]
 #[serial_test::serial]
-fn build_copilot_client_no_auth_returns_error() {
-    // RED: Verify that with no auth available, we get a clear error
+fn build_copilot_client_no_auth_returns_ok() {
+    // With .oauth(), the client builder always succeeds — rig-core owns the full
+    // auth lifecycle (cached token reads, expiry checks, device-code re-auth) and
+    // surfaces auth failures lazily at request time, not at build time.
     use crate::config::Config;
+
+    let _ = rustls::crypto::ring::default_provider().install_default();
 
     // Save original XDG_CONFIG_HOME if set
     let original_xdg = std::env::var("XDG_CONFIG_HOME").ok();
@@ -60,19 +64,22 @@ fn build_copilot_client_no_auth_returns_error() {
         }
     }
 
-    assert!(result.is_err(), "Expected error without credentials");
-    let err_msg = result.unwrap_err().to_string();
     assert!(
-        err_msg.contains("Not authenticated"),
-        "Error should mention 'Not authenticated', got: {err_msg}"
+        result.is_ok(),
+        "OAuth path always succeeds at build time; auth is lazy. Got: {:?}",
+        result.err()
     );
 }
 
 #[test]
 #[serial_test::serial]
-fn build_copilot_client_error_mentions_auth_login() {
-    // RED: Verify error message guides user to run `agent auth login`
+fn build_copilot_client_oauth_path_succeeds_at_build_time() {
+    // With .oauth(), auth is delegated entirely to rig-core and is lazy —
+    // the client is always constructible; errors only surface when a request
+    // is actually made (401/403 triggers device-code re-auth or returns error).
     use crate::config::Config;
+
+    let _ = rustls::crypto::ring::default_provider().install_default();
 
     // Save original XDG_CONFIG_HOME if set
     let original_xdg = std::env::var("XDG_CONFIG_HOME").ok();
@@ -115,11 +122,10 @@ fn build_copilot_client_error_mentions_auth_login() {
         }
     }
 
-    assert!(result.is_err(), "Expected error without credentials");
-    let err_msg = result.unwrap_err().to_string();
     assert!(
-        err_msg.contains("agent auth login"),
-        "Error should mention 'agent auth login', got: {err_msg}"
+        result.is_ok(),
+        "OAuth path always succeeds at build time; auth is lazy. Got: {:?}",
+        result.err()
     );
 }
 
