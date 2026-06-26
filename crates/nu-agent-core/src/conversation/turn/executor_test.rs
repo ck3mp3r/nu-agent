@@ -530,3 +530,307 @@ fn last_total_tokens_updated_on_completed_turn() {
         "last_total_tokens must be Some after a completed turn with a session"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Error path persistence tests
+// ---------------------------------------------------------------------------
+
+/// MaxTurnsError carries full chat_history — executor must persist it and return Err.
+///
+/// Setup: mock returns a tool_call on turn 1. Config limits tool turns to 0, so rig
+/// raises MaxTurnsError after the first tool call attempt. After Fix 1, TurnError
+/// gets messages=Some(chat_history). After Fix 2, executor persists those messages
+/// before returning LabeledError.
+#[test]
+fn max_turns_error_persists_full_history() {
+    // max_tool_turns=0: rig raises MaxTurnsError as soon as a tool-call turn would
+    // be scheduled (current_turn > 0 + 1 after the first tool response).
+    let config = Config {
+        max_tool_turns: Some(0),
+        ..test_config()
+    };
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let session_id = "test-max-turns";
+    let mut memory_state =
+        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+
+    // Turn 1: model asks for a tool call. With max_turns=0, rig will MaxTurnsError
+    // as soon as it tries to schedule the tool-call turn.
+    let model = MockCompletionModel::from_stream_turns([[
+        MockStreamEvent::tool_call(
+            "tool_call_1",
+            "some_tool",
+            serde_json::json!({"x": 1}),
+        ),
+        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+    ]]);
+
+    let cached_client = CachedProviderClient::Mock(model);
+    let mut ui = MockUi::new();
+
+    let closure_registry = crate::tools::closure::ClosureRegistry::new();
+    let mcp_registry = crate::tools::handler::McpToolRegistry::from_names(Vec::<String>::new());
+    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &rt,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(closure_registry),
+            mcp_registry: Arc::new(mcp_registry),
+            tool_server_handle,
+            visible_tool_definitions: vec![],
+        },
+    );
+
+    let result = executor.execute(
+        &mut ui,
+        ExecuteInput {
+            prompt: "please call a tool".to_string(),
+            preamble: None,
+            span: nu_protocol::Span::test_data(),
+        },
+        &cached_client,
+        MockResolver,
+        Some(session_id),
+        None,
+    );
+
+    // Must return Err (it's a hard error, not a cancellation)
+    assert!(
+        result.is_err(),
+        "MaxTurnsError must propagate as LabeledError to caller"
+    );
+
+    // JSONL must have been written with the partial chat history
+    let persisted = memory_state
+        .conversation_store()
+        .load(session_id)
+        .expect("store load should succeed");
+    assert!(
+        !persisted.is_empty(),
+        "MaxTurnsError must persist chat_history to JSONL (Fix 1 + Fix 2 path A history)"
+    );
+}
+
+/// UnknownToolCall carries full chat_history — executor must persist it and return Err.
+///
+/// Setup: mock returns a tool_call for "nonexistent_tool" which is not registered
+/// in the agent's tool list. Rig raises UnknownToolCall. After Fix 1, TurnError
+/// gets messages=Some(chat_history). After Fix 2, executor persists them.
+#[test]
+fn unknown_tool_error_persists_full_history() {
+    let config = test_config();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let session_id = "test-unknown-tool";
+    let mut memory_state =
+        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+
+    // Model calls a tool that is not registered — triggers UnknownToolCall.
+    // No visible_tool_definitions → agent has no tools → any tool call is unknown.
+    let model = MockCompletionModel::from_stream_turns([[
+        MockStreamEvent::tool_call(
+            "tool_call_1",
+            "nonexistent_tool",
+            serde_json::json!({"arg": "value"}),
+        ),
+        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+    ]]);
+
+    let cached_client = CachedProviderClient::Mock(model);
+    let mut ui = MockUi::new();
+
+    let closure_registry = crate::tools::closure::ClosureRegistry::new();
+    let mcp_registry = crate::tools::handler::McpToolRegistry::from_names(Vec::<String>::new());
+    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &rt,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(closure_registry),
+            mcp_registry: Arc::new(mcp_registry),
+            tool_server_handle,
+            visible_tool_definitions: vec![],
+        },
+    );
+
+    let result = executor.execute(
+        &mut ui,
+        ExecuteInput {
+            prompt: "use a tool please".to_string(),
+            preamble: None,
+            span: nu_protocol::Span::test_data(),
+        },
+        &cached_client,
+        MockResolver,
+        Some(session_id),
+        None,
+    );
+
+    // Must return Err
+    assert!(
+        result.is_err(),
+        "UnknownToolCall must propagate as LabeledError to caller"
+    );
+
+    // JSONL must have been written with the partial chat history
+    let persisted = memory_state
+        .conversation_store()
+        .load(session_id)
+        .expect("store load should succeed");
+    assert!(
+        !persisted.is_empty(),
+        "UnknownToolCall must persist chat_history to JSONL (Fix 1 + Fix 2 path A history)"
+    );
+}
+
+/// Network/CompletionError has no chat_history — executor falls back to persisting
+/// just the user prompt so the session remembers the turn was attempted.
+#[test]
+fn network_error_persists_user_prompt() {
+    let config = test_config();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let session_id = "test-network-error";
+    let prompt_text = "what is the weather today?";
+    let mut memory_state =
+        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+
+    // Streaming error on the first event — simulates network failure.
+    let model = MockCompletionModel::from_stream_turns([[MockStreamEvent::error(
+        "network timeout",
+    )]]);
+
+    let cached_client = CachedProviderClient::Mock(model);
+    let mut ui = MockUi::new();
+
+    let closure_registry = crate::tools::closure::ClosureRegistry::new();
+    let mcp_registry = crate::tools::handler::McpToolRegistry::from_names(Vec::<String>::new());
+    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &rt,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(closure_registry),
+            mcp_registry: Arc::new(mcp_registry),
+            tool_server_handle,
+            visible_tool_definitions: vec![],
+        },
+    );
+
+    let result = executor.execute(
+        &mut ui,
+        ExecuteInput {
+            prompt: prompt_text.to_string(),
+            preamble: None,
+            span: nu_protocol::Span::test_data(),
+        },
+        &cached_client,
+        MockResolver,
+        Some(session_id),
+        None,
+    );
+
+    // Must return Err
+    assert!(
+        result.is_err(),
+        "network error must propagate as LabeledError to caller"
+    );
+
+    // JSONL must contain exactly one message: the user prompt
+    let persisted = memory_state
+        .conversation_store()
+        .load(session_id)
+        .expect("store load should succeed");
+    assert_eq!(
+        persisted.len(),
+        1,
+        "hard error with no history must persist exactly one fallback message (the user prompt); got {} messages",
+        persisted.len()
+    );
+    // The persisted message must be the user prompt
+    let msg = &persisted[0];
+    assert!(
+        matches!(msg, crate::types::Message::User { .. }),
+        "persisted fallback message must be a User message"
+    );
+}
+
+/// When there is no session (transient invocation), hard errors must NOT write
+/// anything to the store — there is no conversation to record.
+#[test]
+fn hard_error_no_session_persists_nothing() {
+    let config = test_config();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut memory_state =
+        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+
+    // Streaming error — hard failure, no history recoverable.
+    let model = MockCompletionModel::from_stream_turns([[MockStreamEvent::error(
+        "provider unavailable",
+    )]]);
+
+    let cached_client = CachedProviderClient::Mock(model);
+    let mut ui = MockUi::new();
+
+    let closure_registry = crate::tools::closure::ClosureRegistry::new();
+    let mcp_registry = crate::tools::handler::McpToolRegistry::from_names(Vec::<String>::new());
+    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &rt,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(closure_registry),
+            mcp_registry: Arc::new(mcp_registry),
+            tool_server_handle,
+            visible_tool_definitions: vec![],
+        },
+    );
+
+    let result = executor.execute(
+        &mut ui,
+        ExecuteInput {
+            prompt: "a transient prompt".to_string(),
+            preamble: None,
+            span: nu_protocol::Span::test_data(),
+        },
+        &cached_client,
+        MockResolver,
+        None, // <-- no session
+        None,
+    );
+
+    // Must return Err
+    assert!(
+        result.is_err(),
+        "hard error must propagate as LabeledError"
+    );
+
+    // No JSONL should have been written — transient invocation with no session_id
+    // There is no specific conversation_id to check, so we verify the temp dir
+    // has no .jsonl files written (the store uses conversation_id as filename).
+    let jsonl_files: Vec<_> = std::fs::read_dir(temp_dir.path())
+        .expect("read_dir should succeed")
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path()
+                .extension()
+                .is_some_and(|ext| ext == "jsonl")
+        })
+        .collect();
+    assert!(
+        jsonl_files.is_empty(),
+        "no JSONL files must be written for a transient (no-session) hard error; found: {:?}",
+        jsonl_files.iter().map(|e| e.path()).collect::<Vec<_>>()
+    );
+}

@@ -51,8 +51,10 @@ pub struct TurnError {
     pub msg: String,
     /// Whether the error was due to user cancellation
     pub cancelled: bool,
-    /// Messages captured at the point of cancellation (from rig's chat_history).
-    /// Present only when `cancelled == true` and rig provided a chat_history.
+    /// Messages captured at the error site (from rig's chat_history).
+    /// Present for `PromptCancelled`, `MaxTurnsError`, and `UnknownToolCall` errors.
+    /// `None` for errors where rig's internal history is genuinely unrecoverable
+    /// (e.g. `CompletionError`, `ToolError`).
     pub messages: Option<Vec<Message>>,
 }
 
@@ -79,6 +81,24 @@ impl From<rig::completion::PromptError> for TurnError {
                 cancelled: true,
                 messages: Some(chat_history),
             },
+            rig::completion::PromptError::MaxTurnsError {
+                max_turns,
+                chat_history,
+                ..
+            } => TurnError {
+                msg: format!("Max turns ({max_turns}) exceeded"),
+                cancelled: false,
+                messages: Some(*chat_history),
+            },
+            rig::completion::PromptError::UnknownToolCall {
+                tool_name,
+                chat_history,
+                ..
+            } => TurnError {
+                msg: format!("Unknown tool: {tool_name}"),
+                cancelled: false,
+                messages: Some(*chat_history),
+            },
             other => TurnError {
                 msg: other.to_string(),
                 cancelled: false,
@@ -99,6 +119,24 @@ impl From<rig::agent::StreamingError> for TurnError {
                     msg: reason,
                     cancelled: true,
                     messages: Some(chat_history),
+                },
+                rig::completion::PromptError::MaxTurnsError {
+                    max_turns,
+                    chat_history,
+                    ..
+                } => TurnError {
+                    msg: format!("Max turns ({max_turns}) exceeded"),
+                    cancelled: false,
+                    messages: Some(*chat_history),
+                },
+                rig::completion::PromptError::UnknownToolCall {
+                    tool_name,
+                    chat_history,
+                    ..
+                } => TurnError {
+                    msg: format!("Unknown tool: {tool_name}"),
+                    cancelled: false,
+                    messages: Some(*chat_history),
                 },
                 other => TurnError {
                     msg: other.to_string(),

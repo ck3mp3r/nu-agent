@@ -152,23 +152,41 @@ impl<'a> TurnExecutor<'a> {
 
         let turn_result = match visitor_result {
             Ok(result) => result,
+            Err(e) if e.messages.is_some() && !e.cancelled => {
+                // Path A (non-cancelled): MaxTurnsError / UnknownToolCall carry full chat_history.
+                // Persist it so the session remembers the failed turn.
+                if let Some(session_id) = final_session_id
+                    && let Some(ref messages) = e.messages
+                    && let Err(mem_err) = self.runtime.block_on(
+                        self.memory_state
+                            .memory_mut()
+                            .append(session_id, messages.clone()),
+                    )
+                {
+                    log::warn!(
+                        "Failed to update context for failed turn (path A history): {}",
+                        mem_err
+                    );
+                }
+                return Err(
+                    LabeledError::new(format!("Turn failed: {}", e.msg))
+                        .with_label(e.msg, span),
+                );
+            }
             Err(e) if e.cancelled => {
                 // Path A: rig hook cancelled — persist chat_history if available
                 if let Some(session_id) = final_session_id
                     && let Some(ref messages) = e.messages
-                {
-                    // JournalConversationMemory.append() writes both JSONL and
-                    // in-memory cache in a single call — no separate store write needed.
-                    if let Err(mem_err) = self.runtime.block_on(
+                    && let Err(mem_err) = self.runtime.block_on(
                         self.memory_state
                             .memory_mut()
                             .append(session_id, messages.clone()),
-                    ) {
-                        log::warn!(
-                            "Failed to update context for cancelled turn (path A): {}",
-                            mem_err
-                        );
-                    }
+                    )
+                {
+                    log::warn!(
+                        "Failed to update context for cancelled turn (path A): {}",
+                        mem_err
+                    );
                 }
                 // Return a minimal cancelled response (not an error)
                 let llm_response = crate::llm::LlmResponse {
@@ -192,8 +210,24 @@ impl<'a> TurnExecutor<'a> {
                 )));
             }
             Err(e) => {
+                // Hard error: rig's internal history is unrecoverable (CompletionError, ToolError).
+                // Persist at minimum the user prompt so the session remembers this turn was attempted.
+                if let Some(session_id) = final_session_id {
+                    let fallback = vec![Message::user(prompt.clone())];
+                    if let Err(mem_err) = self.runtime.block_on(
+                        self.memory_state
+                            .memory_mut()
+                            .append(session_id, fallback),
+                    ) {
+                        log::warn!(
+                            "Failed to persist prompt on hard error: {}",
+                            mem_err
+                        );
+                    }
+                }
                 return Err(
-                    LabeledError::new(format!("Turn failed: {}", e.msg)).with_label(e.msg, span)
+                    LabeledError::new(format!("Turn failed: {}", e.msg))
+                        .with_label(e.msg, span),
                 );
             }
         };
