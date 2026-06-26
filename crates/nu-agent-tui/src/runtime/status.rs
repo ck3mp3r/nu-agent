@@ -480,7 +480,7 @@ pub(super) fn status_right_content(
     let mut spans: Vec<Span<'static>> = Vec::new();
 
     if let Some(branch) = branch_opt {
-        let branch_str = format!("{branch} \u{e0a0}");
+        let branch_str = format!("\u{e725} {branch}");
         spans.push(Span::styled(branch_str, theme.focus));
     }
 
@@ -623,20 +623,15 @@ fn format_lane_1(
         }
     }
 }
-
-/// Nerd Font / Powerline branch glyph appended after the branch label
+/// Nerd Font / Powerline git glyph prepended before the branch label
 /// to denote that the displayed text is a git branch (or detached HEAD SHA).
-/// Width: 2 cells (space + glyph). When the available branch budget is too
+/// Width: 2 cells (glyph + space). When the available branch budget is too
 /// narrow to fit even the icon plus a single label character, the icon is
 /// dropped and the raw label is ellipsized as before.
 #[cfg(test)]
-const BRANCH_ICON_SUFFIX: &str = " \u{e0a0}";
+const BRANCH_ICON_PREFIX: &str = "\u{e725} ";
 #[cfg(test)]
-const BRANCH_ICON_SUFFIX_WIDTH: usize = 2;
-
-/// Returns (model_segment, padding_str, branch_segment) for assembling into
-/// span-based `Line<'static>`.
-#[cfg(test)]
+const BRANCH_ICON_PREFIX_WIDTH: usize = 2;#[cfg(test)]
 fn format_lane_1_parts(
     model: &str,
     branch: &str,
@@ -654,7 +649,7 @@ fn format_lane_1_parts(
 
     let model_chars = model.chars().count();
     let branch_chars = branch.chars().count();
-    let branch_display_chars = branch_chars.saturating_add(BRANCH_ICON_SUFFIX_WIDTH);
+    let branch_display_chars = branch_chars.saturating_add(BRANCH_ICON_PREFIX_WIDTH);
 
     let (model_max, branch_max) = if model_chars + branch_display_chars <= fields_budget {
         (model_chars, branch_display_chars)
@@ -684,12 +679,12 @@ fn format_lane_1_parts(
 /// extreme-narrow viewports.
 #[cfg(test)]
 fn format_branch_segment(branch: &str, branch_max: usize) -> String {
-    if branch_max <= BRANCH_ICON_SUFFIX_WIDTH {
+    if branch_max <= BRANCH_ICON_PREFIX_WIDTH {
         return tail_ellipsize(branch, branch_max);
     }
-    let label_budget = branch_max - BRANCH_ICON_SUFFIX_WIDTH;
+    let label_budget = branch_max - BRANCH_ICON_PREFIX_WIDTH;
     let label = tail_ellipsize(branch, label_budget);
-    format!("{label}{BRANCH_ICON_SUFFIX}")
+    format!("{BRANCH_ICON_PREFIX}{label}")
 }
 
 fn tail_ellipsize(input: &str, max_chars: usize) -> String {

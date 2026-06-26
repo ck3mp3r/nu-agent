@@ -686,7 +686,7 @@ fn lane_1_wide_no_truncation() {
     );
     let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
 
-    assert_eq!(text, "○ abcdefghijklmnop          branchname \u{e0a0}");
+    assert_eq!(text, "○ abcdefghijklmnop          \u{e725} branchname");
     assert!(!text.contains('|'));
 }
 
@@ -700,7 +700,7 @@ fn lane_1_medium_one_side_truncation() {
     );
     let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
 
-    assert_eq!(text, "○ ...lmnop branchname \u{e0a0}");
+    assert_eq!(text, "○ ...lmnop \u{e725} branchname");
     assert!(!text.contains('|'));
 }
 
@@ -714,7 +714,7 @@ fn lane_1_narrow_both_side_truncation() {
     );
     let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
 
-    assert_eq!(text, "○ ...op branchname \u{e0a0}");
+    assert_eq!(text, "○ ...op \u{e725} branchname");
     assert!(!text.contains('|'));
 }
 
@@ -731,7 +731,7 @@ fn lane_1_branch_segment_is_right_aligned_when_present() {
 
     assert_eq!(text.chars().count(), width);
     assert!(text.starts_with("○ abcdefghijklmnop"));
-    assert!(text.ends_with("branchname \u{e0a0}"));
+    assert!(text.ends_with("\u{e725} branchname"));
     assert!(!text.contains('|'));
 }
 
@@ -747,7 +747,7 @@ fn lane_1_narrow_truncation_keeps_branch_right_anchored() {
     let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
 
     assert_eq!(text.chars().count(), width);
-    assert!(text.ends_with("branchname \u{e0a0}"));
+    assert!(text.ends_with("\u{e725} branchname"));
     assert!(text.contains("...op"));
     assert!(!text.contains('|'));
 }
@@ -777,15 +777,15 @@ fn lane_1_with_branch_appends_branch_icon() {
     let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
 
     assert!(
-        text.ends_with("main \u{e0a0}"),
-        "expected branch icon suffix, got: {text:?}"
+        text.ends_with("\u{e725} main"),
+        "expected branch icon prefix, got: {text:?}"
     );
 }
 
 #[test]
 fn lane_1_with_branch_ellipsizes_label_while_preserving_icon() {
     // 30-char model + 30-char branch into a tight 32-cell viewport forces
-    // both segments to be truncated. The branch must still end with the icon.
+    // both segments to be truncated. The branch must still start with the icon.
     let line = crate::runtime::status::compact_status_line_with_branch_for_test(
         "the-quick-brown-fox-jumps-over",
         Some("feature/super-long-branch-name"),
@@ -795,7 +795,7 @@ fn lane_1_with_branch_ellipsizes_label_while_preserving_icon() {
     let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
 
     assert!(
-        text.ends_with("\u{e0a0}"),
+        text.contains('\u{e725}'),
         "icon must survive ellipsization, got: {text:?}"
     );
     assert!(
@@ -818,7 +818,7 @@ fn lane_1_with_branch_drops_icon_when_budget_below_three_cells() {
     let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
 
     assert!(
-        !text.contains('\u{e0a0}'),
+        !text.contains('\u{e725}'),
         "icon must be dropped under extreme narrow budgets, got: {text:?}"
     );
     assert!(text.starts_with("○ "));
@@ -838,7 +838,7 @@ fn lane_1_with_detached_head_short_sha_also_gets_icon() {
     let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
 
     assert!(
-        text.ends_with("a1b2c3d \u{e0a0}"),
+        text.ends_with("\u{e725} a1b2c3d"),
         "expected detached-HEAD short SHA to also carry icon, got: {text:?}"
     );
 }
