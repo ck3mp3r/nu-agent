@@ -55,6 +55,8 @@ struct Projector {
     pending_prefix: bool,
     theme: TuiTheme,
     table: Option<TableBuffer>,
+    /// True once the projector has emitted any non-empty line.
+    has_content: bool,
 }
 
 impl Projector {
@@ -109,6 +111,20 @@ impl Projector {
         let spans = std::mem::take(&mut self.current_spans);
         self.lines.push(Line::from(spans));
         self.pending_prefix = true;
+        self.has_content = true;
+    }
+
+    /// Emit a blank separator line between block-level elements.
+    /// Only inserts a single blank line, even if called repeatedly.
+    fn insert_block_separator(&mut self) {
+        if !self.has_content {
+            return;
+        }
+        // Avoid consecutive blank lines: if the last line is already empty, skip.
+        if self.lines.last().is_some_and(|l| l.width() == 0) {
+            return;
+        }
+        self.lines.push(Line::from(Vec::<Span<'static>>::new()));
     }
 
     fn push_wrapped_text(&mut self, text: &str, style: Style) {
@@ -193,8 +209,11 @@ impl Projector {
 
     fn on_start(&mut self, tag: Tag<'_>) {
         match tag {
-            Tag::Paragraph => {}
+            Tag::Paragraph => {
+                self.insert_block_separator();
+            }
             Tag::Heading { .. } => {
+                self.insert_block_separator();
                 self.flush_line();
                 self.heading_depth = self.heading_depth.saturating_add(1);
             }
@@ -205,10 +224,12 @@ impl Projector {
                 self.style_state.strong_depth = self.style_state.strong_depth.saturating_add(1);
             }
             Tag::BlockQuote(_) => {
+                self.insert_block_separator();
                 self.flush_line();
                 self.blockquote_depth = self.blockquote_depth.saturating_add(1);
             }
             Tag::List(start) => {
+                self.insert_block_separator();
                 self.flush_line();
                 self.list_stack.push(ListState {
                     ordered_next: start,
@@ -230,6 +251,7 @@ impl Projector {
                 }
             }
             Tag::CodeBlock(kind) => {
+                self.insert_block_separator();
                 self.flush_line();
                 self.code_block = Some(CodeBlockState {
                     language_hint: fence_language_hint(kind),
@@ -243,6 +265,7 @@ impl Projector {
                 self.image_destinations.push(dest_url.to_string());
             }
             Tag::Table(_) => {
+                self.insert_block_separator();
                 self.flush_line();
                 self.table = Some(TableBuffer::default());
             }
@@ -373,6 +396,7 @@ impl Projector {
                 self.push_text(&math, self.theme.inline_code);
             }
             Event::DisplayMath(math) => {
+                self.insert_block_separator();
                 self.flush_line();
                 self.push_text(&math, self.theme.inline_code);
                 self.flush_line();
@@ -381,6 +405,7 @@ impl Projector {
                 self.flush_line();
             }
             Event::Rule => {
+                self.insert_block_separator();
                 self.flush_line();
                 self.push_text("────────────────", Style::default());
                 self.flush_line();

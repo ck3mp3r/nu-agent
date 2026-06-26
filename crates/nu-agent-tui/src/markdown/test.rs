@@ -57,7 +57,7 @@ fn markdown_projection_fixture_supported_basics_renders_lines_and_inline_styles(
     let lines = project_markdown_to_lines(&markdown);
     let rendered = lines.iter().map(plain_line).collect::<Vec<_>>();
 
-    assert_eq!(rendered, vec!["Title", "Paragraph with em strong code"]);
+    assert_eq!(rendered, vec!["Title", "", "Paragraph with em strong code"]);
     assert!(
         lines[0]
             .spans
@@ -65,7 +65,7 @@ fn markdown_projection_fixture_supported_basics_renders_lines_and_inline_styles(
             .all(|span| span.style.add_modifier.contains(Modifier::BOLD))
     );
 
-    let body = &lines[1].spans;
+    let body = &lines[2].spans;
     assert!(
         body.iter().any(|span| span.content.as_ref() == "em"
             && span.style.add_modifier.contains(Modifier::ITALIC))
@@ -89,8 +89,10 @@ fn markdown_projection_fixture_lists_and_blockquote_render_deterministically() {
         vec![
             "• one",
             "• two",
+            "",
             "1. first",
             "2. second",
+            "",
             "│ quoted",
             "│ second"
         ]
@@ -561,9 +563,18 @@ fn render_markdown_lines_fenced_code_block() {
 }
 
 #[test]
-fn render_markdown_lines_drops_zero_width_lines() {
-    for line in render_markdown_lines("first\n\n\nlast") {
-        let w: usize = line.spans.iter().map(|s| s.text.chars().count()).sum();
-        assert!(w > 0);
-    }
+fn render_markdown_lines_collapses_consecutive_blank_lines() {
+    let lines = render_markdown_lines("first\n\n\nlast");
+    // Should have: "first", blank, "last" (consecutive blanks collapsed to one)
+    assert_eq!(lines.len(), 3);
+    assert!(!lines[0].spans.is_empty()); // "first"
+    assert!(lines[1].spans.is_empty()); // blank separator
+    assert!(!lines[2].spans.is_empty()); // "last"
+}
+
+#[test]
+fn render_markdown_lines_no_leading_trailing_blanks() {
+    let lines = render_markdown_lines("\n\nhello\n\n");
+    assert_eq!(lines.len(), 1);
+    assert!(!lines[0].spans.is_empty());
 }

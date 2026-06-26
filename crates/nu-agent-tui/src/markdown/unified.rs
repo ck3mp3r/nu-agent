@@ -6,15 +6,35 @@ use crate::markdown::project_markdown_to_lines;
 use crate::rendering::theme::TuiTheme;
 
 /// Project raw markdown text into IR ContentLines using the existing
-/// pulldown-cmark pipeline. Drops zero-width lines (matches the empty-line
-/// filtering done at every existing caller site).
+/// pulldown-cmark pipeline. Preserves single blank lines between blocks
+/// for readability, but collapses consecutive blanks and drops leading/trailing ones.
 pub fn render_markdown_lines(text: &str) -> Vec<ContentLine> {
     let theme = TuiTheme::default();
-    project_markdown_to_lines(text)
+    let projected: Vec<ContentLine> = project_markdown_to_lines(text)
         .into_iter()
-        .filter(|line| line.width() > 0)
         .map(|line| line_to_content_line(&line, &theme))
-        .collect()
+        .collect();
+
+    // Collapse consecutive blank lines to at most one, strip leading/trailing blanks
+    let mut result = Vec::with_capacity(projected.len());
+    let mut prev_blank = false;
+    for line in projected {
+        let is_blank = line.spans.is_empty();
+        if is_blank {
+            if !prev_blank && !result.is_empty() {
+                result.push(line);
+            }
+            prev_blank = true;
+        } else {
+            result.push(line);
+            prev_blank = false;
+        }
+    }
+    // Trim trailing blank
+    if result.last().is_some_and(|l| l.spans.is_empty()) {
+        result.pop();
+    }
+    result
 }
 
 fn line_to_content_line(line: &Line<'static>, theme: &TuiTheme) -> ContentLine {
