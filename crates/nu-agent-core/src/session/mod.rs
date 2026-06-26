@@ -1,3 +1,4 @@
+pub mod journal;
 pub mod resolver;
 mod store;
 
@@ -5,6 +6,11 @@ mod store;
 #[path = "store_test.rs"]
 mod store_test;
 
+#[cfg(test)]
+#[path = "journal_test.rs"]
+mod journal_test;
+
+pub use journal::JournalConversationMemory;
 pub use store::{
     CompactionMarker, ConversationStore, JsonlConversationStore, StoreEntry, extract_llm_context,
 };

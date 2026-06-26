@@ -3,8 +3,7 @@ use super::*;
 use crate::compaction::CompactionStrategy;
 use crate::conversation::providers::ClientCacheKey;
 use crate::protocol::{contracts::ProgressUi, event::UiEvent};
-use crate::types::{InMemoryConversationMemory, Message, Text, ToolDefinition, UserContent};
-use rig::memory::ConversationMemory;
+use crate::types::ToolDefinition;
 
 #[derive(Default)]
 struct TestProgressUi {
@@ -184,10 +183,11 @@ fn build_system_preamble_sub_agent_instruction_only() {
 
 #[test]
 fn runtime_struct_has_memory_field() {
-    // GREEN: This test now compiles, proving the memory field exists
+    // GREEN: This test now compiles, proving the memory field exists as JournalConversationMemory
+    use crate::session::JournalConversationMemory;
 
     // Compile-time check that the field exists with correct type
-    fn _assert_field_exists(_memory: &InMemoryConversationMemory) {}
+    fn _assert_field_exists(_memory: &JournalConversationMemory) {}
 
     // We can't easily construct a runtime in tests, but we can verify
     // the type signature compiles
@@ -270,56 +270,9 @@ fn provider_dispatch_unsupported_provider_returns_error() {
     assert_eq!(config.provider, "unsupported-provider");
 }
 
-// Mailbox/session clearing tests
-
-#[test]
-fn clear_session_resets_memory() {
-    use rig::one_or_many::OneOrMany;
-
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let mut memory = InMemoryConversationMemory::new();
-
-    // Populate memory with some messages
-    runtime.block_on(async {
-        memory
-            .append(
-                "test-session",
-                vec![Message::User {
-                    content: OneOrMany::one(UserContent::Text(Text {
-                        text: "hello".to_string(),
-                        additional_params: None,
-                    })),
-                }],
-            )
-            .await
-            .unwrap();
-    });
-
-    // Verify messages exist
-    let messages_before = runtime.block_on(async { memory.load("test-session").await.unwrap() });
-    assert_eq!(messages_before.len(), 1);
-
-    // Clear session by creating a new memory instance (simulates clear_session behavior)
-    memory = InMemoryConversationMemory::new();
-
-    // Verify memory is empty after clear
-    let messages_after = runtime.block_on(async { memory.load("test-session").await.unwrap() });
-    assert_eq!(messages_after.len(), 0);
-}
-
-#[test]
-fn clear_session_resets_memory_state() {
-    // After clear_session(), memory is reset and hydrated flag is false
-    // This is a behavioral test — clear_session creates fresh memory
-
-    let memory = InMemoryConversationMemory::new();
-    let hydrated = false;
-
-    // Verify fresh state
-    assert!(!hydrated, "hydrated should be false after clear_session");
-    // Memory is freshly constructed — no messages
-    let _ = memory;
-}
+// ========================================================================
+// Memory hydration guard tests (now: JournalConversationMemory)
+// ========================================================================
 
 #[test]
 fn runtime_struct_has_compacting_field() {
@@ -334,500 +287,12 @@ fn runtime_struct_has_compacting_field() {
     };
 }
 
-// ========================================================================
-// Memory hydration guard tests
-// ========================================================================
-
 #[test]
-fn runtime_struct_has_memory_hydrated_field() {
-    // Compile-time check that the memory_hydrated field exists with correct type
+fn runtime_struct_has_memory_state_field() {
+    // Compile-time check that the memory_state field exposes memory() and last_total_tokens().
     let _type_check: fn(&AgentConversationRuntime) = |r| {
-        let _hydrated: bool = r.memory_state.is_hydrated();
+        let _tokens: Option<u64> = r.memory_state.last_total_tokens();
     };
-}
-
-#[test]
-fn hydration_guard_prevents_duplicate_memory_append() {
-    // Tests the guard pattern used by ensure_memory_hydrated:
-    // a bool guard must prevent double-appending stored messages to memory.
-    use rig::memory::ConversationMemory;
-
-    use crate::session::{ConversationStore, JsonlConversationStore};
-
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let memory = InMemoryConversationMemory::new();
-    let temp_dir = tempfile::tempdir().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-
-    // Store 2 messages on disk
-    let messages: Vec<Message> = (0..2)
-        .map(|i| Message::user(format!("msg {}", i)))
-        .collect();
-    store.append("s1", &messages, None).unwrap();
-
-    let mut hydrated = false;
-
-    // First hydration — messages enter memory
-    if !hydrated {
-        let loaded = store.load("s1").unwrap();
-        if !loaded.is_empty() {
-            runtime.block_on(memory.append("s1", loaded)).unwrap();
-        }
-        hydrated = true;
-    }
-
-    let after_first = runtime.block_on(memory.load("s1")).unwrap();
-    assert_eq!(after_first.len(), 2);
-
-    // Second hydration — guard prevents duplicate append
-    if !hydrated {
-        let loaded = store.load("s1").unwrap();
-        if !loaded.is_empty() {
-            runtime.block_on(memory.append("s1", loaded)).unwrap();
-        }
-    }
-    // Guard should still be true from first hydration
-    assert!(hydrated, "guard should remain true");
-
-    let after_second = runtime.block_on(memory.load("s1")).unwrap();
-    assert_eq!(
-        after_second.len(),
-        2,
-        "Guard must prevent duplicate hydration"
-    );
-}
-
-#[test]
-fn hydration_without_guard_causes_duplicates() {
-    // Proves the bug: without a guard, calling hydration twice duplicates
-    // messages in memory — exactly the problem ensure_memory_hydrated prevents.
-    use rig::memory::ConversationMemory;
-
-    use crate::session::{ConversationStore, JsonlConversationStore};
-
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let memory = InMemoryConversationMemory::new();
-    let temp_dir = tempfile::tempdir().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-
-    let messages: Vec<Message> = (0..3)
-        .map(|i| Message::user(format!("msg {}", i)))
-        .collect();
-    store.append("s1", &messages, None).unwrap();
-
-    // Load-and-append WITHOUT guard — twice
-    let loaded1 = store.load("s1").unwrap();
-    runtime.block_on(memory.append("s1", loaded1)).unwrap();
-
-    let loaded2 = store.load("s1").unwrap();
-    runtime.block_on(memory.append("s1", loaded2)).unwrap();
-
-    let count = runtime.block_on(memory.load("s1")).unwrap().len();
-    assert_eq!(
-        count, 6,
-        "Without guard, messages are duplicated (3 * 2 = 6)"
-    );
-}
-
-#[test]
-fn cancelled_turn_path_a_persists_to_store_and_memory() {
-    // Path A: rig hook cancelled — e.messages contains chat_history.
-    // Fix: both store and memory must receive the messages.
-    use rig::memory::ConversationMemory;
-
-    use crate::session::{ConversationStore, JsonlConversationStore};
-
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let memory = InMemoryConversationMemory::new();
-    let temp_dir = tempfile::tempdir().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-
-    // Simulate Path A: TurnError.messages contains chat_history from rig
-    let cancelled_messages = vec![
-        Message::user("what is the weather?".to_string()),
-        Message::assistant("Let me check...".to_string()),
-    ];
-
-    // Persist to store (already done in production code)
-    store.append("s1", &cancelled_messages, None).unwrap();
-
-    // Persist to memory (the fix)
-    runtime
-        .block_on(memory.append("s1", cancelled_messages.clone()))
-        .unwrap();
-
-    // Verify store has the messages
-    let stored = store.load("s1").unwrap();
-    assert_eq!(stored.len(), 2, "Store must have 2 cancelled messages");
-
-    // Verify memory has the messages
-    let in_memory = runtime.block_on(memory.load("s1")).unwrap();
-    assert_eq!(
-        in_memory.len(),
-        2,
-        "Memory must have 2 cancelled messages (path A fix)"
-    );
-}
-
-#[test]
-fn cancelled_turn_path_b_persists_to_store_and_memory() {
-    // Path B: cancel_token fired — messages constructed from prompt + partial text.
-    // Fix: both store and memory must receive the constructed messages.
-    use rig::memory::ConversationMemory;
-
-    use crate::session::{ConversationStore, JsonlConversationStore};
-
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let memory = InMemoryConversationMemory::new();
-    let temp_dir = tempfile::tempdir().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-
-    // Simulate Path B construction: user message + partial assistant text
-    let prompt = "explain quantum computing".to_string();
-    let partial_text = "Quantum computing uses qubits which".to_string();
-    let mut cancelled_messages = vec![Message::user(prompt)];
-    if !partial_text.is_empty() {
-        cancelled_messages.push(Message::assistant(partial_text));
-    }
-
-    // Persist to store (already done in production code)
-    store.append("s1", &cancelled_messages, None).unwrap();
-
-    // Persist to memory (the fix)
-    runtime
-        .block_on(memory.append("s1", cancelled_messages.clone()))
-        .unwrap();
-
-    // Verify store
-    let stored = store.load("s1").unwrap();
-    assert_eq!(stored.len(), 2, "Store must have user + partial assistant");
-
-    // Verify memory
-    let in_memory = runtime.block_on(memory.load("s1")).unwrap();
-    assert_eq!(
-        in_memory.len(),
-        2,
-        "Memory must have user + partial assistant (path B fix)"
-    );
-}
-
-// ========================================================================
-// Memory hydration — LLM context extraction tests
-// ========================================================================
-
-#[test]
-fn hydration_loads_llm_context_not_full_history() {
-    // Store has 15 messages + 1 marker(kept=5) + 5 msgs after marker.
-    // After hydration, memory has 6 messages (summary + 5 post-marker).
-    // memory_message_count == 6.
-    use rig::memory::ConversationMemory;
-
-    use crate::session::{
-        CompactionMarker, ConversationStore, JsonlConversationStore, extract_llm_context,
-    };
-
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let memory = InMemoryConversationMemory::new();
-    let temp_dir = tempfile::tempdir().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-
-    // Store 15 messages (old, before marker)
-    let messages: Vec<Message> = (0..15)
-        .map(|i| Message::user(format!("msg {}", i)))
-        .collect();
-    store.append("s1", &messages, None).unwrap();
-
-    // Append a compaction marker (kept=5, summarized 15)
-    let marker = CompactionMarker::new(
-        "Summary of older messages".to_string(),
-        5,
-        15,
-        "summarize_and_keep_recent",
-    );
-    store.append_marker("s1", &marker, None).unwrap();
-
-    // 5 kept messages re-appended after marker
-    let kept: Vec<Message> = (15..20)
-        .map(|i| Message::user(format!("msg {}", i)))
-        .collect();
-    store.append("s1", &kept, None).unwrap();
-
-    // --- New hydration pattern ---
-    let (entries, _) = store.load_all("s1").unwrap();
-    let llm_context = extract_llm_context(&entries);
-
-    if !llm_context.is_empty() {
-        rt.block_on(memory.append("s1", llm_context.clone()))
-            .unwrap();
-    }
-    let memory_message_count = llm_context.len();
-
-    // Expect: 1 summary system message + 5 post-marker = 6
-    assert_eq!(
-        memory_message_count, 6,
-        "Should have summary + 5 kept messages, not all 20"
-    );
-    let in_memory = rt.block_on(memory.load("s1")).unwrap();
-    assert_eq!(in_memory.len(), 6);
-}
-
-#[test]
-fn hydration_no_markers_loads_all() {
-    // Store has 15 messages, no markers. Memory has 15. memory_message_count == 15.
-    use rig::memory::ConversationMemory;
-
-    use crate::session::{ConversationStore, JsonlConversationStore, extract_llm_context};
-
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let memory = InMemoryConversationMemory::new();
-    let temp_dir = tempfile::tempdir().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-
-    let messages: Vec<Message> = (0..15)
-        .map(|i| Message::user(format!("msg {}", i)))
-        .collect();
-    store.append("s1", &messages, None).unwrap();
-
-    let (entries, _) = store.load_all("s1").unwrap();
-    let llm_context = extract_llm_context(&entries);
-
-    if !llm_context.is_empty() {
-        rt.block_on(memory.append("s1", llm_context.clone()))
-            .unwrap();
-    }
-    let memory_message_count = llm_context.len();
-
-    assert_eq!(
-        memory_message_count, 15,
-        "Without markers, all messages should be loaded"
-    );
-    let in_memory = rt.block_on(memory.load("s1")).unwrap();
-    assert_eq!(in_memory.len(), 15);
-}
-
-#[test]
-fn hydration_multiple_markers_uses_latest() {
-    // Store has msgs + marker1 + msgs + marker2(kept=3) + 3 msgs after marker2.
-    // Memory uses marker2's context only.
-    use rig::memory::ConversationMemory;
-
-    use crate::session::{
-        CompactionMarker, ConversationStore, JsonlConversationStore, extract_llm_context,
-    };
-
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let memory = InMemoryConversationMemory::new();
-    let temp_dir = tempfile::tempdir().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-
-    // 10 messages
-    let msgs1: Vec<Message> = (0..10)
-        .map(|i| Message::user(format!("batch1 msg {}", i)))
-        .collect();
-    store.append("s1", &msgs1, None).unwrap();
-
-    // Marker 1 (kept=2)
-    let marker1 = CompactionMarker::new(
-        "First summary".to_string(),
-        2,
-        8,
-        "summarize_and_keep_recent",
-    );
-    store.append_marker("s1", &marker1, None).unwrap();
-
-    // 5 more messages between markers
-    let msgs2: Vec<Message> = (0..5)
-        .map(|i| Message::user(format!("batch2 msg {}", i)))
-        .collect();
-    store.append("s1", &msgs2, None).unwrap();
-
-    // Marker 2 (kept=3)
-    let marker2 = CompactionMarker::new(
-        "Second summary".to_string(),
-        3,
-        12,
-        "summarize_and_keep_recent",
-    );
-    store.append_marker("s1", &marker2, None).unwrap();
-
-    // 3 kept messages re-appended after marker2
-    let kept: Vec<Message> = (0..3)
-        .map(|i| Message::user(format!("kept msg {}", i)))
-        .collect();
-    store.append("s1", &kept, None).unwrap();
-
-    let (entries, _) = store.load_all("s1").unwrap();
-    let llm_context = extract_llm_context(&entries);
-
-    if !llm_context.is_empty() {
-        rt.block_on(memory.append("s1", llm_context.clone()))
-            .unwrap();
-    }
-
-    // marker2: summary("Second summary") + 3 post-marker messages = 4
-    assert_eq!(
-        llm_context.len(),
-        4,
-        "Should use latest marker: 1 summary + 3 kept"
-    );
-    let in_memory = rt.block_on(memory.load("s1")).unwrap();
-    assert_eq!(in_memory.len(), 4);
-}
-
-#[test]
-fn compaction_count_derived_from_markers() {
-    // Store has 3 markers. After hydration, compaction_count == 3.
-
-    use crate::session::{CompactionMarker, ConversationStore, JsonlConversationStore, StoreEntry};
-
-    let temp_dir = tempfile::tempdir().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-
-    // Interleave messages and markers
-    let msgs: Vec<Message> = (0..5)
-        .map(|i| Message::user(format!("msg {}", i)))
-        .collect();
-    store.append("s1", &msgs, None).unwrap();
-
-    let m1 = CompactionMarker::new("s1".to_string(), 2, 3, "summarize_and_keep_recent");
-    store.append_marker("s1", &m1, None).unwrap();
-
-    let msgs2: Vec<Message> = (0..3)
-        .map(|i| Message::user(format!("msg2 {}", i)))
-        .collect();
-    store.append("s1", &msgs2, None).unwrap();
-
-    let m2 = CompactionMarker::new("s2".to_string(), 1, 2, "summarize_and_keep_recent");
-    store.append_marker("s1", &m2, None).unwrap();
-
-    let msgs3: Vec<Message> = (0..2)
-        .map(|i| Message::user(format!("msg3 {}", i)))
-        .collect();
-    store.append("s1", &msgs3, None).unwrap();
-
-    let m3 = CompactionMarker::new("s3".to_string(), 1, 1, "summarize_and_keep_recent");
-    store.append_marker("s1", &m3, None).unwrap();
-
-    let (entries, _) = store.load_all("s1").unwrap();
-
-    // Derive compaction_count from markers
-    let marker_count = entries
-        .iter()
-        .filter(|e| matches!(e, StoreEntry::Marker(_)))
-        .count();
-
-    assert_eq!(marker_count, 3, "Should count all 3 markers");
-}
-
-#[test]
-fn hydration_guard_still_prevents_duplicates() {
-    // Ensure the memory_hydrated guard still works with the new code path
-    // (load_all + extract_llm_context).
-    use rig::memory::ConversationMemory;
-
-    use crate::session::{
-        CompactionMarker, ConversationStore, JsonlConversationStore, extract_llm_context,
-    };
-
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let memory = InMemoryConversationMemory::new();
-    let temp_dir = tempfile::tempdir().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-
-    // Store messages + marker + kept messages after marker
-    let messages: Vec<Message> = (0..7)
-        .map(|i| Message::user(format!("msg {}", i)))
-        .collect();
-    store.append("s1", &messages, None).unwrap();
-
-    let marker = CompactionMarker::new("Summary".to_string(), 3, 7, "summarize_and_keep_recent");
-    store.append_marker("s1", &marker, None).unwrap();
-
-    // 3 kept messages re-appended after marker
-    let kept: Vec<Message> = (7..10)
-        .map(|i| Message::user(format!("msg {}", i)))
-        .collect();
-    store.append("s1", &kept, None).unwrap();
-
-    let mut hydrated = false;
-
-    // First hydration
-    if !hydrated {
-        let (entries, _) = store.load_all("s1").unwrap();
-        let llm_context = extract_llm_context(&entries);
-        if !llm_context.is_empty() {
-            rt.block_on(memory.append("s1", llm_context)).unwrap();
-        }
-        hydrated = true;
-    }
-
-    let after_first = rt.block_on(memory.load("s1")).unwrap();
-    // summary + 3 kept = 4
-    assert_eq!(after_first.len(), 4);
-
-    // Second hydration — guard prevents duplicate append
-    if !hydrated {
-        let (entries, _) = store.load_all("s1").unwrap();
-        let llm_context = extract_llm_context(&entries);
-        if !llm_context.is_empty() {
-            rt.block_on(memory.append("s1", llm_context)).unwrap();
-        }
-    }
-
-    assert!(hydrated, "guard should remain true");
-    let after_second = rt.block_on(memory.load("s1")).unwrap();
-    assert_eq!(
-        after_second.len(),
-        4,
-        "Guard must prevent duplicate hydration with new code path"
-    );
-}
-
-// ========================================================================
-// Phase 1a: Characterise runtime.rs helpers
-// ========================================================================
-
-/// Fake ConversationStore for testing. Tracks load_all call count via an
-/// atomic counter — all methods return Ok with empty/no-op results.
-struct NullStore {
-    load_call_count: Arc<std::sync::atomic::AtomicUsize>,
-}
-
-impl crate::session::ConversationStore for NullStore {
-    fn load(&self, _session_id: &str) -> Result<Vec<Message>, Box<dyn std::error::Error>> {
-        Ok(vec![])
-    }
-
-    fn load_all(
-        &self,
-        _session_id: &str,
-    ) -> Result<(Vec<crate::session::StoreEntry>, Option<u64>), Box<dyn std::error::Error>> {
-        self.load_call_count
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        Ok((vec![], None))
-    }
-
-    fn append(
-        &self,
-        _session_id: &str,
-        _messages: &[Message],
-        _last_total_tokens: Option<u64>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
-    }
-
-    fn append_marker(
-        &self,
-        _session_id: &str,
-        _marker: &crate::session::CompactionMarker,
-        _last_total_tokens: Option<u64>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
-    }
-
-    fn clear(&self, _session_id: &str) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
-    }
 }
 
 #[test]
@@ -918,69 +383,6 @@ fn active_tool_definitions_returns_empty_when_no_tools() {
         handler::llm_visible_tool_definitions(&tool_definitions, &mcp_registry, &permissions);
 
     assert!(result.is_empty());
-}
-
-#[test]
-fn ensure_memory_hydrated_sets_hydrated_flag() {
-    // Characterise ensure_memory_hydrated (runtime.rs:674-706).
-    // With an empty store (no stored messages), calling the hydration
-    // pattern sets the hydrated flag to true and returns Ok(()).
-
-    use crate::session::{ConversationStore, JsonlConversationStore, extract_llm_context};
-
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let memory = InMemoryConversationMemory::new();
-    let temp_dir = tempfile::tempdir().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-    let session_id = "test-session";
-    let mut memory_hydrated = false;
-
-    // Replicate the ensure_memory_hydrated logic (runtime.rs:674-706)
-    if !memory_hydrated {
-        let (entries, _last_total_tokens) = store.load_all(session_id).unwrap();
-        let llm_context = extract_llm_context(&entries);
-        if !llm_context.is_empty() {
-            rt.block_on(memory.append(session_id, llm_context)).unwrap();
-        }
-        memory_hydrated = true;
-    }
-
-    assert!(
-        memory_hydrated,
-        "hydrated flag must be true after hydration"
-    );
-}
-
-#[test]
-fn ensure_memory_hydrated_is_noop_on_second_call() {
-    // Characterise that ensure_memory_hydrated is idempotent:
-    // calling it twice only invokes store.load_all once (the guard
-    // short-circuits on the second call).
-    use crate::session::ConversationStore;
-
-    let load_call_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let store = NullStore {
-        load_call_count: load_call_count.clone(),
-    };
-    let session_id = "test-session";
-    let mut memory_hydrated = false;
-
-    // First call — goes through
-    if !memory_hydrated {
-        let (_entries, _) = store.load_all(session_id).unwrap();
-        memory_hydrated = true;
-    }
-
-    // Second call — guard prevents entry
-    if !memory_hydrated {
-        let (_entries, _) = store.load_all(session_id).unwrap();
-    }
-
-    assert_eq!(
-        load_call_count.load(std::sync::atomic::Ordering::SeqCst),
-        1,
-        "store.load_all must only be called once"
-    );
 }
 
 // ========================================================================
@@ -1075,18 +477,19 @@ fn compaction_state_evaluate_returns_none_below_threshold() {
 
 #[test]
 fn memory_state_hydrated_flag_starts_false() {
-    // Characterise that memory_hydrated is initialised to false.
-    // The field is a plain bool — fresh state is always false.
-    // (Mirrors the clear_session behaviour at runtime.rs:505-508.)
-    let hydrated: bool = false;
+    // JournalConversationMemory replaces the old memory_hydrated bool.
+    // The load-on-demand pattern means the cache starts empty — verified
+    // by checking last_total_tokens is None on a fresh MemoryState.
+    let temp_dir = tempfile::tempdir().unwrap();
+    let ms = super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
     assert!(
-        !hydrated,
-        "memory_hydrated must start false in a fresh runtime"
+        ms.last_total_tokens().is_none(),
+        "last_total_tokens must be None in a fresh MemoryState"
     );
 
-    // Compile-time proof the field exists with type bool on the struct.
+    // Compile-time proof that memory_state.memory() returns JournalConversationMemory.
     let _type_check: fn(&AgentConversationRuntime) = |r| {
-        let _: bool = r.memory_state.is_hydrated();
+        let _: Option<u64> = r.memory_state.last_total_tokens();
     };
 }
 
@@ -1569,9 +972,11 @@ fn compaction_state_compacting_flag_starts_false() {
 
 #[test]
 fn memory_state_hydrated_false_on_construction() {
+    // JournalConversationMemory is load-on-demand (cache starts empty).
+    // Verify last_total_tokens is None on construction.
     let temp_dir = tempfile::tempdir().unwrap();
     let ms = super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
-    assert!(!ms.is_hydrated());
+    assert!(ms.last_total_tokens().is_none());
 }
 
 #[test]

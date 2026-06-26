@@ -13,10 +13,11 @@ use tokio::runtime::Runtime;
 
 use super::*;
 use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
+use crate::session::JournalConversationMemory;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
 use crate::types::{
-    AssistantContent, InMemoryConversationMemory, Message, Text, ToolCall, ToolFunction,
+    AssistantContent, Message, Text, ToolCall, ToolFunction,
     ToolResultContent, UserContent,
 };
 
@@ -106,10 +107,12 @@ fn make_turn_context<'a>(
     runtime: &'a tokio::runtime::Handle,
     model: MockCompletionModel,
 ) -> TurnContext<'a, MockCompletionModel> {
-    let memory = InMemoryConversationMemory::new();
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let conversation = TurnConversation {
         memory,
         conversation_id: "test-conv".to_string(),
+        has_session: true,
     };
     let input = TurnInput {
         prompt: "Hello".to_string(),
@@ -309,10 +312,11 @@ fn turn_context_always_has_tool_server_handle() {
     let _handle_clone = handle.clone();
 }
 
-/// Test that TurnContext uses InMemoryConversationMemory.
+/// Test that TurnContext uses JournalConversationMemory.
 #[test]
 fn turn_context_uses_memory_instead_of_history_vec() {
-    let memory = InMemoryConversationMemory::new();
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let conversation_id = "test-conversation-123".to_string();
     let _memory_clone = memory.clone();
     let _id_clone = conversation_id.clone();
@@ -748,5 +752,134 @@ fn cancel_preserves_multiple_tool_use_cycles() {
         messages.len(),
         chat_history.len(),
         "Every single message in accumulated history should survive cancellation"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// has_session guard: transient turns must not write JSONL to disk
+// ---------------------------------------------------------------------------
+
+/// Transient turn (`has_session = false`) must NOT create any JSONL file.
+///
+/// Before the fix, rig called `memory.append()` unconditionally at turn end,
+/// writing a `transient-{millis}.jsonl` file that accumulates indefinitely.
+/// After the fix, `.memory()` is omitted from the rig `AgentBuilder` when
+/// `has_session = false`, so `memory.append()` is never called.
+#[test]
+fn transient_turn_does_not_write_jsonl() {
+    let rt = Runtime::new().expect("failed to create tokio runtime");
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let sessions_path = temp_dir.path().to_path_buf();
+
+    let memory = JournalConversationMemory::new(sessions_path.clone());
+    let conversation = TurnConversation {
+        memory,
+        conversation_id: format!(
+            "transient-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis()
+        ),
+        has_session: false,
+    };
+    let input = TurnInput {
+        prompt: "Hello".to_string(),
+        preamble: None,
+        max_turns: None,
+    };
+    let tool_infra = executor::ToolInfra {
+        closure_registry: Arc::new(ClosureRegistry::new()),
+        mcp_registry: Arc::new(McpToolRegistry::from_names::<[&str; 0], &str>([])),
+        tool_server_handle: rig::tool::server::ToolServer::new().run(),
+        visible_tool_definitions: vec![],
+    };
+    let model = MockCompletionModel::from_stream_turns([[
+        MockStreamEvent::Text("Hello, world!".to_string()),
+        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+    ]]);
+    let ctx = TurnContext::new(rt.handle(), model, conversation, input, tool_infra);
+    let mut ui = MockUi::new();
+    let resolver = MockResolver(PermissionDecision::Allow);
+
+    let result = execute_turn(ctx, &mut ui, resolver).expect("execute_turn should succeed");
+    assert!(!result.cancelled, "transient turn should not be cancelled");
+
+    // After the turn, the sessions directory must contain NO JSONL files.
+    let jsonl_files: Vec<_> = std::fs::read_dir(&sessions_path)
+        .expect("sessions dir must be readable")
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            entry
+                .path()
+                .extension()
+                .is_some_and(|ext| ext == "jsonl")
+        })
+        .collect();
+
+    assert!(
+        jsonl_files.is_empty(),
+        "transient turn must not write any JSONL file; found: {:?}",
+        jsonl_files
+            .iter()
+            .map(|e| e.path())
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Persistent turn (`has_session = true`) MUST create a JSONL file for the session.
+///
+/// Verifies that the guard does not accidentally suppress JSONL writes for real
+/// sessions — only transient invocations are exempted.
+#[test]
+fn persistent_turn_writes_jsonl() {
+    let rt = Runtime::new().expect("failed to create tokio runtime");
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let sessions_path = temp_dir.path().to_path_buf();
+    let session_id = "test-persistent-session";
+
+    let memory = JournalConversationMemory::new(sessions_path.clone());
+    let conversation = TurnConversation {
+        memory,
+        conversation_id: session_id.to_string(),
+        has_session: true,
+    };
+    let input = TurnInput {
+        prompt: "Hello".to_string(),
+        preamble: None,
+        max_turns: None,
+    };
+    let tool_infra = executor::ToolInfra {
+        closure_registry: Arc::new(ClosureRegistry::new()),
+        mcp_registry: Arc::new(McpToolRegistry::from_names::<[&str; 0], &str>([])),
+        tool_server_handle: rig::tool::server::ToolServer::new().run(),
+        visible_tool_definitions: vec![],
+    };
+    let model = MockCompletionModel::from_stream_turns([[
+        MockStreamEvent::Text("Hello from LLM!".to_string()),
+        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+    ]]);
+    let ctx = TurnContext::new(rt.handle(), model, conversation, input, tool_infra);
+    let mut ui = MockUi::new();
+    let resolver = MockResolver(PermissionDecision::Allow);
+
+    let result = execute_turn(ctx, &mut ui, resolver).expect("execute_turn should succeed");
+    assert!(!result.cancelled, "persistent turn should not be cancelled");
+
+    // After the turn, the sessions directory must contain at least one JSONL file.
+    let jsonl_files: Vec<_> = std::fs::read_dir(&sessions_path)
+        .expect("sessions dir must be readable")
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            entry
+                .path()
+                .extension()
+                .is_some_and(|ext| ext == "jsonl")
+        })
+        .collect();
+
+    assert!(
+        !jsonl_files.is_empty(),
+        "persistent turn must write a JSONL file for the session; sessions dir is empty"
     );
 }

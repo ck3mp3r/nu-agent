@@ -3,49 +3,48 @@ use std::io;
 
 use super::helpers::{estimate_tokens, find_safe_split_index};
 use super::strategy::{CompactionOutcome, CompactionParams, CompactionStrategy};
-use crate::session::{CompactionMarker, ConversationStore, extract_llm_context};
-use crate::types::{InMemoryConversationMemory, Message};
+use crate::session::{CompactionMarker, JournalConversationMemory};
+use crate::types::Message;
+use rig::memory::ConversationMemory;
 
-/// Compacts messages using rig memory and ConversationStore.
+/// Compacts messages using `JournalConversationMemory`.
 ///
 /// This function:
-/// 1. Loads messages from InMemoryConversationMemory
+/// 1. Loads messages from the conversation memory (cache or JSONL on miss)
 /// 2. Splits at `len - keep_recent`
 /// 3. Formats old messages for summarization
 /// 4. Calls summarizer with old messages
 /// 5. Builds compacted list: [Message::system(summary)] + recent
-/// 6. Appends compaction marker to ConversationStore (durable commit point)
-/// 7. Clears memory and appends compacted messages (with rollback on failure)
+/// 6. Appends compaction marker to JSONL (durable commit point)
+/// 7. Appends kept messages to JSONL only (no cache update)
+/// 8. Clears in-memory cache
+/// 9. Resets cache to LLM context (in-memory only — no JSONL write)
 ///
 /// Note: The caller is responsible for incrementing its own compaction_count.
 ///
 /// # Arguments
 /// * `session_id` - The session ID to compact
 /// * `config` - Compaction parameters (thresholds, strategy, budget)
-/// * `memory` - InMemoryConversationMemory containing session messages
-/// * `store` - ConversationStore for persistent JSONL storage
+/// * `memory` - `JournalConversationMemory` owning both cache and JSONL store
 /// * `summarizer` - Function that takes rig messages and returns a summary string
 /// * `last_total_tokens` - Optional token count from last LLM response
 ///
 /// # Returns
-/// CompactionOutcome with counts and summary text
+/// `CompactionOutcome` with counts and summary text
 ///
 /// # Errors
 /// Returns an error if memory operations, summarizer, or store operations fail.
-pub async fn compact<F, Fut, S>(
+pub async fn compact<F, Fut>(
     session_id: &str,
     config: &CompactionParams,
-    memory: &InMemoryConversationMemory,
-    store: &S,
+    memory: &JournalConversationMemory,
     summarizer: F,
     last_total_tokens: Option<u64>,
 ) -> io::Result<CompactionOutcome>
 where
     F: FnOnce(&[Message]) -> Fut,
     Fut: Future<Output = io::Result<String>>,
-    S: ConversationStore,
 {
-    use rig::memory::ConversationMemory;
 
     let keep_count = config.keep_recent;
 
@@ -151,38 +150,38 @@ where
         }
     };
 
-    // Append compaction marker to store
+    // Append compaction marker to JSONL only (durable commit point)
     let marker = CompactionMarker::new(
         summary_text.clone(),
         kept_recent_count,
         summarized_count,
         strategy_name,
     );
-    store
+    memory
         .append_marker(session_id, &marker, last_total_tokens)
         .map_err(|e| io::Error::other(e.to_string()))?;
 
-    // Re-append kept messages after the marker so they appear below it in transcript
+    // Re-append kept messages to JSONL only — no in-memory update yet.
+    // This avoids the double-write that would occur if we used memory.append()
+    // after already writing to the store.
     if !store_kept_messages.is_empty() {
-        store
-            .append(session_id, &store_kept_messages, last_total_tokens)
+        memory
+            .append_messages_to_store_only(session_id, &store_kept_messages, last_total_tokens)
             .map_err(|e| io::Error::other(e.to_string()))?;
     }
 
-    // Now update in-memory state
+    // Reset the in-memory cache to the compacted LLM context.
+    // clear() evicts the cache entry; reset_context() refills it from the
+    // already-computed llm_context without touching JSONL again.
     memory
         .clear(session_id)
         .await
         .map_err(|e| io::Error::other(e.to_string()))?;
 
-    // Rollback: if append fails after clear, reload LLM context from store
-    if let Err(e) = memory.append(session_id, llm_context).await {
-        if let Ok((entries, _)) = store.load_all(session_id) {
-            let context = extract_llm_context(&entries);
-            let _ = memory.append(session_id, context).await;
-        }
-        return Err(io::Error::other(e.to_string()));
-    }
+    // reset_context() is infallible (it's a HashMap insert). If this code path
+    // is somehow skipped (defensive), a subsequent load() will re-read JSONL
+    // cleanly because clear() already evicted the stale cache entry.
+    memory.reset_context(session_id, llm_context);
 
     Ok(CompactionOutcome {
         summarized_count,

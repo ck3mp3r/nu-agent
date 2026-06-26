@@ -2,8 +2,9 @@ use std::time::Duration;
 
 use crate::compaction::{CompactionInvocationMode, CompactionOutcome};
 use crate::protocol::{compaction::CompactionTriggerSource, contracts::ProgressUi, event::UiEvent};
-use crate::session::{ConversationStore, Session};
-use crate::types::{AssistantContent, InMemoryConversationMemory, Message, UserContent};
+use crate::session::{JournalConversationMemory, Session};
+use crate::types::{AssistantContent, Message, UserContent};
+use rig::memory::ConversationMemory;
 
 pub(in crate::conversation) const COMPACTION_FAILURE_WARNING: &str =
     "Session compaction failed: sliding_summary summarization unavailable";
@@ -47,39 +48,34 @@ pub(in crate::conversation) struct CompactionInvocation<'a> {
     pub(in crate::conversation) last_total_tokens: Option<u64>,
 }
 
-/// Execute compaction using rig memory and ConversationStore.
+/// Execute compaction using `JournalConversationMemory`.
 ///
 /// This async function:
-/// 1. Loads messages from InMemoryConversationMemory
+/// 1. Loads messages from the conversation memory
 /// 2. Calls the summarizer with old rig messages
-/// 3. Compacts using `Session::compact`
-/// 4. Updates memory and persists to store
+/// 3. Compacts using `compact()`
+/// 4. Updates in-memory state and persists marker + kept messages to JSONL
 ///
 /// # Arguments
 /// * `session` - Session to compact
-/// * `memory` - InMemoryConversationMemory containing messages
-/// * `store` - ConversationStore for persistence
+/// * `memory` - `JournalConversationMemory` owning cache and JSONL store
 /// * `model` - Completion model for summarization
 /// * `ui` - Progress UI for emitting events
 /// * `invocation` - Compaction mode, source label, and token state
 ///
 /// # Returns
 /// Ok(Some(outcome)) on successful compaction, Ok(None) if no compaction needed
-pub(in crate::conversation) async fn execute_compaction<M, S, U>(
+pub(in crate::conversation) async fn execute_compaction<M, U>(
     session: &mut Session,
-    memory: &InMemoryConversationMemory,
-    store: &S,
+    memory: &JournalConversationMemory,
     model: M,
     ui: &mut U,
     invocation: CompactionInvocation<'_>,
 ) -> Result<Option<CompactionOutcome>, String>
 where
     M: rig::completion::CompletionModel + Clone + 'static,
-    S: ConversationStore,
     U: ProgressUi,
 {
-    use rig::memory::ConversationMemory;
-
     // Load messages from memory to check threshold
     let messages = memory
         .load(session.id())
@@ -111,7 +107,6 @@ where
         session.id(),
         session.compaction_config(),
         memory,
-        store,
         summarizer,
         invocation.last_total_tokens,
     )

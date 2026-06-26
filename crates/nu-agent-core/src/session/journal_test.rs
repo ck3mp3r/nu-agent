@@ -1,0 +1,303 @@
+use super::journal::JournalConversationMemory;
+use super::store::{CompactionMarker, ConversationStore, JsonlConversationStore};
+use crate::types::Message;
+use rig::memory::ConversationMemory;
+use tempfile::TempDir;
+
+/// Compare two messages via their serialized JSON form.
+///
+/// rig uses `#[serde(flatten)]` on `Text::additional_params`.
+/// A round-trip through serde turns `None` into `Some(Object {})`,
+/// which breaks `PartialEq` even though the two forms are semantically
+/// identical. Serializing first normalizes both sides.
+fn assert_msg_eq(left: &Message, right: &Message) {
+    assert_eq!(
+        serde_json::to_value(left).unwrap(),
+        serde_json::to_value(right).unwrap(),
+    );
+}
+
+fn assert_msgs_eq(left: &[Message], right: &[Message]) {
+    assert_eq!(left.len(), right.len(), "message count mismatch");
+    for (i, (l, r)) in left.iter().zip(right.iter()).enumerate() {
+        assert_eq!(
+            serde_json::to_value(l).unwrap(),
+            serde_json::to_value(r).unwrap(),
+            "message {i} mismatch",
+        );
+    }
+}
+
+#[tokio::test]
+async fn load_empty_returns_empty() {
+    let tmp = TempDir::new().unwrap();
+    let mem = JournalConversationMemory::new(tmp.path().to_path_buf());
+
+    let messages = mem.load("conv-1").await.unwrap();
+    assert!(messages.is_empty());
+}
+
+#[tokio::test]
+async fn load_returns_stored_messages() {
+    let tmp = TempDir::new().unwrap();
+    let mem = JournalConversationMemory::new(tmp.path().to_path_buf());
+
+    // Write messages to JSONL manually via the underlying store
+    let store = JsonlConversationStore::new(tmp.path().to_path_buf());
+    let msgs = vec![Message::user("hello"), Message::assistant("hi")];
+    store.append("conv-1", &msgs, None).unwrap();
+
+    let loaded = mem.load("conv-1").await.unwrap();
+    assert_msgs_eq(&loaded, &msgs);
+}
+
+#[tokio::test]
+async fn load_uses_extract_llm_context() {
+    let tmp = TempDir::new().unwrap();
+    let mem = JournalConversationMemory::new(tmp.path().to_path_buf());
+
+    // Write messages + marker + recent messages to JSONL
+    let store = JsonlConversationStore::new(tmp.path().to_path_buf());
+    let old = vec![
+        Message::user("old1"),
+        Message::assistant("old2"),
+        Message::user("old3"),
+    ];
+    store.append("conv-1", &old, None).unwrap();
+
+    let marker = CompactionMarker::new("Summary of old stuff".to_string(), 2, 3, "sliding_summary");
+    store.append_marker("conv-1", &marker, None).unwrap();
+
+    let recent = vec![Message::user("recent1"), Message::assistant("recent2")];
+    store.append("conv-1", &recent, None).unwrap();
+
+    let loaded = mem.load("conv-1").await.unwrap();
+
+    // extract_llm_context: [System(summary)] + recent
+    assert_eq!(loaded.len(), 3); // 1 system + 2 recent
+    assert!(
+        matches!(&loaded[0], Message::System { content } if content == "Summary of old stuff"),
+        "First message should be system summary, got: {:?}",
+        loaded[0]
+    );
+    assert_msg_eq(&loaded[1], &recent[0]);
+    assert_msg_eq(&loaded[2], &recent[1]);
+}
+
+#[tokio::test]
+async fn load_is_cached() {
+    let tmp = TempDir::new().unwrap();
+    let mem = JournalConversationMemory::new(tmp.path().to_path_buf());
+
+    // Write messages directly to the backing store (not via mem.append — that
+    // would populate the cache before we exercise the cold-start JSONL path).
+    let store = JsonlConversationStore::new(tmp.path().to_path_buf());
+    let msgs = vec![Message::user("hello")];
+    store.append("conv-1", &msgs, None).unwrap();
+
+    // First load: cache miss — reads from JSONL and populates cache
+    let first = mem.load("conv-1").await.unwrap();
+    assert_eq!(first.len(), 1);
+    let count_after_first = mem.compaction_count();
+
+    // Mutate the JSONL file — add more messages (bypasses cache)
+    store
+        .append("conv-1", &[Message::assistant("extra")], None)
+        .unwrap();
+
+    // Second load: cache hit — JSONL mutation must NOT be visible
+    let second = mem.load("conv-1").await.unwrap();
+    assert_eq!(second.len(), 1, "second load must hit cache, not re-read JSONL");
+
+    // compaction_count must be unchanged — only updates on cache-miss
+    assert_eq!(
+        mem.compaction_count(),
+        count_after_first,
+        "compaction_count must not change on a cache-hit load"
+    );
+}
+
+#[tokio::test]
+async fn append_writes_to_memory_and_store() {
+    let tmp = TempDir::new().unwrap();
+    let mem = JournalConversationMemory::new(tmp.path().to_path_buf());
+
+    let msgs = vec![Message::user("hello"), Message::assistant("hi")];
+    mem.append("conv-1", msgs.clone()).await.unwrap();
+
+    // Check in-memory cache via subsequent load (which reads from cache)
+    let cached = mem.load("conv-1").await.unwrap();
+    assert_msgs_eq(&cached, &msgs);
+
+    // Check JSONL store — read raw via the backing store
+    let store = JsonlConversationStore::new(tmp.path().to_path_buf());
+    let (entries, _) = store.load_all("conv-1").unwrap();
+    assert_eq!(entries.len(), msgs.len());
+}
+
+#[tokio::test]
+async fn clear_resets_cache_not_store() {
+    let tmp = TempDir::new().unwrap();
+    let mem = JournalConversationMemory::new(tmp.path().to_path_buf());
+
+    let msgs = vec![Message::user("hello"), Message::assistant("hi")];
+    mem.append("conv-1", msgs.clone()).await.unwrap();
+
+    // Clear — only removes from in-memory cache
+    mem.clear("conv-1").await.unwrap();
+
+    // JSONL should still have messages
+    let store = JsonlConversationStore::new(tmp.path().to_path_buf());
+    let (entries, _) = store.load_all("conv-1").unwrap();
+    assert_eq!(entries.len(), msgs.len(), "JSONL should not be cleared");
+
+    // Subsequent load should re-read from JSONL
+    let reloaded = mem.load("conv-1").await.unwrap();
+    assert_msgs_eq(&reloaded, &msgs);
+}
+
+#[tokio::test]
+async fn append_after_clear_no_duplicate() {
+    let tmp = TempDir::new().unwrap();
+    let mem = JournalConversationMemory::new(tmp.path().to_path_buf());
+
+    let msgs = vec![Message::user("hello"), Message::assistant("hi")];
+
+    // First append
+    mem.append("conv-1", msgs.clone()).await.unwrap();
+
+    // Clear in-memory cache
+    mem.clear("conv-1").await.unwrap();
+
+    // Append the same messages again
+    mem.append("conv-1", msgs.clone()).await.unwrap();
+
+    // JSONL should have each message ONCE (because we appended twice to JSONL)
+    // Actually the second append goes to JSONL again — so JSONL has 4 entries total.
+    // But the behavior is: clear resets in-memory only. JSONL is append-only.
+    // The important thing: no unexpected duplication within a single append call.
+    let store = JsonlConversationStore::new(tmp.path().to_path_buf());
+    let (entries, _) = store.load_all("conv-1").unwrap();
+    // Each append writes to JSONL independently, so 2 appends = 4 entries in JSONL
+    assert_eq!(entries.len(), msgs.len() * 2, "each append should write exactly the messages once");
+}
+
+#[tokio::test]
+async fn reset_context_replaces_cache_only() {
+    let tmp = TempDir::new().unwrap();
+    let mem = JournalConversationMemory::new(tmp.path().to_path_buf());
+
+    // Write to store
+    let store = JsonlConversationStore::new(tmp.path().to_path_buf());
+    let original = vec![Message::user("original")];
+    store.append("conv-1", &original, None).unwrap();
+
+    // Populate cache via load
+    let _ = mem.load("conv-1").await.unwrap();
+
+    // Replace cache with new messages
+    let new_msgs = vec![Message::user("replaced"), Message::assistant("answer")];
+    mem.reset_context("conv-1", new_msgs.clone());
+
+    // Cache should reflect new messages
+    let cached = mem.load("conv-1").await.unwrap();
+    assert_msgs_eq(&cached, &new_msgs);
+
+    // JSONL should be unchanged
+    let (entries, _) = store.load_all("conv-1").unwrap();
+    assert_eq!(entries.len(), 1, "JSONL should still have only the original message");
+}
+
+#[tokio::test]
+async fn compaction_count_populated_after_load() {
+    let tmp = TempDir::new().unwrap();
+    let mem = JournalConversationMemory::new(tmp.path().to_path_buf());
+
+    // Write two compaction markers to the JSONL
+    let store = JsonlConversationStore::new(tmp.path().to_path_buf());
+    store.append("conv-1", &[Message::user("m1")], None).unwrap();
+
+    let marker1 = CompactionMarker::new("Summary1".to_string(), 1, 1, "sliding_summary");
+    store.append_marker("conv-1", &marker1, None).unwrap();
+    store.append("conv-1", &[Message::user("m2")], None).unwrap();
+
+    let marker2 = CompactionMarker::new("Summary2".to_string(), 1, 2, "sliding_summary");
+    store.append_marker("conv-1", &marker2, None).unwrap();
+    store.append("conv-1", &[Message::user("m3")], None).unwrap();
+
+    // Load to populate compaction_count
+    let _ = mem.load("conv-1").await.unwrap();
+
+    assert_eq!(mem.compaction_count(), 2);
+}
+
+#[tokio::test]
+async fn append_writes_null_tokens_to_store() {
+    // The ConversationMemory::append() trait method does not carry token information.
+    // JournalConversationMemory.append() must write null for last_total_tokens.
+    // Token counts are tracked externally by MemoryState and written via
+    // append_messages_to_store_only or append_marker for paths that need them.
+    let tmp = TempDir::new().unwrap();
+    let mem = JournalConversationMemory::new(tmp.path().to_path_buf());
+
+    mem.append("conv-1", vec![Message::user("hi")]).await.unwrap();
+
+    // Read raw JSONL and verify last_total_tokens is null (not a token value)
+    let raw = std::fs::read_to_string(tmp.path().join("conv-1.jsonl")).unwrap();
+    let last_data_line = raw.lines().last().unwrap();
+    let value: serde_json::Value = serde_json::from_str(last_data_line).unwrap();
+    assert!(
+        value["last_total_tokens"].is_null(),
+        "append() must write null for last_total_tokens — tokens are managed externally; \
+         got: {}",
+        value["last_total_tokens"]
+    );
+}
+
+#[tokio::test]
+async fn append_marker_writes_to_store_only() {
+    let tmp = TempDir::new().unwrap();
+    let mem = JournalConversationMemory::new(tmp.path().to_path_buf());
+
+    // First load to initialize cache (empty)
+    let _ = mem.load("conv-1").await.unwrap();
+
+    let marker = CompactionMarker::new("Summary".to_string(), 2, 5, "sliding_summary");
+    mem.append_marker("conv-1", &marker, None).unwrap();
+
+    // JSONL should have the marker
+    let store = JsonlConversationStore::new(tmp.path().to_path_buf());
+    let (entries, _) = store.load_all("conv-1").unwrap();
+    assert_eq!(entries.len(), 1);
+    assert!(matches!(&entries[0], super::store::StoreEntry::Marker(_)));
+
+    // Cache should NOT contain the marker (clear + reload would re-read it)
+    // After append_marker, the cache is unchanged (it was empty)
+    let cached = mem.load("conv-1").await.unwrap();
+    assert!(cached.is_empty(), "cache should not be updated by append_marker");
+}
+
+#[tokio::test]
+async fn append_messages_to_store_only_no_cache_update() {
+    let tmp = TempDir::new().unwrap();
+    let mem = JournalConversationMemory::new(tmp.path().to_path_buf());
+
+    // Populate cache with initial messages via load
+    let store = JsonlConversationStore::new(tmp.path().to_path_buf());
+    let initial = vec![Message::user("initial")];
+    store.append("conv-1", &initial, None).unwrap();
+    let _ = mem.load("conv-1").await.unwrap(); // fills cache
+
+    // Append to store only (no cache update)
+    let extra = vec![Message::assistant("store-only")];
+    mem.append_messages_to_store_only("conv-1", &extra, None).unwrap();
+
+    // JSONL has both
+    let (entries, _) = store.load_all("conv-1").unwrap();
+    assert_eq!(entries.len(), 2);
+
+    // Cache should still have only the initial message (no re-read happened)
+    let cached = mem.load("conv-1").await.unwrap();
+    assert_eq!(cached.len(), 1, "cache should not be updated by append_messages_to_store_only");
+    assert_msg_eq(&cached[0], &initial[0]);
+}

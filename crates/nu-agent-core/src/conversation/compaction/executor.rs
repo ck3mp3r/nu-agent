@@ -12,14 +12,12 @@ use crate::conversation::providers::{CachedProviderClient, ModelVisitor};
 use crate::protocol::compaction::CompactionTriggerSource;
 use crate::protocol::contracts::ProgressUi;
 use crate::protocol::event::UiEvent;
-use crate::session::{JsonlConversationStore, SessionStore};
-use crate::types::InMemoryConversationMemory;
+use crate::session::{JournalConversationMemory, SessionStore};
 
 pub struct CompactionExecutor<'a> {
     config: &'a Config,
     runtime: &'a tokio::runtime::Runtime,
-    memory: &'a InMemoryConversationMemory,
-    conversation_store: &'a JsonlConversationStore,
+    memory: &'a JournalConversationMemory,
     store: &'a SessionStore,
     last_total_tokens: Option<u64>,
     final_session_id: &'a str,
@@ -29,8 +27,7 @@ impl<'a> CompactionExecutor<'a> {
     pub fn new(
         config: &'a Config,
         runtime: &'a tokio::runtime::Runtime,
-        memory: &'a InMemoryConversationMemory,
-        conversation_store: &'a JsonlConversationStore,
+        memory: &'a JournalConversationMemory,
         store: &'a SessionStore,
         last_total_tokens: Option<u64>,
         final_session_id: &'a str,
@@ -39,7 +36,6 @@ impl<'a> CompactionExecutor<'a> {
             config,
             runtime,
             memory,
-            conversation_store,
             store,
             last_total_tokens,
             final_session_id,
@@ -82,8 +78,7 @@ impl<'a> CompactionExecutor<'a> {
         struct CompactionVisitor<'a, U> {
             source: CompactionTriggerSource,
             runtime: &'a tokio::runtime::Runtime,
-            memory: &'a InMemoryConversationMemory,
-            conversation_store: &'a JsonlConversationStore,
+            memory: &'a JournalConversationMemory,
             session: &'a mut crate::session::Session,
             ui: &'a mut U,
             source_label: &'a str,
@@ -107,7 +102,6 @@ impl<'a> CompactionExecutor<'a> {
                     self.runtime.block_on(execute_compaction(
                         self.session,
                         self.memory,
-                        self.conversation_store,
                         model.clone(),
                         self.ui,
                         CompactionInvocation {
@@ -126,7 +120,6 @@ impl<'a> CompactionExecutor<'a> {
                 source,
                 runtime: self.runtime,
                 memory: self.memory,
-                conversation_store: self.conversation_store,
                 session: &mut session,
                 ui,
                 source_label: &source_label,

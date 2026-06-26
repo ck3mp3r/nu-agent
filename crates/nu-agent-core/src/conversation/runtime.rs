@@ -123,9 +123,6 @@ impl CoreRuntime for AgentConversationRuntime {
             preamble.as_ref().map_or(0, |p| p.len())
         );
 
-        // Hydrate memory from conversation store (idempotent, guarded)
-        self.ensure_memory_hydrated()?;
-
         // Provider dispatch - build model from cached client
         self.provider_state.ensure_client_cached()?;
 
@@ -410,17 +407,6 @@ impl AgentConversationRuntime {
 
     // ── End Phase I accessor methods ────────────────────────────────
 
-    fn ensure_memory_hydrated(&mut self) -> Result<(), LabeledError> {
-        let mut count = self.compaction_state.compaction_count();
-        let result = self.memory_state.ensure_memory_hydrated(
-            self.final_session_id.as_deref(),
-            &self.runtime,
-            &mut count,
-        );
-        self.compaction_state.set_compaction_count(count);
-        result
-    }
-
     fn execute_compaction_event<U: ProgressUi>(
         &mut self,
         ui: &mut U,
@@ -439,7 +425,6 @@ impl AgentConversationRuntime {
         self.provider_state
             .ensure_client_cached()
             .map_err(|e| e.to_string())?;
-        self.ensure_memory_hydrated().map_err(|e| e.to_string())?;
 
         let session_id = self
             .final_session_id
@@ -450,7 +435,6 @@ impl AgentConversationRuntime {
             self.provider_state.config(),
             &self.runtime,
             self.memory_state.memory(),
-            self.memory_state.conversation_store(),
             &self.store,
             self.memory_state.last_total_tokens(),
             session_id,

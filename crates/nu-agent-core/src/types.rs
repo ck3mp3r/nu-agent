@@ -16,5 +16,3 @@ pub use rig::completion::message::{
 // Tool definitions (used in runtime and turn execution)
 pub use rig::completion::ToolDefinition;
 
-// Memory type (used in compaction and turn execution)
-pub use rig::memory::InMemoryConversationMemory;

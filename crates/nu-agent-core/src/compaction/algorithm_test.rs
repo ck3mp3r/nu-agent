@@ -1,14 +1,13 @@
 use super::helpers::{has_tool_call, has_tool_result};
 use super::*;
-use crate::session::{ConversationStore, JsonlConversationStore, StoreEntry, extract_llm_context};
+use crate::session::{JournalConversationMemory, StoreEntry, extract_llm_context};
 use crate::types::{
-    AssistantContent, InMemoryConversationMemory, Message, Text, ToolCall, ToolFunction,
-    ToolResult, ToolResultContent, UserContent,
+    AssistantContent, Message, Text, ToolCall, ToolFunction, ToolResult, ToolResultContent,
+    UserContent,
 };
 use rig::memory::ConversationMemory;
 use rig::one_or_many::OneOrMany;
 use serde_json::json;
-use std::sync::Arc;
 use tempfile::TempDir;
 
 /// Helper: build an Assistant message containing a single ToolCall.
@@ -46,8 +45,7 @@ fn make_tool_result_message(call_id: &str, result_text: &str) -> Message {
 fn compact_splits_at_keep_recent() {
     // RED: Test that compaction loads from memory, splits correctly, and stores back
     let temp_dir = TempDir::new().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-    let memory = Arc::new(InMemoryConversationMemory::new());
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let session_id = "test_session";
 
     // Setup: 10 messages in memory
@@ -76,7 +74,7 @@ fn compact_splits_at_keep_recent() {
     let outcome = tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(async {
-            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+            super::compact(session_id, &config, &memory, summarizer, None).await
         })
         .unwrap();
 
@@ -116,8 +114,7 @@ fn compact_splits_at_keep_recent() {
 fn compact_persists_to_store() {
     // RED: Test that compacted messages are persisted to ConversationStore
     let temp_dir = TempDir::new().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-    let memory = Arc::new(InMemoryConversationMemory::new());
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let session_id = "test_persist";
 
     // Setup: 5 messages
@@ -128,7 +125,6 @@ fn compact_persists_to_store() {
     tokio::runtime::Runtime::new().unwrap().block_on(async {
         memory.append(session_id, messages.clone()).await.unwrap();
     });
-    store.append(session_id, &messages, None).unwrap();
 
     let config = CompactionParams {
         compaction_threshold: 100,
@@ -142,12 +138,12 @@ fn compact_persists_to_store() {
     tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(async {
-            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+            super::compact(session_id, &config, &memory, summarizer, None).await
         })
         .unwrap();
 
     // Verify: store contains all original messages + compaction marker + re-appended kept
-    let (stored, _) = store.load_all(session_id).unwrap();
+    let (stored, _) = memory.load_all(session_id).unwrap();
     assert_eq!(stored.len(), 8); // 5 original + 1 marker + 2 kept
 
     // Marker should be at index 5
@@ -168,8 +164,7 @@ fn compact_persists_to_store() {
 fn compact_handles_insufficient_messages() {
     // RED: Test no-op when messages <= keep_recent
     let temp_dir = TempDir::new().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-    let memory = Arc::new(InMemoryConversationMemory::new());
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let session_id = "test_noop";
 
     // Setup: only 2 messages, keep_recent = 3
@@ -191,7 +186,7 @@ fn compact_handles_insufficient_messages() {
     let outcome = tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(async {
-            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+            super::compact(session_id, &config, &memory, summarizer, None).await
         })
         .unwrap();
 
@@ -212,8 +207,7 @@ fn compact_handles_insufficient_messages() {
 fn compact_clears_before_append() {
     // RED: Test that memory is cleared before appending compacted messages
     let temp_dir = TempDir::new().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-    let memory = Arc::new(InMemoryConversationMemory::new());
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let session_id = "test_clear";
 
     let messages: Vec<Message> = (0..5).map(|i| Message::user(format!("X{}", i))).collect();
@@ -237,7 +231,7 @@ fn compact_clears_before_append() {
     tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(async {
-            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+            super::compact(session_id, &config, &memory, summarizer, None).await
         })
         .unwrap();
 
@@ -256,8 +250,7 @@ fn compact_with_async_summarizer_does_not_panic() {
     // Before the async fix, this would panic with "Cannot start a runtime
     // from within a runtime".
     let temp_dir = TempDir::new().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-    let memory = Arc::new(InMemoryConversationMemory::new());
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let session_id = "test_async_no_panic";
 
     let messages: Vec<Message> = (0..5)
@@ -291,7 +284,7 @@ fn compact_with_async_summarizer_does_not_panic() {
     // that internally awaits the summarizer
     let outcome = rt
         .block_on(async {
-            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+            super::compact(session_id, &config, &memory, summarizer, None).await
         })
         .unwrap();
 
@@ -305,8 +298,7 @@ fn compact_does_not_split_tool_call_result_pair() {
     // Naive split_index = 10 - 3 = 7, which would cut between TC and TR.
     // Safe split should move back to index 6, keeping both in the recent window.
     let temp_dir = TempDir::new().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-    let memory = Arc::new(InMemoryConversationMemory::new());
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let session_id = "test_tool_pair_split";
 
     let messages: Vec<Message> = vec![
@@ -341,7 +333,7 @@ fn compact_does_not_split_tool_call_result_pair() {
     let outcome = tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(async {
-            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+            super::compact(session_id, &config, &memory, summarizer, None).await
         })
         .unwrap();
 
@@ -376,8 +368,7 @@ fn compact_store_written_before_memory() {
     // point that happens BEFORE memory.clear()/memory.append(). This test
     // confirms the store can independently serve as a recovery source.
     let temp_dir = TempDir::new().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-    let memory = Arc::new(InMemoryConversationMemory::new());
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let session_id = "test_store_first";
 
     let messages: Vec<Message> = (0..8)
@@ -387,7 +378,6 @@ fn compact_store_written_before_memory() {
     tokio::runtime::Runtime::new().unwrap().block_on(async {
         memory.append(session_id, messages.clone()).await.unwrap();
     });
-    store.append(session_id, &messages, None).unwrap();
 
     let config = CompactionParams {
         compaction_threshold: 100,
@@ -404,12 +394,12 @@ fn compact_store_written_before_memory() {
     tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(async {
-            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+            super::compact(session_id, &config, &memory, summarizer, None).await
         })
         .unwrap();
 
     // Store must have all original messages + compaction marker + re-appended kept
-    let (stored, _) = store.load_all(session_id).unwrap();
+    let (stored, _) = memory.load_all(session_id).unwrap();
     assert_eq!(stored.len(), 12); // 8 original + 1 marker + 3 kept
 
     // Marker should be at index 8
@@ -427,8 +417,7 @@ fn compact_successful_produces_correct_state() {
     // After a successful compact, memory has LLM context (summary + recent)
     // and store has full append-only history (all messages + marker).
     let temp_dir = TempDir::new().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-    let memory = Arc::new(InMemoryConversationMemory::new());
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let session_id = "test_consistent_state";
 
     let messages: Vec<Message> = (0..6)
@@ -438,7 +427,6 @@ fn compact_successful_produces_correct_state() {
     tokio::runtime::Runtime::new().unwrap().block_on(async {
         memory.append(session_id, messages.clone()).await.unwrap();
     });
-    store.append(session_id, &messages, None).unwrap();
 
     let config = CompactionParams {
         compaction_threshold: 100,
@@ -452,7 +440,7 @@ fn compact_successful_produces_correct_state() {
     tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(async {
-            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+            super::compact(session_id, &config, &memory, summarizer, None).await
         })
         .unwrap();
 
@@ -463,7 +451,7 @@ fn compact_successful_produces_correct_state() {
     assert_eq!(from_memory.len(), 3); // summary + 2 recent
 
     // Store has full history: 6 original messages + 1 marker + 2 kept = 9 entries
-    let (stored_entries, _) = store.load_all(session_id).unwrap();
+    let (stored_entries, _) = memory.load_all(session_id).unwrap();
     assert_eq!(stored_entries.len(), 9);
 
     // extract_llm_context from store should produce the same messages as memory
@@ -482,8 +470,7 @@ fn compact_successful_produces_correct_state() {
 #[test]
 fn compact_sliding_window_keeps_last_n_messages() {
     let temp_dir = TempDir::new().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-    let memory = Arc::new(InMemoryConversationMemory::new());
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let session_id = "test_sliding_window";
 
     let messages: Vec<Message> = (0..10)
@@ -493,7 +480,6 @@ fn compact_sliding_window_keeps_last_n_messages() {
     tokio::runtime::Runtime::new().unwrap().block_on(async {
         memory.append(session_id, messages.clone()).await.unwrap();
     });
-    store.append(session_id, &messages, None).unwrap();
 
     let config = CompactionParams {
         compaction_threshold: 100,
@@ -508,7 +494,7 @@ fn compact_sliding_window_keeps_last_n_messages() {
     let outcome = tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(async {
-            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+            super::compact(session_id, &config, &memory, summarizer, None).await
         })
         .unwrap();
 
@@ -524,7 +510,7 @@ fn compact_sliding_window_keeps_last_n_messages() {
     assert_eq!(final_messages.len(), 3);
 
     // Store should have all original messages + 1 marker + 3 kept
-    let (stored, _) = store.load_all(session_id).unwrap();
+    let (stored, _) = memory.load_all(session_id).unwrap();
     assert_eq!(stored.len(), 14); // 10 original + 1 marker + 3 kept
 
     // Marker should be at index 10
@@ -549,8 +535,7 @@ fn compact_sliding_window_keeps_last_n_messages() {
 #[test]
 fn compact_sliding_window_summarizer_not_called() {
     let temp_dir = TempDir::new().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-    let memory = Arc::new(InMemoryConversationMemory::new());
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let session_id = "test_sliding_window_no_summarizer";
 
     let messages: Vec<Message> = (0..10)
@@ -577,7 +562,7 @@ fn compact_sliding_window_summarizer_not_called() {
     let outcome = tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(async {
-            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+            super::compact(session_id, &config, &memory, summarizer, None).await
         })
         .unwrap();
 
@@ -588,8 +573,7 @@ fn compact_sliding_window_summarizer_not_called() {
 #[test]
 fn compact_sliding_window_preserves_message_order() {
     let temp_dir = TempDir::new().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-    let memory = Arc::new(InMemoryConversationMemory::new());
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let session_id = "test_sliding_window_order";
 
     let messages: Vec<Message> = (0..10)
@@ -612,7 +596,7 @@ fn compact_sliding_window_preserves_message_order() {
     tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(async {
-            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+            super::compact(session_id, &config, &memory, summarizer, None).await
         })
         .unwrap();
 
@@ -638,8 +622,7 @@ fn compact_sliding_window_preserves_message_order() {
 #[test]
 fn compact_token_truncate_drops_oldest_within_budget() {
     let temp_dir = TempDir::new().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-    let memory = Arc::new(InMemoryConversationMemory::new());
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let session_id = "test_token_truncate";
 
     // 5 messages each with 400 chars = ~100 tokens of content each
@@ -666,7 +649,7 @@ fn compact_token_truncate_drops_oldest_within_budget() {
     let _outcome = tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(async {
-            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+            super::compact(session_id, &config, &memory, summarizer, None).await
         })
         .unwrap();
 
@@ -685,8 +668,7 @@ fn compact_token_truncate_drops_oldest_within_budget() {
 #[test]
 fn compact_token_truncate_single_large_message() {
     let temp_dir = TempDir::new().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-    let memory = Arc::new(InMemoryConversationMemory::new());
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let session_id = "test_token_truncate_single";
 
     // 1 message with 4000 chars = ~1000 tokens, budget = 100
@@ -710,7 +692,7 @@ fn compact_token_truncate_single_large_message() {
     let _outcome = tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(async {
-            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+            super::compact(session_id, &config, &memory, summarizer, None).await
         })
         .unwrap();
 
@@ -730,8 +712,7 @@ fn compact_token_truncate_single_large_message() {
 fn compact_appends_marker_preserving_history() {
     // After compact, store.load_all() has all original messages + marker at end
     let temp_dir = TempDir::new().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-    let memory = Arc::new(InMemoryConversationMemory::new());
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let session_id = "test_append_marker";
 
     let messages: Vec<Message> = (0..5)
@@ -741,7 +722,6 @@ fn compact_appends_marker_preserving_history() {
     tokio::runtime::Runtime::new().unwrap().block_on(async {
         memory.append(session_id, messages.clone()).await.unwrap();
     });
-    store.append(session_id, &messages, None).unwrap();
 
     let config = CompactionParams {
         compaction_threshold: 100,
@@ -755,11 +735,11 @@ fn compact_appends_marker_preserving_history() {
     tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(async {
-            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+            super::compact(session_id, &config, &memory, summarizer, None).await
         })
         .unwrap();
 
-    let (entries, _) = store.load_all(session_id).unwrap();
+    let (entries, _) = memory.load_all(session_id).unwrap();
     assert_eq!(entries.len(), 8); // 5 original + 1 marker + 2 kept
 
     // First 5 are messages
@@ -789,8 +769,7 @@ fn compact_appends_marker_preserving_history() {
 fn compact_marker_has_correct_fields() {
     // Check marker.summary, kept_recent_count, summarized_count, strategy
     let temp_dir = TempDir::new().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-    let memory = Arc::new(InMemoryConversationMemory::new());
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let session_id = "test_marker_fields";
 
     let messages: Vec<Message> = (0..8)
@@ -800,7 +779,6 @@ fn compact_marker_has_correct_fields() {
     tokio::runtime::Runtime::new().unwrap().block_on(async {
         memory.append(session_id, messages.clone()).await.unwrap();
     });
-    store.append(session_id, &messages, None).unwrap();
 
     let config = CompactionParams {
         compaction_threshold: 100,
@@ -817,11 +795,11 @@ fn compact_marker_has_correct_fields() {
     tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(async {
-            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+            super::compact(session_id, &config, &memory, summarizer, None).await
         })
         .unwrap();
 
-    let (entries, _) = store.load_all(session_id).unwrap();
+    let (entries, _) = memory.load_all(session_id).unwrap();
     // Marker should be at index 8 (8 original msgs + marker at index 8, then 3 kept after)
     let marker = match &entries[8] {
         StoreEntry::Marker(m) => m,
@@ -838,8 +816,7 @@ fn compact_marker_has_correct_fields() {
 fn compact_memory_has_llm_context_only() {
     // Memory has summary + recent only, not the full history
     let temp_dir = TempDir::new().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-    let memory = Arc::new(InMemoryConversationMemory::new());
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let session_id = "test_memory_llm_context";
 
     let messages: Vec<Message> = (0..7)
@@ -849,7 +826,6 @@ fn compact_memory_has_llm_context_only() {
     tokio::runtime::Runtime::new().unwrap().block_on(async {
         memory.append(session_id, messages.clone()).await.unwrap();
     });
-    store.append(session_id, &messages, None).unwrap();
 
     let config = CompactionParams {
         compaction_threshold: 100,
@@ -863,7 +839,7 @@ fn compact_memory_has_llm_context_only() {
     tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(async {
-            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+            super::compact(session_id, &config, &memory, summarizer, None).await
         })
         .unwrap();
 
@@ -889,8 +865,7 @@ fn compact_memory_has_llm_context_only() {
 fn compact_sliding_window_appends_marker_empty_summary() {
     // SlidingWindow marker has empty summary
     let temp_dir = TempDir::new().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-    let memory = Arc::new(InMemoryConversationMemory::new());
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let session_id = "test_sw_marker_empty";
 
     let messages: Vec<Message> = (0..6)
@@ -900,7 +875,6 @@ fn compact_sliding_window_appends_marker_empty_summary() {
     tokio::runtime::Runtime::new().unwrap().block_on(async {
         memory.append(session_id, messages.clone()).await.unwrap();
     });
-    store.append(session_id, &messages, None).unwrap();
 
     let config = CompactionParams {
         compaction_threshold: 100,
@@ -914,11 +888,11 @@ fn compact_sliding_window_appends_marker_empty_summary() {
     tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(async {
-            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+            super::compact(session_id, &config, &memory, summarizer, None).await
         })
         .unwrap();
 
-    let (entries, _) = store.load_all(session_id).unwrap();
+    let (entries, _) = memory.load_all(session_id).unwrap();
     // Marker at index 6 (6 original + marker), then 2 kept after
     let marker = match &entries[6] {
         StoreEntry::Marker(m) => m,
@@ -933,8 +907,7 @@ fn compact_sliding_window_appends_marker_empty_summary() {
 fn compact_token_truncate_appends_marker_empty_summary() {
     // TokenTruncate marker has empty summary
     let temp_dir = TempDir::new().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-    let memory = Arc::new(InMemoryConversationMemory::new());
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let session_id = "test_tt_marker_empty";
 
     // 5 messages each with 400 chars = ~100 tokens each
@@ -945,7 +918,6 @@ fn compact_token_truncate_appends_marker_empty_summary() {
     tokio::runtime::Runtime::new().unwrap().block_on(async {
         memory.append(session_id, messages.clone()).await.unwrap();
     });
-    store.append(session_id, &messages, None).unwrap();
 
     let config = CompactionParams {
         compaction_threshold: 100,
@@ -961,11 +933,11 @@ fn compact_token_truncate_appends_marker_empty_summary() {
     tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(async {
-            super::compact(session_id, &config, &memory, &store, summarizer, None).await
+            super::compact(session_id, &config, &memory, summarizer, None).await
         })
         .unwrap();
 
-    let (entries, _) = store.load_all(session_id).unwrap();
+    let (entries, _) = memory.load_all(session_id).unwrap();
     // Marker at index 5 (5 original + marker), then kept messages after
     let marker = match &entries[5] {
         StoreEntry::Marker(m) => m,
@@ -980,8 +952,7 @@ fn compact_token_truncate_appends_marker_empty_summary() {
 fn multiple_compactions_append_multiple_markers() {
     // Compact twice, load_all shows original messages + 2 markers
     let temp_dir = TempDir::new().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-    let memory = Arc::new(InMemoryConversationMemory::new());
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let session_id = "test_multi_marker";
 
     let messages: Vec<Message> = (0..10)
@@ -991,7 +962,6 @@ fn multiple_compactions_append_multiple_markers() {
     tokio::runtime::Runtime::new().unwrap().block_on(async {
         memory.append(session_id, messages.clone()).await.unwrap();
     });
-    store.append(session_id, &messages, None).unwrap();
 
     let config = CompactionParams {
         compaction_threshold: 100,
@@ -1005,7 +975,7 @@ fn multiple_compactions_append_multiple_markers() {
     tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(async {
-            super::compact(session_id, &config, &memory, &store, summarizer1, None).await
+            super::compact(session_id, &config, &memory, summarizer1, None).await
         })
         .unwrap();
 
@@ -1021,18 +991,17 @@ fn multiple_compactions_append_multiple_markers() {
             .await
             .unwrap();
     });
-    store.append(session_id, &more_messages, None).unwrap();
 
     // Second compaction
     let summarizer2 = |_: &[Message]| async move { Ok("Summary 2".to_string()) };
     tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(async {
-            super::compact(session_id, &config, &memory, &store, summarizer2, None).await
+            super::compact(session_id, &config, &memory, summarizer2, None).await
         })
         .unwrap();
 
-    let (entries, _) = store.load_all(session_id).unwrap();
+    let (entries, _) = memory.load_all(session_id).unwrap();
 
     // Count markers
     let marker_count = entries
@@ -1045,8 +1014,7 @@ fn multiple_compactions_append_multiple_markers() {
 #[test]
 fn compaction_preserves_last_total_tokens() {
     let temp_dir = TempDir::new().unwrap();
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-    let memory = Arc::new(InMemoryConversationMemory::new());
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let session_id = "test_token_preservation";
 
     // Setup: 6 messages in memory and store
@@ -1057,7 +1025,6 @@ fn compaction_preserves_last_total_tokens() {
     tokio::runtime::Runtime::new().unwrap().block_on(async {
         memory.append(session_id, messages.clone()).await.unwrap();
     });
-    store.append(session_id, &messages, Some(5000)).unwrap();
 
     let config = CompactionParams {
         compaction_threshold: 100,
@@ -1075,7 +1042,6 @@ fn compaction_preserves_last_total_tokens() {
                 session_id,
                 &config,
                 &memory,
-                &store,
                 summarizer,
                 Some(14000),
             )
@@ -1084,6 +1050,75 @@ fn compaction_preserves_last_total_tokens() {
         .unwrap();
 
     // Verify load_all returns Some(14000) as the last total tokens
-    let (_, last_tokens) = store.load_all(session_id).unwrap();
+    let (_, last_tokens) = memory.load_all(session_id).unwrap();
     assert_eq!(last_tokens, Some(14000));
+}
+
+#[tokio::test]
+async fn compact_no_double_write_kept_messages() {
+    let temp_dir = TempDir::new().unwrap();
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
+    let session_id = "test_no_double_write";
+    let config = CompactionParams {
+        compaction_threshold: 5,
+        keep_recent: 3,
+        compaction_strategy: CompactionStrategy::SlidingSummary,
+        token_budget: None,
+    };
+    let messages: Vec<Message> = (0..10).map(|i| Message::user(format!("msg {i}"))).collect();
+    memory.append(session_id, messages).await.unwrap();
+    let summarizer = |_: &[Message]| async { Ok::<_, std::io::Error>("summary".to_string()) };
+    super::compact(session_id, &config, &memory, summarizer, None).await.unwrap();
+    let (entries, _) = memory.load_all(session_id).unwrap();
+    let marker_idx = entries.iter().rposition(|e| matches!(e, StoreEntry::Marker(_))).unwrap();
+    let after_marker = entries[marker_idx + 1..]
+        .iter()
+        .filter(|e| matches!(e, StoreEntry::Message(_)))
+        .count();
+    assert_eq!(after_marker, 3, "kept messages must appear exactly once after marker, not doubled");
+}
+
+#[tokio::test]
+async fn compact_clear_does_not_delete_jsonl() {
+    let temp_dir = TempDir::new().unwrap();
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
+    let session_id = "test_clear_no_delete";
+    let config = CompactionParams {
+        compaction_threshold: 3,
+        keep_recent: 2,
+        compaction_strategy: CompactionStrategy::SlidingSummary,
+        token_budget: None,
+    };
+    let messages: Vec<Message> = (0..5).map(|i| Message::user(format!("msg {i}"))).collect();
+    memory.append(session_id, messages).await.unwrap();
+    let summarizer = |_: &[Message]| async { Ok::<_, std::io::Error>("summary".to_string()) };
+    super::compact(session_id, &config, &memory, summarizer, None).await.unwrap();
+    let (entries, _) = memory.load_all(session_id).unwrap();
+    assert!(!entries.is_empty(), "JSONL must not be empty after compact");
+    assert!(
+        entries.iter().any(|e| matches!(e, StoreEntry::Marker(_))),
+        "JSONL must contain a compaction marker"
+    );
+}
+
+#[tokio::test]
+async fn compact_rollback_clears_cache() {
+    let temp_dir = TempDir::new().unwrap();
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
+    let session_id = "test_rollback";
+    let config = CompactionParams {
+        compaction_threshold: 3,
+        keep_recent: 2,
+        compaction_strategy: CompactionStrategy::SlidingSummary,
+        token_budget: None,
+    };
+    let messages: Vec<Message> = (0..5).map(|i| Message::user(format!("msg {i}"))).collect();
+    memory.append(session_id, messages).await.unwrap();
+    let summarizer = |_: &[Message]| async { Ok::<_, std::io::Error>("summary".to_string()) };
+    super::compact(session_id, &config, &memory, summarizer, None).await.unwrap();
+    let from_cache = memory.load(session_id).await.unwrap();
+    assert!(!from_cache.is_empty());
+    memory.clear(session_id).await.unwrap();
+    let from_jsonl = memory.load(session_id).await.unwrap();
+    assert_eq!(from_cache.len(), from_jsonl.len(), "re-loaded context must match compacted context");
 }

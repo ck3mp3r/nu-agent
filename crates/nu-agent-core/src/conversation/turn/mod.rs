@@ -13,7 +13,8 @@ use crate::hook::agent_hook::AgentHook;
 use crate::hook::permission_resolver::AsyncPermissionResolver;
 use crate::protocol::contracts::ProgressUi;
 use crate::protocol::event::UiEvent;
-use crate::types::{InMemoryConversationMemory, Message, Text, ToolDefinition, UserContent};
+use crate::session::JournalConversationMemory;
+use crate::types::{Message, Text, ToolDefinition, UserContent};
 use rig::streaming::StreamingPrompt;
 use rig::tool::{ToolDyn, ToolError};
 use rig::wasm_compat::WasmBoxedFuture;
@@ -116,8 +117,17 @@ impl From<rig::agent::StreamingError> for TurnError {
 
 /// Context for executing a conversation turn.
 pub struct TurnConversation {
-    pub memory: InMemoryConversationMemory,
+    pub memory: JournalConversationMemory,
     pub conversation_id: String,
+    /// Whether this turn belongs to a persistent session.
+    ///
+    /// When `false` (transient), the rig `AgentBuilder` must NOT receive
+    /// `.memory(...)` — rig would call `memory.append()` at turn end and write
+    /// a `transient-{millis}.jsonl` file that is never reused and never cleaned
+    /// up.  Omitting `.memory()` lets rig manage the turn's history in-memory
+    /// within its own prompt call, which is exactly correct for a stateless
+    /// one-shot invocation.
+    pub has_session: bool,
 }
 
 pub struct TurnInput<'a> {
@@ -255,6 +265,7 @@ where
         prompt: user_message,
         memory: ctx.conversation.memory,
         conversation_id: ctx.conversation.conversation_id,
+        has_session: ctx.conversation.has_session,
         tool_server_handle: ctx.tool_infra.tool_server_handle,
         visible_tool_definitions: ctx.tool_infra.visible_tool_definitions,
         max_turns: ctx.input.max_turns,
@@ -321,8 +332,13 @@ struct AgentPromptConfig<P: AsyncPermissionResolver> {
     hook: AgentHook<P>,
     preamble: Option<String>,
     prompt: Message,
-    memory: InMemoryConversationMemory,
+    memory: JournalConversationMemory,
     conversation_id: String,
+    /// Whether this turn belongs to a persistent session.
+    ///
+    /// When `false`, `.memory()` is NOT attached to the rig `AgentBuilder` so
+    /// rig never calls `memory.append()` and no JSONL file is written to disk.
+    has_session: bool,
     tool_server_handle: rig::tool::server::ToolServerHandle,
     visible_tool_definitions: Vec<ToolDefinition>,
     max_turns: Option<u32>,
@@ -400,12 +416,12 @@ where
         prompt,
         memory,
         conversation_id,
+        has_session,
         tool_server_handle,
         visible_tool_definitions,
         max_turns,
         cancel_token,
     } = config;
-
     // Create proxy tools that expose only the filtered definitions to the LLM
     // while delegating execution to the original shared tool server handle.
     let proxy_tools: Vec<Box<dyn ToolDyn>> = visible_tool_definitions
@@ -421,10 +437,24 @@ where
         })
         .collect();
 
-    let mut builder = rig::agent::AgentBuilder::new(model)
-        .hook(hook)
-        .memory(memory.clone())
-        .tools(proxy_tools);
+    // Only attach memory when this is a persistent session.
+    //
+    // For transient (no-session) invocations, omitting `.memory()` prevents rig
+    // from calling `memory.append()` at turn end — which would otherwise write a
+    // `transient-{millis}.jsonl` file to disk that is never reused and never
+    // cleaned up.  When memory is absent rig manages the turn's history in-memory
+    // within its own prompt call, which is exactly correct for a stateless
+    // one-shot invocation.
+    let mut builder = if has_session {
+        rig::agent::AgentBuilder::new(model)
+            .hook(hook)
+            .memory(memory)
+            .tools(proxy_tools)
+    } else {
+        rig::agent::AgentBuilder::new(model)
+            .hook(hook)
+            .tools(proxy_tools)
+    };
     if let Some(ref p) = preamble {
         builder = builder.preamble(p);
     }

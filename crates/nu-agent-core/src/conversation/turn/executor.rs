@@ -16,10 +16,10 @@ use crate::conversation::turn::{TurnContext, TurnResult, execute_turn, execute_t
 use crate::hook::permission_resolver::AsyncPermissionResolver;
 use crate::protocol::contracts::ProgressUi;
 use crate::protocol::event::UiEvent;
-use crate::session::ConversationStore;
+use crate::session::JournalConversationMemory;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
-use crate::types::{InMemoryConversationMemory, Message, ToolDefinition};
+use crate::types::{Message, ToolDefinition};
 
 /// Outcome of `TurnExecutor::execute` — either a completed turn whose results
 /// have been persisted and whose UI events have been emitted, or an early-exit
@@ -141,6 +141,7 @@ impl<'a> TurnExecutor<'a> {
                 ui,
                 prompt: prompt.clone(),
                 conversation_id,
+                has_session: final_session_id.is_some(),
                 preamble: preamble.clone(),
                 visible_tool_definitions: std::mem::take(
                     &mut self.tool_infra.visible_tool_definitions,
@@ -156,20 +157,15 @@ impl<'a> TurnExecutor<'a> {
                 if let Some(session_id) = final_session_id
                     && let Some(ref messages) = e.messages
                 {
-                    if let Err(persist_err) = self
-                        .memory_state
-                        .conversation_store()
-                        .append(session_id, messages, None)
-                    {
-                        log::warn!("Failed to persist cancelled turn messages: {}", persist_err);
-                    }
+                    // JournalConversationMemory.append() writes both JSONL and
+                    // in-memory cache in a single call — no separate store write needed.
                     if let Err(mem_err) = self.runtime.block_on(
                         self.memory_state
                             .memory_mut()
                             .append(session_id, messages.clone()),
                     ) {
                         log::warn!(
-                            "Failed to update in-memory context for cancelled turn (path A): {}",
+                            "Failed to update context for cancelled turn (path A): {}",
                             mem_err
                         );
                     }
@@ -211,21 +207,16 @@ impl<'a> TurnExecutor<'a> {
         if turn_result.cancelled {
             if let Some(session_id) = final_session_id {
                 if let Some(ref messages) = turn_result.messages {
-                    // Normal path: rig provided chat_history via PromptCancelled
-                    if let Err(e) = self
-                        .memory_state
-                        .conversation_store()
-                        .append(session_id, messages, None)
-                    {
-                        log::warn!("Failed to persist cancelled turn messages (path C): {}", e);
-                    }
+                    // Normal path: rig provided chat_history via PromptCancelled.
+                    // JournalConversationMemory.append() writes both JSONL and in-memory
+                    // cache in one call — no separate conversation_store.append() needed.
                     if let Err(e) = self.runtime.block_on(
                         self.memory_state
                             .memory_mut()
                             .append(session_id, messages.clone()),
                     ) {
                         log::warn!(
-                            "Failed to update in-memory context for cancelled turn (path C): {}",
+                            "Failed to update context for cancelled turn (path C): {}",
                             e
                         );
                     }
@@ -235,23 +226,13 @@ impl<'a> TurnExecutor<'a> {
                     if !turn_result.text.is_empty() {
                         cancelled_messages.push(Message::assistant(turn_result.text.clone()));
                     }
-                    if let Err(e) = self
-                        .memory_state
-                        .conversation_store()
-                        .append(session_id, &cancelled_messages, None)
-                    {
-                        log::warn!(
-                            "Failed to persist cancelled turn messages (path B fallback): {}",
-                            e
-                        );
-                    }
                     if let Err(e) = self.runtime.block_on(
                         self.memory_state
                             .memory_mut()
-                            .append(session_id, cancelled_messages.clone()),
+                            .append(session_id, cancelled_messages),
                     ) {
                         log::warn!(
-                            "Failed to update in-memory context for cancelled turn (path B fallback): {}",
+                            "Failed to update context for cancelled turn (path B fallback): {}",
                             e
                         );
                     }
@@ -281,22 +262,9 @@ impl<'a> TurnExecutor<'a> {
             )));
         }
 
-        // Persist new messages to conversation store if session exists
-        if let Some(session_id) = final_session_id
-            && let Some(ref messages) = turn_result.messages
-        {
-            if let Err(e) = self.memory_state.conversation_store().append(
-                session_id,
-                messages,
-                Some(turn_result.last_total_tokens),
-            ) {
-                log::warn!(
-                    "Failed to persist turn messages to conversation store: {}",
-                    e
-                );
-            }
-
-            // Update last_total_tokens for compaction
+        // Completed turn: update last_total_tokens for compaction tracking.
+        // The actual JSONL write was already done by rig calling memory.append() at turn end.
+        if final_session_id.is_some() {
             *self.memory_state.last_total_tokens_mut() = Some(turn_result.last_total_tokens);
         }
 
@@ -328,7 +296,7 @@ impl<'a> TurnExecutor<'a> {
 
 struct TurnVisitor<'a, 'b, U, P> {
     runtime: &'a tokio::runtime::Runtime,
-    memory: &'b InMemoryConversationMemory,
+    memory: &'b JournalConversationMemory,
     config: &'a Config,
     permission_resolver: P,
     closure_registry: Arc<ClosureRegistry>,
@@ -337,6 +305,11 @@ struct TurnVisitor<'a, 'b, U, P> {
     ui: &'a mut U,
     prompt: String,
     conversation_id: String,
+    /// Whether this turn belongs to a persistent session.
+    ///
+    /// Threaded into `TurnConversation` so `build_agent_and_stream` can skip
+    /// `.memory()` for transient invocations and avoid writing orphan JSONL files.
+    has_session: bool,
     preamble: Option<String>,
     visible_tool_definitions: Vec<ToolDefinition>,
     /// Pre-built channel for interactive (TUI) mode so the resolver's `ui_tx`
@@ -361,6 +334,7 @@ impl<U: ProgressUi, P: AsyncPermissionResolver> ModelVisitor for TurnVisitor<'_,
             super::TurnConversation {
                 memory: self.memory.clone(),
                 conversation_id: self.conversation_id,
+                has_session: self.has_session,
             },
             super::TurnInput {
                 prompt: self.prompt,

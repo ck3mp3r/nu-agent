@@ -9,6 +9,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use rig::memory::ConversationMemory;
 use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
 use super::*;
@@ -31,6 +32,13 @@ struct MockUi {
 }
 
 impl MockUi {
+    fn new() -> Self {
+        Self {
+            events: Vec::new(),
+            cancel_flag: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
     /// Pre-set cancel so take_cancel_requested() fires on the very first drain
     /// loop iteration — causes cancel_token to be set before the spawned tokio
     /// task processes any stream event, which makes build_agent_and_stream return
@@ -252,23 +260,24 @@ fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_completed(
         "cancelled Ok path must return TurnOutcome::EarlyReturn, not TurnOutcome::Completed"
     );
 
-    // 2. Conversation store must have been appended with the cancelled messages
+    // 2. Conversation store must have been written with the cancelled messages
+    //    (via JournalConversationMemory.append() — single write to both JSONL and cache)
     let persisted = memory_state
         .conversation_store()
         .load(session_id)
         .expect("conversation store load should succeed");
     assert!(
         !persisted.is_empty(),
-        "cancelled turn messages must be persisted to conversation store (path C)"
+        "cancelled turn messages must be persisted to JSONL store (path C)"
     );
 
-    // 2b. InMemoryConversationMemory must also have been updated
+    // 2b. JournalConversationMemory cache must also have been updated
     let in_memory = rt
         .block_on(memory_state.memory().load(session_id))
         .expect("in-memory load should succeed");
     assert!(
         !in_memory.is_empty(),
-        "cancelled turn messages must be persisted to InMemoryConversationMemory (path C)"
+        "cancelled turn messages must be present in JournalConversationMemory cache (path C)"
     );
 
     // 3. UiEvent::Completed must have been emitted
@@ -285,5 +294,239 @@ fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_completed(
             .iter()
             .any(|e| matches!(e, UiEvent::AssistantMessage { .. })),
         "UiEvent::AssistantMessage must NOT be emitted for a cancelled turn (path C)"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Completed turn: rig writes JSONL via memory.append() — no explicit store write
+// ---------------------------------------------------------------------------
+
+/// After a successful (non-cancelled) turn, JSONL receives messages via
+/// JournalConversationMemory.append() called by rig — no explicit store.append() needed.
+///
+/// This verifies the double-write elimination: executor.rs no longer calls
+/// conversation_store().append() for completed turns. The single write happens
+/// through memory.append() which rig calls internally at turn end.
+#[test]
+fn completed_turn_no_explicit_store_append_needed() {
+    let config = test_config();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let session_id = "test-completed-session";
+    let mut memory_state =
+        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+
+    let model = MockCompletionModel::from_stream_turns([[
+        MockStreamEvent::Text("Hello from LLM!".to_string()),
+        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+    ]]);
+
+    let cached_client = CachedProviderClient::Mock(model);
+    let mut ui = MockUi::new();
+
+    let closure_registry = crate::tools::closure::ClosureRegistry::new();
+    let mcp_registry = crate::tools::handler::McpToolRegistry::from_names(Vec::<String>::new());
+    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &rt,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(closure_registry),
+            mcp_registry: Arc::new(mcp_registry),
+            tool_server_handle,
+            visible_tool_definitions: vec![],
+        },
+    );
+
+    let result = executor.execute(
+        &mut ui,
+        ExecuteInput {
+            prompt: "hello".to_string(),
+            preamble: None,
+            span: nu_protocol::Span::test_data(),
+        },
+        &cached_client,
+        MockResolver,
+        Some(session_id),
+        None,
+    );
+
+    // Collect response data before dropping the executor (which holds a mutable borrow)
+    let response_data = executor.take_response_data();
+
+    // Turn must complete normally
+    assert!(result.is_ok(), "execute() must succeed; got: {:?}", result.err());
+    assert!(
+        matches!(result.unwrap(), TurnOutcome::Completed),
+        "completed turn must return TurnOutcome::Completed"
+    );
+
+    // rig wrote to JSONL via memory.append() — no explicit store.append() in executor
+    let persisted = memory_state
+        .conversation_store()
+        .load(session_id)
+        .expect("conversation store load should succeed");
+    assert!(
+        !persisted.is_empty(),
+        "completed turn: JSONL must contain messages written via memory.append()"
+    );
+
+    // Response data must be available
+    assert!(
+        response_data.is_some(),
+        "TurnResponseData must be populated after completed turn"
+    );
+}
+
+/// Cancelled turn (path C) writes to both JSONL and in-memory cache via a
+/// single JournalConversationMemory.append() call — not two separate calls.
+///
+/// Verifying the single-write pattern: both `conversation_store().load()` and
+/// `memory().load()` return the same messages after a cancelled turn.
+#[test]
+fn cancelled_turn_writes_via_single_memory_append() {
+    use rig::memory::ConversationMemory;
+
+    let config = test_config();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let session_id = "test-single-write-cancelled";
+    let mut memory_state =
+        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+
+    let model = MockCompletionModel::from_stream_turns([[
+        MockStreamEvent::Text("partial".to_string()),
+        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+    ]]);
+
+    let cached_client = CachedProviderClient::Mock(model);
+    let mut ui = MockUi::immediately_cancelled();
+
+    let closure_registry = crate::tools::closure::ClosureRegistry::new();
+    let mcp_registry = crate::tools::handler::McpToolRegistry::from_names(Vec::<String>::new());
+    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &rt,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(closure_registry),
+            mcp_registry: Arc::new(mcp_registry),
+            tool_server_handle,
+            visible_tool_definitions: vec![],
+        },
+    );
+
+    let result = executor.execute(
+        &mut ui,
+        ExecuteInput {
+            prompt: "hello".to_string(),
+            preamble: None,
+            span: nu_protocol::Span::test_data(),
+        },
+        &cached_client,
+        MockResolver,
+        Some(session_id),
+        None,
+    );
+
+    assert!(result.is_ok());
+    assert!(matches!(result.unwrap(), TurnOutcome::EarlyReturn(_)));
+
+    // Both store (JSONL) and memory cache must have the messages
+    let from_store = memory_state
+        .conversation_store()
+        .load(session_id)
+        .expect("store load should succeed");
+    let from_memory = rt
+        .block_on(memory_state.memory().load(session_id))
+        .expect("memory load should succeed");
+
+    assert!(
+        !from_store.is_empty(),
+        "JSONL must have cancelled messages (via single memory.append())"
+    );
+    assert!(
+        !from_memory.is_empty(),
+        "in-memory cache must have cancelled messages (via single memory.append())"
+    );
+
+    // Both contain the same count — single write, consistent state
+    assert_eq!(
+        from_store.len(),
+        from_memory.len(),
+        "JSONL and cache must have identical message count — single write, no double-write"
+    );
+}
+
+/// `last_total_tokens` is set on the memory before rig calls `memory.append()` at turn end.
+///
+/// Verifies the timing fix in `turn/mod.rs`: on each `CompletionCall` event,
+/// `memory.set_last_total_tokens()` is called so the value is current when rig
+/// calls `memory.append()` during `FinalResponse`.
+///
+/// With the mock model (no real CompletionCall events), last_total_tokens stays 0.
+/// This test verifies that `last_total_tokens_mut()` on MemoryState is updated
+/// to reflect the turn result's last_total_tokens after a completed turn.
+#[test]
+fn last_total_tokens_updated_on_completed_turn() {
+    let config = test_config();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let session_id = "test-token-tracking";
+    let mut memory_state =
+        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+
+    // Verify initial state
+    assert!(memory_state.last_total_tokens().is_none());
+
+    let model = MockCompletionModel::from_stream_turns([[
+        MockStreamEvent::Text("response text".to_string()),
+        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+    ]]);
+
+    let cached_client = CachedProviderClient::Mock(model);
+    let mut ui = MockUi::new();
+
+    let closure_registry = crate::tools::closure::ClosureRegistry::new();
+    let mcp_registry = crate::tools::handler::McpToolRegistry::from_names(Vec::<String>::new());
+    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &rt,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(closure_registry),
+            mcp_registry: Arc::new(mcp_registry),
+            tool_server_handle,
+            visible_tool_definitions: vec![],
+        },
+    );
+
+    let result = executor.execute(
+        &mut ui,
+        ExecuteInput {
+            prompt: "test prompt".to_string(),
+            preamble: None,
+            span: nu_protocol::Span::test_data(),
+        },
+        &cached_client,
+        MockResolver,
+        Some(session_id),
+        None,
+    );
+
+    assert!(result.is_ok());
+    assert!(matches!(result.unwrap(), TurnOutcome::Completed));
+
+    // After a completed turn with a session, last_total_tokens must be Some(...)
+    // (even if 0 from the mock model — the key is it was set).
+    assert!(
+        memory_state.last_total_tokens().is_some(),
+        "last_total_tokens must be Some after a completed turn with a session"
     );
 }

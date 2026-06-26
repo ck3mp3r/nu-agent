@@ -5,8 +5,7 @@
 
 use super::*;
 use crate::config::Config;
-use crate::session::{JsonlConversationStore, SessionStore};
-use crate::types::InMemoryConversationMemory;
+use crate::session::{JournalConversationMemory, SessionStore};
 
 /// Helper to build a minimal Config for testing.
 fn test_config() -> Config {
@@ -30,16 +29,14 @@ fn test_config() -> Config {
 fn compaction_executor_new_constructs_without_panic() {
     let config = test_config();
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let memory = InMemoryConversationMemory::new();
     let temp_dir = tempfile::tempdir().unwrap();
-    let conversation_store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
 
     let _executor = CompactionExecutor::new(
         &config,
         &rt,
         &memory,
-        &conversation_store,
         &store,
         Some(1000),
         "test-session",
@@ -51,16 +48,14 @@ fn compaction_executor_new_constructs_without_panic() {
 fn compaction_executor_accessors_return_correct_values() {
     let config = test_config();
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let memory = InMemoryConversationMemory::new();
     let temp_dir = tempfile::tempdir().unwrap();
-    let conversation_store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
 
     let executor = CompactionExecutor::new(
         &config,
         &rt,
         &memory,
-        &conversation_store,
         &store,
         Some(500),
         "my-session-id",
@@ -74,16 +69,14 @@ fn compaction_executor_accessors_return_correct_values() {
 fn compaction_executor_none_tokens() {
     let config = test_config();
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let memory = InMemoryConversationMemory::new();
     let temp_dir = tempfile::tempdir().unwrap();
-    let conversation_store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
 
     let executor = CompactionExecutor::new(
         &config,
         &rt,
         &memory,
-        &conversation_store,
         &store,
         None,
         "session-no-tokens",
