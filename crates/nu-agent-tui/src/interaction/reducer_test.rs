@@ -796,17 +796,19 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
                 assert_eq!(state.status_line, "warned");
             }
             "assistant_message_trims_and_appends" => {
-                assert_eq!(
-                    state
-                        .transcript_preview
-                        .iter()
-                        .map(|entry| (entry.role(), entry.text()))
-                        .collect::<Vec<_>>(),
-                    vec![
-                        (Role::Assistant, "line 1".to_string()),
-                        (Role::Assistant, "line 2".to_string()),
-                    ]
-                );
+                // After the raw-markdown refactor, a single AssistantMessage
+                // produces one ProseMessage. The raw text is trimmed before
+                // storage, so leading/trailing whitespace is dropped.
+                let assistant_entries: Vec<_> = state
+                    .transcript_preview
+                    .iter()
+                    .filter(|e| e.role() == Role::Assistant)
+                    .map(|e| e.text())
+                    .collect();
+                assert_eq!(assistant_entries.len(), 1, "one ProseMessage per block");
+                let text = &assistant_entries[0];
+                assert!(text.contains("line 1"), "raw md should contain 'line 1'");
+                assert!(text.contains("line 2"), "raw md should contain 'line 2'");
             }
             "completed_finalizes_cycle" => {
                 assert_eq!(state.phase, UiPhase::Idle);
@@ -890,15 +892,32 @@ fn compaction_artifact_renders_as_single_markdown_block() {
         None,
     );
 
-    let lines = state
+    // Raw text for non-markdown entries (Compaction header is a SystemMessage)
+    let raw_texts: Vec<String> = state
         .transcript_preview
         .iter()
         .map(|line| line.text())
-        .collect::<Vec<_>>();
-    assert!(lines.contains(&"Compaction".to_string()));
-    assert!(lines.contains(&"Summary".to_string()));
+        .collect();
+    assert!(raw_texts.contains(&"Compaction".to_string()));
+
+    // Project markdown entries to verify heading renders as "Summary"
+    let projected_texts: Vec<String> = state
+        .transcript_preview
+        .iter()
+        .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
+        .map(|l| {
+            l.spans
+                .iter()
+                .map(|s| s.text.as_str())
+                .collect::<String>()
+        })
+        .collect();
     assert!(
-        !lines
+        projected_texts.iter().any(|l| l.contains("Summary")),
+        "projected output should contain 'Summary': {projected_texts:?}"
+    );
+    assert!(
+        !raw_texts
             .iter()
             .any(|line| line.starts_with("[compaction source="))
     );
@@ -920,12 +939,20 @@ fn compaction_artifact_does_not_double_wrap_summary_heading() {
         None,
     );
 
-    let summary_lines = state
+    // Project all entries and count how many contain "Summary" text
+    let summary_count = state
         .transcript_preview
         .iter()
-        .filter(|line| line.text() == "Summary")
+        .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
+        .map(|l| {
+            l.spans
+                .iter()
+                .map(|s| s.text.as_str())
+                .collect::<String>()
+        })
+        .filter(|projected| projected.trim() == "Summary")
         .count();
-    assert_eq!(summary_lines, 1);
+    assert_eq!(summary_count, 1);
 }
 
 #[test]
@@ -944,14 +971,35 @@ fn compaction_artifact_preserves_bullets_without_duplication() {
         None,
     );
 
-    let lines = state
+    // Project all entries and check bullet items appear exactly once
+    let projected_texts: Vec<String> = state
         .transcript_preview
         .iter()
-        .map(|line| line.text())
-        .collect::<Vec<_>>();
-    assert_eq!(lines.iter().filter(|line| **line == "• alpha").count(), 1);
-    assert_eq!(lines.iter().filter(|line| **line == "• beta").count(), 1);
-    assert!(!lines.iter().any(|line| line.contains("• •")));
+        .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
+        .map(|l| {
+            l.spans
+                .iter()
+                .map(|s| s.text.as_str())
+                .collect::<String>()
+        })
+        .collect();
+    assert_eq!(
+        projected_texts
+            .iter()
+            .filter(|l| l.contains("• alpha"))
+            .count(),
+        1,
+        "alpha bullet should appear exactly once: {projected_texts:?}"
+    );
+    assert_eq!(
+        projected_texts
+            .iter()
+            .filter(|l| l.contains("• beta"))
+            .count(),
+        1,
+        "beta bullet should appear exactly once: {projected_texts:?}"
+    );
+    assert!(!projected_texts.iter().any(|line| line.contains("• •")));
 }
 
 #[test]
@@ -970,23 +1018,41 @@ fn compaction_block_completion_hides_source_and_explanatory_copy() {
         None,
     );
 
-    let lines = state
+    let raw_texts: Vec<String> = state
         .transcript_preview
         .iter()
         .map(|line| line.text())
-        .collect::<Vec<_>>();
+        .collect();
 
-    assert!(lines.contains(&"Compaction".to_string()));
-    assert!(lines.contains(&"Summary".to_string()));
-    assert!(lines.contains(&"content line".to_string()));
-    assert!(!lines.iter().any(|line| line.contains("source=")));
+    let projected_texts: Vec<String> = state
+        .transcript_preview
+        .iter()
+        .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
+        .map(|l| {
+            l.spans
+                .iter()
+                .map(|s| s.text.as_str())
+                .collect::<String>()
+        })
+        .collect();
+
+    assert!(raw_texts.contains(&"Compaction".to_string()));
     assert!(
-        !lines
+        projected_texts.iter().any(|l| l.contains("Summary")),
+        "projected output should contain Summary: {projected_texts:?}"
+    );
+    assert!(
+        projected_texts.iter().any(|l| l.contains("content line")),
+        "projected output should contain content line: {projected_texts:?}"
+    );
+    assert!(!raw_texts.iter().any(|line| line.contains("source=")));
+    assert!(
+        !raw_texts
             .iter()
             .any(|line| line.contains("metadata above is UI diagnostic only"))
     );
     assert!(
-        !lines
+        !raw_texts
             .iter()
             .any(|line| line.contains("persisted as system summary"))
     );
@@ -1140,14 +1206,42 @@ fn compaction_block_summary_rendering_remains_clean_after_copy_removal() {
         None,
     );
 
-    let lines = state
+    // Project all entries and check projected output
+    let projected_texts: Vec<String> = state
         .transcript_preview
         .iter()
-        .map(|line| line.text())
-        .collect::<Vec<_>>();
-    assert_eq!(lines.iter().filter(|line| **line == "Summary").count(), 1);
-    assert_eq!(lines.iter().filter(|line| **line == "• alpha").count(), 1);
-    assert_eq!(lines.iter().filter(|line| **line == "• beta").count(), 1);
+        .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
+        .map(|l| {
+            l.spans
+                .iter()
+                .map(|s| s.text.as_str())
+                .collect::<String>()
+        })
+        .collect();
+    assert_eq!(
+        projected_texts
+            .iter()
+            .filter(|l| l.trim() == "Summary")
+            .count(),
+        1,
+        "Summary should appear exactly once: {projected_texts:?}"
+    );
+    assert_eq!(
+        projected_texts
+            .iter()
+            .filter(|l| l.contains("• alpha"))
+            .count(),
+        1,
+        "alpha bullet should appear once: {projected_texts:?}"
+    );
+    assert_eq!(
+        projected_texts
+            .iter()
+            .filter(|l| l.contains("• beta"))
+            .count(),
+        1,
+        "beta bullet should appear once: {projected_texts:?}"
+    );
 }
 
 #[test]
@@ -2566,19 +2660,27 @@ mod task_4a_tests {
     use nu_agent_core::transcript::ir::StyleHint;
     use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry};
 
-    fn assistant_spans(state: &AppState) -> Vec<(String, StyleHint)> {
+    /// Return raw markdown strings stored in all Assistant ProseMessage entries.
+    fn assistant_markdown_entries(state: &AppState) -> Vec<String> {
         state
             .transcript_preview
             .iter()
             .filter_map(|e| {
-                if let TranscriptEntry::Assistant(ProseMessage { lines }) = e {
-                    Some(lines)
+                if let TranscriptEntry::Assistant(ProseMessage { markdown }) = e {
+                    Some(markdown.clone())
                 } else {
                     None
                 }
             })
-            .flat_map(|lines| lines.iter().flat_map(|l| l.spans.iter()))
-            .map(|s| (s.text.clone(), s.hint.clone()))
+            .collect()
+    }
+
+    /// Project a markdown string and return all (text, hint) pairs from it.
+    fn project_spans(markdown: &str) -> Vec<(String, StyleHint)> {
+        crate::markdown::render_markdown_lines(markdown, None)
+            .into_iter()
+            .flat_map(|l| l.spans.into_iter())
+            .map(|s| (s.text, s.hint))
             .collect()
     }
 
@@ -2593,9 +2695,14 @@ mod task_4a_tests {
             None,
         );
         assert!(
-            assistant_spans(&state)
+            // Verify the raw markdown is stored and projects to MdBold
+            assistant_markdown_entries(&state)
                 .iter()
-                .any(|(t, h)| t == "bold" && matches!(h, StyleHint::MdBold))
+                .any(|md| {
+                    project_spans(md)
+                        .iter()
+                        .any(|(t, h)| t == "bold" && matches!(h, StyleHint::MdBold))
+                })
         );
     }
 
@@ -2611,10 +2718,9 @@ mod task_4a_tests {
                 None,
             );
         }
-        let concat: String = assistant_spans(&state)
-            .into_iter()
-            .map(|(t, _)| t)
-            .collect();
+        // After streaming, there should be a single ProseMessage with the final text
+        let markdowns = assistant_markdown_entries(&state);
+        let concat: String = markdowns.join("");
         assert!(concat.contains("hello world"));
         assert!(!concat.contains("hellohello"));
     }
@@ -2632,9 +2738,13 @@ mod task_4a_tests {
             None,
         );
         assert!(
-            assistant_spans(&state)
+            assistant_markdown_entries(&state)
                 .iter()
-                .any(|(t, h)| t == "italic" && matches!(h, StyleHint::MdItalic))
+                .any(|md| {
+                    project_spans(md)
+                        .iter()
+                        .any(|(t, h)| t == "italic" && matches!(h, StyleHint::MdItalic))
+                })
         );
     }
 }

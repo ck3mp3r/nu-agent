@@ -24,9 +24,10 @@ fn fallback_plain_text_lines(markdown: &str) -> Vec<Line<'static>> {
         .collect::<Vec<_>>()
 }
 
-pub fn project_markdown_to_lines(markdown: &str) -> Vec<Line<'static>> {
+pub fn project_markdown_to_lines(markdown: &str, max_width: Option<u16>) -> Vec<Line<'static>> {
     let sanitized = sanitize_assistant_visible_markdown(markdown);
-    let projected = std::panic::catch_unwind(|| project_markdown_to_lines_inner(&sanitized));
+    let projected =
+        std::panic::catch_unwind(|| project_markdown_to_lines_inner(&sanitized, max_width));
     match projected {
         Ok(lines) if !lines.is_empty() => lines,
         Ok(lines) if sanitized.trim().is_empty() => lines,

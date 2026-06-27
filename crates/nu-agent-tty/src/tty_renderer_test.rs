@@ -26,7 +26,7 @@ fn ctx() -> RenderContext {
 fn user_message_has_user_prefix() {
     let r = plain();
     let block = TranscriptEntry::User(ProseMessage {
-        lines: vec![ContentLine::single("hello".to_string(), StyleHint::Normal)],
+        markdown: "hello".to_string(),
     })
     .to_render_block();
     let out = r.render(&block, &ctx());
@@ -38,7 +38,7 @@ fn user_message_has_user_prefix() {
 fn assistant_has_no_prefix() {
     let r = plain();
     let block = TranscriptEntry::Assistant(ProseMessage {
-        lines: vec![ContentLine::single("hi".to_string(), StyleHint::Normal)],
+        markdown: "hi".to_string(),
     })
     .to_render_block();
     let out = r.render(&block, &ctx());
@@ -97,6 +97,7 @@ fn no_ansi_when_color_false() {
             "+added".to_string(),
             StyleHint::DiffAdd,
         )],
+        markdown: None,
     };
     let out = r.render(&block, &ctx());
     assert!(
@@ -114,6 +115,7 @@ fn ansi_green_for_diff_add_when_color_true() {
             "+added".to_string(),
             StyleHint::DiffAdd,
         )],
+        markdown: None,
     };
     let out = r.render(&block, &ctx());
     assert!(
@@ -132,6 +134,7 @@ fn multi_line_separated_by_newlines() {
             ContentLine::single("line1".to_string(), StyleHint::Normal),
             ContentLine::single("line2".to_string(), StyleHint::Normal),
         ],
+        markdown: None,
     };
     let out = r.render(&block, &ctx());
     assert!(

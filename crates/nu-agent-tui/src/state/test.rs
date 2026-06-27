@@ -4,7 +4,7 @@ use crate::state::{
     TranscriptLineStatus, TranscriptRole, UiPhase,
 };
 use nu_agent_core::protocol::event::PermissionDecision;
-use nu_agent_core::transcript::ir::{ContentLine, Role, StyleHint};
+use nu_agent_core::transcript::ir::Role;
 use nu_agent_core::transcript::items::{
     ProseMessage, SystemMessage, ToolInvocation, ToolResult, TranscriptEntry,
 };
@@ -988,7 +988,7 @@ fn spacer_not_inserted_for_empty_transcript() {
 fn spacer_not_inserted_for_single_entry() {
     let mut state = AppState::new();
     state.push_transcript_item(TranscriptEntry::User(ProseMessage {
-        lines: vec![ContentLine::single("hi".to_string(), StyleHint::Normal)],
+        markdown: "hi".to_string(),
     }));
     assert_eq!(state.transcript_preview.len(), 1);
     assert!(matches!(
@@ -1001,10 +1001,10 @@ fn spacer_not_inserted_for_single_entry() {
 fn spacer_not_inserted_for_same_role() {
     let mut state = AppState::new();
     state.push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
-        lines: vec![ContentLine::single("first".to_string(), StyleHint::Normal)],
+        markdown: "first".to_string(),
     }));
     state.push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
-        lines: vec![ContentLine::single("second".to_string(), StyleHint::Normal)],
+        markdown: "second".to_string(),
     }));
     assert_eq!(state.transcript_preview.len(), 2);
     assert!(matches!(
@@ -1021,10 +1021,10 @@ fn spacer_not_inserted_for_same_role() {
 fn spacer_not_inserted_for_user_then_assistant() {
     let mut state = AppState::new();
     state.push_transcript_item(TranscriptEntry::User(ProseMessage {
-        lines: vec![ContentLine::single("hi".to_string(), StyleHint::Normal)],
+        markdown: "hi".to_string(),
     }));
     state.push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
-        lines: vec![ContentLine::single("hello".to_string(), StyleHint::Normal)],
+        markdown: "hello".to_string(),
     }));
     // User -> Assistant triggers turn separator, which blocks spacer
     assert_eq!(state.transcript_preview.len(), 3);
@@ -1071,7 +1071,7 @@ fn spacer_not_inserted_for_tool_then_tool_display() {
 fn spacer_inserted_for_assistant_then_system() {
     let mut state = AppState::new();
     state.push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
-        lines: vec![ContentLine::single("done".to_string(), StyleHint::Normal)],
+        markdown: "done".to_string(),
     }));
     state.push_transcript_item(TranscriptEntry::System(SystemMessage {
         text: "system".to_string(),
@@ -1096,7 +1096,7 @@ fn spacer_inserted_for_assistant_then_system() {
 fn spacer_not_inserted_when_turn_separator_blocks() {
     let mut state = AppState::new();
     state.push_transcript_item(TranscriptEntry::User(ProseMessage {
-        lines: vec![ContentLine::single("hi".to_string(), StyleHint::Normal)],
+        markdown: "hi".to_string(),
     }));
     state.push_transcript_item(TranscriptEntry::Tool(ToolInvocation {
         name: "read".to_string(),
@@ -1518,11 +1518,11 @@ fn push_transcript_line_user_bold_markdown_emits_md_bold_span() {
     let TranscriptEntry::User(m) = state.transcript_preview.last().expect("entry") else {
         panic!("expected User");
     };
-    let bold = m
-        .lines
-        .iter()
-        .flat_map(|l| l.spans.iter())
-        .find(|s| matches!(s.hint, StyleHint::MdBold))
+    // Raw markdown is stored; verify it projects to MdBold at render time
+    let bold = crate::markdown::render_markdown_lines(&m.markdown, None)
+        .into_iter()
+        .flat_map(|l| l.spans.into_iter())
+        .find(|s| matches!(s.hint, nu_agent_core::transcript::ir::StyleHint::MdBold))
         .expect("expected MdBold span");
     assert_eq!(bold.text, "world");
 }
@@ -1534,11 +1534,10 @@ fn push_transcript_line_assistant_bold_markdown_emits_md_bold_span() {
     let TranscriptEntry::Assistant(m) = state.transcript_preview.last().expect("entry") else {
         panic!("expected Assistant");
     };
-    let bold = m
-        .lines
-        .iter()
-        .flat_map(|l| l.spans.iter())
-        .find(|s| matches!(s.hint, StyleHint::MdBold))
+    let bold = crate::markdown::render_markdown_lines(&m.markdown, None)
+        .into_iter()
+        .flat_map(|l| l.spans.into_iter())
+        .find(|s| matches!(s.hint, nu_agent_core::transcript::ir::StyleHint::MdBold))
         .expect("expected MdBold span");
     assert_eq!(bold.text, "world");
 }
@@ -1557,7 +1556,7 @@ fn push_transcript_line_user_and_assistant_produce_identical_lines_for_same_text
         panic!();
     };
     assert_eq!(
-        u.lines, a.lines,
+        u.markdown, a.markdown,
         "user and assistant prose must be byte-identical"
     );
 }
@@ -1572,7 +1571,9 @@ fn push_transcript_line_user_fenced_code_block_produces_multiple_lines() {
     let TranscriptEntry::User(m) = state.transcript_preview.last().expect("entry") else {
         panic!();
     };
-    assert!(m.lines.len() >= 2);
+    // Verify projection of the stored raw markdown yields multiple lines
+    let projected = crate::markdown::render_markdown_lines(&m.markdown, None);
+    assert!(projected.len() >= 2);
 }
 
 #[test]

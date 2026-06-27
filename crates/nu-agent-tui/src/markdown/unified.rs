@@ -8,9 +8,12 @@ use crate::rendering::theme::TuiTheme;
 /// Project raw markdown text into IR ContentLines using the existing
 /// pulldown-cmark pipeline. Preserves single blank lines between blocks
 /// for readability, but collapses consecutive blanks and drops leading/trailing ones.
-pub fn render_markdown_lines(text: &str) -> Vec<ContentLine> {
+///
+/// `max_width` is threaded through to the projection layer for future width-aware
+/// table rendering; it is not yet used for clamping (that is a separate task).
+pub fn render_markdown_lines(text: &str, max_width: Option<u16>) -> Vec<ContentLine> {
     let theme = TuiTheme::default();
-    let projected: Vec<ContentLine> = project_markdown_to_lines(text)
+    let projected: Vec<ContentLine> = project_markdown_to_lines(text, max_width)
         .into_iter()
         .map(|line| line_to_content_line(&line, &theme))
         .collect();

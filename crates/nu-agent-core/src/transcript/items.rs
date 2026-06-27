@@ -7,9 +7,12 @@ pub trait Renderable {
 /// Markdown-projected prose authored by the user or assistant.
 /// The role (and therefore lane prefix/background) is determined by which
 /// `TranscriptEntry` variant wraps this value, not by the message itself.
+///
+/// Stores raw markdown source. Projection to `ContentLine` happens at render
+/// time so the available canvas width can be taken into account.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProseMessage {
-    pub lines: Vec<ContentLine>,
+    pub markdown: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,6 +69,7 @@ impl Renderable for ToolInvocation {
                 Span::meta(self.source.clone()),
                 Span::muted(format!(" {}", self.args)),
             ])],
+            markdown: None,
         }
     }
 }
@@ -90,6 +94,7 @@ impl Renderable for ToolResult {
         RenderBlock {
             role: Role::ToolDisplay,
             lines,
+            markdown: None,
         }
     }
 }
@@ -104,6 +109,7 @@ impl Renderable for CompactionNotice {
                 Span::normal(self.kept.to_string()),
                 Span::normal(self.summary.clone()),
             ])],
+            markdown: None,
         }
     }
 }
@@ -113,6 +119,7 @@ impl Renderable for SystemMessage {
         RenderBlock {
             role: Role::System,
             lines: vec![ContentLine::single(self.text.clone(), StyleHint::Normal)],
+            markdown: None,
         }
     }
 }
@@ -122,6 +129,7 @@ impl Renderable for Separator {
         RenderBlock {
             role: Role::Separator,
             lines: vec![],
+            markdown: None,
         }
     }
 }
@@ -131,6 +139,7 @@ impl Renderable for Spacer {
         RenderBlock {
             role: Role::Separator,
             lines: vec![ContentLine::single(String::new(), StyleHint::Normal)],
+            markdown: None,
         }
     }
 }
@@ -140,11 +149,13 @@ impl Renderable for TranscriptEntry {
         match self {
             Self::User(m) => RenderBlock {
                 role: Role::User,
-                lines: m.lines.clone(),
+                lines: vec![],
+                markdown: Some(m.markdown.clone()),
             },
             Self::Assistant(m) => RenderBlock {
                 role: Role::Assistant,
-                lines: m.lines.clone(),
+                lines: vec![],
+                markdown: Some(m.markdown.clone()),
             },
             Self::Tool(t) => t.to_render_block(),
             Self::ToolResult(r) => r.to_render_block(),
@@ -172,17 +183,7 @@ impl TranscriptEntry {
 
     pub fn text(&self) -> String {
         match self {
-            Self::User(m) | Self::Assistant(m) => m
-                .lines
-                .iter()
-                .map(|line| {
-                    line.spans
-                        .iter()
-                        .map(|s| s.text.as_str())
-                        .collect::<String>()
-                })
-                .collect::<Vec<_>>()
-                .join("\n"),
+            Self::User(m) | Self::Assistant(m) => m.markdown.clone(),
             Self::Tool(t) => t.name.clone(),
             Self::ToolResult(r) => r.name.clone(),
             Self::Compaction(c) => c.summary.clone(),

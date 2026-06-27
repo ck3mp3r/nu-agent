@@ -103,6 +103,10 @@ impl ContentLine {
 pub struct RenderBlock {
     pub role: Role,
     pub lines: Vec<ContentLine>,
+    /// Raw markdown source, present for `User` and `Assistant` prose blocks.
+    /// When `Some`, the renderer should project at render time using the
+    /// available canvas width rather than consuming `lines` directly.
+    pub markdown: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

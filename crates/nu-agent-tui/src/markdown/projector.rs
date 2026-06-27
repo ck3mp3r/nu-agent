@@ -55,6 +55,9 @@ struct Projector {
     pending_prefix: bool,
     theme: TuiTheme,
     table: Option<TableBuffer>,
+    /// Maximum canvas width threaded from the render context.
+    /// Passed to `render_table`; clamping logic is a separate task.
+    max_width: Option<u16>,
     /// True once the projector has emitted any non-empty line.
     has_content: bool,
 }
@@ -149,13 +152,12 @@ impl Projector {
         }
     }
 
-    fn render_table(&mut self, table: TableBuffer) {
-        let all_rows = std::iter::once(&table.header_row).chain(table.data_rows.iter());
+    fn render_table(&mut self, mut table: TableBuffer, max_width: Option<u16>) {
         let col_count = table.header_row.len();
 
-        // Measure column widths
+        // Measure column widths using byte length (consistent with existing behaviour).
         let mut widths = vec![0usize; col_count];
-        for row in all_rows.clone() {
+        for row in std::iter::once(&table.header_row).chain(table.data_rows.iter()) {
             for (i, cell) in row.iter().enumerate() {
                 if i < col_count {
                     widths[i] = widths[i].max(cell.len());
@@ -163,48 +165,92 @@ impl Projector {
             }
         }
 
-        // Render header row (bold)
-        let header_style = Style::default().add_modifier(Modifier::BOLD);
-        for (i, cell) in table.header_row.iter().enumerate() {
-            if i > 0 {
-                self.push_text(" │ ", Style::default());
+        // Clamp number of columns so total width fits within max_width.
+        // Table width = 1 (left │) + sum(col_width + 2) + (col_count - 1) (inter-col │) + 1 (right │)
+        //             = 1 + 3*col_count + sum(widths)
+        // Always keep at least 1 column.
+        if let Some(max) = max_width {
+            while widths.len() > 1 {
+                let total = 1 + 3 * widths.len() + widths.iter().sum::<usize>();
+                if total <= max as usize {
+                    break;
+                }
+                widths.pop();
+                table.header_row.pop();
+                for row in &mut table.data_rows {
+                    row.pop();
+                }
             }
-            let padded = format!(
-                " {:<width$} ",
-                cell,
-                width = widths.get(i).copied().unwrap_or(0)
-            );
-            self.push_text(&padded, header_style);
         }
+
+        let active_cols = widths.len();
+
+        // Top border: ╭──...──┬──...──╮
+        let top = format!(
+            "╭{}╮",
+            widths
+                .iter()
+                .map(|w| "─".repeat(w + 2))
+                .collect::<Vec<_>>()
+                .join("┬")
+        );
+        self.push_text(&top, Style::default());
         self.flush_line();
 
-        // Render separator. Each column part is `─` × (width + 2) to match the
-        // padded cell width (" cell "). Joiner is `─┼─` (3 cells) so the `┼`
-        // sits exactly under the header's `│`: the header emits a 3-cell
-        // ` │ ` between columns, and `─┼─` has matching width with the bar
-        // centered between two horizontals. Using a bare `┼` joiner (1 cell)
-        // would leave the intersection one cell left of the header's bar and
-        // the misalignment compounds with every additional column.
-        let sep_parts: Vec<String> = widths.iter().map(|w| "─".repeat(w + 2)).collect();
-        let sep = sep_parts.join("─┼─");
+        // Header row: │ cell │ cell │
+        let header_style = Style::default().add_modifier(Modifier::BOLD);
+        self.push_text("│", Style::default());
+        for (i, cell) in table.header_row.iter().enumerate() {
+            let padded = format!(" {:<width$} ", cell, width = widths[i]);
+            self.push_text(&padded, header_style);
+            if i + 1 < active_cols {
+                self.push_text("│", Style::default());
+            }
+        }
+        self.push_text("│", Style::default());
+        self.flush_line();
+
+        // Separator: ├──...──┼──...──┤
+        let sep = format!(
+            "├{}┤",
+            widths
+                .iter()
+                .map(|w| "─".repeat(w + 2))
+                .collect::<Vec<_>>()
+                .join("┼")
+        );
         self.push_text(&sep, Style::default());
         self.flush_line();
 
-        // Render data rows
+        // Data rows: │ cell │ cell │
         for row in &table.data_rows {
-            for (i, cell) in row.iter().enumerate() {
-                if i > 0 {
-                    self.push_text(" │ ", Style::default());
-                }
+            self.push_text("│", Style::default());
+            for (i, cell) in row.iter().enumerate().take(active_cols) {
                 let padded = format!(
                     " {:<width$} ",
                     cell,
                     width = widths.get(i).copied().unwrap_or(0)
                 );
                 self.push_text(&padded, Style::default());
+                if i + 1 < active_cols {
+                    self.push_text("│", Style::default());
+                }
             }
+            self.push_text("│", Style::default());
             self.flush_line();
         }
+
+        // Bottom border: ╰──...──┴──...──╯
+        let bottom = format!(
+            "╰{}╯",
+            widths
+                .iter()
+                .map(|w| "─".repeat(w + 2))
+                .collect::<Vec<_>>()
+                .join("┴")
+        );
+        self.push_text(&bottom, Style::default());
+        self.flush_line();
     }
 
     fn on_start(&mut self, tag: Tag<'_>) {
@@ -329,7 +375,7 @@ impl Projector {
             }
             TagEnd::Table => {
                 if let Some(table) = self.table.take() {
-                    self.render_table(table);
+                    self.render_table(table, self.max_width);
                 }
             }
             TagEnd::TableHead => {
@@ -420,13 +466,17 @@ impl Projector {
     }
 }
 
-pub(super) fn project_markdown_to_lines_inner(markdown: &str) -> Vec<Line<'static>> {
+pub(super) fn project_markdown_to_lines_inner(
+    markdown: &str,
+    max_width: Option<u16>,
+) -> Vec<Line<'static>> {
     let options =
         Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS | Options::ENABLE_TABLES;
     let parser = Parser::new_ext(markdown, options);
     let mut projector = Projector {
         pending_prefix: true,
         theme: TuiTheme::default(),
+        max_width,
         ..Projector::default()
     };
     for event in parser {

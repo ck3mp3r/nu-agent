@@ -575,7 +575,7 @@ fn insert_mode_alt_and_shift_enter_insert_newline_while_enter_submits() {
     assert_eq!(state.phase, UiPhase::Busy);
     let _ = state.take_next_prompt_for_execution();
     assert_eq!(state.transcript_preview.len(), 1);
-    assert_eq!(state.transcript_preview[0].text(), "h");
+    assert_eq!(state.transcript_preview[0].text().trim(), "h");
 }
 
 #[test]

@@ -13,7 +13,7 @@ mod test;
 use crate::markdown::{project_markdown_to_lines, rendered_line_to_plain_text};
 use nu_agent_core::protocol::event::{PermissionDecision, PermissionDecisionSubmission};
 use nu_agent_core::protocol::slash::{SlashCommand, filter_inline_slash_suggestions};
-use nu_agent_core::transcript::ir::{ContentLine, DisplayLine, Role, Span, StyleHint};
+use nu_agent_core::transcript::ir::{DisplayLine, Role};
 use nu_agent_core::transcript::items::{
     ProseMessage, Separator as TranscriptSeparator, Spacer as SpacerItem, SystemMessage,
     ToolInvocation, ToolResult as TranscriptToolResult, TranscriptEntry, annotate_diff_hint,

@@ -21,7 +21,7 @@ impl BlockRenderer for TuiRenderer {
 
     fn render(&self, block: &RenderBlock, ctx: &RenderContext) -> Self::Output {
         // Special case: Separator role with empty lines (horizontal rule)
-        if block.role == Role::Separator && block.lines.is_empty() {
+        if block.role == Role::Separator && block.lines.is_empty() && block.markdown.is_none() {
             let width = ctx.width.saturating_sub(4).max(1);
             let mut spans = self.lane_prefix(Role::Separator, ctx.cursor);
             spans.push(RatatuiSpan::styled(
@@ -32,11 +32,25 @@ impl BlockRenderer for TuiRenderer {
             return vec![Line::from(spans)];
         }
 
-        // Handle empty block.lines as single empty line
-        let content_lines = if block.lines.is_empty() {
-            vec![ContentLine::empty()]
+        // Project markdown at render time using the available canvas width.
+        // This ensures tables and other width-sensitive constructs can use the
+        // actual terminal width rather than a fixed size baked in at construction.
+        let projected_lines: Vec<ContentLine>;
+        let content_lines: &[ContentLine] = if let Some(ref md) = block.markdown {
+            let canvas_width = u16::try_from(ctx.width).unwrap_or(u16::MAX);
+            projected_lines =
+                crate::markdown::render_markdown_lines(md, Some(canvas_width));
+            &projected_lines
         } else {
-            block.lines.clone()
+            &block.lines
+        };
+
+        // Handle empty content as single empty line
+        let empty_fallback = [ContentLine::empty()];
+        let content_lines = if content_lines.is_empty() {
+            empty_fallback.as_slice()
+        } else {
+            content_lines
         };
 
         let mut result = Vec::new();

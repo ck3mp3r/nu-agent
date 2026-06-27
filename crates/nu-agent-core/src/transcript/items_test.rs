@@ -1,30 +1,50 @@
 use super::ir::*;
 use super::items::*;
 
+// ── ProseMessage stores raw markdown ─────────────────────────────────────────
+
 #[test]
-fn user_message_produces_user_role_block() {
-    let block = TranscriptEntry::User(ProseMessage {
-        lines: vec![ContentLine::single("hi".to_string(), StyleHint::Normal)],
-    })
-    .to_render_block();
-    assert_eq!(block.role, Role::User);
-    assert_eq!(block.lines.len(), 1);
-    assert_eq!(block.lines[0].spans.len(), 1);
-    assert_eq!(block.lines[0].spans[0].text, "hi");
-    assert_eq!(block.lines[0].spans[0].hint, StyleHint::Normal);
+fn prose_message_stores_raw_markdown() {
+    let msg = ProseMessage {
+        markdown: "# Hello".to_string(),
+    };
+    assert_eq!(msg.markdown, "# Hello");
 }
 
 #[test]
-fn assistant_chunk_produces_assistant_role_block() {
+fn prose_message_clone_is_equal() {
+    let msg = ProseMessage {
+        markdown: "**bold**".to_string(),
+    };
+    assert_eq!(msg, msg.clone());
+}
+
+// ── to_render_block: User / Assistant carry markdown field ───────────────────
+
+#[test]
+fn user_message_produces_user_role_block_with_markdown() {
+    let block = TranscriptEntry::User(ProseMessage {
+        markdown: "hi".to_string(),
+    })
+    .to_render_block();
+    assert_eq!(block.role, Role::User);
+    // Lines are empty — projection happens at render time in TuiRenderer
+    assert!(block.lines.is_empty());
+    assert_eq!(block.markdown.as_deref(), Some("hi"));
+}
+
+#[test]
+fn assistant_chunk_produces_assistant_role_block_with_markdown() {
     let block = TranscriptEntry::Assistant(ProseMessage {
-        lines: vec![ContentLine::single("hello".to_string(), StyleHint::Normal)],
+        markdown: "hello".to_string(),
     })
     .to_render_block();
     assert_eq!(block.role, Role::Assistant);
-    assert_eq!(block.lines.len(), 1);
-    assert_eq!(block.lines[0].spans[0].text, "hello");
-    assert_eq!(block.lines[0].spans[0].hint, StyleHint::Normal);
+    assert!(block.lines.is_empty());
+    assert_eq!(block.markdown.as_deref(), Some("hello"));
 }
+
+// ── Non-prose blocks have markdown: None ─────────────────────────────────────
 
 #[test]
 fn tool_invocation_produces_three_spans() {
@@ -35,6 +55,7 @@ fn tool_invocation_produces_three_spans() {
     }
     .to_render_block();
     assert_eq!(block.role, Role::Tool);
+    assert!(block.markdown.is_none());
     assert_eq!(block.lines[0].spans.len(), 3);
     assert_eq!(
         block.lines[0].spans[0],
@@ -55,6 +76,7 @@ fn tool_result_empty_lines_uses_name_with_success_hint() {
         lines: vec![],
     }
     .to_render_block();
+    assert!(block.markdown.is_none());
     assert_eq!(block.lines.len(), 1);
     assert_eq!(block.lines[0].spans[0].text, "x");
     assert_eq!(block.lines[0].spans[0].hint, StyleHint::Success);
@@ -99,6 +121,7 @@ fn compaction_notice_has_four_spans() {
     }
     .to_render_block();
     assert_eq!(block.role, Role::Compaction);
+    assert!(block.markdown.is_none());
     assert_eq!(block.lines[0].spans.len(), 4);
     assert_eq!(block.lines[0].spans[0], Span::meta("ctx".to_string()));
     assert_eq!(block.lines[0].spans[1], Span::normal("5".to_string()));
@@ -107,20 +130,21 @@ fn compaction_notice_has_four_spans() {
 }
 
 #[test]
-fn separator_has_empty_lines_vec() {
+fn separator_has_empty_lines_vec_and_no_markdown() {
     let block = Separator.to_render_block();
     assert_eq!(block.role, Role::Separator);
     assert!(block.lines.is_empty());
+    assert!(block.markdown.is_none());
 }
 
 #[test]
 fn transcript_entry_user_delegates_correctly() {
     let direct = TranscriptEntry::User(ProseMessage {
-        lines: vec![ContentLine::single("z".to_string(), StyleHint::Normal)],
+        markdown: "z".to_string(),
     })
     .to_render_block();
     let via_enum = TranscriptEntry::User(ProseMessage {
-        lines: vec![ContentLine::single("z".to_string(), StyleHint::Normal)],
+        markdown: "z".to_string(),
     })
     .to_render_block();
     assert_eq!(direct, via_enum);
@@ -130,7 +154,7 @@ fn transcript_entry_user_delegates_correctly() {
 fn transcript_entry_role_returns_correct_role() {
     assert_eq!(
         TranscriptEntry::User(ProseMessage {
-            lines: vec![ContentLine::single("x".to_string(), StyleHint::Normal)],
+            markdown: "x".to_string(),
         })
         .role(),
         Role::User
@@ -151,13 +175,13 @@ fn transcript_entry_role_returns_correct_role() {
 }
 
 #[test]
-fn transcript_entry_text_returns_content() {
+fn transcript_entry_text_returns_markdown_source() {
     assert_eq!(
         TranscriptEntry::User(ProseMessage {
-            lines: vec![ContentLine::single("hello".to_string(), StyleHint::Normal)],
+            markdown: "hello world".to_string(),
         })
         .text(),
-        "hello"
+        "hello world"
     );
     assert_eq!(
         TranscriptEntry::Separator(Separator).text(),
@@ -201,30 +225,23 @@ fn annotate_diff_hint_returns_normal_for_plain() {
 
 #[test]
 fn user_and_assistant_render_blocks_differ_only_in_role() {
-    let lines = vec![ContentLine::single("hi".to_string(), StyleHint::MdBold)];
     let user_block = TranscriptEntry::User(ProseMessage {
-        lines: lines.clone(),
+        markdown: "hi".to_string(),
     })
     .to_render_block();
     let assistant_block = TranscriptEntry::Assistant(ProseMessage {
-        lines: lines.clone(),
+        markdown: "hi".to_string(),
     })
     .to_render_block();
-    assert_eq!(user_block.lines, assistant_block.lines);
+    assert_eq!(user_block.markdown, assistant_block.markdown);
     assert_eq!(user_block.role, Role::User);
     assert_eq!(assistant_block.role, Role::Assistant);
 }
 
 #[test]
-fn user_message_text_accessor_concatenates_spans() {
+fn user_message_text_accessor_returns_raw_markdown() {
     let entry = TranscriptEntry::User(ProseMessage {
-        lines: vec![
-            ContentLine::from_spans(vec![
-                Span::new("hello ".to_string(), StyleHint::Normal),
-                Span::new("world".to_string(), StyleHint::MdBold),
-            ]),
-            ContentLine::single("again".to_string(), StyleHint::Normal),
-        ],
+        markdown: "hello **world**\nagain".to_string(),
     });
-    assert_eq!(entry.text(), "hello world\nagain");
+    assert_eq!(entry.text(), "hello **world**\nagain");
 }

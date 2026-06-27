@@ -428,9 +428,9 @@ fn reduce_ui_event(state: &mut AppState, event: UiEvent) {
                 state.transcript_preview.truncate(start);
             }
 
-            for line in crate::markdown::render_markdown_lines(&body) {
+            if !body.trim().is_empty() {
                 state.push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
-                    lines: vec![line],
+                    markdown: body,
                 }));
             }
             state.compaction_streaming_start = None;
@@ -696,16 +696,10 @@ fn handle_assistant_message(state: &mut AppState, text: String) {
     }
 
     // Always follow tail with ListState
-    let content_lines = crate::markdown::render_markdown_lines(trimmed);
-    if content_lines.is_empty() {
-        return;
-    }
     state.scroll_transcript_to_bottom();
-    for line in content_lines {
-        state.push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
-            lines: vec![line],
-        }));
-    }
+    state.push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
+        markdown: trimmed.to_string(),
+    }));
 }
 
 fn handle_compaction_summary_chunk(state: &mut AppState, source: &str, text: String) {
@@ -728,14 +722,11 @@ fn handle_compaction_summary_chunk(state: &mut AppState, source: &str, text: Str
         state.clear_assistant_projection_cache();
     }
 
-    // Re-project the full accumulated text through markdown
-    let content_lines = crate::markdown::render_markdown_lines(trimmed);
+    // Store raw markdown — projected at render time with canvas width
     state.scroll_transcript_to_bottom();
-    for line in content_lines {
-        state.push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
-            lines: vec![line],
-        }));
-    }
+    state.push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
+        markdown: trimmed.to_string(),
+    }));
 }
 
 fn assistant_diff_regurgitation_is_redundant(

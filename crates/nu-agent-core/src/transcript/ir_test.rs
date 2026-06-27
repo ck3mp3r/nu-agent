@@ -48,9 +48,11 @@ fn render_block_stores_role_and_lines() {
     let block = RenderBlock {
         role: Role::Tool,
         lines: vec![ContentLine::single("test".to_string(), StyleHint::Normal)],
+        markdown: None,
     };
     assert_eq!(block.role, Role::Tool);
     assert_eq!(block.lines.len(), 1);
+    assert!(block.markdown.is_none());
 }
 
 #[test]

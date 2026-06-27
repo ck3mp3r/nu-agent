@@ -22,7 +22,7 @@ fn plain_line(line: &Line<'_>) -> String {
 }
 
 fn plain_lines(markdown: &str) -> Vec<String> {
-    project_markdown_to_lines(markdown)
+    project_markdown_to_lines(markdown, None)
         .into_iter()
         .map(|line| plain_line(&line))
         .collect::<Vec<_>>()
@@ -54,7 +54,7 @@ fn adapter_supports_colored_tokens(language: &str, source: &str) -> bool {
 #[test]
 fn markdown_projection_fixture_supported_basics_renders_lines_and_inline_styles() {
     let markdown = markdown_fixture("supported_basics.md");
-    let lines = project_markdown_to_lines(&markdown);
+    let lines = project_markdown_to_lines(&markdown, None);
     let rendered = lines.iter().map(plain_line).collect::<Vec<_>>();
 
     assert_eq!(rendered, vec!["Title", "", "Paragraph with em strong code"]);
@@ -102,7 +102,7 @@ fn markdown_projection_fixture_lists_and_blockquote_render_deterministically() {
 #[test]
 fn markdown_projection_fixture_fenced_code_blocks_render_with_and_without_language() {
     let markdown = markdown_fixture("fenced_code_blocks.md");
-    let lines = project_markdown_to_lines(&markdown);
+    let lines = project_markdown_to_lines(&markdown, None);
     let rendered = lines.iter().map(plain_line).collect::<Vec<_>>();
 
     assert!(rendered.contains(&"    fn main() {".to_string()));
@@ -299,7 +299,7 @@ fn markdown_projection_preserves_valid_markdown_fences_while_sanitizing_control_
 fn markdown_projection_renders_table_with_separator_and_bold_header() {
     let markdown =
         "| Commit | Message |\n|--------|--------|\n| abc123 | fix bug |\n| def456 | add feature |";
-    let lines = project_markdown_to_lines(markdown);
+    let lines = project_markdown_to_lines(markdown, None);
     let plain: Vec<String> = lines.iter().map(|l| plain_line(l)).collect();
 
     assert!(
@@ -337,7 +337,7 @@ fn markdown_projection_renders_table_with_separator_and_bold_header() {
 #[test]
 fn markdown_projection_renders_table_with_aligned_columns() {
     let markdown = "| A | Long Header |\n|---|---|\n| x | y |\n| longer text | z |";
-    let lines = project_markdown_to_lines(markdown);
+    let lines = project_markdown_to_lines(markdown, None);
     let plain: Vec<String> = lines.iter().map(|l| plain_line(l)).collect();
 
     // Find separator line
@@ -357,15 +357,14 @@ fn markdown_projection_renders_table_with_aligned_columns() {
 
 #[test]
 fn markdown_projection_table_separator_intersections_align_with_header_bars() {
-    // Locks in the fix for vertical-bar misalignment that compounded with each
-    // additional column. Pre-fix: header `│` and separator `┼` were off by one
-    // cell because the separator used a 1-char `┼` joiner while the header
-    // used a 3-cell ` │ ` separator. Post-fix: joiner is `─┼─` (3 cells) so
-    // both characters land on the same column for every column boundary.
+    // Locks in the alignment between header `│` column-separators and separator `┼`
+    // intersections. With rounded borders the edges use `├`/`┤` (separator) and
+    // `│` (content rows), so we compare only the inter-column positions — skipping
+    // the outermost edge characters.
     let markdown = "| # | Hash    | Date         | Author             | Message |\n\
                     |---|---------|--------------|--------------------|---------|\n\
                     | 0 | 66f1401 | 2026-06-18   | Christian Kemper   | feat(tui): branch icon |";
-    let lines = project_markdown_to_lines(markdown);
+    let lines = project_markdown_to_lines(markdown, None);
     let plain: Vec<String> = lines.iter().map(|l| plain_line(l)).collect();
 
     let header = plain
@@ -377,11 +376,19 @@ fn markdown_projection_table_separator_intersections_align_with_header_bars() {
         .find(|l| l.contains("┼"))
         .expect("separator row exists");
 
-    let bar_positions: Vec<usize> = header
-        .char_indices()
-        .filter(|(_, c)| *c == '│')
-        .map(|(i, _)| header[..i].chars().count())
-        .collect();
+    // Header: leading `│` + inter-column `│`s + trailing `│`.
+    // We want the inter-column positions only (skip first and last).
+    let bar_positions: Vec<usize> = {
+        let all: Vec<usize> = header
+            .char_indices()
+            .filter(|(_, c)| *c == '│')
+            .map(|(i, _)| header[..i].chars().count())
+            .collect();
+        // Drop first (left border) and last (right border); keep inter-column bars.
+        all[1..all.len().saturating_sub(1)].to_vec()
+    };
+
+    // Separator: `├` at left edge, `┼` inter-column, `┤` at right edge.
     let intersection_positions: Vec<usize> = separator
         .char_indices()
         .filter(|(_, c)| *c == '┼')
@@ -390,10 +397,163 @@ fn markdown_projection_table_separator_intersections_align_with_header_bars() {
 
     assert_eq!(
         bar_positions, intersection_positions,
-        "every header `│` must sit at the same column as the matching separator `┼` \
+        "every inter-column header `│` must sit at the same column as the matching separator `┼` \
          (got bars at {bar_positions:?}, intersections at {intersection_positions:?})\n\
          header:    {header}\n\
          separator: {separator}"
+    );
+
+    // Additionally verify the separator edges use ├ and ┤
+    assert!(
+        separator.starts_with('├'),
+        "separator left edge should be ├, got: {separator}"
+    );
+    assert!(
+        separator.ends_with('┤'),
+        "separator right edge should be ┤, got: {separator}"
+    );
+}
+
+#[test]
+fn table_has_rounded_top_border() {
+    let markdown = "| A | B |\n|---|---|\n| x | y |";
+    let plain = plain_lines(markdown);
+
+    let top = plain.first().expect("table should have at least one line");
+    assert!(
+        top.contains('╭') && top.contains('╮'),
+        "first output line should be the rounded top border with ╭ and ╮, got: {top}"
+    );
+}
+
+#[test]
+fn table_has_rounded_bottom_border() {
+    let markdown = "| A | B |\n|---|---|\n| x | y |";
+    let plain = plain_lines(markdown);
+
+    let bottom = plain.last().expect("table should have at least one line");
+    assert!(
+        bottom.contains('╰') && bottom.contains('╯'),
+        "last output line should be the rounded bottom border with ╰ and ╯, got: {bottom}"
+    );
+}
+
+#[test]
+fn table_has_left_and_right_borders_on_data_rows() {
+    let markdown = "| A | B |\n|---|---|\n| x | y |\n| p | q |";
+    let plain = plain_lines(markdown);
+
+    // Content rows (header + data rows, not top/bottom borders) must start and end with │
+    let content_rows: Vec<&String> = plain
+        .iter()
+        .filter(|l| l.contains('A') || l.contains('x') || l.contains('p'))
+        .collect();
+
+    assert!(
+        !content_rows.is_empty(),
+        "should have at least one content row"
+    );
+    for row in content_rows {
+        assert!(
+            row.starts_with('│'),
+            "content row should start with │, got: {row}"
+        );
+        assert!(
+            row.ends_with('│'),
+            "content row should end with │, got: {row}"
+        );
+    }
+}
+
+#[test]
+fn table_clamped_when_over_max_width() {
+    // Build a 5-column table; choose max_width so only 3 columns fit.
+    // Each column header is 1 char wide → col_width = 1.
+    // Total for N cols = 1 + 3*N + sum(col_widths) = 1 + 3*N + N*1 = 1 + 4*N.
+    // 3 cols → 1 + 4*3 = 13 chars. 4 cols → 1 + 4*4 = 17 chars.
+    // Use max_width = 16: fits 3 cols (13 ≤ 16) but not 4 (17 > 16).
+    let markdown = "| A | B | C | D | E |\n|---|---|---|---|---|\n| 1 | 2 | 3 | 4 | 5 |";
+    let lines = project_markdown_to_lines(markdown, Some(16));
+    let plain: Vec<String> = lines.iter().map(|l| plain_line(l)).collect();
+
+    // Every line must be ≤ max_width characters
+    for line in &plain {
+        assert!(
+            line.chars().count() <= 16,
+            "line exceeds max_width=16: {line:?} (len={})",
+            line.chars().count()
+        );
+    }
+
+    // The clamped table should have exactly 3 columns:
+    // top border: ╭──...─┬──...─┬──...─╮ → 2 ┬ chars
+    let top = plain.first().expect("non-empty output");
+    let top_joiners = top.chars().filter(|c| *c == '┬').count();
+    assert_eq!(
+        top_joiners, 2,
+        "3-column table top border should have 2 ┬ joiners, got {top_joiners}: {top}"
+    );
+
+    // Columns D and E should not appear in any line
+    assert!(
+        !plain.iter().any(|l| l.contains('D')),
+        "column D should have been clamped away"
+    );
+    assert!(
+        !plain.iter().any(|l| l.contains('E')),
+        "column E should have been clamped away"
+    );
+}
+
+#[test]
+fn table_always_renders_at_least_one_column() {
+    // Even with an impossibly small max_width, at least 1 column must be kept.
+    let markdown = "| Alpha | Beta | Gamma |\n|-------|------|-------|\n| a | b | c |";
+    let lines = project_markdown_to_lines(markdown, Some(1));
+    let plain: Vec<String> = lines.iter().map(|l| plain_line(l)).collect();
+
+    // Should still have a top border
+    assert!(
+        plain
+            .iter()
+            .any(|l| l.contains('╭') && l.contains('╮')),
+        "even with max_width=1, should still render top border"
+    );
+
+    // The header row should contain "Alpha" (first column)
+    assert!(
+        plain.iter().any(|l| l.contains("Alpha")),
+        "at least the first column (Alpha) must be rendered"
+    );
+}
+
+#[test]
+fn table_clamped_columns_have_correct_right_border() {
+    // After clamping, the rightmost border chars should be ╮/┤/╯, not ┬/┼/┴.
+    let markdown = "| A | B | C | D | E |\n|---|---|---|---|---|\n| 1 | 2 | 3 | 4 | 5 |";
+    // max_width=16 → 3 columns
+    let lines = project_markdown_to_lines(markdown, Some(16));
+    let plain: Vec<String> = lines.iter().map(|l| plain_line(l)).collect();
+
+    let top = plain.first().expect("has top border");
+    assert!(
+        top.ends_with('╮'),
+        "top border should end with ╮ after clamping, got: {top}"
+    );
+
+    let separator = plain
+        .iter()
+        .find(|l| l.contains('┼') || l.contains('┤'))
+        .expect("separator row exists");
+    assert!(
+        separator.ends_with('┤'),
+        "separator should end with ┤ after clamping, got: {separator}"
+    );
+
+    let bottom = plain.last().expect("has bottom border");
+    assert!(
+        bottom.ends_with('╯'),
+        "bottom border should end with ╯ after clamping, got: {bottom}"
     );
 }
 
@@ -409,7 +569,7 @@ fn markdown_projection_renders_table_with_code_in_cells_correctly() {
 | `README.md` | file | Project readme |
 
 It's a **Rust project** using **Nix flakes** for development/build environment management."#;
-    let lines = project_markdown_to_lines(markdown);
+    let lines = project_markdown_to_lines(markdown, None);
     let plain: Vec<String> = lines.iter().map(|l| plain_line(l)).collect();
 
     // First column values should NOT appear as a concatenated line before the table
@@ -485,12 +645,12 @@ use nu_agent_core::transcript::ir::StyleHint as IrStyleHint;
 
 #[test]
 fn render_markdown_lines_empty_input_returns_empty_vec() {
-    assert!(render_markdown_lines("").is_empty());
+    assert!(render_markdown_lines("", None).is_empty());
 }
 
 #[test]
 fn render_markdown_lines_plain_text_yields_normal_spans() {
-    let lines = render_markdown_lines("hello");
+    let lines = render_markdown_lines("hello", None);
     assert_eq!(lines.len(), 1);
     assert!(
         lines[0]
@@ -504,7 +664,7 @@ fn render_markdown_lines_plain_text_yields_normal_spans() {
 
 #[test]
 fn render_markdown_lines_bold() {
-    let lines = render_markdown_lines("**bold**");
+    let lines = render_markdown_lines("**bold**", None);
     let bold = lines
         .iter()
         .flat_map(|l| l.spans.iter())
@@ -515,7 +675,7 @@ fn render_markdown_lines_bold() {
 
 #[test]
 fn render_markdown_lines_italic() {
-    let lines = render_markdown_lines("*italic*");
+    let lines = render_markdown_lines("*italic*", None);
     let italic = lines
         .iter()
         .flat_map(|l| l.spans.iter())
@@ -526,7 +686,7 @@ fn render_markdown_lines_italic() {
 
 #[test]
 fn render_markdown_lines_inline_code() {
-    let lines = render_markdown_lines("a `code` b");
+    let lines = render_markdown_lines("a `code` b", None);
     let code = lines
         .iter()
         .flat_map(|l| l.spans.iter())
@@ -537,7 +697,7 @@ fn render_markdown_lines_inline_code() {
 
 #[test]
 fn render_markdown_lines_fenced_code_block() {
-    let lines = render_markdown_lines("```rust\nfn x() {}\n```");
+    let lines = render_markdown_lines("```rust\nfn x() {}\n```", None);
     assert!(!lines.is_empty());
     let has_code = lines.iter().flat_map(|l| l.spans.iter()).any(|s| {
         matches!(
@@ -564,7 +724,7 @@ fn render_markdown_lines_fenced_code_block() {
 
 #[test]
 fn render_markdown_lines_collapses_consecutive_blank_lines() {
-    let lines = render_markdown_lines("first\n\n\nlast");
+    let lines = render_markdown_lines("first\n\n\nlast", None);
     // Should have: "first", blank, "last" (consecutive blanks collapsed to one)
     assert_eq!(lines.len(), 3);
     assert!(!lines[0].spans.is_empty()); // "first"
@@ -574,7 +734,7 @@ fn render_markdown_lines_collapses_consecutive_blank_lines() {
 
 #[test]
 fn render_markdown_lines_no_leading_trailing_blanks() {
-    let lines = render_markdown_lines("\n\nhello\n\n");
+    let lines = render_markdown_lines("\n\nhello\n\n", None);
     assert_eq!(lines.len(), 1);
     assert!(!lines[0].spans.is_empty());
 }

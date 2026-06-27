@@ -5,10 +5,10 @@ impl AppState {
         let text = line.into();
         let entry = match role {
             TranscriptRole::User => TranscriptEntry::User(ProseMessage {
-                lines: crate::markdown::render_markdown_lines(&text),
+                markdown: text,
             }),
             TranscriptRole::Assistant => TranscriptEntry::Assistant(ProseMessage {
-                lines: crate::markdown::render_markdown_lines(&text),
+                markdown: text,
             }),
             TranscriptRole::Tool => {
                 let (name, args) = parse_tool_text(&text);
@@ -33,9 +33,9 @@ impl AppState {
     pub fn push_transcript_rendered_line(&mut self, role: TranscriptRole, line: Line<'static>) {
         match role {
             TranscriptRole::Assistant | TranscriptRole::Compaction => {
-                let content_line = ratatui_line_to_content_line(&line);
+                let text = rendered_line_to_plain_text(&line);
                 let entry = TranscriptEntry::Assistant(ProseMessage {
-                    lines: vec![content_line],
+                    markdown: text,
                 });
                 self.push_transcript_item(entry);
             }
@@ -51,7 +51,7 @@ impl AppState {
             return cached.clone();
         }
 
-        let projected = project_markdown_to_lines(markdown);
+        let projected = project_markdown_to_lines(markdown, None);
         self.assistant_projection_cache
             .insert(markdown.to_string(), projected.clone());
         #[cfg(test)]
@@ -190,73 +190,4 @@ pub(crate) fn needs_spacer(previous: Option<&Role>, next: &Role) -> bool {
     )
 }
 
-fn ratatui_line_to_content_line(line: &Line<'static>) -> ContentLine {
-    use crate::rendering::theme::TuiTheme;
 
-    let theme = TuiTheme::default();
-    let spans = line
-        .spans
-        .iter()
-        .map(|span| Span {
-            text: span.content.to_string(),
-            hint: ratatui_style_to_hint(&span.style, &theme),
-        })
-        .collect();
-    ContentLine { spans }
-}
-
-fn ratatui_style_to_hint(
-    style: &ratatui::style::Style,
-    theme: &crate::rendering::theme::TuiTheme,
-) -> StyleHint {
-    use ratatui::style::Modifier;
-
-    // Check syntax token styles first (most specific)
-    if *style == theme.syntax_keyword {
-        return StyleHint::MdCodeKeyword;
-    }
-    if *style == theme.syntax_type {
-        return StyleHint::MdCodeType;
-    }
-    if *style == theme.syntax_function {
-        return StyleHint::MdCodeFunction;
-    }
-    if *style == theme.syntax_variable {
-        return StyleHint::MdCodeVariable;
-    }
-    if *style == theme.syntax_constant {
-        return StyleHint::MdCodeConstant;
-    }
-    if *style == theme.syntax_string {
-        return StyleHint::MdCodeString;
-    }
-    if *style == theme.syntax_number {
-        return StyleHint::MdCodeNumber;
-    }
-    if *style == theme.syntax_operator {
-        return StyleHint::MdCodeOperator;
-    }
-    if *style == theme.syntax_punctuation {
-        return StyleHint::MdCodePunctuation;
-    }
-    if *style == theme.syntax_comment {
-        return StyleHint::MdCodeComment;
-    }
-    if *style == theme.inline_code {
-        return StyleHint::MdInlineCode;
-    }
-
-    // Check modifier-based styles
-    let has_bold = style.add_modifier.contains(Modifier::BOLD);
-    let has_italic = style.add_modifier.contains(Modifier::ITALIC);
-    match (has_bold, has_italic) {
-        (true, true) => StyleHint::MdBoldItalic,
-        (true, false) => StyleHint::MdBold,
-        (false, true) => StyleHint::MdItalic,
-        (false, false) => {
-            // Check for code block plain text (Style::default() inside code blocks
-            // is indistinguishable from normal text — both map to Normal)
-            StyleHint::Normal
-        }
-    }
-}

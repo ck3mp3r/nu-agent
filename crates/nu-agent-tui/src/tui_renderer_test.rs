@@ -111,6 +111,7 @@ fn diff_add_line_uses_done_fg_color() {
             "+added".to_string(),
             StyleHint::DiffAdd,
         )],
+        markdown: None,
     };
     let lines = r.render(&block, &default_ctx(80));
     let span = lines[0]
@@ -130,6 +131,7 @@ fn diff_remove_line_uses_failed_fg_color() {
             "-removed".to_string(),
             StyleHint::DiffRemove,
         )],
+        markdown: None,
     };
     let lines = r.render(&block, &default_ctx(80));
     let span = lines[0]
@@ -149,6 +151,7 @@ fn diff_hunk_line_has_bold_modifier() {
             "@@ -3,2 +3,2 @@".to_string(),
             StyleHint::DiffHunk,
         )],
+        markdown: None,
     };
     let lines = r.render(&block, &default_ctx(80));
     let span = lines[0]
@@ -177,7 +180,7 @@ fn separator_renders_repeated_dash_char() {
 fn selected_row_has_selection_bg_on_all_spans() {
     let r = make_renderer();
     let block = TranscriptEntry::User(ProseMessage {
-        lines: vec![ContentLine::single("hi".to_string(), StyleHint::Normal)],
+        markdown: "hi".to_string(),
     })
     .to_render_block();
     let mut ctx = default_ctx(80);
@@ -199,10 +202,7 @@ fn selected_row_has_selection_bg_on_all_spans() {
 fn short_line_no_wrap() {
     let r = make_renderer();
     let block = TranscriptEntry::User(ProseMessage {
-        lines: vec![ContentLine::single(
-            "Short text".to_string(),
-            StyleHint::Normal,
-        )],
+        markdown: "Short text".to_string(),
     })
     .to_render_block();
     let lines = r.render(&block, &default_ctx(80));
@@ -219,7 +219,7 @@ fn word_wrap_breaks_at_space() {
     // But let's make it wrap: "hello world " = 12 chars
     let text = "hello world foobar";
     let block = TranscriptEntry::User(ProseMessage {
-        lines: vec![ContentLine::single(text.to_string(), StyleHint::Normal)],
+        markdown: text.to_string(),
     })
     .to_render_block();
 
@@ -256,20 +256,23 @@ fn word_wrap_breaks_at_space() {
 #[cfg(test)]
 mod task_5_visual_diff_tests {
     use super::*;
-    use nu_agent_core::transcript::ir::{ContentLine, Span, StyleHint};
     use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry};
     use nu_agent_core::transcript::renderer::BlockRenderer;
     use ratatui::style::Modifier;
 
     fn render_block_for(
         role_user: bool,
-        lines: Vec<ContentLine>,
+        markdown: &str,
     ) -> Vec<ratatui::text::Line<'static>> {
         let r = make_renderer();
         let entry = if role_user {
-            TranscriptEntry::User(ProseMessage { lines })
+            TranscriptEntry::User(ProseMessage {
+                markdown: markdown.to_string(),
+            })
         } else {
-            TranscriptEntry::Assistant(ProseMessage { lines })
+            TranscriptEntry::Assistant(ProseMessage {
+                markdown: markdown.to_string(),
+            })
         };
         let block = entry.to_render_block();
         r.render(&block, &default_ctx(80))
@@ -277,10 +280,7 @@ mod task_5_visual_diff_tests {
 
     #[test]
     fn user_prose_uses_user_lane_prefix() {
-        let lines = render_block_for(
-            true,
-            vec![ContentLine::single("hi".to_string(), StyleHint::Normal)],
-        );
+        let lines = render_block_for(true, "hi");
         let prefix: String = lines[0]
             .spans
             .iter()
@@ -292,10 +292,7 @@ mod task_5_visual_diff_tests {
 
     #[test]
     fn assistant_prose_uses_assistant_lane_prefix() {
-        let lines = render_block_for(
-            false,
-            vec![ContentLine::single("hi".to_string(), StyleHint::Normal)],
-        );
+        let lines = render_block_for(false, "hi");
         let prefix: String = lines[0]
             .spans
             .iter()
@@ -307,10 +304,7 @@ mod task_5_visual_diff_tests {
 
     #[test]
     fn user_prose_has_no_row_background() {
-        let lines = render_block_for(
-            true,
-            vec![ContentLine::single("hi".to_string(), StyleHint::Normal)],
-        );
+        let lines = render_block_for(true, "hi");
         for span in &lines[0].spans {
             assert_eq!(
                 span.style.bg, None,
@@ -322,10 +316,7 @@ mod task_5_visual_diff_tests {
 
     #[test]
     fn assistant_prose_has_no_row_background() {
-        let lines = render_block_for(
-            false,
-            vec![ContentLine::single("hi".to_string(), StyleHint::Normal)],
-        );
+        let lines = render_block_for(false, "hi");
         for span in &lines[0].spans {
             assert_eq!(
                 span.style.bg, None,
@@ -337,35 +328,72 @@ mod task_5_visual_diff_tests {
 
     #[test]
     fn user_md_bold_renders_with_bold_modifier() {
-        let lines = render_block_for(
-            true,
-            vec![ContentLine::from_spans(vec![Span::new(
-                "world".to_string(),
-                StyleHint::MdBold,
-            )])],
-        );
-        let bold = lines[0]
-            .spans
+        // Pass raw markdown — renderer projects at render time
+        let lines = render_block_for(true, "**world**");
+        let bold = lines
             .iter()
+            .flat_map(|l| l.spans.iter())
             .find(|s| s.content.contains("world"))
-            .expect("bold span");
+            .expect("bold span containing 'world'");
         assert!(bold.style.add_modifier.contains(Modifier::BOLD));
     }
 
     #[test]
     fn assistant_md_bold_renders_with_bold_modifier() {
-        let lines = render_block_for(
-            false,
-            vec![ContentLine::from_spans(vec![Span::new(
-                "world".to_string(),
-                StyleHint::MdBold,
-            )])],
-        );
-        let bold = lines[0]
-            .spans
+        let lines = render_block_for(false, "**world**");
+        let bold = lines
             .iter()
+            .flat_map(|l| l.spans.iter())
             .find(|s| s.content.contains("world"))
-            .expect("bold span");
+            .expect("bold span containing 'world'");
         assert!(bold.style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    // ── New tests added by task 70c69610 ────────────────────────────────────
+
+    #[test]
+    fn prose_message_stores_raw_markdown_field() {
+        let msg = ProseMessage {
+            markdown: "# Hello".to_string(),
+        };
+        assert_eq!(msg.markdown, "# Hello");
+    }
+
+    #[test]
+    fn render_markdown_lines_accepts_max_width_none() {
+        // render_markdown_lines("# Hello", None) should produce non-empty output
+        let lines = crate::markdown::render_markdown_lines("# Hello", None);
+        assert!(
+            !lines.is_empty(),
+            "render_markdown_lines with None width must produce non-empty output"
+        );
+        let has_text = lines.iter().any(|l| {
+            l.spans
+                .iter()
+                .any(|s| s.text.contains("Hello"))
+        });
+        assert!(has_text, "expected 'Hello' in projected output");
+    }
+
+    #[test]
+    fn tui_renderer_projects_prose_at_render_time() {
+        // Construct a ProseMessage with raw markdown; verify the renderer
+        // produces styled output containing the text — no pre-projection needed.
+        let r = make_renderer();
+        let block = TranscriptEntry::Assistant(ProseMessage {
+            markdown: "hello".to_string(),
+        })
+        .to_render_block();
+        let lines = r.render(&block, &default_ctx(80));
+        assert!(!lines.is_empty(), "renderer must produce at least one line");
+        let all_text: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(
+            all_text.contains("hello"),
+            "rendered output must contain the markdown text; got: {all_text:?}"
+        );
     }
 }

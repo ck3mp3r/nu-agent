@@ -35,20 +35,32 @@ impl BlockRenderer for TtyRenderer {
             None => "",
         };
 
-        // 3. Content - concatenate all spans from all lines
+        // 3. Content: when markdown is present, use the raw text directly (TTY
+        // renders plain text; rich projection is the TUI's job). When pre-built
+        // ContentLine values are provided, use those instead.
         let mut content_parts = Vec::new();
 
-        for line in &block.lines {
-            let mut line_text = String::new();
-            for span in &line.spans {
-                let text = if self.use_color {
-                    self.colorize(&span.text, &span.hint)
-                } else {
-                    span.text.clone()
-                };
-                line_text.push_str(&text);
+        if let Some(ref md) = block.markdown {
+            // Split raw markdown by line and join; strip blank lines so the
+            // output looks clean on a plain terminal.
+            for line in md.lines() {
+                if !line.trim().is_empty() {
+                    content_parts.push(line.to_string());
+                }
             }
-            content_parts.push(line_text);
+        } else {
+            for line in &block.lines {
+                let mut line_text = String::new();
+                for span in &line.spans {
+                    let text = if self.use_color {
+                        self.colorize(&span.text, &span.hint)
+                    } else {
+                        span.text.clone()
+                    };
+                    line_text.push_str(&text);
+                }
+                content_parts.push(line_text);
+            }
         }
 
         let content = content_parts.join("\n");

@@ -163,12 +163,10 @@ impl RuntimeCoordinator {
 
                 // After Bug 2, content is just the summary body (no stats line)
                 if !message_content.trim().is_empty() {
-                    for line in crate::markdown::render_markdown_lines(message_content) {
-                        self.state
-                            .push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
-                                lines: vec![line],
-                            }));
-                    }
+                    self.state
+                        .push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
+                            markdown: message_content.to_string(),
+                        }));
                 }
                 self.state
                     .push_transcript_line(TranscriptRole::Separator, String::new());
@@ -179,12 +177,10 @@ impl RuntimeCoordinator {
                 continue;
             }
             if role == TranscriptRole::Assistant {
-                for line in crate::markdown::render_markdown_lines(message_content) {
-                    self.state
-                        .push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
-                            lines: vec![line],
-                        }));
-                }
+                self.state
+                    .push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
+                        markdown: message_content.trim().to_string(),
+                    }));
                 continue;
             }
 

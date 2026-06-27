@@ -463,17 +463,23 @@ fn assistant_message_event_is_appended_to_tui_transcript() {
     });
     coordinator.drain_transport();
 
-    assert_eq!(coordinator.state().transcript_preview.len(), 2);
-    assert_eq!(
-        coordinator.state().transcript_preview[0].role(),
-        Role::Assistant
+    // After the raw-markdown refactor, a single AssistantMessage event produces
+    // exactly one ProseMessage entry (the entire text is stored as raw markdown).
+    let assistant_entries: Vec<_> = coordinator
+        .state()
+        .transcript_preview
+        .iter()
+        .filter(|e| e.role() == Role::Assistant)
+        .collect();
+    assert_eq!(assistant_entries.len(), 1, "one ProseMessage per message block");
+    assert!(
+        assistant_entries[0].text().contains("hello"),
+        "raw markdown should contain 'hello'"
     );
-    assert_eq!(coordinator.state().transcript_preview[0].text(), "hello");
-    assert_eq!(
-        coordinator.state().transcript_preview[1].role(),
-        Role::Assistant
+    assert!(
+        assistant_entries[0].text().contains("world"),
+        "raw markdown should contain 'world'"
     );
-    assert_eq!(coordinator.state().transcript_preview[1].text(), "world");
 }
 
 #[test]
@@ -483,19 +489,35 @@ fn assistant_markdown_message_is_projected_before_transcript_append() {
     coordinator.enqueue_ui_event(UiEvent::AssistantMessage { text: markdown });
     coordinator.drain_transport();
 
-    let lines = coordinator
+    // After the raw-markdown refactor, the transcript stores the source markdown.
+    // Projection happens at render time. Verify the raw markdown is stored and
+    // produces the expected rendered output when projected.
+    let raw_texts: Vec<String> = coordinator
         .state()
         .transcript_preview
         .iter()
-        .map(|line| line.text())
-        .collect::<Vec<_>>();
+        .map(|entry| entry.text())
+        .collect();
 
-    assert!(lines.contains(&"• one".to_string()));
-    assert!(lines.contains(&"• two".to_string()));
-    assert!(lines.contains(&"1. first".to_string()));
-    assert!(lines.contains(&"2. second".to_string()));
-    assert!(lines.contains(&"│ quoted".to_string()));
-    assert!(lines.contains(&"│ second".to_string()));
+    // The entire markdown is stored in a single ProseMessage.
+    // Project it and verify the list markers appear.
+    let projected: Vec<String> = raw_texts
+        .iter()
+        .flat_map(|md| crate::markdown::render_markdown_lines(md, None))
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|s| s.text.as_str())
+                .collect::<String>()
+        })
+        .collect();
+
+    assert!(projected.iter().any(|l| l.contains("• one")));
+    assert!(projected.iter().any(|l| l.contains("• two")));
+    assert!(projected.iter().any(|l| l.contains("1. first")));
+    assert!(projected.iter().any(|l| l.contains("2. second")));
+    assert!(projected.iter().any(|l| l.contains("│ quoted")));
+    assert!(projected.iter().any(|l| l.contains("│ second")));
 }
 
 #[test]
@@ -1312,7 +1334,9 @@ fn coordinator_hydration_projects_both_user_and_assistant_markdown() {
         None,
     );
 
-    let lines = coordinator
+    // After the raw-markdown refactor: text() returns raw markdown source.
+    // Project to verify the rendered content.
+    let raw_lines: Vec<(TranscriptRole, String)> = coordinator
         .state()
         .transcript_preview
         .iter()
@@ -1328,11 +1352,35 @@ fn coordinator_hydration_projects_both_user_and_assistant_markdown() {
             };
             (role, line.text())
         })
-        .collect::<Vec<_>>();
+        .collect();
 
-    assert!(lines.contains(&(TranscriptRole::User, "user stays literal".to_string())));
-    assert!(lines.contains(&(TranscriptRole::Assistant, "heading".to_string())));
-    assert!(lines.contains(&(TranscriptRole::Assistant, "x".to_string())));
+    // User message: raw markdown stored as-is
+    assert!(
+        raw_lines
+            .iter()
+            .any(|(r, t)| *r == TranscriptRole::User && t.contains("user stays literal")),
+        "user message should contain the text; got: {raw_lines:?}"
+    );
+    // Assistant message: raw markdown stored, projection produces heading and code
+    let assistant_projected: Vec<String> = raw_lines
+        .iter()
+        .filter(|(r, _)| *r == TranscriptRole::Assistant)
+        .flat_map(|(_, md)| crate::markdown::render_markdown_lines(md, None))
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|s| s.text.as_str())
+                .collect::<String>()
+        })
+        .collect();
+    assert!(
+        assistant_projected.iter().any(|l| l.contains("heading")),
+        "projected assistant lines should contain heading text; got: {assistant_projected:?}"
+    );
+    assert!(
+        assistant_projected.iter().any(|l| l.contains("x")),
+        "projected assistant lines should contain code text; got: {assistant_projected:?}"
+    );
 }
 
 #[test]
@@ -1400,31 +1448,39 @@ fn coordinator_hydration_keeps_unsupported_markdown_readable_in_assistant_transc
         None,
     );
 
-    let lines = coordinator
+    // After the raw-markdown refactor, the entry stores raw markdown.
+    // Project it to verify the rendered content is readable.
+    let projected_lines: Vec<String> = coordinator
         .state()
         .transcript_preview
         .iter()
         .filter(|line| matches!(line.role(), nu_agent_core::transcript::ir::Role::Assistant))
-        .map(|line| line.text())
-        .collect::<Vec<_>>();
+        .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
+        .map(|l| {
+            l.spans
+                .iter()
+                .map(|s| s.text.as_str())
+                .collect::<String>()
+        })
+        .collect();
 
     // Tables are now supported and rendered with separators
     assert!(
-        lines
+        projected_lines
             .iter()
             .any(|line| line.contains("col") && line.contains("val"))
     );
     assert!(
-        lines
+        projected_lines
             .iter()
             .any(|line| line.contains("a") && line.contains("b"))
     );
     assert!(
-        lines.iter().any(|line| line.contains("│")),
+        projected_lines.iter().any(|line| line.contains("│")),
         "table cells should be separated"
     );
     assert!(
-        lines
+        projected_lines
             .iter()
             .any(|line| line.contains("alt (image: https://img.example/x.png)"))
     );
@@ -1439,18 +1495,24 @@ fn coordinator_hydration_handles_malformed_assistant_markdown_without_dropping_m
         None,
     );
 
-    let assistant_lines = coordinator
+    let assistant_entries = coordinator
         .state()
         .transcript_preview
         .iter()
         .filter(|line| matches!(line.role(), nu_agent_core::transcript::ir::Role::Assistant))
         .collect::<Vec<_>>();
 
-    assert!(!assistant_lines.is_empty());
+    assert!(!assistant_entries.is_empty());
+    // Raw markdown is stored; check projected output contains the expected text
+    let projected_text: String = assistant_entries
+        .iter()
+        .flat_map(|entry| crate::markdown::render_markdown_lines(&entry.text(), None))
+        .flat_map(|l| l.spans.into_iter())
+        .map(|s| s.text)
+        .collect();
     assert!(
-        assistant_lines
-            .iter()
-            .any(|line| line.text().contains("fn main() {"))
+        projected_text.contains("fn main() {"),
+        "projected text should contain 'fn main()'; got: {projected_text:?}"
     );
 }
 
@@ -1463,29 +1525,37 @@ fn assistant_message_event_sanitizes_pseudo_tags_and_control_tags_in_runtime_tra
     });
     coordinator.drain_transport();
 
-    let assistant_lines = coordinator
+    // After the raw-markdown refactor, the raw markdown is stored in the ProseMessage.
+    // Sanitization happens at projection time (render_markdown_lines). Verify by projecting.
+    let projected_lines: Vec<String> = coordinator
         .state()
         .transcript_preview
         .iter()
         .filter(|line| matches!(line.role(), nu_agent_core::transcript::ir::Role::Assistant))
-        .map(|line| line.text())
-        .collect::<Vec<_>>();
+        .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
+        .map(|l| {
+            l.spans
+                .iter()
+                .map(|s| s.text.as_str())
+                .collect::<String>()
+        })
+        .collect();
 
-    assert!(assistant_lines.contains(&"prefix".to_string()));
+    assert!(projected_lines.iter().any(|l| l.contains("prefix")));
     assert!(
-        assistant_lines
+        projected_lines
             .iter()
             .any(|line| line.contains("{\"ok\":true}"))
     );
-    assert!(assistant_lines.contains(&"suffix".to_string()));
-    assert!(!assistant_lines.iter().any(|line| line.contains("[code:")));
-    assert!(!assistant_lines.iter().any(|line| line.contains("[/code]")));
+    assert!(projected_lines.iter().any(|l| l.contains("suffix")));
+    assert!(!projected_lines.iter().any(|line| line.contains("[code:")));
+    assert!(!projected_lines.iter().any(|line| line.contains("[/code]")));
     assert!(
-        !assistant_lines
+        !projected_lines
             .iter()
             .any(|line| line.contains("<system-reminder>"))
     );
-    assert!(!assistant_lines.iter().any(|line| line.contains("hidden")));
+    assert!(!projected_lines.iter().any(|line| line.contains("hidden")));
 }
 
 #[test]
@@ -3819,30 +3889,39 @@ fn hydration_compaction_renders_markdown_body() {
         None,
     );
 
-    let texts: Vec<String> = coordinator
+    // After the raw-markdown refactor, the compaction body is stored as raw markdown.
+    // Projection (sanitization + rendering) happens at render time.
+    // Test by projecting the stored markdown and checking the output.
+    let projected_texts: Vec<String> = coordinator
         .state()
         .transcript_preview
         .iter()
-        .map(|line| line.text())
+        .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
+        .map(|l| {
+            l.spans
+                .iter()
+                .map(|s| s.text.as_str())
+                .collect::<String>()
+        })
         .collect();
 
-    // Raw markdown markers should NOT appear (markdown was rendered)
+    // Raw markdown markers should NOT appear in the projected output
     assert!(
-        !texts.iter().any(|t| t.contains("## ")),
-        "raw markdown heading marker should not appear: {texts:?}"
+        !projected_texts.iter().any(|t| t.contains("## ")),
+        "raw markdown heading marker should not appear in projected output: {projected_texts:?}"
     );
     assert!(
-        !texts.iter().any(|t| t.starts_with("- ")),
-        "raw markdown list marker should not appear: {texts:?}"
+        !projected_texts.iter().any(|t| t.starts_with("- ")),
+        "raw markdown list marker should not appear in projected output: {projected_texts:?}"
     );
     // Rendered content should be present
     assert!(
-        texts.iter().any(|t| t.contains("Summary")),
-        "rendered heading text should appear: {texts:?}"
+        projected_texts.iter().any(|t| t.contains("Summary")),
+        "rendered heading text should appear in projected output: {projected_texts:?}"
     );
     assert!(
-        texts.iter().any(|t| t.contains("alpha")),
-        "rendered list item text should appear: {texts:?}"
+        projected_texts.iter().any(|t| t.contains("alpha")),
+        "rendered list item text should appear in projected output: {projected_texts:?}"
     );
 }
 
@@ -4169,15 +4248,16 @@ fn hydrate_assistant_message_with_bold_emits_md_bold_span() {
         .iter()
         .filter_map(|e| {
             if let nu_agent_core::transcript::items::TranscriptEntry::Assistant(
-                nu_agent_core::transcript::items::ProseMessage { lines },
+                nu_agent_core::transcript::items::ProseMessage { markdown },
             ) = e
             {
-                Some(lines)
+                Some(markdown.as_str())
             } else {
                 None
             }
         })
-        .flat_map(|ls| ls.iter().flat_map(|l| l.spans.iter()))
+        .flat_map(|md| crate::markdown::render_markdown_lines(md, None))
+        .flat_map(|l| l.spans.into_iter())
         .any(|s| {
             s.text == "bold" && matches!(s.hint, nu_agent_core::transcript::ir::StyleHint::MdBold)
         });
@@ -4197,15 +4277,16 @@ fn hydrate_compaction_message_with_italic_emits_md_italic_span() {
         .iter()
         .filter_map(|e| {
             if let nu_agent_core::transcript::items::TranscriptEntry::Assistant(
-                nu_agent_core::transcript::items::ProseMessage { lines },
+                nu_agent_core::transcript::items::ProseMessage { markdown },
             ) = e
             {
-                Some(lines)
+                Some(markdown.as_str())
             } else {
                 None
             }
         })
-        .flat_map(|ls| ls.iter().flat_map(|l| l.spans.iter()))
+        .flat_map(|md| crate::markdown::render_markdown_lines(md, None))
+        .flat_map(|l| l.spans.into_iter())
         .any(|s| {
             s.text == "italic"
                 && matches!(s.hint, nu_agent_core::transcript::ir::StyleHint::MdItalic)
