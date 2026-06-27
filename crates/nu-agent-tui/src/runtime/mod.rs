@@ -10,7 +10,6 @@ use ratatui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout},
     layout::{Margin, Position, Rect},
-    style::Style,
     text::{Line, Span, Text},
     widgets::{
         Block, Borders, Cell, Clear, Paragraph, Row, Scrollbar, ScrollbarOrientation,
@@ -742,10 +741,20 @@ impl RuntimeCoordinator {
         self.last_render_at = at;
     }
 
-    fn render_frame(&self, live: &mut Option<LiveTerminalUi>) -> Result<(), String> {
+    fn render_frame(&mut self, live: &mut Option<LiveTerminalUi>) -> Result<(), String> {
         let Some(live) = live.as_mut() else {
             return Ok(());
         };
+
+        // Capture values needed inside the FnOnce draw closure (avoid borrowing self mutably)
+        let transcript_following_tail = self.state.transcript_following_tail;
+        let transcript_scroll_offset = self.state.transcript_scroll_offset;
+
+        // Smuggle the resolved effective_offset out of the FnOnce draw closure so we can
+        // write it back to transcript_scroll_offset after draw() returns. This ensures that
+        // when following_tail is true, transcript_scroll_offset reflects the actual rendered
+        // position — otherwise the first scroll-up would jump to offset 0.
+        let mut rendered_scroll_offset: Option<usize> = None;
 
         live.terminal
             .draw(|frame| {
@@ -798,84 +807,56 @@ impl RuntimeCoordinator {
                     theme: self.theme.clone(),
                 };
 
-                // Capture input_mode before the closure to avoid borrowing self
-                let input_mode = self.state.input_mode;
-
-                // Build ListView with tui-widget-list
-                let builder = tui_widget_list::ListBuilder::new(|context| {
-                    let entry = &entries_for_render[context.index];
-                    let block = entry.to_render_block();
-                    let item_status = transcript_line_statuses
-                        .get(context.index)
-                        .copied()
-                        .flatten()
-                        .map(transcript_line_status_to_item_status);
-                    let ctx = RenderContext {
-                        width: context.cross_axis_size as usize,
-                        cursor: false,
-                        selected: context.is_selected
-                            && input_mode == crate::state::InputMode::Normal,
-                        status: item_status,
-                        now_millis,
-                    };
-                    let lines = renderer.render(&block, &ctx);
-                    let text = ratatui::text::Text::from(lines);
-
-                    // Calculate wrapped height: for each line, compute how many visual rows it takes
-                    let width = context.cross_axis_size as usize;
-                    let height: u16 = text
-                        .lines
-                        .iter()
-                        .map(|line| {
-                            let line_width = line.width();
-                            if line_width == 0 || width == 0 {
-                                1u16
-                            } else {
-                                line_width.div_ceil(width) as u16
-                            }
-                        })
-                        .sum::<u16>()
-                        .max(1);
-
-                    let paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
-                    (paragraph, height)
-                });
-
-                let transcript_border_style =
-                    if self.state.pane_focus == crate::state::PaneFocus::Transcript {
-                        self.theme.focus
-                    } else {
-                        Style::default()
-                    };
-
-                let list_view = tui_widget_list::ListView::new(builder, entries_for_render.len())
-                    .infinite_scrolling(false)
-                    .block(
-                        Block::default()
-                            .borders(Borders::TOP)
-                            .border_style(transcript_border_style),
-                    );
-
                 if vertical[1].height > 0 {
                     frame.render_widget(Clear, vertical[1]);
                     if transcript_content_area.height > 0 {
-                        let mut list_state_clone = self.state.transcript_list_state.clone();
-                        let rendered_len = entries_for_render.len();
-                        if let Some(sel) = list_state_clone.selected
-                            && sel + 1 >= self.state.transcript_preview.len()
-                        {
-                            list_state_clone.select(Some(rendered_len.saturating_sub(1)));
+                        let width = transcript_list_area.width as usize;
+
+                        let mut all_lines: Vec<Line<'static>> = Vec::new();
+
+                        for (idx, entry) in entries_for_render.iter().enumerate() {
+                            let block = entry.to_render_block();
+                            let item_status = transcript_line_statuses
+                                .get(idx)
+                                .copied()
+                                .flatten()
+                                .map(transcript_line_status_to_item_status);
+                            let ctx = RenderContext {
+                                width,
+                                cursor: false,
+                                selected: false,
+                                status: item_status,
+                                now_millis,
+                            };
+                            all_lines.extend(renderer.render(&block, &ctx));
                         }
-                        frame.render_stateful_widget(
-                            list_view,
+
+                        let text = ratatui::text::Text::from(all_lines);
+                        let paragraph = Paragraph::new(text)
+                            .wrap(Wrap { trim: false });
+
+                        let viewport_height = transcript_list_area.height as usize;
+                        let total_visual_rows =
+                            paragraph.line_count(transcript_list_area.width);
+                        let max_scroll: usize =
+                            total_visual_rows.saturating_sub(viewport_height);
+                        let effective_offset: usize = if transcript_following_tail {
+                            max_scroll
+                        } else {
+                            transcript_scroll_offset.min(max_scroll)
+                        };
+                        rendered_scroll_offset = Some(effective_offset);
+
+                        let scroll_u16 = effective_offset.min(u16::MAX as usize) as u16;
+                        frame.render_widget(
+                            paragraph.scroll((scroll_u16, 0)),
                             transcript_list_area,
-                            &mut list_state_clone,
                         );
-                        let content_count = entries_for_render.len();
-                        if content_count > 0 {
-                            let scroll_pos = list_state_clone.selected.unwrap_or(0);
+
+                        if total_visual_rows > viewport_height {
                             let mut scrollbar_state =
-                                ScrollbarState::new(content_count).position(scroll_pos);
+                                ScrollbarState::new(max_scroll)
+                                    .position(effective_offset);
                             frame.render_stateful_widget(
                                 Scrollbar::new(ScrollbarOrientation::VerticalRight)
                                     .begin_symbol(None)
@@ -1353,6 +1334,13 @@ impl RuntimeCoordinator {
                 }
             })
             .map_err(|err| format!("TUI render failed: {err}"))?;
+
+        // Write back the resolved scroll offset so that transcript_scroll_offset always
+        // reflects the actual rendered position. Without this, when following_tail is true
+        // transcript_scroll_offset stays at 0 and the first scroll-up key jumps to the top.
+        if let Some(offset) = rendered_scroll_offset {
+            self.state.transcript_scroll_offset = offset;
+        }
 
         let cursor_style = self.state.input_mode.cursor_style();
         let _ = crossterm::execute!(std::io::stdout(), cursor_style);

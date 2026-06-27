@@ -297,7 +297,7 @@ fn permission_prompt_open_scrolls_to_bottom() {
     state.push_transcript_line(TranscriptRole::Assistant, "msg2".to_string());
     state.push_transcript_line(TranscriptRole::Tool, "tool1".to_string());
     state.scroll_transcript_to_top();
-    assert_eq!(state.transcript_list_state.selected, Some(0));
+    assert!(!state.transcript_following_tail);
 
     state.open_permission_prompt(PermissionPrompt {
         request_id: "ask-001".to_string(),
@@ -311,8 +311,7 @@ fn permission_prompt_open_scrolls_to_bottom() {
         summary: "edit foo.rs".to_string(),
     });
 
-    let last = state.transcript_preview.len().saturating_sub(1);
-    assert_eq!(state.transcript_list_state.selected, Some(last));
+    assert!(state.transcript_following_tail);
 }
 
 #[test]
@@ -846,17 +845,17 @@ fn model_picker_empty_catalog_shows_deterministic_empty_state() {
 fn push_transcript_item_follows_tail_when_at_last_item() {
     let mut state = AppState::new();
 
-    // Push first item - should select it (None -> 0)
+    // Push first item — following_tail starts true, stays true
     state.push_transcript_line(TranscriptRole::User, "first");
-    assert_eq!(state.transcript_cursor_index(), Some(0));
+    assert!(state.transcript_following_tail);
 
-    // Push second item - should follow (already at end)
+    // Push second item — should still follow
     state.push_transcript_line(TranscriptRole::Assistant, "second");
-    assert_eq!(state.transcript_cursor_index(), Some(2)); // 0=User, 1=Separator, 2=Assistant
+    assert!(state.transcript_following_tail);
 
-    // Push third item - should still follow
+    // Push third item — should still follow
     state.push_transcript_line(TranscriptRole::User, "third");
-    assert_eq!(state.transcript_cursor_index(), Some(4)); // 2=Assistant, 3=Separator, 4=User
+    assert!(state.transcript_following_tail);
 }
 
 #[test]
@@ -868,16 +867,21 @@ fn push_transcript_item_stays_put_when_scrolled_up() {
     state.push_transcript_line(TranscriptRole::Assistant, "second");
     state.push_transcript_line(TranscriptRole::User, "third");
 
-    // Scroll to top (user has scrolled up)
+    // Scroll to top (user has scrolled up — disables following)
     state.scroll_transcript_to_top();
-    assert_eq!(state.transcript_cursor_index(), Some(0));
+    assert!(!state.transcript_following_tail);
+    assert_eq!(state.transcript_scroll_offset, 0);
 
-    // Push new item - should NOT change selection
+    // Push new item — should NOT re-enable following, offset stays at 0
     state.push_transcript_line(TranscriptRole::Assistant, "fourth");
+    assert!(
+        !state.transcript_following_tail,
+        "following_tail should stay false when user has scrolled up"
+    );
     assert_eq!(
-        state.transcript_cursor_index(),
-        Some(0),
-        "selection should stay at top when user has scrolled up"
+        state.transcript_scroll_offset,
+        0,
+        "scroll offset should stay at top when user has scrolled up"
     );
 }
 
@@ -885,15 +889,14 @@ fn push_transcript_item_stays_put_when_scrolled_up() {
 fn push_transcript_item_follows_when_nothing_selected() {
     let mut state = AppState::new();
 
-    // Initially nothing is selected
-    assert_eq!(state.transcript_cursor_index(), None);
+    // Initially following_tail is true (default)
+    assert!(state.transcript_following_tail);
 
-    // Push first item - should select it
+    // Push first item — following_tail stays true
     state.push_transcript_line(TranscriptRole::User, "first");
-    assert_eq!(
-        state.transcript_cursor_index(),
-        Some(0),
-        "first push should select item 0 when nothing was selected"
+    assert!(
+        state.transcript_following_tail,
+        "first push should keep following_tail true"
     );
 }
 

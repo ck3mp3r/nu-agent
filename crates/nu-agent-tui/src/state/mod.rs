@@ -22,7 +22,6 @@ use nu_agent_core::transcript::items::{
 use ratatui::text::Line;
 use std::collections::HashMap;
 use std::collections::VecDeque;
-use tui_widget_list::ListState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiPhase {
@@ -254,13 +253,14 @@ pub struct AbortState {
     pub confirmation_marker: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AppState {
     pub phase: UiPhase,
     pub input: InputState,
     pub abort: AbortState,
     pub transcript_preview: Vec<TranscriptEntry>,
-    pub transcript_list_state: ListState,
+    pub transcript_scroll_offset: usize,
+    pub transcript_following_tail: bool,
     pub status_line: String,
     pub input_mode: InputMode,
     pub pane_focus: PaneFocus,
@@ -324,76 +324,6 @@ pub struct AppState {
     assistant_projection_cache_misses: usize,
 }
 
-// Manual PartialEq implementation that skips transcript_list_state comparison
-// because tui_widget_list::ListState doesn't implement PartialEq
-impl PartialEq for AppState {
-    fn eq(&self, other: &Self) -> bool {
-        self.phase == other.phase
-            && self.input == other.input
-            && self.abort == other.abort
-            && self.transcript_preview == other.transcript_preview
-            // Skip transcript_list_state
-            && self.status_line == other.status_line
-            && self.input_mode == other.input_mode
-            && self.pane_focus == other.pane_focus
-            && self.latest_input_tokens == other.latest_input_tokens
-            && self.latest_output_tokens == other.latest_output_tokens
-            && self.latest_total_tokens == other.latest_total_tokens
-            && self.session_total_tokens == other.session_total_tokens
-            && self.context_window_max_tokens == other.context_window_max_tokens
-            && self.quit_requested == other.quit_requested
-            && self.command_palette_open == other.command_palette_open
-            && self.command_palette_query == other.command_palette_query
-            && self.command_palette_selection == other.command_palette_selection
-            && self.inline_slash_open == other.inline_slash_open
-            && self.inline_slash_selection == other.inline_slash_selection
-            && self.model_picker_open == other.model_picker_open
-            && self.model_picker_query == other.model_picker_query
-            && self.model_picker_selection == other.model_picker_selection
-            && self.model_picker_options == other.model_picker_options
-            && self.agent_picker_open == other.agent_picker_open
-            && self.agent_picker_query == other.agent_picker_query
-            && self.agent_picker_selection == other.agent_picker_selection
-            && self.agent_picker_options == other.agent_picker_options
-            && self.pending_agent_picker_launch_requests == other.pending_agent_picker_launch_requests
-            && self.pending_agent_switch_requests == other.pending_agent_switch_requests
-            && self.active_agent_identity == other.active_agent_identity
-            && self.agent_cycle_names == other.agent_cycle_names
-            && self.info_panel == other.info_panel
-            && self.info_panel_scroll == other.info_panel_scroll
-            && self.mcp_servers == other.mcp_servers
-            && self.mcp_panel_selection == other.mcp_panel_selection
-            && self.discoverable_skills == other.discoverable_skills
-            && self.skills_discovery_failed == other.skills_discovery_failed
-            && self.llm_visible_mcp_tool_count == other.llm_visible_mcp_tool_count
-            && self.mcp_visible_tool_count_by_server == other.mcp_visible_tool_count_by_server
-            && self.mcp_visible_tool_names_by_server == other.mcp_visible_tool_names_by_server
-            && self.mcp_failure_reasons == other.mcp_failure_reasons
-            && self.pending_mcp_toggle_requests == other.pending_mcp_toggle_requests
-            && self.pending_model_switch_requests == other.pending_model_switch_requests
-            && self.pending_permission_decisions == other.pending_permission_decisions
-            && self.pending_model_picker_launch_requests == other.pending_model_picker_launch_requests
-            && self.permission_prompt == other.permission_prompt
-            && self.assistant_projection_cache == other.assistant_projection_cache
-            && self.prompt_items == other.prompt_items
-            && self.tool_call_items == other.tool_call_items
-            && self.compaction_items == other.compaction_items
-            && self.active_tool_ids_by_key == other.active_tool_ids_by_key
-            && self.pending_prompt_ids == other.pending_prompt_ids
-            && self.pending_immediate_submissions == other.pending_immediate_submissions
-            && self.active_prompt_id == other.active_prompt_id
-            && self.next_prompt_id == other.next_prompt_id
-            && self.active_cycle == other.active_cycle
-            && self.insert_exit_pending_j == other.insert_exit_pending_j
-            && self.normal_pending_key == other.normal_pending_key
-            && self.inline_slash_commands == other.inline_slash_commands
-            && self.clipboard_request == other.clipboard_request
-            && self.pre_displayed_tool_keys == other.pre_displayed_tool_keys
-            && self.streaming_message_start == other.streaming_message_start
-            && self.compaction_streaming_start == other.compaction_streaming_start
-    }
-}
-
 impl Default for AppState {
     fn default() -> Self {
         Self {
@@ -401,7 +331,8 @@ impl Default for AppState {
             input: InputState::default(),
             abort: AbortState::default(),
             transcript_preview: Vec::new(),
-            transcript_list_state: ListState::default(),
+            transcript_scroll_offset: 0,
+            transcript_following_tail: true,
             status_line: String::new(),
             input_mode: InputMode::Insert,
             pane_focus: PaneFocus::Input,

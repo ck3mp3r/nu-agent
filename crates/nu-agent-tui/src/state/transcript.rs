@@ -77,11 +77,6 @@ impl AppState {
     }
 
     pub fn push_transcript_item(&mut self, entry: TranscriptEntry) {
-        // Check if we should follow tail (user is at end, or nothing selected)
-        let was_at_end = match self.transcript_list_state.selected {
-            Some(idx) => idx + 1 >= self.transcript_preview.len(),
-            None => true,
-        };
 
         let entry_role = entry.role();
         if should_insert_turn_separator(
@@ -102,47 +97,39 @@ impl AppState {
         }
 
         self.transcript_preview.push(entry);
-
-        // Only follow tail if user was already at the end
-        if was_at_end {
-            self.transcript_list_state
-                .select(Some(self.transcript_preview.len().saturating_sub(1)));
-        }
-    }
-
-    pub fn scroll_transcript_page_up(&mut self, page_lines: usize) {
-        let current = self.transcript_list_state.selected.unwrap_or(0);
-        self.transcript_list_state
-            .select(Some(current.saturating_sub(page_lines.max(1))));
     }
 
     pub fn scroll_transcript_line_up(&mut self) {
-        let current = self.transcript_list_state.selected.unwrap_or(0);
-        self.transcript_list_state
-            .select(Some(current.saturating_sub(1)));
-    }
-
-    pub fn scroll_transcript_page_down(&mut self, page_lines: usize) {
-        let current = self.transcript_list_state.selected.unwrap_or(0);
-        let last = self.transcript_preview.len().saturating_sub(1);
-        self.transcript_list_state
-            .select(Some(current.saturating_add(page_lines.max(1)).min(last)));
+        self.transcript_following_tail = false;
+        self.transcript_scroll_offset = self.transcript_scroll_offset.saturating_sub(1);
     }
 
     pub fn scroll_transcript_line_down(&mut self) {
-        let current = self.transcript_list_state.selected.unwrap_or(0);
-        let last = self.transcript_preview.len().saturating_sub(1);
-        self.transcript_list_state
-            .select(Some(current.saturating_add(1).min(last)));
+        self.transcript_following_tail = false;
+        self.transcript_scroll_offset = self.transcript_scroll_offset.saturating_add(1);
+        // clamped to max_scroll at render time
+    }
+
+    pub fn scroll_transcript_page_up(&mut self, page_lines: usize) {
+        self.transcript_following_tail = false;
+        self.transcript_scroll_offset =
+            self.transcript_scroll_offset.saturating_sub(page_lines.max(1));
+    }
+
+    pub fn scroll_transcript_page_down(&mut self, page_lines: usize) {
+        self.transcript_following_tail = false;
+        self.transcript_scroll_offset =
+            self.transcript_scroll_offset.saturating_add(page_lines.max(1));
+        // clamped to max_scroll at render time
     }
 
     pub fn scroll_transcript_to_top(&mut self) {
-        self.transcript_list_state.select(Some(0));
+        self.transcript_following_tail = false;
+        self.transcript_scroll_offset = 0;
     }
 
     pub fn scroll_transcript_to_bottom(&mut self) {
-        let last = self.transcript_preview.len().saturating_sub(1);
-        self.transcript_list_state.select(Some(last));
+        self.transcript_following_tail = true;
     }
 
     pub fn focus_prev_pane(&mut self) {

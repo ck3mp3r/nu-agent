@@ -59,7 +59,7 @@ impl AppState {
     }
 
     pub fn transcript_cursor_index(&self) -> Option<usize> {
-        self.transcript_list_state.selected
+        Some(self.transcript_scroll_offset)
     }
 
     pub fn take_clipboard_request(&mut self) -> Option<String> {
