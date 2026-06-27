@@ -339,6 +339,10 @@ impl ExtendedRuntime for AgentConversationRuntime {
     fn clear_session(&mut self) {
         self.memory_state.clear();
     }
+
+    fn seed_last_total_tokens(&mut self, tokens: Option<u64>) {
+        *self.memory_state.last_total_tokens_mut() = tokens;
+    }
 }
 
 impl AgentConversationRuntime {
@@ -436,15 +440,16 @@ impl AgentConversationRuntime {
             &self.runtime,
             self.memory_state.memory(),
             &self.store,
-            self.memory_state.last_total_tokens(),
             session_id,
         )
         .execute(ui, source, self.provider_state.client().unwrap())?;
 
-        if let Some(new_count) = result {
+        if let Some((new_count, summary_total_tokens)) = result {
             self.compaction_state.set_compaction_count(new_count);
-            // Reset so stale pre-compaction token count can't re-trigger
-            *self.memory_state.last_total_tokens_mut() = None;
+            // Use the summary token count captured from the streaming Final chunk.
+            // If the provider didn't yield usage, fall back to None so the stale
+            // pre-compaction count doesn't re-trigger compaction on next load.
+            *self.memory_state.last_total_tokens_mut() = summary_total_tokens;
         }
 
         Ok(())

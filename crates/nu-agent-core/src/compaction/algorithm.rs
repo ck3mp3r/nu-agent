@@ -26,11 +26,10 @@ use rig::memory::ConversationMemory;
 /// * `session_id` - The session ID to compact
 /// * `config` - Compaction parameters (thresholds, strategy, budget)
 /// * `memory` - `JournalConversationMemory` owning both cache and JSONL store
-/// * `summarizer` - Function that takes rig messages and returns a summary string
-/// * `last_total_tokens` - Optional token count from last LLM response
+/// * `summarizer` - Function that takes rig messages and returns a (summary, token_count) tuple
 ///
 /// # Returns
-/// `CompactionOutcome` with counts and summary text
+/// `CompactionOutcome` with counts, summary text, and summary token usage
 ///
 /// # Errors
 /// Returns an error if memory operations, summarizer, or store operations fail.
@@ -39,11 +38,10 @@ pub async fn compact<F, Fut>(
     config: &CompactionParams,
     memory: &JournalConversationMemory,
     summarizer: F,
-    last_total_tokens: Option<u64>,
 ) -> io::Result<CompactionOutcome>
 where
     F: FnOnce(&[Message]) -> Fut,
-    Fut: Future<Output = io::Result<String>>,
+    Fut: Future<Output = io::Result<(String, Option<u64>)>>,
 {
     let keep_count = config.keep_recent;
 
@@ -63,6 +61,7 @@ where
         kept_recent_count,
         strategy_name,
         store_kept_messages,
+        summary_total_tokens,
     ) = match config.compaction_strategy {
         CompactionStrategy::TokenTruncate => {
             let budget = config
@@ -94,6 +93,7 @@ where
                 kept_count,
                 "token_truncate",
                 store_kept,
+                None::<u64>,
             )
         }
         _ => {
@@ -103,6 +103,7 @@ where
                     summarized_count: 0,
                     kept_recent_count: messages.len(),
                     summary_text: String::new(),
+                    summary_total_tokens: None,
                 });
             }
 
@@ -117,7 +118,7 @@ where
 
             match config.compaction_strategy {
                 CompactionStrategy::SlidingSummary => {
-                    let summary = summarizer(old_messages).await?;
+                    let (summary, summary_tokens) = summarizer(old_messages).await?;
                     let summary_message = Message::system(&summary);
                     let mut compacted = vec![summary_message];
                     compacted.extend_from_slice(recent_messages);
@@ -129,6 +130,7 @@ where
                         kept_recent_count,
                         "sliding_summary",
                         store_kept,
+                        summary_tokens,
                     )
                 }
                 CompactionStrategy::SlidingWindow => {
@@ -140,6 +142,7 @@ where
                         kept_recent_count,
                         "sliding_window",
                         store_kept,
+                        None::<u64>,
                     )
                 }
                 CompactionStrategy::TokenTruncate => {
@@ -149,7 +152,10 @@ where
         }
     };
 
-    // Append compaction marker to JSONL only (durable commit point)
+    // Append compaction marker to JSONL only (durable commit point).
+    // Write None for last_total_tokens — the pre-compaction value is stale.
+    // The real post-compaction count is summary_total_tokens and is set in-memory
+    // at the runtime level, not written to the JSONL here.
     let marker = CompactionMarker::new(
         summary_text.clone(),
         kept_recent_count,
@@ -157,7 +163,7 @@ where
         strategy_name,
     );
     memory
-        .append_marker(session_id, &marker, last_total_tokens)
+        .append_marker(session_id, &marker, None)
         .map_err(|e| io::Error::other(e.to_string()))?;
 
     // Re-append kept messages to JSONL only — no in-memory update yet.
@@ -165,7 +171,7 @@ where
     // after already writing to the store.
     if !store_kept_messages.is_empty() {
         memory
-            .append_messages_to_store_only(session_id, &store_kept_messages, last_total_tokens)
+            .append_messages_to_store_only(session_id, &store_kept_messages, None)
             .map_err(|e| io::Error::other(e.to_string()))?;
     }
 
@@ -186,5 +192,6 @@ where
         summarized_count,
         kept_recent_count,
         summary_text,
+        summary_total_tokens,
     })
 }

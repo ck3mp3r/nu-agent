@@ -270,6 +270,62 @@ fn no_merge_for_alternating() {
 }
 
 // ================================================================
+// Pass 3 — ToolResult guard (merge_consecutive_same_role)
+// ================================================================
+
+#[test]
+fn user_tool_result_and_text_not_merged() {
+    // User(ToolResult) followed by User(Text) must NOT be merged:
+    // OpenAI-compatible providers discard Text when ToolResult is present.
+    let assistant = assistant_with_content(vec![make_tool_call("T1", "tool_one")]);
+    let tool_result_msg = user_with_content(vec![make_tool_result("T1", "result")]);
+    let text_msg = Message::user("follow-up question");
+    let msgs = vec![assistant, tool_result_msg, text_msg];
+    let mut issues = Vec::new();
+    let result = merge_consecutive_same_role(msgs, &mut issues);
+    assert_eq!(result.len(), 3, "messages must remain separate");
+    assert!(issues.is_empty(), "no merge should be recorded");
+}
+
+#[test]
+fn plain_text_users_still_merged() {
+    // User(Text) followed by User(Text) IS still merged — existing behaviour preserved.
+    let msgs = vec![
+        Message::user("first"),
+        Message::user("second"),
+        Message::assistant("reply"),
+    ];
+    let mut issues = Vec::new();
+    let result = merge_consecutive_same_role(msgs, &mut issues);
+    assert_eq!(
+        result.len(),
+        2,
+        "two text-only user messages must be merged"
+    );
+    match &result[0] {
+        Message::User { content } => assert_eq!(content.len(), 2),
+        _ => panic!("expected user message"),
+    }
+    assert!(!issues.is_empty(), "merge must emit a diagnostic");
+}
+
+#[test]
+fn tool_result_followed_by_tool_result_not_merged() {
+    // User(ToolResult) followed by User(ToolResult) must NOT be merged.
+    let assistant = assistant_with_content(vec![
+        make_tool_call("A1", "tool_a"),
+        make_tool_call("B1", "tool_b"),
+    ]);
+    let result_a = user_with_content(vec![make_tool_result("A1", "res_a")]);
+    let result_b = user_with_content(vec![make_tool_result("B1", "res_b")]);
+    let msgs = vec![assistant, result_a, result_b];
+    let mut issues = Vec::new();
+    let result = merge_consecutive_same_role(msgs, &mut issues);
+    assert_eq!(result.len(), 3, "tool result messages must remain separate");
+    assert!(issues.is_empty(), "no merge should be recorded");
+}
+
+// ================================================================
 // Pass 4 — trim_trailing_user (direct tests)
 // ================================================================
 

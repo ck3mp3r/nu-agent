@@ -14,38 +14,42 @@ const COMPACTION_SUMMARY_PROMPT: &str = include_str!("prompts/compaction_summary
 pub(in crate::conversation) fn execute_compaction_event_shared<F>(
     source: CompactionTriggerSource,
     mut execute: F,
-) -> Result<UiEvent, String>
+) -> Result<(UiEvent, Option<u64>), String>
 where
     F: FnMut() -> Result<Option<CompactionOutcome>, String>,
 {
     let outcome = execute()?;
-    let (summarized_count, kept_recent_count, summary_body) = match outcome {
+    let (summarized_count, kept_recent_count, summary_body, summary_total_tokens) = match outcome {
         Some(outcome) => (
             outcome.summarized_count,
             outcome.kept_recent_count,
             outcome.summary_text,
+            outcome.summary_total_tokens,
         ),
         None => (
             0usize,
             0usize,
             "No-op: insufficient messages to summarize.".to_string(),
+            None,
         ),
     };
 
-    Ok(UiEvent::CompactionTriggered {
-        source: source.as_str().to_string(),
-        summarized_count,
-        kept_recent_count,
-        summary_preview: summary_preview_text(&summary_body),
-        summary_body,
-    })
+    Ok((
+        UiEvent::CompactionTriggered {
+            source: source.as_str().to_string(),
+            summarized_count,
+            kept_recent_count,
+            summary_preview: summary_preview_text(&summary_body),
+            summary_body,
+        },
+        summary_total_tokens,
+    ))
 }
 
 /// Parameters for a single compaction invocation.
 pub(in crate::conversation) struct CompactionInvocation<'a> {
     pub(in crate::conversation) mode: CompactionInvocationMode,
     pub(in crate::conversation) source: &'a str,
-    pub(in crate::conversation) last_total_tokens: Option<u64>,
 }
 
 /// Execute compaction using `JournalConversationMemory`.
@@ -108,7 +112,6 @@ where
         session.compaction_config(),
         memory,
         summarizer,
-        invocation.last_total_tokens,
     )
     .await
     .map_err(|_| COMPACTION_FAILURE_WARNING.to_string())?;
@@ -183,12 +186,15 @@ fn format_messages_for_summary(messages: &[Message]) -> String {
 ///
 /// Formats rig messages, creates summarization prompt, and calls rig agent completion.
 /// Uses streaming API to emit progressive chunks via `UiEvent::CompactionSummaryChunk`.
+///
+/// Returns `(summary_text, total_tokens)` where `total_tokens` is captured from the
+/// streaming `Final` variant if the provider yields usage data.
 async fn summarize_messages<M, U>(
     model: M,
     ui: &mut U,
     old_messages: &[Message],
     source: &str,
-) -> std::io::Result<String>
+) -> std::io::Result<(String, Option<u64>)>
 where
     M: rig::completion::CompletionModel + Clone + 'static,
     U: ProgressUi,
@@ -213,6 +219,7 @@ where
 
     let mut stream = std::pin::pin!(stream_result);
     let mut aggregated = String::new();
+    let mut summary_tokens: Option<u64> = None;
 
     loop {
         if ui.take_cancel_requested() {
@@ -223,13 +230,20 @@ where
             item = stream.next() => {
                 match item {
                     Some(Ok(chunk)) => {
-                        if let rig::streaming::StreamedAssistantContent::Text(delta) = chunk {
-                            aggregated.push_str(&delta.text);
-                            ui.emit(&UiEvent::CompactionSummaryChunk {
-                                source: source.to_string(),
-                                delta: delta.text,
-                                aggregated: aggregated.clone(),
-                            });
+                        match chunk {
+                            rig::streaming::StreamedAssistantContent::Text(delta) => {
+                                aggregated.push_str(&delta.text);
+                                ui.emit(&UiEvent::CompactionSummaryChunk {
+                                    source: source.to_string(),
+                                    delta: delta.text,
+                                    aggregated: aggregated.clone(),
+                                });
+                            }
+                            rig::streaming::StreamedAssistantContent::Final(response) => {
+                                use rig::completion::GetTokenUsage;
+                                summary_tokens = Some(response.token_usage().total_tokens);
+                            }
+                            _ => {}
                         }
                     }
                     Some(Err(_)) => {
@@ -246,5 +260,5 @@ where
         }
     }
 
-    Ok(aggregated)
+    Ok((aggregated, summary_tokens))
 }

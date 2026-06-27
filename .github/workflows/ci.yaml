@@ -21,7 +21,7 @@ env:
 
 jobs:
   build-and-cache:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - name: Code checkout
         uses: actions/checkout@v6
@@ -29,9 +29,7 @@ jobs:
           fetch-depth: 0  # full history for git diff
 
       - name: Install Determinate Nix
-        uses: DeterminateSystems/nix-installer-action@main
-        with:
-          github-token: ${{github.token}}
+        run: curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install --no-confirm
 
       - name: Setup CI Tools
         uses: ck3mp3r/actions/ci-tools@main
@@ -60,16 +58,29 @@ jobs:
           if $should_cache {
             print '✓ Pushing closure to ck3mp3r.cachix.org...'
             let closure_paths = ($store_path | ci nix closure)
-            let cache_results = $closure_paths | ci nix cache 'https://ck3mp3r.cachix.org' --upstream 'https://cache.nixos.org'
+            let cache_results = ($closure_paths | ci nix cache 'https://ck3mp3r.cachix.org' --upstream 'https://cache.nixos.org')
 
             let total_paths = ($closure_paths | length)
             let pushed_count = ($cache_results | where cached == false | length)
-
-            $"## 🏗️ Build & Cache Summary\n\n**Store path:** ($store_path)\n\n**Total paths:** ($total_paths) | **Pushed:** ($pushed_count)" | ci github summary
+            let summary = [
+              $"## 🏗️ Build & Cache Summary"
+              ""
+              $"**Store path:** ($store_path)"
+              ""
+              $"**Total paths:** ($total_paths)  **Pushed:** ($pushed_count)"
+            ]
+            $summary | ci github summary
           } else {
             print 'ℹ️ Branch push — skipping cache push'
             let closure_paths = ($store_path | ci nix closure)
-            _ = $closure_paths | ci nix cache 'https://ck3mp3r.cachix.org' --upstream 'https://cache.nixos.org' --dry-run
+            $closure_paths | ci nix cache 'https://ck3mp3r.cachix.org' --upstream 'https://cache.nixos.org' --dry-run
 
-            $"## 🏗️ Build Summary\n\n**Store path:** ($store_path)\n\nCache push skipped (not main branch)." | ci github summary
+            let summary = [
+              $"## 🏗️ Build Summary"
+              ""
+              $"**Store path:** ($store_path)"
+              ""
+              "Cache push skipped (not main branch)."
+            ]
+            $summary | ci github summary
           }

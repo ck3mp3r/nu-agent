@@ -22,8 +22,10 @@ use std::sync::{Arc, Mutex};
 /// trait's `append()` signature is fixed by rig and does not carry token information.
 /// Token counts are managed by `MemoryState` in the executor layer and written to JSONL
 /// explicitly via `append_messages_to_store_only` (cancelled turns) or passed as a parameter
-/// to `append_marker`. For completed turns where rig calls `append()` internally, the JSONL
-/// entry will have `last_total_tokens: null` — that is acceptable and expected.
+/// to `append_marker`. For completed turns where rig calls `append()` internally, `append()`
+/// reads the last known token count from the store and preserves it — so a failed turn that
+/// never receives a `CompletionCall` event does not clobber a previously correct token count
+/// with null.
 #[derive(Clone, Debug)]
 pub struct JournalConversationMemory {
     /// In-memory message cache keyed by conversation_id.
@@ -130,7 +132,12 @@ impl ConversationMemory for JournalConversationMemory {
             {
                 let cache = self.lock_cache()?;
                 if let Some(messages) = cache.get(conversation_id) {
-                    return Ok(messages.clone());
+                    let (repaired, issues) =
+                        crate::session::repair::repair_messages(messages.clone());
+                    for issue in &issues {
+                        log::warn!("conversation repair (cache hit): {}", issue);
+                    }
+                    return Ok(repaired);
                 }
             }
 
@@ -182,12 +189,18 @@ impl ConversationMemory for JournalConversationMemory {
                     .extend(messages.iter().cloned());
             }
 
-            // Write to JSONL store. Token count is not available here — the
-            // ConversationMemory trait does not carry it. Tokens are tracked
-            // externally by MemoryState and written via append_messages_to_store_only
-            // or append_marker for paths that need them.
+            // Preserve the last known token count: if the store already has a
+            // non-null value from a previous turn, use it rather than writing null.
+            // This prevents a failed turn (which never receives a CompletionCall
+            // event) from clobbering a previously correct token count in JSONL.
+            let preserved_tokens = self
+                .store
+                .load_all(conversation_id)
+                .ok()
+                .and_then(|(_, tokens)| tokens);
+
             self.store
-                .append(conversation_id, &messages, None)
+                .append(conversation_id, &messages, preserved_tokens)
                 .map_err(|e| MemoryError::Backend(e.to_string().into()))?;
 
             Ok(())

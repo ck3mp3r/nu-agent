@@ -305,6 +305,9 @@ impl ConversationStore for JsonlConversationStore {
         let file = File::open(&path)?;
         let reader = BufReader::new(file);
         let mut entries = Vec::new();
+        // Track only tokens from AFTER the last compaction marker.
+        // When we encounter a marker, reset this to None so that stale
+        // pre-compaction token counts don't surface on resume.
         let mut last_total_tokens: Option<u64> = None;
 
         for (line_num, line) in reader.lines().enumerate() {
@@ -323,13 +326,10 @@ impl ConversationStore for JsonlConversationStore {
             // Parse as serde_json::Value first to discriminate type
             match serde_json::from_str::<serde_json::Value>(&line) {
                 Ok(value) => {
-                    // Extract last_total_tokens from each entry if present
-                    let tokens = value.get("last_total_tokens").and_then(|v| v.as_u64());
-                    if tokens.is_some() {
-                        last_total_tokens = tokens;
-                    }
-
                     if value.get("type").and_then(|v| v.as_str()) == Some("compaction_marker") {
+                        // Reset token tracking — pre-compaction values are stale.
+                        // Tokens recorded on the marker itself are also null (by design).
+                        last_total_tokens = None;
                         // Deserialize as CompactionMarker
                         match serde_json::from_value::<CompactionMarker>(value) {
                             Ok(marker) => entries.push(StoreEntry::Marker(marker)),
@@ -343,6 +343,11 @@ impl ConversationStore for JsonlConversationStore {
                             }
                         }
                     } else if value.get("role").is_some() {
+                        // Extract last_total_tokens from post-marker entries if present.
+                        let tokens = value.get("last_total_tokens").and_then(|v| v.as_u64());
+                        if tokens.is_some() {
+                            last_total_tokens = tokens;
+                        }
                         // Deserialize as Message
                         match serde_json::from_value::<Message>(value) {
                             Ok(message) => entries.push(StoreEntry::Message(message)),

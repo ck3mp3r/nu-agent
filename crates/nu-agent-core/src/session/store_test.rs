@@ -670,3 +670,79 @@ fn extract_llm_context_empty_after_trimming_returns_empty() {
     let context = extract_llm_context(&entries);
     assert_eq!(context.len(), 0);
 }
+
+// --- Post-compaction token tracking tests ---
+
+#[test]
+fn load_all_returns_none_when_post_marker_entries_have_null_tokens() {
+    // JSONL layout: [msg(tokens=80000), marker(null), msg(null)]
+    // Expected: load_all returns (entries, None) because all post-marker entries
+    // have null tokens, and the marker resets the token tracking.
+    let temp_dir = TempDir::new().unwrap();
+    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
+    let session_id = "s_post_marker_null";
+
+    // Pre-compaction message with tokens
+    store
+        .append(
+            session_id,
+            &[Message::user("before compaction")],
+            Some(80000),
+        )
+        .unwrap();
+
+    // Compaction marker with null tokens
+    let marker = CompactionMarker::new("summary".to_string(), 1, 1, "sliding_summary");
+    store.append_marker(session_id, &marker, None).unwrap();
+
+    // Post-compaction kept message with null tokens
+    store
+        .append(session_id, &[Message::assistant("kept")], None)
+        .unwrap();
+
+    let (entries, last_tokens) = store.load_all(session_id).unwrap();
+    assert_eq!(entries.len(), 3); // original msg + marker + kept msg
+
+    // Token tracking resets at the marker; null post-marker entries → None
+    assert_eq!(
+        last_tokens, None,
+        "marker resets token tracking; null post-marker entries must yield None"
+    );
+}
+
+#[test]
+fn load_all_returns_fresh_tokens_after_post_compaction_turn() {
+    // JSONL layout: [msg(80000), marker(null), msg(null), msg(5000)]
+    // Expected: load_all returns (entries, Some(5000))
+    let temp_dir = TempDir::new().unwrap();
+    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
+    let session_id = "s_post_compact_turn";
+
+    store
+        .append(session_id, &[Message::user("pre-compact")], Some(80000))
+        .unwrap();
+
+    let marker = CompactionMarker::new("summary".to_string(), 1, 1, "sliding_summary");
+    store.append_marker(session_id, &marker, None).unwrap();
+
+    store
+        .append(session_id, &[Message::assistant("kept")], None)
+        .unwrap();
+
+    // First real LLM turn after compaction — this is the fresh count
+    store
+        .append(
+            session_id,
+            &[Message::user("post-compact turn")],
+            Some(5000),
+        )
+        .unwrap();
+
+    let (entries, last_tokens) = store.load_all(session_id).unwrap();
+    assert_eq!(entries.len(), 4);
+    assert_eq!(
+        last_tokens,
+        Some(5000),
+        "first post-compaction turn with tokens should be returned"
+    );
+}

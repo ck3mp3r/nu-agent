@@ -4,6 +4,90 @@ use crate::types::Message;
 use rig::memory::ConversationMemory;
 use tempfile::TempDir;
 
+// ---------------------------------------------------------------------------
+// Fix 1 tests: repair runs on cache-hit load
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn load_cache_hit_runs_repair() {
+    // Prime the cache with two consecutive user messages via append().
+    // repair_messages() would merge them — but append() populates the cache
+    // directly without repairing, so the bad state is in the cache.
+    // The second load() must be a cache-hit AND must return repaired messages.
+    let tmp = TempDir::new().unwrap();
+    let mem = JournalConversationMemory::new(tmp.path().to_path_buf());
+
+    // Append two consecutive user messages and one assistant — this goes
+    // directly into the in-memory cache (no repair on the write path).
+    mem.append(
+        "conv-1",
+        vec![
+            Message::user("first"),
+            Message::user("second"),
+            Message::assistant("reply"),
+        ],
+    )
+    .await
+    .unwrap();
+
+    // First load is a cache hit (cache was populated by append above).
+    // It must run repair and merge the consecutive user messages.
+    let loaded = mem.load("conv-1").await.unwrap();
+
+    // After merging consecutive users: [User("first" + "second"), Assistant("reply")]
+    assert_eq!(loaded.len(), 2, "consecutive users should be merged");
+    assert!(
+        matches!(&loaded[0], Message::User { .. }),
+        "first message should be user"
+    );
+    assert!(
+        matches!(&loaded[1], Message::Assistant { .. }),
+        "second message should be assistant"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Fix 2 tests: append() preserves last known token count
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn append_preserves_last_total_tokens_when_none() {
+    // Scenario: a conversation already has a known token count from a
+    // previous successful turn (written via append_messages_to_store_only).
+    // A subsequent append() call (e.g., from the error-fallback path) must
+    // NOT clobber that count with null.
+    let tmp = TempDir::new().unwrap();
+    let mem = JournalConversationMemory::new(tmp.path().to_path_buf());
+
+    // Write an initial message with a known token count to the JSONL store.
+    let initial = vec![Message::user("hello"), Message::assistant("hi")];
+    mem.append_messages_to_store_only("conv-1", &initial, Some(5000))
+        .unwrap();
+
+    // Populate the in-memory cache.
+    let _ = mem.load("conv-1").await.unwrap();
+
+    // Now append via the trait method (no token count available — simulates
+    // the error-fallback path in executor.rs).
+    let fallback = vec![
+        Message::user("failed prompt"),
+        Message::assistant("[Turn failed: some error]"),
+    ];
+    mem.append("conv-1", fallback).await.unwrap();
+
+    // Read raw JSONL and verify the last entry preserves the token count.
+    let raw = std::fs::read_to_string(tmp.path().join("conv-1.jsonl")).unwrap();
+    let last_data_line = raw.lines().rfind(|l| !l.trim().is_empty()).unwrap();
+    let value: serde_json::Value = serde_json::from_str(last_data_line).unwrap();
+    assert_eq!(
+        value["last_total_tokens"],
+        serde_json::json!(5000),
+        "append() must preserve the last known token count (5000) — \
+         got: {}",
+        value["last_total_tokens"]
+    );
+}
+
 /// Compare two messages via their serialized JSON form.
 ///
 /// rig uses `#[serde(flatten)]` on `Text::additional_params`.
@@ -250,11 +334,10 @@ async fn compaction_count_populated_after_load() {
 }
 
 #[tokio::test]
-async fn append_writes_null_tokens_to_store() {
-    // The ConversationMemory::append() trait method does not carry token information.
-    // JournalConversationMemory.append() must write null for last_total_tokens.
-    // Token counts are tracked externally by MemoryState and written via
-    // append_messages_to_store_only or append_marker for paths that need them.
+async fn append_writes_null_tokens_to_store_when_no_prior_count() {
+    // When there is no prior token count in the store, append() must write
+    // null (not invent a value). Token counts are only preserved when a
+    // previous entry already recorded a non-null value.
     let tmp = TempDir::new().unwrap();
     let mem = JournalConversationMemory::new(tmp.path().to_path_buf());
 
@@ -262,13 +345,13 @@ async fn append_writes_null_tokens_to_store() {
         .await
         .unwrap();
 
-    // Read raw JSONL and verify last_total_tokens is null (not a token value)
+    // Read raw JSONL and verify last_total_tokens is null (no prior count to preserve)
     let raw = std::fs::read_to_string(tmp.path().join("conv-1.jsonl")).unwrap();
     let last_data_line = raw.lines().last().unwrap();
     let value: serde_json::Value = serde_json::from_str(last_data_line).unwrap();
     assert!(
         value["last_total_tokens"].is_null(),
-        "append() must write null for last_total_tokens — tokens are managed externally; \
+        "append() must write null when there is no prior token count to preserve; \
          got: {}",
         value["last_total_tokens"]
     );

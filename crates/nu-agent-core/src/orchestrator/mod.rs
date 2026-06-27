@@ -627,6 +627,7 @@ where
     U: ProgressUi + UserInputUi + DisplayStateUi + LifecycleUi + TranscriptUi,
 {
     ui.hydrate_transcript_from_messages(messages, last_total_tokens);
+    runtime.seed_last_total_tokens(last_total_tokens);
     run_interactive_loop(runtime, ui, mailbox_rx, span, interactive_pending)
 }
 

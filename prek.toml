@@ -15,6 +15,7 @@ name = "cargo fmt"
 language = "system"
 entry = "sh -c 'cargo fmt && git diff --name-only --diff-filter=M | xargs git add'"
 files = "\\.rs$"
+stages = ["pre-commit"]
 
 [[repos.hooks]]
 id = "clippy"

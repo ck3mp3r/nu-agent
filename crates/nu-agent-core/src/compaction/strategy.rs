@@ -34,6 +34,10 @@ pub struct CompactionOutcome {
     pub summarized_count: usize,
     pub kept_recent_count: usize,
     pub summary_text: String,
+    /// Token count captured from the summarization streaming response.
+    /// `None` for non-SlidingSummary strategies (no LLM call) or when the
+    /// provider did not yield a `Final` usage chunk.
+    pub summary_total_tokens: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

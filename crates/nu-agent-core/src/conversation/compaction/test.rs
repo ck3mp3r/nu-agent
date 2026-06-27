@@ -17,9 +17,10 @@ fn manual_and_auto_compaction_share_single_execution_path() {
             summarized_count: 1,
             kept_recent_count: 1,
             summary_text: "summary".to_string(),
+            summary_total_tokens: None,
         }))
     });
-    if let Ok(event) = &manual {
+    if let Ok((event, _)) = &manual {
         ui.emit(event);
     }
     let auto = execute_compaction_event_shared(CompactionTriggerSource::AutoThreshold, || {
@@ -28,9 +29,10 @@ fn manual_and_auto_compaction_share_single_execution_path() {
             summarized_count: 1,
             kept_recent_count: 1,
             summary_text: "summary".to_string(),
+            summary_total_tokens: None,
         }))
     });
-    if let Ok(event) = &auto {
+    if let Ok((event, _)) = &auto {
         ui.emit(event);
     }
 
@@ -48,18 +50,20 @@ fn compaction_event_emits_correct_source_metadata() {
             summarized_count: 3,
             kept_recent_count: 2,
             summary_text: "auto summary body".to_string(),
+            summary_total_tokens: None,
         }))
     })
-    .map(|event| ui.emit(&event))
+    .map(|(event, _)| ui.emit(&event))
     .expect("auto event");
     execute_compaction_event_shared(CompactionTriggerSource::SlashCompact, || {
         Ok(Some(CompactionOutcome {
             summarized_count: 4,
             kept_recent_count: 1,
             summary_text: "manual summary body".to_string(),
+            summary_total_tokens: None,
         }))
     })
-    .map(|event| ui.emit(&event))
+    .map(|(event, _)| ui.emit(&event))
     .expect("manual event");
 
     assert!(ui.events.contains(&UiEvent::CompactionTriggered {
@@ -87,9 +91,10 @@ fn compaction_summary_transcript_includes_source_and_counts() {
             summarized_count: 7,
             kept_recent_count: 3,
             summary_text: "summary body for transcript".to_string(),
+            summary_total_tokens: None,
         }))
     })
-    .map(|event| ui.emit(&event))
+    .map(|(event, _)| ui.emit(&event))
     .expect("event");
 
     assert!(ui.events.contains(&UiEvent::CompactionTriggered {
@@ -214,4 +219,36 @@ fn compaction_guard_resets_on_simulated_error() {
         !compacting.load(Ordering::Relaxed),
         "flag must be reset even after error"
     );
+}
+
+#[test]
+fn execute_compaction_event_shared_returns_summary_tokens() {
+    // When a CompactionOutcome with summary_total_tokens is returned,
+    // execute_compaction_event_shared should pass it through.
+    let result = execute_compaction_event_shared(CompactionTriggerSource::SlashCompact, || {
+        Ok(Some(CompactionOutcome {
+            summarized_count: 5,
+            kept_recent_count: 3,
+            summary_text: "summary".to_string(),
+            summary_total_tokens: Some(5000),
+        }))
+    });
+
+    let (_, tokens) = result.expect("should succeed");
+    assert_eq!(tokens, Some(5000));
+}
+
+#[test]
+fn execute_compaction_event_shared_returns_none_tokens_when_absent() {
+    let result = execute_compaction_event_shared(CompactionTriggerSource::SlashCompact, || {
+        Ok(Some(CompactionOutcome {
+            summarized_count: 2,
+            kept_recent_count: 2,
+            summary_text: "no tokens".to_string(),
+            summary_total_tokens: None,
+        }))
+    });
+
+    let (_, tokens) = result.expect("should succeed");
+    assert_eq!(tokens, None);
 }

@@ -19,7 +19,6 @@ pub struct CompactionExecutor<'a> {
     runtime: &'a tokio::runtime::Runtime,
     memory: &'a JournalConversationMemory,
     store: &'a SessionStore,
-    last_total_tokens: Option<u64>,
     final_session_id: &'a str,
 }
 
@@ -29,7 +28,6 @@ impl<'a> CompactionExecutor<'a> {
         runtime: &'a tokio::runtime::Runtime,
         memory: &'a JournalConversationMemory,
         store: &'a SessionStore,
-        last_total_tokens: Option<u64>,
         final_session_id: &'a str,
     ) -> Self {
         Self {
@@ -37,14 +35,8 @@ impl<'a> CompactionExecutor<'a> {
             runtime,
             memory,
             store,
-            last_total_tokens,
             final_session_id,
         }
-    }
-
-    #[cfg(test)]
-    pub fn last_total_tokens(&self) -> Option<u64> {
-        self.last_total_tokens
     }
 
     #[cfg(test)]
@@ -52,17 +44,17 @@ impl<'a> CompactionExecutor<'a> {
         self.final_session_id
     }
 
-    /// Execute compaction. Returns `Ok(Some(new_compaction_count))` when compaction
-    /// was triggered, or `Ok(None)` when compaction was skipped.
-    /// Caller is responsible for updating `compaction_count` and resetting
-    /// `last_total_tokens` to `None` when `Some` is returned.
+    /// Execute compaction. Returns `Ok(Some((new_compaction_count, summary_total_tokens)))` when
+    /// compaction was triggered, or `Ok(None)` when compaction was skipped.
+    /// Caller is responsible for updating `compaction_count` and setting
+    /// `last_total_tokens` to `summary_total_tokens` when `Some` is returned.
     /// Returns `Err(message)` on failure.
     pub fn execute<U: ProgressUi>(
         &self,
         ui: &mut U,
         source: CompactionTriggerSource,
         cached_client: &CachedProviderClient,
-    ) -> Result<Option<usize>, String> {
+    ) -> Result<Option<(usize, Option<u64>)>, String> {
         let source_label = source.as_str().to_string();
         ui.emit(&UiEvent::CompactionStarted {
             source: source_label.clone(),
@@ -82,11 +74,10 @@ impl<'a> CompactionExecutor<'a> {
             session: &'a mut crate::session::Session,
             ui: &'a mut U,
             source_label: &'a str,
-            last_total_tokens: Option<u64>,
         }
 
         impl<U: ProgressUi> ModelVisitor for CompactionVisitor<'_, U> {
-            type Output = Result<UiEvent, String>;
+            type Output = Result<(UiEvent, Option<u64>), String>;
 
             fn visit<M>(self, model: M) -> Self::Output
             where
@@ -107,7 +98,6 @@ impl<'a> CompactionExecutor<'a> {
                         CompactionInvocation {
                             mode,
                             source: self.source_label,
-                            last_total_tokens: self.last_total_tokens,
                         },
                     ))
                 })
@@ -123,17 +113,16 @@ impl<'a> CompactionExecutor<'a> {
                 session: &mut session,
                 ui,
                 source_label: &source_label,
-                last_total_tokens: self.last_total_tokens,
             },
         );
 
         match result {
-            Ok(event) => {
+            Ok((event, summary_total_tokens)) => {
                 ui.emit(&event);
 
                 // Return new compaction count when compaction was triggered
                 if let UiEvent::CompactionTriggered { .. } = &event {
-                    Ok(Some(session.compaction_count()))
+                    Ok(Some((session.compaction_count(), summary_total_tokens)))
                 } else {
                     // CompactionSkipped — no state change needed
                     Ok(None)

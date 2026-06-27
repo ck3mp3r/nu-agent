@@ -167,7 +167,10 @@ pub(crate) fn merge_consecutive_same_role(
 
     for msg in messages {
         match (result.last_mut(), msg) {
-            (Some(Message::User { content: prev }), Message::User { content: next }) => {
+            (Some(Message::User { content: prev }), Message::User { content: next })
+                if !prev.iter().any(|i| matches!(i, UserContent::ToolResult(_)))
+                    && !next.iter().any(|i| matches!(i, UserContent::ToolResult(_))) =>
+            {
                 issues.push("merged consecutive user messages".to_string());
                 for item in next {
                     prev.push(item);

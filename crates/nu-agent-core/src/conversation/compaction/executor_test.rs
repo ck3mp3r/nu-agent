@@ -33,36 +33,32 @@ fn compaction_executor_new_constructs_without_panic() {
     let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
 
-    let _executor =
-        CompactionExecutor::new(&config, &rt, &memory, &store, Some(1000), "test-session");
+    let _executor = CompactionExecutor::new(&config, &rt, &memory, &store, "test-session");
     // Construction succeeded — no panic.
 }
 
 #[test]
-fn compaction_executor_accessors_return_correct_values() {
+fn compaction_executor_session_id_accessor() {
     let config = test_config();
     let rt = tokio::runtime::Runtime::new().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
     let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
 
-    let executor =
-        CompactionExecutor::new(&config, &rt, &memory, &store, Some(500), "my-session-id");
+    let executor = CompactionExecutor::new(&config, &rt, &memory, &store, "my-session-id");
 
-    assert_eq!(executor.last_total_tokens(), Some(500));
     assert_eq!(executor.session_id(), "my-session-id");
 }
 
 #[test]
-fn compaction_executor_none_tokens() {
+fn compaction_executor_empty_session_id() {
     let config = test_config();
     let rt = tokio::runtime::Runtime::new().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
     let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
 
-    let executor =
-        CompactionExecutor::new(&config, &rt, &memory, &store, None, "session-no-tokens");
+    let executor = CompactionExecutor::new(&config, &rt, &memory, &store, "session-no-tokens");
 
-    assert_eq!(executor.last_total_tokens(), None);
+    assert_eq!(executor.session_id(), "session-no-tokens");
 }

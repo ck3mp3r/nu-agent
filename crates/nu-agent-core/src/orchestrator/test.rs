@@ -3218,3 +3218,86 @@ fn model_switch_updates_context_window_max_tokens_none_when_unset() {
         "expected context_window_max_tokens to be set to None when model has no limit"
     );
 }
+
+// ── session_resume token seeding tests ───────────────────────────────────────
+
+#[derive(Default)]
+struct TokenSeedingRuntime {
+    seeded_tokens: Option<Option<u64>>,
+}
+
+impl CoreRuntime for TokenSeedingRuntime {
+    fn execute_turn<U: ProgressUi>(
+        &mut self,
+        _ui: &mut U,
+        _prompt: String,
+        _context: Option<String>,
+        span: Span,
+    ) -> Result<Value, LabeledError> {
+        Ok(Value::nothing(span))
+    }
+}
+
+impl ExtendedRuntime for TokenSeedingRuntime {
+    fn set_mcp_server_enabled(
+        &mut self,
+        _server_name: &str,
+        enabled: bool,
+    ) -> Result<McpUsabilityState, String> {
+        Ok(if enabled {
+            McpUsabilityState::Enabled
+        } else {
+            McpUsabilityState::Disabled
+        })
+    }
+
+    fn seed_last_total_tokens(&mut self, tokens: Option<u64>) {
+        self.seeded_tokens = Some(tokens);
+    }
+}
+
+#[test]
+fn session_resume_seeds_last_total_tokens() {
+    let mut runtime = TokenSeedingRuntime::default();
+    let mut ui = FakeInteractiveUi::with_prompts(&[]);
+
+    run_hydrated_interactive_loop(
+        &mut runtime,
+        &mut ui,
+        vec![],
+        Some(90_000),
+        None,
+        Span::test_data(),
+        None,
+    )
+    .expect("hydrated interactive loop");
+
+    assert_eq!(
+        runtime.seeded_tokens,
+        Some(Some(90_000)),
+        "seed_last_total_tokens must be called with the loaded token count on session resume"
+    );
+}
+
+#[test]
+fn session_resume_seeds_last_total_tokens_none_when_no_prior_session() {
+    let mut runtime = TokenSeedingRuntime::default();
+    let mut ui = FakeInteractiveUi::with_prompts(&[]);
+
+    run_hydrated_interactive_loop(
+        &mut runtime,
+        &mut ui,
+        vec![],
+        None,
+        None,
+        Span::test_data(),
+        None,
+    )
+    .expect("hydrated interactive loop");
+
+    assert_eq!(
+        runtime.seeded_tokens,
+        Some(None),
+        "seed_last_total_tokens must be called with None when no prior token count exists"
+    );
+}
