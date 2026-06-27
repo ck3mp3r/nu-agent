@@ -1,28 +1,75 @@
 ---
-name: CI Rust Build
+name: CI Build & Cache
 on:
   workflow_dispatch:
   push:
-    branches-ignore:
-      - main
+    branches-ignore: []  # all branches
     paths:
-      - "**/*.nix"
-      - "Cargo.lock"
-      - "Cargo.toml"
-      - "flake.lock"
-      - "flake.nix"
-      - "crates/**"
+      - '**/*.nix'
+      - 'Cargo.lock'
+      - 'Cargo.toml'
+      - 'flake.lock'
+      - 'flake.nix'
+      - 'crates/**'
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  XDG_CONFIG_HOME: /var/tmp/xdg-config-home
+
 jobs:
-  build:
+  build-and-cache:
     runs-on: ubuntu-latest
     steps:
       - name: Code checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # full history for git diff
 
       - name: Install Determinate Nix
         uses: DeterminateSystems/nix-installer-action@main
         with:
           github-token: ${{github.token}}
 
-      - name: Build and test nu-agent via Nix
-        run: nix build .#nu-agent
+      - name: Setup CI Tools
+        uses: ck3mp3r/actions/ci-tools@main
+
+      - name: Build, test, and cache
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        shell: nu {0}
+        run: |
+          use ci *
+
+          # Build the package
+          let results = ("." | ci nix build nu-agent)
+
+          let failed = ($results | where status != 'success')
+          if ($failed | length) > 0 {
+            print '❌ Build failed'
+            exit 1
+          }
+
+          let store_path = ($results | where status == 'success' | first | get path)
+
+          # Determine if we should push to cache (only on main)
+          let should_cache = ($env.GITHUB_REF == 'refs/heads/main')
+
+          if $should_cache {
+            print '✓ Pushing closure to ck3mp3r.cachix.org...'
+            let closure_paths = ($store_path | ci nix closure)
+            let cache_results = $closure_paths | ci nix cache 'https://ck3mp3r.cachix.org' --upstream 'https://cache.nixos.org'
+
+            let total_paths = ($closure_paths | length)
+            let pushed_count = ($cache_results | where cached == false | length)
+
+            $"## 🏗️ Build & Cache Summary\n\n**Store path:** ($store_path)\n\n**Total paths:** ($total_paths) | **Pushed:** ($pushed_count)" | ci github summary
+          } else {
+            print 'ℹ️ Branch push — skipping cache push'
+            let closure_paths = ($store_path | ci nix closure)
+            _ = $closure_paths | ci nix cache 'https://ck3mp3r.cachix.org' --upstream 'https://cache.nixos.org' --dry-run
+
+            $"## 🏗️ Build Summary\n\n**Store path:** ($store_path)\n\nCache push skipped (not main branch)." | ci github summary
+          }
