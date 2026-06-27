@@ -63,6 +63,48 @@ pub(super) fn skills_panel_lines_for_test(state: &AppState) -> (&'static str, Ve
     skills_panel_lines(state)
 }
 
+/// Returns the effective (clamped) scroll offset that would be passed to
+/// `render_scroll_text_panel` for the Help panel given a terminal area and
+/// a requested scroll offset. The clamp uses `help_panel_max_scroll`, which
+/// accounts for word-wrap using the actual content width.
+///
+/// Status and Skills panels share the same clamp logic; only Help additionally
+/// shows an overflow cue in the title. The cue is omitted for Status/Skills
+/// because those panels are short and rarely scroll in practice — add a cue
+/// there if that assumption changes.
+#[cfg(test)]
+pub(super) fn help_panel_scroll_offset_for_test(
+    viewport_height: u16,
+    viewport_width: u16,
+    requested_scroll: usize,
+) -> usize {
+    let (_title, lines) = help_panel_lines();
+    requested_scroll.min(help_panel_max_scroll(&lines, viewport_height, viewport_width))
+}
+
+#[cfg(test)]
+pub(super) fn status_panel_scroll_offset_for_test(
+    state: &AppState,
+    active_model_identity: &str,
+    viewport_height: u16,
+    viewport_width: u16,
+    requested_scroll: usize,
+) -> usize {
+    let (_title, lines) = status_panel_lines(state, active_model_identity);
+    requested_scroll.min(help_panel_max_scroll(&lines, viewport_height, viewport_width))
+}
+
+#[cfg(test)]
+pub(super) fn skills_panel_scroll_offset_for_test(
+    state: &AppState,
+    viewport_height: u16,
+    viewport_width: u16,
+    requested_scroll: usize,
+) -> usize {
+    let (_title, lines) = skills_panel_lines(state);
+    requested_scroll.min(help_panel_max_scroll(&lines, viewport_height, viewport_width))
+}
+
 #[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct McpTableModelForTest {
@@ -288,4 +330,29 @@ pub(super) fn input_rows_with_prompt_for_test(state: &AppState, pane_width: u16)
     }
 
     lines
+}
+
+#[cfg(test)]
+pub(super) fn model_picker_row_cells_for_test(state: &AppState) -> Vec<Vec<String>> {
+    state
+        .model_picker_filtered_options()
+        .iter()
+        .map(|option| {
+            let active = if option.active { "*" } else { "" };
+            vec![option.identity.clone(), active.to_string()]
+        })
+        .collect()
+}
+
+#[cfg(test)]
+pub(super) fn agent_picker_row_cells_for_test(state: &AppState) -> Vec<Vec<String>> {
+    state
+        .agent_picker_filtered_options()
+        .iter()
+        .map(|option| {
+            let active = if option.active { "*" } else { "" };
+            let desc = option.description.as_deref().unwrap_or("");
+            vec![option.name.clone(), desc.to_string(), active.to_string()]
+        })
+        .collect()
 }

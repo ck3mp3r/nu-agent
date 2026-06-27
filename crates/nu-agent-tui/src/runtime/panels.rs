@@ -392,20 +392,14 @@ pub(super) fn mcp_selected_details_lines(
 }
 
 pub(super) fn mcp_details_height_for_inner_height(inner_height: u16) -> u16 {
-    if inner_height >= 14 {
-        6
-    } else if inner_height >= 12 {
-        5
-    } else if inner_height >= 10 {
-        4
-    } else if inner_height >= 8 {
-        3
-    } else if inner_height >= 6 {
-        2
-    } else if inner_height >= 5 {
-        1
-    } else {
-        0
+    match inner_height {
+        0..=4 => 0,
+        5 => 1,
+        6..=7 => 2,
+        8..=9 => 3,
+        10..=11 => 4,
+        12..=13 => 5,
+        _ => 6,
     }
 }
 

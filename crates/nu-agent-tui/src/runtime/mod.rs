@@ -1156,29 +1156,13 @@ impl RuntimeCoordinator {
 
                     match panel {
                         InfoPanel::Mcps => {
-                            let pre_inner = popup.inner(Margin {
+                            let inner = popup.inner(Margin {
                                 vertical: 1,
                                 horizontal: 1,
                             });
                             let details_height =
-                                mcp_details_height_for_inner_height(pre_inner.height);
+                                mcp_details_height_for_inner_height(inner.height);
 
-                            let pre_rows = Layout::default()
-                                .direction(Direction::Vertical)
-                                .constraints([
-                                    Constraint::Length(1),
-                                    Constraint::Min(1),
-                                    Constraint::Length(details_height),
-                                ])
-                                .split(pre_inner);
-
-                            let model = mcp_table_model(&self.state, pre_rows[1].height);
-                            let title = if let Some(cue) = model.overflow_cue.as_deref() {
-                                format!("MCPs ({cue})")
-                            } else {
-                                "MCPs".to_string()
-                            };
-                            let inner = render_modal_frame(frame, popup, title);
                             let rows = Layout::default()
                                 .direction(Direction::Vertical)
                                 .constraints([
@@ -1187,6 +1171,14 @@ impl RuntimeCoordinator {
                                     Constraint::Length(details_height),
                                 ])
                                 .split(inner);
+
+                            let model = mcp_table_model(&self.state, rows[1].height);
+                            let title = if let Some(cue) = model.overflow_cue.as_deref() {
+                                format!("MCPs ({cue})")
+                            } else {
+                                "MCPs".to_string()
+                            };
+                            render_modal_frame(frame, popup, title);
 
                             frame.render_widget(
                                 Paragraph::new(Line::from(mcp_panel_controls_line())),
@@ -1261,12 +1253,12 @@ impl RuntimeCoordinator {
                                 _ => title.to_string(),
                             };
 
-                            let inner = render_modal_frame(frame, popup, panel_title);
-                            frame.render_widget(
-                                Paragraph::new(lines)
-                                    .wrap(Wrap { trim: false })
-                                    .scroll((panel_scroll.min(u16::MAX as usize) as u16, 0)),
-                                inner,
+                            render_scroll_text_panel(
+                                frame,
+                                popup,
+                                panel_title,
+                                Text::from(lines),
+                                panel_scroll,
                             );
                         }
                     }
@@ -1295,22 +1287,18 @@ impl RuntimeCoordinator {
                             rows[1],
                         );
                     } else {
-                        let table_rows = options.iter().enumerate().map(|(idx, option)| {
+                        let table_rows = options.iter().map(|option| {
                             let active = if option.active { "*" } else { "" };
-                            let marker = if idx == self.state.model_picker_selection {
-                                "❯ "
-                            } else {
-                                "  "
-                            };
                             Row::new(vec![
-                                Cell::from(format!("{marker}{}", option.identity)),
+                                Cell::from(option.identity.clone()),
                                 Cell::from(active.to_string()),
                             ])
                         });
                         let table =
                             Table::new(table_rows, [Constraint::Min(12), Constraint::Length(1)])
                                 .header(Row::new(vec!["Model", "A"]))
-                                .column_spacing(1);
+                                .column_spacing(1)
+                                .highlight_symbol("❯ ");
                         let mut table_state = TableState::default();
                         table_state.select(Some(self.state.model_picker_selection));
                         frame.render_stateful_widget(table, rows[1], &mut table_state);
@@ -1341,17 +1329,11 @@ impl RuntimeCoordinator {
                     } else {
                         let table_rows: Vec<Row> = options
                             .iter()
-                            .enumerate()
-                            .map(|(idx, option)| {
+                            .map(|option| {
                                 let active = if option.active { "*" } else { "" };
-                                let marker = if idx == self.state.agent_picker_selection {
-                                    "❯ "
-                                } else {
-                                    "  "
-                                };
                                 let desc = option.description.as_deref().unwrap_or("");
                                 Row::new(vec![
-                                    Cell::from(format!("{marker}{}", option.name)),
+                                    Cell::from(option.name.clone()),
                                     Cell::from(desc.to_string()),
                                     Cell::from(active.to_string()),
                                 ])
@@ -1366,7 +1348,8 @@ impl RuntimeCoordinator {
                             ],
                         )
                         .header(Row::new(vec!["Agent", "Description", "A"]))
-                        .column_spacing(1);
+                        .column_spacing(1)
+                        .highlight_symbol("❯ ");
                         let mut table_state = TableState::default();
                         table_state.select(Some(self.state.agent_picker_selection));
                         frame.render_stateful_widget(table, rows[1], &mut table_state);
@@ -1398,6 +1381,22 @@ impl RuntimeCoordinator {
         self.poll_terminal_event(event_source);
         self.drain_transport();
     }
+}
+
+fn render_scroll_text_panel(
+    frame: &mut Frame,
+    area: Rect,
+    title: impl Into<Line<'static>>,
+    lines: Text<'_>,
+    scroll: usize,
+) {
+    let inner = render_modal_frame(frame, area, title);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((scroll.min(u16::MAX as usize) as u16, 0)),
+        inner,
+    );
 }
 
 fn render_modal_frame(frame: &mut Frame, area: Rect, title: impl Into<Line<'static>>) -> Rect {

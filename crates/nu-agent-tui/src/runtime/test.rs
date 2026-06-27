@@ -2234,6 +2234,43 @@ fn mcp_details_height_allocation_prefers_multiple_tool_lines_in_normal_popup_hei
 }
 
 #[test]
+fn mcp_details_height_formula_matches_step_table() {
+    // Verifies all inner_height values 0..=20 against the expected step-table output.
+    // The step-table was replaced by a match expression for idiomatic clarity;
+    // this test pins the observable behaviour so any future change is caught.
+    let expected: [(u16, u16); 21] = [
+        (0, 0),
+        (1, 0),
+        (2, 0),
+        (3, 0),
+        (4, 0),
+        (5, 1),
+        (6, 2),
+        (7, 2),
+        (8, 3),
+        (9, 3),
+        (10, 4),
+        (11, 4),
+        (12, 5),
+        (13, 5),
+        (14, 6),
+        (15, 6),
+        (16, 6),
+        (17, 6),
+        (18, 6),
+        (19, 6),
+        (20, 6),
+    ];
+    for (h, want) in expected {
+        assert_eq!(
+            super::mcp_details_height_for_inner_height_for_test(h),
+            want,
+            "inner_height={h}"
+        );
+    }
+}
+
+#[test]
 fn mcp_panel_layout_keeps_table_primary_with_multiple_visible_rows_in_common_height() {
     let mut state = AppState::new();
     state.set_mcp_servers(
@@ -2740,6 +2777,103 @@ fn skills_panel_lists_skills_in_deterministic_order() {
     let zeta_idx = rendered.find("zeta").expect("zeta row present");
     assert!(alpha_idx < beta_idx);
     assert!(beta_idx < zeta_idx);
+}
+
+#[test]
+fn help_panel_scroll_offset_applied() {
+    // A viewport smaller than the help content forces a nonzero max scroll.
+    // Requesting a large offset must be clamped to the max; requesting a small
+    // offset must be returned unchanged.
+    let viewport_height = 8u16;
+    let viewport_width = 80u16;
+
+    let small_scroll =
+        super::help_panel_scroll_offset_for_test(viewport_height, viewport_width, 3);
+    assert_eq!(
+        small_scroll, 3,
+        "scroll offset below max must pass through unchanged"
+    );
+
+    let huge_scroll =
+        super::help_panel_scroll_offset_for_test(viewport_height, viewport_width, usize::MAX);
+    let max_scroll = super::help_panel_max_scroll_for_test(
+        &super::help_panel_lines_for_test().1,
+        viewport_height,
+    );
+    assert_eq!(
+        huge_scroll, max_scroll,
+        "scroll offset above max must be clamped to max"
+    );
+    assert!(max_scroll > 0, "help content must exceed small viewport");
+}
+
+#[test]
+fn status_panel_scroll_offset_applied() {
+    // Status content is short; with a large viewport the max scroll is 0 and
+    // any requested offset is clamped to 0. With a very small viewport the
+    // offset should be clamped correctly.
+    let mut state = AppState::new();
+    state.set_mcp_servers(vec![crate::state::McpServerState {
+        name: "gh".to_string(),
+        state: crate::state::McpServerUsabilityState::Enabled,
+    }]);
+
+    let viewport_height = 3u16; // smaller than status content
+    let viewport_width = 80u16;
+    let model = "openai/gpt-4o";
+
+    let small_scroll =
+        super::status_panel_scroll_offset_for_test(&state, model, viewport_height, viewport_width, 1);
+    // 1 is within content so it should pass through (or be clamped if content
+    // is ≤ 3 lines — either outcome is correct as long as it's ≤ max).
+    let (_title, lines) = super::status_panel_lines_for_test(&state, model);
+    let max =
+        super::help_panel_max_scroll_for_test(&lines, viewport_height);
+    assert!(
+        small_scroll <= max,
+        "scroll offset must not exceed max (got {small_scroll}, max {max})"
+    );
+
+    let huge_scroll =
+        super::status_panel_scroll_offset_for_test(&state, model, viewport_height, viewport_width, usize::MAX);
+    assert_eq!(
+        huge_scroll, max,
+        "scroll offset above max must be clamped to max"
+    );
+}
+
+#[test]
+fn skills_panel_scroll_offset_applied() {
+    let mut state = AppState::new();
+    state.set_discoverable_skills(vec![
+        crate::state::DiscoverableSkill {
+            source_priority: 0,
+            source: "repo".to_string(),
+            name: "alpha".to_string(),
+        },
+        crate::state::DiscoverableSkill {
+            source_priority: 0,
+            source: "repo".to_string(),
+            name: "beta".to_string(),
+        },
+    ]);
+
+    let viewport_height = 2u16; // smaller than content (header + 2 skill lines)
+    let viewport_width = 80u16;
+
+    let (_title, lines) = super::skills_panel_lines_for_test(&state);
+    let max = super::help_panel_max_scroll_for_test(&lines, viewport_height);
+
+    let huge_scroll =
+        super::skills_panel_scroll_offset_for_test(&state, viewport_height, viewport_width, usize::MAX);
+    assert_eq!(
+        huge_scroll, max,
+        "scroll offset above max must be clamped to max"
+    );
+
+    let zero_scroll =
+        super::skills_panel_scroll_offset_for_test(&state, viewport_height, viewport_width, 0);
+    assert_eq!(zero_scroll, 0, "zero scroll must pass through as zero");
 }
 
 #[test]
@@ -4202,4 +4336,92 @@ fn transcript_list_area_is_two_columns_narrower_than_content_area() {
     assert_eq!(list_area.width, 78);
     assert_eq!(list_area.x, content_area.x);
     assert_eq!(list_area.height, content_area.height);
+}
+
+#[test]
+fn model_picker_rows_do_not_contain_selection_prefix() {
+    let mut state = AppState::new();
+    state.set_model_picker_options(vec![
+        crate::state::ModelPickerOption {
+            provider: "openai".to_string(),
+            model: "gpt-4o".to_string(),
+            identity: "openai/gpt-4o".to_string(),
+            display: "openai/gpt-4o".to_string(),
+            active: true,
+        },
+        crate::state::ModelPickerOption {
+            provider: "anthropic".to_string(),
+            model: "claude-3-5-sonnet".to_string(),
+            identity: "anthropic/claude-3-5-sonnet".to_string(),
+            display: "anthropic/claude-3-5-sonnet".to_string(),
+            active: false,
+        },
+        crate::state::ModelPickerOption {
+            provider: "openai".to_string(),
+            model: "gpt-4o-mini".to_string(),
+            identity: "openai/gpt-4o-mini".to_string(),
+            display: "openai/gpt-4o-mini".to_string(),
+            active: false,
+        },
+    ]);
+    state.model_picker_selection = 1;
+
+    let rows = super::model_picker_row_cells_for_test(&state);
+    assert!(!rows.is_empty(), "expected at least one row");
+    for row in &rows {
+        for cell in row {
+            assert!(
+                !cell.starts_with("❯ "),
+                "cell must not start with selection prefix '❯ ': {cell:?}"
+            );
+            assert!(
+                !cell.starts_with("  "),
+                "cell must not start with deselected prefix '  ': {cell:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn agent_picker_rows_do_not_contain_selection_prefix() {
+    let mut state = AppState::new();
+    state.set_agent_picker_options(vec![
+        crate::state::AgentPickerOption {
+            name: "default".to_string(),
+            description: Some("Default agent".to_string()),
+            display: "default".to_string(),
+            active: true,
+            builtin: true,
+        },
+        crate::state::AgentPickerOption {
+            name: "coder".to_string(),
+            description: Some("Coding assistant".to_string()),
+            display: "coder".to_string(),
+            active: false,
+            builtin: false,
+        },
+        crate::state::AgentPickerOption {
+            name: "reviewer".to_string(),
+            description: None,
+            display: "reviewer".to_string(),
+            active: false,
+            builtin: false,
+        },
+    ]);
+    state.agent_picker_selection = 1;
+
+    let rows = super::agent_picker_row_cells_for_test(&state);
+    assert!(!rows.is_empty(), "expected at least one row");
+    for row in &rows {
+        for cell in row {
+            assert!(
+                !cell.starts_with("❯ "),
+                "cell must not start with selection prefix '❯ ': {cell:?}"
+            );
+            assert!(
+                !cell.starts_with("  "),
+                "cell must not start with deselected prefix '  ': {cell:?}"
+            );
+        }
+    }
 }

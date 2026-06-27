@@ -579,14 +579,26 @@ fn insert_mode_alt_and_shift_enter_insert_newline_while_enter_submits() {
 }
 
 #[test]
-fn ctrl_p_toggles_palette_open_and_close() {
+fn ctrl_p_opens_palette_and_second_ctrl_p_moves_selection_up() {
     let mut state = AppState::new();
 
     let opened = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
     assert!(opened);
     assert!(state.command_palette_open);
 
-    let closed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
+    // Move down so there's somewhere to go up
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
+    assert_eq!(state.command_palette_selection, 1);
+
+    // Ctrl-P while palette open moves selection up (does not close)
+    let moved_up =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
+    assert!(moved_up);
+    assert!(state.command_palette_open);
+    assert_eq!(state.command_palette_selection, 0);
+
+    // Esc closes the palette
+    let closed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Esc), None);
     assert!(closed);
     assert!(!state.command_palette_open);
 }
@@ -605,25 +617,17 @@ fn escape_closes_palette_only_and_preserves_insert_mode() {
 }
 
 #[test]
-fn palette_navigation_supports_arrows_and_jk_and_enter_routes_action() {
+fn palette_navigation_supports_arrows_and_ctrl_np_and_enter_routes_action() {
     let mut state = AppState::new();
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
 
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
     assert_eq!(state.command_palette_selection, 1);
 
-    let _ = dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('k')),
-        None,
-    );
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
     assert_eq!(state.command_palette_selection, 0);
 
-    let _ = dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('j')),
-        None,
-    );
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlN), None);
     assert_eq!(state.command_palette_selection, 1);
 
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
@@ -1030,7 +1034,7 @@ fn mcps_panel_navigation_and_enter_toggle_updates_selected_server() {
 }
 
 #[test]
-fn mcps_panel_supports_up_k_and_space_toggle() {
+fn mcps_panel_supports_up_ctrl_p_and_space_toggle() {
     let mut state = AppState::new();
     state.set_mcp_servers(vec![
         McpServerState {
@@ -1048,11 +1052,8 @@ fn mcps_panel_supports_up_k_and_space_toggle() {
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Up), None);
     assert_eq!(state.mcp_panel_selection, 0);
 
-    let _ = dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('k')),
-        None,
-    );
+    // Ctrl-P moves selection up (wraps: 0 -> len-1 = 1)
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
     assert_eq!(state.mcp_panel_selection, 1);
 
     let _ = dispatch_terminal_event(
@@ -1436,4 +1437,256 @@ fn test_tab_does_not_cycle_when_no_builtins() {
     // In idle insert mode, Tab maps to CompleteForward which is a no-op in the reducer
     // (no slash menu open, no special handling), so changed depends on state diff
     let _ = changed; // outcome is not Noop+true since cycling didn't fire
+}
+
+// ---- Ctrl-N/Ctrl-P picker navigation, j/k feed query in command palette ----
+
+#[test]
+fn command_palette_j_feeds_query_not_navigation() {
+    let mut state = AppState::new();
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
+    assert!(state.command_palette_open);
+
+    let changed = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('j')),
+        None,
+    );
+
+    assert!(changed);
+    assert_eq!(state.command_palette_query, "j");
+    // Selection should not have changed (still at 0)
+    assert_eq!(state.command_palette_selection, 0);
+    assert!(state.command_palette_open);
+}
+
+#[test]
+fn command_palette_k_feeds_query_not_navigation() {
+    let mut state = AppState::new();
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
+    assert!(state.command_palette_open);
+
+    let changed = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('k')),
+        None,
+    );
+
+    assert!(changed);
+    assert_eq!(state.command_palette_query, "k");
+    assert_eq!(state.command_palette_selection, 0);
+    assert!(state.command_palette_open);
+}
+
+#[test]
+fn command_palette_ctrl_n_moves_selection_down() {
+    let mut state = AppState::new();
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
+    assert!(state.command_palette_open);
+    assert_eq!(state.command_palette_selection, 0);
+
+    let changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlN), None);
+
+    assert!(changed);
+    assert_eq!(state.command_palette_selection, 1);
+    assert!(state.command_palette_open);
+}
+
+#[test]
+fn command_palette_ctrl_p_moves_selection_up() {
+    let mut state = AppState::new();
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
+    assert!(state.command_palette_open);
+
+    // Move down first so we have somewhere to go up
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
+    assert_eq!(state.command_palette_selection, 1);
+
+    let changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
+
+    assert!(changed);
+    assert_eq!(state.command_palette_selection, 0);
+    assert!(state.command_palette_open);
+}
+
+#[test]
+fn model_picker_ctrl_p_moves_selection_up() {
+    let mut state = AppState::new();
+    state.set_model_picker_options(vec![
+        ModelPickerOption {
+            provider: "openai".to_string(),
+            model: "gpt-4o-mini".to_string(),
+            identity: "openai/gpt-4o-mini".to_string(),
+            display: "openai / gpt-4o-mini".to_string(),
+            active: true,
+        },
+        ModelPickerOption {
+            provider: "anthropic".to_string(),
+            model: "claude-3-5-sonnet".to_string(),
+            identity: "anthropic/claude-3-5-sonnet".to_string(),
+            display: "anthropic / claude-3-5-sonnet".to_string(),
+            active: false,
+        },
+    ]);
+    state.open_model_picker();
+
+    // Move down first
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
+    assert_eq!(state.model_picker_selection, 1);
+
+    let changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
+
+    assert!(changed);
+    assert_eq!(state.model_picker_selection, 0);
+    assert!(state.model_picker_open);
+}
+
+#[test]
+fn agent_picker_ctrl_p_moves_selection_up() {
+    let mut state = setup_agent_picker_open();
+
+    // Move down first
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
+    assert_eq!(state.agent_picker_selection, 1);
+
+    let changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
+
+    assert!(changed);
+    assert_eq!(state.agent_picker_selection, 0);
+    assert!(state.agent_picker_open);
+}
+
+#[test]
+fn ctrl_p_with_no_modal_open_opens_command_palette() {
+    let mut state = AppState::new();
+    assert!(!state.command_palette_open);
+    assert!(!state.model_picker_open);
+    assert!(!state.agent_picker_open);
+
+    let changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
+
+    assert!(changed);
+    assert!(state.command_palette_open);
+}
+
+// ---- Ctrl-N/Ctrl-P navigation in non-picker panels (Help, Status, Skills, MCPs) ----
+
+#[test]
+fn help_panel_ctrl_n_scrolls_down() {
+    let mut state = AppState::new();
+    state.open_info_panel(crate::state::InfoPanel::Help);
+    assert_eq!(state.info_panel_scroll, 0);
+
+    let changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlN), None);
+
+    assert!(changed);
+    assert_eq!(state.info_panel_scroll, 1);
+}
+
+#[test]
+fn help_panel_ctrl_p_scrolls_up() {
+    let mut state = AppState::new();
+    state.open_info_panel(crate::state::InfoPanel::Help);
+    state.info_panel_scroll = 3;
+
+    let changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
+
+    assert!(changed);
+    assert_eq!(state.info_panel_scroll, 2);
+}
+
+#[test]
+fn help_panel_j_is_noop() {
+    let mut state = AppState::new();
+    state.open_info_panel(crate::state::InfoPanel::Help);
+    state.info_panel_scroll = 0;
+
+    let changed = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('j')),
+        None,
+    );
+
+    // j is not a navigation key in the help panel — scroll must not change
+    assert_eq!(state.info_panel_scroll, 0);
+    // changed may be true or false depending on reducer noop handling;
+    // the important assertion is that scroll did not increment
+    let _ = changed;
+}
+
+#[test]
+fn mcp_panel_ctrl_n_moves_selection_down() {
+    let mut state = AppState::new();
+    state.set_mcp_servers(vec![
+        McpServerState {
+            name: "gh".to_string(),
+            state: McpServerUsabilityState::Enabled,
+        },
+        McpServerState {
+            name: "k8s".to_string(),
+            state: McpServerUsabilityState::Disabled,
+        },
+    ]);
+    state.open_info_panel(InfoPanel::Mcps);
+    assert_eq!(state.mcp_panel_selection, 0);
+
+    let _ =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlN), None);
+
+    assert_eq!(state.mcp_panel_selection, 1);
+}
+
+#[test]
+fn mcp_panel_ctrl_p_moves_selection_up() {
+    let mut state = AppState::new();
+    state.set_mcp_servers(vec![
+        McpServerState {
+            name: "gh".to_string(),
+            state: McpServerUsabilityState::Enabled,
+        },
+        McpServerState {
+            name: "k8s".to_string(),
+            state: McpServerUsabilityState::Disabled,
+        },
+    ]);
+    state.open_info_panel(InfoPanel::Mcps);
+    state.mcp_panel_selection = 1;
+
+    let _ =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
+
+    assert_eq!(state.mcp_panel_selection, 0);
+}
+
+#[test]
+fn mcp_panel_j_is_noop() {
+    let mut state = AppState::new();
+    state.set_mcp_servers(vec![
+        McpServerState {
+            name: "gh".to_string(),
+            state: McpServerUsabilityState::Enabled,
+        },
+        McpServerState {
+            name: "k8s".to_string(),
+            state: McpServerUsabilityState::Disabled,
+        },
+    ]);
+    state.open_info_panel(InfoPanel::Mcps);
+    assert_eq!(state.mcp_panel_selection, 0);
+
+    dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('j')),
+        None,
+    );
+
+    // j is no longer a navigation key in the MCPs panel — selection must not change
+    assert_eq!(state.mcp_panel_selection, 0);
 }

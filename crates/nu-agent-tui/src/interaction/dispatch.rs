@@ -30,17 +30,12 @@ fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserAction, bool
             match panel {
                 crate::state::InfoPanel::Mcps => match action {
                     UserAction::Esc => UserAction::Esc,
-                    UserAction::ToggleCommandPalette => UserAction::ToggleCommandPalette,
                     UserAction::Quit => UserAction::Quit,
-                    UserAction::ScrollLineUp
-                    | UserAction::HistoryUp
-                    | UserAction::InsertChar('k') => {
+                    UserAction::ScrollLineUp | UserAction::HistoryUp | UserAction::ToggleCommandPalette => {
                         state.mcp_panel_move_up();
                         UserAction::Noop
                     }
-                    UserAction::ScrollLineDown
-                    | UserAction::HistoryDown
-                    | UserAction::InsertChar('j') => {
+                    UserAction::ScrollLineDown | UserAction::HistoryDown | UserAction::QueryNext => {
                         state.mcp_panel_move_down();
                         UserAction::Noop
                     }
@@ -54,17 +49,16 @@ fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserAction, bool
                     const PANEL_PAGE_LINES: usize = 8;
                     match action {
                         UserAction::Esc => UserAction::Esc,
-                        UserAction::ToggleCommandPalette => UserAction::ToggleCommandPalette,
                         UserAction::Quit => UserAction::Quit,
                         UserAction::ScrollLineUp
                         | UserAction::HistoryUp
-                        | UserAction::InsertChar('k') => {
+                        | UserAction::ToggleCommandPalette => {
                             state.info_panel_scroll = state.info_panel_scroll.saturating_sub(1);
                             return (UserAction::Noop, true);
                         }
                         UserAction::ScrollLineDown
                         | UserAction::HistoryDown
-                        | UserAction::InsertChar('j') => {
+                        | UserAction::QueryNext => {
                             state.info_panel_scroll = state.info_panel_scroll.saturating_add(1);
                             return (UserAction::Noop, true);
                         }
@@ -89,7 +83,7 @@ fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserAction, bool
     if state.command_palette_open {
         return (
             match action {
-                UserAction::ToggleCommandPalette => UserAction::ToggleCommandPalette,
+                UserAction::ToggleCommandPalette => UserAction::CommandPaletteMoveUp,
                 UserAction::Esc => UserAction::CommandPaletteClose,
                 UserAction::EnterInsertMode => UserAction::Noop,
                 UserAction::Submit => UserAction::CommandPaletteSelect,
@@ -104,8 +98,6 @@ fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserAction, bool
                     state.backspace_command_palette_query_char();
                     UserAction::Noop
                 }
-                UserAction::InsertChar('j') => UserAction::CommandPaletteMoveDown,
-                UserAction::InsertChar('k') => UserAction::CommandPaletteMoveUp,
                 UserAction::InsertChar(ch) => {
                     state.append_command_palette_query_char(ch);
                     UserAction::Noop
@@ -113,7 +105,7 @@ fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserAction, bool
                 UserAction::Quit => UserAction::Quit,
                 _ => UserAction::Noop,
             },
-            false,
+            true,
         );
     }
 
@@ -139,6 +131,10 @@ fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserAction, bool
                 }
                 UserAction::QueryNext => {
                     state.model_picker_move_down();
+                    UserAction::Noop
+                }
+                UserAction::ToggleCommandPalette => {
+                    state.model_picker_move_up();
                     UserAction::Noop
                 }
                 UserAction::Backspace => {
@@ -177,6 +173,10 @@ fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserAction, bool
                 }
                 UserAction::QueryNext => {
                     state.agent_picker_move_down();
+                    UserAction::Noop
+                }
+                UserAction::ToggleCommandPalette => {
+                    state.agent_picker_move_up();
                     UserAction::Noop
                 }
                 UserAction::Backspace => {
