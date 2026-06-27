@@ -38,8 +38,7 @@ impl BlockRenderer for TuiRenderer {
         let projected_lines: Vec<ContentLine>;
         let content_lines: &[ContentLine] = if let Some(ref md) = block.markdown {
             let canvas_width = u16::try_from(ctx.width).unwrap_or(u16::MAX);
-            projected_lines =
-                crate::markdown::render_markdown_lines(md, Some(canvas_width));
+            projected_lines = crate::markdown::render_markdown_lines(md, Some(canvas_width));
             &projected_lines
         } else {
             &block.lines

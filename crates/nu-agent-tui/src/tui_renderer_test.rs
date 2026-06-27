@@ -260,10 +260,7 @@ mod task_5_visual_diff_tests {
     use nu_agent_core::transcript::renderer::BlockRenderer;
     use ratatui::style::Modifier;
 
-    fn render_block_for(
-        role_user: bool,
-        markdown: &str,
-    ) -> Vec<ratatui::text::Line<'static>> {
+    fn render_block_for(role_user: bool, markdown: &str) -> Vec<ratatui::text::Line<'static>> {
         let r = make_renderer();
         let entry = if role_user {
             TranscriptEntry::User(ProseMessage {
@@ -367,11 +364,9 @@ mod task_5_visual_diff_tests {
             !lines.is_empty(),
             "render_markdown_lines with None width must produce non-empty output"
         );
-        let has_text = lines.iter().any(|l| {
-            l.spans
-                .iter()
-                .any(|s| s.text.contains("Hello"))
-        });
+        let has_text = lines
+            .iter()
+            .any(|l| l.spans.iter().any(|s| s.text.contains("Hello")));
         assert!(has_text, "expected 'Hello' in projected output");
     }
 

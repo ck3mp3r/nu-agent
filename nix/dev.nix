@@ -21,6 +21,7 @@ in
 
     buildInputs = [
       toolchain
+      pkgs.prek
 
       # Development scripts
       check
@@ -38,7 +39,10 @@ in
       echo "  check   - Run cargo check"
       echo "  fmt     - Run cargo fmt"
       echo "  tests   - Run cargo test"
-      echo "  clippy  - Run cargo clippy"
+      echo ""
+      echo "Git hooks (prek):"
+      echo "  prek install    - Install git hook shims"
+      echo "  prek run        - Run hooks manually"
       echo "  build   - Build release binary"
     '';
   }

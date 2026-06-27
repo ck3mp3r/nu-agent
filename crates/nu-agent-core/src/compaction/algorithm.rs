@@ -45,7 +45,6 @@ where
     F: FnOnce(&[Message]) -> Fut,
     Fut: Future<Output = io::Result<String>>,
 {
-
     let keep_count = config.keep_recent;
 
     // Load messages from memory

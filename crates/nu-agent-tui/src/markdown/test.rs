@@ -514,9 +514,7 @@ fn table_always_renders_at_least_one_column() {
 
     // Should still have a top border
     assert!(
-        plain
-            .iter()
-            .any(|l| l.contains('╭') && l.contains('╮')),
+        plain.iter().any(|l| l.contains('╭') && l.contains('╮')),
         "even with max_width=1, should still render top border"
     );
 

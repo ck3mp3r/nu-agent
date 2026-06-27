@@ -357,7 +357,11 @@ fn completed_turn_no_explicit_store_append_needed() {
     let response_data = executor.take_response_data();
 
     // Turn must complete normally
-    assert!(result.is_ok(), "execute() must succeed; got: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "execute() must succeed; got: {:?}",
+        result.err()
+    );
     assert!(
         matches!(result.unwrap(), TurnOutcome::Completed),
         "completed turn must return TurnOutcome::Completed"
@@ -558,11 +562,7 @@ fn max_turns_error_persists_full_history() {
     // Turn 1: model asks for a tool call. With max_turns=0, rig will MaxTurnsError
     // as soon as it tries to schedule the tool-call turn.
     let model = MockCompletionModel::from_stream_turns([[
-        MockStreamEvent::tool_call(
-            "tool_call_1",
-            "some_tool",
-            serde_json::json!({"x": 1}),
-        ),
+        MockStreamEvent::tool_call("tool_call_1", "some_tool", serde_json::json!({"x": 1})),
         MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
     ]]);
 
@@ -704,9 +704,8 @@ fn network_error_persists_user_and_assistant_error_placeholder() {
         super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
 
     // Streaming error on the first event — simulates network failure.
-    let model = MockCompletionModel::from_stream_turns([[MockStreamEvent::error(
-        "network timeout",
-    )]]);
+    let model =
+        MockCompletionModel::from_stream_turns([[MockStreamEvent::error("network timeout")]]);
 
     let cached_client = CachedProviderClient::Mock(model);
     let mut ui = MockUi::new();
@@ -769,18 +768,16 @@ fn network_error_persists_user_and_assistant_error_placeholder() {
     );
     // The assistant placeholder must contain the failure marker
     let assistant_content = match &persisted[1] {
-        crate::types::Message::Assistant { content, .. } => {
-            content
-                .iter()
-                .find_map(|c| {
-                    if let crate::types::AssistantContent::Text(t) = c {
-                        Some(t.text.clone())
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or_default()
-        }
+        crate::types::Message::Assistant { content, .. } => content
+            .iter()
+            .find_map(|c| {
+                if let crate::types::AssistantContent::Text(t) = c {
+                    Some(t.text.clone())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default(),
         _ => unreachable!(),
     };
     assert!(
@@ -800,9 +797,8 @@ fn hard_error_no_session_persists_nothing() {
         super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
 
     // Streaming error — hard failure, no history recoverable.
-    let model = MockCompletionModel::from_stream_turns([[MockStreamEvent::error(
-        "provider unavailable",
-    )]]);
+    let model =
+        MockCompletionModel::from_stream_turns([[MockStreamEvent::error("provider unavailable")]]);
 
     let cached_client = CachedProviderClient::Mock(model);
     let mut ui = MockUi::new();
@@ -837,10 +833,7 @@ fn hard_error_no_session_persists_nothing() {
     );
 
     // Must return Err
-    assert!(
-        result.is_err(),
-        "hard error must propagate as LabeledError"
-    );
+    assert!(result.is_err(), "hard error must propagate as LabeledError");
 
     // No JSONL should have been written — transient invocation with no session_id
     // There is no specific conversation_id to check, so we verify the temp dir
@@ -848,11 +841,7 @@ fn hard_error_no_session_persists_nothing() {
     let jsonl_files: Vec<_> = std::fs::read_dir(temp_dir.path())
         .expect("read_dir should succeed")
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .is_some_and(|ext| ext == "jsonl")
-        })
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "jsonl"))
         .collect();
     assert!(
         jsonl_files.is_empty(),

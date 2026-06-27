@@ -74,7 +74,8 @@ impl JournalConversationMemory {
         messages: &[Message],
         last_total_tokens: Option<u64>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        self.store.append(conversation_id, messages, last_total_tokens)
+        self.store
+            .append(conversation_id, messages, last_total_tokens)
     }
 
     /// Replace the in-memory cache for `conversation_id` without touching JSONL.
@@ -107,10 +108,7 @@ impl JournalConversationMemory {
     /// Used when no conversation_id is available (e.g., `clear_session` in the runtime).
     /// Does not touch JSONL — the store is append-only.
     pub fn clear_all(&self) {
-        self.cache
-            .lock()
-            .expect("cache lock poisoned")
-            .clear();
+        self.cache.lock().expect("cache lock poisoned").clear();
     }
 
     fn lock_cache(

@@ -1637,8 +1637,7 @@ fn mcp_panel_ctrl_n_moves_selection_down() {
     state.open_info_panel(InfoPanel::Mcps);
     assert_eq!(state.mcp_panel_selection, 0);
 
-    let _ =
-        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlN), None);
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlN), None);
 
     assert_eq!(state.mcp_panel_selection, 1);
 }
@@ -1659,8 +1658,7 @@ fn mcp_panel_ctrl_p_moves_selection_up() {
     state.open_info_panel(InfoPanel::Mcps);
     state.mcp_panel_selection = 1;
 
-    let _ =
-        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
 
     assert_eq!(state.mcp_panel_selection, 0);
 }

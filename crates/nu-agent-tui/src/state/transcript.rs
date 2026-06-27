@@ -4,12 +4,10 @@ impl AppState {
     pub fn push_transcript_line(&mut self, role: TranscriptRole, line: impl Into<String>) {
         let text = line.into();
         let entry = match role {
-            TranscriptRole::User => TranscriptEntry::User(ProseMessage {
-                markdown: text,
-            }),
-            TranscriptRole::Assistant => TranscriptEntry::Assistant(ProseMessage {
-                markdown: text,
-            }),
+            TranscriptRole::User => TranscriptEntry::User(ProseMessage { markdown: text }),
+            TranscriptRole::Assistant => {
+                TranscriptEntry::Assistant(ProseMessage { markdown: text })
+            }
             TranscriptRole::Tool => {
                 let (name, args) = parse_tool_text(&text);
                 TranscriptEntry::Tool(ToolInvocation {
@@ -34,9 +32,7 @@ impl AppState {
         match role {
             TranscriptRole::Assistant | TranscriptRole::Compaction => {
                 let text = rendered_line_to_plain_text(&line);
-                let entry = TranscriptEntry::Assistant(ProseMessage {
-                    markdown: text,
-                });
+                let entry = TranscriptEntry::Assistant(ProseMessage { markdown: text });
                 self.push_transcript_item(entry);
             }
             _ => {
@@ -77,7 +73,6 @@ impl AppState {
     }
 
     pub fn push_transcript_item(&mut self, entry: TranscriptEntry) {
-
         let entry_role = entry.role();
         if should_insert_turn_separator(
             self.transcript_preview.last().map(|e| e.role()).as_ref(),
@@ -112,14 +107,16 @@ impl AppState {
 
     pub fn scroll_transcript_page_up(&mut self, page_lines: usize) {
         self.transcript_following_tail = false;
-        self.transcript_scroll_offset =
-            self.transcript_scroll_offset.saturating_sub(page_lines.max(1));
+        self.transcript_scroll_offset = self
+            .transcript_scroll_offset
+            .saturating_sub(page_lines.max(1));
     }
 
     pub fn scroll_transcript_page_down(&mut self, page_lines: usize) {
         self.transcript_following_tail = false;
-        self.transcript_scroll_offset =
-            self.transcript_scroll_offset.saturating_add(page_lines.max(1));
+        self.transcript_scroll_offset = self
+            .transcript_scroll_offset
+            .saturating_add(page_lines.max(1));
         // clamped to max_scroll at render time
     }
 
@@ -176,5 +173,3 @@ pub(crate) fn needs_spacer(previous: Option<&Role>, next: &Role) -> bool {
             | (Role::ToolDisplay, Role::Tool)
     )
 }
-
-

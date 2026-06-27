@@ -31,11 +31,15 @@ fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserAction, bool
                 crate::state::InfoPanel::Mcps => match action {
                     UserAction::Esc => UserAction::Esc,
                     UserAction::Quit => UserAction::Quit,
-                    UserAction::ScrollLineUp | UserAction::HistoryUp | UserAction::ToggleCommandPalette => {
+                    UserAction::ScrollLineUp
+                    | UserAction::HistoryUp
+                    | UserAction::ToggleCommandPalette => {
                         state.mcp_panel_move_up();
                         UserAction::Noop
                     }
-                    UserAction::ScrollLineDown | UserAction::HistoryDown | UserAction::QueryNext => {
+                    UserAction::ScrollLineDown
+                    | UserAction::HistoryDown
+                    | UserAction::QueryNext => {
                         state.mcp_panel_move_down();
                         UserAction::Noop
                     }

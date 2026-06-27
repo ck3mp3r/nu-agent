@@ -60,12 +60,13 @@ fn remove_empty_user_message() {
     // OneOrMany<T> cannot hold zero items, so "structurally empty" is
     // impossible at the type level. The only user-empty case is all-empty text
     // with no ToolResults.
-    let msg = user_with_content(vec![UserContent::Text(
-        crate::types::Text::new(""),
-    )]);
+    let msg = user_with_content(vec![UserContent::Text(crate::types::Text::new(""))]);
     let mut issues = Vec::new();
     let result = remove_empty_messages(vec![msg], &mut issues);
-    assert!(result.is_empty(), "user message with empty text must be removed");
+    assert!(
+        result.is_empty(),
+        "user message with empty text must be removed"
+    );
     assert!(!issues.is_empty(), "should emit a diagnostic");
 }
 
@@ -75,7 +76,10 @@ fn remove_empty_assistant_message() {
     let msg = assistant_with_content(vec![AssistantContent::text("   ")]);
     let mut issues = Vec::new();
     let result = remove_empty_messages(vec![msg], &mut issues);
-    assert!(result.is_empty(), "assistant message with whitespace-only text must be removed");
+    assert!(
+        result.is_empty(),
+        "assistant message with whitespace-only text must be removed"
+    );
     assert!(!issues.is_empty());
 }
 
@@ -194,7 +198,11 @@ fn multiple_tool_calls_partial_match() {
     ];
     let mut issues = Vec::new();
     let result = fix_tool_call_integrity(msgs, &mut issues);
-    assert_eq!(result.len(), 3, "all three messages kept (C removed from assistant content)");
+    assert_eq!(
+        result.len(),
+        3,
+        "all three messages kept (C removed from assistant content)"
+    );
     match &result[1] {
         Message::Assistant { content, .. } => {
             assert_eq!(content.len(), 2, "A and B calls kept, C removed");
@@ -308,7 +316,10 @@ fn pipeline_is_idempotent() {
     let (once, _) = repair_messages(msgs);
     let (twice, issues2) = repair_messages(once.clone());
     assert_msgs_eq(&once, &twice);
-    assert!(issues2.is_empty(), "second pass should find nothing to repair");
+    assert!(
+        issues2.is_empty(),
+        "second pass should find nothing to repair"
+    );
 }
 
 #[test]
@@ -333,12 +344,12 @@ fn pipeline_complex_corruption() {
     // 3. Trailing orphan user message (pass 4)
     let msgs = vec![
         Message::user("first"),
-        Message::user("second"),           // consecutive user
+        Message::user("second"), // consecutive user
         assistant_with_content(vec![
             AssistantContent::text("thinking"),
-            make_tool_call("Y", "fetch"),  // dangling — no result follows
+            make_tool_call("Y", "fetch"), // dangling — no result follows
         ]),
-        Message::user("orphan"),           // trailing user
+        Message::user("orphan"), // trailing user
     ];
     let (result, issues) = repair_messages(msgs);
 

@@ -471,7 +471,11 @@ fn assistant_message_event_is_appended_to_tui_transcript() {
         .iter()
         .filter(|e| e.role() == Role::Assistant)
         .collect();
-    assert_eq!(assistant_entries.len(), 1, "one ProseMessage per message block");
+    assert_eq!(
+        assistant_entries.len(),
+        1,
+        "one ProseMessage per message block"
+    );
     assert!(
         assistant_entries[0].text().contains("hello"),
         "raw markdown should contain 'hello'"
@@ -1456,12 +1460,7 @@ fn coordinator_hydration_keeps_unsupported_markdown_readable_in_assistant_transc
         .iter()
         .filter(|line| matches!(line.role(), nu_agent_core::transcript::ir::Role::Assistant))
         .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
-        .map(|l| {
-            l.spans
-                .iter()
-                .map(|s| s.text.as_str())
-                .collect::<String>()
-        })
+        .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
 
     // Tables are now supported and rendered with separators
@@ -1533,12 +1532,7 @@ fn assistant_message_event_sanitizes_pseudo_tags_and_control_tags_in_runtime_tra
         .iter()
         .filter(|line| matches!(line.role(), nu_agent_core::transcript::ir::Role::Assistant))
         .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
-        .map(|l| {
-            l.spans
-                .iter()
-                .map(|s| s.text.as_str())
-                .collect::<String>()
-        })
+        .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
 
     assert!(projected_lines.iter().any(|l| l.contains("prefix")));
@@ -2857,8 +2851,7 @@ fn help_panel_scroll_offset_applied() {
     let viewport_height = 8u16;
     let viewport_width = 80u16;
 
-    let small_scroll =
-        super::help_panel_scroll_offset_for_test(viewport_height, viewport_width, 3);
+    let small_scroll = super::help_panel_scroll_offset_for_test(viewport_height, viewport_width, 3);
     assert_eq!(
         small_scroll, 3,
         "scroll offset below max must pass through unchanged"
@@ -2892,20 +2885,29 @@ fn status_panel_scroll_offset_applied() {
     let viewport_width = 80u16;
     let model = "openai/gpt-4o";
 
-    let small_scroll =
-        super::status_panel_scroll_offset_for_test(&state, model, viewport_height, viewport_width, 1);
+    let small_scroll = super::status_panel_scroll_offset_for_test(
+        &state,
+        model,
+        viewport_height,
+        viewport_width,
+        1,
+    );
     // 1 is within content so it should pass through (or be clamped if content
     // is ≤ 3 lines — either outcome is correct as long as it's ≤ max).
     let (_title, lines) = super::status_panel_lines_for_test(&state, model);
-    let max =
-        super::help_panel_max_scroll_for_test(&lines, viewport_height);
+    let max = super::help_panel_max_scroll_for_test(&lines, viewport_height);
     assert!(
         small_scroll <= max,
         "scroll offset must not exceed max (got {small_scroll}, max {max})"
     );
 
-    let huge_scroll =
-        super::status_panel_scroll_offset_for_test(&state, model, viewport_height, viewport_width, usize::MAX);
+    let huge_scroll = super::status_panel_scroll_offset_for_test(
+        &state,
+        model,
+        viewport_height,
+        viewport_width,
+        usize::MAX,
+    );
     assert_eq!(
         huge_scroll, max,
         "scroll offset above max must be clamped to max"
@@ -2934,8 +2936,12 @@ fn skills_panel_scroll_offset_applied() {
     let (_title, lines) = super::skills_panel_lines_for_test(&state);
     let max = super::help_panel_max_scroll_for_test(&lines, viewport_height);
 
-    let huge_scroll =
-        super::skills_panel_scroll_offset_for_test(&state, viewport_height, viewport_width, usize::MAX);
+    let huge_scroll = super::skills_panel_scroll_offset_for_test(
+        &state,
+        viewport_height,
+        viewport_width,
+        usize::MAX,
+    );
     assert_eq!(
         huge_scroll, max,
         "scroll offset above max must be clamped to max"
@@ -3897,12 +3903,7 @@ fn hydration_compaction_renders_markdown_body() {
         .transcript_preview
         .iter()
         .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
-        .map(|l| {
-            l.spans
-                .iter()
-                .map(|s| s.text.as_str())
-                .collect::<String>()
-        })
+        .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
 
     // Raw markdown markers should NOT appear in the projected output

@@ -107,7 +107,11 @@ async fn load_is_cached() {
 
     // Second load: cache hit — JSONL mutation must NOT be visible
     let second = mem.load("conv-1").await.unwrap();
-    assert_eq!(second.len(), 2, "second load must hit cache, not re-read JSONL");
+    assert_eq!(
+        second.len(),
+        2,
+        "second load must hit cache, not re-read JSONL"
+    );
 
     // compaction_count must be unchanged — only updates on cache-miss
     assert_eq!(
@@ -179,7 +183,11 @@ async fn append_after_clear_no_duplicate() {
     let store = JsonlConversationStore::new(tmp.path().to_path_buf());
     let (entries, _) = store.load_all("conv-1").unwrap();
     // Each append writes to JSONL independently, so 2 appends = 4 entries in JSONL
-    assert_eq!(entries.len(), msgs.len() * 2, "each append should write exactly the messages once");
+    assert_eq!(
+        entries.len(),
+        msgs.len() * 2,
+        "each append should write exactly the messages once"
+    );
 }
 
 #[tokio::test]
@@ -205,7 +213,11 @@ async fn reset_context_replaces_cache_only() {
 
     // JSONL should be unchanged
     let (entries, _) = store.load_all("conv-1").unwrap();
-    assert_eq!(entries.len(), 1, "JSONL should still have only the original message");
+    assert_eq!(
+        entries.len(),
+        1,
+        "JSONL should still have only the original message"
+    );
 }
 
 #[tokio::test]
@@ -215,15 +227,21 @@ async fn compaction_count_populated_after_load() {
 
     // Write two compaction markers to the JSONL
     let store = JsonlConversationStore::new(tmp.path().to_path_buf());
-    store.append("conv-1", &[Message::user("m1")], None).unwrap();
+    store
+        .append("conv-1", &[Message::user("m1")], None)
+        .unwrap();
 
     let marker1 = CompactionMarker::new("Summary1".to_string(), 1, 1, "sliding_summary");
     store.append_marker("conv-1", &marker1, None).unwrap();
-    store.append("conv-1", &[Message::user("m2")], None).unwrap();
+    store
+        .append("conv-1", &[Message::user("m2")], None)
+        .unwrap();
 
     let marker2 = CompactionMarker::new("Summary2".to_string(), 1, 2, "sliding_summary");
     store.append_marker("conv-1", &marker2, None).unwrap();
-    store.append("conv-1", &[Message::user("m3")], None).unwrap();
+    store
+        .append("conv-1", &[Message::user("m3")], None)
+        .unwrap();
 
     // Load to populate compaction_count
     let _ = mem.load("conv-1").await.unwrap();
@@ -240,7 +258,9 @@ async fn append_writes_null_tokens_to_store() {
     let tmp = TempDir::new().unwrap();
     let mem = JournalConversationMemory::new(tmp.path().to_path_buf());
 
-    mem.append("conv-1", vec![Message::user("hi")]).await.unwrap();
+    mem.append("conv-1", vec![Message::user("hi")])
+        .await
+        .unwrap();
 
     // Read raw JSONL and verify last_total_tokens is null (not a token value)
     let raw = std::fs::read_to_string(tmp.path().join("conv-1.jsonl")).unwrap();
@@ -274,7 +294,10 @@ async fn append_marker_writes_to_store_only() {
     // Cache should NOT contain the marker (clear + reload would re-read it)
     // After append_marker, the cache is unchanged (it was empty)
     let cached = mem.load("conv-1").await.unwrap();
-    assert!(cached.is_empty(), "cache should not be updated by append_marker");
+    assert!(
+        cached.is_empty(),
+        "cache should not be updated by append_marker"
+    );
 }
 
 #[tokio::test]
@@ -290,7 +313,8 @@ async fn append_messages_to_store_only_no_cache_update() {
 
     // Append to store only (no cache update)
     let extra = vec![Message::user("store-only")];
-    mem.append_messages_to_store_only("conv-1", &extra, None).unwrap();
+    mem.append_messages_to_store_only("conv-1", &extra, None)
+        .unwrap();
 
     // JSONL has both
     let (entries, _) = store.load_all("conv-1").unwrap();
@@ -298,7 +322,11 @@ async fn append_messages_to_store_only_no_cache_update() {
 
     // Cache should still have only the initial messages (no re-read happened)
     let cached = mem.load("conv-1").await.unwrap();
-    assert_eq!(cached.len(), 2, "cache should not be updated by append_messages_to_store_only");
+    assert_eq!(
+        cached.len(),
+        2,
+        "cache should not be updated by append_messages_to_store_only"
+    );
     assert_msg_eq(&cached[0], &initial[0]);
     assert_msg_eq(&cached[1], &initial[1]);
 }

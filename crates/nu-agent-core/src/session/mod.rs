@@ -1,6 +1,6 @@
 pub mod journal;
-pub mod resolver;
 mod repair;
+pub mod resolver;
 mod store;
 
 #[cfg(test)]

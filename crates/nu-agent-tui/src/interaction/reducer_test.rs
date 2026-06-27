@@ -905,12 +905,7 @@ fn compaction_artifact_renders_as_single_markdown_block() {
         .transcript_preview
         .iter()
         .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
-        .map(|l| {
-            l.spans
-                .iter()
-                .map(|s| s.text.as_str())
-                .collect::<String>()
-        })
+        .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
     assert!(
         projected_texts.iter().any(|l| l.contains("Summary")),
@@ -944,12 +939,7 @@ fn compaction_artifact_does_not_double_wrap_summary_heading() {
         .transcript_preview
         .iter()
         .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
-        .map(|l| {
-            l.spans
-                .iter()
-                .map(|s| s.text.as_str())
-                .collect::<String>()
-        })
+        .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .filter(|projected| projected.trim() == "Summary")
         .count();
     assert_eq!(summary_count, 1);
@@ -976,12 +966,7 @@ fn compaction_artifact_preserves_bullets_without_duplication() {
         .transcript_preview
         .iter()
         .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
-        .map(|l| {
-            l.spans
-                .iter()
-                .map(|s| s.text.as_str())
-                .collect::<String>()
-        })
+        .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
     assert_eq!(
         projected_texts
@@ -1028,12 +1013,7 @@ fn compaction_block_completion_hides_source_and_explanatory_copy() {
         .transcript_preview
         .iter()
         .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
-        .map(|l| {
-            l.spans
-                .iter()
-                .map(|s| s.text.as_str())
-                .collect::<String>()
-        })
+        .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
 
     assert!(raw_texts.contains(&"Compaction".to_string()));
@@ -1211,12 +1191,7 @@ fn compaction_block_summary_rendering_remains_clean_after_copy_removal() {
         .transcript_preview
         .iter()
         .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
-        .map(|l| {
-            l.spans
-                .iter()
-                .map(|s| s.text.as_str())
-                .collect::<String>()
-        })
+        .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
     assert_eq!(
         projected_texts
@@ -2696,13 +2671,11 @@ mod task_4a_tests {
         );
         assert!(
             // Verify the raw markdown is stored and projects to MdBold
-            assistant_markdown_entries(&state)
-                .iter()
-                .any(|md| {
-                    project_spans(md)
-                        .iter()
-                        .any(|(t, h)| t == "bold" && matches!(h, StyleHint::MdBold))
-                })
+            assistant_markdown_entries(&state).iter().any(|md| {
+                project_spans(md)
+                    .iter()
+                    .any(|(t, h)| t == "bold" && matches!(h, StyleHint::MdBold))
+            })
         );
     }
 
@@ -2737,14 +2710,10 @@ mod task_4a_tests {
             })),
             None,
         );
-        assert!(
-            assistant_markdown_entries(&state)
+        assert!(assistant_markdown_entries(&state).iter().any(|md| {
+            project_spans(md)
                 .iter()
-                .any(|md| {
-                    project_spans(md)
-                        .iter()
-                        .any(|(t, h)| t == "italic" && matches!(h, StyleHint::MdItalic))
-                })
-        );
+                .any(|(t, h)| t == "italic" && matches!(h, StyleHint::MdItalic))
+        }));
     }
 }

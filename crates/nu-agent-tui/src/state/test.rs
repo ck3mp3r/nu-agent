@@ -879,8 +879,7 @@ fn push_transcript_item_stays_put_when_scrolled_up() {
         "following_tail should stay false when user has scrolled up"
     );
     assert_eq!(
-        state.transcript_scroll_offset,
-        0,
+        state.transcript_scroll_offset, 0,
         "scroll offset should stay at top when user has scrolled up"
     );
 }

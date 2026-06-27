@@ -631,7 +631,8 @@ fn format_lane_1(
 #[cfg(test)]
 const BRANCH_ICON_PREFIX: &str = "\u{e725} ";
 #[cfg(test)]
-const BRANCH_ICON_PREFIX_WIDTH: usize = 2;#[cfg(test)]
+const BRANCH_ICON_PREFIX_WIDTH: usize = 2;
+#[cfg(test)]
 fn format_lane_1_parts(
     model: &str,
     branch: &str,

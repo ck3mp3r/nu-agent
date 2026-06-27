@@ -832,14 +832,11 @@ impl RuntimeCoordinator {
                         }
 
                         let text = ratatui::text::Text::from(all_lines);
-                        let paragraph = Paragraph::new(text)
-                            .wrap(Wrap { trim: false });
+                        let paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
 
                         let viewport_height = transcript_list_area.height as usize;
-                        let total_visual_rows =
-                            paragraph.line_count(transcript_list_area.width);
-                        let max_scroll: usize =
-                            total_visual_rows.saturating_sub(viewport_height);
+                        let total_visual_rows = paragraph.line_count(transcript_list_area.width);
+                        let max_scroll: usize = total_visual_rows.saturating_sub(viewport_height);
                         let effective_offset: usize = if transcript_following_tail {
                             max_scroll
                         } else {
@@ -848,15 +845,12 @@ impl RuntimeCoordinator {
                         rendered_scroll_offset = Some(effective_offset);
 
                         let scroll_u16 = effective_offset.min(u16::MAX as usize) as u16;
-                        frame.render_widget(
-                            paragraph.scroll((scroll_u16, 0)),
-                            transcript_list_area,
-                        );
+                        frame
+                            .render_widget(paragraph.scroll((scroll_u16, 0)), transcript_list_area);
 
                         if total_visual_rows > viewport_height {
                             let mut scrollbar_state =
-                                ScrollbarState::new(max_scroll)
-                                    .position(effective_offset);
+                                ScrollbarState::new(max_scroll).position(effective_offset);
                             frame.render_stateful_widget(
                                 Scrollbar::new(ScrollbarOrientation::VerticalRight)
                                     .begin_symbol(None)
@@ -1137,8 +1131,7 @@ impl RuntimeCoordinator {
                                 vertical: 1,
                                 horizontal: 1,
                             });
-                            let details_height =
-                                mcp_details_height_for_inner_height(inner.height);
+                            let details_height = mcp_details_height_for_inner_height(inner.height);
 
                             let rows = Layout::default()
                                 .direction(Direction::Vertical)

@@ -371,9 +371,13 @@ fn extract_llm_context_single_marker() {
 
     // 4 kept messages re-appended after marker (2 user/assistant pairs)
     entries.push(StoreEntry::Message(Message::user("msg6".to_string())));
-    entries.push(StoreEntry::Message(Message::assistant("reply6".to_string())));
+    entries.push(StoreEntry::Message(Message::assistant(
+        "reply6".to_string(),
+    )));
     entries.push(StoreEntry::Message(Message::user("msg8".to_string())));
-    entries.push(StoreEntry::Message(Message::assistant("reply8".to_string())));
+    entries.push(StoreEntry::Message(Message::assistant(
+        "reply8".to_string(),
+    )));
 
     let context = extract_llm_context(&entries);
     assert_eq!(context.len(), 5); // 1 summary system msg + 4 post-marker
@@ -393,7 +397,10 @@ fn extract_llm_context_multiple_markers() {
     // 4 messages before marker1 (2 user/assistant pairs)
     for i in 0..2 {
         entries.push(StoreEntry::Message(Message::user(format!("old{}", i))));
-        entries.push(StoreEntry::Message(Message::assistant(format!("oldr{}", i))));
+        entries.push(StoreEntry::Message(Message::assistant(format!(
+            "oldr{}",
+            i
+        ))));
     }
 
     let marker1 = CompactionMarker::new("Summary1".to_string(), 3, 5, "sliding_summary");
@@ -402,7 +409,10 @@ fn extract_llm_context_multiple_markers() {
     // 4 messages between markers (2 user/assistant pairs)
     for i in 0..2 {
         entries.push(StoreEntry::Message(Message::user(format!("mid{}", i))));
-        entries.push(StoreEntry::Message(Message::assistant(format!("midr{}", i))));
+        entries.push(StoreEntry::Message(Message::assistant(format!(
+            "midr{}",
+            i
+        ))));
     }
 
     let marker2 = CompactionMarker::new("Summary2".to_string(), 2, 8, "sliding_summary");
@@ -410,7 +420,9 @@ fn extract_llm_context_multiple_markers() {
 
     // 2 kept messages re-appended after marker2 (1 user/assistant pair)
     entries.push(StoreEntry::Message(Message::user("post0".to_string())));
-    entries.push(StoreEntry::Message(Message::assistant("postr0".to_string())));
+    entries.push(StoreEntry::Message(Message::assistant(
+        "postr0".to_string(),
+    )));
 
     let context = extract_llm_context(&entries);
 
@@ -431,7 +443,10 @@ fn extract_llm_context_kept_recent_count_correct() {
     // 4 messages (old, before marker) — 2 user/assistant pairs
     for i in 0..2 {
         entries.push(StoreEntry::Message(Message::user(format!("m{}", i * 2))));
-        entries.push(StoreEntry::Message(Message::assistant(format!("r{}", i * 2))));
+        entries.push(StoreEntry::Message(Message::assistant(format!(
+            "r{}",
+            i * 2
+        ))));
     }
 
     // marker with kept=4

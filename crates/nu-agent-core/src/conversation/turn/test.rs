@@ -17,8 +17,7 @@ use crate::session::JournalConversationMemory;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
 use crate::types::{
-    AssistantContent, Message, Text, ToolCall, ToolFunction,
-    ToolResultContent, UserContent,
+    AssistantContent, Message, Text, ToolCall, ToolFunction, ToolResultContent, UserContent,
 };
 
 // ---------------------------------------------------------------------------
@@ -809,21 +808,13 @@ fn transient_turn_does_not_write_jsonl() {
     let jsonl_files: Vec<_> = std::fs::read_dir(&sessions_path)
         .expect("sessions dir must be readable")
         .filter_map(|entry| entry.ok())
-        .filter(|entry| {
-            entry
-                .path()
-                .extension()
-                .is_some_and(|ext| ext == "jsonl")
-        })
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "jsonl"))
         .collect();
 
     assert!(
         jsonl_files.is_empty(),
         "transient turn must not write any JSONL file; found: {:?}",
-        jsonl_files
-            .iter()
-            .map(|e| e.path())
-            .collect::<Vec<_>>()
+        jsonl_files.iter().map(|e| e.path()).collect::<Vec<_>>()
     );
 }
 
@@ -870,12 +861,7 @@ fn persistent_turn_writes_jsonl() {
     let jsonl_files: Vec<_> = std::fs::read_dir(&sessions_path)
         .expect("sessions dir must be readable")
         .filter_map(|entry| entry.ok())
-        .filter(|entry| {
-            entry
-                .path()
-                .extension()
-                .is_some_and(|ext| ext == "jsonl")
-        })
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "jsonl"))
         .collect();
 
     assert!(

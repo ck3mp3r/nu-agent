@@ -79,7 +79,11 @@ pub(super) fn help_panel_scroll_offset_for_test(
     requested_scroll: usize,
 ) -> usize {
     let (_title, lines) = help_panel_lines();
-    requested_scroll.min(help_panel_max_scroll(&lines, viewport_height, viewport_width))
+    requested_scroll.min(help_panel_max_scroll(
+        &lines,
+        viewport_height,
+        viewport_width,
+    ))
 }
 
 #[cfg(test)]
@@ -91,7 +95,11 @@ pub(super) fn status_panel_scroll_offset_for_test(
     requested_scroll: usize,
 ) -> usize {
     let (_title, lines) = status_panel_lines(state, active_model_identity);
-    requested_scroll.min(help_panel_max_scroll(&lines, viewport_height, viewport_width))
+    requested_scroll.min(help_panel_max_scroll(
+        &lines,
+        viewport_height,
+        viewport_width,
+    ))
 }
 
 #[cfg(test)]
@@ -102,7 +110,11 @@ pub(super) fn skills_panel_scroll_offset_for_test(
     requested_scroll: usize,
 ) -> usize {
     let (_title, lines) = skills_panel_lines(state);
-    requested_scroll.min(help_panel_max_scroll(&lines, viewport_height, viewport_width))
+    requested_scroll.min(help_panel_max_scroll(
+        &lines,
+        viewport_height,
+        viewport_width,
+    ))
 }
 
 #[cfg(test)]
