@@ -13,7 +13,7 @@ repo = "local"
 id = "rustfmt"
 name = "cargo fmt"
 language = "system"
-entry = "sh -c 'cargo fmt && git diff --name-only --diff-filter=M | xargs git add'"
+entry = "cargo fmt"
 files = "\\.rs$"
 stages = ["pre-commit"]
 
