@@ -92,22 +92,22 @@ async fn load_is_cached() {
     // Write messages directly to the backing store (not via mem.append — that
     // would populate the cache before we exercise the cold-start JSONL path).
     let store = JsonlConversationStore::new(tmp.path().to_path_buf());
-    let msgs = vec![Message::user("hello")];
+    let msgs = vec![Message::user("hello"), Message::assistant("hi")];
     store.append("conv-1", &msgs, None).unwrap();
 
     // First load: cache miss — reads from JSONL and populates cache
     let first = mem.load("conv-1").await.unwrap();
-    assert_eq!(first.len(), 1);
+    assert_eq!(first.len(), 2);
     let count_after_first = mem.compaction_count();
 
     // Mutate the JSONL file — add more messages (bypasses cache)
     store
-        .append("conv-1", &[Message::assistant("extra")], None)
+        .append("conv-1", &[Message::user("extra")], None)
         .unwrap();
 
     // Second load: cache hit — JSONL mutation must NOT be visible
     let second = mem.load("conv-1").await.unwrap();
-    assert_eq!(second.len(), 1, "second load must hit cache, not re-read JSONL");
+    assert_eq!(second.len(), 2, "second load must hit cache, not re-read JSONL");
 
     // compaction_count must be unchanged — only updates on cache-miss
     assert_eq!(
@@ -284,20 +284,21 @@ async fn append_messages_to_store_only_no_cache_update() {
 
     // Populate cache with initial messages via load
     let store = JsonlConversationStore::new(tmp.path().to_path_buf());
-    let initial = vec![Message::user("initial")];
+    let initial = vec![Message::user("initial"), Message::assistant("reply")];
     store.append("conv-1", &initial, None).unwrap();
     let _ = mem.load("conv-1").await.unwrap(); // fills cache
 
     // Append to store only (no cache update)
-    let extra = vec![Message::assistant("store-only")];
+    let extra = vec![Message::user("store-only")];
     mem.append_messages_to_store_only("conv-1", &extra, None).unwrap();
 
     // JSONL has both
     let (entries, _) = store.load_all("conv-1").unwrap();
-    assert_eq!(entries.len(), 2);
+    assert_eq!(entries.len(), 3);
 
-    // Cache should still have only the initial message (no re-read happened)
+    // Cache should still have only the initial messages (no re-read happened)
     let cached = mem.load("conv-1").await.unwrap();
-    assert_eq!(cached.len(), 1, "cache should not be updated by append_messages_to_store_only");
+    assert_eq!(cached.len(), 2, "cache should not be updated by append_messages_to_store_only");
     assert_msg_eq(&cached[0], &initial[0]);
+    assert_msg_eq(&cached[1], &initial[1]);
 }

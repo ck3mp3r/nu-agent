@@ -347,33 +347,40 @@ fn extract_llm_context_no_markers() {
         StoreEntry::Message(Message::user("Hello")),
         StoreEntry::Message(Message::assistant("Hi")),
         StoreEntry::Message(Message::user("How are you?")),
+        StoreEntry::Message(Message::assistant("I am fine")),
     ];
 
     let context = extract_llm_context(&entries);
-    assert_eq!(context.len(), 3);
+    assert_eq!(context.len(), 4);
 }
 
 #[test]
 fn extract_llm_context_single_marker() {
-    // 7 messages + marker(kept=3) + 3 msgs after marker → summary + 3 post-marker = 4 messages
-    let mut entries: Vec<StoreEntry> = (0..7)
-        .map(|i| StoreEntry::Message(Message::user(format!("msg{}", i))))
+    // 6 messages (3 user/assistant pairs) + marker(kept=4) + 4 msgs after marker → summary + 4 post-marker = 5 messages
+    let mut entries: Vec<StoreEntry> = (0..3)
+        .flat_map(|i| {
+            [
+                StoreEntry::Message(Message::user(format!("msg{}", i * 2))),
+                StoreEntry::Message(Message::assistant(format!("reply{}", i * 2))),
+            ]
+        })
         .collect();
 
-    let marker = CompactionMarker::new("Summary of first 7".to_string(), 3, 7, "sliding_summary");
+    let marker = CompactionMarker::new("Summary of first 6".to_string(), 4, 6, "sliding_summary");
     entries.push(StoreEntry::Marker(marker));
 
-    // 3 kept messages re-appended after marker
-    for i in 7..10 {
-        entries.push(StoreEntry::Message(Message::user(format!("msg{}", i))));
-    }
+    // 4 kept messages re-appended after marker (2 user/assistant pairs)
+    entries.push(StoreEntry::Message(Message::user("msg6".to_string())));
+    entries.push(StoreEntry::Message(Message::assistant("reply6".to_string())));
+    entries.push(StoreEntry::Message(Message::user("msg8".to_string())));
+    entries.push(StoreEntry::Message(Message::assistant("reply8".to_string())));
 
     let context = extract_llm_context(&entries);
-    assert_eq!(context.len(), 4); // 1 summary system msg + 3 post-marker
+    assert_eq!(context.len(), 5); // 1 summary system msg + 4 post-marker
 
     // First is system summary
     match &context[0] {
-        Message::System { content } => assert_eq!(content, "Summary of first 7"),
+        Message::System { content } => assert_eq!(content, "Summary of first 6"),
         _ => panic!("Expected system message with summary"),
     }
 }
@@ -383,25 +390,27 @@ fn extract_llm_context_multiple_markers() {
     // msgs + marker1 + msgs + marker2(kept=2) + 2 msgs after marker2 → uses marker2
     let mut entries = Vec::new();
 
-    // 5 messages before marker1
-    for i in 0..5 {
+    // 4 messages before marker1 (2 user/assistant pairs)
+    for i in 0..2 {
         entries.push(StoreEntry::Message(Message::user(format!("old{}", i))));
+        entries.push(StoreEntry::Message(Message::assistant(format!("oldr{}", i))));
     }
 
     let marker1 = CompactionMarker::new("Summary1".to_string(), 3, 5, "sliding_summary");
     entries.push(StoreEntry::Marker(marker1));
 
-    // 4 messages between markers
-    for i in 0..4 {
+    // 4 messages between markers (2 user/assistant pairs)
+    for i in 0..2 {
         entries.push(StoreEntry::Message(Message::user(format!("mid{}", i))));
+        entries.push(StoreEntry::Message(Message::assistant(format!("midr{}", i))));
     }
 
     let marker2 = CompactionMarker::new("Summary2".to_string(), 2, 8, "sliding_summary");
     entries.push(StoreEntry::Marker(marker2));
 
-    // 2 kept messages re-appended after marker2
+    // 2 kept messages re-appended after marker2 (1 user/assistant pair)
     entries.push(StoreEntry::Message(Message::user("post0".to_string())));
-    entries.push(StoreEntry::Message(Message::user("post1".to_string())));
+    entries.push(StoreEntry::Message(Message::assistant("postr0".to_string())));
 
     let context = extract_llm_context(&entries);
 
@@ -419,73 +428,71 @@ fn extract_llm_context_kept_recent_count_correct() {
     // Verify exactly k messages after marker are included
     let mut entries = Vec::new();
 
-    // 4 messages (old, before marker)
-    for i in 0..4 {
-        entries.push(StoreEntry::Message(Message::user(format!("m{}", i))));
+    // 4 messages (old, before marker) — 2 user/assistant pairs
+    for i in 0..2 {
+        entries.push(StoreEntry::Message(Message::user(format!("m{}", i * 2))));
+        entries.push(StoreEntry::Message(Message::assistant(format!("r{}", i * 2))));
     }
 
     // marker with kept=4
     let marker = CompactionMarker::new("S".to_string(), 4, 4, "sliding_summary");
     entries.push(StoreEntry::Marker(marker));
 
-    // 4 kept messages re-appended after marker
-    for i in 4..8 {
-        entries.push(StoreEntry::Message(Message::user(format!("m{}", i))));
-    }
+    // 4 kept messages re-appended after marker — 2 user/assistant pairs
+    entries.push(StoreEntry::Message(Message::user("m4".to_string())));
+    entries.push(StoreEntry::Message(Message::assistant("r4".to_string())));
+    entries.push(StoreEntry::Message(Message::user("m6".to_string())));
+    entries.push(StoreEntry::Message(Message::assistant("r6".to_string())));
 
     let context = extract_llm_context(&entries);
     // summary + 4 post-marker = 5
     assert_eq!(context.len(), 5);
 
-    // Verify the kept messages are the 4 after marker (m4, m5, m6, m7)
+    // Verify the kept messages are the 4 after marker
     let kept_texts: Vec<String> = context[1..]
         .iter()
         .map(|m| serde_json::to_string(m).unwrap())
         .collect();
-    for (i, text) in kept_texts.iter().enumerate() {
-        let expected = format!("m{}", i + 4);
-        assert!(
-            text.contains(&expected),
-            "Expected '{}' in kept message {}, got: {}",
-            expected,
-            i,
-            text
-        );
-    }
+    assert!(kept_texts[0].contains("m4"));
+    assert!(kept_texts[1].contains("r4"));
+    assert!(kept_texts[2].contains("m6"));
+    assert!(kept_texts[3].contains("r6"));
 }
 
 #[test]
 fn extract_llm_context_skips_older_markers_in_kept_range() {
     // Older markers are before the latest marker; kept messages are after.
     // Only the latest marker is used for context extraction.
-    let mut entries = Vec::new();
+    // 4 messages (2 user/assistant pairs)
+    let mut entries = vec![
+        StoreEntry::Message(Message::user("a0".to_string())),
+        StoreEntry::Message(Message::assistant("ar0".to_string())),
+        StoreEntry::Message(Message::user("a1".to_string())),
+        StoreEntry::Message(Message::assistant("ar1".to_string())),
+    ];
 
-    // 3 messages
-    for i in 0..3 {
-        entries.push(StoreEntry::Message(Message::user(format!("a{}", i))));
-    }
-
-    // marker1 at index 3
+    // marker1 at index 4
     let marker1 = CompactionMarker::new("OldSummary".to_string(), 2, 3, "sliding_summary");
     entries.push(StoreEntry::Marker(marker1));
 
-    // 2 messages at indices 4, 5
+    // 2 messages between markers (1 user/assistant pair)
     entries.push(StoreEntry::Message(Message::user("b0".to_string())));
-    entries.push(StoreEntry::Message(Message::user("b1".to_string())));
+    entries.push(StoreEntry::Message(Message::assistant("br0".to_string())));
 
-    // marker2 at index 6, kept=3
-    let marker2 = CompactionMarker::new("NewSummary".to_string(), 3, 5, "sliding_summary");
+    // marker2, kept=4
+    let marker2 = CompactionMarker::new("NewSummary".to_string(), 4, 6, "sliding_summary");
     entries.push(StoreEntry::Marker(marker2));
 
-    // 3 kept messages re-appended after marker2
+    // 4 kept messages re-appended after marker2 (2 user/assistant pairs)
     entries.push(StoreEntry::Message(Message::user("k0".to_string())));
+    entries.push(StoreEntry::Message(Message::assistant("kr0".to_string())));
     entries.push(StoreEntry::Message(Message::user("k1".to_string())));
-    entries.push(StoreEntry::Message(Message::user("k2".to_string())));
+    entries.push(StoreEntry::Message(Message::assistant("kr1".to_string())));
 
     let context = extract_llm_context(&entries);
 
-    // summary + 3 post-marker messages = 4
-    assert_eq!(context.len(), 4);
+    // summary + 4 post-marker messages = 5
+    assert_eq!(context.len(), 5);
 
     match &context[0] {
         Message::System { content } => assert_eq!(content, "NewSummary"),
@@ -506,25 +513,28 @@ fn extract_llm_context_empty_summary() {
     // SlidingWindow has empty summary → no system message prepended
     let mut entries = Vec::new();
 
+    // 3 user/assistant pairs before the marker
     for i in 0..3 {
         entries.push(StoreEntry::Message(Message::user(format!("w{}", i))));
+        entries.push(StoreEntry::Message(Message::assistant(format!("wr{}", i))));
     }
 
     // Marker with empty summary (SlidingWindow style)
-    let marker = CompactionMarker::new(String::new(), 3, 3, "sliding_window");
+    let marker = CompactionMarker::new(String::new(), 4, 6, "sliding_window");
     entries.push(StoreEntry::Marker(marker));
 
-    // 3 kept messages re-appended after marker
-    for i in 3..6 {
-        entries.push(StoreEntry::Message(Message::user(format!("w{}", i))));
-    }
+    // 4 kept messages re-appended after marker (2 user/assistant pairs)
+    entries.push(StoreEntry::Message(Message::user("w6".to_string())));
+    entries.push(StoreEntry::Message(Message::assistant("wr6".to_string())));
+    entries.push(StoreEntry::Message(Message::user("w8".to_string())));
+    entries.push(StoreEntry::Message(Message::assistant("wr8".to_string())));
 
     let context = extract_llm_context(&entries);
 
-    // No summary + 3 post-marker = 3
-    assert_eq!(context.len(), 3);
+    // No summary + 4 post-marker = 4
+    assert_eq!(context.len(), 4);
 
-    // First should be user message (w3), not a system message
+    // First should be user message (w6), not a system message
     assert!(
         matches!(&context[0], Message::User { .. }),
         "Expected user message, not system message when summary is empty"
@@ -587,4 +597,61 @@ fn load_all_returns_none_for_legacy_entries_without_tokens() {
     let (entries, last_tokens) = store.load_all("s1").unwrap();
     assert!(!entries.is_empty());
     assert_eq!(last_tokens, None);
+}
+
+// --- Orphan user message trimming tests ---
+
+#[test]
+fn extract_llm_context_trims_trailing_orphan_user_message() {
+    // [user, assistant, user(orphan)] → returns [user, assistant]
+    let entries = vec![
+        StoreEntry::Message(Message::user("first")),
+        StoreEntry::Message(Message::assistant("reply")),
+        StoreEntry::Message(Message::user("orphan")),
+    ];
+
+    let context = extract_llm_context(&entries);
+    assert_eq!(context.len(), 2);
+    assert!(matches!(&context[0], Message::User { .. }));
+    assert!(matches!(&context[1], Message::Assistant { .. }));
+}
+
+#[test]
+fn extract_llm_context_trims_multiple_stacked_orphan_user_messages() {
+    // [user, assistant, user, user, user] → returns [user, assistant]
+    let entries = vec![
+        StoreEntry::Message(Message::user("first")),
+        StoreEntry::Message(Message::assistant("reply")),
+        StoreEntry::Message(Message::user("orphan1")),
+        StoreEntry::Message(Message::user("orphan2")),
+        StoreEntry::Message(Message::user("orphan3")),
+    ];
+
+    let context = extract_llm_context(&entries);
+    assert_eq!(context.len(), 2);
+    assert!(matches!(&context[0], Message::User { .. }));
+    assert!(matches!(&context[1], Message::Assistant { .. }));
+}
+
+#[test]
+fn extract_llm_context_preserves_valid_conversation_ending_with_assistant() {
+    // [user, assistant, user, assistant] → unchanged (length 4)
+    let entries = vec![
+        StoreEntry::Message(Message::user("first")),
+        StoreEntry::Message(Message::assistant("reply1")),
+        StoreEntry::Message(Message::user("second")),
+        StoreEntry::Message(Message::assistant("reply2")),
+    ];
+
+    let context = extract_llm_context(&entries);
+    assert_eq!(context.len(), 4);
+}
+
+#[test]
+fn extract_llm_context_empty_after_trimming_returns_empty() {
+    // [user] only → returns []
+    let entries = vec![StoreEntry::Message(Message::user("orphan"))];
+
+    let context = extract_llm_context(&entries);
+    assert_eq!(context.len(), 0);
 }

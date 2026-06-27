@@ -690,9 +690,11 @@ fn unknown_tool_error_persists_full_history() {
 }
 
 /// Network/CompletionError has no chat_history — executor falls back to persisting
-/// just the user prompt so the session remembers the turn was attempted.
+/// a user+assistant pair so the session retains alternating turn structure.
+/// A bare user message at JSONL end would violate alternation and cause the Copilot API
+/// to reject all subsequent turns with 400 "No user query found".
 #[test]
-fn network_error_persists_user_prompt() {
+fn network_error_persists_user_and_assistant_error_placeholder() {
     let config = test_config();
     let rt = tokio::runtime::Runtime::new().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
@@ -744,22 +746,46 @@ fn network_error_persists_user_prompt() {
         "network error must propagate as LabeledError to caller"
     );
 
-    // JSONL must contain exactly one message: the user prompt
+    // JSONL must contain exactly two messages: user prompt + assistant error placeholder
     let persisted = memory_state
         .conversation_store()
         .load(session_id)
         .expect("store load should succeed");
     assert_eq!(
         persisted.len(),
-        1,
-        "hard error with no history must persist exactly one fallback message (the user prompt); got {} messages",
+        2,
+        "hard error must persist a user+assistant pair to maintain alternating turn structure; got {} messages",
         persisted.len()
     );
-    // The persisted message must be the user prompt
-    let msg = &persisted[0];
+    // First persisted message must be the user prompt
     assert!(
-        matches!(msg, crate::types::Message::User { .. }),
-        "persisted fallback message must be a User message"
+        matches!(persisted[0], crate::types::Message::User { .. }),
+        "persisted[0] must be a User message"
+    );
+    // Second persisted message must be an assistant error placeholder
+    assert!(
+        matches!(persisted[1], crate::types::Message::Assistant { .. }),
+        "persisted[1] must be an Assistant message"
+    );
+    // The assistant placeholder must contain the failure marker
+    let assistant_content = match &persisted[1] {
+        crate::types::Message::Assistant { content, .. } => {
+            content
+                .iter()
+                .find_map(|c| {
+                    if let crate::types::AssistantContent::Text(t) = c {
+                        Some(t.text.clone())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_default()
+        }
+        _ => unreachable!(),
+    };
+    assert!(
+        assistant_content.contains("Turn failed"),
+        "assistant error placeholder must contain 'Turn failed'; got: {assistant_content:?}"
     );
 }
 

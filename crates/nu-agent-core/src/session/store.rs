@@ -391,7 +391,7 @@ pub fn extract_llm_context(entries: &[StoreEntry]) -> Vec<Message> {
         .iter()
         .rposition(|e| matches!(e, StoreEntry::Marker(_)));
 
-    match last_marker_idx {
+    let messages = match last_marker_idx {
         Some(idx) => {
             let marker = match &entries[idx] {
                 StoreEntry::Marker(m) => m,
@@ -416,5 +416,13 @@ pub fn extract_llm_context(entries: &[StoreEntry]) -> Vec<Message> {
                 _ => None,
             })
             .collect(),
+    };
+
+    // Repair the conversation: remove empty messages, fix dangling tool call/result
+    // pairs, merge consecutive same-role messages, and trim trailing orphan user messages.
+    let (repaired, issues) = super::repair::repair_messages(messages);
+    for issue in &issues {
+        log::warn!("conversation repair: {}", issue);
     }
+    repaired
 }

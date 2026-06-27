@@ -420,8 +420,14 @@ fn compact_successful_produces_correct_state() {
     let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let session_id = "test_consistent_state";
 
-    let messages: Vec<Message> = (0..6)
-        .map(|i| Message::user(format!("Entry {}", i)))
+    // 6 messages: 3 user/assistant pairs (well-formed conversation)
+    let messages: Vec<Message> = (0..3)
+        .flat_map(|i| {
+            [
+                Message::user(format!("Entry {}", i * 2)),
+                Message::assistant(format!("Reply {}", i * 2)),
+            ]
+        })
         .collect();
 
     tokio::runtime::Runtime::new().unwrap().block_on(async {
@@ -1112,7 +1118,10 @@ async fn compact_rollback_clears_cache() {
         compaction_strategy: CompactionStrategy::SlidingSummary,
         token_budget: None,
     };
-    let messages: Vec<Message> = (0..5).map(|i| Message::user(format!("msg {i}"))).collect();
+    // 6 messages: 3 user/assistant pairs (well-formed conversation)
+    let messages: Vec<Message> = (0..3)
+        .flat_map(|i| [Message::user(format!("msg {i}")), Message::assistant(format!("reply {i}"))])
+        .collect();
     memory.append(session_id, messages).await.unwrap();
     let summarizer = |_: &[Message]| async { Ok::<_, std::io::Error>("summary".to_string()) };
     super::compact(session_id, &config, &memory, summarizer, None).await.unwrap();

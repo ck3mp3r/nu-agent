@@ -211,16 +211,21 @@ impl<'a> TurnExecutor<'a> {
             }
             Err(e) => {
                 // Hard error: rig's internal history is unrecoverable (CompletionError, ToolError).
-                // Persist at minimum the user prompt so the session remembers this turn was attempted.
+                // Persist a user+assistant pair so the session retains alternating turn structure.
+                // A bare user message at the end of JSONL violates user/assistant alternation and
+                // causes the Copilot API to reject all subsequent turns with 400 "No user query found".
                 if let Some(session_id) = final_session_id {
-                    let fallback = vec![Message::user(prompt.clone())];
+                    let fallback = vec![
+                        Message::user(prompt.clone()),
+                        Message::assistant(format!("[Turn failed: {}]", e.msg)),
+                    ];
                     if let Err(mem_err) = self.runtime.block_on(
                         self.memory_state
                             .memory_mut()
                             .append(session_id, fallback),
                     ) {
                         log::warn!(
-                            "Failed to persist prompt on hard error: {}",
+                            "Failed to persist error placeholder on hard error: {}",
                             mem_err
                         );
                     }

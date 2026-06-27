@@ -1,5 +1,6 @@
 pub mod journal;
 pub mod resolver;
+mod repair;
 mod store;
 
 #[cfg(test)]
@@ -9,6 +10,10 @@ mod store_test;
 #[cfg(test)]
 #[path = "journal_test.rs"]
 mod journal_test;
+
+#[cfg(test)]
+#[path = "repair_test.rs"]
+mod repair_test;
 
 pub use journal::JournalConversationMemory;
 pub use store::{
