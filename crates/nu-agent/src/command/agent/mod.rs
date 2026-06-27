@@ -245,7 +245,7 @@ Compaction flags:
             .named(
                 "log-level",
                 nu_protocol::SyntaxShape::String,
-                "Log level for file logging: off, error, warn, info, debug, trace (default: off)",
+                "Log level for file-based logging (error|warn|info|debug|trace). Writes to $XDG_STATE_HOME/nu-agent/logs/agent.log",
                 None,
             )
             .named(

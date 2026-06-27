@@ -214,6 +214,11 @@ impl<'a> TurnExecutor<'a> {
                 // Persist a user+assistant pair so the session retains alternating turn structure.
                 // A bare user message at the end of JSONL violates user/assistant alternation and
                 // causes the Copilot API to reject all subsequent turns with 400 "No user query found".
+                log::error!(
+                    "Turn failed with unrecoverable error: session={:?} error={}",
+                    final_session_id,
+                    e.msg
+                );
                 if let Some(session_id) = final_session_id {
                     let fallback = vec![
                         Message::user(prompt.clone()),
