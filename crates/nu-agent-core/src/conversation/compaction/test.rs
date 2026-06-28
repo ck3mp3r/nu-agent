@@ -20,7 +20,7 @@ fn manual_and_auto_compaction_share_single_execution_path() {
             summary_total_tokens: None,
         }))
     });
-    if let Ok((event, _)) = &manual {
+    if let Ok(Some((event, _))) = &manual {
         ui.emit(event);
     }
     let auto = execute_compaction_event_shared(CompactionTriggerSource::AutoThreshold, || {
@@ -32,7 +32,7 @@ fn manual_and_auto_compaction_share_single_execution_path() {
             summary_total_tokens: None,
         }))
     });
-    if let Ok((event, _)) = &auto {
+    if let Ok(Some((event, _))) = &auto {
         ui.emit(event);
     }
 
@@ -53,7 +53,7 @@ fn compaction_event_emits_correct_source_metadata() {
             summary_total_tokens: None,
         }))
     })
-    .map(|(event, _)| ui.emit(&event))
+    .map(|opt| opt.map(|(event, _)| ui.emit(&event)))
     .expect("auto event");
     execute_compaction_event_shared(CompactionTriggerSource::SlashCompact, || {
         Ok(Some(CompactionOutcome {
@@ -63,7 +63,7 @@ fn compaction_event_emits_correct_source_metadata() {
             summary_total_tokens: None,
         }))
     })
-    .map(|(event, _)| ui.emit(&event))
+    .map(|opt| opt.map(|(event, _)| ui.emit(&event)))
     .expect("manual event");
 
     assert!(ui.events.contains(&UiEvent::CompactionTriggered {
@@ -94,7 +94,7 @@ fn compaction_summary_transcript_includes_source_and_counts() {
             summary_total_tokens: None,
         }))
     })
-    .map(|(event, _)| ui.emit(&event))
+    .map(|opt| opt.map(|(event, _)| ui.emit(&event)))
     .expect("event");
 
     assert!(ui.events.contains(&UiEvent::CompactionTriggered {
@@ -234,7 +234,7 @@ fn execute_compaction_event_shared_returns_summary_tokens() {
         }))
     });
 
-    let (_, tokens) = result.expect("should succeed");
+    let (_, tokens) = result.expect("should succeed").expect("should be Some");
     assert_eq!(tokens, Some(5000));
 }
 
@@ -249,6 +249,13 @@ fn execute_compaction_event_shared_returns_none_tokens_when_absent() {
         }))
     });
 
-    let (_, tokens) = result.expect("should succeed");
+    let (_, tokens) = result.expect("should succeed").expect("should be Some");
     assert_eq!(tokens, None);
+}
+
+#[test]
+fn execute_compaction_event_shared_returns_none_when_closure_returns_none() {
+    let result =
+        execute_compaction_event_shared(CompactionTriggerSource::AutoThreshold, || Ok(None));
+    assert_eq!(result, Ok(None));
 }

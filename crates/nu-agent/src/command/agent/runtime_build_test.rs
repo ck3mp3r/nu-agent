@@ -78,7 +78,6 @@ fn build_compaction_params_applies_merged_values() {
         config.compaction_strategy,
         CompactionStrategy::SlidingWindow
     );
-    assert_eq!(config.compaction_threshold, 100); // default, no longer overridden
     assert_eq!(config.keep_recent, 5);
     assert_eq!(config.token_budget, Some(8000));
 }
@@ -90,7 +89,6 @@ fn build_compaction_params_uses_defaults_when_none() {
     let defaults = CompactionParams::default();
 
     assert_eq!(config.compaction_strategy, defaults.compaction_strategy);
-    assert_eq!(config.compaction_threshold, defaults.compaction_threshold);
     assert_eq!(config.keep_recent, defaults.keep_recent);
     assert_eq!(config.token_budget, defaults.token_budget);
 }
@@ -111,7 +109,6 @@ fn build_compaction_params_partial_override() {
         config.compaction_strategy,
         CompactionStrategy::TokenTruncate
     );
-    assert_eq!(config.compaction_threshold, defaults.compaction_threshold);
     assert_eq!(config.keep_recent, defaults.keep_recent);
 }
 
@@ -144,7 +141,6 @@ fn full_precedence_default_then_plugin_then_cli() {
         CompactionStrategy::TokenTruncate
     );
     // Plugin wins for keep_recent (CLI was None)
-    assert_eq!(config.compaction_threshold, 100); // default, no longer overridden
     assert_eq!(config.keep_recent, 15);
     // CLI wins for token_budget
     assert_eq!(config.token_budget, Some(12000));

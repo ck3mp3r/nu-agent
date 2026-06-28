@@ -13,6 +13,4 @@ mod helpers_test;
 mod strategy_test;
 
 pub use algorithm::compact;
-pub use strategy::{
-    CompactionInvocationMode, CompactionOutcome, CompactionParams, CompactionStrategy,
-};
+pub use strategy::{CompactionOutcome, CompactionParams, CompactionStrategy};

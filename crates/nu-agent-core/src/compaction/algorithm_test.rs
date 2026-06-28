@@ -75,7 +75,6 @@ fn compact_splits_at_keep_recent() {
 
     let keep_recent = 3;
     let config = CompactionParams {
-        compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingSummary,
         keep_recent,
         token_budget: None,
@@ -137,7 +136,6 @@ fn compact_persists_to_store() {
     });
 
     let config = CompactionParams {
-        compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingSummary,
         keep_recent: 2,
         token_budget: None,
@@ -183,7 +181,6 @@ fn compact_handles_insufficient_messages() {
     });
 
     let config = CompactionParams {
-        compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingSummary,
         keep_recent: 3,
         token_budget: None,
@@ -223,7 +220,6 @@ fn compact_clears_before_append() {
     });
 
     let config = CompactionParams {
-        compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingSummary,
         keep_recent: 2,
         token_budget: None,
@@ -266,7 +262,6 @@ fn compact_with_async_summarizer_does_not_panic() {
     });
 
     let config = CompactionParams {
-        compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingSummary,
         keep_recent: 2,
         token_budget: None,
@@ -324,7 +319,6 @@ fn compact_does_not_split_tool_call_result_pair() {
     });
 
     let config = CompactionParams {
-        compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingSummary,
         keep_recent: 4,
         token_budget: None,
@@ -382,7 +376,6 @@ fn compact_store_written_before_memory() {
     });
 
     let config = CompactionParams {
-        compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingSummary,
         keep_recent: 3,
         token_budget: None,
@@ -435,7 +428,6 @@ fn compact_successful_produces_correct_state() {
     });
 
     let config = CompactionParams {
-        compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingSummary,
         keep_recent: 2,
         token_budget: None,
@@ -485,7 +477,6 @@ fn compact_sliding_window_keeps_last_n_messages() {
     });
 
     let config = CompactionParams {
-        compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingWindow,
         keep_recent: 3,
         token_budget: None,
@@ -547,7 +538,6 @@ fn compact_sliding_window_summarizer_not_called() {
     });
 
     let config = CompactionParams {
-        compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingWindow,
         keep_recent: 3,
         token_budget: None,
@@ -583,7 +573,6 @@ fn compact_sliding_window_preserves_message_order() {
     });
 
     let config = CompactionParams {
-        compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingWindow,
         keep_recent: 4,
         token_budget: None,
@@ -638,7 +627,6 @@ fn compact_token_truncate_drops_oldest_within_budget() {
     });
 
     let config = CompactionParams {
-        compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::TokenTruncate,
         keep_recent: 999, // ignored by TokenTruncate
         token_budget: Some(250),
@@ -681,7 +669,6 @@ fn compact_token_truncate_single_large_message() {
     });
 
     let config = CompactionParams {
-        compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::TokenTruncate,
         keep_recent: 999,
         token_budget: Some(100),
@@ -723,7 +710,6 @@ fn compact_appends_marker_preserving_history() {
     });
 
     let config = CompactionParams {
-        compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingSummary,
         keep_recent: 2,
         token_budget: None,
@@ -777,7 +763,6 @@ fn compact_marker_has_correct_fields() {
     });
 
     let config = CompactionParams {
-        compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingSummary,
         keep_recent: 3,
         token_budget: None,
@@ -821,7 +806,6 @@ fn compact_memory_has_llm_context_only() {
     });
 
     let config = CompactionParams {
-        compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingSummary,
         keep_recent: 2,
         token_budget: None,
@@ -871,7 +855,6 @@ fn compact_sliding_window_appends_marker_empty_summary() {
     });
 
     let config = CompactionParams {
-        compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingWindow,
         keep_recent: 2,
         token_budget: None,
@@ -912,7 +895,6 @@ fn compact_token_truncate_appends_marker_empty_summary() {
     });
 
     let config = CompactionParams {
-        compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::TokenTruncate,
         keep_recent: 999,
         token_budget: Some(250),
@@ -953,7 +935,6 @@ fn multiple_compactions_append_multiple_markers() {
     });
 
     let config = CompactionParams {
-        compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingSummary,
         keep_recent: 3,
         token_budget: None,
@@ -1012,7 +993,6 @@ fn compact_writes_null_tokens_to_store() {
     });
 
     let config = CompactionParams {
-        compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingWindow,
         keep_recent: 2,
         token_budget: None,
@@ -1036,12 +1016,10 @@ async fn compact_no_double_write_kept_messages() {
     let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let session_id = "test_no_double_write";
     let config = CompactionParams {
-        compaction_threshold: 5,
         keep_recent: 3,
         compaction_strategy: CompactionStrategy::SlidingSummary,
         token_budget: None,
-    };
-    // 10 alternating messages (ends with assistant — survives repair unchanged)
+    }; // 10 alternating messages (ends with assistant — survives repair unchanged)
     let messages = make_test_messages(10);
     memory.append(session_id, messages).await.unwrap();
     let summarizer =
@@ -1070,7 +1048,6 @@ async fn compact_clear_does_not_delete_jsonl() {
     let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let session_id = "test_clear_no_delete";
     let config = CompactionParams {
-        compaction_threshold: 3,
         keep_recent: 2,
         compaction_strategy: CompactionStrategy::SlidingSummary,
         token_budget: None,
@@ -1097,7 +1074,6 @@ async fn compact_rollback_clears_cache() {
     let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let session_id = "test_rollback";
     let config = CompactionParams {
-        compaction_threshold: 3,
         keep_recent: 2,
         compaction_strategy: CompactionStrategy::SlidingSummary,
         token_budget: None,
@@ -1145,7 +1121,6 @@ fn compact_writes_null_tokens_to_marker_and_kept_messages() {
     });
 
     let config = CompactionParams {
-        compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingSummary,
         keep_recent: 2,
         token_budget: None,
@@ -1215,7 +1190,6 @@ fn compact_outcome_includes_summary_tokens() {
     });
 
     let config = CompactionParams {
-        compaction_threshold: 100,
         compaction_strategy: CompactionStrategy::SlidingSummary,
         keep_recent: 2,
         token_budget: None,

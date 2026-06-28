@@ -64,9 +64,9 @@ where
         summary_total_tokens,
     ) = match config.compaction_strategy {
         CompactionStrategy::TokenTruncate => {
-            let budget = config
-                .token_budget
-                .unwrap_or(config.compaction_threshold * 100);
+            let budget = config.token_budget.ok_or_else(|| {
+                io::Error::other("TokenTruncate strategy requires token_budget to be set")
+            })?;
             let mut kept: Vec<Message> = Vec::new();
             let mut total_tokens: usize = 0;
             for msg in messages.iter().rev() {

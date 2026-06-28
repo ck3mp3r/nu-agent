@@ -40,17 +40,9 @@ pub struct CompactionOutcome {
     pub summary_total_tokens: Option<u64>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CompactionInvocationMode {
-    Threshold,
-    Force,
-}
-
 /// Configuration for compaction behavior.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompactionParams {
-    /// Maximum number of messages before compaction is triggered.
-    pub compaction_threshold: usize,
     /// Strategy to use for compaction.
     pub compaction_strategy: CompactionStrategy,
     /// Number of recent messages to keep during truncation compaction.
@@ -62,10 +54,9 @@ pub struct CompactionParams {
 impl Default for CompactionParams {
     fn default() -> Self {
         Self {
-            compaction_threshold: 100, // Default threshold
             compaction_strategy: CompactionStrategy::SlidingSummary, // Canonical strategy
-            keep_recent: 10,           // Default keep last 10 messages
-            token_budget: None,        // No token budget by default
+            keep_recent: 10,    // Default keep last 10 messages
+            token_budget: None, // No token budget by default
         }
     }
 }

@@ -1,10 +1,9 @@
 use std::time::Duration;
 
-use crate::compaction::{CompactionInvocationMode, CompactionOutcome};
+use crate::compaction::CompactionOutcome;
 use crate::protocol::{compaction::CompactionTriggerSource, contracts::ProgressUi, event::UiEvent};
 use crate::session::{JournalConversationMemory, Session};
 use crate::types::{AssistantContent, Message, UserContent};
-use rig::memory::ConversationMemory;
 
 pub(in crate::conversation) const COMPACTION_FAILURE_WARNING: &str =
     "Session compaction failed: sliding_summary summarization unavailable";
@@ -14,41 +13,28 @@ const COMPACTION_SUMMARY_PROMPT: &str = include_str!("prompts/compaction_summary
 pub(in crate::conversation) fn execute_compaction_event_shared<F>(
     source: CompactionTriggerSource,
     mut execute: F,
-) -> Result<(UiEvent, Option<u64>), String>
+) -> Result<Option<(UiEvent, Option<u64>)>, String>
 where
     F: FnMut() -> Result<Option<CompactionOutcome>, String>,
 {
-    let outcome = execute()?;
-    let (summarized_count, kept_recent_count, summary_body, summary_total_tokens) = match outcome {
-        Some(outcome) => (
-            outcome.summarized_count,
-            outcome.kept_recent_count,
-            outcome.summary_text,
-            outcome.summary_total_tokens,
-        ),
-        None => (
-            0usize,
-            0usize,
-            "No-op: insufficient messages to summarize.".to_string(),
-            None,
-        ),
+    let Some(outcome) = execute()? else {
+        return Ok(None);
     };
 
-    Ok((
+    Ok(Some((
         UiEvent::CompactionTriggered {
             source: source.as_str().to_string(),
-            summarized_count,
-            kept_recent_count,
-            summary_preview: summary_preview_text(&summary_body),
-            summary_body,
+            summarized_count: outcome.summarized_count,
+            kept_recent_count: outcome.kept_recent_count,
+            summary_preview: summary_preview_text(&outcome.summary_text),
+            summary_body: outcome.summary_text,
         },
-        summary_total_tokens,
-    ))
+        outcome.summary_total_tokens,
+    )))
 }
 
 /// Parameters for a single compaction invocation.
 pub(in crate::conversation) struct CompactionInvocation<'a> {
-    pub(in crate::conversation) mode: CompactionInvocationMode,
     pub(in crate::conversation) source: &'a str,
 }
 
@@ -80,24 +66,6 @@ where
     M: rig::completion::CompletionModel + Clone + 'static,
     U: ProgressUi,
 {
-    // Load messages from memory to check threshold
-    let messages = memory
-        .load(session.id())
-        .await
-        .map_err(|e| format!("Failed to load messages from memory: {}", e))?;
-
-    // Determine if compaction should run
-    let should_compact = match invocation.mode {
-        CompactionInvocationMode::Threshold => {
-            messages.len() > session.compaction_config().compaction_threshold
-        }
-        CompactionInvocationMode::Force => true,
-    };
-
-    if !should_compact {
-        return Ok(None);
-    }
-
     // Perform compaction with summarizer closure
     let source_owned = invocation.source.to_string();
     let summarizer = |old_messages: &[Message]| {
@@ -114,7 +82,7 @@ where
         summarizer,
     )
     .await
-    .map_err(|_| COMPACTION_FAILURE_WARNING.to_string())?;
+    .map_err(|e| e.to_string())?;
 
     session.increment_compaction_count();
 

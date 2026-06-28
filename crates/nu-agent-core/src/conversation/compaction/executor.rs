@@ -6,7 +6,6 @@ use super::invocation::{
     COMPACTION_FAILURE_WARNING, CompactionInvocation, execute_compaction,
     execute_compaction_event_shared,
 };
-use crate::compaction::CompactionInvocationMode;
 use crate::config::Config;
 use crate::conversation::providers::{CachedProviderClient, ModelVisitor};
 use crate::protocol::compaction::CompactionTriggerSource;
@@ -56,9 +55,6 @@ impl<'a> CompactionExecutor<'a> {
         cached_client: &CachedProviderClient,
     ) -> Result<Option<(usize, Option<u64>)>, String> {
         let source_label = source.as_str().to_string();
-        ui.emit(&UiEvent::CompactionStarted {
-            source: source_label.clone(),
-        });
 
         // Load session temporarily for compaction
         let mut session = self
@@ -77,26 +73,19 @@ impl<'a> CompactionExecutor<'a> {
         }
 
         impl<U: ProgressUi> ModelVisitor for CompactionVisitor<'_, U> {
-            type Output = Result<(UiEvent, Option<u64>), String>;
+            type Output = Result<Option<(UiEvent, Option<u64>)>, String>;
 
             fn visit<M>(self, model: M) -> Self::Output
             where
                 M: rig::completion::CompletionModel + Clone + 'static,
             {
                 execute_compaction_event_shared(self.source, || {
-                    let mode = match self.source {
-                        CompactionTriggerSource::SlashCompact => CompactionInvocationMode::Force,
-                        CompactionTriggerSource::AutoThreshold => {
-                            CompactionInvocationMode::Threshold
-                        }
-                    };
                     self.runtime.block_on(execute_compaction(
                         self.session,
                         self.memory,
                         model.clone(),
                         self.ui,
                         CompactionInvocation {
-                            mode,
                             source: self.source_label,
                         },
                     ))
@@ -117,17 +106,14 @@ impl<'a> CompactionExecutor<'a> {
         );
 
         match result {
-            Ok((event, summary_total_tokens)) => {
+            Ok(Some((event, summary_total_tokens))) => {
+                ui.emit(&UiEvent::CompactionStarted {
+                    source: source_label,
+                });
                 ui.emit(&event);
-
-                // Return new compaction count when compaction was triggered
-                if let UiEvent::CompactionTriggered { .. } = &event {
-                    Ok(Some((session.compaction_count(), summary_total_tokens)))
-                } else {
-                    // CompactionSkipped — no state change needed
-                    Ok(None)
-                }
+                Ok(Some((session.compaction_count(), summary_total_tokens)))
             }
+            Ok(None) => Ok(None),
             Err(error) => {
                 ui.emit(&UiEvent::CompactionFailed {
                     source: source_label,

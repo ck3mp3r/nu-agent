@@ -110,13 +110,6 @@ impl AgentSessionInspect {
         // Convert config to Nushell Value (record)
         let mut config_record = Record::new();
         config_record.push(
-            "compaction_threshold",
-            Value::int(
-                session.compaction_config().compaction_threshold as i64,
-                call.head,
-            ),
-        );
-        config_record.push(
             "compaction_strategy",
             Value::string(
                 session.compaction_config().compaction_strategy.as_str(),

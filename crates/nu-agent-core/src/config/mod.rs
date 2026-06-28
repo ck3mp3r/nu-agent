@@ -143,6 +143,12 @@ impl CompactionConfig {
             return Err("keep_recent must be greater than 0".to_string());
         }
 
+        if let Some(CompactionStrategy::TokenTruncate) = self.strategy
+            && self.token_budget.is_none()
+        {
+            return Err("token_budget must be set when using token_truncate strategy".to_string());
+        }
+
         Ok(())
     }
 }

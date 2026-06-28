@@ -77,7 +77,10 @@ fn test_agent_session_inspect_displays_full_session_details() {
 
     // Verify config is present (default config)
     let config = session.compaction_config();
-    assert_eq!(config.compaction_threshold, 100);
+    assert_eq!(
+        config.compaction_strategy,
+        nu_agent_core::compaction::CompactionStrategy::SlidingSummary
+    );
 }
 
 #[test]
@@ -126,7 +129,6 @@ fn session_inspect_reports_canonical_sliding_summary_mode() {
         .expect("create session");
 
     session.set_compaction_config(nu_agent_core::compaction::CompactionParams {
-        compaction_threshold: 4,
         compaction_strategy: nu_agent_core::compaction::CompactionStrategy::SlidingSummary,
         keep_recent: 2,
         token_budget: None,

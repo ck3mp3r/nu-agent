@@ -27,7 +27,6 @@ fn sliding_window_roundtrip_preserves_name() {
 #[test]
 fn compaction_params_roundtrip_preserves_sliding_window_mode() {
     let cfg = CompactionParams {
-        compaction_threshold: 50,
         compaction_strategy: CompactionStrategy::SlidingWindow,
         keep_recent: 5,
         token_budget: None,
@@ -61,7 +60,6 @@ fn legacy_strategy_values_normalize_to_sliding_summary() {
 #[test]
 fn compaction_params_roundtrip_preserves_sliding_summary_mode() {
     let cfg = CompactionParams {
-        compaction_threshold: 7,
         compaction_strategy: CompactionStrategy::SlidingSummary,
         keep_recent: 3,
         token_budget: None,

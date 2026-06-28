@@ -1764,6 +1764,27 @@ fn compaction_config_validate_zero_keep_recent() {
     assert!(err.contains("keep_recent"));
 }
 
+#[test]
+fn validate_rejects_token_truncate_without_token_budget() {
+    let config = CompactionConfig {
+        strategy: Some(CompactionStrategy::TokenTruncate),
+        token_budget: None,
+        ..CompactionConfig::default()
+    };
+    let err = config.validate().unwrap_err();
+    assert!(err.contains("token_budget"));
+}
+
+#[test]
+fn validate_accepts_token_truncate_with_token_budget() {
+    let config = CompactionConfig {
+        strategy: Some(CompactionStrategy::TokenTruncate),
+        token_budget: Some(8000),
+        ..CompactionConfig::default()
+    };
+    assert!(config.validate().is_ok());
+}
+
 // ============================================================================
 // New Tests: Copilot Provider Does Not Set API Key From Env
 // ============================================================================
