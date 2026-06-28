@@ -838,3 +838,240 @@ fn hard_error_no_session_persists_nothing() {
         jsonl_files.iter().map(|e| e.path()).collect::<Vec<_>>()
     );
 }
+
+// ---------------------------------------------------------------------------
+// Subtask 1 — inject_missing_tool_results: integration tests
+// ---------------------------------------------------------------------------
+
+/// On PromptCancelled (Ok path, cancelled=true) with an unpaired ToolCall in
+/// the chat_history, the messages written to JSONL must contain a synthetic
+/// User(ToolResult) for that ToolCall ID so the stored history is always valid.
+///
+/// We force a PromptCancelled scenario by triggering immediate cancellation.
+/// The mock model emits a tool_call on its first (and only) turn; the UI
+/// cancels immediately so rig returns PromptCancelled with a chat_history that
+/// contains the Assistant(ToolCall) but no User(ToolResult).
+///
+/// After inject_missing_tool_results, the persisted JSONL must contain both
+/// the Assistant(ToolCall) and a User(ToolResult{id, content:"[interrupted]"}).
+#[test]
+fn prompt_cancelled_with_unpaired_tool_call_injects_synthetic_result() {
+    let config = test_config();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let session_id = "test-cancel-inject";
+    let mut memory_state =
+        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+
+    // Model issues a tool call — the cancel fires before the tool result is
+    // appended, so chat_history will contain Assistant(ToolCall) with no
+    // matching User(ToolResult).
+    let model = MockCompletionModel::from_stream_turns([[
+        MockStreamEvent::tool_call("tc_cancel_1", "some_tool", serde_json::json!({"x": 1})),
+        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+    ]]);
+
+    let cached_client = CachedProviderClient::Mock(model);
+    let mut ui = MockUi::immediately_cancelled();
+
+    let closure_registry = crate::tools::closure::ClosureRegistry::new();
+    let mcp_registry = crate::tools::handler::McpToolRegistry::from_names(Vec::<String>::new());
+    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &rt,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(closure_registry),
+            mcp_registry: Arc::new(mcp_registry),
+            tool_server_handle,
+            visible_tool_definitions: vec![],
+        },
+    );
+
+    let result = executor.execute(
+        &mut ui,
+        ExecuteInput {
+            prompt: "call a tool".to_string(),
+            preamble: None,
+            span: nu_protocol::Span::test_data(),
+        },
+        &cached_client,
+        MockResolver,
+        Some(session_id),
+        None,
+    );
+
+    assert!(result.is_ok(), "cancelled turn must not return Err");
+    assert!(matches!(result.unwrap(), TurnOutcome::EarlyReturn(_)));
+
+    // The persisted JSONL must contain both ToolCall and ToolResult entries.
+    // If the model was fast enough that the tool call was actually processed
+    // before cancel fired, we may get a completed turn. Either way, if a
+    // ToolCall was persisted, its ToolResult must also be persisted.
+    let persisted = memory_state
+        .conversation_store()
+        .load(session_id)
+        .expect("store load should succeed");
+
+    // For every Assistant message with a ToolCall, there must be a following
+    // User message with the matching ToolResult.
+    use crate::types::{AssistantContent, UserContent};
+    for (i, msg) in persisted.iter().enumerate() {
+        let crate::types::Message::Assistant { content, .. } = msg else {
+            continue;
+        };
+        for item in content.iter() {
+            let AssistantContent::ToolCall(tc) = item else {
+                continue;
+            };
+            let call_id = &tc.id;
+            // Find the next message
+            let next_has_result = persisted.get(i + 1).is_some_and(|next| {
+                if let crate::types::Message::User { content } = next {
+                    content.iter().any(|item| {
+                        if let UserContent::ToolResult(tr) = item {
+                            &tr.id == call_id
+                        } else {
+                            false
+                        }
+                    })
+                } else {
+                    false
+                }
+            });
+            assert!(
+                next_has_result,
+                "ToolCall id={call_id} must have a matching ToolResult in the persisted history"
+            );
+        }
+    }
+}
+
+/// On UnknownToolCall (Err path, e.messages=Some) with an unpaired ToolCall in
+/// chat_history, the messages persisted to JSONL must contain a synthetic
+/// User(ToolResult) immediately after the unpaired Assistant(ToolCall).
+#[test]
+fn unknown_tool_error_with_unpaired_tool_call_injects_synthetic_result() {
+    let config = test_config();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let session_id = "test-unknown-inject";
+    let mut memory_state =
+        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+
+    // Model calls a tool that is not registered — triggers UnknownToolCall.
+    // The chat_history will contain the user prompt + Assistant(ToolCall) but
+    // no User(ToolResult) since the tool could not be dispatched.
+    let model = MockCompletionModel::from_stream_turns([[
+        MockStreamEvent::tool_call(
+            "tc_unknown_1",
+            "nonexistent_tool",
+            serde_json::json!({"arg": "value"}),
+        ),
+        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+    ]]);
+
+    let cached_client = CachedProviderClient::Mock(model);
+    let mut ui = MockUi::new();
+
+    let closure_registry = crate::tools::closure::ClosureRegistry::new();
+    let mcp_registry = crate::tools::handler::McpToolRegistry::from_names(Vec::<String>::new());
+    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &rt,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(closure_registry),
+            mcp_registry: Arc::new(mcp_registry),
+            tool_server_handle,
+            visible_tool_definitions: vec![],
+        },
+    );
+
+    let result = executor.execute(
+        &mut ui,
+        ExecuteInput {
+            prompt: "use a tool".to_string(),
+            preamble: None,
+            span: nu_protocol::Span::test_data(),
+        },
+        &cached_client,
+        MockResolver,
+        Some(session_id),
+        None,
+    );
+
+    // UnknownToolCall returns Err
+    assert!(result.is_err(), "UnknownToolCall must propagate as Err");
+
+    let persisted = memory_state
+        .conversation_store()
+        .load(session_id)
+        .expect("store load should succeed");
+
+    // Same invariant: every persisted ToolCall must have an adjacent ToolResult.
+    use crate::types::{AssistantContent, UserContent};
+    for (i, msg) in persisted.iter().enumerate() {
+        let crate::types::Message::Assistant { content, .. } = msg else {
+            continue;
+        };
+        for item in content.iter() {
+            let AssistantContent::ToolCall(tc) = item else {
+                continue;
+            };
+            let call_id = &tc.id;
+            let next_has_result = persisted.get(i + 1).is_some_and(|next| {
+                if let crate::types::Message::User { content } = next {
+                    content.iter().any(|item| {
+                        if let UserContent::ToolResult(tr) = item {
+                            &tr.id == call_id
+                        } else {
+                            false
+                        }
+                    })
+                } else {
+                    false
+                }
+            });
+            assert!(
+                next_has_result,
+                "ToolCall id={call_id} must have a matching ToolResult in the persisted history (UnknownToolCall path)"
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Subtask 2 — error classification test
+// ---------------------------------------------------------------------------
+
+#[test]
+fn error_classifier_returns_human_readable_message_for_tool_use_invalid_request() {
+    let raw_error = r#"invalid_request_body: tool_use block requires a subsequent tool_result"#;
+    let classified = classify_completion_error(raw_error);
+    assert_eq!(
+        classified,
+        "Turn failed: the API rejected this turn — a tool call was missing its result in the message history. Repair will run on the next turn."
+    );
+}
+
+#[test]
+fn error_classifier_returns_human_readable_message_for_tool_result_invalid_request() {
+    let raw_error = r#"invalid_request_body: tool_result block has no matching tool call"#;
+    let classified = classify_completion_error(raw_error);
+    assert_eq!(
+        classified,
+        "Turn failed: the API rejected this turn — a tool call was missing its result in the message history. Repair will run on the next turn."
+    );
+}
+
+#[test]
+fn error_classifier_passes_through_unrelated_errors() {
+    let raw_error = "network timeout";
+    let classified = classify_completion_error(raw_error);
+    assert_eq!(classified, "Turn failed: network timeout");
+}

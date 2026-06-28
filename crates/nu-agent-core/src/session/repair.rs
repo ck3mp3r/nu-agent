@@ -1,4 +1,76 @@
-use crate::types::{AssistantContent, Message, UserContent};
+use crate::types::{AssistantContent, Message, ToolResult, ToolResultContent, UserContent};
+
+/// For each `Assistant(ToolCall)` in `messages` that has no matching `User(ToolResult)`
+/// anywhere in `messages`, inserts a synthetic `User` message containing `ToolResult`
+/// entries with content `"[interrupted]"` immediately after that `Assistant` message.
+/// All unpaired ToolCalls from a single Assistant message are grouped into one synthetic
+/// User message. Returns the patched message list.
+pub fn inject_missing_tool_results(messages: Vec<Message>) -> Vec<Message> {
+    use std::collections::HashSet;
+
+    // Collect all ToolResult IDs that already exist in the history.
+    let existing_result_ids: HashSet<String> = messages
+        .iter()
+        .flat_map(|msg| match msg {
+            Message::User { content } => content
+                .iter()
+                .filter_map(|item| match item {
+                    UserContent::ToolResult(tr) => Some(tr.id.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            _ => vec![],
+        })
+        .collect();
+
+    let mut result: Vec<Message> = Vec::with_capacity(messages.len());
+
+    for msg in messages {
+        match &msg {
+            Message::Assistant { content, .. } => {
+                // Collect unpaired ToolCall IDs from this Assistant message.
+                let unpaired_ids: Vec<String> = content
+                    .iter()
+                    .filter_map(|item| match item {
+                        AssistantContent::ToolCall(tc) => {
+                            if !existing_result_ids.contains(&tc.id) {
+                                Some(tc.id.clone())
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    })
+                    .collect();
+
+                result.push(msg);
+
+                if !unpaired_ids.is_empty() {
+                    // Build a single User message with one ToolResult per unpaired call.
+                    let tool_results: Vec<UserContent> = unpaired_ids
+                        .into_iter()
+                        .map(|id| {
+                            UserContent::ToolResult(ToolResult {
+                                id,
+                                call_id: None,
+                                content: rig::one_or_many::OneOrMany::one(ToolResultContent::text(
+                                    "[interrupted]",
+                                )),
+                            })
+                        })
+                        .collect();
+
+                    if let Ok(content) = rig::one_or_many::OneOrMany::many(tool_results) {
+                        result.push(Message::User { content });
+                    }
+                }
+            }
+            _ => result.push(msg),
+        }
+    }
+
+    result
+}
 
 /// Repairs a conversation history to satisfy rig/Copilot API invariants.
 ///
@@ -6,9 +78,15 @@ use crate::types::{AssistantContent, Message, UserContent};
 /// what was changed (empty if no repairs were needed).
 pub fn repair_messages(messages: Vec<Message>) -> (Vec<Message>, Vec<String>) {
     let mut issues = Vec::new();
+    // Pass ordering (fix 4): fix_tool_call_integrity runs LAST so that any
+    // violations introduced by earlier passes are caught.  A second
+    // trim_trailing_user follows because integrity removal can leave a new
+    // trailing User(Text) message exposed (e.g. when the assistant message
+    // that followed it was stripped).
     let messages = remove_empty_messages(messages, &mut issues);
-    let messages = fix_tool_call_integrity(messages, &mut issues);
     let messages = merge_consecutive_same_role(messages, &mut issues);
+    let messages = trim_trailing_user(messages, &mut issues);
+    let messages = fix_tool_call_integrity(messages, &mut issues);
     let messages = trim_trailing_user(messages, &mut issues);
     let messages = ensure_valid(messages, &mut issues);
     (messages, issues)
@@ -64,99 +142,193 @@ pub(crate) fn fix_tool_call_integrity(
 ) -> Vec<Message> {
     use std::collections::HashSet;
 
-    // Collect all ToolCall ids from assistant messages.
-    let all_call_ids: HashSet<String> = messages
-        .iter()
-        .flat_map(|msg| match msg {
-            Message::Assistant { content, .. } => content
-                .iter()
-                .filter_map(|item| match item {
-                    AssistantContent::ToolCall(tc) => Some(tc.id.clone()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>(),
-            _ => vec![],
-        })
-        .collect();
+    // We loop until no violations remain; stripping one pair may expose another.
+    let mut messages = messages;
+    loop {
+        // --- Step 1: orphan removal (global ID matching) ---
 
-    // Collect all ToolResult ids from user messages.
-    let all_result_ids: HashSet<String> = messages
-        .iter()
-        .flat_map(|msg| match msg {
-            Message::User { content } => content
-                .iter()
-                .filter_map(|item| match item {
-                    UserContent::ToolResult(tr) => Some(tr.id.clone()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>(),
-            _ => vec![],
-        })
-        .collect();
+        // Collect all ToolCall ids from assistant messages.
+        let all_call_ids: HashSet<String> = messages
+            .iter()
+            .flat_map(|msg| match msg {
+                Message::Assistant { content, .. } => content
+                    .iter()
+                    .filter_map(|item| match item {
+                        AssistantContent::ToolCall(tc) => Some(tc.id.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>(),
+                _ => vec![],
+            })
+            .collect();
+
+        // Collect all ToolResult ids from user messages.
+        let all_result_ids: HashSet<String> = messages
+            .iter()
+            .flat_map(|msg| match msg {
+                Message::User { content } => content
+                    .iter()
+                    .filter_map(|item| match item {
+                        UserContent::ToolResult(tr) => Some(tr.id.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>(),
+                _ => vec![],
+            })
+            .collect();
+
+        let after_orphan: Vec<Message> = messages
+            .into_iter()
+            .filter_map(|msg| match msg {
+                Message::Assistant { id, content } => {
+                    let items: Vec<AssistantContent> = content
+                        .into_iter()
+                        .filter(|item| match item {
+                            AssistantContent::ToolCall(tc) => {
+                                let matched = all_result_ids.contains(&tc.id);
+                                if !matched {
+                                    issues.push(format!(
+                                        "removed dangling ToolCall id={} (no matching ToolResult)",
+                                        tc.id
+                                    ));
+                                }
+                                matched
+                            }
+                            _ => true,
+                        })
+                        .collect();
+
+                    match rig::one_or_many::OneOrMany::many(items) {
+                        Ok(content) => Some(Message::Assistant { id, content }),
+                        Err(_) => {
+                            issues.push(
+                                "removed assistant message emptied by ToolCall integrity pass"
+                                    .to_string(),
+                            );
+                            None
+                        }
+                    }
+                }
+                Message::User { content } => {
+                    let items: Vec<UserContent> = content
+                        .into_iter()
+                        .filter(|item| match item {
+                            UserContent::ToolResult(tr) => {
+                                let matched = all_call_ids.contains(&tr.id);
+                                if !matched {
+                                    issues.push(format!(
+                                        "removed orphaned ToolResult id={} (no matching ToolCall)",
+                                        tr.id
+                                    ));
+                                }
+                                matched
+                            }
+                            _ => true,
+                        })
+                        .collect();
+
+                    match rig::one_or_many::OneOrMany::many(items) {
+                        Ok(content) => Some(Message::User { content }),
+                        Err(_) => {
+                            issues.push(
+                                "removed user message emptied by ToolResult integrity pass"
+                                    .to_string(),
+                            );
+                            None
+                        }
+                    }
+                }
+                system @ Message::System { .. } => Some(system),
+            })
+            .collect();
+
+        // --- Step 2: adjacency enforcement ---
+        // Find the first Assistant message whose ToolCall IDs are not all
+        // covered by the immediately following User message.
+        let violation_ids: Option<HashSet<String>> =
+            after_orphan.iter().enumerate().find_map(|(i, msg)| {
+                let Message::Assistant { content, .. } = msg else {
+                    return None;
+                };
+                let call_ids: HashSet<String> = content
+                    .iter()
+                    .filter_map(|item| match item {
+                        AssistantContent::ToolCall(tc) => Some(tc.id.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                if call_ids.is_empty() {
+                    return None;
+                }
+                let next_result_ids: HashSet<String> = match after_orphan.get(i + 1) {
+                    Some(Message::User { content }) => content
+                        .iter()
+                        .filter_map(|item| match item {
+                            UserContent::ToolResult(tr) => Some(tr.id.clone()),
+                            _ => None,
+                        })
+                        .collect(),
+                    _ => HashSet::new(),
+                };
+                if call_ids.is_subset(&next_result_ids) {
+                    None
+                } else {
+                    Some(call_ids)
+                }
+            });
+
+        match violation_ids {
+            None => {
+                // No violations; we are done.
+                messages = after_orphan;
+                break;
+            }
+            Some(bad_ids) => {
+                // Strip the offending Assistant message and all ToolResult entries
+                // with those IDs from anywhere in the list, then loop again.
+                for id in &bad_ids {
+                    issues.push(format!(
+                        "removed non-adjacent ToolCall/ToolResult pair id={}",
+                        id
+                    ));
+                }
+                messages = after_orphan
+                    .into_iter()
+                    .filter_map(|msg| match msg {
+                        Message::Assistant { id, content } => {
+                            let items: Vec<AssistantContent> = content
+                                .into_iter()
+                                .filter(|item| match item {
+                                    AssistantContent::ToolCall(tc) => !bad_ids.contains(&tc.id),
+                                    _ => true,
+                                })
+                                .collect();
+                            match rig::one_or_many::OneOrMany::many(items) {
+                                Ok(content) => Some(Message::Assistant { id, content }),
+                                Err(_) => None,
+                            }
+                        }
+                        Message::User { content } => {
+                            let items: Vec<UserContent> = content
+                                .into_iter()
+                                .filter(|item| match item {
+                                    UserContent::ToolResult(tr) => !bad_ids.contains(&tr.id),
+                                    _ => true,
+                                })
+                                .collect();
+                            match rig::one_or_many::OneOrMany::many(items) {
+                                Ok(content) => Some(Message::User { content }),
+                                Err(_) => None,
+                            }
+                        }
+                        system @ Message::System { .. } => Some(system),
+                    })
+                    .collect();
+            }
+        }
+    }
 
     messages
-        .into_iter()
-        .filter_map(|msg| match msg {
-            Message::Assistant { id, content } => {
-                let items: Vec<AssistantContent> = content
-                    .into_iter()
-                    .filter(|item| match item {
-                        AssistantContent::ToolCall(tc) => {
-                            let matched = all_result_ids.contains(&tc.id);
-                            if !matched {
-                                issues.push(format!(
-                                    "removed dangling ToolCall id={} (no matching ToolResult)",
-                                    tc.id
-                                ));
-                            }
-                            matched
-                        }
-                        _ => true,
-                    })
-                    .collect();
-
-                match rig::one_or_many::OneOrMany::many(items) {
-                    Ok(content) => Some(Message::Assistant { id, content }),
-                    Err(_) => {
-                        issues.push(
-                            "removed assistant message emptied by ToolCall integrity pass"
-                                .to_string(),
-                        );
-                        None
-                    }
-                }
-            }
-            Message::User { content } => {
-                let items: Vec<UserContent> = content
-                    .into_iter()
-                    .filter(|item| match item {
-                        UserContent::ToolResult(tr) => {
-                            let matched = all_call_ids.contains(&tr.id);
-                            if !matched {
-                                issues.push(format!(
-                                    "removed orphaned ToolResult id={} (no matching ToolCall)",
-                                    tr.id
-                                ));
-                            }
-                            matched
-                        }
-                        _ => true,
-                    })
-                    .collect();
-
-                match rig::one_or_many::OneOrMany::many(items) {
-                    Ok(content) => Some(Message::User { content }),
-                    Err(_) => {
-                        issues.push(
-                            "removed user message emptied by ToolResult integrity pass".to_string(),
-                        );
-                        None
-                    }
-                }
-            }
-            system @ Message::System { .. } => Some(system),
-        })
-        .collect()
 }
 
 pub(crate) fn merge_consecutive_same_role(
@@ -176,10 +348,18 @@ pub(crate) fn merge_consecutive_same_role(
                     prev.push(item);
                 }
             }
+            // Fix 3: guard Assistant merge — do NOT merge if either message
+            // contains a ToolCall.
             (
                 Some(Message::Assistant { content: prev, .. }),
                 Message::Assistant { content: next, .. },
-            ) => {
+            ) if !prev
+                .iter()
+                .any(|i| matches!(i, AssistantContent::ToolCall(_)))
+                && !next
+                    .iter()
+                    .any(|i| matches!(i, AssistantContent::ToolCall(_))) =>
+            {
                 issues.push("merged consecutive assistant messages".to_string());
                 for item in next {
                     prev.push(item);
@@ -196,7 +376,14 @@ pub(crate) fn trim_trailing_user(
     mut messages: Vec<Message>,
     issues: &mut Vec<String>,
 ) -> Vec<Message> {
-    while matches!(messages.last(), Some(Message::User { .. })) {
+    // Fix 1: do NOT pop a User message that contains any ToolResult content.
+    while let Some(Message::User { content }) = messages.last() {
+        if content
+            .iter()
+            .any(|i| matches!(i, UserContent::ToolResult(_)))
+        {
+            break;
+        }
         messages.pop();
         issues.push("trimmed trailing orphan user message".to_string());
     }

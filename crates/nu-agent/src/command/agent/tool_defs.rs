@@ -166,37 +166,40 @@ pub(crate) fn orchestrator_tool_definitions(
     ]
 }
 
+/// Tool definitions available to any agent that can send messages (sub-agents and orchestrators).
 pub(crate) fn messaging_tool_definitions() -> Vec<ToolDefinition> {
-    vec![
-        ToolDefinition {
-            name: "send_message".to_string(),
-            description: "Send a message to another agent. Messages are delivered as conversation turns to the target agent. \
-                           The target agent name must match a spawned agent's --name (use list_agents to discover running agents). \
-                           The response comes back asynchronously as a new conversation turn.".to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "to": { "type": "string", "description": "Target agent name" },
-                    "message": { "type": "string", "description": "Message content" },
-                    "kind": {
-                        "type": "string",
-                        "description": "Message type: 'message' (generic/informational, default), 'task' (task assignment), 'completion' (task results), 'question' (blocked, needs decision)",
-                        "enum": ["message", "task", "completion", "question"],
-                        "default": "message"
-                    }
-                },
-                "required": ["to", "message"]
-            }),
-        },
-        ToolDefinition {
-            name: "list_agents".to_string(),
-            description: "List all connected agents and their names".to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {},
-            }),
-        },
-    ]
+    vec![ToolDefinition {
+        name: "send_message".to_string(),
+        description: "Send a message to another agent. Messages are delivered as conversation turns to the target agent. \
+                       Use the agent names provided in your task instructions — you know your own name and your \
+                       --parent-name at birth. The response comes back asynchronously as a new conversation turn.".to_string(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "to": { "type": "string", "description": "Target agent name" },
+                "message": { "type": "string", "description": "Message content" },
+                "kind": {
+                    "type": "string",
+                    "description": "Message type: 'message' (generic/informational, default), 'task' (task assignment), 'completion' (task results), 'question' (blocked, needs decision)",
+                    "enum": ["message", "task", "completion", "question"],
+                    "default": "message"
+                }
+            },
+            "required": ["to", "message"]
+        }),
+    }]
+}
+
+/// Tool definitions available only to orchestrator agents.
+pub(crate) fn orchestrator_messaging_tool_definitions() -> Vec<ToolDefinition> {
+    vec![ToolDefinition {
+        name: "list_agents".to_string(),
+        description: "List all connected agents and their names".to_string(),
+        parameters: json!({
+            "type": "object",
+            "properties": {},
+        }),
+    }]
 }
 
 /// Result of assembling the full tool definition set.
@@ -239,6 +242,10 @@ pub(crate) fn assemble_tool_definitions(
     let has_messaging = has_broker || is_orchestrator;
     if has_messaging {
         tool_definitions.extend(messaging_tool_definitions());
+    }
+    // list_agents requires orchestrator state — only register it for orchestrators
+    if is_orchestrator {
+        tool_definitions.extend(orchestrator_messaging_tool_definitions());
     }
     let available_agents = if is_orchestrator {
         use nu_agent_core::protocol::persona::{FsPersonaResolver, PersonaLister};

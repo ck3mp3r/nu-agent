@@ -1,6 +1,6 @@
 use super::repair::{
-    fix_tool_call_integrity, merge_consecutive_same_role, remove_empty_messages, repair_messages,
-    trim_trailing_user,
+    fix_tool_call_integrity, inject_missing_tool_results, merge_consecutive_same_role,
+    remove_empty_messages, repair_messages, trim_trailing_user,
 };
 use crate::types::{AssistantContent, Message, ToolCall, ToolFunction, ToolResult, UserContent};
 use rig::one_or_many::OneOrMany;
@@ -424,4 +424,233 @@ fn pipeline_complex_corruption() {
         _ => panic!("expected assistant message"),
     }
     assert!(!issues.is_empty(), "repairs should produce diagnostics");
+}
+
+// ================================================================
+// New failing tests — TDD RED phase
+// ================================================================
+
+/// Test 1 — `trim_trailing_user` must NOT pop a User message that contains
+/// a ToolResult.  Before the fix, the trailing User(ToolResult) is popped,
+/// leaving the Assistant(ToolCall) dangling.
+#[test]
+fn trim_trailing_user_preserves_tool_result() {
+    let msgs = vec![
+        Message::user("prompt"),
+        assistant_with_content(vec![make_tool_call("abc", "do_thing")]),
+        user_with_content(vec![make_tool_result("abc", "ok")]),
+    ];
+    let (result, _) = repair_messages(msgs);
+    let has_tool_result = result.iter().any(|msg| match msg {
+        Message::User { content } => content
+            .iter()
+            .any(|i| matches!(i, UserContent::ToolResult(_))),
+        _ => false,
+    });
+    assert!(
+        has_tool_result,
+        "User(ToolResult) must NOT be trimmed by trim_trailing_user"
+    );
+}
+
+/// Test 2 — `fix_tool_call_integrity` must enforce adjacency.
+/// A ToolCall and its ToolResult that are separated by another message are
+/// non-adjacent and must be stripped.  Before the fix, the current global-ID
+/// matching passes them through unchanged.
+#[test]
+fn fix_tool_call_integrity_strips_non_adjacent_pair() {
+    let msgs = vec![
+        Message::user("start"),
+        assistant_with_content(vec![make_tool_call("abc", "do_thing")]),
+        Message::user("in between"),
+        user_with_content(vec![make_tool_result("abc", "ok")]),
+    ];
+    let (result, _) = repair_messages(msgs);
+
+    let has_tool_call = result.iter().any(|msg| match msg {
+        Message::Assistant { content, .. } => content
+            .iter()
+            .any(|i| matches!(i, AssistantContent::ToolCall(_))),
+        _ => false,
+    });
+    let has_tool_result = result.iter().any(|msg| match msg {
+        Message::User { content } => content
+            .iter()
+            .any(|i| matches!(i, UserContent::ToolResult(_))),
+        _ => false,
+    });
+    assert!(
+        !has_tool_call,
+        "non-adjacent ToolCall must be stripped from result"
+    );
+    assert!(
+        !has_tool_result,
+        "non-adjacent ToolResult must be stripped from result"
+    );
+}
+
+/// Test 3 — `merge_consecutive_same_role` must NOT merge two consecutive
+/// Assistant messages when either contains a ToolCall.
+/// Before the fix, they are merged unconditionally.
+/// We call the pass directly so the adjacency enforcement in
+/// `fix_tool_call_integrity` does not confound the assertion.
+#[test]
+fn merge_consecutive_same_role_does_not_merge_tool_call_assistants() {
+    let msgs = vec![
+        Message::user("q"),
+        assistant_with_content(vec![make_tool_call("a", "tool_a")]),
+        assistant_with_content(vec![make_tool_call("b", "tool_b")]),
+        user_with_content(vec![make_tool_result("a", "res_a")]),
+        user_with_content(vec![make_tool_result("b", "res_b")]),
+    ];
+    let mut issues = Vec::new();
+    let result = merge_consecutive_same_role(msgs, &mut issues);
+
+    let assistant_count = result
+        .iter()
+        .filter(|msg| matches!(msg, Message::Assistant { .. }))
+        .count();
+    assert_eq!(
+        assistant_count, 2,
+        "two ToolCall-bearing Assistant messages must NOT be merged into one"
+    );
+    assert!(issues.is_empty(), "no merge diagnostic should be emitted");
+}
+
+// ================================================================
+// inject_missing_tool_results — TDD RED phase
+// ================================================================
+
+/// Test: history with unpaired `Assistant(ToolCall{id:"x"})` →
+/// result contains `User(ToolResult{id:"x", content:"[interrupted]"})`
+/// immediately after it.
+#[test]
+fn inject_missing_tool_results_inserts_synthetic_result_for_unpaired_call() {
+    let msgs = vec![
+        Message::user("go"),
+        assistant_with_content(vec![make_tool_call("x", "do_thing")]),
+    ];
+    let result = inject_missing_tool_results(msgs);
+    // Should have 3 messages: user, assistant(ToolCall), user(ToolResult)
+    assert_eq!(result.len(), 3, "synthetic ToolResult must be injected");
+    // The injected message is at index 2
+    match &result[2] {
+        Message::User { content } => {
+            let has_tool_result = content.iter().any(|item| match item {
+                UserContent::ToolResult(tr) => tr.id == "x",
+                _ => false,
+            });
+            assert!(
+                has_tool_result,
+                "injected User message must contain ToolResult with id='x'"
+            );
+        }
+        _ => panic!("message[2] must be a User message with ToolResult"),
+    }
+}
+
+/// Test: fully paired history → result is identical to input (nothing injected).
+#[test]
+fn inject_missing_tool_results_leaves_paired_history_unchanged() {
+    let msgs = vec![
+        Message::user("prompt"),
+        assistant_with_content(vec![make_tool_call("x", "do_thing")]),
+        user_with_content(vec![make_tool_result("x", "ok")]),
+    ];
+    let expected = msgs.clone();
+    let result = inject_missing_tool_results(msgs);
+    assert_msgs_eq(&result, &expected);
+}
+
+/// Test: `Assistant` message with two unpaired ToolCalls (`id:"a"` and `id:"b"`) →
+/// both get synthetic results, injected as a single `User` message with both
+/// `ToolResult` entries (one `User` message covers all ToolCalls from one `Assistant` message).
+#[test]
+fn inject_missing_tool_results_groups_two_unpaired_calls_into_one_user_message() {
+    let msgs = vec![
+        Message::user("go"),
+        assistant_with_content(vec![
+            make_tool_call("a", "tool_a"),
+            make_tool_call("b", "tool_b"),
+        ]),
+    ];
+    let result = inject_missing_tool_results(msgs);
+    // Should be: user, assistant(a+b), user(ToolResult{a} + ToolResult{b})
+    assert_eq!(result.len(), 3, "one synthetic User message for both calls");
+    match &result[2] {
+        Message::User { content } => {
+            let result_ids: Vec<&str> = content
+                .iter()
+                .filter_map(|item| match item {
+                    UserContent::ToolResult(tr) => Some(tr.id.as_str()),
+                    _ => None,
+                })
+                .collect();
+            assert!(
+                result_ids.contains(&"a"),
+                "ToolResult for 'a' must be present"
+            );
+            assert!(
+                result_ids.contains(&"b"),
+                "ToolResult for 'b' must be present"
+            );
+            assert_eq!(
+                result_ids.len(),
+                2,
+                "exactly two ToolResults in one User message"
+            );
+        }
+        _ => panic!("message[2] must be a User message"),
+    }
+}
+
+/// Test 4 — Pass ordering: `trim_trailing_user` must not leave a dangling
+/// ToolCall in the output.  Currently `fix_tool_call_integrity` runs before
+/// `trim_trailing_user`; after trim pops the ToolResult, there is no second
+/// integrity pass and the ToolCall is left dangling.
+#[test]
+fn pipeline_no_dangling_tool_call_after_trim() {
+    let msgs = vec![
+        Message::user("q"),
+        assistant_with_content(vec![make_tool_call("abc", "do_thing")]),
+        user_with_content(vec![make_tool_result("abc", "ok")]),
+    ];
+    let (result, _) = repair_messages(msgs);
+
+    // Walk the result; for every Assistant message with ToolCalls, the very
+    // next message must be a User message containing matching ToolResults.
+    for (i, msg) in result.iter().enumerate() {
+        let Message::Assistant { content, .. } = msg else {
+            continue;
+        };
+        let call_ids: Vec<&str> = content
+            .iter()
+            .filter_map(|item| match item {
+                AssistantContent::ToolCall(tc) => Some(tc.id.as_str()),
+                _ => None,
+            })
+            .collect();
+        if call_ids.is_empty() {
+            continue;
+        }
+        let next = result.get(i + 1);
+        let next_result_ids: Vec<&str> = match next {
+            Some(Message::User { content }) => content
+                .iter()
+                .filter_map(|item| match item {
+                    UserContent::ToolResult(tr) => Some(tr.id.as_str()),
+                    _ => None,
+                })
+                .collect(),
+            _ => vec![],
+        };
+        for id in &call_ids {
+            assert!(
+                next_result_ids.contains(id),
+                "ToolCall id={id} has no adjacent ToolResult in message[{}]; result length={}",
+                i + 1,
+                result.len()
+            );
+        }
+    }
 }

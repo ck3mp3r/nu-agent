@@ -1,6 +1,6 @@
 pub mod journal;
 pub mod prefix;
-mod repair;
+pub(crate) mod repair;
 pub mod resolver;
 mod store;
 

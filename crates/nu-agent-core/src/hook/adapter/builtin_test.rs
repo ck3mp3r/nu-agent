@@ -198,3 +198,54 @@ fn spawn_agent_without_orchestrator_returns_descriptive_error() {
         "Expected orchestrator error, got: {err_msg}"
     );
 }
+
+#[test]
+fn adapter_truncates_large_output() {
+    use crate::tools::limits::MAX_TOOL_OUTPUT_BYTES;
+    use rig::tool::ToolDyn;
+
+    // Write a skill file that is large enough to trigger truncation.
+    // When the skill tool reads this file and serializes it as JSON, the
+    // result will exceed MAX_TOOL_OUTPUT_BYTES, causing truncation.
+    let temp_dir = std::env::temp_dir();
+    let cwd = temp_dir.join("nu-agent-test-builtin-adapter-truncate");
+    std::fs::create_dir_all(&cwd).unwrap();
+
+    let skill_dir = cwd.join(".agents").join("skills").join("big_skill");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+
+    // MAX_TOOL_OUTPUT_BYTES of 'x' to ensure the serialized JSON output
+    // (which wraps content in a JSON string with extra fields) exceeds the limit.
+    let big_content = "x".repeat(MAX_TOOL_OUTPUT_BYTES + 1_000);
+    let skill_file = skill_dir.join("SKILL.md");
+    std::fs::write(&skill_file, &big_content).unwrap();
+
+    let tool_def = ToolDefinition {
+        name: "skill".to_string(),
+        description: "Load skill content".to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "name": { "type": "string" }
+            },
+            "required": ["name"]
+        }),
+    };
+    let adapter = BuiltinToolAdapter::new(tool_def, cwd.clone(), None, None, None);
+
+    let args = serde_json::json!({ "name": "big_skill" });
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let result = runtime.block_on(adapter.call(args.to_string()));
+
+    // Clean up
+    std::fs::remove_dir_all(&cwd).ok();
+
+    assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+    let result_str = result.unwrap();
+
+    assert!(
+        result_str.contains("[output truncated:"),
+        "large builtin output must be truncated; got {} bytes, no marker",
+        result_str.len()
+    );
+}

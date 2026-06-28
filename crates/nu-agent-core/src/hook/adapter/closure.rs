@@ -1,3 +1,4 @@
+use crate::tools::limits::truncate_tool_output;
 use crate::types::ToolDefinition;
 use nu_protocol::{Span, Value};
 use rig::tool::{ToolDyn, ToolError};
@@ -129,12 +130,13 @@ impl ToolDyn for ClosureToolAdapter {
                 ))))
             })?;
 
-            // Serialize to string
-            serde_json::to_string(&result_json).map_err(|e| {
+            // Serialize to string and cap output size before returning to rig.
+            let result_str = serde_json::to_string(&result_json).map_err(|e| {
                 ToolError::ToolCallError(Box::new(ClosureExecError::ResultConversion(format!(
                     "JSON serialization failed: {e}"
                 ))))
-            })
+            })?;
+            Ok(truncate_tool_output(result_str))
         })
     }
 }

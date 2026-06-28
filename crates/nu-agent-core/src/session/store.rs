@@ -383,6 +383,101 @@ impl ConversationStore for JsonlConversationStore {
     }
 }
 
+/// Final safety net after repair_messages(). Walks the message list and strips any
+/// `Assistant(ToolCall)` that is not immediately followed by a `User` containing
+/// matching ToolResults for ALL its IDs. Logs a warn! for each violation found.
+/// Does NOT inject synthetic results — only strips and warns.
+pub(crate) fn validate_tool_call_adjacency(messages: Vec<Message>) -> Vec<Message> {
+    use crate::types::{AssistantContent, UserContent};
+    use std::collections::HashSet;
+
+    // We loop until no violations remain; stripping one pair may expose another.
+    let mut messages = messages;
+    loop {
+        // Find the first Assistant message whose ToolCall IDs are not all
+        // covered by the immediately following User message.
+        let violation_ids: Option<HashSet<String>> =
+            messages.iter().enumerate().find_map(|(i, msg)| {
+                let Message::Assistant { content, .. } = msg else {
+                    return None;
+                };
+                let call_ids: HashSet<String> = content
+                    .iter()
+                    .filter_map(|item| match item {
+                        AssistantContent::ToolCall(tc) => Some(tc.id.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                if call_ids.is_empty() {
+                    return None;
+                }
+                let next_result_ids: HashSet<String> = match messages.get(i + 1) {
+                    Some(Message::User { content }) => content
+                        .iter()
+                        .filter_map(|item| match item {
+                            UserContent::ToolResult(tr) => Some(tr.id.clone()),
+                            _ => None,
+                        })
+                        .collect(),
+                    _ => HashSet::new(),
+                };
+                if call_ids.is_subset(&next_result_ids) {
+                    None
+                } else {
+                    Some(call_ids)
+                }
+            });
+
+        let Some(bad_ids) = violation_ids else {
+            // No violations — we are done.
+            break;
+        };
+
+        // Log and strip the offending pair.
+        for id in &bad_ids {
+            log::warn!(
+                "validate_tool_call_adjacency: stripped non-adjacent ToolCall/ToolResult pair id={}",
+                id
+            );
+        }
+
+        messages = messages
+            .into_iter()
+            .filter_map(|msg| match msg {
+                Message::Assistant { id, content } => {
+                    let items: Vec<crate::types::AssistantContent> = content
+                        .into_iter()
+                        .filter(|item| match item {
+                            AssistantContent::ToolCall(tc) => !bad_ids.contains(&tc.id),
+                            _ => true,
+                        })
+                        .collect();
+                    match rig::one_or_many::OneOrMany::many(items) {
+                        Ok(content) => Some(Message::Assistant { id, content }),
+                        Err(_) => None,
+                    }
+                }
+                Message::User { content } => {
+                    let items: Vec<crate::types::UserContent> = content
+                        .into_iter()
+                        .filter(|item| match item {
+                            UserContent::ToolResult(tr) => !bad_ids.contains(&tr.id),
+                            _ => true,
+                        })
+                        .collect();
+                    match rig::one_or_many::OneOrMany::many(items) {
+                        Ok(content) => Some(Message::User { content }),
+                        Err(_) => None,
+                    }
+                }
+                system @ Message::System { .. } => Some(system),
+            })
+            .collect();
+    }
+
+    messages
+}
+
 /// Extracts the LLM context from a sequence of store entries.
 ///
 /// If there are compaction markers, uses the **last** marker to determine context:
@@ -429,5 +524,6 @@ pub fn extract_llm_context(entries: &[StoreEntry]) -> Vec<Message> {
     for issue in &issues {
         log::warn!("conversation repair: {}", issue);
     }
-    repaired
+    // Final safety net: validate adjacency and strip any remaining violations.
+    validate_tool_call_adjacency(repaired)
 }

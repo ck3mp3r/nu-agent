@@ -7,7 +7,6 @@
 
 // Core conversation message types
 pub use rig::completion::Message;
-#[cfg(test)]
 pub use rig::completion::message::ToolResult;
 pub use rig::completion::message::{
     AssistantContent, Text, ToolCall, ToolFunction, ToolResultContent, UserContent,

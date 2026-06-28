@@ -1,3 +1,4 @@
+use crate::tools::limits::truncate_tool_output;
 use crate::types::ToolDefinition;
 use rig::tool::{ToolDyn, ToolError};
 use rig::wasm_compat::WasmBoxedFuture;
@@ -53,8 +54,9 @@ impl ToolDyn for NamespacedTool {
     }
 
     fn call<'a>(&'a self, args: String) -> WasmBoxedFuture<'a, Result<String, ToolError>> {
-        // Delegate the call to the inner tool unchanged
-        self.inner.call(args)
+        // Delegate the call to the inner tool, then cap output size before returning.
+        let inner_future = self.inner.call(args);
+        Box::pin(async move { inner_future.await.map(truncate_tool_output) })
     }
 }
 

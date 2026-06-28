@@ -1,5 +1,6 @@
 use super::tool_defs::{
-    builtin_tool_definitions, messaging_tool_definitions, orchestrator_tool_definitions,
+    assemble_tool_definitions, builtin_tool_definitions, messaging_tool_definitions,
+    orchestrator_messaging_tool_definitions, orchestrator_tool_definitions,
 };
 
 #[test]
@@ -65,13 +66,23 @@ fn orchestrator_tool_description_lists_available_agents() {
 }
 
 #[test]
-fn messaging_tool_registration_contains_exact_names() {
+fn messaging_tool_registration_contains_only_send_message() {
     let names = messaging_tool_definitions()
         .into_iter()
         .map(|tool| tool.name)
         .collect::<Vec<_>>();
 
-    assert_eq!(names, vec!["send_message", "list_agents"]);
+    assert_eq!(names, vec!["send_message"]);
+}
+
+#[test]
+fn orchestrator_messaging_tool_registration_contains_only_list_agents() {
+    let names = orchestrator_messaging_tool_definitions()
+        .into_iter()
+        .map(|tool| tool.name)
+        .collect::<Vec<_>>();
+
+    assert_eq!(names, vec!["list_agents"]);
 }
 
 #[test]
@@ -87,13 +98,18 @@ fn send_message_description_explains_delivery_semantics() {
         send.description
     );
     assert!(
-        send.description.contains("list_agents"),
-        "Expected list_agents mention, got: {}",
+        send.description.contains("asynchronously"),
+        "Expected async mention, got: {}",
         send.description
     );
     assert!(
-        send.description.contains("asynchronously"),
-        "Expected async mention, got: {}",
+        send.description.contains("task instructions"),
+        "Expected task instructions mention, got: {}",
+        send.description
+    );
+    assert!(
+        !send.description.contains("list_agents"),
+        "send_message description must not reference list_agents (sub-agents cannot use it), got: {}",
         send.description
     );
 }
@@ -142,5 +158,71 @@ fn builtin_edit_definition_uses_mode_and_operation_contract_with_legacy_compat_f
             .as_str()
             .unwrap_or_default()
             .contains("legacy")
+    );
+}
+
+// --- Tool assembly tests for list_agents / send_message visibility ---
+
+#[test]
+fn sub_agent_with_broker_has_send_message_but_not_list_agents() {
+    // Sub-agents have has_broker=true, so is_orchestrator=false.
+    // They must get send_message but NOT list_agents (which always fails for sub-agents).
+    let closure_registry = nu_agent_core::tools::closure::ClosureRegistry::default();
+    let agents_config = nu_agent_core::config::AgentsConfig::default();
+    let cwd = std::path::Path::new("/tmp");
+
+    let assembly = assemble_tool_definitions(
+        &closure_registry,
+        /*has_broker=*/ true,
+        &agents_config,
+        &[],
+        cwd,
+    );
+
+    let names: Vec<&str> = assembly
+        .tool_definitions
+        .iter()
+        .map(|t| t.name.as_str())
+        .collect();
+
+    assert!(
+        names.contains(&"send_message"),
+        "Sub-agent must have send_message, got: {names:?}"
+    );
+    assert!(
+        !names.contains(&"list_agents"),
+        "Sub-agent must NOT have list_agents, got: {names:?}"
+    );
+}
+
+#[test]
+fn orchestrator_has_both_send_message_and_list_agents() {
+    // Orchestrators have has_broker=false, so is_orchestrator=true.
+    // They must get both send_message and list_agents.
+    let closure_registry = nu_agent_core::tools::closure::ClosureRegistry::default();
+    let agents_config = nu_agent_core::config::AgentsConfig::default();
+    let cwd = std::path::Path::new("/tmp");
+
+    let assembly = assemble_tool_definitions(
+        &closure_registry,
+        /*has_broker=*/ false,
+        &agents_config,
+        &[],
+        cwd,
+    );
+
+    let names: Vec<&str> = assembly
+        .tool_definitions
+        .iter()
+        .map(|t| t.name.as_str())
+        .collect();
+
+    assert!(
+        names.contains(&"send_message"),
+        "Orchestrator must have send_message, got: {names:?}"
+    );
+    assert!(
+        names.contains(&"list_agents"),
+        "Orchestrator must have list_agents, got: {names:?}"
     );
 }

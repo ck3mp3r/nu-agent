@@ -1,5 +1,6 @@
 use super::store::{
     CompactionMarker, ConversationStore, JsonlConversationStore, StoreEntry, extract_llm_context,
+    validate_tool_call_adjacency,
 };
 use crate::types::Message;
 use tempfile::TempDir;
@@ -745,4 +746,88 @@ fn load_all_returns_fresh_tokens_after_post_compaction_turn() {
         Some(5000),
         "first post-compaction turn with tokens should be returned"
     );
+}
+
+// ================================================================
+// validate_tool_call_adjacency — TDD RED phase
+// ================================================================
+
+fn make_tool_call_msg(id: &str) -> crate::types::Message {
+    use crate::types::{AssistantContent, ToolCall, ToolFunction};
+    crate::types::Message::Assistant {
+        id: None,
+        content: rig::one_or_many::OneOrMany::one(AssistantContent::ToolCall(ToolCall::new(
+            id.to_string(),
+            ToolFunction::new("some_tool".to_string(), serde_json::json!({})),
+        ))),
+    }
+}
+
+fn make_tool_result_msg(id: &str) -> crate::types::Message {
+    use crate::types::{ToolResult, ToolResultContent, UserContent};
+    crate::types::Message::User {
+        content: rig::one_or_many::OneOrMany::one(UserContent::ToolResult(ToolResult {
+            id: id.to_string(),
+            call_id: None,
+            content: rig::one_or_many::OneOrMany::one(ToolResultContent::text("ok")),
+        })),
+    }
+}
+
+/// Test: structurally valid list (ToolCall at i, ToolResult at i+1) → returned unchanged.
+#[test]
+fn validate_tool_call_adjacency_passes_valid_adjacent_pair() {
+    let msgs = vec![
+        crate::types::Message::user("hi"),
+        make_tool_call_msg("tc1"),
+        make_tool_result_msg("tc1"),
+    ];
+    let expected = msgs.clone();
+    let result = validate_tool_call_adjacency(msgs);
+    assert_msgs_eq(&result, &expected);
+}
+
+/// Test: non-adjacent pair (ToolCall at i, ToolResult at i+2 with something else at i+1) →
+/// both stripped, remaining messages returned.
+#[test]
+fn validate_tool_call_adjacency_strips_non_adjacent_pair() {
+    let msgs = vec![
+        crate::types::Message::user("start"),
+        make_tool_call_msg("tc1"),
+        crate::types::Message::user("in-between"),
+        make_tool_result_msg("tc1"),
+    ];
+    let result = validate_tool_call_adjacency(msgs);
+    // ToolCall and ToolResult must both be stripped; remaining: user("start"), user("in-between")
+    let has_tc = result
+        .iter()
+        .any(|m| matches!(m, crate::types::Message::Assistant { .. }));
+    let has_tr = result.iter().any(|m| match m {
+        crate::types::Message::User { content } => content
+            .iter()
+            .any(|i| matches!(i, crate::types::UserContent::ToolResult(_))),
+        _ => false,
+    });
+    assert!(!has_tc, "ToolCall must be stripped from non-adjacent pair");
+    assert!(
+        !has_tr,
+        "ToolResult must be stripped from non-adjacent pair"
+    );
+    assert_eq!(result.len(), 2, "only the two non-tool messages remain");
+}
+
+/// Test: multiple valid tool call pairs in sequence → all pass through unchanged.
+#[test]
+fn validate_tool_call_adjacency_passes_multiple_valid_pairs() {
+    let msgs = vec![
+        crate::types::Message::user("go"),
+        make_tool_call_msg("tc1"),
+        make_tool_result_msg("tc1"),
+        make_tool_call_msg("tc2"),
+        make_tool_result_msg("tc2"),
+        crate::types::Message::assistant("done"),
+    ];
+    let expected = msgs.clone();
+    let result = validate_tool_call_adjacency(msgs);
+    assert_msgs_eq(&result, &expected);
 }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::tools::limits::MAX_TOOL_OUTPUT_BYTES;
 use crate::types::ToolDefinition;
 use rig::tool::{ToolDyn, ToolError};
 use rig::wasm_compat::WasmBoxedFuture;
@@ -81,4 +82,45 @@ async fn namespaced_tool_uses_custom_delimiter() {
 
     let definition = tool.definition("prompt".to_string()).await;
     assert_eq!(definition.name, "server::info");
+}
+
+/// Mock tool that returns a large result exceeding MAX_TOOL_OUTPUT_BYTES.
+struct LargeMockTool;
+
+impl ToolDyn for LargeMockTool {
+    fn name(&self) -> String {
+        "big_tool".to_string()
+    }
+
+    fn definition<'a>(&'a self, _prompt: String) -> WasmBoxedFuture<'a, ToolDefinition> {
+        Box::pin(async {
+            ToolDefinition {
+                name: "big_tool".to_string(),
+                description: "Returns lots of data".to_string(),
+                parameters: serde_json::json!({}),
+            }
+        })
+    }
+
+    fn call<'a>(&'a self, _args: String) -> WasmBoxedFuture<'a, Result<String, ToolError>> {
+        let large = "x".repeat(MAX_TOOL_OUTPUT_BYTES + 1_000);
+        Box::pin(async move { Ok(large) })
+    }
+}
+
+#[tokio::test]
+async fn namespaced_tool_truncates_large_output() {
+    let inner = LargeMockTool;
+    let tool = NamespacedTool::new(Box::new(inner), "server", "__");
+
+    let result = tool.call("{}".to_string()).await;
+    assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+
+    let result_str = result.unwrap();
+    assert!(
+        result_str.contains("[output truncated:"),
+        "NamespacedTool must truncate output exceeding MAX_TOOL_OUTPUT_BYTES; \
+         got {} bytes with no marker",
+        result_str.len()
+    );
 }
