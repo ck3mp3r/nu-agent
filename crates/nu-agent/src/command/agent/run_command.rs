@@ -245,7 +245,6 @@ pub(super) fn run_command(
     let resolver = DefaultSessionResolver::new(&agent.store);
     let mut session_resolution = resolver.resolve(SessionResolutionInput {
         use_tui: mode.is_tui(),
-        input_is_nothing,
         session_id,
         cwd: cwd.clone(),
     })?;
@@ -332,8 +331,8 @@ pub(super) fn run_command(
             call.head,
             ui_policy,
             super::mode_execute::TuiHydrationInput {
-                should_hydrate: session_resolution.tui_should_hydrate_transcript,
-                initial_messages: session_resolution.tui_initial_messages,
+                should_hydrate: session_resolution.should_hydrate_transcript,
+                initial_messages: session_resolution.initial_messages,
                 last_total_tokens: session_resolution.last_total_tokens,
             },
         ),

@@ -21,7 +21,6 @@ pub enum SessionRequest {
 #[derive(Debug, Clone)]
 pub struct SessionResolutionInput {
     pub use_tui: bool,
-    pub input_is_nothing: bool,
     pub session_id: Option<String>,
     pub cwd: PathBuf,
 }
@@ -30,8 +29,8 @@ pub struct SessionResolutionInput {
 pub struct SessionResolution {
     pub final_session_id: Option<String>,
     pub session: Option<Session>,
-    pub tui_should_hydrate_transcript: bool,
-    pub tui_initial_messages: Vec<UiMessageSnapshot>,
+    pub should_hydrate_transcript: bool,
+    pub initial_messages: Vec<UiMessageSnapshot>,
     pub last_total_tokens: Option<u64>,
 }
 
@@ -62,60 +61,47 @@ impl SessionResolver for DefaultSessionResolver<'_> {
             SessionRequest::None => Ok(SessionResolution {
                 final_session_id: None,
                 session: None,
-                tui_should_hydrate_transcript: false,
-                tui_initial_messages: Vec::new(),
+                should_hydrate_transcript: false,
+                initial_messages: Vec::new(),
                 last_total_tokens: None,
             }),
             SessionRequest::Attach(id) => {
-                let (session, tui_hydration_messages, last_total_tokens) = if input.use_tui {
-                    let (session, existed_before_attach) =
-                        load_or_create_tui_session(self.store, &id)?;
-                    let (messages, last_total_tokens) =
-                        if input.input_is_nothing && existed_before_attach {
-                            // Load store entries (messages + markers) from JSONL
-                            let conversation_store =
-                                JsonlConversationStore::new(self.store.cache_dir().to_path_buf());
-                            let (entries, last_total_tokens) =
-                                conversation_store.load_all(&id).map_err(|e| {
-                                    LabeledError::new(format!("Failed to load messages: {e}"))
-                                })?;
+                let (session, existed_before_attach) = load_or_create_tui_session(self.store, &id)?;
+                let (initial_messages, last_total_tokens) = if existed_before_attach {
+                    // Load store entries (messages + markers) from JSONL
+                    let conversation_store =
+                        JsonlConversationStore::new(self.store.cache_dir().to_path_buf());
+                    let (entries, last_total_tokens) = conversation_store
+                        .load_all(&id)
+                        .map_err(|e| LabeledError::new(format!("Failed to load messages: {e}")))?;
 
-                            // Convert to UiMessageSnapshots for transcript display
-                            (
-                                hydrate_transcript_from_store_entries(&entries),
-                                last_total_tokens,
-                            )
-                        } else {
-                            (Vec::new(), None)
-                        };
-
-                    (session, messages, last_total_tokens)
+                    // Convert to UiMessageSnapshots for transcript display
+                    (
+                        hydrate_transcript_from_store_entries(&entries),
+                        last_total_tokens,
+                    )
                 } else {
-                    let session = self.store.get_or_create(Some(id.clone())).map_err(|e| {
-                        LabeledError::new(format!("Failed to load/create session: {e}"))
-                    })?;
-
-                    (session, Vec::new(), None)
+                    (Vec::new(), None)
                 };
 
                 Ok(SessionResolution {
                     final_session_id: Some(id),
                     session: Some(session),
-                    tui_should_hydrate_transcript: !tui_hydration_messages.is_empty(),
-                    tui_initial_messages: tui_hydration_messages,
+                    should_hydrate_transcript: !initial_messages.is_empty(),
+                    initial_messages,
                     last_total_tokens,
                 })
             }
             SessionRequest::Create(id) => {
-                let _ = (input.use_tui, input.input_is_nothing);
+                let _ = input.use_tui;
                 let session = self.store.get_or_create(Some(id.clone())).map_err(|e| {
                     LabeledError::new(format!("Failed to load/create session: {e}"))
                 })?;
                 Ok(SessionResolution {
                     final_session_id: Some(id),
                     session: Some(session),
-                    tui_should_hydrate_transcript: false,
-                    tui_initial_messages: Vec::new(),
+                    should_hydrate_transcript: false,
+                    initial_messages: Vec::new(),
                     last_total_tokens: None,
                 })
             }

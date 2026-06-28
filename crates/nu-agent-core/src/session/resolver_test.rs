@@ -892,7 +892,6 @@ fn resolve_session_request_user_provided_id_gets_prefixed() {
     let result = resolver
         .resolve(SessionResolutionInput {
             use_tui: false,
-            input_is_nothing: true,
             session_id: Some("foo".to_string()),
             cwd: cwd.clone(),
         })
@@ -924,7 +923,6 @@ fn resolve_auto_generated_id_gets_prefixed() {
     let result = resolver
         .resolve(SessionResolutionInput {
             use_tui: true,
-            input_is_nothing: true,
             session_id: None,
             cwd: cwd.clone(),
         })
@@ -935,5 +933,49 @@ fn resolve_auto_generated_id_gets_prefixed() {
     assert!(
         id.starts_with(&format!("{prefix}-")),
         "expected id to start with '{prefix}-', got: {id}"
+    );
+}
+
+#[test]
+fn attach_existing_session_always_returns_initial_messages() {
+    use crate::session::resolver::{
+        DefaultSessionResolver, SessionResolutionInput, SessionResolver,
+    };
+    use crate::session::{ConversationStore, JsonlConversationStore, SessionStore};
+    use crate::types::Message;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+    let conv_store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
+    let cwd = std::path::PathBuf::from("/home/user/project");
+
+    // Pre-compute the prefixed session ID so we can write messages under it
+    let prefix = crate::session::prefix::dir_prefix(&cwd);
+    let raw_id = "existing-session";
+    let prefixed_id = format!("{prefix}-{raw_id}");
+
+    // Write messages to the conversation store for that session ID
+    let messages = vec![Message::user("hello"), Message::assistant("world")];
+    conv_store.append(&prefixed_id, &messages, None).unwrap();
+
+    // Resolve with use_tui: true to trigger the Attach path for an explicit session_id.
+    // The Attach branch now always loads existing store entries, with no input_is_nothing gate.
+    let resolver = DefaultSessionResolver::new(&store);
+    let result = resolver
+        .resolve(SessionResolutionInput {
+            use_tui: true,
+            session_id: Some(raw_id.to_string()),
+            cwd: cwd.clone(),
+        })
+        .unwrap();
+
+    assert!(
+        result.should_hydrate_transcript,
+        "should_hydrate_transcript must be true when session has messages"
+    );
+    assert!(
+        !result.initial_messages.is_empty(),
+        "initial_messages must be non-empty when session has messages"
     );
 }

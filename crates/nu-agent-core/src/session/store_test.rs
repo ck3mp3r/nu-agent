@@ -268,6 +268,35 @@ fn compaction_marker_serde_roundtrip() {
 }
 
 #[test]
+fn append_marker_writes_type_field_to_raw_jsonl() {
+    let temp_dir = TempDir::new().unwrap();
+    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
+
+    // Append a message first so the metadata line is written
+    store
+        .append("test-session", &[Message::user("Hello")], None)
+        .unwrap();
+
+    // Append the marker
+    let marker = CompactionMarker::new("Summary".to_string(), 1, 3, "sliding_summary");
+    store.append_marker("test-session", &marker, None).unwrap();
+
+    // Read raw JSONL bytes from disk
+    let content = std::fs::read_to_string(temp_dir.path().join("test-session.jsonl")).unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+
+    // Line 0 = metadata, line 1 = message, line 2 = marker
+    let marker_line = lines[2];
+    let value: serde_json::Value = serde_json::from_str(marker_line).unwrap();
+
+    assert_eq!(
+        value["type"].as_str(),
+        Some("compaction_marker"),
+        "raw JSONL must contain \"type\":\"compaction_marker\", got: {value}"
+    );
+}
+
+#[test]
 fn append_marker_writes_to_store() {
     let temp_dir = TempDir::new().unwrap();
     let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
