@@ -78,6 +78,13 @@ pub struct AgentHook<P: AsyncPermissionResolver> {
     doom_state: Arc<Mutex<DoomLoopState>>,
     closure_registry: Arc<ClosureRegistry>,
     mcp_registry: Arc<McpToolRegistry>,
+    /// Snapshot of the full conversation history captured just before each LLM HTTP call.
+    ///
+    /// Updated by `on_completion_call` (which fires before every `stream()` call).
+    /// If a `CompletionError` occurs, the caller can read this Arc to recover the
+    /// history that was live at the time of the last LLM call attempt, rather than
+    /// losing all completed sub-turns.
+    last_known_history: Arc<Mutex<Vec<Message>>>,
 }
 
 impl<P: AsyncPermissionResolver> AgentHook<P> {
@@ -95,7 +102,17 @@ impl<P: AsyncPermissionResolver> AgentHook<P> {
             doom_state: Arc::new(Mutex::new(DoomLoopState::default())),
             closure_registry,
             mcp_registry,
+            last_known_history: Arc::new(Mutex::new(Vec::new())),
         }
+    }
+
+    /// Return a clone of the `Arc` that holds the most recent history snapshot.
+    ///
+    /// Callers clone this Arc **before** passing the hook into the agent builder
+    /// (which consumes `self`), then read it back after a `CompletionError` to
+    /// recover whatever history was captured by the last `on_completion_call`.
+    pub fn last_known_history(&self) -> Arc<Mutex<Vec<Message>>> {
+        Arc::clone(&self.last_known_history)
     }
 }
 
@@ -104,7 +121,8 @@ where
     M: CompletionModel,
     P: AsyncPermissionResolver,
 {
-    async fn on_completion_call(&self, _prompt: &Message, _history: &[Message]) -> HookAction {
+    async fn on_completion_call(&self, _prompt: &Message, history: &[Message]) -> HookAction {
+        *self.last_known_history.lock().unwrap() = history.to_vec();
         if self.cancel_token.is_cancelled() {
             return HookAction::Terminate {
                 reason: "Cancelled by user".into(),

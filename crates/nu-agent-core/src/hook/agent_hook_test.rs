@@ -397,3 +397,45 @@ fn is_tool_failure_does_not_flag_success() {
     assert!(!is_tool_failure(""));
     assert!(!is_tool_failure("ls output here"));
 }
+
+// ---------------------------------------------------------------------------
+// last_known_history Arc tests
+// ---------------------------------------------------------------------------
+
+/// `on_completion_call` stores the full history in the shared Arc each time it
+/// fires, overwriting any previous snapshot (not appending).
+///
+/// RED: fails before `last_known_history` field and `last_known_history()` accessor are added.
+#[tokio::test]
+async fn on_completion_call_stores_history_in_shared_arc() {
+    let (hook, _rx) = make_hook_with_resolver(MockResolver(PermissionDecision::Allow));
+
+    // Obtain a clone of the Arc BEFORE any on_completion_call fires.
+    let arc = hook.last_known_history();
+
+    // Initially empty.
+    assert_eq!(arc.lock().unwrap().len(), 0);
+
+    let prompt = dummy_message();
+
+    // First call: history = [user("hello")]
+    let history_one = [rig::message::Message::user("hello")];
+    PromptHook::<DummyModel>::on_completion_call(&hook, &prompt, &history_one).await;
+    assert_eq!(
+        arc.lock().unwrap().len(),
+        1,
+        "after first on_completion_call the arc must contain 1 message"
+    );
+
+    // Second call: history = [user("hello"), assistant("hi")]
+    let history_two = [
+        rig::message::Message::user("hello"),
+        rig::message::Message::assistant("hi"),
+    ];
+    PromptHook::<DummyModel>::on_completion_call(&hook, &prompt, &history_two).await;
+    assert_eq!(
+        arc.lock().unwrap().len(),
+        2,
+        "after second on_completion_call the arc must be overwritten with 2 messages (not appended)"
+    );
+}

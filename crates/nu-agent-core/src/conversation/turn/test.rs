@@ -223,6 +223,7 @@ fn turn_error_can_be_constructed() {
         msg: "Test error".to_string(),
         cancelled: false,
         messages: None,
+        last_known_history: vec![],
     };
 
     assert_eq!(error.msg, "Test error");
@@ -233,6 +234,7 @@ fn turn_error_can_be_constructed() {
         msg: "Cancelled".to_string(),
         cancelled: true,
         messages: None,
+        last_known_history: vec![],
     };
     assert!(cancelled.cancelled);
     assert!(cancelled.messages.is_none());

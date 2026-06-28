@@ -56,6 +56,9 @@ pub struct TurnError {
     /// `None` for errors where rig's internal history is genuinely unrecoverable
     /// (e.g. `CompletionError`, `ToolError`).
     pub messages: Option<Vec<Message>>,
+    /// History snapshot from hook, captured before the last LLM call.
+    /// Empty if no `on_completion_call` fired (failure before first HTTP request).
+    pub last_known_history: Vec<Message>,
 }
 
 impl std::fmt::Display for TurnError {
@@ -80,6 +83,7 @@ impl From<rig::completion::PromptError> for TurnError {
                 msg: reason,
                 cancelled: true,
                 messages: Some(chat_history),
+                last_known_history: vec![],
             },
             rig::completion::PromptError::MaxTurnsError {
                 max_turns,
@@ -89,6 +93,7 @@ impl From<rig::completion::PromptError> for TurnError {
                 msg: format!("Max turns ({max_turns}) exceeded"),
                 cancelled: false,
                 messages: Some(*chat_history),
+                last_known_history: vec![],
             },
             rig::completion::PromptError::UnknownToolCall {
                 tool_name,
@@ -98,11 +103,13 @@ impl From<rig::completion::PromptError> for TurnError {
                 msg: format!("Unknown tool: {tool_name}"),
                 cancelled: false,
                 messages: Some(*chat_history),
+                last_known_history: vec![],
             },
             other => TurnError {
                 msg: other.to_string(),
                 cancelled: false,
                 messages: None,
+                last_known_history: vec![],
             },
         }
     }
@@ -119,6 +126,7 @@ impl From<rig::agent::StreamingError> for TurnError {
                     msg: reason,
                     cancelled: true,
                     messages: Some(chat_history),
+                    last_known_history: vec![],
                 },
                 rig::completion::PromptError::MaxTurnsError {
                     max_turns,
@@ -128,6 +136,7 @@ impl From<rig::agent::StreamingError> for TurnError {
                     msg: format!("Max turns ({max_turns}) exceeded"),
                     cancelled: false,
                     messages: Some(*chat_history),
+                    last_known_history: vec![],
                 },
                 rig::completion::PromptError::UnknownToolCall {
                     tool_name,
@@ -137,17 +146,20 @@ impl From<rig::agent::StreamingError> for TurnError {
                     msg: format!("Unknown tool: {tool_name}"),
                     cancelled: false,
                     messages: Some(*chat_history),
+                    last_known_history: vec![],
                 },
                 other => TurnError {
                     msg: other.to_string(),
                     cancelled: false,
                     messages: None,
+                    last_known_history: vec![],
                 },
             },
             other => TurnError {
                 msg: other.to_string(),
                 cancelled: false,
                 messages: None,
+                last_known_history: vec![],
             },
         }
     }
@@ -285,6 +297,10 @@ where
         ctx.tool_infra.mcp_registry.clone(),
     );
 
+    // Clone the Arc BEFORE hook moves into config so we can read history after a
+    // CompletionError (when rig does not provide chat_history in TurnError::messages).
+    let last_known_history_arc = hook.last_known_history();
+
     // Build the prompt message
     let user_message = Message::User {
         content: rig::one_or_many::OneOrMany::one(UserContent::Text(Text {
@@ -344,9 +360,14 @@ where
         msg: format!("Agent task panicked: {}", e),
         cancelled: false,
         messages: None,
+        last_known_history: vec![],
     })?;
 
-    let response = join_result.map_err(TurnError::from)?;
+    let response = join_result.map_err(|e| {
+        let mut err = TurnError::from(e);
+        err.last_known_history = last_known_history_arc.lock().unwrap().clone();
+        err
+    })?;
 
     log::info!(
         "execute_turn: complete, tool_calls={} deltas_emitted={}",

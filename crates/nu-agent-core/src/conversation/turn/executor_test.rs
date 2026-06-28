@@ -1075,3 +1075,215 @@ fn error_classifier_passes_through_unrelated_errors() {
     let classified = classify_completion_error(raw_error);
     assert_eq!(classified, "Turn failed: network timeout");
 }
+
+// ---------------------------------------------------------------------------
+// CompletionError + hook history recovery tests
+// ---------------------------------------------------------------------------
+
+/// When `on_completion_call` fires with non-empty history before a CompletionError,
+/// the executor must persist the hook history (not a synthetic placeholder).
+///
+/// Setup: pre-populate the session store with `[user("work done"), assistant("ok")]`
+/// so that `on_completion_call` fires with that history. Then run a turn that
+/// immediately errors. The hook Arc captures the pre-loaded history before the
+/// error, so `last_known_history` is non-empty — the recovery path writes the
+/// hook history to JSONL, not the placeholder.
+///
+/// RED: fails before `last_known_history` field is added to `TurnError` and
+/// the executor uses it in the hard-error path.
+#[test]
+fn hard_error_persists_hook_history_not_placeholder() {
+    use crate::session::ConversationStore;
+
+    let config = test_config();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let session_id = "test-hard-error-hook-history";
+    let mut memory_state =
+        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+
+    // Pre-populate the session store with a completed exchange so that rig
+    // loads it into the agent's context and on_completion_call fires with
+    // non-empty history.
+    let prior_messages = vec![
+        crate::types::Message::user("work done"),
+        crate::types::Message::assistant("ok"),
+    ];
+    memory_state
+        .conversation_store()
+        .append(session_id, &prior_messages, None)
+        .expect("pre-populate store should succeed");
+
+    // Mock model: errors immediately (simulates CompletionError / network failure).
+    let model =
+        MockCompletionModel::from_stream_turns([[MockStreamEvent::error("http decode error")]]);
+
+    let cached_client = CachedProviderClient::Mock(model);
+    let mut ui = MockUi::new();
+
+    let closure_registry = crate::tools::closure::ClosureRegistry::new();
+    let mcp_registry = crate::tools::handler::McpToolRegistry::from_names(Vec::<String>::new());
+    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &rt,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(closure_registry),
+            mcp_registry: Arc::new(mcp_registry),
+            tool_server_handle,
+            visible_tool_definitions: vec![],
+        },
+    );
+
+    let result = executor.execute(
+        &mut ui,
+        ExecuteInput {
+            prompt: "new prompt".to_string(),
+            preamble: None,
+            span: nu_protocol::Span::test_data(),
+        },
+        &cached_client,
+        MockResolver,
+        Some(session_id),
+        None,
+    );
+
+    // Must return Err (it's a hard error)
+    assert!(result.is_err(), "CompletionError must propagate as Err");
+
+    // JSONL must NOT contain the placeholder assistant message
+    let persisted = memory_state
+        .conversation_store()
+        .load(session_id)
+        .expect("store load should succeed");
+
+    let has_placeholder = persisted.iter().any(|msg| {
+        if let crate::types::Message::Assistant { content, .. } = msg {
+            content.iter().any(|item| {
+                if let crate::types::AssistantContent::Text(t) = item {
+                    t.text.contains("[Turn failed:")
+                } else {
+                    false
+                }
+            })
+        } else {
+            false
+        }
+    });
+    assert!(
+        !has_placeholder,
+        "hard error with non-empty hook history must NOT persist '[Turn failed:' placeholder; got messages: {:?}",
+        persisted
+    );
+
+    // JSONL must contain the hook history messages (user("work done") and assistant("ok"))
+    let has_hook_user = persisted.iter().any(|msg| {
+        if let crate::types::Message::User { content } = msg {
+            content.iter().any(|item| {
+                if let crate::types::UserContent::Text(t) = item {
+                    t.text == "work done"
+                } else {
+                    false
+                }
+            })
+        } else {
+            false
+        }
+    });
+    assert!(
+        has_hook_user,
+        "hard error recovery must persist hook history (user('work done')); got messages: {:?}",
+        persisted
+    );
+}
+
+/// When `on_completion_call` fires with EMPTY history (first turn, no prior messages)
+/// before a CompletionError, the executor must fall back to a synthetic placeholder.
+///
+/// This is the "no hook history available" case — the hook captured an empty
+/// history slice, so `last_known_history` is empty, and the fallback placeholder
+/// maintains the alternating user/assistant structure required by the API.
+///
+/// RED: currently this test also passes (placeholder path was always used before
+/// our change). After the change, it must continue to pass — the placeholder is
+/// only used when `last_known_history` is empty.
+#[test]
+fn hard_error_before_first_llm_call_persists_placeholder() {
+    let config = test_config();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let session_id = "test-hard-error-no-hook-history";
+    let prompt_text = "fresh turn on empty session";
+    let mut memory_state =
+        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+
+    // Fresh session — no prior messages. on_completion_call fires with history=[]
+    // which means last_known_history stays empty → placeholder path.
+    let model =
+        MockCompletionModel::from_stream_turns([[MockStreamEvent::error("provider unavailable")]]);
+
+    let cached_client = CachedProviderClient::Mock(model);
+    let mut ui = MockUi::new();
+
+    let closure_registry = crate::tools::closure::ClosureRegistry::new();
+    let mcp_registry = crate::tools::handler::McpToolRegistry::from_names(Vec::<String>::new());
+    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &rt,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(closure_registry),
+            mcp_registry: Arc::new(mcp_registry),
+            tool_server_handle,
+            visible_tool_definitions: vec![],
+        },
+    );
+
+    let result = executor.execute(
+        &mut ui,
+        ExecuteInput {
+            prompt: prompt_text.to_string(),
+            preamble: None,
+            span: nu_protocol::Span::test_data(),
+        },
+        &cached_client,
+        MockResolver,
+        Some(session_id),
+        None,
+    );
+
+    // Must return Err
+    assert!(
+        result.is_err(),
+        "hard error must propagate as Err to caller"
+    );
+
+    // JSONL must contain the placeholder assistant message
+    let persisted = memory_state
+        .conversation_store()
+        .load(session_id)
+        .expect("store load should succeed");
+
+    let has_placeholder = persisted.iter().any(|msg| {
+        if let crate::types::Message::Assistant { content, .. } = msg {
+            content.iter().any(|item| {
+                if let crate::types::AssistantContent::Text(t) = item {
+                    t.text.contains("[Turn failed:")
+                } else {
+                    false
+                }
+            })
+        } else {
+            false
+        }
+    });
+    assert!(
+        has_placeholder,
+        "hard error on fresh session (empty hook history) must persist '[Turn failed:' placeholder; got messages: {:?}",
+        persisted
+    );
+}

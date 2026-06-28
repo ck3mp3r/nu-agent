@@ -151,94 +151,107 @@ impl<'a> TurnExecutor<'a> {
             },
         );
 
-        let turn_result = match visitor_result {
-            Ok(result) => result,
-            Err(e) if e.messages.is_some() && !e.cancelled => {
-                // Path A (non-cancelled): MaxTurnsError / UnknownToolCall carry full chat_history.
-                // Persist it so the session remembers the failed turn.
-                if let Some(session_id) = final_session_id
-                    && let Some(ref messages) = e.messages
-                {
-                    let patched = inject_missing_tool_results(messages.clone());
-                    if let Err(mem_err) = self
-                        .runtime
-                        .block_on(self.memory_state.memory_mut().append(session_id, patched))
+        let turn_result =
+            match visitor_result {
+                Ok(result) => result,
+                Err(e) if e.messages.is_some() && !e.cancelled => {
+                    // Path A (non-cancelled): MaxTurnsError / UnknownToolCall carry full chat_history.
+                    // Persist it so the session remembers the failed turn.
+                    if let Some(session_id) = final_session_id
+                        && let Some(ref messages) = e.messages
                     {
-                        log::warn!(
-                            "Failed to update context for failed turn (path A history): {}",
-                            mem_err
-                        );
+                        let patched = inject_missing_tool_results(messages.clone());
+                        if let Err(mem_err) = self
+                            .runtime
+                            .block_on(self.memory_state.memory_mut().append(session_id, patched))
+                        {
+                            log::warn!(
+                                "Failed to update context for failed turn (path A history): {}",
+                                mem_err
+                            );
+                        }
                     }
+                    let user_msg = classify_completion_error(&e.msg);
+                    return Err(LabeledError::new(user_msg.clone()).with_label(user_msg, span));
                 }
-                let user_msg = classify_completion_error(&e.msg);
-                return Err(LabeledError::new(user_msg.clone()).with_label(user_msg, span));
-            }
-            Err(e) if e.cancelled => {
-                // Path A: rig hook cancelled — persist chat_history if available
-                if let Some(session_id) = final_session_id
-                    && let Some(ref messages) = e.messages
-                {
-                    let patched = inject_missing_tool_results(messages.clone());
-                    if let Err(mem_err) = self
-                        .runtime
-                        .block_on(self.memory_state.memory_mut().append(session_id, patched))
+                Err(e) if e.cancelled => {
+                    // Path A: rig hook cancelled — persist chat_history if available
+                    if let Some(session_id) = final_session_id
+                        && let Some(ref messages) = e.messages
                     {
-                        log::warn!(
-                            "Failed to update context for cancelled turn (path A): {}",
-                            mem_err
-                        );
+                        let patched = inject_missing_tool_results(messages.clone());
+                        if let Err(mem_err) = self
+                            .runtime
+                            .block_on(self.memory_state.memory_mut().append(session_id, patched))
+                        {
+                            log::warn!(
+                                "Failed to update context for cancelled turn (path A): {}",
+                                mem_err
+                            );
+                        }
                     }
+                    // Return a minimal cancelled response (not an error)
+                    let llm_response = crate::llm::LlmResponse {
+                        text: String::new(),
+                        usage: crate::llm::LlmUsage {
+                            input_tokens: 0,
+                            output_tokens: 0,
+                            total_tokens: 0,
+                            cached_input_tokens: 0,
+                            cache_creation_input_tokens: 0,
+                        },
+                        tool_calls: Vec::new(),
+                        tool_call_metadata: Vec::new(),
+                    };
+                    return Ok(TurnOutcome::EarlyReturn(crate::llm::format_response(
+                        &llm_response,
+                        self.config,
+                        final_session_id,
+                        0, // compaction_count not relevant for cancelled turns
+                        span,
+                    )));
                 }
-                // Return a minimal cancelled response (not an error)
-                let llm_response = crate::llm::LlmResponse {
-                    text: String::new(),
-                    usage: crate::llm::LlmUsage {
-                        input_tokens: 0,
-                        output_tokens: 0,
-                        total_tokens: 0,
-                        cached_input_tokens: 0,
-                        cache_creation_input_tokens: 0,
-                    },
-                    tool_calls: Vec::new(),
-                    tool_call_metadata: Vec::new(),
-                };
-                return Ok(TurnOutcome::EarlyReturn(crate::llm::format_response(
-                    &llm_response,
-                    self.config,
-                    final_session_id,
-                    0, // compaction_count not relevant for cancelled turns
-                    span,
-                )));
-            }
-            Err(e) => {
-                // Hard error: rig's internal history is unrecoverable (CompletionError, ToolError).
-                // Persist a user+assistant pair so the session retains alternating turn structure.
-                // A bare user message at the end of JSONL violates user/assistant alternation and
-                // causes the Copilot API to reject all subsequent turns with 400 "No user query found".
-                let user_msg = classify_completion_error(&e.msg);
-                log::error!(
-                    "Turn failed with unrecoverable error: session={:?} error={}",
-                    final_session_id,
-                    e.msg
-                );
-                if let Some(session_id) = final_session_id {
-                    let fallback = vec![
-                        Message::user(prompt.clone()),
-                        Message::assistant(format!("[Turn failed: {}]", e.msg)),
-                    ];
-                    if let Err(mem_err) = self
-                        .runtime
-                        .block_on(self.memory_state.memory_mut().append(session_id, fallback))
-                    {
-                        log::warn!(
-                            "Failed to persist error placeholder on hard error: {}",
-                            mem_err
-                        );
+                Err(e) => {
+                    // Hard error: CompletionError or ToolError.
+                    // If on_completion_call fired at least once, we have a partial history snapshot
+                    // from the hook Arc. Persist it so completed sub-turns are not lost.
+                    // If no on_completion_call fired (failure before first HTTP request), fall back
+                    // to a synthetic user+assistant placeholder pair to maintain alternating structure.
+                    let user_msg = classify_completion_error(&e.msg);
+                    log::error!(
+                        "Turn failed with unrecoverable error: session={:?} error={}",
+                        final_session_id,
+                        e.msg
+                    );
+                    if let Some(session_id) = final_session_id {
+                        if !e.last_known_history.is_empty() {
+                            let patched = inject_missing_tool_results(e.last_known_history);
+                            if let Err(mem_err) = self.runtime.block_on(
+                                self.memory_state.memory_mut().append(session_id, patched),
+                            ) {
+                                log::warn!(
+                                    "Failed to persist recovered history on hard error: {}",
+                                    mem_err
+                                );
+                            }
+                        } else {
+                            let fallback = vec![
+                                Message::user(prompt.clone()),
+                                Message::assistant(format!("[Turn failed: {}]", e.msg)),
+                            ];
+                            if let Err(mem_err) = self.runtime.block_on(
+                                self.memory_state.memory_mut().append(session_id, fallback),
+                            ) {
+                                log::warn!(
+                                    "Failed to persist error placeholder on hard error: {}",
+                                    mem_err
+                                );
+                            }
+                        }
                     }
+                    return Err(LabeledError::new(user_msg.clone()).with_label(user_msg, span));
                 }
-                return Err(LabeledError::new(user_msg.clone()).with_label(user_msg, span));
-            }
-        };
+            };
 
         // Path C: PromptCancelled was caught inside build_agent_and_stream and returned
         // as Ok(cancelled=true). Treat identically to Path A.
