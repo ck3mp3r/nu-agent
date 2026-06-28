@@ -1,8 +1,21 @@
 use crate::plugin::AgentPlugin;
+use nu_agent_core::session::prefix::dir_prefix;
 use nu_agent_core::session::{ConversationStore, JsonlConversationStore, SessionStore};
 use nu_agent_core::types::{AssistantContent, Message, UserContent};
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, Example, LabeledError, Record, Signature, SyntaxShape, Value};
+
+/// Abstracts the engine's cwd query so `run_inner` can be tested without a live plugin context.
+pub(crate) trait CwdInterface {
+    fn get_current_dir(&self) -> Result<String, LabeledError>;
+}
+
+impl CwdInterface for EngineInterface {
+    fn get_current_dir(&self) -> Result<String, LabeledError> {
+        self.get_current_dir()
+            .map_err(|e| LabeledError::new(format!("Failed to get working directory: {e}")))
+    }
+}
 
 /// The `agent session inspect` command displays full details of a specific session.
 pub struct AgentSessionInspect {
@@ -14,50 +27,17 @@ impl AgentSessionInspect {
     pub fn new(store: SessionStore) -> Self {
         Self { store }
     }
-}
 
-impl SimplePluginCommand for AgentSessionInspect {
-    type Plugin = AgentPlugin;
-
-    fn name(&self) -> &str {
-        "agent session inspect"
-    }
-
-    fn description(&self) -> &str {
-        "Display full details of a specific session"
-    }
-
-    fn extra_description(&self) -> &str {
-        "Shows full session details including config, message history, and compaction count."
-    }
-
-    fn search_terms(&self) -> Vec<&str> {
-        vec!["session", "inspect", "view", "history", "messages"]
-    }
-
-    fn examples(&self) -> Vec<Example<'_>> {
-        vec![Example {
-            description: "Inspect a session by ID",
-            example: "agent session inspect my-project",
-            result: None,
-        }]
-    }
-
-    fn signature(&self) -> Signature {
-        Signature::build(PluginCommand::name(self))
-            .required("id", SyntaxShape::String, "Session ID to inspect")
-            .category(Category::Experimental)
-    }
-
-    fn run(
+    pub(crate) fn run_inner<C: CwdInterface>(
         &self,
-        _plugin: &AgentPlugin,
-        _engine: &EngineInterface,
+        engine: &C,
         call: &EvaluatedCall,
-        _input: &Value,
     ) -> Result<Value, LabeledError> {
-        // Get session_id parameter
         let session_id: String = call.req(0)?;
+
+        let cwd = std::path::PathBuf::from(engine.get_current_dir()?);
+        let prefix = dir_prefix(&cwd);
+        let session_id = format!("{prefix}-{session_id}");
 
         // Load the session metadata
         let session = self
@@ -167,5 +147,49 @@ impl SimplePluginCommand for AgentSessionInspect {
         session_record.push("messages", Value::list(message_values, call.head));
 
         Ok(Value::record(session_record, call.head))
+    }
+}
+
+impl SimplePluginCommand for AgentSessionInspect {
+    type Plugin = AgentPlugin;
+
+    fn name(&self) -> &str {
+        "agent session inspect"
+    }
+
+    fn description(&self) -> &str {
+        "Display full details of a specific session"
+    }
+
+    fn extra_description(&self) -> &str {
+        "Shows full session details including config, message history, and compaction count."
+    }
+
+    fn search_terms(&self) -> Vec<&str> {
+        vec!["session", "inspect", "view", "history", "messages"]
+    }
+
+    fn examples(&self) -> Vec<Example<'_>> {
+        vec![Example {
+            description: "Inspect a session by ID",
+            example: "agent session inspect my-project",
+            result: None,
+        }]
+    }
+
+    fn signature(&self) -> Signature {
+        Signature::build(PluginCommand::name(self))
+            .required("id", SyntaxShape::String, "Session ID to inspect")
+            .category(Category::Experimental)
+    }
+
+    fn run(
+        &self,
+        _plugin: &AgentPlugin,
+        engine: &EngineInterface,
+        call: &EvaluatedCall,
+        _input: &Value,
+    ) -> Result<Value, LabeledError> {
+        self.run_inner(engine, call)
     }
 }
