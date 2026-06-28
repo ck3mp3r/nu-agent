@@ -258,6 +258,8 @@ pub trait ExtendedRuntime: CoreRuntime {
 
     fn clear_session(&mut self) {}
 
+    fn new_session(&mut self) {}
+
     /// Seed `MemoryState.last_total_tokens` from a loaded session so that
     /// compaction can fire on the first turn after a session resume.
     ///

@@ -247,6 +247,7 @@ pub(super) fn run_command(
         use_tui: mode.is_tui(),
         input_is_nothing,
         session_id,
+        cwd: cwd.clone(),
     })?;
 
     let super::setup::SetupResult {
@@ -315,6 +316,7 @@ pub(super) fn run_command(
             mailbox_rx,
             available_agents,
             agents_config,
+            cwd: cwd.clone(),
         });
     log::debug!(
         "runtime: agent_persona_body_len={:?}, agent_identity={:?}, agent_description={:?}",

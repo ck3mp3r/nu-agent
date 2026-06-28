@@ -186,6 +186,10 @@ where
             .hydrate_transcript_from_messages(messages, last_total_tokens);
     }
 
+    pub(crate) fn clear_transcript(&mut self) {
+        self.coordinator.clear_transcript();
+    }
+
     pub fn pump_terminal_once(&mut self) {
         self.coordinator.poll_terminal_event(&mut self.event_source);
         self.coordinator.drain_transport();

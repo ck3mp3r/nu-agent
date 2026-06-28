@@ -522,6 +522,7 @@ fn inline_slash_suggestions_open_on_leading_slash() {
             nu_agent_core::protocol::slash::SlashCommand::Status,
             nu_agent_core::protocol::slash::SlashCommand::Models,
             nu_agent_core::protocol::slash::SlashCommand::Agent,
+            nu_agent_core::protocol::slash::SlashCommand::New,
         ]
     );
 }
@@ -531,7 +532,7 @@ fn inline_slash_suggestions_filter_incrementally_as_input_grows() {
     let mut state = AppState::new();
 
     state.append_input_char('/');
-    assert_eq!(state.inline_slash_suggestions().len(), 6);
+    assert_eq!(state.inline_slash_suggestions().len(), 7);
 
     state.append_input_char('c');
     assert_eq!(
@@ -1598,6 +1599,18 @@ fn queued_prompt_has_sentinel_transcript_line_index() {
         .find(|p| p.status == PromptStatus::Queued)
         .unwrap();
     assert_eq!(queued.transcript_line_index, usize::MAX);
+}
+
+#[test]
+fn clear_transcript_resets_token_fields() {
+    let mut state = AppState::new();
+    state.latest_input_tokens = Some(100);
+    state.latest_output_tokens = Some(200);
+    state.latest_total_tokens = Some(300);
+    state.clear_transcript();
+    assert!(state.latest_input_tokens.is_none());
+    assert!(state.latest_output_tokens.is_none());
+    assert!(state.latest_total_tokens.is_none());
 }
 
 #[test]

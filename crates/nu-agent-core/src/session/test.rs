@@ -20,19 +20,22 @@ fn test_get_or_create_auto_generates_id() {
 
     let session = store.get_or_create(None).expect("Failed to create session");
 
-    // Verify ID format: session-<timestamp>
+    // Verify ID format: YYYYMMDD-HHMMSS-micros
     assert!(
-        session.id().starts_with("session-"),
-        "Session ID should start with 'session-', got: {}",
+        session
+            .id()
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_digit()),
+        "Session ID should start with a digit (timestamp), got: {}",
         session.id()
     );
 
-    // Verify ID contains timestamp-like suffix (digits and dashes)
-    let suffix = session.id().strip_prefix("session-").unwrap();
+    // Verify ID contains only digits and dashes
     assert!(
-        !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit() || c == '-'),
-        "Session ID suffix should contain only digits and dashes, got: {}",
-        suffix
+        session.id().chars().all(|c| c.is_ascii_digit() || c == '-'),
+        "Session ID should contain only digits and dashes, got: {}",
+        session.id()
     );
 }
 
@@ -85,7 +88,7 @@ fn test_list_sessions_empty_directory() {
 
     // List sessions in empty directory
     let sessions = store
-        .list_sessions()
+        .list_sessions(None)
         .expect("Failed to list sessions in empty directory");
 
     assert_eq!(
@@ -98,3 +101,20 @@ fn test_list_sessions_empty_directory() {
 // All other tests that use add_message(), append_message(), load_session().messages(), etc.
 // are commented out pending Session migration to rig Messages.
 // See task 4692a68d for full Session migration.
+
+#[test]
+fn test_list_sessions_with_prefix_filter() {
+    let temp_dir = TempDir::new().unwrap();
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+
+    store.get_or_create(Some("abc1234-foo".into())).unwrap();
+    store.get_or_create(Some("abc1234-bar".into())).unwrap();
+    store.get_or_create(Some("def5678-baz".into())).unwrap();
+
+    let filtered = store.list_sessions(Some("abc1234")).unwrap();
+    assert_eq!(filtered.len(), 2);
+    assert!(filtered.iter().all(|s| s.id.starts_with("abc1234-")));
+
+    let all = store.list_sessions(None).unwrap();
+    assert_eq!(all.len(), 3);
+}

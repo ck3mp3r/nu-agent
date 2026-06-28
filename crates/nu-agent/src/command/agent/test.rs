@@ -1575,7 +1575,9 @@ mod tui_session_resolution_tests {
     fn interactive_tui_without_session_auto_creates() {
         let request = resolve_session_request(true, None);
         match request {
-            SessionRequest::Create(id) => assert!(id.starts_with("session-")),
+            SessionRequest::Create(id) => {
+                assert!(id.chars().next().is_some_and(|c| c.is_ascii_digit()))
+            }
             other => panic!("expected Create request, got: {other:?}"),
         }
     }
@@ -1601,8 +1603,11 @@ mod tui_session_resolution_tests {
     #[test]
     fn generated_session_id_matches_expected_prefix() {
         let id = generate_session_id();
-        assert!(id.starts_with("session-"));
-        assert!(id.len() >= 25, "session id too short: {id}");
+        assert!(
+            id.chars().next().is_some_and(|c| c.is_ascii_digit()),
+            "expected timestamp prefix, got: {id}"
+        );
+        assert!(id.len() >= 15, "session id too short: {id}");
     }
 
     #[test]

@@ -875,3 +875,65 @@ fn hydrate_doom_loop_rehydrates_as_false() {
         "Doom loop result must rehydrate as tool_success=false"
     );
 }
+
+#[test]
+fn resolve_session_request_user_provided_id_gets_prefixed() {
+    use crate::session::SessionStore;
+    use crate::session::resolver::{
+        DefaultSessionResolver, SessionResolutionInput, SessionResolver,
+    };
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+    let resolver = DefaultSessionResolver::new(&store);
+    let cwd = std::path::PathBuf::from("/home/user/project");
+
+    let result = resolver
+        .resolve(SessionResolutionInput {
+            use_tui: false,
+            input_is_nothing: true,
+            session_id: Some("foo".to_string()),
+            cwd: cwd.clone(),
+        })
+        .unwrap();
+
+    let id = result.final_session_id.unwrap();
+    // Must start with 7-char prefix derived from cwd
+    let prefix = crate::session::prefix::dir_prefix(&cwd);
+    assert_eq!(&id[..8], format!("{prefix}-"));
+    assert!(
+        id.ends_with("foo"),
+        "expected id to end with 'foo', got: {id}"
+    );
+}
+
+#[test]
+fn resolve_auto_generated_id_gets_prefixed() {
+    use crate::session::SessionStore;
+    use crate::session::resolver::{
+        DefaultSessionResolver, SessionResolutionInput, SessionResolver,
+    };
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+    let resolver = DefaultSessionResolver::new(&store);
+    let cwd = std::path::PathBuf::from("/home/user/project");
+
+    let result = resolver
+        .resolve(SessionResolutionInput {
+            use_tui: true,
+            input_is_nothing: true,
+            session_id: None,
+            cwd: cwd.clone(),
+        })
+        .unwrap();
+
+    let id = result.final_session_id.unwrap();
+    let prefix = crate::session::prefix::dir_prefix(&cwd);
+    assert!(
+        id.starts_with(&format!("{prefix}-")),
+        "expected id to start with '{prefix}-', got: {id}"
+    );
+}

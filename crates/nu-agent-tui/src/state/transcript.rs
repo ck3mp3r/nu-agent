@@ -125,6 +125,16 @@ impl AppState {
         self.transcript_scroll_offset = 0;
     }
 
+    pub fn clear_transcript(&mut self) {
+        self.transcript_preview.clear();
+        self.clear_assistant_projection_cache();
+        self.transcript_scroll_offset = 0;
+        self.transcript_following_tail = true;
+        self.latest_input_tokens = None;
+        self.latest_output_tokens = None;
+        self.latest_total_tokens = None;
+    }
+
     pub fn scroll_transcript_to_bottom(&mut self) {
         self.transcript_following_tail = true;
     }

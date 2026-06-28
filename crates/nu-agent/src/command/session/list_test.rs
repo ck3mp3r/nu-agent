@@ -34,7 +34,7 @@ fn test_agent_session_list_returns_table_with_session_stats() {
 
     // Actually, let's test just the session listing logic without the full plugin infrastructure
     // This is a more unit-test approach
-    let sessions = command.store.list_sessions().unwrap();
+    let sessions = command.store.list_sessions(None).unwrap();
 
     // Verify result
     assert_eq!(sessions.len(), 2, "Should have 2 sessions");
@@ -80,7 +80,7 @@ fn test_agent_session_list_returns_empty_list_when_no_sessions() {
     let command = AgentSessionList::new(store);
 
     // Test the underlying list_sessions() directly
-    let sessions = command.store.list_sessions().unwrap();
+    let sessions = command.store.list_sessions(None).unwrap();
 
     // Verify result
     assert_eq!(sessions.len(), 0, "Should have 0 sessions");

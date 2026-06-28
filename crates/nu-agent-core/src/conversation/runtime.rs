@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
@@ -81,6 +82,7 @@ pub struct AgentConversationRuntime {
     pub memory_state: super::state::memory::MemoryState,
     pub persona_state: super::state::persona::PersonaState,
     pub multi_agent_state: super::state::multi_agent::MultiAgentState,
+    pub cwd: PathBuf,
     /// Shared pending-decision map for interactive (TUI) mode.
     ///
     /// When `Some`, `execute_turn` constructs an `InteractivePermissionResolver` instead
@@ -338,6 +340,15 @@ impl ExtendedRuntime for AgentConversationRuntime {
 
     fn clear_session(&mut self) {
         self.memory_state.clear();
+    }
+
+    fn new_session(&mut self) {
+        self.memory_state.clear();
+        let new_id = crate::session::resolver::generate_session_id();
+        let prefix = crate::session::prefix::dir_prefix(&self.cwd);
+        let new_id = format!("{prefix}-{new_id}");
+        self.final_session_id = Some(new_id.clone());
+        let _ = self.store.get_or_create(Some(new_id));
     }
 
     fn seed_last_total_tokens(&mut self, tokens: Option<u64>) {

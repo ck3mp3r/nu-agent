@@ -309,6 +309,10 @@ impl RuntimeCoordinator {
         self.state.take_next_agent_switch_request()
     }
 
+    pub(crate) fn clear_transcript(&mut self) {
+        self.state.clear_transcript();
+    }
+
     pub(crate) fn set_active_model_identity(&mut self, active_model_identity: String) {
         self.active_model_identity = active_model_identity;
     }

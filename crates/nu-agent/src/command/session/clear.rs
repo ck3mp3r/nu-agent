@@ -1,5 +1,6 @@
 use crate::plugin::AgentPlugin;
 use nu_agent_core::session::SessionStore;
+use nu_agent_core::session::prefix::dir_prefix;
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, Example, LabeledError, Signature, SyntaxShape, Value};
 
@@ -51,12 +52,20 @@ impl SimplePluginCommand for AgentSessionClear {
     fn run(
         &self,
         _plugin: &AgentPlugin,
-        _engine: &EngineInterface,
+        engine: &EngineInterface,
         call: &EvaluatedCall,
         _input: &Value,
     ) -> Result<Value, LabeledError> {
         // Get session_id parameter
         let session_id: String = call.req(0)?;
+
+        let cwd = std::path::PathBuf::from(
+            engine
+                .get_current_dir()
+                .map_err(|e| LabeledError::new(format!("Failed to get working directory: {e}")))?,
+        );
+        let prefix = dir_prefix(&cwd);
+        let session_id = format!("{prefix}-{session_id}");
 
         // Delete the session
         self.store

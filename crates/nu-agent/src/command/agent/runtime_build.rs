@@ -436,6 +436,7 @@ pub(crate) struct RuntimeBuildParams {
         Option<std::sync::mpsc::Receiver<nu_agent_core::mailbox::IncomingMessage>>,
     pub(crate) available_agents: Vec<nu_agent_core::protocol::persona::PersonaSummary>,
     pub(crate) agents_config: nu_agent_core::config::AgentsConfig,
+    pub(crate) cwd: std::path::PathBuf,
 }
 
 pub(crate) fn build_runtime(params: RuntimeBuildParams) -> AgentConversationRuntime {
@@ -500,6 +501,7 @@ pub(crate) fn build_runtime(params: RuntimeBuildParams) -> AgentConversationRunt
             params.available_agents,
             params.agents_config,
         ),
+        cwd: params.cwd,
         interactive_pending: None,
     }
 }

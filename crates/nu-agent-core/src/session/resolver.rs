@@ -1,4 +1,5 @@
 use nu_protocol::LabeledError;
+use std::path::PathBuf;
 
 use crate::hook::agent_hook::is_tool_failure;
 use crate::protocol::contracts::UiMessageSnapshot;
@@ -22,6 +23,7 @@ pub struct SessionResolutionInput {
     pub use_tui: bool,
     pub input_is_nothing: bool,
     pub session_id: Option<String>,
+    pub cwd: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -49,7 +51,13 @@ impl<'a> DefaultSessionResolver<'a> {
 
 impl SessionResolver for DefaultSessionResolver<'_> {
     fn resolve(&self, input: SessionResolutionInput) -> Result<SessionResolution, LabeledError> {
+        let prefix = crate::session::prefix::dir_prefix(&input.cwd);
         let request = resolve_session_request(input.use_tui, input.session_id);
+        let request = match request {
+            SessionRequest::Attach(id) => SessionRequest::Attach(format!("{prefix}-{id}")),
+            SessionRequest::Create(id) => SessionRequest::Create(format!("{prefix}-{id}")),
+            SessionRequest::None => SessionRequest::None,
+        };
         match request {
             SessionRequest::None => Ok(SessionResolution {
                 final_session_id: None,
@@ -119,7 +127,7 @@ pub fn generate_session_id() -> String {
     use chrono::Utc;
     let now = Utc::now();
     format!(
-        "session-{}-{}",
+        "{}-{}",
         now.format("%Y%m%d-%H%M%S"),
         now.timestamp_subsec_micros()
     )

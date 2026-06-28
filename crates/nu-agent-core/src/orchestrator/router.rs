@@ -116,6 +116,10 @@ impl<'a, R: ExtendedRuntime + Send> CommandRouter<'a, R> {
                 self.runtime.clear_session();
                 true
             }
+            WorkerCommand::NewSession => {
+                self.runtime.new_session();
+                true
+            }
             WorkerCommand::Shutdown => false,
         }
     }

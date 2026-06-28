@@ -58,6 +58,7 @@ fn inline_slash_filter_is_prefix_based_and_deterministic() {
             SlashCommand::Status,
             SlashCommand::Models,
             SlashCommand::Agent,
+            SlashCommand::New,
         ]
     );
     assert_eq!(
@@ -87,6 +88,7 @@ fn slash_command_catalog_exports_expected_labels_and_order() {
             SlashCommand::Status,
             SlashCommand::Models,
             SlashCommand::Agent,
+            SlashCommand::New,
         ]
     );
 
@@ -96,6 +98,7 @@ fn slash_command_catalog_exports_expected_labels_and_order() {
     assert_eq!(SlashCommand::Status.label(), "/status");
     assert_eq!(SlashCommand::Models.label(), "/models");
     assert_eq!(SlashCommand::Agent.label(), "/agent");
+    assert_eq!(SlashCommand::New.label(), "/new");
 
     assert!(!SlashCommand::Compact.summary().is_empty());
     assert!(!SlashCommand::Mcp.summary().is_empty());
@@ -103,6 +106,7 @@ fn slash_command_catalog_exports_expected_labels_and_order() {
     assert!(!SlashCommand::Status.summary().is_empty());
     assert!(!SlashCommand::Models.summary().is_empty());
     assert!(!SlashCommand::Agent.summary().is_empty());
+    assert!(!SlashCommand::New.summary().is_empty());
 }
 
 #[test]

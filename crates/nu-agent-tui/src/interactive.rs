@@ -233,4 +233,8 @@ where
         self.renderer
             .hydrate_transcript_from_messages(messages, last_total_tokens);
     }
+
+    fn clear_transcript(&mut self) {
+        self.renderer.clear_transcript();
+    }
 }

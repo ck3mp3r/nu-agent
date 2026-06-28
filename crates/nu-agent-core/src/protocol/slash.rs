@@ -6,6 +6,7 @@ pub enum SlashCommand {
     Status,
     Models,
     Agent,
+    New,
 }
 
 impl SlashCommand {
@@ -17,6 +18,7 @@ impl SlashCommand {
             SlashCommand::Status => "/status",
             SlashCommand::Models => "/models",
             SlashCommand::Agent => "/agent",
+            SlashCommand::New => "/new",
         }
     }
 
@@ -28,6 +30,7 @@ impl SlashCommand {
             SlashCommand::Status => "Open status panel",
             SlashCommand::Models => "Open model picker",
             SlashCommand::Agent => "Switch agent persona",
+            SlashCommand::New => "Start a new session",
         }
     }
 }
@@ -39,13 +42,14 @@ pub enum SlashParseResult {
     Unknown(String),
 }
 
-pub const SLASH_COMMAND_ORDER: [SlashCommand; 6] = [
+pub const SLASH_COMMAND_ORDER: [SlashCommand; 7] = [
     SlashCommand::Compact,
     SlashCommand::Mcp,
     SlashCommand::Help,
     SlashCommand::Status,
     SlashCommand::Models,
     SlashCommand::Agent,
+    SlashCommand::New,
 ];
 
 pub fn filter_inline_slash_suggestions(input: &str) -> Vec<SlashCommand> {
@@ -78,6 +82,7 @@ pub fn parse_slash_command(input: &str) -> SlashParseResult {
         "/status" => Some(SlashCommand::Status),
         "/models" => Some(SlashCommand::Models),
         "/agent" => Some(SlashCommand::Agent),
+        "/new" => Some(SlashCommand::New),
         _ => None,
     };
 

@@ -78,6 +78,7 @@ pub enum WorkerCommand {
         response_tx: mpsc::Sender<AgentSwitchResult>,
     },
     ClearSession,
+    NewSession,
     Shutdown,
 }
 
@@ -504,6 +505,11 @@ where
                                     message: "Compaction worker channel closed".to_string(),
                                 });
                             }
+                            continue;
+                        }
+                        SlashParseResult::Command(SlashCommand::New) => {
+                            let _ = worker_cmd_tx.send(WorkerCommand::NewSession);
+                            ui.clear_transcript();
                             continue;
                         }
                         SlashParseResult::Command(SlashCommand::Help) => {

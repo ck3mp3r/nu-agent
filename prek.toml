@@ -15,6 +15,7 @@ name = "cargo fmt"
 language = "system"
 entry = "cargo fmt"
 files = "\\.rs$"
+pass_filenames = false
 stages = ["pre-commit"]
 
 [[repos.hooks]]

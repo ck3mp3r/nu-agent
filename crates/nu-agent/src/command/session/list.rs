@@ -1,5 +1,6 @@
 use crate::plugin::AgentPlugin;
 use nu_agent_core::session::SessionStore;
+use nu_agent_core::session::prefix::dir_prefix;
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, Example, LabeledError, Record, Signature, Value};
 
@@ -49,14 +50,21 @@ impl SimplePluginCommand for AgentSessionList {
     fn run(
         &self,
         _plugin: &AgentPlugin,
-        _engine: &EngineInterface,
+        engine: &EngineInterface,
         call: &EvaluatedCall,
         _input: &Value,
     ) -> Result<Value, LabeledError> {
+        let cwd = std::path::PathBuf::from(
+            engine
+                .get_current_dir()
+                .map_err(|e| LabeledError::new(format!("Failed to get working directory: {e}")))?,
+        );
+        let prefix = dir_prefix(&cwd);
+
         // Call SessionStore::list_sessions()
         let sessions = self
             .store
-            .list_sessions()
+            .list_sessions(Some(&prefix))
             .map_err(|e| LabeledError::new(format!("Failed to list sessions: {}", e)))?;
 
         // Convert SessionInfo list to Nushell Value (list of records)
@@ -64,7 +72,12 @@ impl SimplePluginCommand for AgentSessionList {
             .iter()
             .map(|info| {
                 let mut record = Record::new();
-                record.push("id", Value::string(&info.id, call.head));
+                let display_id = info
+                    .id
+                    .strip_prefix(&format!("{prefix}-"))
+                    .unwrap_or(&info.id)
+                    .to_string();
+                record.push("id", Value::string(display_id, call.head));
                 record.push(
                     "message_count",
                     Value::int(info.message_count as i64, call.head),

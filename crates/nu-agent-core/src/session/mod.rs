@@ -1,4 +1,5 @@
 pub mod journal;
+pub mod prefix;
 mod repair;
 pub mod resolver;
 mod store;
@@ -194,11 +195,11 @@ impl SessionStore {
         }
     }
 
-    /// Generates a unique session ID with format: session-YYYYMMDD-HHMMSS-micros
+    /// Generates a unique session ID with format: YYYYMMDD-HHMMSS-micros
     fn generate_session_id(&self) -> String {
         let now = Utc::now();
         format!(
-            "session-{}-{}",
+            "{}-{}",
             now.format("%Y%m%d-%H%M%S"),
             now.timestamp_subsec_micros()
         )
@@ -250,7 +251,10 @@ impl SessionStore {
     }
 
     /// Lists all sessions in the cache directory with their metadata.
-    pub fn list_sessions(&self) -> io::Result<Vec<SessionInfo>> {
+    ///
+    /// If `prefix` is `Some(pfx)`, only sessions whose ID starts with `"{pfx}-"` are returned.
+    /// Pass `None` to return all sessions.
+    pub fn list_sessions(&self, prefix: Option<&str>) -> io::Result<Vec<SessionInfo>> {
         let mut sessions = Vec::new();
 
         let entries = match fs::read_dir(&self.cache_dir) {
@@ -266,6 +270,13 @@ impl SessionStore {
             let path = entry.path();
 
             if path.extension().and_then(|s| s.to_str()) != Some("jsonl") {
+                continue;
+            }
+
+            if let Some(pfx) = prefix
+                && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+                && !stem.starts_with(&format!("{pfx}-"))
+            {
                 continue;
             }
 
