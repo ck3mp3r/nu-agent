@@ -7,101 +7,15 @@
 //!    persist messages, emit Completed, and NOT emit AssistantMessage.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
+use super::test_utils::{MockResolver, MockUi, test_config};
 use super::*;
-use crate::config::Config;
 use crate::conversation::providers::CachedProviderClient;
-use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
-use crate::protocol::contracts::ProgressUi;
-use crate::protocol::event::UiEvent;
 use crate::session::ConversationStore;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
-
-// ---------------------------------------------------------------------------
-// MockUi for executor tests
-// ---------------------------------------------------------------------------
-
-struct MockUi {
-    pub events: Vec<UiEvent>,
-    cancel_flag: Arc<AtomicBool>,
-}
-
-impl MockUi {
-    fn new() -> Self {
-        Self {
-            events: Vec::new(),
-            cancel_flag: Arc::new(AtomicBool::new(false)),
-        }
-    }
-
-    /// Pre-set cancel so take_cancel_requested() fires on the very first drain
-    /// loop iteration — causes cancel_token to be set before the spawned tokio
-    /// task processes any stream event, which makes build_agent_and_stream return
-    /// Ok(StreamingTurnResult { cancelled: true, messages: Some(chat_history) }).
-    fn immediately_cancelled() -> Self {
-        Self {
-            events: Vec::new(),
-            cancel_flag: Arc::new(AtomicBool::new(true)),
-        }
-    }
-}
-
-impl ProgressUi for MockUi {
-    fn emit(&mut self, event: &UiEvent) {
-        self.events.push(event.clone());
-    }
-
-    fn flush(&mut self) {}
-
-    fn take_cancel_requested(&self) -> bool {
-        self.cancel_flag.swap(false, Ordering::SeqCst)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// MockResolver — always allows
-// ---------------------------------------------------------------------------
-
-#[derive(Clone)]
-struct MockResolver;
-
-impl AsyncPermissionResolver for MockResolver {
-    fn resolve(
-        &self,
-        _tool_name: &str,
-        _arguments: &str,
-        _tool_call_id: Option<String>,
-    ) -> impl std::future::Future<Output = PermissionDecision> + Send {
-        let decision = PermissionDecision::Allow;
-        async move { decision }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Helper to build a minimal Config for testing.
-fn test_config() -> Config {
-    Config {
-        provider: "copilot".to_string(),
-        provider_impl: None,
-        model: "gpt-4o".to_string(),
-        api_key: None,
-        base_url: None,
-        preamble: None,
-        max_context_tokens: None,
-        max_output_tokens: None,
-        max_tokens: None,
-        max_tool_turns: None,
-        temperature: None,
-        read_timeout_secs: None,
-    }
-}
 
 #[test]
 fn turn_executor_new_constructs_without_panic() {

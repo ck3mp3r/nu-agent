@@ -321,8 +321,10 @@ where
         0
     };
 
-    // Create cancel token
-    let cancel_token = CancellationToken::new();
+    // Create cancel token — use an externally supplied token if the UI provides one
+    // (e.g. MockUi::with_external_cancel() in tests, or a real UI that wants to cancel
+    // from outside the drain loop). Falls back to a fresh token when none is provided.
+    let cancel_token = ui.external_cancel_token().unwrap_or_default();
 
     // Build the hook using AgentHook<P> — no HookDriver needed
     let hook = AgentHook::new(

@@ -25,6 +25,7 @@ use crate::types::{Message, ToolDefinition};
 /// Outcome of `TurnExecutor::execute` — either a completed turn whose results
 /// have been persisted and whose UI events have been emitted, or an early-exit
 /// value (cancelled / error) that the caller can return directly.
+#[derive(Debug)]
 pub enum TurnOutcome {
     /// The turn completed normally. The delegate should evaluate auto-compaction
     /// and then build the final `Value` using `build_response`.
@@ -533,5 +534,13 @@ pub fn build_response(
 }
 
 #[cfg(test)]
+#[path = "test_utils.rs"]
+mod test_utils;
+
+#[cfg(test)]
 #[path = "executor_test.rs"]
 mod executor_test;
+
+#[cfg(test)]
+#[path = "journey_test.rs"]
+mod journey_test;

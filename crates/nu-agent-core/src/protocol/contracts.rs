@@ -128,6 +128,9 @@ pub trait ProgressUi {
             self.emit(event);
         }
     }
+    fn external_cancel_token(&self) -> Option<tokio_util::sync::CancellationToken> {
+        None
+    }
 }
 
 pub trait UserInputUi {
