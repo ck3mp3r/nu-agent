@@ -1780,7 +1780,6 @@ impl LifecycleUi for ModelPickerLaunchWhileActiveUi {
             self.pending_model_picker_launch_requests =
                 self.pending_model_picker_launch_requests.saturating_add(1);
             self.injected = true;
-            self.block_first_turn.store(true, Ordering::SeqCst);
         }
     }
 
@@ -1817,6 +1816,9 @@ impl DisplayStateUi for ModelPickerLaunchWhileActiveUi {
         self.shared_actions.push(action);
         self.shared_actions_observed_while_active
             .push(self.active.load(Ordering::SeqCst));
+        // Unblock worker AFTER observing active state — prevents race where worker
+        // finishes before we record that it was active, causing flaky assertions.
+        self.block_first_turn.store(true, Ordering::SeqCst);
         true
     }
 }

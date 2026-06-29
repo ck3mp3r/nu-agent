@@ -15,6 +15,7 @@ use crate::protocol::contracts::ProgressUi;
 use crate::protocol::event::UiEvent;
 use crate::session::JournalConversationMemory;
 use crate::types::{Message, Text, ToolDefinition, UserContent};
+use rig::memory::ConversationMemory;
 use rig::streaming::StreamingPrompt;
 use rig::tool::{ToolDyn, ToolError};
 use rig::wasm_compat::WasmBoxedFuture;
@@ -42,6 +43,11 @@ pub struct TurnResult {
     /// This is the per-sub-call value representing actual context window usage,
     /// NOT the aggregated total across all sub-calls in this turn.
     pub last_total_tokens: u64,
+    /// Number of messages in persistent storage before this turn started.
+    /// Used by cancelled-turn paths (A cancelled, C) in executor.rs to slice only
+    /// the new-message delta from `messages` (rig's full chat_history) so the store
+    /// is not doubled when a cancelled turn follows prior session history.
+    pub pre_turn_message_count: usize,
 }
 
 /// Error from a conversation turn
@@ -59,6 +65,11 @@ pub struct TurnError {
     /// History snapshot from hook, captured before the last LLM call.
     /// Empty if no `on_completion_call` fired (failure before first HTTP request).
     pub last_known_history: Vec<Message>,
+    /// Number of messages in persistent storage before this turn started.
+    /// Used by executor error paths to slice only the new-message delta from
+    /// `last_known_history` / `messages` when deciding what to persist.
+    /// Defaults to 0 in all `From` impls; overwritten by `execute_turn_with_channel`.
+    pub pre_turn_message_count: usize,
 }
 
 impl std::fmt::Display for TurnError {
@@ -84,6 +95,7 @@ impl From<rig::completion::PromptError> for TurnError {
                 cancelled: true,
                 messages: Some(chat_history),
                 last_known_history: vec![],
+                pre_turn_message_count: 0,
             },
             rig::completion::PromptError::MaxTurnsError {
                 max_turns,
@@ -94,6 +106,7 @@ impl From<rig::completion::PromptError> for TurnError {
                 cancelled: false,
                 messages: Some(*chat_history),
                 last_known_history: vec![],
+                pre_turn_message_count: 0,
             },
             rig::completion::PromptError::UnknownToolCall {
                 tool_name,
@@ -104,12 +117,14 @@ impl From<rig::completion::PromptError> for TurnError {
                 cancelled: false,
                 messages: Some(*chat_history),
                 last_known_history: vec![],
+                pre_turn_message_count: 0,
             },
             other => TurnError {
                 msg: other.to_string(),
                 cancelled: false,
                 messages: None,
                 last_known_history: vec![],
+                pre_turn_message_count: 0,
             },
         }
     }
@@ -127,6 +142,7 @@ impl From<rig::agent::StreamingError> for TurnError {
                     cancelled: true,
                     messages: Some(chat_history),
                     last_known_history: vec![],
+                    pre_turn_message_count: 0,
                 },
                 rig::completion::PromptError::MaxTurnsError {
                     max_turns,
@@ -137,6 +153,7 @@ impl From<rig::agent::StreamingError> for TurnError {
                     cancelled: false,
                     messages: Some(*chat_history),
                     last_known_history: vec![],
+                    pre_turn_message_count: 0,
                 },
                 rig::completion::PromptError::UnknownToolCall {
                     tool_name,
@@ -147,12 +164,14 @@ impl From<rig::agent::StreamingError> for TurnError {
                     cancelled: false,
                     messages: Some(*chat_history),
                     last_known_history: vec![],
+                    pre_turn_message_count: 0,
                 },
                 other => TurnError {
                     msg: other.to_string(),
                     cancelled: false,
                     messages: None,
                     last_known_history: vec![],
+                    pre_turn_message_count: 0,
                 },
             },
             other => TurnError {
@@ -160,6 +179,7 @@ impl From<rig::agent::StreamingError> for TurnError {
                 cancelled: false,
                 messages: None,
                 last_known_history: vec![],
+                pre_turn_message_count: 0,
             },
         }
     }
@@ -285,6 +305,22 @@ where
 {
     log::info!("execute_turn: starting turn");
 
+    // Snapshot message count before this turn. Used by error paths to slice only
+    // the new-message delta from last_known_history / e.messages.
+    // Cache-first load: no JSONL I/O if the cache is already warm.
+    let pre_turn_count: usize = if ctx.conversation.has_session {
+        ctx.runtime
+            .block_on(
+                ctx.conversation
+                    .memory
+                    .load(&ctx.conversation.conversation_id),
+            )
+            .map(|msgs| msgs.len())
+            .unwrap_or(0)
+    } else {
+        0
+    };
+
     // Create cancel token
     let cancel_token = CancellationToken::new();
 
@@ -361,11 +397,13 @@ where
         cancelled: false,
         messages: None,
         last_known_history: vec![],
+        pre_turn_message_count: 0,
     })?;
 
     let response = join_result.map_err(|e| {
         let mut err = TurnError::from(e);
         err.last_known_history = last_known_history_arc.lock().unwrap().clone();
+        err.pre_turn_message_count = pre_turn_count;
         err
     })?;
 
@@ -383,6 +421,7 @@ where
         deltas_emitted: response.deltas_emitted,
         cancelled: response.cancelled,
         last_total_tokens: response.last_total_tokens,
+        pre_turn_message_count: pre_turn_count,
     })
 }
 

@@ -156,38 +156,61 @@ impl<'a> TurnExecutor<'a> {
                 Ok(result) => result,
                 Err(e) if e.messages.is_some() && !e.cancelled => {
                     // Path A (non-cancelled): MaxTurnsError / UnknownToolCall carry full chat_history.
-                    // Persist it so the session remembers the failed turn.
+                    // Persist only the delta (new messages from this turn) so the session remembers
+                    // the failed turn without re-appending messages already in persistent storage.
                     if let Some(session_id) = final_session_id
                         && let Some(ref messages) = e.messages
                     {
-                        let patched = inject_missing_tool_results(messages.clone());
-                        if let Err(mem_err) = self
-                            .runtime
-                            .block_on(self.memory_state.memory_mut().append(session_id, patched))
-                        {
-                            log::warn!(
-                                "Failed to update context for failed turn (path A history): {}",
-                                mem_err
-                            );
+                        // e.messages for MaxTurnsError/UnknownToolCall is rig's full accumulated
+                        // chat_history (from AgentRun::full_history()), which DOES include the
+                        // current-turn user prompt and any tool call exchanges from this turn.
+                        // This is unlike last_known_history (from on_completion_call's `history`
+                        // parameter), which contains only prior messages. skip(pre_turn_message_count)
+                        // correctly yields [user_prompt, assistant_tool_calls...] — the new messages.
+                        let delta: Vec<Message> = messages
+                            .iter()
+                            .skip(e.pre_turn_message_count)
+                            .cloned()
+                            .collect();
+                        if !delta.is_empty() {
+                            let patched = inject_missing_tool_results(delta);
+                            if let Err(mem_err) = self.runtime.block_on(
+                                self.memory_state.memory_mut().append(session_id, patched),
+                            ) {
+                                log::warn!(
+                                    "Failed to update context for failed turn (path A history): {}",
+                                    mem_err
+                                );
+                            }
                         }
                     }
                     let user_msg = classify_completion_error(&e.msg);
                     return Err(LabeledError::new(user_msg.clone()).with_label(user_msg, span));
                 }
                 Err(e) if e.cancelled => {
-                    // Path A: rig hook cancelled — persist chat_history if available
+                    // Path A: rig hook cancelled — persist chat_history delta if available.
+                    // e.messages for PromptCancelled is rig's full_history() — it DOES include
+                    // the current-turn user prompt and any tool exchanges. skip(pre_turn_message_count)
+                    // yields only the new messages from this turn, preventing double-appending the
+                    // prior session history when a cancelled turn follows prior session messages.
                     if let Some(session_id) = final_session_id
                         && let Some(ref messages) = e.messages
                     {
-                        let patched = inject_missing_tool_results(messages.clone());
-                        if let Err(mem_err) = self
-                            .runtime
-                            .block_on(self.memory_state.memory_mut().append(session_id, patched))
-                        {
-                            log::warn!(
-                                "Failed to update context for cancelled turn (path A): {}",
-                                mem_err
-                            );
+                        let delta: Vec<Message> = messages
+                            .iter()
+                            .skip(e.pre_turn_message_count)
+                            .cloned()
+                            .collect();
+                        if !delta.is_empty() {
+                            let patched = inject_missing_tool_results(delta);
+                            if let Err(mem_err) = self.runtime.block_on(
+                                self.memory_state.memory_mut().append(session_id, patched),
+                            ) {
+                                log::warn!(
+                                    "Failed to update context for cancelled turn (path A): {}",
+                                    mem_err
+                                );
+                            }
                         }
                     }
                     // Return a minimal cancelled response (not an error)
@@ -224,8 +247,14 @@ impl<'a> TurnExecutor<'a> {
                         e.msg
                     );
                     if let Some(session_id) = final_session_id {
-                        if !e.last_known_history.is_empty() {
-                            let patched = inject_missing_tool_results(e.last_known_history);
+                        let delta: Vec<Message> = e
+                            .last_known_history
+                            .iter()
+                            .skip(e.pre_turn_message_count)
+                            .cloned()
+                            .collect();
+                        if !delta.is_empty() {
+                            let patched = inject_missing_tool_results(delta);
                             if let Err(mem_err) = self.runtime.block_on(
                                 self.memory_state.memory_mut().append(session_id, patched),
                             ) {
@@ -235,6 +264,9 @@ impl<'a> TurnExecutor<'a> {
                                 );
                             }
                         } else {
+                            // delta is empty: hook never fired OR error before any new messages
+                            // were added. Synthesise a placeholder to maintain the alternating
+                            // user/assistant structure.
                             let fallback = vec![
                                 Message::user(prompt.clone()),
                                 Message::assistant(format!("[Turn failed: {}]", e.msg)),
@@ -263,17 +295,28 @@ impl<'a> TurnExecutor<'a> {
             if let Some(session_id) = final_session_id {
                 if let Some(ref messages) = turn_result.messages {
                     // Normal path: rig provided chat_history via PromptCancelled.
+                    // PromptCancelled.chat_history is rig's full_history() — it DOES include
+                    // the current-turn user prompt and any tool exchanges. skip(pre_turn_message_count)
+                    // yields only the new messages from this turn, preventing double-appending the
+                    // prior session history when a cancelled turn follows prior session messages.
                     // JournalConversationMemory.append() writes both JSONL and in-memory
                     // cache in one call — no separate conversation_store.append() needed.
-                    let patched = inject_missing_tool_results(messages.clone());
-                    if let Err(e) = self
-                        .runtime
-                        .block_on(self.memory_state.memory_mut().append(session_id, patched))
-                    {
-                        log::warn!(
-                            "Failed to update context for cancelled turn (path C): {}",
-                            e
-                        );
+                    let delta: Vec<Message> = messages
+                        .iter()
+                        .skip(turn_result.pre_turn_message_count)
+                        .cloned()
+                        .collect();
+                    if !delta.is_empty() {
+                        let patched = inject_missing_tool_results(delta);
+                        if let Err(e) = self
+                            .runtime
+                            .block_on(self.memory_state.memory_mut().append(session_id, patched))
+                        {
+                            log::warn!(
+                                "Failed to update context for cancelled turn (path C): {}",
+                                e
+                            );
+                        }
                     }
                 } else {
                     // Defensive fallback: no chat_history provided — synthesise from prompt+text

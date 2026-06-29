@@ -413,3 +413,130 @@ async fn append_messages_to_store_only_no_cache_update() {
     assert_msg_eq(&cached[0], &initial[0]);
     assert_msg_eq(&cached[1], &initial[1]);
 }
+
+// ---------------------------------------------------------------------------
+// Integration test: no duplication when appending deltas sequentially
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn no_duplication_when_appending_deltas_sequentially() {
+    use rig::memory::ConversationMemory;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let memory = crate::session::JournalConversationMemory::new(temp_dir.path().to_path_buf());
+    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
+    let conversation_id = "integ-dedup-test";
+
+    // Simulate turn 1 success: append [user, assistant]
+    memory
+        .append(
+            conversation_id,
+            vec![
+                crate::types::Message::user("turn1"),
+                crate::types::Message::assistant("ok1"),
+            ],
+        )
+        .await
+        .expect("append turn1 should succeed");
+
+    // Verify the store has exactly 2 entries (no duplication at the storage layer)
+    let (entries_after_turn1, _) = store.load_all(conversation_id).unwrap();
+    assert_eq!(
+        entries_after_turn1.len(),
+        2,
+        "after turn1: JSONL store must have exactly 2 entries"
+    );
+
+    // Simulate turn 2 error: the executor appends the delta [user("turn2"),
+    // assistant("[Turn failed:]")] — a complete pair so the session stays valid.
+    memory
+        .append(
+            conversation_id,
+            vec![
+                crate::types::Message::user("turn2"),
+                crate::types::Message::assistant("[Turn failed: network error]"),
+            ],
+        )
+        .await
+        .expect("append turn2 delta should succeed");
+
+    // Verify the store has exactly 4 entries (strictly additive)
+    let (entries_after_turn2, _) = store.load_all(conversation_id).unwrap();
+    assert_eq!(
+        entries_after_turn2.len(),
+        4,
+        "after turn2 delta: JSONL store must have exactly 4 entries (bug would double to >4)"
+    );
+
+    // load() must also return the correct count after complete pairs
+    let after_turn2 = memory
+        .load(conversation_id)
+        .await
+        .expect("load should succeed");
+    assert_eq!(
+        after_turn2.len(),
+        4,
+        "after turn2 delta: load() expected 4 messages"
+    );
+
+    // Simulate turn 3 error: append another delta pair
+    memory
+        .append(
+            conversation_id,
+            vec![
+                crate::types::Message::user("turn3"),
+                crate::types::Message::assistant("[Turn failed: timeout]"),
+            ],
+        )
+        .await
+        .expect("append turn3 delta should succeed");
+
+    // Verify the store has exactly 6 entries (strictly additive)
+    let (entries_after_turn3, _) = store.load_all(conversation_id).unwrap();
+    assert_eq!(
+        entries_after_turn3.len(),
+        6,
+        "after turn3 delta: JSONL store must have exactly 6 entries (bug would double)"
+    );
+
+    // load() must return the correct count
+    let after_turn3 = memory
+        .load(conversation_id)
+        .await
+        .expect("load should succeed");
+    assert_eq!(
+        after_turn3.len(),
+        6,
+        "after turn3 delta: load() expected 6 messages"
+    );
+
+    // Verify no duplicate message content in the final view
+    let texts: Vec<String> = after_turn3
+        .iter()
+        .filter_map(|msg| match msg {
+            crate::types::Message::User { content } => content.iter().find_map(|c| {
+                if let crate::types::UserContent::Text(t) = c {
+                    Some(t.text.clone())
+                } else {
+                    None
+                }
+            }),
+            crate::types::Message::Assistant { content, .. } => content.iter().find_map(|c| {
+                if let crate::types::AssistantContent::Text(t) = c {
+                    Some(t.text.clone())
+                } else {
+                    None
+                }
+            }),
+            _ => None,
+        })
+        .collect();
+
+    let unique_count = texts.iter().collect::<std::collections::HashSet<_>>().len();
+    assert_eq!(
+        unique_count,
+        texts.len(),
+        "no message content should appear twice; got: {:?}",
+        texts
+    );
+}

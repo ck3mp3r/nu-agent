@@ -121,8 +121,10 @@ where
     M: CompletionModel,
     P: AsyncPermissionResolver,
 {
-    async fn on_completion_call(&self, _prompt: &Message, history: &[Message]) -> HookAction {
-        *self.last_known_history.lock().unwrap() = history.to_vec();
+    async fn on_completion_call(&self, prompt: &Message, history: &[Message]) -> HookAction {
+        let mut snapshot = history.to_vec();
+        snapshot.push(prompt.clone());
+        *self.last_known_history.lock().unwrap() = snapshot;
         if self.cancel_token.is_cancelled() {
             return HookAction::Terminate {
                 reason: "Cancelled by user".into(),

@@ -207,6 +207,7 @@ fn turn_result_can_be_constructed() {
         deltas_emitted: false,
         cancelled: false,
         last_total_tokens: 0,
+        pre_turn_message_count: 0,
     };
 
     assert_eq!(result.text, "Hello");
@@ -224,6 +225,7 @@ fn turn_error_can_be_constructed() {
         cancelled: false,
         messages: None,
         last_known_history: vec![],
+        pre_turn_message_count: 0,
     };
 
     assert_eq!(error.msg, "Test error");
@@ -235,6 +237,7 @@ fn turn_error_can_be_constructed() {
         cancelled: true,
         messages: None,
         last_known_history: vec![],
+        pre_turn_message_count: 0,
     };
     assert!(cancelled.cancelled);
     assert!(cancelled.messages.is_none());
@@ -475,6 +478,7 @@ fn path_b_cancelled_with_partial_text_constructs_user_and_assistant_messages() {
         deltas_emitted: true,
         cancelled: true,
         last_total_tokens: 0,
+        pre_turn_message_count: 0,
     };
 
     let prompt = "user prompt".to_string();
@@ -524,6 +528,7 @@ fn path_b_cancelled_with_empty_text_constructs_only_user_message() {
         deltas_emitted: false,
         cancelled: true,
         last_total_tokens: 0,
+        pre_turn_message_count: 0,
     };
 
     let prompt = "user prompt".to_string();
@@ -554,6 +559,7 @@ fn turn_result_cancelled_flag_propagates() {
         deltas_emitted: true,
         cancelled: true,
         last_total_tokens: 0,
+        pre_turn_message_count: 0,
     };
 
     assert!(cancelled_result.cancelled, "Cancelled flag should be true");
@@ -574,6 +580,7 @@ fn turn_result_cancelled_flag_propagates() {
         deltas_emitted: true,
         cancelled: false,
         last_total_tokens: 0,
+        pre_turn_message_count: 0,
     };
 
     assert!(

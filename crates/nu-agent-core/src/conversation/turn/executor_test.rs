@@ -265,9 +265,18 @@ fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_completed(
         .conversation_store()
         .load(session_id)
         .expect("conversation store load should succeed");
+    // The mock cancels immediately (before any assistant response), so path C appends
+    // the delta from PromptCancelled::chat_history. With pre_turn_count=0 on a fresh
+    // session the delta is [user("hello")] = 1 message. However the mock timing may
+    // include a partial assistant message depending on scheduler ordering, so we allow
+    // up to 2 (user + optional partial assistant). We assert strictly > 0 AND <= 2 to
+    // catch duplication (which would produce 3+ messages).
     assert!(
-        !persisted.is_empty(),
-        "cancelled turn messages must be persisted to JSONL store (path C)"
+        !persisted.is_empty() && persisted.len() <= 2,
+        "cancelled turn: expected 1-2 messages (user + optional partial), got {}; \
+         messages: {:?}",
+        persisted.len(),
+        persisted
     );
 
     // 2b. memory.load() returns repair-filtered view — raw messages are in JSONL (asserted
@@ -678,12 +687,15 @@ fn unknown_tool_error_persists_full_history() {
     );
 }
 
-/// Network/CompletionError has no chat_history — executor falls back to persisting
-/// a user+assistant pair so the session retains alternating turn structure.
-/// A bare user message at JSONL end would violate alternation and cause the Copilot API
-/// to reject all subsequent turns with 400 "No user query found".
+/// Network/CompletionError on a fresh session — executor persists the user prompt
+/// via the delta path (last_known_history = [user_prompt] after fix).
+///
+/// After the `on_completion_call` fix, `last_known_history` = `history + [prompt]` =
+/// `[] + [user_msg]` = `[user_msg]`. delta = skip(0) = `[user_msg]` (non-empty),
+/// so the delta path fires and persists just the user message. The placeholder path
+/// is no longer triggered for this case.
 #[test]
-fn network_error_persists_user_and_assistant_error_placeholder() {
+fn network_error_on_fresh_session_persists_user_message() {
     let config = test_config();
     let rt = tokio::runtime::Runtime::new().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
@@ -734,44 +746,110 @@ fn network_error_persists_user_and_assistant_error_placeholder() {
         "network error must propagate as LabeledError to caller"
     );
 
-    // JSONL must contain exactly two messages: user prompt + assistant error placeholder
+    // After the fix: last_known_history = [user_msg], delta = skip(0) = [user_msg].
+    // Delta path fires → 1 message persisted (just the user prompt).
+    // The placeholder path no longer fires because the delta is non-empty.
     let persisted = memory_state
         .conversation_store()
         .load(session_id)
         .expect("store load should succeed");
     assert_eq!(
         persisted.len(),
-        2,
-        "hard error must persist a user+assistant pair to maintain alternating turn structure; got {} messages",
+        1,
+        "hard error on fresh session must persist exactly 1 message (user prompt via delta path); got {} messages",
         persisted.len()
     );
-    // First persisted message must be the user prompt
+    // The single persisted message must be the user prompt
     assert!(
         matches!(persisted[0], crate::types::Message::User { .. }),
         "persisted[0] must be a User message"
     );
-    // Second persisted message must be an assistant error placeholder
-    assert!(
-        matches!(persisted[1], crate::types::Message::Assistant { .. }),
-        "persisted[1] must be an Assistant message"
+}
+
+/// When `on_completion_call` fires before a CompletionError on a fresh session,
+/// the executor persists the user prompt via the delta path (not a placeholder pair).
+///
+/// After the fix, `on_completion_call(prompt, history=[]`) stores `[] + [user_prompt]`
+/// = `[user_prompt]`. `pre_turn_message_count = 0`, so `delta = skip(0) = [user_prompt]`
+/// (non-empty) → delta path fires → 1 message persisted (just the user prompt).
+///
+/// The placeholder path (which would produce 2 messages) is no longer triggered
+/// because the delta is now always non-empty when `on_completion_call` has fired.
+///
+/// This is CORRECT: we now save the user's question even if the API fails to respond,
+/// which is better than saving a fake `[Turn failed:]` assistant message.
+#[test]
+fn hard_error_on_first_llm_call_persists_user_message() {
+    let config = test_config();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let session_id = "test-hard-error-no-hook-history";
+    let prompt_text = "fresh turn on empty session";
+    let mut memory_state =
+        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+
+    // Fresh session — no prior messages. on_completion_call fires with history=[]
+    // and prompt = user_msg. After fix: last_known_history = [user_msg].
+    // delta = skip(0) = [user_msg] → delta path fires → 1 message persisted.
+    let model =
+        MockCompletionModel::from_stream_turns([[MockStreamEvent::error("provider unavailable")]]);
+
+    let cached_client = CachedProviderClient::Mock(model);
+    let mut ui = MockUi::new();
+
+    let closure_registry = crate::tools::closure::ClosureRegistry::new();
+    let mcp_registry = crate::tools::handler::McpToolRegistry::from_names(Vec::<String>::new());
+    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &rt,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(closure_registry),
+            mcp_registry: Arc::new(mcp_registry),
+            tool_server_handle,
+            visible_tool_definitions: vec![],
+        },
     );
-    // The assistant placeholder must contain the failure marker
-    let assistant_content = match &persisted[1] {
-        crate::types::Message::Assistant { content, .. } => content
-            .iter()
-            .find_map(|c| {
-                if let crate::types::AssistantContent::Text(t) = c {
-                    Some(t.text.clone())
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_default(),
-        _ => unreachable!(),
-    };
+
+    let result = executor.execute(
+        &mut ui,
+        ExecuteInput {
+            prompt: prompt_text.to_string(),
+            preamble: None,
+            span: nu_protocol::Span::test_data(),
+        },
+        &cached_client,
+        MockResolver,
+        Some(session_id),
+        None,
+    );
+
+    // Must return Err
     assert!(
-        assistant_content.contains("Turn failed"),
-        "assistant error placeholder must contain 'Turn failed'; got: {assistant_content:?}"
+        result.is_err(),
+        "hard error must propagate as Err to caller"
+    );
+
+    // After the fix: last_known_history = [user_msg], delta = [user_msg], 1 message persisted.
+    let persisted = memory_state
+        .conversation_store()
+        .load(session_id)
+        .expect("store load should succeed");
+
+    assert_eq!(
+        persisted.len(),
+        1,
+        "hard error on fresh session must persist exactly 1 message (user prompt); got {:?}",
+        persisted
+    );
+
+    // The single persisted message must be the user prompt (not a placeholder)
+    assert!(
+        matches!(persisted[0], crate::types::Message::User { .. }),
+        "persisted[0] must be a User message; got {:?}",
+        persisted[0]
     );
 }
 
@@ -1080,19 +1158,24 @@ fn error_classifier_passes_through_unrelated_errors() {
 // CompletionError + hook history recovery tests
 // ---------------------------------------------------------------------------
 
-/// When `on_completion_call` fires with non-empty history before a CompletionError,
-/// the executor must persist the hook history (not a synthetic placeholder).
+/// Hard error after prior session history: the user prompt is persisted via the delta
+/// path (not a placeholder pair), because `last_known_history` now includes the prompt.
 ///
-/// Setup: pre-populate the session store with `[user("work done"), assistant("ok")]`
-/// so that `on_completion_call` fires with that history. Then run a turn that
-/// immediately errors. The hook Arc captures the pre-loaded history before the
-/// error, so `last_known_history` is non-empty — the recovery path writes the
-/// hook history to JSONL, not the placeholder.
+/// **Why the delta is [user_prompt] after the fix:** `on_completion_call(prompt, history)`
+/// now stores `history + [prompt]`. With prior history = [prior_1, prior_2] and a new
+/// user prompt, `last_known_history` = [prior_1, prior_2, user_prompt].
+/// `skip(pre_turn_message_count=2)` = [user_prompt] → delta path fires → 1 new message.
 ///
-/// RED: fails before `last_known_history` field is added to `TurnError` and
-/// the executor uses it in the hard-error path.
+/// Before the fix: `last_known_history` = [prior_1, prior_2] (no prompt included).
+/// `skip(2)` = empty delta → placeholder pair fired → 4 messages (2 prior + 2 placeholder).
+///
+/// After the fix: delta = [user_prompt] → delta path fires → 3 messages total
+/// (2 prior + 1 user_prompt). The placeholder path no longer fires.
+///
+/// Key regression assertion: store must be exactly 3 (2 prior + 1 user prompt),
+/// NOT 4 (old placeholder pair) and NOT 5 (the doubled result from the pre-delta-fix bug).
 #[test]
-fn hard_error_persists_hook_history_not_placeholder() {
+fn hard_error_after_prior_history_persists_user_message() {
     use crate::session::ConversationStore;
 
     let config = test_config();
@@ -1104,7 +1187,7 @@ fn hard_error_persists_hook_history_not_placeholder() {
 
     // Pre-populate the session store with a completed exchange so that rig
     // loads it into the agent's context and on_completion_call fires with
-    // non-empty history.
+    // non-empty prior history.
     let prior_messages = vec![
         crate::types::Message::user("work done"),
         crate::types::Message::assistant("ok"),
@@ -1153,33 +1236,61 @@ fn hard_error_persists_hook_history_not_placeholder() {
     // Must return Err (it's a hard error)
     assert!(result.is_err(), "CompletionError must propagate as Err");
 
-    // JSONL must NOT contain the placeholder assistant message
     let persisted = memory_state
         .conversation_store()
         .load(session_id)
         .expect("store load should succeed");
 
-    let has_placeholder = persisted.iter().any(|msg| {
-        if let crate::types::Message::Assistant { content, .. } = msg {
-            content.iter().any(|item| {
-                if let crate::types::AssistantContent::Text(t) = item {
-                    t.text.contains("[Turn failed:")
-                } else {
-                    false
-                }
-            })
-        } else {
-            false
-        }
-    });
-    assert!(
-        !has_placeholder,
-        "hard error with non-empty hook history must NOT persist '[Turn failed:' placeholder; got messages: {:?}",
+    // After the fix: last_known_history = [prior_1, prior_2, user_prompt].
+    // delta = skip(2) = [user_prompt] → delta path fires → 3 messages total.
+    // NOT 4 (old placeholder pair), NOT 5 (doubled history from pre-delta bug).
+    assert_eq!(
+        persisted.len(),
+        3,
+        "hard error after prior history must persist exactly 3 messages \
+         (2 prior + 1 user prompt via delta path); got {:?}",
         persisted
     );
 
-    // JSONL must contain the hook history messages (user("work done") and assistant("ok"))
-    let has_hook_user = persisted.iter().any(|msg| {
+    // [0] must be the prior user message
+    assert!(
+        matches!(&persisted[0], crate::types::Message::User { .. }),
+        "persisted[0] must be User (prior); got {:?}",
+        persisted[0]
+    );
+    // [1] must be the prior assistant message
+    assert!(
+        matches!(&persisted[1], crate::types::Message::Assistant { .. }),
+        "persisted[1] must be Assistant (prior); got {:?}",
+        persisted[1]
+    );
+    // [2] must be the user prompt ("new prompt")
+    assert!(
+        matches!(&persisted[2], crate::types::Message::User { .. }),
+        "persisted[2] must be User (new prompt); got {:?}",
+        persisted[2]
+    );
+    // Verify [2] contains the new prompt text
+    let new_prompt_text = match &persisted[2] {
+        crate::types::Message::User { content } => content
+            .iter()
+            .find_map(|c| {
+                if let crate::types::UserContent::Text(t) = c {
+                    Some(t.text.clone())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default(),
+        other => panic!("persisted[2] must be User; got {:?}", other),
+    };
+    assert_eq!(
+        new_prompt_text, "new prompt",
+        "persisted[2] must contain the new user prompt text"
+    );
+
+    // Prior message content check
+    let has_prior_user = persisted.iter().any(|msg| {
         if let crate::types::Message::User { content } = msg {
             content.iter().any(|item| {
                 if let crate::types::UserContent::Text(t) = item {
@@ -1193,34 +1304,377 @@ fn hard_error_persists_hook_history_not_placeholder() {
         }
     });
     assert!(
-        has_hook_user,
-        "hard error recovery must persist hook history (user('work done')); got messages: {:?}",
+        has_prior_user,
+        "prior user message must still be in store; got messages: {:?}",
         persisted
     );
 }
 
-/// When `on_completion_call` fires with EMPTY history (first turn, no prior messages)
-/// before a CompletionError, the executor must fall back to a synthetic placeholder.
+// ---------------------------------------------------------------------------
+// Subtask 2 — delta-only persistence regression tests
+// ---------------------------------------------------------------------------
+
+/// Regression test: hard error after prior session history must not re-append the
+/// full hook history snapshot — only a delta (the user prompt from this turn).
 ///
-/// This is the "no hook history available" case — the hook captured an empty
-/// history slice, so `last_known_history` is empty, and the fallback placeholder
-/// maintains the alternating user/assistant structure required by the API.
+/// Before the fix: `last_known_history` (full history) was appended → store grew
+/// from 2 to 5 messages (2 prior + 3 full history re-appended).
+/// After the fix: `last_known_history` = [prior_1, prior_2, user_prompt].
+/// delta = skip(pre_turn_count=2) = [user_prompt] → delta path fires → 3 messages total.
 ///
-/// RED: currently this test also passes (placeholder path was always used before
-/// our change). After the change, it must continue to pass — the placeholder is
-/// only used when `last_known_history` is empty.
+/// The bound is now exactly 3 (not < 5). The delta path fires with just the user
+/// prompt — no placeholder is synthesised because the delta is non-empty.
 #[test]
-fn hard_error_before_first_llm_call_persists_placeholder() {
+fn hard_error_after_prior_history_persists_only_delta() {
     let config = test_config();
     let rt = tokio::runtime::Runtime::new().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
-    let session_id = "test-hard-error-no-hook-history";
+    let session_id = "test-delta-hard-error";
+    let mut memory_state =
+        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+
+    // Pre-populate: simulate a prior successful turn
+    memory_state
+        .conversation_store()
+        .append(
+            session_id,
+            &[
+                crate::types::Message::user("prior work"),
+                crate::types::Message::assistant("done"),
+            ],
+            None,
+        )
+        .expect("pre-populate should succeed");
+
+    // Model errors immediately — simulates CompletionError / network failure.
+    // on_completion_call fires with history = [user("prior work"), assistant("done")]
+    // and prompt = user("new question").
+    // After fix: last_known_history = [prior_1, prior_2, user_prompt].
+    // delta = skip(2) = [user_prompt] → delta path fires → 3 total.
+    let model =
+        MockCompletionModel::from_stream_turns([[MockStreamEvent::error("network timeout")]]);
+
+    let cached_client = CachedProviderClient::Mock(model);
+    let mut ui = MockUi::new();
+    let closure_registry = ClosureRegistry::new();
+    let mcp_registry = McpToolRegistry::from_names(Vec::<String>::new());
+    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &rt,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(closure_registry),
+            mcp_registry: Arc::new(mcp_registry),
+            tool_server_handle,
+            visible_tool_definitions: vec![],
+        },
+    );
+
+    let result = executor.execute(
+        &mut ui,
+        ExecuteInput {
+            prompt: "new question".to_string(),
+            preamble: None,
+            span: nu_protocol::Span::test_data(),
+        },
+        &cached_client,
+        MockResolver,
+        Some(session_id),
+        None,
+    );
+
+    assert!(result.is_err(), "hard error must propagate as Err");
+
+    let persisted = memory_state
+        .conversation_store()
+        .load(session_id)
+        .expect("store load should succeed");
+
+    // After the fix: exactly 3 messages (2 prior + 1 user prompt delta).
+    // The delta path fires because last_known_history includes the user prompt.
+    // NOT 5 (pre-delta-fix duplication bug), NOT 4 (old placeholder pair).
+    assert_eq!(
+        persisted.len(),
+        3,
+        "hard error after prior history must persist exactly 3 messages (2 prior + 1 user prompt delta); got {} messages",
+        persisted.len()
+    );
+    assert!(
+        persisted.len() >= 2,
+        "prior messages must be preserved; got {}",
+        persisted.len()
+    );
+}
+
+/// Regression test: two consecutive hard errors must not double history each time.
+///
+/// Before the fix: turn 2 error appended full history (3 msgs), turn 3 appended full
+/// history again (4 msgs) → store grew to 2 + 3 + 4 = 9 messages.
+/// After the fix: `on_completion_call` stores `history + [prompt]`, so for each error
+/// turn the delta = [user_prompt_for_that_turn] (1 message). The delta path fires.
+/// Store grows by 1 per error turn:
+///   - Turn 1 success: 2 messages (rig persists [user("t1"), assistant("ok")])
+///   - Turn 2 error: +1 = 3 messages (delta = [user("t2")])
+///   - Turn 3 error: +1 = 4 messages (delta = [user("t3")])
+#[test]
+fn hard_error_twice_does_not_double_history() {
+    let config = test_config();
+    let session_id = "test-no-double";
+    let temp_dir = tempfile::tempdir().unwrap();
+
+    // Turn 1: successful turn — rig appends [user("t1"), assistant("ok")] → store has 2 msgs.
+    {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut memory_state =
+            super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+        let model = MockCompletionModel::from_stream_turns([[
+            MockStreamEvent::Text("ok".to_string()),
+            MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+        ]]);
+        let cached_client = CachedProviderClient::Mock(model);
+        let mut ui = MockUi::new();
+        let closure_registry = ClosureRegistry::new();
+        let mcp_registry = McpToolRegistry::from_names(Vec::<String>::new());
+        let tool_server_handle = rig::tool::server::ToolServer::new().run();
+        let mut executor = TurnExecutor::new(
+            &config,
+            &rt,
+            &mut memory_state,
+            ToolInfra {
+                closure_registry: Arc::new(closure_registry),
+                mcp_registry: Arc::new(mcp_registry),
+                tool_server_handle,
+                visible_tool_definitions: vec![],
+            },
+        );
+        let result = executor.execute(
+            &mut ui,
+            ExecuteInput {
+                prompt: "t1".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            &cached_client,
+            MockResolver,
+            Some(session_id),
+            None,
+        );
+        assert!(result.is_ok(), "turn 1 must succeed");
+    }
+
+    // Turn 2: hard error. pre_turn_count=2. last_known_history = [prior_1, prior_2, user("t2")].
+    // delta = skip(2) = [user("t2")] → delta path fires → store has 3.
+    {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut memory_state =
+            super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+        let model = MockCompletionModel::from_stream_turns([[MockStreamEvent::error("timeout")]]);
+        let cached_client = CachedProviderClient::Mock(model);
+        let mut ui = MockUi::new();
+        let closure_registry = ClosureRegistry::new();
+        let mcp_registry = McpToolRegistry::from_names(Vec::<String>::new());
+        let tool_server_handle = rig::tool::server::ToolServer::new().run();
+        let mut executor = TurnExecutor::new(
+            &config,
+            &rt,
+            &mut memory_state,
+            ToolInfra {
+                closure_registry: Arc::new(closure_registry),
+                mcp_registry: Arc::new(mcp_registry),
+                tool_server_handle,
+                visible_tool_definitions: vec![],
+            },
+        );
+        let _ = executor.execute(
+            &mut ui,
+            ExecuteInput {
+                prompt: "t2".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            &cached_client,
+            MockResolver,
+            Some(session_id),
+            None,
+        );
+    }
+
+    // Turn 3: hard error again. pre_turn_count=3. last_known_history = [prior_1, prior_2, user("t2"), user("t3")].
+    // delta = skip(3) = [user("t3")] → delta path fires → store has 4.
+    {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut memory_state =
+            super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+        let model = MockCompletionModel::from_stream_turns([[MockStreamEvent::error("timeout")]]);
+        let cached_client = CachedProviderClient::Mock(model);
+        let mut ui = MockUi::new();
+        let closure_registry = ClosureRegistry::new();
+        let mcp_registry = McpToolRegistry::from_names(Vec::<String>::new());
+        let tool_server_handle = rig::tool::server::ToolServer::new().run();
+        let mut executor = TurnExecutor::new(
+            &config,
+            &rt,
+            &mut memory_state,
+            ToolInfra {
+                closure_registry: Arc::new(closure_registry),
+                mcp_registry: Arc::new(mcp_registry),
+                tool_server_handle,
+                visible_tool_definitions: vec![],
+            },
+        );
+        let _ = executor.execute(
+            &mut ui,
+            ExecuteInput {
+                prompt: "t3".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            &cached_client,
+            MockResolver,
+            Some(session_id),
+            None,
+        );
+    }
+
+    // Final state: 2 (turn 1 success) + 1 (turn 2 user delta) + 1 (turn 3 user delta) = 4.
+    // After the fix: on_completion_call stores history + [prompt], so delta = [user_prompt]
+    // for each error turn. Delta path fires → 1 message per error turn, not 2 (no placeholder).
+    let final_memory_state =
+        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+    let final_count = final_memory_state
+        .conversation_store()
+        .load(session_id)
+        .expect("store load should succeed")
+        .len();
+
+    assert_eq!(
+        final_count, 4,
+        "two hard errors after one success must produce exactly 4 messages \
+         (2 from turn1 + 1 user delta turn2 + 1 user delta turn3); got {} messages",
+        final_count
+    );
+    assert!(
+        final_count >= 2,
+        "original turn 1 messages must be preserved; got {}",
+        final_count
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Subtask 3 — cancelled-turn diagnostic test
+// ---------------------------------------------------------------------------
+
+/// Diagnostic test: does a cancelled turn after prior session history duplicate JSONL?
+///
+/// Path C fires: rig's PromptCancelled carries chat_history. If that chat_history
+/// is the full accumulated history (prior + current user prompt), appending it
+/// directly would double the store.
+///
+/// Expected: store grows by at most the new messages from this turn, not by the
+/// full prior history again.
+#[test]
+fn cancelled_turn_after_prior_history_persists_only_delta() {
+    let config = test_config();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let session_id = "test-cancelled-delta";
+    let mut memory_state =
+        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+
+    // Pre-populate: simulate a prior successful turn
+    memory_state
+        .conversation_store()
+        .append(
+            session_id,
+            &[
+                crate::types::Message::user("prior work"),
+                crate::types::Message::assistant("done"),
+            ],
+            None,
+        )
+        .expect("pre-populate should succeed");
+
+    let model = MockCompletionModel::from_stream_turns([[
+        MockStreamEvent::Text("partial".to_string()),
+        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+    ]]);
+    let cached_client = CachedProviderClient::Mock(model);
+    let mut ui = MockUi::immediately_cancelled();
+    let closure_registry = ClosureRegistry::new();
+    let mcp_registry = McpToolRegistry::from_names(Vec::<String>::new());
+    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &rt,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(closure_registry),
+            mcp_registry: Arc::new(mcp_registry),
+            tool_server_handle,
+            visible_tool_definitions: vec![],
+        },
+    );
+
+    let result = executor.execute(
+        &mut ui,
+        ExecuteInput {
+            prompt: "new question".to_string(),
+            preamble: None,
+            span: nu_protocol::Span::test_data(),
+        },
+        &cached_client,
+        MockResolver,
+        Some(session_id),
+        None,
+    );
+
+    assert!(result.is_ok(), "cancelled turn must not return Err");
+    assert!(matches!(result.unwrap(), TurnOutcome::EarlyReturn(_)));
+
+    let persisted = memory_state
+        .conversation_store()
+        .load(session_id)
+        .expect("store load should succeed");
+
+    // MUST be <= 4 (2 prior + at most 2 new), NOT 5+ (prior doubled)
+    assert!(
+        persisted.len() <= 4,
+        "cancelled turn after prior history must not double the store; got {} messages (expected <= 4)",
+        persisted.len()
+    );
+    assert!(
+        persisted.len() >= 2,
+        "prior messages must be preserved; got {}",
+        persisted.len()
+    );
+}
+
+/// When `on_completion_call` fires on the first LLM call of a fresh session
+/// before a CompletionError, the executor persists the user prompt via the delta
+/// path — NOT a synthetic placeholder.
+///
+/// After the fix, `on_completion_call(prompt, history=[])` stores `[prompt]`.
+/// `pre_turn_message_count = 0`, so `delta = skip(0) = [prompt]` (non-empty).
+/// Delta path fires → 1 message persisted. The placeholder path is never reached.
+///
+/// This also confirms the `test-hard-error-no-hook-history` session_id is used
+/// consistently across this and the renamed test.
+#[test]
+fn hard_error_on_first_llm_call_no_prior_history_persists_user_message() {
+    let config = test_config();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let session_id = "test-hard-error-fresh-session-2";
     let prompt_text = "fresh turn on empty session";
     let mut memory_state =
         super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
 
     // Fresh session — no prior messages. on_completion_call fires with history=[]
-    // which means last_known_history stays empty → placeholder path.
+    // and prompt = user_msg. After fix: last_known_history = [user_msg].
+    // delta = skip(0) = [user_msg] (non-empty) → delta path fires → 1 message.
     let model =
         MockCompletionModel::from_stream_turns([[MockStreamEvent::error("provider unavailable")]]);
 
@@ -1262,28 +1716,204 @@ fn hard_error_before_first_llm_call_persists_placeholder() {
         "hard error must propagate as Err to caller"
     );
 
-    // JSONL must contain the placeholder assistant message
+    // After the fix: 1 message persisted (user prompt via delta path, no placeholder).
     let persisted = memory_state
         .conversation_store()
         .load(session_id)
         .expect("store load should succeed");
 
-    let has_placeholder = persisted.iter().any(|msg| {
-        if let crate::types::Message::Assistant { content, .. } = msg {
-            content.iter().any(|item| {
-                if let crate::types::AssistantContent::Text(t) = item {
-                    t.text.contains("[Turn failed:")
-                } else {
-                    false
-                }
-            })
-        } else {
-            false
-        }
-    });
+    assert_eq!(
+        persisted.len(),
+        1,
+        "fresh session hard error must produce exactly 1 message (user prompt, no placeholder); \
+         got {:?}",
+        persisted
+    );
+
     assert!(
-        has_placeholder,
-        "hard error on fresh session (empty hook history) must persist '[Turn failed:' placeholder; got messages: {:?}",
+        matches!(persisted[0], crate::types::Message::User { .. }),
+        "persisted[0] must be a User message; got {:?}",
+        persisted[0]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// New test: hard error mid-tool-loop preserves real tool results
+// ---------------------------------------------------------------------------
+
+/// Verifies the root-cause fix: when a CompletionError occurs on the second LLM
+/// sub-call of a multi-tool-call turn, the real tool result from sub-turn 1 is
+/// preserved in the session — not replaced by a synthetic "[interrupted]" placeholder.
+///
+/// Before the fix: `on_completion_call(prompt=tool_result_msg, history=[user_msg,
+/// assistant_tool_call])` discarded `prompt` → `last_known_history` = [user_msg,
+/// assistant_tool_call] → `inject_missing_tool_results` synthesised "[interrupted]"
+/// for "tc1" since no following ToolResult was present.
+///
+/// After the fix: `last_known_history` = [user_msg, assistant_tool_call,
+/// tool_result_msg] → delta includes the real tool result → no synthesis needed.
+///
+/// Test flow (two `from_stream_turns` turns):
+///   Sub-turn 1: LLM → tool_call("tc1", "some_tool", …) + FinalResponse
+///               Rig dispatches tool → "some_tool" not in toolset → on_invalid_tool_call
+///               → Skip → rig inserts error ToolResult for "tc1" into new_messages
+///               → on_completion_call(prompt=tool_result_user_msg,
+///                                   history=[user_msg, assistant_tool_call_msg])
+///   Sub-turn 2: LLM → error("network failure")
+///               → CompletionError → last_known_history snapshot is read
+///
+/// After fix:
+///   last_known_history = [user_msg, assistant_tool_call_msg, tool_result_user_msg]
+///   delta = skip(pre_turn_count=0) = all 3 messages
+///   inject_missing_tool_results: tool_call "tc1" HAS following ToolResult → no patch
+///   persisted = [user_msg, assistant_tool_call_msg, tool_result_user_msg]
+///
+/// Key assertion: every persisted ToolCall has a following ToolResult NOT containing "[interrupted]".
+#[test]
+fn hard_error_mid_tool_loop_preserves_real_tool_results() {
+    let config = test_config();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let session_id = "test-mid-tool-loop-error";
+    let mut memory_state =
+        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+
+    // Turn 1: LLM emits tool_call + FinalResponse
+    // Turn 2: LLM errors (simulates CompletionError after tool result is in history)
+    let model = MockCompletionModel::from_stream_turns([
+        vec![
+            MockStreamEvent::tool_call("tc1", "some_tool", serde_json::json!({"x": 1})),
+            MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+        ],
+        vec![MockStreamEvent::error("network failure after tool")],
+    ]);
+
+    let cached_client = CachedProviderClient::Mock(model);
+    let mut ui = MockUi::new();
+
+    let closure_registry = crate::tools::closure::ClosureRegistry::new();
+    let mcp_registry = crate::tools::handler::McpToolRegistry::from_names(Vec::<String>::new());
+    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &rt,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(closure_registry),
+            mcp_registry: Arc::new(mcp_registry),
+            tool_server_handle,
+            visible_tool_definitions: vec![],
+        },
+    );
+
+    let result = executor.execute(
+        &mut ui,
+        ExecuteInput {
+            prompt: "do the thing".to_string(),
+            preamble: None,
+            span: nu_protocol::Span::test_data(),
+        },
+        &cached_client,
+        MockResolver,
+        Some(session_id),
+        None,
+    );
+
+    // The error must propagate (CompletionError from turn 2, or UnknownToolCall from turn 1)
+    assert!(
+        result.is_err(),
+        "error on sub-call must propagate as Err; got ok"
+    );
+
+    let persisted = memory_state
+        .conversation_store()
+        .load(session_id)
+        .expect("store load should succeed");
+
+    // Must have exactly 3 messages: [User(prompt), Assistant(ToolCall), User(ToolResult)]
+    assert_eq!(
+        persisted.len(),
+        3,
+        "mid-tool-loop error must persist exactly [user_msg, assistant_tool_call, tool_result]; got {} messages: {:?}",
+        persisted.len(),
+        persisted
+    );
+
+    // For every persisted ToolCall, verify the following ToolResult is NOT "[interrupted]"
+    use crate::types::{AssistantContent, UserContent};
+    let mut found_tool_call = false;
+    for (i, msg) in persisted.iter().enumerate() {
+        let crate::types::Message::Assistant { content, .. } = msg else {
+            continue;
+        };
+        for item in content.iter() {
+            let AssistantContent::ToolCall(tc) = item else {
+                continue;
+            };
+            let call_id = &tc.id;
+            found_tool_call = true;
+
+            // There MUST be a following ToolResult
+            let next = persisted.get(i + 1).unwrap_or_else(|| {
+                panic!("ToolCall id={call_id} must have a following message in persisted history")
+            });
+
+            let result_content = if let crate::types::Message::User { content } = next {
+                content
+                    .iter()
+                    .find_map(|item| {
+                        if let UserContent::ToolResult(tr) = item {
+                            if &tr.id == call_id {
+                                // Extract text content
+                                Some(
+                                    tr.content
+                                        .iter()
+                                        .find_map(|c| {
+                                            if let crate::types::ToolResultContent::Text(t) = c {
+                                                Some(t.text.clone())
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                        .unwrap_or_default(),
+                                )
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "ToolCall id={call_id} must have a matching ToolResult; \
+                             next message: {:?}",
+                            next
+                        )
+                    })
+            } else {
+                panic!(
+                    "Message after ToolCall id={call_id} must be User; got {:?}",
+                    next
+                )
+            };
+
+            // The real key assertion: result must NOT be the synthetic "[interrupted]"
+            // placeholder that inject_missing_tool_results would insert.
+            assert!(
+                !result_content.contains("[interrupted]"),
+                "ToolResult id={call_id} must NOT contain '[interrupted]' \
+                 (real result was available but got synthetic placeholder); \
+                 content: {:?}",
+                result_content
+            );
+        }
+    }
+
+    assert!(
+        found_tool_call,
+        "test requires at least one ToolCall to be persisted; got: {:?}",
         persisted
     );
 }

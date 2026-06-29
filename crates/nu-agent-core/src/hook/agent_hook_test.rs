@@ -402,8 +402,13 @@ fn is_tool_failure_does_not_flag_success() {
 // last_known_history Arc tests
 // ---------------------------------------------------------------------------
 
-/// `on_completion_call` stores the full history in the shared Arc each time it
+/// `on_completion_call` stores `history + [prompt]` in the shared Arc each time it
 /// fires, overwriting any previous snapshot (not appending).
+///
+/// After the fix, `on_completion_call(prompt, history)` stores `history.to_vec() + [prompt]`
+/// so that `last_known_history` always includes the current prompt that was sent to the LLM.
+/// This ensures that after a CompletionError the caller can recover the full context window
+/// including the message that triggered the error.
 ///
 /// RED: fails before `last_known_history` field and `last_known_history()` accessor are added.
 #[tokio::test]
@@ -418,16 +423,18 @@ async fn on_completion_call_stores_history_in_shared_arc() {
 
     let prompt = dummy_message();
 
-    // First call: history = [user("hello")]
+    // First call: history = [user("hello")], prompt = dummy_message()
+    // Expected snapshot: [user("hello"), prompt] = 2 messages
     let history_one = [rig::message::Message::user("hello")];
     PromptHook::<DummyModel>::on_completion_call(&hook, &prompt, &history_one).await;
     assert_eq!(
         arc.lock().unwrap().len(),
-        1,
-        "after first on_completion_call the arc must contain 1 message"
+        2,
+        "after first on_completion_call the arc must contain history + [prompt] = 2 messages"
     );
 
-    // Second call: history = [user("hello"), assistant("hi")]
+    // Second call: history = [user("hello"), assistant("hi")], prompt = dummy_message()
+    // Expected snapshot: [user("hello"), assistant("hi"), prompt] = 3 messages (overwrite, not append)
     let history_two = [
         rig::message::Message::user("hello"),
         rig::message::Message::assistant("hi"),
@@ -435,7 +442,7 @@ async fn on_completion_call_stores_history_in_shared_arc() {
     PromptHook::<DummyModel>::on_completion_call(&hook, &prompt, &history_two).await;
     assert_eq!(
         arc.lock().unwrap().len(),
-        2,
-        "after second on_completion_call the arc must be overwritten with 2 messages (not appended)"
+        3,
+        "after second on_completion_call the arc must be overwritten with history + [prompt] = 3 messages (not appended)"
     );
 }
