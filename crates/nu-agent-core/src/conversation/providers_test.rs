@@ -51,6 +51,11 @@ fn build_copilot_client_no_auth_returns_ok() {
         max_tool_turns: None,
         preamble: None,
         read_timeout_secs: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     let result = build_copilot_client(&config);
@@ -109,6 +114,11 @@ fn build_copilot_client_oauth_path_succeeds_at_build_time() {
         max_tool_turns: None,
         preamble: None,
         read_timeout_secs: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     let result = build_copilot_client(&config);

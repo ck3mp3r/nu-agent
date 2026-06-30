@@ -35,6 +35,7 @@ pub struct ClosureToolAdapter {
     resolved: ResolvedClosure,
     executor: Arc<ToolExecutor>,
     span: Span,
+    max_tool_result_bytes: usize,
 }
 
 impl ClosureToolAdapter {
@@ -46,11 +47,13 @@ impl ClosureToolAdapter {
     /// * `resolved` - The resolved closure with pre-extracted parameters
     /// * `executor` - The ToolExecutor for running the closure
     /// * `span` - Span for error reporting
+    /// * `max_tool_result_bytes` - Maximum bytes before truncation (0 = disabled)
     pub fn new(
         name: String,
         resolved: ResolvedClosure,
         executor: Arc<ToolExecutor>,
         span: Span,
+        max_tool_result_bytes: usize,
     ) -> Self {
         let definition =
             crate::tools::closure::closure_to_tool_definition(name.clone(), &resolved.params, None);
@@ -61,6 +64,7 @@ impl ClosureToolAdapter {
             resolved,
             executor,
             span,
+            max_tool_result_bytes,
         }
     }
 }
@@ -136,7 +140,7 @@ impl ToolDyn for ClosureToolAdapter {
                     "JSON serialization failed: {e}"
                 ))))
             })?;
-            Ok(truncate_tool_output(result_str))
+            Ok(truncate_tool_output(result_str, self.max_tool_result_bytes))
         })
     }
 }
@@ -151,6 +155,7 @@ impl ToolDyn for ClosureToolAdapter {
 /// * `registry` - The closure registry containing all tool closures
 /// * `executor` - The ToolExecutor for running closures
 /// * `span` - Span for error reporting
+/// * `max_tool_result_bytes` - Maximum bytes before truncation (0 = disabled)
 ///
 /// # Returns
 ///
@@ -160,12 +165,19 @@ pub fn adapt_closures(
     registry: &ClosureRegistry,
     executor: Arc<ToolExecutor>,
     span: Span,
+    max_tool_result_bytes: usize,
 ) -> Vec<ClosureToolAdapter> {
     registry
         .names()
         .map(|name| {
             let resolved = registry.get(name).unwrap().clone();
-            ClosureToolAdapter::new(name.clone(), resolved, executor.clone(), span)
+            ClosureToolAdapter::new(
+                name.clone(),
+                resolved,
+                executor.clone(),
+                span,
+                max_tool_result_bytes,
+            )
         })
         .collect()
 }

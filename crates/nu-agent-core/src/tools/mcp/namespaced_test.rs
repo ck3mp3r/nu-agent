@@ -45,7 +45,7 @@ impl ToolDyn for MockTool {
 async fn namespaced_tool_returns_prefixed_name() {
     // RED: Write failing test first
     let inner = MockTool::new("run", "Run a command");
-    let tool = NamespacedTool::new(Box::new(inner), "nu", "__");
+    let tool = NamespacedTool::new(Box::new(inner), "nu", "__", MAX_TOOL_OUTPUT_BYTES);
 
     assert_eq!(tool.name(), "nu__run");
 }
@@ -54,7 +54,7 @@ async fn namespaced_tool_returns_prefixed_name() {
 async fn namespaced_tool_definition_has_prefixed_name() {
     // RED: Test that definition returns namespaced name
     let inner = MockTool::new("exec", "Execute something");
-    let tool = NamespacedTool::new(Box::new(inner), "mcp", "__");
+    let tool = NamespacedTool::new(Box::new(inner), "mcp", "__", MAX_TOOL_OUTPUT_BYTES);
 
     let definition = tool.definition("test prompt".to_string()).await;
     assert_eq!(definition.name, "mcp__exec");
@@ -65,7 +65,7 @@ async fn namespaced_tool_definition_has_prefixed_name() {
 async fn namespaced_tool_call_delegates_to_inner() {
     // RED: Test that call delegates to inner tool
     let inner = MockTool::new("test", "Test tool");
-    let tool = NamespacedTool::new(Box::new(inner), "server", "__");
+    let tool = NamespacedTool::new(Box::new(inner), "server", "__", MAX_TOOL_OUTPUT_BYTES);
 
     let result = tool.call(r#"{"arg": "value"}"#.to_string()).await;
     assert!(result.is_ok());
@@ -76,7 +76,7 @@ async fn namespaced_tool_call_delegates_to_inner() {
 async fn namespaced_tool_uses_custom_delimiter() {
     // RED: Test custom delimiter
     let inner = MockTool::new("info", "Get info");
-    let tool = NamespacedTool::new(Box::new(inner), "server", "::");
+    let tool = NamespacedTool::new(Box::new(inner), "server", "::", MAX_TOOL_OUTPUT_BYTES);
 
     assert_eq!(tool.name(), "server::info");
 
@@ -111,7 +111,7 @@ impl ToolDyn for LargeMockTool {
 #[tokio::test]
 async fn namespaced_tool_truncates_large_output() {
     let inner = LargeMockTool;
-    let tool = NamespacedTool::new(Box::new(inner), "server", "__");
+    let tool = NamespacedTool::new(Box::new(inner), "server", "__", MAX_TOOL_OUTPUT_BYTES);
 
     let result = tool.call("{}".to_string()).await;
     assert!(result.is_ok(), "Expected Ok, got: {:?}", result);

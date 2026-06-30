@@ -258,6 +258,7 @@ pub async fn connect_servers(
     tool_server_handle: &rig::tool::server::ToolServerHandle,
     servers: &[McpServerConfig],
     caller_cwd: Option<&std::path::Path>,
+    max_tool_result_bytes: usize,
 ) -> Result<McpRuntime, String> {
     let mut sessions = Vec::new();
     let mut connected_servers = std::collections::BTreeSet::new();
@@ -265,8 +266,13 @@ pub async fn connect_servers(
     let mut exposed_name_owner: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
     for server in select_enabled_servers(servers) {
-        let (service, server_tools) =
-            connect_server(tool_server_handle, server, caller_cwd).await?;
+        let (service, server_tools) = connect_server(
+            tool_server_handle,
+            server,
+            caller_cwd,
+            max_tool_result_bytes,
+        )
+        .await?;
 
         for tool in &server_tools {
             register_exposed_name(&mut exposed_name_owner, &tool.name, &server.name)?;
@@ -288,6 +294,7 @@ pub(crate) async fn connect_server(
     tool_server_handle: &rig::tool::server::ToolServerHandle,
     server: &McpServerConfig,
     caller_cwd: Option<&std::path::Path>,
+    max_tool_result_bytes: usize,
 ) -> Result<
     (
         rmcp::service::RunningService<rmcp::service::RoleClient, NamespacedClientHandler>,
@@ -305,6 +312,7 @@ pub(crate) async fn connect_server(
         tool_server_handle.clone(),
         server.name.clone(),
         MCP_TOOL_NAMESPACE_DELIMITER.to_string(),
+        max_tool_result_bytes,
     );
 
     match server.transport {

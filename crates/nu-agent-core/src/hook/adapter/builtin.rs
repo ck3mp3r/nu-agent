@@ -35,6 +35,7 @@ pub struct BuiltinToolAdapter {
         Option<Arc<std::sync::Mutex<crate::tools::handler::spawn_agent::OrchestratorState>>>,
     broker_sender: Option<Arc<tokio::sync::Mutex<crate::mailbox::BrokerSender>>>,
     agent_name: Option<String>,
+    max_tool_result_bytes: usize,
 }
 
 impl BuiltinToolAdapter {
@@ -47,6 +48,7 @@ impl BuiltinToolAdapter {
     /// * `orchestrator` - Optional orchestrator state for spawn_agent, send_message (parent), and list_agents
     /// * `broker_sender` - Optional broker sender for send_message (children)
     /// * `agent_name` - Optional agent identity for send_message `from` field
+    /// * `max_tool_result_bytes` - Maximum bytes before truncation (0 = disabled)
     #[allow(private_interfaces)]
     pub fn new(
         tool_def: ToolDefinition,
@@ -56,6 +58,7 @@ impl BuiltinToolAdapter {
         >,
         broker_sender: Option<Arc<tokio::sync::Mutex<crate::mailbox::BrokerSender>>>,
         agent_name: Option<String>,
+        max_tool_result_bytes: usize,
     ) -> Self {
         Self {
             tool_def,
@@ -63,6 +66,7 @@ impl BuiltinToolAdapter {
             orchestrator,
             broker_sender,
             agent_name,
+            max_tool_result_bytes,
         }
     }
 }
@@ -227,7 +231,7 @@ impl ToolDyn for BuiltinToolAdapter {
                     "JSON serialization failed: {e}"
                 ))))
             })?;
-            Ok(truncate_tool_output(result_str))
+            Ok(truncate_tool_output(result_str, self.max_tool_result_bytes))
         })
     }
 }
@@ -244,6 +248,7 @@ impl ToolDyn for BuiltinToolAdapter {
 /// * `orchestrator` - Optional orchestrator state for spawn_agent, send_message (parent), and list_agents
 /// * `broker_sender` - Optional broker sender for send_message (children)
 /// * `agent_name` - Optional agent identity for send_message `from` field
+/// * `max_tool_result_bytes` - Maximum bytes before truncation (0 = disabled)
 ///
 /// # Returns
 ///
@@ -258,6 +263,7 @@ pub fn adapt_builtins(
     >,
     broker_sender: Option<Arc<tokio::sync::Mutex<crate::mailbox::BrokerSender>>>,
     agent_name: Option<String>,
+    max_tool_result_bytes: usize,
 ) -> Vec<BuiltinToolAdapter> {
     tool_definitions
         .into_iter()
@@ -268,6 +274,7 @@ pub fn adapt_builtins(
                 orchestrator.clone(),
                 broker_sender.clone(),
                 agent_name.clone(),
+                max_tool_result_bytes,
             )
         })
         .collect()

@@ -12,6 +12,7 @@ use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 use tokio::runtime::Runtime;
 
 use super::*;
+use crate::config::Config;
 use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
 use crate::session::JournalConversationMemory;
 use crate::tools::closure::ClosureRegistry;
@@ -105,6 +106,7 @@ impl ProgressUi for MockUi {
 fn make_turn_context<'a>(
     runtime: &'a tokio::runtime::Handle,
     model: MockCompletionModel,
+    config: &'a Config,
 ) -> TurnContext<'a, MockCompletionModel> {
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
@@ -124,7 +126,7 @@ fn make_turn_context<'a>(
         tool_server_handle: rig::tool::server::ToolServer::new().run(),
         visible_tool_definitions: vec![],
     };
-    TurnContext::new(runtime, model, conversation, input, tool_infra)
+    TurnContext::new(runtime, model, conversation, input, tool_infra, config)
 }
 
 // ---------------------------------------------------------------------------
@@ -140,7 +142,8 @@ fn execute_turn_text_only_response() {
         MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
     ]]);
 
-    let ctx = make_turn_context(rt.handle(), model);
+    let config = Config::default();
+    let ctx = make_turn_context(rt.handle(), model, &config);
     let mut ui = MockUi::new();
     let resolver = MockResolver(PermissionDecision::Allow);
 
@@ -173,7 +176,8 @@ fn execute_turn_cancel_returns_cancelled_true() {
         MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
     ]]);
 
-    let ctx = make_turn_context(rt.handle(), model);
+    let config = Config::default();
+    let ctx = make_turn_context(rt.handle(), model, &config);
     // Pre-set cancel flag so take_cancel_requested() fires on the very first drain
     // loop iteration — before any 16ms sleep, giving the cancel_token the best
     // chance to be seen by the spawned task before it processes stream events.
@@ -806,7 +810,8 @@ fn transient_turn_does_not_write_jsonl() {
         MockStreamEvent::Text("Hello, world!".to_string()),
         MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
     ]]);
-    let ctx = TurnContext::new(rt.handle(), model, conversation, input, tool_infra);
+    let config = Config::default();
+    let ctx = TurnContext::new(rt.handle(), model, conversation, input, tool_infra, &config);
     let mut ui = MockUi::new();
     let resolver = MockResolver(PermissionDecision::Allow);
 
@@ -859,7 +864,8 @@ fn persistent_turn_writes_jsonl() {
         MockStreamEvent::Text("Hello from LLM!".to_string()),
         MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
     ]]);
-    let ctx = TurnContext::new(rt.handle(), model, conversation, input, tool_infra);
+    let config = Config::default();
+    let ctx = TurnContext::new(rt.handle(), model, conversation, input, tool_infra, &config);
     let mut ui = MockUi::new();
     let resolver = MockResolver(PermissionDecision::Allow);
 

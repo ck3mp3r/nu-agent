@@ -359,7 +359,7 @@ async fn connect_servers_does_not_replace_existing_handle_contents() {
     let handle = ToolServer::new().run();
 
     // Connect with no servers — should succeed and return empty runtime
-    let result = crate::tools::mcp::runtime::connect_servers(&handle, &[], None).await;
+    let result = crate::tools::mcp::runtime::connect_servers(&handle, &[], None, 20_000).await;
 
     assert!(
         result.is_ok(),

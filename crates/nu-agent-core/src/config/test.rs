@@ -43,6 +43,11 @@ fn test_config_required_fields() {
         max_tool_turns: None,
         preamble: None,
         read_timeout_secs: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     assert_eq!(config.provider, "openai");
@@ -66,6 +71,11 @@ fn test_config_all_fields() {
         max_tool_turns: Some(10),
         preamble: None,
         read_timeout_secs: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     assert_eq!(config.provider, "anthropic");
@@ -98,6 +108,9 @@ fn test_config_default_trait() {
 
     // max_tool_turns should now default to None (runtime decides based on mode)
     assert!(config.max_tool_turns.is_none());
+
+    // max_tool_result_bytes defaults to None (resolved to 20_000 at point of use)
+    assert!(config.max_tool_result_bytes.is_none());
 }
 
 #[test]
@@ -138,6 +151,7 @@ fn test_from_env_with_agent_overrides() {
             ("AGENT_MAX_OUTPUT_TOKENS", "4096"),
             ("AGENT_MAX_TOOL_TURNS", "15"),
             ("AGENT_BASE_URL", "https://custom.api.com"),
+            ("AGENT_MAX_TOOL_RESULT_BYTES", "15000"),
         ],
         || {
             let config = Config::from_env("anthropic", "claude-3-opus");
@@ -151,6 +165,7 @@ fn test_from_env_with_agent_overrides() {
             assert_eq!(config.max_context_tokens, Some(8192));
             assert_eq!(config.max_output_tokens, Some(4096));
             assert_eq!(config.max_tool_turns, Some(15));
+            assert_eq!(config.max_tool_result_bytes, Some(15_000));
         },
     );
 }
@@ -226,6 +241,7 @@ fn test_from_plugin_config_full() {
             "max_context_tokens" => Value::int(8000, span),
             "max_output_tokens" => Value::int(3000, span),
             "max_tool_turns" => Value::int(25, span),
+            "max_tool_result_bytes" => Value::int(10_000, span),
         },
         span,
     );
@@ -241,6 +257,7 @@ fn test_from_plugin_config_full() {
     assert_eq!(config.max_context_tokens, Some(8000));
     assert_eq!(config.max_output_tokens, Some(3000));
     assert_eq!(config.max_tool_turns, Some(25));
+    assert_eq!(config.max_tool_result_bytes, Some(10_000));
 }
 
 #[test]
@@ -359,6 +376,11 @@ fn test_merge_full_configs() {
         max_tool_turns: Some(10),
         preamble: None,
         read_timeout_secs: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     let override_config = Config {
@@ -374,6 +396,11 @@ fn test_merge_full_configs() {
         max_tool_turns: Some(25),
         preamble: None,
         read_timeout_secs: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     let merged = base.merge(override_config);
@@ -406,6 +433,11 @@ fn test_merge_with_partial_override() {
         max_tool_turns: Some(10),
         preamble: None,
         read_timeout_secs: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     let override_config = Config {
@@ -421,6 +453,11 @@ fn test_merge_with_partial_override() {
         max_tool_turns: None,
         preamble: None,
         read_timeout_secs: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     let merged = base.merge(override_config);
@@ -453,6 +490,11 @@ fn test_merge_with_empty_override() {
         max_tool_turns: Some(10),
         preamble: None,
         read_timeout_secs: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     let empty_override = Config {
@@ -468,6 +510,11 @@ fn test_merge_with_empty_override() {
         max_tool_turns: None,
         preamble: None,
         read_timeout_secs: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     let merged = base.clone().merge(empty_override);
@@ -492,6 +539,11 @@ fn test_merge_chain() {
         max_tool_turns: Some(20),
         preamble: None,
         read_timeout_secs: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     let override1 = Config {
@@ -507,6 +559,11 @@ fn test_merge_chain() {
         max_tool_turns: None,
         preamble: None,
         read_timeout_secs: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     let override2 = Config {
@@ -522,6 +579,11 @@ fn test_merge_chain() {
         max_tool_turns: None,
         preamble: None,
         read_timeout_secs: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     let merged = base.merge(override1).merge(override2);
@@ -551,6 +613,11 @@ fn test_merge_required_fields() {
         max_tool_turns: None,
         preamble: None,
         read_timeout_secs: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     let override_config = Config {
@@ -566,6 +633,11 @@ fn test_merge_required_fields() {
         max_tool_turns: None,
         preamble: None,
         read_timeout_secs: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     let merged = base.merge(override_config);
@@ -591,6 +663,11 @@ fn test_validate_valid_config() {
         max_tool_turns: Some(20),
         preamble: None,
         read_timeout_secs: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     assert!(config.validate().is_ok());
@@ -612,6 +689,11 @@ fn test_validate_minimal_config() {
         max_tool_turns: Some(20),
         preamble: None,
         read_timeout_secs: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     assert!(config.validate().is_ok());
@@ -633,6 +715,11 @@ fn test_validate_empty_provider() {
         max_tool_turns: Some(20),
         preamble: None,
         read_timeout_secs: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     let result = config.validate();
@@ -657,6 +744,11 @@ fn test_validate_empty_model() {
         max_tool_turns: Some(20),
         preamble: None,
         read_timeout_secs: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     let result = config.validate();
@@ -681,6 +773,11 @@ fn test_validate_max_output_exceeds_context() {
         max_tool_turns: Some(20),
         preamble: None,
         read_timeout_secs: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     let result = config.validate();
@@ -706,6 +803,11 @@ fn test_validate_max_output_equals_context() {
         max_tool_turns: Some(20),
         preamble: None,
         read_timeout_secs: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     assert!(config.validate().is_ok());
@@ -727,6 +829,11 @@ fn test_validate_zero_max_tool_turns() {
         max_tool_turns: Some(0), // Invalid
         preamble: None,
         read_timeout_secs: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     let result = config.validate();
@@ -751,6 +858,11 @@ fn test_validate_only_context_tokens_set() {
         max_tool_turns: Some(20),
         preamble: None,
         read_timeout_secs: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     assert!(config.validate().is_ok());
@@ -772,8 +884,86 @@ fn test_validate_only_output_tokens_set() {
         max_tool_turns: Some(20),
         preamble: None,
         read_timeout_secs: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
+    assert!(config.validate().is_ok());
+}
+
+#[test]
+fn test_validate_context_warning_threshold_zero_is_err() {
+    let config = Config {
+        provider: "openai".to_string(),
+        model: "gpt-4".to_string(),
+        context_warning_threshold: Some(0.0),
+        ..Config::default()
+    };
+    let result = config.validate();
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("context_warning_threshold"));
+}
+
+#[test]
+fn test_validate_context_warning_threshold_above_one_is_err() {
+    let config = Config {
+        provider: "openai".to_string(),
+        model: "gpt-4".to_string(),
+        context_warning_threshold: Some(1.1),
+        ..Config::default()
+    };
+    let result = config.validate();
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("context_warning_threshold"));
+}
+
+#[test]
+fn test_validate_context_warning_threshold_one_is_ok() {
+    // Boundary: 1.0 is valid
+    let config = Config {
+        provider: "openai".to_string(),
+        model: "gpt-4".to_string(),
+        context_warning_threshold: Some(1.0),
+        ..Config::default()
+    };
+    assert!(config.validate().is_ok());
+}
+
+#[test]
+fn test_validate_context_warning_threshold_typical_is_ok() {
+    let config = Config {
+        provider: "openai".to_string(),
+        model: "gpt-4".to_string(),
+        context_warning_threshold: Some(0.6),
+        ..Config::default()
+    };
+    assert!(config.validate().is_ok());
+}
+
+#[test]
+fn test_validate_model_context_tokens_zero_is_err() {
+    let config = Config {
+        provider: "openai".to_string(),
+        model: "gpt-4".to_string(),
+        model_context_tokens: Some(0),
+        ..Config::default()
+    };
+    let result = config.validate();
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("model_context_tokens"));
+}
+
+#[test]
+fn test_validate_model_context_tokens_one_is_ok() {
+    let config = Config {
+        provider: "openai".to_string(),
+        model: "gpt-4".to_string(),
+        model_context_tokens: Some(1),
+        ..Config::default()
+    };
     assert!(config.validate().is_ok());
 }
 
@@ -1560,6 +1750,11 @@ fn test_validate_none_max_tool_turns_is_valid() {
         max_tool_turns: None, // Should be valid
         preamble: None,
         read_timeout_secs: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     assert!(config.validate().is_ok());
@@ -1581,6 +1776,11 @@ fn test_validate_zero_max_tool_turns_still_invalid() {
         max_tool_turns: Some(0), // Still invalid
         preamble: None,
         read_timeout_secs: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     let result = config.validate();
@@ -1917,4 +2117,18 @@ fn test_parse_agents_config_with_fallback() {
 
     let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
     assert_eq!(plugin_config.agents.fallback, Some("my-agent".to_string()));
+}
+
+// ---------------------------------------------------------------------------
+// max_tool_result_bytes merge regression test (Gap 2B)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn merge_preserves_custom_max_tool_result_bytes_when_other_is_default() {
+    let base = Config {
+        max_tool_result_bytes: Some(5_000),
+        ..Config::default()
+    };
+    let merged = base.merge(Config::default());
+    assert_eq!(merged.max_tool_result_bytes, Some(5_000));
 }

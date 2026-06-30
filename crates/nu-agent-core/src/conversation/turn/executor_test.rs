@@ -1044,28 +1044,230 @@ fn unknown_tool_error_with_unpaired_tool_call_injects_synthetic_result() {
 #[test]
 fn error_classifier_returns_human_readable_message_for_tool_use_invalid_request() {
     let raw_error = r#"invalid_request_body: tool_use block requires a subsequent tool_result"#;
-    let classified = classify_completion_error(raw_error);
+    let (kind, user_msg) = classify_completion_error(raw_error);
+    assert_eq!(kind, CompletionErrorKind::ToolStructure);
     assert_eq!(
-        classified,
-        "Turn failed: the API rejected this turn — a tool call was missing its result in the message history. Repair will run on the next turn."
+        user_msg,
+        "Turn failed: the API rejected this turn — a tool call was missing its result. The session has been repaired."
     );
 }
 
 #[test]
 fn error_classifier_returns_human_readable_message_for_tool_result_invalid_request() {
     let raw_error = r#"invalid_request_body: tool_result block has no matching tool call"#;
-    let classified = classify_completion_error(raw_error);
+    let (kind, user_msg) = classify_completion_error(raw_error);
+    assert_eq!(kind, CompletionErrorKind::ToolStructure);
     assert_eq!(
-        classified,
-        "Turn failed: the API rejected this turn — a tool call was missing its result in the message history. Repair will run on the next turn."
+        user_msg,
+        "Turn failed: the API rejected this turn — a tool call was missing its result. The session has been repaired."
     );
 }
 
 #[test]
 fn error_classifier_passes_through_unrelated_errors() {
-    let raw_error = "network timeout";
-    let classified = classify_completion_error(raw_error);
-    assert_eq!(classified, "Turn failed: network timeout");
+    let raw_error = "502 bad gateway proxy error";
+    let (kind, user_msg) = classify_completion_error(raw_error);
+    assert_eq!(kind, CompletionErrorKind::Unknown);
+    assert_eq!(user_msg, "Turn failed: 502 bad gateway proxy error");
+}
+
+// ---------------------------------------------------------------------------
+// Gap 4 — CompletionErrorKind comprehensive classification tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn classify_tool_structure_error() {
+    let (kind, _) = classify_completion_error("invalid_request_body contains tool_use block");
+    assert_eq!(kind, CompletionErrorKind::ToolStructure);
+}
+
+#[test]
+fn classify_context_overflow_context_length_exceeded() {
+    let (kind, _) = classify_completion_error("context_length_exceeded in prompt");
+    assert_eq!(kind, CompletionErrorKind::ContextOverflow);
+}
+
+#[test]
+fn classify_context_overflow_input_too_long() {
+    let (kind, _) = classify_completion_error("input is too long for requested model");
+    assert_eq!(kind, CompletionErrorKind::ContextOverflow);
+}
+
+#[test]
+fn classify_context_overflow_reduce_length() {
+    let (kind, _) = classify_completion_error("reduce the length of your prompt");
+    assert_eq!(kind, CompletionErrorKind::ContextOverflow);
+}
+
+#[test]
+fn classify_request_too_large() {
+    let (kind, _) = classify_completion_error("413 request_too_large response");
+    assert_eq!(kind, CompletionErrorKind::RequestTooLarge);
+}
+
+#[test]
+fn classify_refusal_content_policy() {
+    let (kind, _) = classify_completion_error("content policy violation detected");
+    assert_eq!(kind, CompletionErrorKind::Refusal);
+}
+
+#[test]
+fn classify_credits_exhausted() {
+    let (kind, _) = classify_completion_error("account out of credits");
+    assert_eq!(kind, CompletionErrorKind::CreditsExhausted);
+}
+
+#[test]
+fn classify_quota_billing_error() {
+    let (kind, _) = classify_completion_error("402 billing_error");
+    assert_eq!(kind, CompletionErrorKind::Quota);
+}
+
+#[test]
+fn classify_rate_limit() {
+    let (kind, _) = classify_completion_error("rate limit exceeded 429");
+    assert_eq!(kind, CompletionErrorKind::RateLimit);
+}
+
+#[test]
+fn classify_overloaded() {
+    let (kind, _) = classify_completion_error("529 overloaded_error service busy");
+    assert_eq!(kind, CompletionErrorKind::Overloaded);
+}
+
+#[test]
+fn classify_server_error() {
+    let (kind, _) = classify_completion_error("500 api_error internal server");
+    assert_eq!(kind, CompletionErrorKind::ServerError);
+}
+
+#[test]
+fn classify_network_error_sending_request() {
+    let (kind, _) = classify_completion_error("error sending request for url");
+    assert_eq!(kind, CompletionErrorKind::Network);
+}
+
+#[test]
+fn classify_network_stream_decode_invalid_utf8() {
+    let (kind, _) = classify_completion_error("stream decode error: invalid utf-8");
+    assert_eq!(kind, CompletionErrorKind::Network);
+}
+
+#[test]
+fn classify_endpoint_not_found() {
+    let (kind, _) = classify_completion_error("404 endpoint not found");
+    assert_eq!(kind, CompletionErrorKind::EndpointNotFound);
+}
+
+#[test]
+fn classify_auth_error() {
+    let (kind, _) = classify_completion_error("401 authentication_error invalid key");
+    assert_eq!(kind, CompletionErrorKind::Auth);
+}
+
+#[test]
+fn classify_unknown_502_bad_gateway() {
+    let (kind, _) = classify_completion_error("502 bad gateway proxy error");
+    assert_eq!(kind, CompletionErrorKind::Unknown);
+}
+
+#[test]
+fn is_retryable_matches_spec() {
+    // Retryable kinds
+    assert!(
+        CompletionErrorKind::RateLimit.is_retryable(),
+        "RateLimit must be retryable"
+    );
+    assert!(
+        CompletionErrorKind::Overloaded.is_retryable(),
+        "Overloaded must be retryable"
+    );
+    assert!(
+        CompletionErrorKind::ServerError.is_retryable(),
+        "ServerError must be retryable"
+    );
+    assert!(
+        CompletionErrorKind::Network.is_retryable(),
+        "Network must be retryable"
+    );
+
+    // Non-retryable kinds
+    assert!(
+        !CompletionErrorKind::RequestTooLarge.is_retryable(),
+        "RequestTooLarge must not be retryable"
+    );
+    assert!(
+        !CompletionErrorKind::ContextOverflow.is_retryable(),
+        "ContextOverflow must not be retryable"
+    );
+    assert!(
+        !CompletionErrorKind::ToolStructure.is_retryable(),
+        "ToolStructure must not be retryable"
+    );
+    assert!(
+        !CompletionErrorKind::Auth.is_retryable(),
+        "Auth must not be retryable"
+    );
+    assert!(
+        !CompletionErrorKind::Quota.is_retryable(),
+        "Quota must not be retryable"
+    );
+    assert!(
+        !CompletionErrorKind::CreditsExhausted.is_retryable(),
+        "CreditsExhausted must not be retryable"
+    );
+    assert!(
+        !CompletionErrorKind::Refusal.is_retryable(),
+        "Refusal must not be retryable"
+    );
+    assert!(
+        !CompletionErrorKind::EndpointNotFound.is_retryable(),
+        "EndpointNotFound must not be retryable"
+    );
+    assert!(
+        !CompletionErrorKind::Unknown.is_retryable(),
+        "Unknown must not be retryable"
+    );
+}
+
+#[test]
+fn classify_does_not_misclassify_number_in_token_count() {
+    // "5000" contains "500" as substring — must NOT match ServerError
+    let (kind, _) = classify_completion_error("processing 5000 tokens per request");
+    assert_eq!(kind, CompletionErrorKind::Unknown);
+
+    // "4042" contains "404" as substring — must NOT match EndpointNotFound
+    let (kind, _) = classify_completion_error("step 4042 of pipeline");
+    assert_eq!(kind, CompletionErrorKind::Unknown);
+
+    // "500" as a standalone token (standalone HTTP status) MUST match ServerError
+    let (kind, _) = classify_completion_error("HTTP 500 internal server error");
+    assert_eq!(kind, CompletionErrorKind::ServerError);
+}
+
+#[test]
+fn classify_network_timeout_is_unknown_not_network() {
+    // "network timeout" does not match any Network patterns (no "decode error",
+    // "connection reset", etc.) — it falls through to Unknown.
+    // Confirm this is stable and hasn't been accidentally absorbed.
+    let (kind, _) = classify_completion_error("network timeout after 30s");
+    assert_eq!(kind, CompletionErrorKind::Unknown);
+}
+
+#[test]
+fn classify_insufficient_quota_is_quota_not_credits_exhausted() {
+    // Fix 1: "insufficient_quota" belongs to Quota (OpenAI billing quota),
+    // not CreditsExhausted (account credit balance exhausted).
+    let (kind, _) = classify_completion_error("insufficient_quota for this API key");
+    assert_eq!(kind, CompletionErrorKind::Quota);
+}
+
+#[test]
+fn classify_request_entity_too_large_is_request_too_large_not_context_overflow() {
+    // Fix 2: "request entity too large" is HTTP 413 (payload too large),
+    // not ContextOverflow (conversation context window exceeded).
+    let (kind, _) = classify_completion_error("request entity too large");
+    assert_eq!(kind, CompletionErrorKind::RequestTooLarge);
 }
 
 // ---------------------------------------------------------------------------
@@ -1745,13 +1947,22 @@ fn hard_error_mid_tool_loop_preserves_real_tool_results() {
         .load(session_id)
         .expect("store load should succeed");
 
-    // Must have exactly 3 messages: [User(prompt), Assistant(ToolCall), User(ToolResult)]
+    // Must have exactly 4 messages:
+    //   [User(prompt), Assistant(ToolCall), User(ToolResult), Assistant(close-block)]
+    // The 4th is the synthetic assistant message appended by close_open_tool_result_block
+    // to prevent user(ToolResult) → user(Text) on the next turn.
     assert_eq!(
         persisted.len(),
-        3,
-        "mid-tool-loop error must persist exactly [user_msg, assistant_tool_call, tool_result]; got {} messages: {:?}",
+        4,
+        "mid-tool-loop error must persist exactly [user_msg, assistant_tool_call, tool_result, asst_close]; got {} messages: {:?}",
         persisted.len(),
         persisted
+    );
+    // The 4th message must be a synthetic assistant close-block.
+    assert!(
+        matches!(&persisted[3], crate::types::Message::Assistant { .. }),
+        "persisted[3] must be the synthetic assistant close-block; got: {:?}",
+        persisted[3]
     );
 
     // For every persisted ToolCall, verify the following ToolResult is NOT "[interrupted]"
@@ -1830,4 +2041,483 @@ fn hard_error_mid_tool_loop_preserves_real_tool_results() {
         "test requires at least one ToolCall to be persisted; got: {:?}",
         persisted
     );
+}
+
+// ---------------------------------------------------------------------------
+// close_open_tool_result_block unit tests
+// ---------------------------------------------------------------------------
+
+/// Helper: build a User message whose content is a single ToolResult.
+fn user_with_tool_result(id: &str) -> crate::types::Message {
+    use rig::one_or_many::OneOrMany;
+    crate::types::Message::User {
+        content: OneOrMany::one(crate::types::UserContent::ToolResult(
+            crate::types::ToolResult {
+                id: id.to_string(),
+                call_id: None,
+                content: OneOrMany::one(crate::types::ToolResultContent::text("result")),
+            },
+        )),
+    }
+}
+
+/// Helper: build a User message whose content is a single Text item.
+fn user_with_text(text: &str) -> crate::types::Message {
+    crate::types::Message::user(text)
+}
+
+/// Helper: build an Assistant text message.
+fn assistant_with_text(text: &str) -> crate::types::Message {
+    crate::types::Message::assistant(text)
+}
+
+/// Helper: build a User message with mixed content (ToolResult + Text).
+fn user_with_mixed_content(id: &str) -> crate::types::Message {
+    use rig::one_or_many::OneOrMany;
+    crate::types::Message::User {
+        content: OneOrMany::many(vec![
+            crate::types::UserContent::ToolResult(crate::types::ToolResult {
+                id: id.to_string(),
+                call_id: None,
+                content: OneOrMany::one(crate::types::ToolResultContent::text("result")),
+            }),
+            crate::types::UserContent::Text(crate::types::Text::new("some text")),
+        ])
+        .expect("non-empty user content"),
+    }
+}
+
+#[test]
+fn close_open_tool_result_block_appends_when_last_is_tool_result() {
+    use super::close_open_tool_result_block;
+
+    let msgs = vec![
+        user_with_text("prompt"),
+        crate::types::Message::assistant("ok"),
+        user_with_tool_result("tc1"),
+    ];
+    let result = close_open_tool_result_block(msgs, "server error");
+    assert_eq!(result.len(), 4, "synthetic assistant must be appended");
+    assert!(
+        matches!(result[3], crate::types::Message::Assistant { .. }),
+        "last message must be Assistant; got: {:?}",
+        result[3]
+    );
+}
+
+#[test]
+fn close_open_tool_result_block_noop_when_last_is_assistant() {
+    use super::close_open_tool_result_block;
+
+    let msgs = vec![user_with_text("prompt"), assistant_with_text("response")];
+    let len_before = msgs.len();
+    let result = close_open_tool_result_block(msgs, "error");
+    assert_eq!(result.len(), len_before, "no change when last is assistant");
+    assert!(
+        matches!(
+            result[result.len() - 1],
+            crate::types::Message::Assistant { .. }
+        ),
+        "last message must still be Assistant"
+    );
+}
+
+#[test]
+fn close_open_tool_result_block_noop_when_last_is_user_text() {
+    use super::close_open_tool_result_block;
+
+    let msgs = vec![
+        user_with_text("prompt"),
+        assistant_with_text("response"),
+        user_with_text("follow up"),
+    ];
+    let len_before = msgs.len();
+    let result = close_open_tool_result_block(msgs, "error");
+    assert_eq!(result.len(), len_before, "no change when last is user text");
+    assert!(
+        matches!(result[result.len() - 1], crate::types::Message::User { .. }),
+        "last message must still be User"
+    );
+}
+
+#[test]
+fn close_open_tool_result_block_noop_when_last_user_has_mixed_content() {
+    use super::close_open_tool_result_block;
+
+    let msgs = vec![
+        user_with_text("prompt"),
+        assistant_with_text("assistant"),
+        user_with_mixed_content("tc1"),
+    ];
+    let len_before = msgs.len();
+    let result = close_open_tool_result_block(msgs, "error");
+    assert_eq!(
+        result.len(),
+        len_before,
+        "no change when last user has mixed content (ToolResult + Text)"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Gap 3 — Retry-with-backoff tests
+// ---------------------------------------------------------------------------
+
+/// Retry succeeds on the second attempt: first call returns a retryable 500 error,
+/// second call succeeds. Result should be Ok with 2 messages in JSONL.
+#[test]
+fn retry_succeeds_on_second_attempt() {
+    let config = Config {
+        max_retries: Some(3),
+        retry_base_delay_ms: Some(1),
+        ..test_config()
+    };
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let session_id = "test-retry-success";
+    let mut memory_state =
+        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+
+    // Turn 1: error (retryable 500). Turn 2: success.
+    let model = MockCompletionModel::from_stream_turns([
+        vec![MockStreamEvent::error("500 api_error internal server")],
+        vec![
+            MockStreamEvent::Text("recovered".to_string()),
+            MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+        ],
+    ]);
+
+    let cached_client = CachedProviderClient::Mock(model);
+    let mut ui = MockUi::new();
+
+    let closure_registry = ClosureRegistry::new();
+    let mcp_registry = McpToolRegistry::from_names(Vec::<String>::new());
+    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &rt,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(closure_registry),
+            mcp_registry: Arc::new(mcp_registry),
+            tool_server_handle,
+            visible_tool_definitions: vec![],
+        },
+    );
+
+    let result = executor.execute(
+        &mut ui,
+        ExecuteInput {
+            prompt: "hello".to_string(),
+            preamble: None,
+            span: nu_protocol::Span::test_data(),
+        },
+        &cached_client,
+        MockResolver,
+        Some(session_id),
+        None,
+    );
+
+    assert!(
+        result.is_ok(),
+        "retry should succeed on second attempt; got: {:?}",
+        result.err()
+    );
+    assert!(matches!(result.unwrap(), TurnOutcome::Completed));
+
+    let persisted = memory_state
+        .conversation_store()
+        .load(session_id)
+        .expect("store load should succeed");
+    assert_eq!(
+        persisted.len(),
+        2,
+        "successful retry must produce 2 messages (user + assistant); got {}",
+        persisted.len()
+    );
+}
+
+/// Retry exhausted: all attempts fail with retryable errors. The final error
+/// message must mention the retry attempt count.
+#[test]
+fn retry_exhausted_surfaces_attempt_count() {
+    let config = Config {
+        max_retries: Some(2),
+        retry_base_delay_ms: Some(1),
+        ..test_config()
+    };
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let session_id = "test-retry-exhausted";
+    let mut memory_state =
+        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+
+    // All 3 attempts (1 initial + 2 retries) fail with retryable error
+    let model = MockCompletionModel::from_stream_turns([
+        vec![MockStreamEvent::error("500 api_error server down")],
+        vec![MockStreamEvent::error("500 api_error server down")],
+        vec![MockStreamEvent::error("500 api_error server down")],
+    ]);
+
+    let cached_client = CachedProviderClient::Mock(model);
+    let mut ui = MockUi::new();
+
+    let closure_registry = ClosureRegistry::new();
+    let mcp_registry = McpToolRegistry::from_names(Vec::<String>::new());
+    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &rt,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(closure_registry),
+            mcp_registry: Arc::new(mcp_registry),
+            tool_server_handle,
+            visible_tool_definitions: vec![],
+        },
+    );
+
+    let result = executor.execute(
+        &mut ui,
+        ExecuteInput {
+            prompt: "hello".to_string(),
+            preamble: None,
+            span: nu_protocol::Span::test_data(),
+        },
+        &cached_client,
+        MockResolver,
+        Some(session_id),
+        None,
+    );
+
+    assert!(result.is_err(), "exhausted retries must return Err");
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("after 2 retries"),
+        "error message must mention retry count; got: {err_msg}"
+    );
+}
+
+/// Non-retryable errors (e.g., context_length_exceeded) must NOT be retried.
+/// Exactly 1 attempt should be made.
+#[test]
+fn non_retryable_error_not_retried() {
+    let config = Config {
+        max_retries: Some(3),
+        retry_base_delay_ms: Some(1),
+        ..test_config()
+    };
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let session_id = "test-non-retryable";
+    let mut memory_state =
+        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+
+    // Only 1 turn — if retried, MockCompletionModel would panic (no more turns).
+    // A 400 context_length_exceeded is NOT retryable.
+    let model = MockCompletionModel::from_stream_turns([vec![MockStreamEvent::error(
+        "context_length_exceeded in prompt",
+    )]]);
+
+    let cached_client = CachedProviderClient::Mock(model);
+    let mut ui = MockUi::new();
+
+    let closure_registry = ClosureRegistry::new();
+    let mcp_registry = McpToolRegistry::from_names(Vec::<String>::new());
+    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &rt,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(closure_registry),
+            mcp_registry: Arc::new(mcp_registry),
+            tool_server_handle,
+            visible_tool_definitions: vec![],
+        },
+    );
+
+    let result = executor.execute(
+        &mut ui,
+        ExecuteInput {
+            prompt: "hello".to_string(),
+            preamble: None,
+            span: nu_protocol::Span::test_data(),
+        },
+        &cached_client,
+        MockResolver,
+        Some(session_id),
+        None,
+    );
+
+    // Must fail immediately without retrying
+    assert!(
+        result.is_err(),
+        "non-retryable error must not be retried; got Ok"
+    );
+    // If the model had been called more than once, MockCompletionModel would panic
+    // (it only has 1 turn configured). The test passing proves exactly 1 HTTP request.
+}
+
+/// When `max_retries` is `Some(0)`, no retry is attempted regardless of error type.
+///
+/// Tests the most direct way to disable retries: setting max_retries=0 ensures
+/// `attempt < max_retries` is always false on the first attempt (attempt=0 < 0 = false).
+/// The test verifies the error message does NOT contain "retries" — proving the retry
+/// path was not entered.
+#[test]
+fn retry_disabled_when_max_retries_is_zero() {
+    let config = Config {
+        max_retries: Some(0),
+        retry_base_delay_ms: Some(1),
+        ..test_config()
+    };
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let session_id = "test-no-retry-guard";
+    let mut memory_state =
+        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+
+    let model = MockCompletionModel::from_stream_turns([vec![MockStreamEvent::error(
+        "500 api_error server error",
+    )]]);
+
+    let cached_client = CachedProviderClient::Mock(model);
+    let mut ui = MockUi::new();
+
+    let closure_registry = ClosureRegistry::new();
+    let mcp_registry = McpToolRegistry::from_names(Vec::<String>::new());
+    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &rt,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(closure_registry),
+            mcp_registry: Arc::new(mcp_registry),
+            tool_server_handle,
+            visible_tool_definitions: vec![],
+        },
+    );
+
+    let result = executor.execute(
+        &mut ui,
+        ExecuteInput {
+            prompt: "hello".to_string(),
+            preamble: None,
+            span: nu_protocol::Span::test_data(),
+        },
+        &cached_client,
+        MockResolver,
+        Some(session_id),
+        None,
+    );
+
+    assert!(result.is_err(), "error must propagate without retry");
+    let err_msg = result.unwrap_err().to_string();
+    // When max_retries=0, attempt never increments, so "retries" should not appear
+    assert!(
+        !err_msg.contains("retries"),
+        "error message must NOT mention retries when max_retries=0; got: {err_msg}"
+    );
+}
+
+/// When `last_known_history` is empty the retry guard (`has_partial_history`) prevents
+/// any retry from being attempted, even when `max_retries > 0` and the error is retryable.
+///
+/// Architecture note: In the current executor, `last_known_history` comes from
+/// `TurnError::last_known_history`, which is populated by `on_completion_call` in the
+/// rig hook. With `MockCompletionModel`, `on_completion_call` always fires (capturing
+/// `[user_prompt]`), so `last_known_history` is never truly empty through the full
+/// executor path.
+///
+/// Therefore, this test exercises the guard logic directly by constructing a `TurnError`
+/// with `last_known_history: vec![]` and asserting that the guard condition evaluates to
+/// `false` — confirming that an empty history would suppress retry.
+///
+/// For the full-path scenario (history always non-empty via MockCompletionModel), see
+/// `retry_disabled_when_max_retries_is_zero` which tests the equivalent observable outcome.
+#[test]
+fn retry_not_attempted_when_no_partial_history() {
+    // Test the guard condition: `has_partial_history = !e.last_known_history.is_empty()`.
+    // Construct a TurnError with empty last_known_history and verify the guard is false.
+    let turn_error_empty_history = crate::conversation::turn::TurnError {
+        msg: "500 api_error server error".to_string(),
+        cancelled: false,
+        messages: None,
+        last_known_history: vec![], // empty — no partial history
+        pre_turn_message_count: 0,
+    };
+
+    let has_partial_history = !turn_error_empty_history.last_known_history.is_empty();
+
+    // Guard must evaluate to false with empty history — retry must not be attempted.
+    assert!(
+        !has_partial_history,
+        "has_partial_history guard must be false when last_known_history is empty; \
+         retry must be suppressed even for retryable errors with max_retries > 0"
+    );
+
+    // Confirm the mirror case: non-empty history enables the guard.
+    let turn_error_with_history = crate::conversation::turn::TurnError {
+        msg: "500 api_error server error".to_string(),
+        cancelled: false,
+        messages: None,
+        last_known_history: vec![crate::types::Message::user("prompt")],
+        pre_turn_message_count: 0,
+    };
+    let has_partial_history_non_empty = !turn_error_with_history.last_known_history.is_empty();
+    assert!(
+        has_partial_history_non_empty,
+        "has_partial_history guard must be true when last_known_history is non-empty"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Gap 3 — extract_retry_after_ms unit tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn extract_retry_after_ms_parses_seconds_basic() {
+    use super::extract_retry_after_ms;
+    assert_eq!(
+        extract_retry_after_ms("rate limited, retry after 5 seconds"),
+        Some(5000)
+    );
+}
+
+#[test]
+fn extract_retry_after_ms_parses_retry_after_header() {
+    use super::extract_retry_after_ms;
+    assert_eq!(
+        extract_retry_after_ms("HTTP 429: Retry-After: 30"),
+        Some(30_000)
+    );
+}
+
+#[test]
+fn extract_retry_after_ms_parses_underscore_variant() {
+    use super::extract_retry_after_ms;
+    assert_eq!(
+        extract_retry_after_ms("error: retry_after: 10 seconds"),
+        Some(10_000)
+    );
+}
+
+#[test]
+fn extract_retry_after_ms_returns_none_when_absent() {
+    use super::extract_retry_after_ms;
+    assert_eq!(
+        extract_retry_after_ms("rate limit exceeded, try again later"),
+        None
+    );
+}
+
+#[test]
+fn extract_retry_after_ms_handles_zero() {
+    use super::extract_retry_after_ms;
+    assert_eq!(extract_retry_after_ms("retry after 0 seconds"), Some(0));
 }

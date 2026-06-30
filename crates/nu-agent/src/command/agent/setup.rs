@@ -27,6 +27,7 @@ pub(crate) struct RegisterToolsInput<'a> {
     pub(crate) has_messaging: bool,
     pub(crate) tool_timeout: std::time::Duration,
     pub(crate) session: Option<&'a mut nu_agent_core::session::Session>,
+    pub(crate) max_tool_result_bytes: usize,
 }
 
 /// Register closure tools, builtin tools, and messaging tools with the ToolServer.
@@ -56,6 +57,7 @@ pub(crate) fn register_tools(input: RegisterToolsInput<'_>) -> Result<SetupResul
         has_messaging,
         tool_timeout,
         session,
+        max_tool_result_bytes,
     } = input;
 
     // Create audit log directory ONCE before prompt loop
@@ -79,6 +81,7 @@ pub(crate) fn register_tools(input: RegisterToolsInput<'_>) -> Result<SetupResul
         closure_registry,
         std::sync::Arc::new(tool_executor.clone()),
         call.head,
+        max_tool_result_bytes,
     );
 
     for tool in closure_tools {
@@ -258,6 +261,7 @@ pub(crate) fn register_tools(input: RegisterToolsInput<'_>) -> Result<SetupResul
         orchestrator_state,
         broker_sender_arc,
         messaging_identity,
+        max_tool_result_bytes,
     );
 
     for tool in builtin_tools {

@@ -16,6 +16,7 @@ pub struct McpState {
     mcp_server_configs: Vec<McpServerConfig>,
     mcp_caller_cwd: Option<std::path::PathBuf>,
     mcp_registry: McpToolRegistry,
+    max_tool_result_bytes: usize,
 }
 
 impl McpState {
@@ -25,6 +26,7 @@ impl McpState {
         mcp_server_configs: Vec<McpServerConfig>,
         mcp_caller_cwd: Option<std::path::PathBuf>,
         mcp_registry: McpToolRegistry,
+        max_tool_result_bytes: usize,
     ) -> Self {
         Self {
             mcp_runtime,
@@ -32,6 +34,7 @@ impl McpState {
             mcp_server_configs,
             mcp_caller_cwd,
             mcp_registry,
+            max_tool_result_bytes,
         }
     }
 
@@ -119,6 +122,7 @@ impl McpState {
             tool_server_handle,
             &single_server_config,
             self.mcp_caller_cwd.as_deref(),
+            self.max_tool_result_bytes,
         )) {
             Ok(new_rt) if new_rt.has_sessions() => {
                 let discovered = new_rt.discovered_tools().to_vec();

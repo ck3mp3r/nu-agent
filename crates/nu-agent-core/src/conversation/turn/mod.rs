@@ -9,11 +9,13 @@ use futures::StreamExt;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+use crate::config::Config;
 use crate::hook::agent_hook::AgentHook;
 use crate::hook::permission_resolver::AsyncPermissionResolver;
 use crate::protocol::contracts::ProgressUi;
 use crate::protocol::event::UiEvent;
 use crate::session::JournalConversationMemory;
+use crate::session::repair::repair_messages;
 use crate::types::{Message, Text, ToolDefinition, UserContent};
 use rig::memory::ConversationMemory;
 use rig::streaming::StreamingPrompt;
@@ -216,6 +218,7 @@ where
     conversation: TurnConversation,
     input: TurnInput<'a>,
     tool_infra: executor::ToolInfra,
+    config: &'a Config,
 }
 
 impl<'a, M> TurnContext<'a, M>
@@ -229,6 +232,7 @@ where
         conversation: TurnConversation,
         input: TurnInput<'a>,
         tool_infra: executor::ToolInfra,
+        config: &'a Config,
     ) -> Self {
         Self {
             runtime,
@@ -236,6 +240,7 @@ where
             conversation,
             input,
             tool_infra,
+            config,
         }
     }
 }
@@ -308,18 +313,53 @@ where
     // Snapshot message count before this turn. Used by error paths to slice only
     // the new-message delta from last_known_history / e.messages.
     // Cache-first load: no JSONL I/O if the cache is already warm.
-    let pre_turn_count: usize = if ctx.conversation.has_session {
+    let pre_turn_messages: Vec<Message> = if ctx.conversation.has_session {
         ctx.runtime
             .block_on(
                 ctx.conversation
                     .memory
                     .load(&ctx.conversation.conversation_id),
             )
-            .map(|msgs| msgs.len())
-            .unwrap_or(0)
+            .unwrap_or_default()
     } else {
-        0
+        vec![]
     };
+    let pre_turn_count = pre_turn_messages.len();
+
+    // Pre-flight repair: fix structural violations before handing history to rig.
+    // Ephemeral — applies for this turn only; the JSONL backing store is not written.
+    let (repaired_messages, repair_issues) = repair_messages(pre_turn_messages.clone());
+    if !repair_issues.is_empty() {
+        log::warn!(
+            "Pre-flight repair applied {} fix(es) before turn: {:?}",
+            repair_issues.len(),
+            repair_issues
+        );
+        ctx.conversation
+            .memory
+            .reset_context(&ctx.conversation.conversation_id, repaired_messages.clone());
+    }
+
+    // Note: on warm-cache paths `repair_messages()` is typically a no-op because
+    // `JournalConversationMemory::load()` already runs the same repair pipeline on
+    // every JSONL load. This second pass catches anything that slipped through at a
+    // higher layer (e.g. an in-memory cache populated directly without going through
+    // `load()`).
+    if let Some(limit) = ctx.config.model_context_tokens {
+        let estimated = token_estimate::estimate_token_count(&repaired_messages);
+        let threshold =
+            (limit as f32 * ctx.config.context_warning_threshold.unwrap_or(0.6)) as usize;
+        if estimated >= threshold {
+            let _ = ui_tx.send(UiEvent::Warning {
+                message: format!(
+                    "Conversation is using ~{estimated} estimated tokens \
+                     (~{}% of the {limit}-token context window). \
+                     Consider running 'agent session compact' before the next turn.",
+                    (estimated * 100) / limit,
+                ),
+            });
+        }
+    }
 
     // Create cancel token — use an externally supplied token if the UI provides one
     // (e.g. MockUi::with_external_cancel() in tests, or a real UI that wants to cancel
@@ -662,6 +702,8 @@ where
 }
 
 pub mod executor;
+
+pub(crate) mod token_estimate;
 
 #[cfg(test)]
 mod test;

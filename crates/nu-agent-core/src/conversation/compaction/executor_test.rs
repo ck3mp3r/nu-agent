@@ -22,6 +22,11 @@ fn test_config() -> Config {
         max_tool_turns: None,
         temperature: None,
         read_timeout_secs: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     }
 }
 

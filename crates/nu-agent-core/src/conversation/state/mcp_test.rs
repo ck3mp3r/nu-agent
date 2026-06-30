@@ -19,7 +19,7 @@ fn mcp_state_with_k8s_tools() -> (McpState, Vec<ToolDefinition>) {
         tool_definition_named("k8s__delete_pod"),
     ];
 
-    let state = McpState::new(None, vec![], configs, None, registry);
+    let state = McpState::new(None, vec![], configs, None, registry, 20_000);
 
     (state, tool_definitions)
 }
@@ -92,7 +92,7 @@ fn disable_leaves_non_target_server_tools_enabled() {
         tool_definition_named("gh__list_prs"),
     ];
 
-    let mut mcp_state = McpState::new(None, vec![], configs, None, registry);
+    let mut mcp_state = McpState::new(None, vec![], configs, None, registry, 20_000);
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
     let handle = rig::tool::server::ToolServer::new().run();
 

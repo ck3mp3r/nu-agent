@@ -41,7 +41,7 @@ fn adapter_returns_correct_name() {
     };
     let cwd = std::path::PathBuf::from("/tmp");
 
-    let adapter = BuiltinToolAdapter::new(tool_def, cwd, None, None, None);
+    let adapter = BuiltinToolAdapter::new(tool_def, cwd, None, None, None, 20_000);
 
     assert_eq!(adapter.name(), "test_tool");
 }
@@ -63,7 +63,7 @@ fn adapter_returns_correct_definition() {
     };
     let cwd = std::path::PathBuf::from("/tmp");
 
-    let adapter = BuiltinToolAdapter::new(tool_def.clone(), cwd, None, None, None);
+    let adapter = BuiltinToolAdapter::new(tool_def.clone(), cwd, None, None, None, 20_000);
 
     // Since definition() is async, we need to use a runtime
     let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -94,7 +94,7 @@ fn adapter_calls_skill_tool() {
     let cwd = temp_dir.join("nu-agent-test-builtin-adapter");
     std::fs::create_dir_all(&cwd).unwrap();
 
-    let adapter = BuiltinToolAdapter::new(tool_def, cwd.clone(), None, None, None);
+    let adapter = BuiltinToolAdapter::new(tool_def, cwd.clone(), None, None, None, 20_000);
 
     // Create a simple skill for testing
     let skill_dir = cwd.join(".agents").join("skills").join("test_skill");
@@ -145,7 +145,14 @@ fn adapter_stores_agent_name() {
     };
     let cwd = std::path::PathBuf::from("/tmp");
 
-    let adapter = BuiltinToolAdapter::new(tool_def, cwd, None, None, Some("my-agent".to_string()));
+    let adapter = BuiltinToolAdapter::new(
+        tool_def,
+        cwd,
+        None,
+        None,
+        Some("my-agent".to_string()),
+        20_000,
+    );
 
     assert_eq!(adapter.agent_name.as_deref(), Some("my-agent"));
 }
@@ -162,7 +169,7 @@ fn adapter_agent_name_defaults_to_none() {
     };
     let cwd = std::path::PathBuf::from("/tmp");
 
-    let adapter = BuiltinToolAdapter::new(tool_def, cwd, None, None, None);
+    let adapter = BuiltinToolAdapter::new(tool_def, cwd, None, None, None, 20_000);
 
     assert_eq!(adapter.agent_name, None);
 }
@@ -185,7 +192,7 @@ fn spawn_agent_without_orchestrator_returns_descriptive_error() {
     let cwd = std::path::PathBuf::from("/tmp");
 
     // No orchestrator state — simulates a child agent calling spawn_agent
-    let adapter = BuiltinToolAdapter::new(tool_def, cwd, None, None, None);
+    let adapter = BuiltinToolAdapter::new(tool_def, cwd, None, None, None, 20_000);
 
     let args = serde_json::json!({ "agent": "coder" });
     let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -231,7 +238,14 @@ fn adapter_truncates_large_output() {
             "required": ["name"]
         }),
     };
-    let adapter = BuiltinToolAdapter::new(tool_def, cwd.clone(), None, None, None);
+    let adapter = BuiltinToolAdapter::new(
+        tool_def,
+        cwd.clone(),
+        None,
+        None,
+        None,
+        MAX_TOOL_OUTPUT_BYTES,
+    );
 
     let args = serde_json::json!({ "name": "big_skill" });
     let runtime = tokio::runtime::Runtime::new().unwrap();

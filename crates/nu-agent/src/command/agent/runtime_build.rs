@@ -126,6 +126,11 @@ pub fn extract_flag_config(call: &EvaluatedCall) -> Config {
         max_tool_turns,
         preamble: None,
         read_timeout_secs: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     }
 }
 
@@ -450,6 +455,8 @@ pub(crate) fn build_runtime(params: RuntimeBuildParams) -> AgentConversationRunt
     // CRITICAL: extract cache_dir BEFORE moving params.store into the struct literal
     // because params.store.cache_dir() and params.store cannot both be used after move
     let cache_dir = params.store.cache_dir().to_path_buf();
+    // Extract max_tool_result_bytes before params.config is moved.
+    let max_tool_result_bytes = params.config.max_tool_result_bytes.unwrap_or(20_000);
 
     AgentConversationRuntime {
         runtime: params.runtime,
@@ -472,6 +479,7 @@ pub(crate) fn build_runtime(params: RuntimeBuildParams) -> AgentConversationRunt
             params.mcp_server_configs,
             params.mcp_caller_cwd,
             params.mcp_registry,
+            max_tool_result_bytes,
         ),
         engine: params.engine,
         store: params.store,

@@ -3,7 +3,7 @@ use super::{MAX_TOOL_OUTPUT_BYTES, truncate_tool_output};
 #[test]
 fn short_output_returned_unchanged() {
     let input = "hello, world".to_string();
-    let result = truncate_tool_output(input.clone());
+    let result = truncate_tool_output(input.clone(), MAX_TOOL_OUTPUT_BYTES);
     assert_eq!(result, input, "short output must not be modified");
 }
 
@@ -11,7 +11,7 @@ fn short_output_returned_unchanged() {
 fn short_output_writes_no_temp_file() {
     // We can verify indirectly: output is unchanged, so no truncation marker appears
     let input = "a".repeat(MAX_TOOL_OUTPUT_BYTES - 1);
-    let result = truncate_tool_output(input.clone());
+    let result = truncate_tool_output(input.clone(), MAX_TOOL_OUTPUT_BYTES);
     assert_eq!(result, input);
     assert!(
         !result.contains("[output truncated:"),
@@ -23,7 +23,7 @@ fn short_output_writes_no_temp_file() {
 fn long_output_is_truncated_with_marker() {
     let original_len = MAX_TOOL_OUTPUT_BYTES + 1_000;
     let input = "x".repeat(original_len);
-    let result = truncate_tool_output(input);
+    let result = truncate_tool_output(input, MAX_TOOL_OUTPUT_BYTES);
 
     // Result must be shorter than input
     assert!(
@@ -48,7 +48,7 @@ fn long_output_is_truncated_with_marker() {
 #[test]
 fn long_output_includes_file_path_in_marker() {
     let input = "y".repeat(MAX_TOOL_OUTPUT_BYTES + 500);
-    let result = truncate_tool_output(input);
+    let result = truncate_tool_output(input, MAX_TOOL_OUTPUT_BYTES);
 
     // Must reference a temp file path OR the "could not be saved" fallback
     let has_file =
@@ -64,7 +64,7 @@ fn long_output_includes_file_path_in_marker() {
 #[test]
 fn long_output_temp_file_contains_full_content() {
     let original = "z".repeat(MAX_TOOL_OUTPUT_BYTES + 200);
-    let result = truncate_tool_output(original.clone());
+    let result = truncate_tool_output(original.clone(), MAX_TOOL_OUTPUT_BYTES);
 
     // Extract file path from the result
     // Pattern: "Full output saved to: <path>."
@@ -110,7 +110,7 @@ fn truncation_respects_utf8_char_boundary() {
     // Pad to make it clearly over the limit
     input.push_str(&"b".repeat(100));
 
-    let result = truncate_tool_output(input);
+    let result = truncate_tool_output(input, MAX_TOOL_OUTPUT_BYTES);
 
     // The truncated portion must be valid UTF-8 (Rust strings always are,
     // but we specifically check the truncation point is at a char boundary)
@@ -141,5 +141,60 @@ fn truncation_respects_utf8_char_boundary() {
         prefix.len(),
         prefix_len,
         "truncation must fall at the char boundary just before '€'"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// New tests for configurable limit
+// ---------------------------------------------------------------------------
+
+#[test]
+fn truncate_tool_output_respects_custom_limit() {
+    let input = "a".repeat(25_000); // 25KB
+
+    // 25KB > 20KB → should be truncated
+    let result_20k = truncate_tool_output(input.clone(), 20_000);
+    assert!(
+        result_20k.contains("[output truncated"),
+        "25KB input must be truncated at 20KB limit, got: {}",
+        &result_20k[result_20k.len().saturating_sub(200)..]
+    );
+
+    // 25KB < 50KB → should pass through unchanged
+    let result_50k = truncate_tool_output(input.clone(), 50_000);
+    assert_eq!(
+        result_50k, input,
+        "25KB input must not be truncated at 50KB limit"
+    );
+}
+
+#[test]
+fn truncate_tool_output_zero_limit_passes_through() {
+    let input = "x".repeat(100_000); // 100KB
+
+    // max_bytes == 0 → truncation disabled, must return unchanged
+    let result = truncate_tool_output(input.clone(), 0);
+    assert_eq!(
+        result, input,
+        "zero limit must disable truncation and pass through unchanged"
+    );
+}
+
+#[test]
+fn truncate_tool_output_default_limit_still_works() {
+    // 60KB > 50KB (MAX_TOOL_OUTPUT_BYTES) → truncated
+    let long_input = "a".repeat(60_000);
+    let result_long = truncate_tool_output(long_input, MAX_TOOL_OUTPUT_BYTES);
+    assert!(
+        result_long.contains("[output truncated"),
+        "60KB input must be truncated at MAX_TOOL_OUTPUT_BYTES (50KB)"
+    );
+
+    // 40KB < 50KB → unchanged
+    let short_input = "a".repeat(40_000);
+    let result_short = truncate_tool_output(short_input.clone(), MAX_TOOL_OUTPUT_BYTES);
+    assert_eq!(
+        result_short, short_input,
+        "40KB input must not be truncated at MAX_TOOL_OUTPUT_BYTES (50KB)"
     );
 }

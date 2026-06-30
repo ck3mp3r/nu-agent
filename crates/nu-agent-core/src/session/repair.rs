@@ -72,6 +72,36 @@ pub fn inject_missing_tool_results(messages: Vec<Message>) -> Vec<Message> {
     result
 }
 
+/// Detects any `User` message whose content consists entirely of `ToolResult`
+/// items that is immediately followed by another `User` message (of any content).
+/// Injects a synthetic `Assistant("[interrupted — turn failed before LLM responded]")`
+/// between each such pair.
+///
+/// This heals sessions saved in a structurally invalid state where a mid-tool-loop
+/// abort persisted tool results without a closing assistant message.
+/// Idempotent: a second pass over already-healed history is a no-op.
+pub(crate) fn inject_assistant_after_dangling_tool_results(
+    messages: Vec<Message>,
+    issues: &mut Vec<String>,
+) -> Vec<Message> {
+    let mut result: Vec<Message> = Vec::with_capacity(messages.len() + 4);
+    let mut iter = messages.into_iter().peekable();
+    while let Some(msg) = iter.next() {
+        let is_pure_tool_result = matches!(
+            &msg,
+            Message::User { content } if content.iter().all(|c| matches!(c, UserContent::ToolResult(_)))
+        );
+        result.push(msg);
+        if is_pure_tool_result && matches!(iter.peek(), Some(Message::User { .. })) {
+            result.push(Message::assistant(
+                "[interrupted — turn failed before LLM responded]",
+            ));
+            issues.push("injected synthetic assistant after dangling tool results".to_string());
+        }
+    }
+    result
+}
+
 /// Repairs a conversation history to satisfy rig/Copilot API invariants.
 ///
 /// Returns the repaired messages and a list of diagnostic strings describing
@@ -83,12 +113,14 @@ pub fn repair_messages(messages: Vec<Message>) -> (Vec<Message>, Vec<String>) {
     // trim_trailing_user follows because integrity removal can leave a new
     // trailing User(Text) message exposed (e.g. when the assistant message
     // that followed it was stripped).
+    let messages = inject_assistant_after_dangling_tool_results(messages, &mut issues); // NEW — first
     let messages = remove_empty_messages(messages, &mut issues);
     let messages = merge_consecutive_same_role(messages, &mut issues);
     let messages = trim_trailing_user(messages, &mut issues);
     let messages = fix_tool_call_integrity(messages, &mut issues);
     let messages = trim_trailing_user(messages, &mut issues);
     let messages = ensure_valid(messages, &mut issues);
+    let messages = fix_empty_tool_results(messages, &mut issues);
     (messages, issues)
 }
 
@@ -393,4 +425,57 @@ pub(crate) fn trim_trailing_user(
 fn ensure_valid(messages: Vec<Message>, _issues: &mut Vec<String>) -> Vec<Message> {
     // An empty history is valid — rig handles it as a fresh conversation.
     messages
+}
+
+/// Replaces any `ToolResult` within a `User` message whose content consists
+/// entirely of empty (blank) text with a single `"(empty result)"` placeholder.
+///
+/// Empty tool results trigger API validation errors on some providers.
+/// This pass is applied **last** in `repair_messages` so that earlier passes
+/// (which may synthesise tool results) can always produce a non-empty string.
+pub(crate) fn fix_empty_tool_results(
+    messages: Vec<Message>,
+    issues: &mut Vec<String>,
+) -> Vec<Message> {
+    messages
+        .into_iter()
+        .map(|msg| match msg {
+            Message::User { content } => {
+                let fixed: Vec<UserContent> = content
+                    .into_iter()
+                    .map(|item| match item {
+                        UserContent::ToolResult(mut tr) => {
+                            let has_empty = tr.content.iter().any(|c| {
+                                matches!(
+                                    c,
+                                    crate::types::ToolResultContent::Text(t)
+                                        if t.text.trim().is_empty()
+                                )
+                            });
+                            if has_empty {
+                                issues.push(format!(
+                                    "replaced empty tool_result content id={}",
+                                    tr.id
+                                ));
+                                tr.content = rig::one_or_many::OneOrMany::one(
+                                    crate::types::ToolResultContent::text("(empty result)"),
+                                );
+                            }
+                            UserContent::ToolResult(tr)
+                        }
+                        other => other,
+                    })
+                    .collect();
+                Message::User {
+                    content: rig::one_or_many::OneOrMany::many(fixed).unwrap_or_else(|_| {
+                        rig::one_or_many::OneOrMany::one(UserContent::Text(crate::types::Text {
+                            text: "(empty result)".to_string(),
+                            additional_params: None,
+                        }))
+                    }),
+                }
+            }
+            other => other,
+        })
+        .collect()
 }

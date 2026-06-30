@@ -640,7 +640,7 @@ impl PluginConfig {
 }
 
 /// Runtime configuration for a specific invocation
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Config {
     /// LLM provider (e.g., "openai", "anthropic", "copilot")
     pub provider: String,
@@ -680,6 +680,27 @@ pub struct Config {
     /// Only fires when no bytes are received for this duration — safe for long
     /// but active LLM responses. Set to 0 to disable. None = use default (30s).
     pub read_timeout_secs: Option<u64>,
+
+    /// Maximum bytes of a single tool result before truncation.
+    /// Full output saved to a temp file; LLM is told to use `read` with offset/limit.
+    /// None = use runtime default (20_000). Some(0) = disable truncation.
+    pub max_tool_result_bytes: Option<usize>,
+
+    /// Approximate context window in tokens for the configured model.
+    /// None = no warning. Set explicitly — no per-provider auto-detection.
+    /// Reference: claude-sonnet-4 = 200_000, gpt-4o = 128_000.
+    pub model_context_tokens: Option<usize>,
+
+    /// Fraction of model_context_tokens at which to warn (0.0–1.0).
+    /// Default: 0.6 — conservative to compensate for the chars/4 under-count.
+    /// None falls back to 0.6.
+    pub context_warning_threshold: Option<f32>,
+
+    /// Max retry attempts for transient errors. None = use default (3).
+    pub max_retries: Option<u8>,
+
+    /// Base backoff in ms, doubles each attempt, capped at 30_000ms. None = use default (1000).
+    pub retry_base_delay_ms: Option<u64>,
 }
 
 impl Config {
@@ -727,6 +748,9 @@ impl Config {
         let max_context_tokens = parse_env_var("AGENT_MAX_CONTEXT_TOKENS");
         let max_output_tokens = parse_env_var("AGENT_MAX_OUTPUT_TOKENS");
         let max_tool_turns = parse_env_var("AGENT_MAX_TOOL_TURNS"); // No default - runtime decides based on mode
+        let max_tool_result_bytes = parse_env_var("AGENT_MAX_TOOL_RESULT_BYTES");
+        let model_context_tokens = parse_env_var("AGENT_MODEL_CONTEXT_TOKENS");
+        let context_warning_threshold = parse_env_var("AGENT_CONTEXT_WARNING_THRESHOLD");
 
         Self {
             provider: provider.to_string(),
@@ -741,6 +765,11 @@ impl Config {
             max_tool_turns,
             preamble: None,
             read_timeout_secs: None,
+            max_tool_result_bytes,
+            model_context_tokens,
+            context_warning_threshold,
+            max_retries: None,
+            retry_base_delay_ms: None,
         }
     }
 
@@ -807,6 +836,15 @@ impl Config {
             })
         }
 
+        // Helper to extract optional int field as usize
+        fn get_optional_usize(record: &nu_protocol::Record, key: &str) -> Option<usize> {
+            record.get(key).and_then(|v| {
+                v.as_int()
+                    .ok()
+                    .and_then(|i| if i >= 0 { Some(i as usize) } else { None })
+            })
+        }
+
         let span = value.span();
 
         // Extract required fields
@@ -821,6 +859,12 @@ impl Config {
         let max_context_tokens = get_optional_u32(record, "max_context_tokens");
         let max_output_tokens = get_optional_u32(record, "max_output_tokens");
         let max_tool_turns = get_optional_u32(record, "max_tool_turns"); // No default - runtime decides based on mode
+        let max_tool_result_bytes = get_optional_usize(record, "max_tool_result_bytes");
+        let model_context_tokens = get_optional_usize(record, "model_context_tokens");
+        let context_warning_threshold = record
+            .get("context_warning_threshold")
+            .and_then(|v| v.as_float().ok())
+            .map(|f| f as f32);
         let preamble = get_optional_string(record, "preamble").and_then(|s| {
             let trimmed = s.trim().to_string();
             if trimmed.is_empty() {
@@ -843,6 +887,11 @@ impl Config {
             max_tool_turns,
             preamble,
             read_timeout_secs: None,
+            max_tool_result_bytes,
+            model_context_tokens,
+            context_warning_threshold,
+            max_retries: None,
+            retry_base_delay_ms: None,
         })
     }
 
@@ -870,6 +919,13 @@ impl Config {
             max_tool_turns: other.max_tool_turns.or(self.max_tool_turns),
             preamble: other.preamble.or(self.preamble),
             read_timeout_secs: other.read_timeout_secs.or(self.read_timeout_secs),
+            max_tool_result_bytes: other.max_tool_result_bytes.or(self.max_tool_result_bytes),
+            model_context_tokens: other.model_context_tokens.or(self.model_context_tokens),
+            context_warning_threshold: other
+                .context_warning_threshold
+                .or(self.context_warning_threshold),
+            max_retries: other.max_retries.or(self.max_retries),
+            retry_base_delay_ms: other.retry_base_delay_ms.or(self.retry_base_delay_ms),
         }
     }
 
@@ -909,6 +965,23 @@ impl Config {
             && turns == 0
         {
             return Err("max_tool_turns must be greater than 0".to_string());
+        }
+
+        // Rule 5: context_warning_threshold must be in (0.0, 1.0] if set
+        if let Some(threshold) = self.context_warning_threshold
+            && (threshold <= 0.0 || threshold > 1.0)
+        {
+            return Err(format!(
+                "context_warning_threshold must be in (0.0, 1.0], got {}",
+                threshold
+            ));
+        }
+
+        // Rule 6: model_context_tokens must be > 0 if set (guards divide-by-zero)
+        if let Some(limit) = self.model_context_tokens
+            && limit == 0
+        {
+            return Err("model_context_tokens must be greater than 0".to_string());
         }
 
         Ok(())

@@ -18,6 +18,7 @@ permissions:
 
 env:
   XDG_CONFIG_HOME: /var/tmp/xdg-config-home
+  NIX_CONFIG: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
 
 jobs:
   build-and-cache:

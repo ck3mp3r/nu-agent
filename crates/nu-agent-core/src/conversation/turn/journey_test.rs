@@ -15,10 +15,40 @@ use super::test_utils::{MockResolver, MockUi, test_config};
 use super::*;
 use crate::conversation::providers::CachedProviderClient;
 use crate::conversation::state::memory::MemoryState;
+use crate::protocol::event::UiEvent;
 use crate::session::ConversationStore;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
 use crate::types::Message;
+
+// ---------------------------------------------------------------------------
+// SSE body helpers for wiremock integration tests
+// ---------------------------------------------------------------------------
+
+fn sse_text_response(text: &str) -> String {
+    let chunks: Vec<String> = text
+        .chars()
+        .collect::<Vec<_>>()
+        .chunks(20)
+        .map(|c| c.iter().collect::<String>())
+        .map(|chunk| format!(
+            "data: {{\"id\":\"chatcmpl-test\",\"choices\":[{{\"index\":0,\"delta\":{{\"content\":{}}},\"finish_reason\":null}}]}}\n\n",
+            serde_json::to_string(&chunk).unwrap()
+        ))
+        .collect();
+
+    let mut body = chunks.join("");
+    body.push_str("data: {\"id\":\"chatcmpl-test\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}\n\n");
+    body.push_str("data: [DONE]\n\n");
+    body
+}
+
+fn sse_tool_call_response(id: &str, name: &str, args: &str) -> String {
+    format!(
+        "data: {{\"id\":\"chatcmpl-test\",\"choices\":[{{\"index\":0,\"delta\":{{\"tool_calls\":[{{\"index\":0,\"id\":\"{id}\",\"type\":\"function\",\"function\":{{\"name\":\"{name}\",\"arguments\":\"\"}}}}]}},\"finish_reason\":null}}]}}\n\ndata: {{\"id\":\"chatcmpl-test\",\"choices\":[{{\"index\":0,\"delta\":{{\"tool_calls\":[{{\"index\":0,\"function\":{{\"arguments\":{}}}}}]}},\"finish_reason\":null}}]}}\n\ndata: {{\"id\":\"chatcmpl-test\",\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"tool_calls\"}}],\"usage\":{{\"prompt_tokens\":50,\"completion_tokens\":15,\"total_tokens\":65}}}}\n\ndata: [DONE]\n\n",
+        serde_json::to_string(args).unwrap()
+    )
+}
 
 // ---------------------------------------------------------------------------
 // JourneyHarness
@@ -34,6 +64,11 @@ struct JourneyHarness {
 
 impl JourneyHarness {
     fn new(session_id: &'static str) -> Self {
+        Self::new_with_config(session_id, test_config())
+    }
+
+    /// Create a harness with a custom config (e.g., to set max_tool_result_bytes).
+    fn new_with_config(session_id: &'static str, config: crate::config::Config) -> Self {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let memory_state = MemoryState::new(temp_dir.path().to_path_buf());
         Self {
@@ -41,7 +76,7 @@ impl JourneyHarness {
             _temp_dir: temp_dir,
             memory_state,
             session_id,
-            config: test_config(),
+            config,
         }
     }
 
@@ -106,6 +141,68 @@ impl JourneyHarness {
             .block_on(self.memory_state.memory_mut().load(self.session_id))
             .expect("memory load")
     }
+
+    /// Starts a wiremock MockServer on the harness runtime.
+    /// Caller must keep the returned MockServer alive for the duration of the test —
+    /// dropping it early causes connection refused mid-stream.
+    fn start_mock_server(&self) -> (wiremock::MockServer, CachedProviderClient) {
+        // Install the rustls crypto provider required by reqwest+rustls before building
+        // any HTTP client. This is a process-global install; `let _` discards the error
+        // when it has already been installed by another test in the same process.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        // Start MockServer on a dedicated runtime to avoid conflicts with the harness rt.
+        let server = tokio::runtime::Runtime::new()
+            .expect("mock server runtime")
+            .block_on(wiremock::MockServer::start());
+        // Use OpenAiCompletions (which targets /chat/completions) for wiremock tests.
+        // This is the OpenAI-compatible completions API path, matching our wiremock setup.
+        let openai_client = rig::providers::openai::Client::builder()
+            .base_url(server.uri())
+            .api_key("fake-key".to_string())
+            .build()
+            .expect("build openai client");
+        let cached = CachedProviderClient::OpenAiCompletions(openai_client.completions_api());
+        (server, cached)
+    }
+
+    fn turn_with_client(
+        &mut self,
+        prompt: &str,
+        client: &CachedProviderClient,
+        tool_infra: ToolInfra,
+    ) -> (
+        Result<TurnOutcome, LabeledError>,
+        Vec<crate::protocol::event::UiEvent>,
+    ) {
+        self.turn_with_client_and_ui(prompt, client, tool_infra, MockUi::new())
+    }
+
+    fn turn_with_client_and_ui(
+        &mut self,
+        prompt: &str,
+        client: &CachedProviderClient,
+        tool_infra: ToolInfra,
+        mut ui: MockUi,
+    ) -> (
+        Result<TurnOutcome, LabeledError>,
+        Vec<crate::protocol::event::UiEvent>,
+    ) {
+        let mut executor =
+            TurnExecutor::new(&self.config, &self.rt, &mut self.memory_state, tool_infra);
+        let outcome = executor.execute(
+            &mut ui,
+            ExecuteInput {
+                prompt: prompt.to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            client,
+            MockResolver,
+            Some(self.session_id),
+            None,
+        );
+        (outcome, ui.events)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +216,119 @@ fn no_tools() -> ToolInfra {
         mcp_registry: Arc::new(McpToolRegistry::from_names(Vec::<String>::new())),
         tool_server_handle: rig::tool::server::ToolServer::new().run(),
         visible_tool_definitions: vec![],
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TestNuShellTool — simple nu__shell tool that returns a fixed result
+// ---------------------------------------------------------------------------
+
+struct TestNuShellTool {
+    response: &'static str,
+}
+
+impl rig::tool::Tool for TestNuShellTool {
+    const NAME: &'static str = "nu__shell";
+    type Error = std::convert::Infallible;
+    type Args = serde_json::Value;
+    type Output = String;
+
+    async fn definition(&self, _prompt: String) -> rig::completion::ToolDefinition {
+        rig::completion::ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "Execute a Nushell command".to_string(),
+            parameters: serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}),
+        }
+    }
+
+    async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
+        Ok(self.response.to_string())
+    }
+}
+
+/// Register a nu__shell tool that returns a fixed result string.
+fn nu_shell_tool(response: &'static str) -> ToolInfra {
+    let handle = rig::tool::server::ToolServer::new()
+        .tool(TestNuShellTool { response })
+        .run();
+    ToolInfra {
+        closure_registry: Arc::new(ClosureRegistry::new()),
+        mcp_registry: Arc::new(McpToolRegistry::from_names(Vec::<String>::new())),
+        tool_server_handle: handle,
+        visible_tool_definitions: vec![rig::completion::ToolDefinition {
+            name: "nu__shell".to_string(),
+            description: "Execute a Nushell command".to_string(),
+            parameters: serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}),
+        }],
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TestTruncatingNuShellTool — nu__shell tool that applies our truncation logic
+// ---------------------------------------------------------------------------
+
+/// A nu__shell tool that goes through `truncate_tool_output` so integration
+/// tests can verify the truncation threshold is respected end-to-end.
+struct TestTruncatingNuShellTool {
+    response: &'static str,
+    max_tool_result_bytes: usize,
+}
+
+impl rig::tool::ToolDyn for TestTruncatingNuShellTool {
+    fn name(&self) -> String {
+        "nu__shell".to_string()
+    }
+
+    fn definition<'a>(
+        &'a self,
+        _prompt: String,
+    ) -> rig::wasm_compat::WasmBoxedFuture<'a, crate::types::ToolDefinition> {
+        Box::pin(async {
+            crate::types::ToolDefinition {
+                name: "nu__shell".to_string(),
+                description: "Execute a Nushell command".to_string(),
+                parameters: serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}),
+            }
+        })
+    }
+
+    fn call<'a>(
+        &'a self,
+        _args: String,
+    ) -> rig::wasm_compat::WasmBoxedFuture<'a, Result<String, rig::tool::ToolError>> {
+        let output = self.response.to_string();
+        let max_bytes = self.max_tool_result_bytes;
+        Box::pin(async move {
+            Ok(crate::tools::limits::truncate_tool_output(
+                output, max_bytes,
+            ))
+        })
+    }
+}
+
+/// Register a nu__shell tool that applies truncation at `max_tool_result_bytes`.
+fn nu_shell_tool_truncating(response: &'static str, max_tool_result_bytes: usize) -> ToolInfra {
+    let handle = rig::tool::server::ToolServer::new().run();
+    // Register via add_tool since ToolDyn cannot use the .tool() builder
+    let rt = tokio::runtime::Runtime::new().expect("tmp runtime for tool registration");
+    rt.block_on(async {
+        handle
+            .add_tool(TestTruncatingNuShellTool {
+                response,
+                max_tool_result_bytes,
+            })
+            .await
+            .expect("add_tool must succeed")
+    });
+    ToolInfra {
+        closure_registry: Arc::new(ClosureRegistry::new()),
+        mcp_registry: Arc::new(McpToolRegistry::from_names(Vec::<String>::new())),
+        tool_server_handle: handle,
+        visible_tool_definitions: vec![rig::completion::ToolDefinition {
+            name: "nu__shell".to_string(),
+            description: "Execute a Nushell command".to_string(),
+            parameters: serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}),
+        }],
     }
 }
 
@@ -666,17 +876,23 @@ fn journey_error_mid_tool_loop_then_recovery() {
     let msgs = h.raw_messages();
     assert_eq!(
         msgs.len(),
-        5,
-        "5 messages: prompt+tc1+tr1+tc2+tr2; got: {msgs:?}"
+        6,
+        "6 messages: prompt+tc1+tr1+tc2+tr2+asst(close); got: {msgs:?}"
     );
     assert_user_text(&msgs[0], "do things");
     assert_tool_call_in_msg(&msgs[1], "tc1", "test_echo");
     assert_tool_result_in_msg(&msgs[2], "tc1", "real_result");
     assert_tool_call_in_msg(&msgs[3], "tc2", "test_echo");
     assert_tool_result_in_msg(&msgs[4], "tc2", "real_result");
+    // msgs[5] is the synthetic assistant close-block appended by close_open_tool_result_block
+    assert!(
+        matches!(&msgs[5], crate::types::Message::Assistant { .. }),
+        "msgs[5] must be the synthetic assistant close-block; got: {:?}",
+        msgs[5]
+    );
     assert_no_interrupted(&msgs);
 
-    // Turn 2: recovery — plain text, sees 5-message prior context
+    // Turn 2: recovery — plain text, sees 6-message prior context
     let model2 = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("recovered".into()),
         MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
@@ -686,14 +902,14 @@ fn journey_error_mid_tool_loop_then_recovery() {
     assert!(r2.is_ok(), "recovery turn must succeed: {r2:?}");
 
     let msgs = h.raw_messages();
-    assert_eq!(msgs.len(), 7, "5 prior + 2 new; got: {msgs:?}");
-    assert_user_text(&msgs[5], "continue");
-    assert_assistant_text_contains(&msgs[6], "recovered");
+    assert_eq!(msgs.len(), 8, "6 prior + 2 new; got: {msgs:?}");
+    assert_user_text(&msgs[6], "continue");
+    assert_assistant_text_contains(&msgs[7], "recovered");
 
     // Verify rig sent the correct context on turn 2.
     // rig's CompletionRequestBuilder::build() pushes the current prompt into
     // chat_history before sending (see rig-core request.rs ~line 914).
-    // So: 5 prior messages + 1 current "continue" prompt = 6 total in chat_history.
+    // So: 6 prior messages + 1 current "continue" prompt = 7 total in chat_history.
     assert_eq!(
         model2_spy.request_count(),
         1,
@@ -701,11 +917,11 @@ fn journey_error_mid_tool_loop_then_recovery() {
     );
     let req = &model2_spy.requests()[0];
     let prior: Vec<_> = req.chat_history.iter().collect();
-    // 5 prior messages + 1 current "continue" prompt = 6
+    // 6 prior messages + 1 current "continue" prompt = 7
     assert_eq!(
         prior.len(),
-        6,
-        "turn 2 chat_history must be 6 (5 prior + current prompt), got: {prior:?}"
+        7,
+        "turn 2 chat_history must be 7 (6 prior + current prompt), got: {prior:?}"
     );
 }
 
@@ -761,15 +977,21 @@ fn journey_cancelled_turn_then_continuation() {
     let msgs = h.raw_messages();
     assert_eq!(
         msgs.len(),
-        3,
-        "expect [user(prompt), asst(tool_call), user(tool_result)]; got: {msgs:?}"
+        4,
+        "expect [user(prompt), asst(tool_call), user(tool_result), asst(close)]; got: {msgs:?}"
     );
     assert_user_text(&msgs[0], "run a git command");
     assert_tool_call_in_msg(&msgs[1], "tc1", "nu__shell");
     assert_tool_result_in_msg(&msgs[2], "tc1", "Already up to date.");
+    // msgs[3] is the synthetic assistant close-block appended by close_open_tool_result_block
+    assert!(
+        matches!(&msgs[3], crate::types::Message::Assistant { .. }),
+        "msgs[3] must be the synthetic assistant close-block; got: {:?}",
+        msgs[3]
+    );
     assert_no_interrupted(&msgs);
 
-    // Turn 2: continuation sees prior 3-message context
+    // Turn 2: continuation sees prior 4-message context
     let model2 = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("I can see the git pull completed. How can I help next?".into()),
         MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
@@ -777,15 +999,15 @@ fn journey_cancelled_turn_then_continuation() {
     let model2_spy = model2.clone();
     let (r2, _) = h.turn("what happened?", model2, no_tools());
     assert!(r2.is_ok());
-    assert_eq!(h.raw_messages().len(), 5);
+    assert_eq!(h.raw_messages().len(), 6);
     let requests = model2_spy.requests();
     let prior: Vec<_> = requests[0].chat_history.iter().collect();
     // rig appends the current prompt into chat_history before sending (see rig-core request.rs).
-    // So: 3 prior messages + 1 current "what happened?" prompt = 4 total in chat_history.
+    // So: 4 prior messages + 1 current "what happened?" prompt = 5 total in chat_history.
     assert_eq!(
         prior.len(),
-        4,
-        "turn 2 chat_history must be 4 (3 prior + current prompt), got: {prior:?}"
+        5,
+        "turn 2 chat_history must be 5 (4 prior + current prompt), got: {prior:?}"
     );
 }
 
@@ -888,4 +1110,743 @@ fn journey_session_reload_from_disk() {
             "turn 2 chat_history must be 3 (2 prior + current prompt), got: {prior:?}"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Gap 1A: wiremock diagnostics + close_open_tool_result_block integration test
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Gap 1B: corrupt session healed by repair on load
+// ---------------------------------------------------------------------------
+
+/// Verifies that a session corrupted before Gap 1A (user(ToolResult) → user(Text)
+/// with no assistant between) is transparently healed on load and the next turn succeeds.
+///
+/// The repair happens inside `JournalConversationMemory::load()` via `repair_messages()`.
+/// This test proves end-to-end that a corrupt session is healed and a new turn can succeed.
+#[test]
+fn journey_corrupt_session_healed_by_repair_on_load() {
+    use std::io::Write;
+
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let path = temp_dir.path().to_path_buf();
+    let session_id = "journey-repair-load";
+    let config = test_config();
+
+    // Write corrupt JSONL directly to the session file using rig's own serialization.
+    // The corrupt pattern: user(ToolResult) immediately followed by user(Text), no asst between.
+    {
+        use crate::types::{
+            AssistantContent, Message, ToolCall, ToolFunction, ToolResult, ToolResultContent,
+            UserContent,
+        };
+        use rig::one_or_many::OneOrMany;
+
+        let session_file = path.join(format!("{}.jsonl", session_id));
+        let mut f = std::fs::File::create(&session_file).expect("create session file");
+
+        // metadata line (required by JsonlConversationStore::load as first line)
+        let metadata = serde_json::json!({
+            "type": "session",
+            "session_id": session_id,
+            "created_at": "2024-01-01T00:00:00Z",
+            "compaction_count": 0
+        });
+        writeln!(f, "{}", serde_json::to_string(&metadata).unwrap()).unwrap();
+
+        // Build the corrupt messages using rig types and serialize them.
+        // This ensures the JSONL format matches what rig can parse back.
+        let corrupt_messages: Vec<Message> = vec![
+            // user("run something")
+            Message::user("run something"),
+            // assistant(tool_call tc1 nu__shell)
+            Message::Assistant {
+                id: None,
+                content: OneOrMany::one(AssistantContent::ToolCall(ToolCall::new(
+                    "tc1".to_string(),
+                    ToolFunction::new(
+                        "nu__shell".to_string(),
+                        serde_json::json!({"command": "git pull"}),
+                    ),
+                ))),
+            },
+            // user(tool_result tc1) — pure ToolResult message
+            Message::User {
+                content: OneOrMany::one(UserContent::ToolResult(ToolResult {
+                    id: "tc1".to_string(),
+                    call_id: None,
+                    content: OneOrMany::one(ToolResultContent::text("Already up to date.")),
+                })),
+            },
+            // user("continue") — immediately after ToolResult, no assistant between them → CORRUPT
+            Message::user("continue"),
+        ];
+
+        for msg in &corrupt_messages {
+            writeln!(f, "{}", serde_json::to_string(msg).unwrap()).unwrap();
+        }
+    }
+
+    // Now create a MemoryState pointing to the same directory (simulating a new CLI invocation
+    // that loads the corrupt JSONL). Repair fires inside load().
+    let rt = tokio::runtime::Runtime::new().expect("rt");
+    let mut ms = crate::conversation::state::memory::MemoryState::new(path.clone());
+
+    let model = MockCompletionModel::from_stream_turns([[
+        MockStreamEvent::Text("The git pull succeeded.".into()),
+        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+    ]]);
+
+    let mut ui = MockUi::new();
+    let mut executor = TurnExecutor::new(&config, &rt, &mut ms, no_tools());
+    let outcome = executor.execute(
+        &mut ui,
+        ExecuteInput {
+            prompt: "what happened?".to_string(),
+            preamble: None,
+            span: nu_protocol::Span::test_data(),
+        },
+        &CachedProviderClient::Mock(model),
+        MockResolver,
+        Some(session_id),
+        None,
+    );
+
+    // The turn must succeed — repair healed the corrupt session on load.
+    assert!(
+        outcome.is_ok(),
+        "turn must succeed after corrupt session is healed on load; got: {outcome:?}"
+    );
+
+    // Verify the raw JSONL contains the expected message count.
+    // The corrupt JSONL had 4 messages. Repair is applied in-memory on load (not written
+    // back to JSONL). The turn then appends 2 new messages (user prompt + assistant reply).
+    // Raw JSONL = 4 original (corrupt) + 2 new = 6 total.
+    let raw = ms
+        .conversation_store()
+        .load(session_id)
+        .expect("store load");
+    assert_eq!(
+        raw.len(),
+        6,
+        "raw JSONL must have 6 messages (4 original + 2 new); got: {raw:?}"
+    );
+}
+
+#[test]
+fn journey_wiremock_basic_text_smoke() {
+    let mut h = JourneyHarness::new("journey-wiremock-smoke");
+    let (server, client) = h.start_mock_server();
+
+    let sse_body = sse_text_response("hello from mock");
+    h.rt.block_on(async {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, ResponseTemplate};
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .append_header("content-type", "text/event-stream")
+                    .set_body_bytes(sse_body.into_bytes()),
+            )
+            .mount(&server)
+            .await;
+    });
+
+    let (r, _) = h.turn_with_client("test", &client, no_tools());
+    assert!(r.is_ok(), "basic wiremock text turn must succeed: {r:?}");
+    let msgs = h.raw_messages();
+    assert_eq!(msgs.len(), 2, "expect [user, assistant]; got: {msgs:?}");
+}
+
+/// Turn 1: LLM calls nu__shell, tool executes (sub-turn 1 succeeds), sub-turn 2
+/// returns HTTP 500 (server error). The executor must:
+///   1. Persist [user(prompt), asst(tc1), user(tr1)] via inject_missing_tool_results
+///   2. Append a synthetic assistant close-block message via close_open_tool_result_block
+///   3. Return Err
+///
+/// Turn 2: Normal text response. Must succeed — proves the session is no longer broken
+/// (the message history ends with Assistant, so the next User can follow without API error).
+#[test]
+fn journey_hard_error_after_tool_results_session_remains_valid() {
+    let mut h = JourneyHarness::new("journey-gap1a");
+    let (server, client) = h.start_mock_server();
+
+    // Turn 1: tool call succeeds, sub-turn 2 → HTTP 500
+    let tool_call_body = sse_tool_call_response("tc1", "nu__shell", "{\"command\":\"git pull\"}");
+    h.rt.block_on(async {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .append_header("content-type", "text/event-stream")
+                    .set_body_bytes(tool_call_body.into_bytes()),
+            )
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+
+        // The 500 is up_to_n_times(1) so it's consumed by sub-turn 2 of turn 1
+        // and does NOT interfere with turn 2's request.
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(500).set_body_bytes(
+                b"{\"error\":{\"message\":\"server error\",\"type\":\"api_error\"}}".to_vec(),
+            ))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+    });
+
+    let (r1, _) = h.turn_with_client("run something", &client, nu_shell_tool("result_42"));
+    assert!(r1.is_err(), "turn 1 must fail with server error");
+
+    let msgs = h.raw_messages();
+    assert_eq!(
+        msgs.len(),
+        4,
+        "expect [user, asst(tc1), user(tr1), asst(close)]"
+    );
+    // last message must be the synthetic assistant that closes the tool block
+    assert!(
+        matches!(&msgs[3], rig::message::Message::Assistant { .. }),
+        "last message must be Assistant, got: {:?}",
+        msgs[3]
+    );
+
+    // Turn 2: must succeed — proves the session is no longer broken
+    let text_body = sse_text_response("recovered successfully");
+    h.rt.block_on(async {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .append_header("content-type", "text/event-stream")
+                    .set_body_bytes(text_body.into_bytes()),
+            )
+            .mount(&server)
+            .await;
+    });
+
+    let (r2, _) = h.turn_with_client("continue", &client, no_tools());
+    assert!(r2.is_ok(), "turn 2 must succeed after repair — was: {r2:?}");
+    assert_eq!(h.raw_messages().len(), 6);
+}
+
+// ---------------------------------------------------------------------------
+// Gap 2B: configurable tool result truncation limit
+// ---------------------------------------------------------------------------
+
+/// Verify that a tiny `max_tool_result_bytes` causes tool results to be
+/// truncated when the response exceeds the limit.
+#[test]
+fn journey_tool_result_truncated_at_configured_limit() {
+    use rig::message::{Message, UserContent};
+
+    // Use a tiny limit to avoid large allocations in tests.
+    let mut h = JourneyHarness::new_with_config(
+        "journey-truncate",
+        crate::config::Config {
+            max_tool_result_bytes: Some(100),
+            ..crate::config::Config::default()
+        },
+    );
+    let (server, client) = h.start_mock_server();
+
+    // Mount responses: tool call first, then a plain text response
+    h.rt.block_on(async {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .append_header("content-type", "text/event-stream")
+                    .set_body_bytes(
+                        sse_tool_call_response("tc1", "nu__shell", "{\"command\":\"ls\"}")
+                            .into_bytes(),
+                    ),
+            )
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .append_header("content-type", "text/event-stream")
+                    .set_body_bytes(sse_text_response("done").into_bytes()),
+            )
+            .mount(&server)
+            .await;
+    });
+
+    // Tool returns 200 bytes — well over the 100-byte limit.
+    let response_200: &'static str = Box::leak("x".repeat(200).into_boxed_str());
+    let (r, _) = h.turn_with_client(
+        "list files",
+        &client,
+        nu_shell_tool_truncating(response_200, 100),
+    );
+    assert!(r.is_ok(), "turn must succeed: {r:?}");
+
+    let msgs = h.raw_messages();
+    // Expect [user(prompt), asst(tool_call), user(tool_result), asst(final)]
+    assert!(
+        msgs.len() >= 3,
+        "expected at least 3 messages, got: {}",
+        msgs.len()
+    );
+
+    // The tool result is in the third message (index 2), which is a user message
+    // containing a ToolResult with the truncated output.
+    let tool_result_text = msgs
+        .iter()
+        .find_map(|msg| {
+            if let Message::User { content } = msg {
+                content.iter().find_map(|c| {
+                    if let UserContent::ToolResult(tr) = c {
+                        use crate::types::ToolResultContent;
+                        let text = tr
+                            .content
+                            .iter()
+                            .map(|tc| match tc {
+                                ToolResultContent::Text(t) => t.text.clone(),
+                                ToolResultContent::Image(_) => String::new(),
+                            })
+                            .collect::<Vec<_>>()
+                            .join("");
+                        Some(text)
+                    } else {
+                        None
+                    }
+                })
+            } else {
+                None
+            }
+        })
+        .expect("expected a ToolResult message");
+
+    assert!(
+        tool_result_text.contains("[output truncated"),
+        "tool result must be truncated at 100-byte limit, got: {tool_result_text:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Gap 2B (wiring): Config::max_tool_result_bytes → BuiltinToolAdapter
+// ---------------------------------------------------------------------------
+
+/// Register a `skill` tool backed by a real `BuiltinToolAdapter` using the provided
+/// `max_tool_result_bytes` limit and temp directory (caller creates the skill content
+/// inside `cwd`).  This is the only builtin-tool path we can exercise in `nu-agent-core`
+/// tests: `nu__shell` is not handled by `dispatch_fs_tool`, but `skill` is.
+fn skill_via_builtin_adapter(max_tool_result_bytes: usize, cwd: std::path::PathBuf) -> ToolInfra {
+    use crate::hook::adapter::BuiltinToolAdapter;
+    use crate::types::ToolDefinition;
+
+    let tool_def = ToolDefinition {
+        name: "skill".to_string(),
+        description: "Load skill content".to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "name": { "type": "string" }
+            },
+            "required": ["name"]
+        }),
+    };
+    let adapter = BuiltinToolAdapter::new(
+        tool_def.clone(),
+        cwd,
+        None,
+        None,
+        None,
+        max_tool_result_bytes,
+    );
+
+    let handle = rig::tool::server::ToolServer::new().run();
+    let rt = tokio::runtime::Runtime::new().expect("tmp runtime for skill adapter");
+    rt.block_on(async {
+        handle
+            .add_tool(adapter)
+            .await
+            .expect("add_tool must succeed")
+    });
+    ToolInfra {
+        closure_registry: Arc::new(ClosureRegistry::new()),
+        mcp_registry: Arc::new(McpToolRegistry::from_names(Vec::<String>::new())),
+        tool_server_handle: handle,
+        visible_tool_definitions: vec![rig::completion::ToolDefinition {
+            name: "skill".to_string(),
+            description: "Load skill content".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" }
+                },
+                "required": ["name"]
+            }),
+        }],
+    }
+}
+
+/// Prove `Config::max_tool_result_bytes → BuiltinToolAdapter::max_tool_result_bytes →
+/// truncate_tool_output` wiring is correct end-to-end.
+///
+/// Unlike `journey_tool_result_truncated_at_configured_limit` (which exercises a
+/// hand-rolled `TestTruncatingNuShellTool`), this test registers a real
+/// `BuiltinToolAdapter` (via `skill_via_builtin_adapter`) and verifies that the limit
+/// from the harness config is respected when the adapter serialises and caps the result.
+#[test]
+fn journey_tool_result_limit_flows_from_config_to_adapter() {
+    use rig::message::{Message, UserContent};
+
+    // ── 1. Harness with a 100-byte limit ─────────────────────────────────────
+    let limit = 100usize;
+    let mut h = JourneyHarness::new_with_config(
+        "journey-builtin-adapter-truncate",
+        crate::config::Config {
+            max_tool_result_bytes: Some(limit),
+            ..crate::config::Config::default()
+        },
+    );
+    let (server, client) = h.start_mock_server();
+
+    // ── 2. Create a skill file whose serialised JSON will exceed 100 bytes ───
+    //    The content itself is 200 'x' characters; once wrapped in JSON
+    //    (`{"name":…,"source":…,"content":…}`) the total is well over 100 bytes.
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let skill_dir = temp_dir
+        .path()
+        .join(".agents")
+        .join("skills")
+        .join("big_skill");
+    std::fs::create_dir_all(&skill_dir).expect("create skill dir");
+    std::fs::write(skill_dir.join("SKILL.md"), "x".repeat(200)).expect("write skill");
+
+    // ── 3. Mount: tool call → text response ──────────────────────────────────
+    h.rt.block_on(async {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .append_header("content-type", "text/event-stream")
+                    .set_body_bytes(
+                        sse_tool_call_response("tc-adapter", "skill", "{\"name\":\"big_skill\"}")
+                            .into_bytes(),
+                    ),
+            )
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .append_header("content-type", "text/event-stream")
+                    .set_body_bytes(sse_text_response("done").into_bytes()),
+            )
+            .mount(&server)
+            .await;
+    });
+
+    // ── 4. Run the turn with the BuiltinToolAdapter-backed ToolInfra ─────────
+    let cwd = temp_dir.path().to_path_buf();
+    let (r, _) = h.turn_with_client("load skill", &client, skill_via_builtin_adapter(limit, cwd));
+    assert!(r.is_ok(), "turn must succeed: {r:?}");
+
+    // ── 5. Assert the tool result was truncated ───────────────────────────────
+    let msgs = h.raw_messages();
+    assert!(
+        msgs.len() >= 3,
+        "expected at least 3 messages, got: {}",
+        msgs.len()
+    );
+
+    let tool_result_text = msgs
+        .iter()
+        .find_map(|msg| {
+            if let Message::User { content } = msg {
+                content.iter().find_map(|c| {
+                    if let UserContent::ToolResult(tr) = c {
+                        use crate::types::ToolResultContent;
+                        let text = tr
+                            .content
+                            .iter()
+                            .map(|tc| match tc {
+                                ToolResultContent::Text(t) => t.text.clone(),
+                                ToolResultContent::Image(_) => String::new(),
+                            })
+                            .collect::<Vec<_>>()
+                            .join("");
+                        Some(text)
+                    } else {
+                        None
+                    }
+                })
+            } else {
+                None
+            }
+        })
+        .expect("expected a ToolResult message");
+
+    assert!(
+        tool_result_text.contains("[output truncated"),
+        "BuiltinToolAdapter must truncate at {limit}-byte limit; got: {tool_result_text:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Gap 2A: Token estimate warning
+// ---------------------------------------------------------------------------
+
+/// Verifies that a context warning is emitted when the estimated token count
+/// of the session history exceeds the configured threshold before a turn.
+#[test]
+fn journey_context_warning_emitted_near_limit() {
+    let config = crate::config::Config {
+        model_context_tokens: Some(100),
+        context_warning_threshold: Some(0.5), // warn at 50 tokens
+        ..crate::config::Config::default()
+    };
+    let mut h = JourneyHarness::new_with_config("journey-ctx-warn", config);
+    let (server, client) = h.start_mock_server();
+
+    // Pre-populate session with enough content to exceed threshold.
+    // Execute a first turn to build up history.
+    h.rt.block_on(async {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .append_header("content-type", "text/event-stream")
+                    .set_body_bytes(sse_text_response(&"b".repeat(200)).into_bytes()),
+            )
+            .mount(&server)
+            .await;
+    });
+    let _ = h.turn_with_client("initial prompt with some content here", &client, no_tools());
+
+    // Execute a second turn — pre_turn_messages will include the first turn's history
+    // which should exceed the 50-token threshold (100 * 0.5).
+    h.rt.block_on(async {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .append_header("content-type", "text/event-stream")
+                    .set_body_bytes(sse_text_response("done").into_bytes()),
+            )
+            .mount(&server)
+            .await;
+    });
+    let (r2, events) = h.turn_with_client("follow up", &client, no_tools());
+
+    assert!(r2.is_ok(), "turn must succeed even with warning: {r2:?}");
+    let has_warning = events
+        .iter()
+        .any(|e| matches!(e, UiEvent::Warning { message } if message.contains("context window")));
+    assert!(
+        has_warning,
+        "expected context window warning, got events: {events:?}"
+    );
+}
+
+/// Verifies that no context warning is emitted when `model_context_tokens` is `None`
+/// (the default), regardless of session size.
+#[test]
+fn journey_no_context_warning_when_not_configured() {
+    // Config::default() has model_context_tokens = None → no warning ever
+    let mut h = JourneyHarness::new("journey-no-ctx-warn");
+    let (server, client) = h.start_mock_server();
+
+    h.rt.block_on(async {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .append_header("content-type", "text/event-stream")
+                    .set_body_bytes(sse_text_response("ok").into_bytes()),
+            )
+            .mount(&server)
+            .await;
+    });
+    let (r, events) = h.turn_with_client("hello", &client, no_tools());
+
+    assert!(r.is_ok());
+    let has_ctx_warning = events
+        .iter()
+        .any(|e| matches!(e, UiEvent::Warning { message } if message.contains("context window")));
+    assert!(
+        !has_ctx_warning,
+        "no context warning expected when model_context_tokens is None"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Gap 3: Retry on server error recovers
+// ---------------------------------------------------------------------------
+
+/// Integration test using wiremock: first POST → 500 server error (retryable),
+/// second POST → success. Verifies the retry loop transparently recovers.
+#[test]
+fn journey_retry_on_server_error_recovers() {
+    let config = crate::config::Config {
+        max_retries: Some(3),
+        retry_base_delay_ms: Some(1), // minimal delay for fast tests
+        ..crate::config::Config::default()
+    };
+    let mut h = JourneyHarness::new_with_config("journey-retry-recover", config);
+    let (server, client) = h.start_mock_server();
+
+    let sse_body = sse_text_response("recovered from 500");
+    h.rt.block_on(async {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+
+        // First request: 500 server error
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(500).set_body_bytes(
+                b"{\"error\":{\"message\":\"500 api_error internal server error\",\"type\":\"api_error\"}}".to_vec(),
+            ))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+
+        // Second request: success
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .append_header("content-type", "text/event-stream")
+                    .set_body_bytes(sse_body.into_bytes()),
+            )
+            .mount(&server)
+            .await;
+    });
+
+    let (r, _) = h.turn_with_client("test retry", &client, no_tools());
+    assert!(
+        r.is_ok(),
+        "retry should recover from server error; got: {r:?}"
+    );
+
+    let msgs = h.raw_messages();
+    assert_eq!(
+        msgs.len(),
+        2,
+        "expect [user, assistant] after successful retry; got {msgs:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Gap 6: Pre-flight repair — empty ToolResult replaced with placeholder
+// ---------------------------------------------------------------------------
+
+/// Integration test: a session containing a ToolResult with empty content is
+/// repaired ephemerally before the turn starts, and the turn succeeds.
+///
+/// The raw JSONL is NOT modified — the repair is applied only to the in-memory
+/// cache so rig receives structurally valid history.
+///
+/// Setup:
+/// 1. Write a valid session (tool call + empty tool result + closing assistant)
+///    directly into the memory cache to simulate a prior turn that produced
+///    an empty tool result.
+/// 2. Execute a follow-up turn — the pre-flight repair should replace the
+///    empty ToolResult content with "(empty result)" before rig sees the history.
+/// 3. Assert the turn succeeds (Ok).
+/// 4. Assert the in-memory history (post-turn raw messages) contains "(empty result)".
+#[test]
+fn journey_empty_tool_result_replaced_with_placeholder() {
+    use crate::types::{
+        AssistantContent, ToolCall, ToolFunction, ToolResult, ToolResultContent, UserContent,
+    };
+    use rig::memory::ConversationMemory;
+    use rig::one_or_many::OneOrMany;
+
+    let mut h = JourneyHarness::new("journey-gap6-empty-tool-result");
+
+    // Pre-populate the in-memory cache with a valid-structured but empty-content
+    // ToolResult message. This simulates a prior turn that stored an empty result.
+    let tc_id = "tc_gap6";
+    let prior_messages: Vec<crate::types::Message> = vec![
+        crate::types::Message::user("run something"),
+        crate::types::Message::Assistant {
+            id: None,
+            content: OneOrMany::one(AssistantContent::ToolCall(ToolCall::new(
+                tc_id.to_string(),
+                ToolFunction::new("test_echo".to_string(), serde_json::json!({})),
+            ))),
+        },
+        // Empty tool result — the key scenario for Gap 6
+        crate::types::Message::User {
+            content: OneOrMany::one(UserContent::ToolResult(ToolResult {
+                id: tc_id.to_string(),
+                call_id: None,
+                content: OneOrMany::one(ToolResultContent::text("")),
+            })),
+        },
+        crate::types::Message::assistant("[ok]"),
+    ];
+
+    h.rt.block_on(
+        h.memory_state
+            .memory_mut()
+            .append(h.session_id, prior_messages),
+    )
+    .expect("pre-populate cache");
+
+    // Now run a follow-up turn — pre-flight repair must fix the empty ToolResult.
+    let model = MockCompletionModel::from_stream_turns([[
+        MockStreamEvent::Text("follow-up answer".into()),
+        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+    ]]);
+    let (r, _) = h.turn("what was the result?", model, no_tools());
+    assert!(
+        r.is_ok(),
+        "turn must succeed after empty ToolResult is repaired; got: {r:?}"
+    );
+
+    // Verify the in-memory cache contains "(empty result)" for the repaired entry.
+    let all_msgs =
+        h.rt.block_on(h.memory_state.memory_mut().load(h.session_id))
+            .expect("load messages");
+
+    let has_placeholder = all_msgs.iter().any(|msg| {
+        let crate::types::Message::User { content } = msg else {
+            return false;
+        };
+        content.iter().any(|c| {
+            match c {
+            rig::message::UserContent::ToolResult(tr) => tr.content.iter().any(|tc| {
+                matches!(tc, crate::types::ToolResultContent::Text(t) if t.text == "(empty result)")
+            }),
+            _ => false,
+        }
+        })
+    });
+    assert!(
+        has_placeholder,
+        "in-memory history must contain '(empty result)' placeholder after repair; msgs: {all_msgs:?}"
+    );
 }

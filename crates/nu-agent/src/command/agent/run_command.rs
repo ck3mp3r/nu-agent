@@ -199,6 +199,7 @@ pub(super) fn run_command(
                         &tool_server_handle,
                         &cfg.mcp,
                         Some(caller_cwd_path),
+                        config.max_tool_result_bytes.unwrap_or(20_000),
                     ))
                     .map_err(|msg| {
                         LabeledError::new("Failed to connect MCP runtime")
@@ -270,6 +271,7 @@ pub(super) fn run_command(
         has_messaging,
         tool_timeout,
         session: session_resolution.session.as_mut(),
+        max_tool_result_bytes: config.max_tool_result_bytes.unwrap_or(20_000),
     })?;
 
     let mcp_caller_cwd = cwd.clone();

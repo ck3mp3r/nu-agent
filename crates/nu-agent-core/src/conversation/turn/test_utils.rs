@@ -104,6 +104,10 @@ impl AsyncPermissionResolver for MockResolver {
 // ---------------------------------------------------------------------------
 
 /// Build a minimal Config for testing.
+///
+/// Uses `max_retries: Some(0)` so existing tests that exercise error persistence paths
+/// are not affected by the retry loop. Tests that specifically verify retry behaviour
+/// should override this with `max_retries: Some(3)` (or the desired count).
 pub(super) fn test_config() -> Config {
     Config {
         provider: "copilot".to_string(),
@@ -118,5 +122,10 @@ pub(super) fn test_config() -> Config {
         max_tool_turns: None,
         temperature: None,
         read_timeout_secs: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: Some(0),
+        retry_base_delay_ms: Some(1),
     }
 }

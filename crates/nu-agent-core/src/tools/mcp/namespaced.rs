@@ -17,6 +17,7 @@ use tokio::sync::RwLock;
 pub struct NamespacedTool {
     inner: Box<dyn ToolDyn>,
     namespaced_name: String,
+    max_tool_result_bytes: usize,
 }
 
 impl NamespacedTool {
@@ -26,12 +27,19 @@ impl NamespacedTool {
     /// * `inner` - The tool to wrap (any type implementing ToolDyn)
     /// * `server_prefix` - The server name prefix (e.g., "nu", "context7")
     /// * `delimiter` - The delimiter to use between prefix and tool name (e.g., "__")
-    pub fn new(inner: Box<dyn ToolDyn>, server_prefix: &str, delimiter: &str) -> Self {
+    /// * `max_tool_result_bytes` - Maximum bytes before truncation (0 = disabled)
+    pub fn new(
+        inner: Box<dyn ToolDyn>,
+        server_prefix: &str,
+        delimiter: &str,
+        max_tool_result_bytes: usize,
+    ) -> Self {
         let raw_name = inner.name();
         let namespaced_name = format!("{server_prefix}{delimiter}{raw_name}");
         Self {
             inner,
             namespaced_name,
+            max_tool_result_bytes,
         }
     }
 }
@@ -56,7 +64,12 @@ impl ToolDyn for NamespacedTool {
     fn call<'a>(&'a self, args: String) -> WasmBoxedFuture<'a, Result<String, ToolError>> {
         // Delegate the call to the inner tool, then cap output size before returning.
         let inner_future = self.inner.call(args);
-        Box::pin(async move { inner_future.await.map(truncate_tool_output) })
+        let max_bytes = self.max_tool_result_bytes;
+        Box::pin(async move {
+            inner_future
+                .await
+                .map(|output| truncate_tool_output(output, max_bytes))
+        })
     }
 }
 
@@ -70,6 +83,7 @@ pub struct NamespacedClientHandler {
     tool_server_handle: rig::tool::server::ToolServerHandle,
     server_prefix: String,
     delimiter: String,
+    max_tool_result_bytes: usize,
     /// Stores the NAMESPACED tool names that we manage
     managed_tool_names: Arc<RwLock<Vec<String>>>,
 }
@@ -82,17 +96,20 @@ impl NamespacedClientHandler {
     /// * `tool_server_handle` - Handle to rig's ToolServer for registering tools
     /// * `server_prefix` - The server name to use as prefix (e.g., "nu", "context7")
     /// * `delimiter` - The delimiter between prefix and tool name (typically "__")
+    /// * `max_tool_result_bytes` - Maximum bytes before truncation (0 = disabled)
     pub fn new(
         client_info: ClientInfo,
         tool_server_handle: rig::tool::server::ToolServerHandle,
         server_prefix: String,
         delimiter: String,
+        max_tool_result_bytes: usize,
     ) -> Self {
         Self {
             client_info,
             tool_server_handle,
             server_prefix,
             delimiter,
+            max_tool_result_bytes,
             managed_tool_names: Arc::new(RwLock::new(Vec::new())),
         }
     }
@@ -137,6 +154,7 @@ impl NamespacedClientHandler {
                     Box::new(mcp_tool),
                     &handler.server_prefix,
                     &handler.delimiter,
+                    handler.max_tool_result_bytes,
                 );
 
                 // The namespaced name is what rig will see
@@ -184,8 +202,12 @@ impl ClientHandler for NamespacedClientHandler {
         for tool in tools {
             let mcp_tool = rig::tool::rmcp::McpTool::from_mcp_server(tool, context.peer.clone());
 
-            let namespaced_tool =
-                NamespacedTool::new(Box::new(mcp_tool), &self.server_prefix, &self.delimiter);
+            let namespaced_tool = NamespacedTool::new(
+                Box::new(mcp_tool),
+                &self.server_prefix,
+                &self.delimiter,
+                self.max_tool_result_bytes,
+            );
 
             let namespaced_name = namespaced_tool.name();
 

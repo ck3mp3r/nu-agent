@@ -1,6 +1,7 @@
 use super::repair::{
-    fix_tool_call_integrity, inject_missing_tool_results, merge_consecutive_same_role,
-    remove_empty_messages, repair_messages, trim_trailing_user,
+    fix_empty_tool_results, fix_tool_call_integrity, inject_assistant_after_dangling_tool_results,
+    inject_missing_tool_results, merge_consecutive_same_role, remove_empty_messages,
+    repair_messages, trim_trailing_user,
 };
 use crate::types::{AssistantContent, Message, ToolCall, ToolFunction, ToolResult, UserContent};
 use rig::one_or_many::OneOrMany;
@@ -518,8 +519,158 @@ fn merge_consecutive_same_role_does_not_merge_tool_call_assistants() {
 }
 
 // ================================================================
-// inject_missing_tool_results — TDD RED phase
+// inject_assistant_after_dangling_tool_results
 // ================================================================
+
+#[test]
+fn inject_assistant_after_dangling_tool_results_heals_corrupt_session() {
+    // Input: user(prompt), asst([tool_call("tc1")]), user([tool_result("tc1")]), user("continue")
+    // The user([tool_result]) followed by user("continue") is the corrupt pattern.
+    let msgs = vec![
+        Message::user("prompt"),
+        assistant_with_content(vec![make_tool_call("tc1", "do_thing")]),
+        user_with_content(vec![make_tool_result("tc1", "output")]),
+        Message::user("continue"),
+    ];
+    let mut issues = Vec::new();
+    let result = inject_assistant_after_dangling_tool_results(msgs, &mut issues);
+    assert_eq!(
+        result.len(),
+        5,
+        "synthetic assistant must be injected between user(ToolResult) and user(Text)"
+    );
+    // The injected message is at index 3
+    match &result[3] {
+        Message::Assistant { content, .. } => {
+            let text = content.iter().find_map(|c| match c {
+                crate::types::AssistantContent::Text(t) => Some(t.text.as_str()),
+                _ => None,
+            });
+            assert!(
+                text.is_some_and(|t| t.contains("[interrupted")),
+                "injected assistant must contain '[interrupted'; got: {text:?}"
+            );
+        }
+        _ => panic!("result[3] must be an Assistant message"),
+    }
+    assert!(
+        issues
+            .iter()
+            .any(|i| i.contains("injected synthetic assistant after dangling tool results")),
+        "must emit the expected diagnostic; issues: {issues:?}"
+    );
+}
+
+#[test]
+fn inject_assistant_after_dangling_tool_results_noop_when_valid() {
+    let msgs = vec![Message::user("p"), Message::assistant("ok")];
+    let expected = msgs.clone();
+    let mut issues = Vec::new();
+    let result = inject_assistant_after_dangling_tool_results(msgs, &mut issues);
+    assert_msgs_eq(&result, &expected);
+    assert!(issues.is_empty(), "no issues for valid input");
+}
+
+#[test]
+fn inject_assistant_after_dangling_tool_results_noop_after_gap1a() {
+    // Already healed by Gap 1A: asst closes the block after tool results
+    let msgs = vec![
+        Message::user("p"),
+        assistant_with_content(vec![make_tool_call("tc1", "do_thing")]),
+        user_with_content(vec![make_tool_result("tc1", "x")]),
+        Message::assistant("[Turn failed: server error]"),
+        Message::user("continue"),
+    ];
+    let expected = msgs.clone();
+    let mut issues = Vec::new();
+    let result = inject_assistant_after_dangling_tool_results(msgs, &mut issues);
+    assert_msgs_eq(&result, &expected);
+    assert!(
+        issues.is_empty(),
+        "already-healed session must produce no issues; issues: {issues:?}"
+    );
+}
+
+#[test]
+fn inject_assistant_after_dangling_tool_results_idempotent() {
+    // First pass: corrupt input → healed
+    let msgs = vec![
+        Message::user("prompt"),
+        assistant_with_content(vec![make_tool_call("tc1", "do_thing")]),
+        user_with_content(vec![make_tool_result("tc1", "output")]),
+        Message::user("continue"),
+    ];
+    let mut issues1 = Vec::new();
+    let healed = inject_assistant_after_dangling_tool_results(msgs, &mut issues1);
+    assert!(!issues1.is_empty(), "first pass must emit a diagnostic");
+
+    // Second pass: healed → identical, no new issues
+    let healed_clone = healed.clone();
+    let mut issues2 = Vec::new();
+    let healed_again = inject_assistant_after_dangling_tool_results(healed, &mut issues2);
+    assert_msgs_eq(&healed_again, &healed_clone);
+    assert!(
+        issues2.is_empty(),
+        "second pass must emit no issues (idempotent); issues: {issues2:?}"
+    );
+}
+
+#[test]
+fn repair_messages_heals_session_jsonl_pattern() {
+    // Simulate the real broken session pattern:
+    //   user(prompt)
+    //   asst([tool_call(tc_read1), tool_call(tc_read2), tool_call(tc_ls)])
+    //   user([tool_result(tc_read1), tool_result(tc_read2), tool_result(tc_ls)])  ← pure ToolResult
+    //   user("continue")  ← next is User → inject assistant between them
+    //
+    // After inject_assistant_after_dangling_tool_results, there are 5 messages.
+    // Then trim_trailing_user removes the trailing user("continue") (text-only, no ToolResult),
+    // yielding 4 messages. The injected assistant is at index 3 (the final message).
+    let msgs = vec![
+        Message::user("prompt"),
+        assistant_with_content(vec![
+            make_tool_call("tc_read1", "read"),
+            make_tool_call("tc_read2", "read"),
+            make_tool_call("tc_ls", "ls"),
+        ]),
+        user_with_content(vec![
+            make_tool_result("tc_read1", "content1"),
+            make_tool_result("tc_read2", "content2"),
+            make_tool_result("tc_ls", "skills"),
+        ]),
+        Message::user("continue"),
+    ];
+    let (result, issues) = repair_messages(msgs);
+
+    // inject adds asst("[interrupted]") before user("continue") → 5 messages,
+    // then trim_trailing_user removes the trailing user("continue") → 4 messages.
+    assert_eq!(
+        result.len(),
+        4,
+        "expected 4 messages after repair; got: {result:?}"
+    );
+    // result[3] must be the injected assistant (last message after trim)
+    match &result[3] {
+        Message::Assistant { content, .. } => {
+            let text = content.iter().find_map(|c| match c {
+                crate::types::AssistantContent::Text(t) => Some(t.text.as_str()),
+                _ => None,
+            });
+            assert!(
+                text.is_some_and(|t| t.contains("[interrupted")),
+                "result[3] must be the injected assistant message; text: {text:?}"
+            );
+        }
+        _ => panic!(
+            "result[3] must be an Assistant message; got: {:?}",
+            result[3]
+        ),
+    }
+    assert!(
+        !issues.is_empty(),
+        "repair_messages must emit diagnostics for the corrupt input"
+    );
+}
 
 /// Test: history with unpaired `Assistant(ToolCall{id:"x"})` →
 /// result contains `User(ToolResult{id:"x", content:"[interrupted]"})`
@@ -653,4 +804,145 @@ fn pipeline_no_dangling_tool_call_after_trim() {
             );
         }
     }
+}
+
+// ================================================================
+// Gap 6 — fix_empty_tool_results tests
+// ================================================================
+
+/// Test 1 — `fix_empty_tool_results` replaces empty-text ToolResult content
+/// with `"(empty result)"` and logs a diagnostic.
+#[test]
+fn fix_empty_tool_results_replaces_empty_text() {
+    let msgs = vec![user_with_content(vec![make_tool_result("tc1", "")])];
+    let mut issues = Vec::new();
+    let result = fix_empty_tool_results(msgs, &mut issues);
+
+    // Content must be replaced with "(empty result)"
+    assert_eq!(result.len(), 1);
+    let Message::User { content } = &result[0] else {
+        panic!("expected User message");
+    };
+    let tr = content
+        .iter()
+        .find_map(|c| match c {
+            UserContent::ToolResult(tr) => Some(tr),
+            _ => None,
+        })
+        .expect("ToolResult must still be present");
+    let text: Vec<_> = tr
+        .content
+        .iter()
+        .filter_map(|c| match c {
+            crate::types::ToolResultContent::Text(t) => Some(t.text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        text,
+        vec!["(empty result)"],
+        "empty ToolResult content must be replaced with '(empty result)'"
+    );
+    assert!(
+        !issues.is_empty(),
+        "must emit a diagnostic for replaced content"
+    );
+    assert!(
+        issues.iter().any(|i| i.contains("tc1")),
+        "diagnostic must reference tool result id=tc1; issues: {issues:?}"
+    );
+}
+
+#[test]
+fn fix_empty_tool_results_replaces_whitespace_only() {
+    let msgs = vec![user_with_content(vec![make_tool_result("tc_ws", "   ")])];
+    let mut issues = Vec::new();
+    let result = fix_empty_tool_results(msgs, &mut issues);
+
+    let Message::User { content } = &result[0] else {
+        panic!("expected User message");
+    };
+    let tr = content
+        .iter()
+        .find_map(|c| match c {
+            UserContent::ToolResult(tr) => Some(tr),
+            _ => None,
+        })
+        .expect("ToolResult must still be present");
+    let text: Vec<_> = tr
+        .content
+        .iter()
+        .filter_map(|c| match c {
+            crate::types::ToolResultContent::Text(t) => Some(t.text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        text,
+        vec!["(empty result)"],
+        "whitespace-only content must be treated as empty"
+    );
+    assert!(issues.iter().any(|i| i.contains("tc_ws")));
+}
+
+/// Test 2 — Non-empty content is not modified and no issues are logged.
+#[test]
+fn fix_empty_tool_results_noop_when_content_present() {
+    let msgs = vec![user_with_content(vec![make_tool_result(
+        "tc2",
+        "actual output",
+    )])];
+    let original = msgs.clone();
+    let mut issues = Vec::new();
+    let result = fix_empty_tool_results(msgs, &mut issues);
+
+    assert_msgs_eq(&result, &original);
+    assert!(issues.is_empty(), "no issues for non-empty tool result");
+}
+
+/// Test 3 — Assistant and plain User messages are not modified.
+#[test]
+fn fix_empty_tool_results_noop_on_non_user_messages() {
+    let msgs = vec![Message::assistant("text"), Message::user("plain user text")];
+    let original = msgs.clone();
+    let mut issues = Vec::new();
+    let result = fix_empty_tool_results(msgs, &mut issues);
+
+    assert_msgs_eq(&result, &original);
+    assert!(issues.is_empty());
+}
+
+/// Test 4 — Full `repair_messages` pipeline includes empty ToolResult fix.
+#[test]
+fn repair_messages_pipeline_includes_empty_tool_result_fix() {
+    let msgs = vec![
+        Message::user("go"),
+        assistant_with_content(vec![make_tool_call("tcX", "tool_x")]),
+        user_with_content(vec![make_tool_result("tcX", "")]),
+        Message::assistant("done"),
+    ];
+    let (result, issues) = repair_messages(msgs);
+
+    // The empty ToolResult must have been replaced
+    let has_placeholder = result.iter().any(|msg| {
+        let Message::User { content } = msg else {
+            return false;
+        };
+        content.iter().any(|c| {
+            match c {
+            UserContent::ToolResult(tr) => tr.content.iter().any(|tc| {
+                matches!(tc, crate::types::ToolResultContent::Text(t) if t.text == "(empty result)")
+            }),
+            _ => false,
+        }
+        })
+    });
+    assert!(
+        has_placeholder,
+        "repair_messages must replace empty tool result with '(empty result)'; result: {result:?}"
+    );
+    assert!(
+        issues.iter().any(|i| i.contains("tcX")),
+        "repair_messages must emit issue for empty tool result fix; issues: {issues:?}"
+    );
 }
