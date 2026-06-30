@@ -26,17 +26,17 @@ fn make_interactive(
 ) -> (
     InteractivePermissionResolver,
     mpsc::UnboundedReceiver<UiEvent>,
+    mpsc::UnboundedSender<UiEvent>,
 ) {
     let (ui_tx, ui_rx) = mpsc::unbounded_channel();
     let resolver = InteractivePermissionResolver {
-        ui_tx,
         pending: Arc::new(Mutex::new(HashMap::new())),
         permissions: Arc::new(permissions),
         session_grants: Arc::new(Mutex::new(SessionGrantCache::default())),
         closure_registry: Arc::new(ClosureRegistry::new()),
         mcp_registry: Arc::new(McpToolRegistry::from_names::<[&str; 0], &str>([])),
     };
-    (resolver, ui_rx)
+    (resolver, ui_rx, ui_tx)
 }
 
 fn make_policy(permissions: PermissionsConfig) -> PolicyPermissionResolver {
@@ -75,7 +75,7 @@ const ALLOW_TOOL: &str = "read";
 #[tokio::test]
 async fn policy_resolver_explicit_allow_returns_allow() {
     let resolver = make_policy(ask_global_with_read_allowed_config());
-    let decision = resolver.resolve(ALLOW_TOOL, "{}", None).await;
+    let decision = resolver.resolve(ALLOW_TOOL, "{}", None, None).await;
     assert_eq!(decision, PermissionDecision::Allow);
 }
 
@@ -84,7 +84,7 @@ async fn policy_resolver_explicit_allow_returns_allow() {
 async fn policy_resolver_explicit_deny_returns_deny() {
     let resolver = make_policy(deny_all_config());
     // "some_mcp_tool" not in the allow list, and global is Deny
-    let decision = resolver.resolve(ASK_TOOL, "{}", None).await;
+    let decision = resolver.resolve(ASK_TOOL, "{}", None, None).await;
     assert_eq!(decision, PermissionDecision::Deny);
 }
 
@@ -93,7 +93,7 @@ async fn policy_resolver_explicit_deny_returns_deny() {
 async fn policy_resolver_ask_config_returns_deny_without_interaction() {
     let resolver = make_policy(ask_global_with_read_allowed_config());
     // ASK_TOOL falls through to global Ask → NoOpAskHook returns Deny
-    let decision = resolver.resolve(ASK_TOOL, "{}", None).await;
+    let decision = resolver.resolve(ASK_TOOL, "{}", None, None).await;
     assert_eq!(decision, PermissionDecision::Deny);
 }
 
@@ -104,8 +104,8 @@ async fn policy_resolver_ask_config_returns_deny_without_interaction() {
 /// Test 4: InteractivePermissionResolver + explicit allow config → Allow, no PermissionRequested.
 #[tokio::test]
 async fn interactive_resolver_explicit_allow_returns_allow_no_event() {
-    let (resolver, mut ui_rx) = make_interactive(ask_global_with_read_allowed_config());
-    let decision = resolver.resolve(ALLOW_TOOL, "{}", None).await;
+    let (resolver, mut ui_rx, ui_tx) = make_interactive(ask_global_with_read_allowed_config());
+    let decision = resolver.resolve(ALLOW_TOOL, "{}", None, Some(ui_tx)).await;
     assert_eq!(decision, PermissionDecision::Allow);
     // No PermissionRequested event should have been emitted
     assert!(
@@ -117,8 +117,8 @@ async fn interactive_resolver_explicit_allow_returns_allow_no_event() {
 /// Test 5: InteractivePermissionResolver + explicit deny config → Deny, no PermissionRequested.
 #[tokio::test]
 async fn interactive_resolver_explicit_deny_returns_deny_no_event() {
-    let (resolver, mut ui_rx) = make_interactive(deny_all_config());
-    let decision = resolver.resolve(ASK_TOOL, "{}", None).await;
+    let (resolver, mut ui_rx, ui_tx) = make_interactive(deny_all_config());
+    let decision = resolver.resolve(ASK_TOOL, "{}", None, Some(ui_tx)).await;
     assert_eq!(decision, PermissionDecision::Deny);
     // No PermissionRequested event should have been emitted
     assert!(
@@ -131,13 +131,14 @@ async fn interactive_resolver_explicit_deny_returns_deny_no_event() {
 /// submit_decision(request_id, Allow) → resolve returns Allow.
 #[tokio::test]
 async fn interactive_resolver_ask_config_submit_allow_returns_allow() {
-    let (resolver, mut ui_rx) = make_interactive(ask_global_with_read_allowed_config());
+    let (resolver, mut ui_rx, ui_tx) = make_interactive(ask_global_with_read_allowed_config());
 
     // Clone the resolver so we can call submit_decision from a separate task
     let resolver_clone = resolver.clone();
 
     // Spawn resolve() — it will block waiting for submit_decision
-    let resolve_fut = tokio::spawn(async move { resolver.resolve(ASK_TOOL, "{}", None).await });
+    let resolve_fut =
+        tokio::spawn(async move { resolver.resolve(ASK_TOOL, "{}", None, Some(ui_tx)).await });
 
     // Wait for the PermissionRequested event
     let event = ui_rx
@@ -160,11 +161,12 @@ async fn interactive_resolver_ask_config_submit_allow_returns_allow() {
 /// Test 7: InteractivePermissionResolver + ask config → submit_decision(request_id, Deny) → Deny.
 #[tokio::test]
 async fn interactive_resolver_ask_config_submit_deny_returns_deny() {
-    let (resolver, mut ui_rx) = make_interactive(ask_global_with_read_allowed_config());
+    let (resolver, mut ui_rx, ui_tx) = make_interactive(ask_global_with_read_allowed_config());
 
     let resolver_clone = resolver.clone();
 
-    let resolve_fut = tokio::spawn(async move { resolver.resolve(ASK_TOOL, "{}", None).await });
+    let resolve_fut =
+        tokio::spawn(async move { resolver.resolve(ASK_TOOL, "{}", None, Some(ui_tx)).await });
 
     // Wait for the PermissionRequested event
     let event = ui_rx
@@ -188,7 +190,7 @@ async fn interactive_resolver_ask_config_submit_deny_returns_deny() {
 /// PermissionRequested event.
 #[tokio::test]
 async fn interactive_allow_always_writes_grant_and_auto_allows_subsequent_call() {
-    let (resolver, mut ui_rx) = make_interactive(ask_global_with_read_allowed_config());
+    let (resolver, mut ui_rx, ui_tx) = make_interactive(ask_global_with_read_allowed_config());
 
     // Clone the resolver so we can call submit_decision from a separate task
     let resolver_clone = resolver.clone();
@@ -196,7 +198,8 @@ async fn interactive_allow_always_writes_grant_and_auto_allows_subsequent_call()
     // --- First call: should trigger PermissionRequested ---
     let resolve_fut = tokio::spawn({
         let resolver = resolver.clone();
-        async move { resolver.resolve(ASK_TOOL, "{}", None).await }
+        let ui_tx = ui_tx.clone();
+        async move { resolver.resolve(ASK_TOOL, "{}", None, Some(ui_tx)).await }
     });
 
     // Wait for the PermissionRequested event
@@ -223,7 +226,7 @@ async fn interactive_allow_always_writes_grant_and_auto_allows_subsequent_call()
     // --- Second call: must return Allow WITHOUT emitting another PermissionRequested ---
     let decision2 = tokio::time::timeout(
         std::time::Duration::from_secs(2),
-        resolver.resolve(ASK_TOOL, "{}", None),
+        resolver.resolve(ASK_TOOL, "{}", None, Some(ui_tx)),
     )
     .await
     .expect("second resolve timed out — AllowAlways grant not persisted to session cache");
@@ -275,7 +278,7 @@ async fn session_grant_arc_is_shared_across_resolver_instances() {
     };
 
     // Before any grant: resolver1 sees Deny (global Ask → NoOpAskHook → Deny).
-    let before = resolver1.resolve(ASK_TOOL, "{}", None).await;
+    let before = resolver1.resolve(ASK_TOOL, "{}", None, None).await;
     assert_eq!(
         before,
         PermissionDecision::Deny,
@@ -310,7 +313,7 @@ async fn session_grant_arc_is_shared_across_resolver_instances() {
 
     // resolver2 must now return Allow — the cache hit via apply_session_grant_override
     // upgrades Ask → Allow before the NoOpAskHook is even consulted.
-    let after = resolver2.resolve(ASK_TOOL, "{}", None).await;
+    let after = resolver2.resolve(ASK_TOOL, "{}", None, None).await;
     assert_eq!(
         after,
         PermissionDecision::Allow,

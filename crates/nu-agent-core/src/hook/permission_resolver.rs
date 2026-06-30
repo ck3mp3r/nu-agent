@@ -101,12 +101,18 @@ fn summarize_ask_payload(tool_name: &str, args: &JsonValue) -> String {
 ///
 /// - TUI mode: sends a `PermissionRequested` event and awaits user input.
 /// - TTY mode: evaluates policy inline and returns immediately.
+///
+/// The `ui_tx` parameter is an optional sender for UI events. In interactive (TUI) mode,
+/// the caller (AgentHook) passes its own sender so the resolver can emit
+/// `PermissionRequested` events without owning a long-lived sender that would
+/// prevent the drain loop's channel from closing.
 pub trait AsyncPermissionResolver: Clone + Send + Sync + 'static {
     fn resolve(
         &self,
         tool_name: &str,
         arguments: &str,
         tool_call_id: Option<String>,
+        ui_tx: Option<mpsc::UnboundedSender<UiEvent>>,
     ) -> impl std::future::Future<Output = PermissionDecision> + Send;
 }
 
@@ -132,6 +138,7 @@ impl AsyncPermissionResolver for PolicyPermissionResolver {
         tool_name: &str,
         arguments: &str,
         tool_call_id: Option<String>,
+        _ui_tx: Option<mpsc::UnboundedSender<UiEvent>>,
     ) -> impl std::future::Future<Output = PermissionDecision> + Send {
         let tool_name = tool_name.to_string();
         let arguments = arguments.to_string();
@@ -225,9 +232,14 @@ impl AskApprovalHook for AskContextCapture {
 /// `UiEvent::PermissionRequested` and awaits the user's decision.
 /// The TUI event loop must call [`InteractivePermissionResolver::submit_decision`]
 /// to unblock the waiting `resolve()` future.
+///
+/// **Design note (deadlock prevention):** This struct intentionally does NOT own a
+/// `mpsc::UnboundedSender<UiEvent>`. The sender is passed as a parameter to `resolve()`
+/// by the `AgentHook` that calls it. This ensures the executor's stack frame (which holds
+/// the resolver across the retry loop) never keeps a sender alive that would prevent the
+/// drain loop's channel from closing — eliminating the sender-lifetime deadlock.
 #[derive(Clone)]
 pub struct InteractivePermissionResolver {
-    pub ui_tx: mpsc::UnboundedSender<UiEvent>,
     pub pending: Arc<Mutex<HashMap<String, oneshot::Sender<ProtocolPermissionDecision>>>>,
     pub permissions: Arc<PermissionsConfig>,
     pub session_grants: Arc<Mutex<SessionGrantCache>>,
@@ -240,12 +252,16 @@ impl InteractivePermissionResolver {
     ///
     /// # Parameters
     ///
-    /// - `ui_tx`: the tokio unbounded sender used to emit `UiEvent::PermissionRequested`
-    ///   to the UI drain loop (must be the same channel drained by `execute_turn`).
     /// - `pending`: shared map of request-id → oneshot sender, also held by the
     ///   orchestrator's permission poll loop so it can call `submit_decision`.
+    /// - `permissions`: the static permission configuration.
+    /// - `session_grants`: shared session grant cache for AllowAlways persistence.
+    /// - `closure_registry`: registry of closure-based tools.
+    /// - `mcp_registry`: registry of MCP tools.
+    ///
+    /// Note: `ui_tx` is NOT stored here. It is passed per-call via `resolve()`'s
+    /// `ui_tx` parameter by the `AgentHook` that invokes the resolver.
     pub fn new(
-        ui_tx: mpsc::UnboundedSender<UiEvent>,
         pending: Arc<Mutex<HashMap<String, oneshot::Sender<ProtocolPermissionDecision>>>>,
         permissions: Arc<PermissionsConfig>,
         session_grants: Arc<Mutex<SessionGrantCache>>,
@@ -253,7 +269,6 @@ impl InteractivePermissionResolver {
         mcp_registry: Arc<McpToolRegistry>,
     ) -> Self {
         Self {
-            ui_tx,
             pending,
             permissions,
             session_grants,
@@ -276,6 +291,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
         tool_name: &str,
         arguments: &str,
         tool_call_id: Option<String>,
+        ui_tx: Option<mpsc::UnboundedSender<UiEvent>>,
     ) -> impl std::future::Future<Output = PermissionDecision> + Send {
         let tool_name = tool_name.to_string();
         let arguments = arguments.to_string();
@@ -283,7 +299,6 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
         let session_grants = Arc::clone(&self.session_grants);
         let closure_registry = Arc::clone(&self.closure_registry);
         let mcp_registry = Arc::clone(&self.mcp_registry);
-        let ui_tx = self.ui_tx.clone();
         let pending = Arc::clone(&self.pending);
 
         async move {
@@ -325,6 +340,15 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                 }
             } else {
                 // Policy said Ask — send event to TUI and await user decision.
+                let Some(ui_tx) = ui_tx else {
+                    // No UI sender available (should not happen in TUI mode).
+                    // Fall back to Deny to be safe.
+                    log::warn!(
+                        "InteractivePermissionResolver: Ask triggered but no ui_tx provided; denying"
+                    );
+                    return PermissionDecision::Deny;
+                };
+
                 let request_id = next_request_id();
                 let context =
                     capture_hook

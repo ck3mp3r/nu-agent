@@ -190,7 +190,7 @@ where
         // 5. Ask permission
         let decision = self
             .permission_resolver
-            .resolve(tool_name, args, tool_call_id)
+            .resolve(tool_name, args, tool_call_id, Some(self.ui_tx.clone()))
             .await;
 
         // 6. Act on decision

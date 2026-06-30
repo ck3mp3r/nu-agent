@@ -95,11 +95,10 @@ impl<'a> TurnExecutor<'a> {
     /// on success (caller should then evaluate compaction and call `build_response`),
     /// or `TurnOutcome::EarlyReturn(value)` for cancellation paths.
     ///
-    /// The optional `ui_channel` is used when `InteractivePermissionResolver` is the
-    /// permission resolver: the caller creates `(ui_tx, ui_rx)` first, gives a clone
-    /// of `ui_tx` to the resolver, then passes the original pair here so the drain
-    /// loop uses the same channel that the resolver writes `PermissionRequested` events
-    /// to. Pass `None` for TTY/policy mode (the channel is created internally).
+    /// The optional `ui_channel` is used in TUI mode: the caller creates `(ui_tx, ui_rx)`
+    /// and passes the pair here so the drain loop and the `AgentHook` share the same
+    /// channel. The hook passes its `ui_tx` to the permission resolver on each call.
+    /// Pass `None` for TTY/policy mode (the channel is created internally).
     pub fn execute<U: ProgressUi, P: AsyncPermissionResolver>(
         &mut self,
         ui: &mut U,

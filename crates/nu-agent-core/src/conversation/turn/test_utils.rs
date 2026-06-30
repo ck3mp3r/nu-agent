@@ -10,6 +10,7 @@ use crate::config::Config;
 use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
 use crate::protocol::contracts::ProgressUi;
 use crate::protocol::event::UiEvent;
+use tokio::sync::mpsc;
 
 // ---------------------------------------------------------------------------
 // MockUi
@@ -93,6 +94,7 @@ impl AsyncPermissionResolver for MockResolver {
         _tool_name: &str,
         _arguments: &str,
         _tool_call_id: Option<String>,
+        _ui_tx: Option<mpsc::UnboundedSender<UiEvent>>,
     ) -> impl std::future::Future<Output = PermissionDecision> + Send {
         let decision = PermissionDecision::Allow;
         async move { decision }

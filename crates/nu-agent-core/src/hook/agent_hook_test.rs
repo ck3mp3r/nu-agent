@@ -79,6 +79,7 @@ impl AsyncPermissionResolver for MockResolver {
         _tool_name: &str,
         _arguments: &str,
         _tool_call_id: Option<String>,
+        _ui_tx: Option<mpsc::UnboundedSender<UiEvent>>,
     ) -> impl std::future::Future<Output = PermissionDecision> + Send {
         let decision = self.0;
         async move { decision }

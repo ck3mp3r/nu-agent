@@ -291,8 +291,9 @@ where
 /// Execute a conversation turn with a pre-built UI event channel.
 ///
 /// This variant is used by TUI mode where the caller creates `(ui_tx, ui_rx)` first
-/// so that a clone of `ui_tx` can be given to `InteractivePermissionResolver` before
-/// the channel is consumed by the hook and drain loop.
+/// so the hook's `ui_tx` clone and the drain loop's `ui_rx` share the same channel.
+/// The `InteractivePermissionResolver` does NOT own a `ui_tx` — it receives one
+/// per-call from the `AgentHook` (which gets it from this same channel).
 ///
 /// For non-interactive (TTY/policy) mode, use `execute_turn` which creates its own channel.
 pub(crate) fn execute_turn_with_channel<M, U, P>(
@@ -619,7 +620,14 @@ where
     let mut deltas_emitted = false;
 
     loop {
-        let item = stream.next().await;
+        let item = tokio::select! {
+            biased;
+            item = stream.next() => item,
+            _ = cancel_token.cancelled() => {
+                cancelled = true;
+                break;
+            }
+        };
         match item {
             Some(Ok(event)) => match event {
                 // --- STREAMED ASSISTANT CONTENT ---

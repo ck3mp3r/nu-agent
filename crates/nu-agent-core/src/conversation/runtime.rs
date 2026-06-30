@@ -160,12 +160,13 @@ impl CoreRuntime for AgentConversationRuntime {
                 // TUI mode: construct InteractivePermissionResolver.
                 //
                 // Create the tokio UI event channel here so that we can:
-                //   1. Clone ui_tx for InteractivePermissionResolver (it sends PermissionRequested).
-                //   2. Pass the original (ui_tx, ui_rx) to the executor so the drain loop uses
-                //      the same channel that the resolver writes events to.
+                //   1. Pass the (ui_tx, ui_rx) pair to the executor so the drain loop uses
+                //      the same channel that the hook's ui_tx writes events to.
+                //   2. The resolver does NOT own a ui_tx — it receives one per-call from
+                //      the AgentHook, preventing the executor's stack-held resolver from
+                //      keeping a sender alive that would deadlock the drain loop.
                 let (ui_tx, ui_rx) = mpsc::unbounded_channel::<UiEvent>();
                 let resolver = InteractivePermissionResolver::new(
-                    ui_tx.clone(),
                     Arc::clone(pending),
                     Arc::clone(&permissions),
                     Arc::clone(&session_grants),
