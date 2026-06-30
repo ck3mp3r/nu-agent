@@ -99,7 +99,7 @@ fn make_hook_with_resolver(
     let mcp_registry = Arc::new(crate::tools::handler::McpToolRegistry::from_names(
         std::iter::empty::<String>(),
     ));
-    let hook = AgentHook::new(token, tx, resolver, closure_registry, mcp_registry);
+    let hook = AgentHook::new(token, tx, resolver, closure_registry, mcp_registry, None);
     (hook, rx)
 }
 
@@ -116,7 +116,14 @@ fn make_hook_with_token(
     let mcp_registry = Arc::new(crate::tools::handler::McpToolRegistry::from_names(
         std::iter::empty::<String>(),
     ));
-    let hook = AgentHook::new(token.clone(), tx, resolver, closure_registry, mcp_registry);
+    let hook = AgentHook::new(
+        token.clone(),
+        tx,
+        resolver,
+        closure_registry,
+        mcp_registry,
+        None,
+    );
     (hook, rx, token)
 }
 
@@ -446,4 +453,144 @@ async fn on_completion_call_stores_history_in_shared_arc() {
         3,
         "after second on_completion_call the arc must be overwritten with history + [prompt] = 3 messages (not appended)"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Helper: hook with a custom tool-call-per-sub-turn limit
+// ---------------------------------------------------------------------------
+
+fn make_hook_with_limit(
+    resolver: MockResolver,
+    limit: usize,
+) -> (AgentHook<MockResolver>, mpsc::UnboundedReceiver<UiEvent>) {
+    let (tx, rx) = mpsc::unbounded_channel();
+    let token = CancellationToken::new();
+    let closure_registry = Arc::new(crate::tools::closure::ClosureRegistry::new());
+    let mcp_registry = Arc::new(crate::tools::handler::McpToolRegistry::from_names(
+        std::iter::empty::<String>(),
+    ));
+    let hook = AgentHook::new(
+        token,
+        tx,
+        resolver,
+        closure_registry,
+        mcp_registry,
+        Some(limit),
+    );
+    (hook, rx)
+}
+
+// ---------------------------------------------------------------------------
+// Per-sub-turn tool call cap tests
+// ---------------------------------------------------------------------------
+
+/// With limit=5 and 15 tool calls, first 5 return Continue, remaining 10 return Skip
+/// with the expected reason string.
+#[tokio::test]
+async fn tool_call_cap_skips_after_limit() {
+    let limit = 5;
+    let total = 15;
+    let (hook, _rx) = make_hook_with_limit(MockResolver(PermissionDecision::Allow), limit);
+
+    for i in 0..total {
+        let result = PromptHook::<DummyModel>::on_tool_call(
+            &hook,
+            "some_tool",
+            None,
+            &format!("id{i}"),
+            &format!("{{\"arg\": {i}}}"), // different args to avoid doom loop
+        )
+        .await;
+
+        if i < limit {
+            assert!(
+                matches!(result, ToolCallHookAction::Continue),
+                "call {i} should Continue (under limit)"
+            );
+        } else {
+            match result {
+                ToolCallHookAction::Skip { reason } => {
+                    assert!(
+                        reason.contains("Tool call limit exceeded"),
+                        "expected limit-exceeded reason, got: {reason}"
+                    );
+                }
+                other => panic!("call {i} should be Skip, got {other:?}"),
+            }
+        }
+    }
+}
+
+/// Counter resets between sub-turns: after hitting the cap, a new
+/// `on_completion_call` resets the counter so calls succeed again.
+#[tokio::test]
+async fn tool_call_cap_resets_on_completion_call() {
+    let limit = 3;
+    let (hook, _rx) = make_hook_with_limit(MockResolver(PermissionDecision::Allow), limit);
+
+    // Exhaust the limit
+    for i in 0..limit {
+        let result = PromptHook::<DummyModel>::on_tool_call(
+            &hook,
+            "tool_a",
+            None,
+            &format!("id{i}"),
+            &format!("{{\"n\": {i}}}"),
+        )
+        .await;
+        assert!(
+            matches!(result, ToolCallHookAction::Continue),
+            "call {i} should Continue"
+        );
+    }
+
+    // Next call should be skipped
+    let result =
+        PromptHook::<DummyModel>::on_tool_call(&hook, "tool_a", None, "over", "{\"n\": 99}").await;
+    assert!(
+        matches!(result, ToolCallHookAction::Skip { .. }),
+        "should be skipped after exhausting limit"
+    );
+
+    // Simulate new sub-turn via on_completion_call
+    let msg = dummy_message();
+    PromptHook::<DummyModel>::on_completion_call(&hook, &msg, &[]).await;
+
+    // Now calls should succeed again
+    let result =
+        PromptHook::<DummyModel>::on_tool_call(&hook, "tool_a", None, "reset1", "{\"n\": 100}")
+            .await;
+    assert!(
+        matches!(result, ToolCallHookAction::Continue),
+        "should Continue after counter reset"
+    );
+}
+
+/// With limit=0 (unlimited), all calls pass through regardless of count.
+#[tokio::test]
+async fn tool_call_cap_zero_means_unlimited() {
+    let (hook, _rx) = make_hook_with_limit(MockResolver(PermissionDecision::Allow), 0);
+
+    for i in 0..50 {
+        let result = PromptHook::<DummyModel>::on_tool_call(
+            &hook,
+            "some_tool",
+            None,
+            &format!("id{i}"),
+            &format!("{{\"arg\": {i}}}"),
+        )
+        .await;
+        assert!(
+            matches!(result, ToolCallHookAction::Continue),
+            "call {i} should Continue when limit is 0 (unlimited)"
+        );
+    }
+}
+
+/// `is_tool_failure` detects the tool-call-limit skip reason.
+#[test]
+fn is_tool_failure_detects_tool_call_limit() {
+    assert!(is_tool_failure(
+        "Tool call limit exceeded for this sub-turn. Remaining calls skipped."
+    ));
 }

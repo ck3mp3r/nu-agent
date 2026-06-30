@@ -129,5 +129,6 @@ pub(super) fn test_config() -> Config {
         context_warning_threshold: None,
         max_retries: Some(0),
         retry_base_delay_ms: Some(1),
+        max_tool_calls_per_subturn: None,
     }
 }

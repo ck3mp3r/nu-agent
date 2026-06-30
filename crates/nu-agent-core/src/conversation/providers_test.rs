@@ -56,6 +56,7 @@ fn build_copilot_client_no_auth_returns_ok() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     let result = build_copilot_client(&config);
@@ -119,6 +120,7 @@ fn build_copilot_client_oauth_path_succeeds_at_build_time() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     let result = build_copilot_client(&config);
@@ -351,6 +353,7 @@ fn plugin_config_read_timeout_secs_propagates_to_resolved_config() {
         compaction: None,
         agents: AgentsConfig::default(),
         read_timeout_secs: Some(60),
+        max_tool_calls_per_subturn: None,
     };
 
     let resolved = plugin_config
@@ -390,6 +393,7 @@ fn plugin_config_without_read_timeout_secs_resolves_to_none() {
         compaction: None,
         agents: AgentsConfig::default(),
         read_timeout_secs: None,
+        max_tool_calls_per_subturn: None,
     };
 
     let resolved = plugin_config

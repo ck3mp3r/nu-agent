@@ -263,6 +263,7 @@ fn provider_dispatch_unsupported_provider_returns_error() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     // This test will compile once we add the dispatch logic
@@ -324,6 +325,7 @@ fn client_cache_key_contains_provider_and_model() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     // client_cache_key clones (provider, api_key, base_url) from config.
@@ -362,6 +364,7 @@ fn client_cache_key_includes_base_url_when_set() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     let key: ClientCacheKey = (
@@ -532,6 +535,7 @@ fn active_model_identity_returns_provider_slash_model() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     // Replicate the method body exactly
@@ -662,6 +666,7 @@ fn provider_state_client_cache_key_contains_provider_and_api_key() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     // Replicate client_cache_key body
@@ -792,6 +797,7 @@ fn accessor_provider_returns_provider_string() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     // Verify the accessor delegation chain: provider() -> provider_state.config().provider
@@ -822,6 +828,7 @@ fn accessor_model_returns_model_string() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     let provider_state = super::super::state::provider::ProviderState::new(config, None);
@@ -850,6 +857,7 @@ fn accessor_max_context_tokens_returns_none_when_unset() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     let provider_state = super::super::state::provider::ProviderState::new(config, None);
@@ -881,6 +889,7 @@ fn accessor_max_context_tokens_returns_value_when_set() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     let provider_state = super::super::state::provider::ProviderState::new(config, None);
@@ -912,6 +921,7 @@ fn accessor_startup_plugin_config_returns_none_when_default() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     let provider_state = super::super::state::provider::ProviderState::new(config, None);

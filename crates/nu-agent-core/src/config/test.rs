@@ -48,6 +48,7 @@ fn test_config_required_fields() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     assert_eq!(config.provider, "openai");
@@ -76,6 +77,7 @@ fn test_config_all_fields() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     assert_eq!(config.provider, "anthropic");
@@ -381,6 +383,7 @@ fn test_merge_full_configs() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     let override_config = Config {
@@ -401,6 +404,7 @@ fn test_merge_full_configs() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     let merged = base.merge(override_config);
@@ -438,6 +442,7 @@ fn test_merge_with_partial_override() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     let override_config = Config {
@@ -458,6 +463,7 @@ fn test_merge_with_partial_override() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     let merged = base.merge(override_config);
@@ -495,6 +501,7 @@ fn test_merge_with_empty_override() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     let empty_override = Config {
@@ -515,6 +522,7 @@ fn test_merge_with_empty_override() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     let merged = base.clone().merge(empty_override);
@@ -544,6 +552,7 @@ fn test_merge_chain() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     let override1 = Config {
@@ -564,6 +573,7 @@ fn test_merge_chain() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     let override2 = Config {
@@ -584,6 +594,7 @@ fn test_merge_chain() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     let merged = base.merge(override1).merge(override2);
@@ -618,6 +629,7 @@ fn test_merge_required_fields() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     let override_config = Config {
@@ -638,6 +650,7 @@ fn test_merge_required_fields() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     let merged = base.merge(override_config);
@@ -668,6 +681,7 @@ fn test_validate_valid_config() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     assert!(config.validate().is_ok());
@@ -694,6 +708,7 @@ fn test_validate_minimal_config() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     assert!(config.validate().is_ok());
@@ -720,6 +735,7 @@ fn test_validate_empty_provider() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     let result = config.validate();
@@ -749,6 +765,7 @@ fn test_validate_empty_model() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     let result = config.validate();
@@ -778,6 +795,7 @@ fn test_validate_max_output_exceeds_context() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     let result = config.validate();
@@ -808,6 +826,7 @@ fn test_validate_max_output_equals_context() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     assert!(config.validate().is_ok());
@@ -834,6 +853,7 @@ fn test_validate_zero_max_tool_turns() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     let result = config.validate();
@@ -863,6 +883,7 @@ fn test_validate_only_context_tokens_set() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     assert!(config.validate().is_ok());
@@ -889,6 +910,7 @@ fn test_validate_only_output_tokens_set() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     assert!(config.validate().is_ok());
@@ -1309,6 +1331,7 @@ fn test_resolve_model_basic() {
         compaction: None,
         agents: AgentsConfig::default(),
         read_timeout_secs: None,
+        max_tool_calls_per_subturn: None,
     };
 
     let config = plugin_config
@@ -1347,6 +1370,7 @@ fn test_resolve_model_with_env_fallback() {
         compaction: None,
         agents: AgentsConfig::default(),
         read_timeout_secs: None,
+        max_tool_calls_per_subturn: None,
     };
 
     let config = plugin_config
@@ -1369,6 +1393,7 @@ fn test_resolve_model_invalid_format() {
         compaction: None,
         agents: AgentsConfig::default(),
         read_timeout_secs: None,
+        max_tool_calls_per_subturn: None,
     };
 
     // No slash separator
@@ -1395,6 +1420,7 @@ fn test_resolve_model_provider_not_found() {
         compaction: None,
         agents: AgentsConfig::default(),
         read_timeout_secs: None,
+        max_tool_calls_per_subturn: None,
     };
 
     let result = plugin_config.resolve_model("unknown/model");
@@ -1427,6 +1453,7 @@ fn test_resolve_model_model_not_in_config() {
         compaction: None,
         agents: AgentsConfig::default(),
         read_timeout_secs: None,
+        max_tool_calls_per_subturn: None,
     };
 
     let config = plugin_config
@@ -1464,6 +1491,7 @@ fn test_resolve_model_with_provider_field() {
         compaction: None,
         agents: AgentsConfig::default(),
         read_timeout_secs: None,
+        max_tool_calls_per_subturn: None,
     };
 
     let config = plugin_config
@@ -1520,6 +1548,7 @@ fn test_resolve_model_merges_limits() {
         compaction: None,
         agents: AgentsConfig::default(),
         read_timeout_secs: None,
+        max_tool_calls_per_subturn: None,
     };
 
     let config = plugin_config
@@ -1558,6 +1587,7 @@ fn resolve_model_handles_two_part_format() {
         compaction: None,
         agents: AgentsConfig::default(),
         read_timeout_secs: None,
+        max_tool_calls_per_subturn: None,
     };
 
     let config = plugin_config
@@ -1579,6 +1609,7 @@ fn resolve_model_validates_empty_parts() {
         compaction: None,
         agents: AgentsConfig::default(),
         read_timeout_secs: None,
+        max_tool_calls_per_subturn: None,
     };
 
     // Empty provider
@@ -1623,6 +1654,7 @@ fn resolve_model_uses_split_once_for_multi_part_models() {
         compaction: None,
         agents: AgentsConfig::default(),
         read_timeout_secs: None,
+        max_tool_calls_per_subturn: None,
     };
 
     let config = plugin_config
@@ -1662,6 +1694,7 @@ fn resolve_model_works_with_simple_two_part() {
         compaction: None,
         agents: AgentsConfig::default(),
         read_timeout_secs: None,
+        max_tool_calls_per_subturn: None,
     };
 
     let config = plugin_config
@@ -1701,6 +1734,7 @@ fn integration_github_copilot_with_backend_in_model() {
         compaction: None,
         agents: AgentsConfig::default(),
         read_timeout_secs: None,
+        max_tool_calls_per_subturn: None,
     };
 
     // Test default model
@@ -1755,6 +1789,7 @@ fn test_validate_none_max_tool_turns_is_valid() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     assert!(config.validate().is_ok());
@@ -1781,6 +1816,7 @@ fn test_validate_zero_max_tool_turns_still_invalid() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        max_tool_calls_per_subturn: None,
     };
 
     let result = config.validate();

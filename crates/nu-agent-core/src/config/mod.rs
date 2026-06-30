@@ -77,6 +77,12 @@ pub struct PluginConfig {
     /// Only fires when no bytes are received for this duration — safe for long
     /// but active LLM responses. Set to 0 to disable.
     pub read_timeout_secs: Option<u64>,
+
+    /// Maximum tool calls allowed per sub-turn (single LLM response).
+    /// Defense against models that ignore `parallel_tool_calls: false` and emit
+    /// many tool calls in one response, causing oversized follow-up requests.
+    /// None = use default (10). Some(0) = unlimited.
+    pub max_tool_calls_per_subturn: Option<usize>,
 }
 
 /// Configuration for conversation compaction behavior.
@@ -256,6 +262,13 @@ impl PluginConfig {
                 .and_then(|i| if i >= 0 { Some(i as u64) } else { None })
         });
 
+        // Extract optional 'max_tool_calls_per_subturn' field
+        let max_tool_calls_per_subturn = record.get("max_tool_calls_per_subturn").and_then(|v| {
+            v.as_int()
+                .ok()
+                .and_then(|i| if i >= 0 { Some(i as usize) } else { None })
+        });
+
         Ok(Self {
             model,
             small_model,
@@ -263,6 +276,7 @@ impl PluginConfig {
             compaction,
             agents,
             read_timeout_secs,
+            max_tool_calls_per_subturn,
         })
     }
 
@@ -635,6 +649,9 @@ impl PluginConfig {
         // Populate read_timeout_secs from plugin config
         config.read_timeout_secs = self.read_timeout_secs;
 
+        // Populate max_tool_calls_per_subturn from plugin config
+        config.max_tool_calls_per_subturn = self.max_tool_calls_per_subturn;
+
         Ok(config)
     }
 }
@@ -701,6 +718,12 @@ pub struct Config {
 
     /// Base backoff in ms, doubles each attempt, capped at 30_000ms. None = use default (1000).
     pub retry_base_delay_ms: Option<u64>,
+
+    /// Maximum tool calls allowed per sub-turn (single LLM response).
+    /// Defense against models that ignore `parallel_tool_calls: false` and emit
+    /// many tool calls in one response, causing oversized follow-up requests.
+    /// None = use default (10). Some(0) = unlimited.
+    pub max_tool_calls_per_subturn: Option<usize>,
 }
 
 impl Config {
@@ -751,6 +774,7 @@ impl Config {
         let max_tool_result_bytes = parse_env_var("AGENT_MAX_TOOL_RESULT_BYTES");
         let model_context_tokens = parse_env_var("AGENT_MODEL_CONTEXT_TOKENS");
         let context_warning_threshold = parse_env_var("AGENT_CONTEXT_WARNING_THRESHOLD");
+        let max_tool_calls_per_subturn = parse_env_var("AGENT_MAX_TOOL_CALLS_PER_SUBTURN");
 
         Self {
             provider: provider.to_string(),
@@ -770,6 +794,7 @@ impl Config {
             context_warning_threshold,
             max_retries: None,
             retry_base_delay_ms: None,
+            max_tool_calls_per_subturn,
         }
     }
 
@@ -861,6 +886,7 @@ impl Config {
         let max_tool_turns = get_optional_u32(record, "max_tool_turns"); // No default - runtime decides based on mode
         let max_tool_result_bytes = get_optional_usize(record, "max_tool_result_bytes");
         let model_context_tokens = get_optional_usize(record, "model_context_tokens");
+        let max_tool_calls_per_subturn = get_optional_usize(record, "max_tool_calls_per_subturn");
         let context_warning_threshold = record
             .get("context_warning_threshold")
             .and_then(|v| v.as_float().ok())
@@ -892,6 +918,7 @@ impl Config {
             context_warning_threshold,
             max_retries: None,
             retry_base_delay_ms: None,
+            max_tool_calls_per_subturn,
         })
     }
 
@@ -926,6 +953,9 @@ impl Config {
                 .or(self.context_warning_threshold),
             max_retries: other.max_retries.or(self.max_retries),
             retry_base_delay_ms: other.retry_base_delay_ms.or(self.retry_base_delay_ms),
+            max_tool_calls_per_subturn: other
+                .max_tool_calls_per_subturn
+                .or(self.max_tool_calls_per_subturn),
         }
     }
 

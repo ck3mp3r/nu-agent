@@ -33,11 +33,13 @@ const DOOM_LOOP_THRESHOLD: usize = 5;
 /// - `"Permission denied"` — permission denial from `on_tool_call`
 /// - `"Doom loop detected: "` — doom loop guard in `on_tool_call`
 /// - `"Tool '"` — invalid/unavailable tool skip from `on_invalid_tool_call`
+/// - `"Tool call limit exceeded"` — per-sub-turn cap from `on_tool_call`
 pub(crate) fn is_tool_failure(result_text: &str) -> bool {
     result_text.starts_with("Toolset error: ")
         || result_text == "Permission denied"
         || result_text.starts_with("Doom loop detected: ")
         || result_text.starts_with("Tool '")
+        || result_text.starts_with("Tool call limit exceeded")
 }
 
 /// Tracks recent tool call signatures for doom loop detection.
@@ -66,6 +68,9 @@ impl DoomLoopState {
     }
 }
 
+/// Default cap on tool calls per sub-turn when not configured.
+const DEFAULT_MAX_TOOL_CALLS_PER_SUBTURN: usize = 10;
+
 /// Generic `PromptHook` implementation parameterized by an async permission resolver.
 ///
 /// Emits `UiEvent` values directly via `ui_tx`, bypassing the `HookEvent` / `HookDriver`
@@ -85,6 +90,12 @@ pub struct AgentHook<P: AsyncPermissionResolver> {
     /// history that was live at the time of the last LLM call attempt, rather than
     /// losing all completed sub-turns.
     last_known_history: Arc<Mutex<Vec<Message>>>,
+    /// Maximum tool calls allowed in a single sub-turn (LLM response).
+    /// 0 means unlimited.
+    max_tool_calls_per_subturn: usize,
+    /// Counter of tool calls executed in the current sub-turn, reset on each
+    /// `on_completion_call` (which fires before each new LLM request).
+    tool_calls_this_subturn: Arc<Mutex<usize>>,
 }
 
 impl<P: AsyncPermissionResolver> AgentHook<P> {
@@ -94,6 +105,7 @@ impl<P: AsyncPermissionResolver> AgentHook<P> {
         permission_resolver: P,
         closure_registry: Arc<ClosureRegistry>,
         mcp_registry: Arc<McpToolRegistry>,
+        max_tool_calls_per_subturn: Option<usize>,
     ) -> Self {
         Self {
             cancel_token,
@@ -103,6 +115,9 @@ impl<P: AsyncPermissionResolver> AgentHook<P> {
             closure_registry,
             mcp_registry,
             last_known_history: Arc::new(Mutex::new(Vec::new())),
+            max_tool_calls_per_subturn: max_tool_calls_per_subturn
+                .unwrap_or(DEFAULT_MAX_TOOL_CALLS_PER_SUBTURN),
+            tool_calls_this_subturn: Arc::new(Mutex::new(0)),
         }
     }
 
@@ -125,6 +140,9 @@ where
         let mut snapshot = history.to_vec();
         snapshot.push(prompt.clone());
         *self.last_known_history.lock().unwrap() = snapshot;
+        // Reset the per-sub-turn tool call counter — a new LLM request is about
+        // to fire, so any tool calls that follow belong to a fresh sub-turn.
+        *self.tool_calls_this_subturn.lock().unwrap() = 0;
         if self.cancel_token.is_cancelled() {
             return HookAction::Terminate {
                 reason: "Cancelled by user".into(),
@@ -160,7 +178,19 @@ where
             };
         }
 
-        // 2. Check doom loop
+        // 2. Check per-sub-turn tool call cap
+        if self.max_tool_calls_per_subturn > 0 {
+            let mut count = self.tool_calls_this_subturn.lock().unwrap();
+            if *count >= self.max_tool_calls_per_subturn {
+                return ToolCallHookAction::Skip {
+                    reason: "Tool call limit exceeded for this sub-turn. Remaining calls skipped."
+                        .to_string(),
+                };
+            }
+            *count += 1;
+        }
+
+        // 3. Check doom loop
         {
             let mut state = self.doom_state.lock().unwrap();
             if let Some(tool) = state.check_and_record(tool_name, args) {
@@ -175,25 +205,25 @@ where
             }
         }
 
-        // 3. Resolve tool source
+        // 4. Resolve tool source
         let source = resolve_tool_source(tool_name, &self.closure_registry, &self.mcp_registry)
             .as_str()
             .to_string();
 
-        // 4. Announce tool call
+        // 5. Announce tool call
         let _ = self.ui_tx.send(UiEvent::ToolStart {
             name: tool_name.to_string(),
             source: source.clone(),
             arguments: args.to_string(),
         });
 
-        // 5. Ask permission
+        // 6. Ask permission
         let decision = self
             .permission_resolver
             .resolve(tool_name, args, tool_call_id, Some(self.ui_tx.clone()))
             .await;
 
-        // 6. Act on decision
+        // 7. Act on decision
         match decision {
             PermissionDecision::Allow => ToolCallHookAction::Continue,
             PermissionDecision::Deny => {

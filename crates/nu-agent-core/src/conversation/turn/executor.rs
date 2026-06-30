@@ -169,7 +169,7 @@ impl<'a> TurnExecutor<'a> {
             match &result {
                 Err(e) if e.messages.is_none() && !e.cancelled => {
                     // Hard error path — check if retryable
-                    let (kind, _) = classify_completion_error(&e.msg);
+                    let (kind, _) = classify_completion_error(&e.msg, e.estimated_request_bytes);
                     let has_partial_history = !e.last_known_history.is_empty();
                     if kind.is_retryable()
                         && attempt < self.config.max_retries.unwrap_or(3)
@@ -182,12 +182,8 @@ impl<'a> TurnExecutor<'a> {
                             .unwrap_or(1000)
                             .saturating_mul(1u64 << attempt.min(5))
                             .min(30_000);
-                        // Deterministic jitter: ±15% alternating by attempt parity
-                        let jitter_factor = if attempt.is_multiple_of(2) {
-                            0.85f64
-                        } else {
-                            1.15f64
-                        };
+                        // Random jitter: ±20% (0.8–1.2× multiplier) per Goose strategy
+                        let jitter_factor = 0.8 + (rand::random::<f64>() * 0.4);
                         let raw_delay = if kind == CompletionErrorKind::RateLimit {
                             extract_retry_after_ms(&e.msg).unwrap_or(base_delay)
                         } else {
@@ -210,6 +206,7 @@ impl<'a> TurnExecutor<'a> {
                             messages: None,
                             last_known_history: e.last_known_history.clone(),
                             pre_turn_message_count: e.pre_turn_message_count,
+                            estimated_request_bytes: e.estimated_request_bytes,
                         });
                     }
                     break result;
@@ -251,7 +248,8 @@ impl<'a> TurnExecutor<'a> {
                             }
                         }
                     }
-                    let (_kind, user_msg) = classify_completion_error(&e.msg);
+                    let (_kind, user_msg) =
+                        classify_completion_error(&e.msg, e.estimated_request_bytes);
                     return Err(LabeledError::new(user_msg.clone()).with_label(user_msg, span));
                 }
                 Err(e) if e.cancelled => {
@@ -314,7 +312,8 @@ impl<'a> TurnExecutor<'a> {
                     let user_msg = if e.msg.starts_with("Turn failed after") {
                         e.msg.clone()
                     } else {
-                        let (_kind, msg) = classify_completion_error(&e.msg);
+                        let (_kind, msg) =
+                            classify_completion_error(&e.msg, e.estimated_request_bytes);
                         msg
                     };
                     log::error!(
@@ -397,20 +396,42 @@ impl<'a> TurnExecutor<'a> {
                         }
                     }
                 } else {
-                    // Defensive fallback: no chat_history provided — synthesise from prompt+text
-                    let mut cancelled_messages = vec![Message::user(prompt.clone())];
-                    if !turn_result.text.is_empty() {
-                        cancelled_messages.push(Message::assistant(turn_result.text.clone()));
-                    }
-                    if let Err(e) = self.runtime.block_on(
-                        self.memory_state
-                            .memory_mut()
-                            .append(session_id, cancelled_messages),
-                    ) {
-                        log::warn!(
-                            "Failed to update context for cancelled turn (path B fallback): {}",
-                            e
-                        );
+                    // Path B: tokio::select cancelled before rig yielded PromptCancelled.
+                    // Use last_known_history from the hook's snapshot of completed work
+                    // (including tool calls and their results) instead of synthesizing a
+                    // minimal placeholder that would lose all completed work from this turn.
+                    let lkh = &turn_result.last_known_history;
+                    if !lkh.is_empty() {
+                        let delta: Vec<Message> = lkh
+                            .iter()
+                            .skip(turn_result.pre_turn_message_count)
+                            .cloned()
+                            .collect();
+                        if !delta.is_empty() {
+                            let patched = inject_missing_tool_results(delta);
+                            let patched = close_open_tool_result_block(patched, "[cancelled]");
+                            if let Err(e) = self.runtime.block_on(
+                                self.memory_state.memory_mut().append(session_id, patched),
+                            ) {
+                                log::warn!(
+                                    "Failed to persist cancel path B with last_known_history: {}",
+                                    e
+                                );
+                            }
+                        }
+                    } else {
+                        // True fallback: hook never fired, synthesize minimal placeholder
+                        let mut cancelled_messages = vec![Message::user(prompt.clone())];
+                        if !turn_result.text.is_empty() {
+                            cancelled_messages.push(Message::assistant(turn_result.text.clone()));
+                        }
+                        if let Err(e) = self.runtime.block_on(
+                            self.memory_state
+                                .memory_mut()
+                                .append(session_id, cancelled_messages),
+                        ) {
+                            log::warn!("Failed to persist cancel path B fallback: {}", e);
+                        }
                     }
                 }
             }
@@ -612,9 +633,15 @@ fn contains_status_code(msg: &str, code: &str) -> bool {
 /// The `CompletionErrorKind` captures the error category for retry/repair policy decisions.
 /// The `String` is a human-readable message suitable for display to the user.
 ///
+/// `estimated_request_bytes`: when provided, "error sending request" with a large payload
+/// (>100 KB) is classified as `RequestTooLarge` (permanent) instead of `Network` (retryable).
+///
 /// Patterns are ordered most-specific first to prevent misclassification (e.g. ToolStructure
 /// is checked before generic 400-class patterns; ContextOverflow before RequestTooLarge).
-pub fn classify_completion_error(msg: &str) -> (CompletionErrorKind, String) {
+pub fn classify_completion_error(
+    msg: &str,
+    estimated_request_bytes: Option<usize>,
+) -> (CompletionErrorKind, String) {
     // ToolStructure — most specific (400 + tool keyword)
     if (msg.contains("invalid_request_body") || msg.contains("invalid_request_error"))
         && (msg.contains("tool_use") || msg.contains("tool_result"))
@@ -733,6 +760,22 @@ pub fn classify_completion_error(msg: &str) -> (CompletionErrorKind, String) {
         return (
             CompletionErrorKind::ServerError,
             "Turn failed: provider server error.".into(),
+        );
+    }
+
+    // Size-aware network error reclassification: "error sending request" with a large
+    // payload (>100 KB) is almost certainly a RequestTooLarge, not a transient network
+    // issue. Check this BEFORE the generic Network match to avoid misclassifying large
+    // payloads as retryable.
+    const REQUEST_SIZE_THRESHOLD: usize = 100 * 1024; // 100 KB
+    if msg_lower.contains("error sending request")
+        && estimated_request_bytes.is_some_and(|size| size > REQUEST_SIZE_THRESHOLD)
+    {
+        return (
+            CompletionErrorKind::RequestTooLarge,
+            "Turn failed: request payload too large (estimated >100 KB). \
+             Run 'agent session compact' or lower max_tool_result_bytes in config."
+                .into(),
         );
     }
 

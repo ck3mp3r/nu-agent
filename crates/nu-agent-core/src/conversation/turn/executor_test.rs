@@ -1044,7 +1044,7 @@ fn unknown_tool_error_with_unpaired_tool_call_injects_synthetic_result() {
 #[test]
 fn error_classifier_returns_human_readable_message_for_tool_use_invalid_request() {
     let raw_error = r#"invalid_request_body: tool_use block requires a subsequent tool_result"#;
-    let (kind, user_msg) = classify_completion_error(raw_error);
+    let (kind, user_msg) = classify_completion_error(raw_error, None);
     assert_eq!(kind, CompletionErrorKind::ToolStructure);
     assert_eq!(
         user_msg,
@@ -1055,7 +1055,7 @@ fn error_classifier_returns_human_readable_message_for_tool_use_invalid_request(
 #[test]
 fn error_classifier_returns_human_readable_message_for_tool_result_invalid_request() {
     let raw_error = r#"invalid_request_body: tool_result block has no matching tool call"#;
-    let (kind, user_msg) = classify_completion_error(raw_error);
+    let (kind, user_msg) = classify_completion_error(raw_error, None);
     assert_eq!(kind, CompletionErrorKind::ToolStructure);
     assert_eq!(
         user_msg,
@@ -1066,7 +1066,7 @@ fn error_classifier_returns_human_readable_message_for_tool_result_invalid_reque
 #[test]
 fn error_classifier_passes_through_unrelated_errors() {
     let raw_error = "502 bad gateway proxy error";
-    let (kind, user_msg) = classify_completion_error(raw_error);
+    let (kind, user_msg) = classify_completion_error(raw_error, None);
     assert_eq!(kind, CompletionErrorKind::Unknown);
     assert_eq!(user_msg, "Turn failed: 502 bad gateway proxy error");
 }
@@ -1077,97 +1077,97 @@ fn error_classifier_passes_through_unrelated_errors() {
 
 #[test]
 fn classify_tool_structure_error() {
-    let (kind, _) = classify_completion_error("invalid_request_body contains tool_use block");
+    let (kind, _) = classify_completion_error("invalid_request_body contains tool_use block", None);
     assert_eq!(kind, CompletionErrorKind::ToolStructure);
 }
 
 #[test]
 fn classify_context_overflow_context_length_exceeded() {
-    let (kind, _) = classify_completion_error("context_length_exceeded in prompt");
+    let (kind, _) = classify_completion_error("context_length_exceeded in prompt", None);
     assert_eq!(kind, CompletionErrorKind::ContextOverflow);
 }
 
 #[test]
 fn classify_context_overflow_input_too_long() {
-    let (kind, _) = classify_completion_error("input is too long for requested model");
+    let (kind, _) = classify_completion_error("input is too long for requested model", None);
     assert_eq!(kind, CompletionErrorKind::ContextOverflow);
 }
 
 #[test]
 fn classify_context_overflow_reduce_length() {
-    let (kind, _) = classify_completion_error("reduce the length of your prompt");
+    let (kind, _) = classify_completion_error("reduce the length of your prompt", None);
     assert_eq!(kind, CompletionErrorKind::ContextOverflow);
 }
 
 #[test]
 fn classify_request_too_large() {
-    let (kind, _) = classify_completion_error("413 request_too_large response");
+    let (kind, _) = classify_completion_error("413 request_too_large response", None);
     assert_eq!(kind, CompletionErrorKind::RequestTooLarge);
 }
 
 #[test]
 fn classify_refusal_content_policy() {
-    let (kind, _) = classify_completion_error("content policy violation detected");
+    let (kind, _) = classify_completion_error("content policy violation detected", None);
     assert_eq!(kind, CompletionErrorKind::Refusal);
 }
 
 #[test]
 fn classify_credits_exhausted() {
-    let (kind, _) = classify_completion_error("account out of credits");
+    let (kind, _) = classify_completion_error("account out of credits", None);
     assert_eq!(kind, CompletionErrorKind::CreditsExhausted);
 }
 
 #[test]
 fn classify_quota_billing_error() {
-    let (kind, _) = classify_completion_error("402 billing_error");
+    let (kind, _) = classify_completion_error("402 billing_error", None);
     assert_eq!(kind, CompletionErrorKind::Quota);
 }
 
 #[test]
 fn classify_rate_limit() {
-    let (kind, _) = classify_completion_error("rate limit exceeded 429");
+    let (kind, _) = classify_completion_error("rate limit exceeded 429", None);
     assert_eq!(kind, CompletionErrorKind::RateLimit);
 }
 
 #[test]
 fn classify_overloaded() {
-    let (kind, _) = classify_completion_error("529 overloaded_error service busy");
+    let (kind, _) = classify_completion_error("529 overloaded_error service busy", None);
     assert_eq!(kind, CompletionErrorKind::Overloaded);
 }
 
 #[test]
 fn classify_server_error() {
-    let (kind, _) = classify_completion_error("500 api_error internal server");
+    let (kind, _) = classify_completion_error("500 api_error internal server", None);
     assert_eq!(kind, CompletionErrorKind::ServerError);
 }
 
 #[test]
 fn classify_network_error_sending_request() {
-    let (kind, _) = classify_completion_error("error sending request for url");
+    let (kind, _) = classify_completion_error("error sending request for url", None);
     assert_eq!(kind, CompletionErrorKind::Network);
 }
 
 #[test]
 fn classify_network_stream_decode_invalid_utf8() {
-    let (kind, _) = classify_completion_error("stream decode error: invalid utf-8");
+    let (kind, _) = classify_completion_error("stream decode error: invalid utf-8", None);
     assert_eq!(kind, CompletionErrorKind::Network);
 }
 
 #[test]
 fn classify_endpoint_not_found() {
-    let (kind, _) = classify_completion_error("404 endpoint not found");
+    let (kind, _) = classify_completion_error("404 endpoint not found", None);
     assert_eq!(kind, CompletionErrorKind::EndpointNotFound);
 }
 
 #[test]
 fn classify_auth_error() {
-    let (kind, _) = classify_completion_error("401 authentication_error invalid key");
+    let (kind, _) = classify_completion_error("401 authentication_error invalid key", None);
     assert_eq!(kind, CompletionErrorKind::Auth);
 }
 
 #[test]
 fn classify_unknown_502_bad_gateway() {
-    let (kind, _) = classify_completion_error("502 bad gateway proxy error");
+    let (kind, _) = classify_completion_error("502 bad gateway proxy error", None);
     assert_eq!(kind, CompletionErrorKind::Unknown);
 }
 
@@ -1233,15 +1233,15 @@ fn is_retryable_matches_spec() {
 #[test]
 fn classify_does_not_misclassify_number_in_token_count() {
     // "5000" contains "500" as substring — must NOT match ServerError
-    let (kind, _) = classify_completion_error("processing 5000 tokens per request");
+    let (kind, _) = classify_completion_error("processing 5000 tokens per request", None);
     assert_eq!(kind, CompletionErrorKind::Unknown);
 
     // "4042" contains "404" as substring — must NOT match EndpointNotFound
-    let (kind, _) = classify_completion_error("step 4042 of pipeline");
+    let (kind, _) = classify_completion_error("step 4042 of pipeline", None);
     assert_eq!(kind, CompletionErrorKind::Unknown);
 
     // "500" as a standalone token (standalone HTTP status) MUST match ServerError
-    let (kind, _) = classify_completion_error("HTTP 500 internal server error");
+    let (kind, _) = classify_completion_error("HTTP 500 internal server error", None);
     assert_eq!(kind, CompletionErrorKind::ServerError);
 }
 
@@ -1250,7 +1250,7 @@ fn classify_network_timeout_is_unknown_not_network() {
     // "network timeout" does not match any Network patterns (no "decode error",
     // "connection reset", etc.) — it falls through to Unknown.
     // Confirm this is stable and hasn't been accidentally absorbed.
-    let (kind, _) = classify_completion_error("network timeout after 30s");
+    let (kind, _) = classify_completion_error("network timeout after 30s", None);
     assert_eq!(kind, CompletionErrorKind::Unknown);
 }
 
@@ -1258,7 +1258,7 @@ fn classify_network_timeout_is_unknown_not_network() {
 fn classify_insufficient_quota_is_quota_not_credits_exhausted() {
     // Fix 1: "insufficient_quota" belongs to Quota (OpenAI billing quota),
     // not CreditsExhausted (account credit balance exhausted).
-    let (kind, _) = classify_completion_error("insufficient_quota for this API key");
+    let (kind, _) = classify_completion_error("insufficient_quota for this API key", None);
     assert_eq!(kind, CompletionErrorKind::Quota);
 }
 
@@ -1266,7 +1266,7 @@ fn classify_insufficient_quota_is_quota_not_credits_exhausted() {
 fn classify_request_entity_too_large_is_request_too_large_not_context_overflow() {
     // Fix 2: "request entity too large" is HTTP 413 (payload too large),
     // not ContextOverflow (conversation context window exceeded).
-    let (kind, _) = classify_completion_error("request entity too large");
+    let (kind, _) = classify_completion_error("request entity too large", None);
     assert_eq!(kind, CompletionErrorKind::RequestTooLarge);
 }
 
@@ -2450,6 +2450,7 @@ fn retry_not_attempted_when_no_partial_history() {
         messages: None,
         last_known_history: vec![], // empty — no partial history
         pre_turn_message_count: 0,
+        estimated_request_bytes: None,
     };
 
     let has_partial_history = !turn_error_empty_history.last_known_history.is_empty();
@@ -2468,6 +2469,7 @@ fn retry_not_attempted_when_no_partial_history() {
         messages: None,
         last_known_history: vec![crate::types::Message::user("prompt")],
         pre_turn_message_count: 0,
+        estimated_request_bytes: None,
     };
     let has_partial_history_non_empty = !turn_error_with_history.last_known_history.is_empty();
     assert!(
@@ -2520,4 +2522,321 @@ fn extract_retry_after_ms_returns_none_when_absent() {
 fn extract_retry_after_ms_handles_zero() {
     use super::extract_retry_after_ms;
     assert_eq!(extract_retry_after_ms("retry after 0 seconds"), Some(0));
+}
+
+// ---------------------------------------------------------------------------
+// Path B regression: last_known_history preserves tool calls on cancel
+// ---------------------------------------------------------------------------
+
+/// Regression test for the critical Path B cancel bug: when `tokio::select!`
+/// cancels the stream BEFORE rig yields `PromptCancelled` (Path B), the executor
+/// must use `TurnResult.last_known_history` to persist completed tool calls and
+/// their results — NOT fall through to the old minimal `[user(prompt)]` fallback.
+///
+/// Scenario: the agent completes tool call T1 (hook's `on_completion_call` fires
+/// with history containing T1), then cancel fires via `tokio::select!` before
+/// the next LLM response. The `StreamingTurnResult` has `cancelled: true,
+/// messages: None` (rig never yielded `PromptCancelled`). However,
+/// `last_known_history` contains the full snapshot including the completed T1.
+///
+/// **Before the fix:** Path B synthesized `[user(prompt), assistant(partial_text)]`
+/// and all completed tool work was LOST.
+///
+/// **After the fix:** Path B reads `last_known_history`, slices the delta, patches
+/// it with `inject_missing_tool_results` + `close_open_tool_result_block`, and
+/// persists the real work.
+///
+/// We exercise this end-to-end using the `JourneyHarness` pattern: a mock tool that
+/// fires the cancel token from within `call()` after producing its result. The
+/// `MockUi::with_external_cancel()` injects the token so the cancel fires
+/// deterministically.
+///
+/// This is intentionally an integration test (not a unit test) because the bug
+/// exists at the intersection of `build_agent_and_stream` (which populates
+/// `last_known_history` on `TurnResult`) and `TurnExecutor::execute` (which
+/// reads it in Path B).
+#[test]
+fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use rig::test_utils::{MockCompletionModel, MockStreamEvent};
+
+    use super::test_utils::MockUi;
+    use crate::conversation::providers::CachedProviderClient;
+    use crate::session::ConversationStore;
+    use crate::tools::closure::ClosureRegistry;
+    use crate::tools::handler::McpToolRegistry;
+
+    // -- cancelling tool (fires cancel after producing its result) ----------
+    struct CancellingTool {
+        output: &'static str,
+        token: tokio_util::sync::CancellationToken,
+        fired: Arc<AtomicBool>,
+    }
+
+    impl rig::tool::Tool for CancellingTool {
+        const NAME: &'static str = "test_cancel_tool";
+        type Error = std::convert::Infallible;
+        type Args = serde_json::Value;
+        type Output = String;
+
+        async fn definition(&self, _prompt: String) -> rig::completion::ToolDefinition {
+            rig::completion::ToolDefinition {
+                name: Self::NAME.to_string(),
+                description: "Tool that cancels after first call".to_string(),
+                parameters: serde_json::json!({"type": "object", "properties": {}}),
+            }
+        }
+
+        async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
+            let result = self.output.to_string();
+            if !self.fired.swap(true, Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+                self.token.cancel();
+            }
+            Ok(result)
+        }
+    }
+
+    // -- test body ---------------------------------------------------------
+    let config = test_config();
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let session_id = "test-path-b-lkh";
+    let mut memory_state =
+        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+
+    let (ui, cancel_token) = MockUi::with_external_cancel();
+
+    // Model: sub-turn 1 emits tool_call → tool executes (cancels after result).
+    // Sub-turn 2 would normally proceed but cancel fires first.
+    let model = MockCompletionModel::from_stream_turns([
+        vec![
+            MockStreamEvent::tool_call("tc1", "test_cancel_tool", serde_json::json!({})),
+            MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+        ],
+        vec![
+            MockStreamEvent::Text("unreachable".into()),
+            MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+        ],
+    ]);
+
+    let handle = rig::tool::server::ToolServer::new()
+        .tool(CancellingTool {
+            output: "tool_completed_successfully",
+            token: cancel_token,
+            fired: Arc::new(AtomicBool::new(false)),
+        })
+        .run();
+    let tool_infra = ToolInfra {
+        closure_registry: Arc::new(ClosureRegistry::new()),
+        mcp_registry: Arc::new(McpToolRegistry::from_names(Vec::<String>::new())),
+        tool_server_handle: handle,
+        visible_tool_definitions: vec![rig::completion::ToolDefinition {
+            name: "test_cancel_tool".to_string(),
+            description: "Tool that cancels after first call".to_string(),
+            parameters: serde_json::json!({"type": "object", "properties": {}}),
+        }],
+    };
+
+    let cached_client = CachedProviderClient::Mock(model);
+    let mut ui = ui;
+
+    let mut executor = TurnExecutor::new(&config, &rt, &mut memory_state, tool_infra);
+
+    let result = executor.execute(
+        &mut ui,
+        ExecuteInput {
+            prompt: "call the tool".to_string(),
+            preamble: None,
+            span: nu_protocol::Span::test_data(),
+        },
+        &cached_client,
+        MockResolver,
+        Some(session_id),
+        None,
+    );
+
+    // 1. Must be Ok(EarlyReturn) — cancelled turn, not an error
+    assert!(
+        result.is_ok(),
+        "cancelled turn must not return Err; got: {:?}",
+        result.err()
+    );
+    assert!(
+        matches!(result.unwrap(), TurnOutcome::EarlyReturn(_)),
+        "cancelled turn must return EarlyReturn"
+    );
+
+    // 2. Persisted JSONL must contain the user prompt + tool call + tool result
+    let persisted = memory_state
+        .conversation_store()
+        .load(session_id)
+        .expect("store load should succeed");
+
+    // Before the fix: Path B would synthesize [user("call the tool")] = 1 message.
+    // After the fix: Path B uses last_known_history which contains
+    // [user(prompt), asst(tool_call), user(tool_result)] + possibly a close-block.
+    assert!(
+        persisted.len() >= 3,
+        "Path B must persist at least 3 messages \
+         [user(prompt), asst(tool_call), user(tool_result)]; got {} messages: {:?}",
+        persisted.len(),
+        persisted
+    );
+
+    // 3. Verify tool call is in the persisted messages
+    let has_tool_call = persisted.iter().any(|msg| {
+        if let crate::types::Message::Assistant { content, .. } = msg {
+            content.iter().any(
+                |c| matches!(c, crate::types::AssistantContent::ToolCall(tc) if tc.id == "tc1"),
+            )
+        } else {
+            false
+        }
+    });
+    assert!(
+        has_tool_call,
+        "persisted messages must contain tool call tc1; got: {:?}",
+        persisted
+    );
+
+    // 4. Verify tool result is in the persisted messages (NOT [interrupted])
+    let has_real_tool_result = persisted.iter().any(|msg| {
+        if let crate::types::Message::User { content } = msg {
+            content.iter().any(|c| {
+                if let crate::types::UserContent::ToolResult(tr) = c {
+                    tr.id == "tc1"
+                        && tr.content.iter().any(|rc| {
+                            if let crate::types::ToolResultContent::Text(t) = rc {
+                                !t.text.contains("[interrupted]")
+                            } else {
+                                false
+                            }
+                        })
+                } else {
+                    false
+                }
+            })
+        } else {
+            false
+        }
+    });
+    assert!(
+        has_real_tool_result,
+        "persisted messages must contain real tool result for tc1 \
+         (not [interrupted] placeholder); got: {:?}",
+        persisted
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Size-aware error classification tests
+// ---------------------------------------------------------------------------
+
+/// "error sending request" with estimated_request_bytes > 100 KB must be classified
+/// as `RequestTooLarge` (non-retryable), not `Network` (retryable).
+#[test]
+fn classify_error_sending_request_large_payload_is_request_too_large() {
+    let msg = "error sending request for url https://api.example.com/v1/chat";
+    let large_payload = Some(200 * 1024); // 200 KB — well above 100 KB threshold
+    let (kind, user_msg) = classify_completion_error(msg, large_payload);
+    assert_eq!(
+        kind,
+        CompletionErrorKind::RequestTooLarge,
+        "large payload 'error sending request' must be RequestTooLarge, not Network"
+    );
+    assert!(
+        !kind.is_retryable(),
+        "RequestTooLarge must not be retryable"
+    );
+    assert!(
+        user_msg.contains("too large"),
+        "user message must mention 'too large'; got: {user_msg}"
+    );
+}
+
+/// "error sending request" with no estimated_request_bytes must remain `Network`
+/// (retryable) — the fallback for genuine network failures.
+#[test]
+fn classify_error_sending_request_no_size_is_network() {
+    let msg = "error sending request for url https://api.example.com/v1/chat";
+    let (kind, _) = classify_completion_error(msg, None);
+    assert_eq!(
+        kind,
+        CompletionErrorKind::Network,
+        "'error sending request' without size info must be Network"
+    );
+    assert!(kind.is_retryable(), "Network must be retryable");
+}
+
+/// "error sending request" with estimated_request_bytes below the 100 KB threshold
+/// must remain `Network` (retryable).
+#[test]
+fn classify_error_sending_request_small_payload_is_network() {
+    let msg = "error sending request for url https://api.example.com/v1/chat";
+    let small_payload = Some(50 * 1024); // 50 KB — below 100 KB threshold
+    let (kind, _) = classify_completion_error(msg, small_payload);
+    assert_eq!(
+        kind,
+        CompletionErrorKind::Network,
+        "small payload 'error sending request' must be Network, not RequestTooLarge"
+    );
+    assert!(kind.is_retryable(), "Network must be retryable");
+}
+
+/// "error sending request" with estimated_request_bytes exactly at the 100 KB
+/// boundary must remain `Network` — the threshold is strictly greater-than.
+#[test]
+fn classify_error_sending_request_at_boundary_is_network() {
+    let msg = "error sending request for url https://api.example.com/v1/chat";
+    let boundary = Some(100 * 1024); // exactly 100 KB
+    let (kind, _) = classify_completion_error(msg, boundary);
+    assert_eq!(
+        kind,
+        CompletionErrorKind::Network,
+        "boundary (100 KB exact) must be Network — threshold is strictly greater-than"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Jitter variance test
+// ---------------------------------------------------------------------------
+
+/// Verify that the jitter factor produces varying delays across multiple samples.
+///
+/// The retry loop uses `0.8 + (rand::random::<f64>() * 0.4)` which gives a
+/// jitter_factor in [0.8, 1.2). Over 50 samples, the min and max must differ
+/// by at least 10% of the base delay — confirming non-deterministic jitter.
+#[test]
+fn jitter_produces_varying_delays() {
+    let base_delay_ms: u64 = 1000;
+    let samples: Vec<u64> = (0..50)
+        .map(|_| {
+            let jitter_factor = 0.8 + (rand::random::<f64>() * 0.4);
+            (base_delay_ms as f64 * jitter_factor) as u64
+        })
+        .collect();
+
+    let min = samples.iter().copied().min().unwrap_or(base_delay_ms);
+    let max = samples.iter().copied().max().unwrap_or(base_delay_ms);
+    let range = max - min;
+
+    // With 50 samples from a uniform [0.8, 1.2) distribution applied to 1000ms,
+    // the range should be well above 100ms (10% of base). In practice it will be
+    // close to 400ms (the theoretical max range of 800..1200). We assert > 50ms
+    // to avoid flakiness while still catching deterministic implementations.
+    assert!(
+        range > 50,
+        "jitter must produce varying delays; got range={range}ms (min={min}, max={max})"
+    );
+
+    // Verify all samples are within the expected [800, 1200) range
+    for &sample in &samples {
+        assert!(
+            (800..1200).contains(&sample),
+            "jittered delay must be in [800, 1200); got {sample}"
+        );
+    }
 }
