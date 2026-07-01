@@ -258,6 +258,12 @@ impl McpToolRegistry {
             });
         }
 
+        let new_count = pending_tools.iter().filter(|p| p.is_new_mapping).count();
+        log::debug!(
+            "McpToolRegistry.register_tools: count={} new={new_count}",
+            pending_tools.len()
+        );
+
         for pending in pending_tools {
             if pending.is_new_mapping {
                 self.names.insert(pending.exposed_name.clone());
@@ -305,6 +311,7 @@ impl McpToolRegistry {
     }
 
     pub fn set_server_enabled(&self, server_name: &str, enabled: bool) -> Result<(), String> {
+        log::debug!("McpToolRegistry.set_server_enabled: server={server_name} enabled={enabled}");
         let mut servers = self
             .enabled_servers
             .write()

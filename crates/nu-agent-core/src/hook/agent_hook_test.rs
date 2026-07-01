@@ -1,9 +1,11 @@
 use super::*;
+use crate::hook::agent_hook::{DoomLoopState, HookState};
 use crate::protocol::event::UiEvent;
+use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
 use crate::types::{Text, UserContent};
 use rig::agent::{InvalidToolCallContext, InvalidToolCallHookAction, PromptHook};
 use rig::one_or_many::OneOrMany;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -99,7 +101,18 @@ fn make_hook_with_resolver(
     let mcp_registry = Arc::new(crate::tools::handler::McpToolRegistry::from_names(
         std::iter::empty::<String>(),
     ));
-    let hook = AgentHook::new(token, tx, resolver, closure_registry, mcp_registry, None);
+    let hook = AgentHook::new(
+        token,
+        tx,
+        resolver,
+        closure_registry,
+        mcp_registry,
+        None,
+        HookState {
+            circuit_breaker: Arc::new(Mutex::new(McpCircuitBreaker::default())),
+            doom_state: Arc::new(Mutex::new(DoomLoopState::default())),
+        },
+    );
     (hook, rx)
 }
 
@@ -123,6 +136,10 @@ fn make_hook_with_token(
         closure_registry,
         mcp_registry,
         None,
+        HookState {
+            circuit_breaker: Arc::new(Mutex::new(McpCircuitBreaker::default())),
+            doom_state: Arc::new(Mutex::new(DoomLoopState::default())),
+        },
     );
     (hook, rx, token)
 }
@@ -282,7 +299,7 @@ async fn on_stream_completion_response_finish_emits_llm_end() {
 }
 
 #[tokio::test]
-async fn on_invalid_tool_call_emits_warning_and_returns_skip() {
+async fn on_invalid_tool_call_emits_warning_and_returns_retry() {
     let (hook, mut ui_rx) = make_hook_with_resolver(MockResolver(PermissionDecision::Allow));
 
     let context = InvalidToolCallContext {
@@ -300,11 +317,11 @@ async fn on_invalid_tool_call_emits_warning_and_returns_skip() {
     let action = PromptHook::<DummyModel>::on_invalid_tool_call(&hook, &context).await;
 
     match action {
-        InvalidToolCallHookAction::Skip { reason } => {
-            assert!(reason.contains("nonexistent_tool"));
-            assert!(reason.contains("nu__run"));
+        InvalidToolCallHookAction::Retry { feedback } => {
+            assert!(feedback.contains("nonexistent_tool"));
+            assert!(feedback.contains("nu__run"));
         }
-        other => panic!("expected Skip, got {:?}", other),
+        other => panic!("expected Retry, got {:?}", other),
     }
 
     let event = ui_rx.try_recv().expect("expected a UiEvent");
@@ -476,6 +493,10 @@ fn make_hook_with_limit(
         closure_registry,
         mcp_registry,
         Some(limit),
+        HookState {
+            circuit_breaker: Arc::new(Mutex::new(McpCircuitBreaker::default())),
+            doom_state: Arc::new(Mutex::new(DoomLoopState::default())),
+        },
     );
     (hook, rx)
 }
@@ -593,4 +614,185 @@ fn is_tool_failure_detects_tool_call_limit() {
     assert!(is_tool_failure(
         "Tool call limit exceeded for this sub-turn. Remaining calls skipped."
     ));
+}
+
+// ---------------------------------------------------------------------------
+// Helper: hook with a shared DoomLoopState
+// ---------------------------------------------------------------------------
+
+fn make_hook_with_doom_state(
+    resolver: MockResolver,
+    doom_state: Arc<Mutex<DoomLoopState>>,
+) -> (AgentHook<MockResolver>, mpsc::UnboundedReceiver<UiEvent>) {
+    let (tx, rx) = mpsc::unbounded_channel();
+    let token = CancellationToken::new();
+    let closure_registry = Arc::new(crate::tools::closure::ClosureRegistry::new());
+    let mcp_registry = Arc::new(crate::tools::handler::McpToolRegistry::from_names(
+        std::iter::empty::<String>(),
+    ));
+    let hook = AgentHook::new(
+        token,
+        tx,
+        resolver,
+        closure_registry,
+        mcp_registry,
+        None,
+        HookState {
+            circuit_breaker: Arc::new(Mutex::new(McpCircuitBreaker::default())),
+            doom_state,
+        },
+    );
+    (hook, rx)
+}
+
+// ---------------------------------------------------------------------------
+// Cross-turn doom loop state persistence tests
+// ---------------------------------------------------------------------------
+
+/// Doom loop fires on the 5th identical call even when those calls span
+/// two separate AgentHook instances sharing the same DoomLoopState Arc.
+#[tokio::test]
+async fn doom_state_persists_across_hooks() {
+    let shared = Arc::new(Mutex::new(DoomLoopState::default()));
+
+    // Hook #1: 3 identical calls
+    let (hook1, _rx1) =
+        make_hook_with_doom_state(MockResolver(PermissionDecision::Allow), Arc::clone(&shared));
+    for i in 0..3 {
+        let result = PromptHook::<DummyModel>::on_tool_call(
+            &hook1,
+            "read_file",
+            None,
+            &format!("id{i}"),
+            "{\"path\": \"same\"}",
+        )
+        .await;
+        assert!(
+            matches!(result, ToolCallHookAction::Continue),
+            "hook1 call {i} should Continue"
+        );
+    }
+
+    // Hook #2: 2 more identical calls — 5th should trip doom loop
+    let (hook2, _rx2) =
+        make_hook_with_doom_state(MockResolver(PermissionDecision::Allow), Arc::clone(&shared));
+    let result = PromptHook::<DummyModel>::on_tool_call(
+        &hook2,
+        "read_file",
+        None,
+        "id3",
+        "{\"path\": \"same\"}",
+    )
+    .await;
+    assert!(
+        matches!(result, ToolCallHookAction::Continue),
+        "hook2 call 4 should Continue"
+    );
+
+    let result = PromptHook::<DummyModel>::on_tool_call(
+        &hook2,
+        "read_file",
+        None,
+        "id4",
+        "{\"path\": \"same\"}",
+    )
+    .await;
+    assert!(
+        matches!(result, ToolCallHookAction::Skip { .. }),
+        "hook2 call 5 should Skip (doom loop)"
+    );
+}
+
+/// 4 identical calls on one hook with shared state — no doom loop (under threshold).
+#[tokio::test]
+async fn doom_state_does_not_fire_within_single_turn_under_threshold() {
+    let shared = Arc::new(Mutex::new(DoomLoopState::default()));
+    let (hook, _rx) =
+        make_hook_with_doom_state(MockResolver(PermissionDecision::Allow), Arc::clone(&shared));
+
+    for i in 0..4 {
+        let result = PromptHook::<DummyModel>::on_tool_call(
+            &hook,
+            "read_file",
+            None,
+            &format!("id{i}"),
+            "{\"path\": \"same\"}",
+        )
+        .await;
+        assert!(
+            matches!(result, ToolCallHookAction::Continue),
+            "call {i} should Continue (under threshold)"
+        );
+    }
+
+    // Verify count is at 4
+    let state = shared.lock().unwrap();
+    assert_eq!(state.recent_signatures.len(), 4);
+}
+
+/// After accumulating 4 signatures, reset() clears them so 4 more
+/// identical calls do NOT trip the doom loop.
+#[tokio::test]
+async fn doom_state_reset_clears_signatures() {
+    let shared = Arc::new(Mutex::new(DoomLoopState::default()));
+    let (hook1, _rx1) =
+        make_hook_with_doom_state(MockResolver(PermissionDecision::Allow), Arc::clone(&shared));
+
+    // Accumulate 4 signatures
+    for i in 0..4 {
+        PromptHook::<DummyModel>::on_tool_call(
+            &hook1,
+            "read_file",
+            None,
+            &format!("id{i}"),
+            "{\"path\": \"same\"}",
+        )
+        .await;
+    }
+    assert_eq!(shared.lock().unwrap().recent_signatures.len(), 4);
+
+    // Reset
+    shared.lock().unwrap().reset();
+    assert_eq!(shared.lock().unwrap().recent_signatures.len(), 0);
+
+    // 4 more identical calls — should NOT trip doom loop
+    let (hook2, _rx2) =
+        make_hook_with_doom_state(MockResolver(PermissionDecision::Allow), Arc::clone(&shared));
+    for i in 0..4 {
+        let result = PromptHook::<DummyModel>::on_tool_call(
+            &hook2,
+            "read_file",
+            None,
+            &format!("id{i}"),
+            "{\"path\": \"same\"}",
+        )
+        .await;
+        assert!(
+            matches!(result, ToolCallHookAction::Continue),
+            "call {i} after reset should Continue"
+        );
+    }
+}
+
+/// When a turn fails (no reset called), signatures remain accumulated.
+#[test]
+fn doom_state_not_reset_on_failed_turn() {
+    let shared = Arc::new(Mutex::new(DoomLoopState::default()));
+
+    // Manually accumulate signatures (simulating tool calls from a failed turn)
+    {
+        let mut state = shared.lock().unwrap();
+        for i in 0..4 {
+            state.check_and_record("read_file", &format!("{{\"path\": \"same{i}\"}}"));
+        }
+    }
+
+    // Simulate failed turn: do NOT call reset()
+    // Verify signatures are still accumulated
+    let state = shared.lock().unwrap();
+    assert_eq!(
+        state.recent_signatures.len(),
+        4,
+        "signatures should persist after failed turn (no reset)"
+    );
 }

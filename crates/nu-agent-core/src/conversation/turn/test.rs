@@ -13,13 +13,23 @@ use tokio::runtime::Runtime;
 
 use super::*;
 use crate::config::Config;
+use crate::hook::agent_hook::DoomLoopState;
 use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
 use crate::session::JournalConversationMemory;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
+use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
 use crate::types::{
     AssistantContent, Message, Text, ToolCall, ToolFunction, ToolResultContent, UserContent,
 };
+
+fn default_circuit_breaker() -> Arc<std::sync::Mutex<McpCircuitBreaker>> {
+    Arc::new(std::sync::Mutex::new(McpCircuitBreaker::default()))
+}
+
+fn default_doom_state() -> Arc<std::sync::Mutex<DoomLoopState>> {
+    Arc::new(std::sync::Mutex::new(DoomLoopState::default()))
+}
 
 // ---------------------------------------------------------------------------
 // MockResolver: AsyncPermissionResolver that always returns Allow
@@ -126,6 +136,8 @@ fn make_turn_context<'a>(
         mcp_registry: Arc::new(McpToolRegistry::from_names::<[&str; 0], &str>([])),
         tool_server_handle: rig::tool::server::ToolServer::new().run(),
         visible_tool_definitions: vec![],
+        circuit_breaker: default_circuit_breaker(),
+        doom_state: default_doom_state(),
     };
     TurnContext::new(runtime, model, conversation, input, tool_infra, config)
 }
@@ -232,7 +244,6 @@ fn turn_error_can_be_constructed() {
         messages: None,
         last_known_history: vec![],
         pre_turn_message_count: 0,
-        estimated_request_bytes: None,
     };
 
     assert_eq!(error.msg, "Test error");
@@ -245,7 +256,6 @@ fn turn_error_can_be_constructed() {
         messages: None,
         last_known_history: vec![],
         pre_turn_message_count: 0,
-        estimated_request_bytes: None,
     };
     assert!(cancelled.cancelled);
     assert!(cancelled.messages.is_none());
@@ -813,6 +823,8 @@ fn transient_turn_does_not_write_jsonl() {
         mcp_registry: Arc::new(McpToolRegistry::from_names::<[&str; 0], &str>([])),
         tool_server_handle: rig::tool::server::ToolServer::new().run(),
         visible_tool_definitions: vec![],
+        circuit_breaker: default_circuit_breaker(),
+        doom_state: default_doom_state(),
     };
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("Hello, world!".to_string()),
@@ -867,6 +879,8 @@ fn persistent_turn_writes_jsonl() {
         mcp_registry: Arc::new(McpToolRegistry::from_names::<[&str; 0], &str>([])),
         tool_server_handle: rig::tool::server::ToolServer::new().run(),
         visible_tool_definitions: vec![],
+        circuit_breaker: default_circuit_breaker(),
+        doom_state: default_doom_state(),
     };
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("Hello from LLM!".to_string()),

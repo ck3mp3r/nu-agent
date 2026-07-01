@@ -39,6 +39,12 @@ pub fn truncate_tool_output(output: String, max_bytes: usize) -> String {
 
     let suffix = match std::fs::write(&file_path, &output) {
         Ok(()) => {
+            log::warn!(
+                "Tool output truncated: original={}b limit={}b saved_to={:?}",
+                original_len,
+                max_bytes,
+                file_path
+            );
             let path_str = file_path.display();
             format!(
                 "\n[output truncated: {original_len} bytes total, showing first {max_bytes} bytes. \
@@ -47,6 +53,11 @@ Use the `read` tool with offset and limit parameters to read more of the file.]"
             )
         }
         Err(_) => {
+            log::warn!(
+                "Tool output truncated, temp file write failed: original={}b limit={}b",
+                original_len,
+                max_bytes
+            );
             format!(
                 "\n[output truncated: {original_len} bytes total, showing first {max_bytes} bytes. \
 Full output could not be saved.]"

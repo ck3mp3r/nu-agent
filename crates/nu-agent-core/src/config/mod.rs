@@ -612,6 +612,11 @@ impl PluginConfig {
         // Look up model-specific configuration (optional)
         let model_config = provider_config.models.get(model_name);
 
+        log::debug!(
+            "resolve_model: spec={model_spec} provider={provider_name} model={model_name} config_found={}",
+            model_config.is_some()
+        );
+
         // Start with env-based config for this provider/model
         // Use the actual provider name, not provider_impl
         let mut config = Config::from_env(provider_name, model_name);
@@ -776,6 +781,11 @@ impl Config {
         let context_warning_threshold = parse_env_var("AGENT_CONTEXT_WARNING_THRESHOLD");
         let max_tool_calls_per_subturn = parse_env_var("AGENT_MAX_TOOL_CALLS_PER_SUBTURN");
 
+        log::debug!(
+            "Config.from_env: provider={provider} model={model} api_key={} base_url={base_url:?}",
+            api_key.is_some()
+        );
+
         Self {
             provider: provider.to_string(),
             provider_impl: None, // from_env doesn't use provider_impl
@@ -875,6 +885,7 @@ impl Config {
         // Extract required fields
         let provider = get_required_string(record, "provider", span)?;
         let model = get_required_string(record, "model", span)?;
+        log::debug!("Config.from_plugin_config: provider={provider} model={model}");
 
         // Extract optional fields
         let api_key = get_optional_string(record, "api_key");
@@ -930,6 +941,11 @@ impl Config {
     ///
     /// This allows layering configs: base.merge(override).merge(cli_args)
     pub fn merge(self, other: Self) -> Self {
+        log::debug!(
+            "Config.merge: provider={} model={}",
+            other.provider,
+            other.model
+        );
         Self {
             // Required fields always from other
             provider: other.provider,

@@ -13,9 +13,19 @@ use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 use super::test_utils::{MockResolver, MockUi, test_config};
 use super::*;
 use crate::conversation::providers::CachedProviderClient;
+use crate::hook::agent_hook::DoomLoopState;
 use crate::session::ConversationStore;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
+use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
+
+fn default_circuit_breaker() -> Arc<std::sync::Mutex<McpCircuitBreaker>> {
+    Arc::new(std::sync::Mutex::new(McpCircuitBreaker::default()))
+}
+
+fn default_doom_state() -> Arc<std::sync::Mutex<DoomLoopState>> {
+    Arc::new(std::sync::Mutex::new(DoomLoopState::default()))
+}
 
 #[test]
 fn turn_executor_new_constructs_without_panic() {
@@ -37,6 +47,8 @@ fn turn_executor_new_constructs_without_panic() {
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle,
             visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
         },
     );
     // Construction succeeded — no panic.
@@ -62,6 +74,8 @@ fn turn_executor_exposes_memory_state() {
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle,
             visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
         },
     );
 
@@ -89,6 +103,8 @@ fn turn_executor_take_response_data_returns_none_before_execute() {
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle,
             visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
         },
     );
 
@@ -146,6 +162,8 @@ fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_completed(
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle,
             visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
         },
     );
 
@@ -255,6 +273,8 @@ fn completed_turn_no_explicit_store_append_needed() {
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle,
             visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
         },
     );
 
@@ -339,6 +359,8 @@ fn cancelled_turn_writes_via_single_memory_append() {
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle,
             visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
         },
     );
 
@@ -420,6 +442,8 @@ fn last_total_tokens_updated_on_completed_turn() {
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle,
             visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
         },
     );
 
@@ -494,6 +518,8 @@ fn max_turns_error_persists_full_history() {
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle,
             visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
         },
     );
 
@@ -568,6 +594,8 @@ fn unknown_tool_error_persists_full_history() {
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle,
             visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
         },
     );
 
@@ -638,6 +666,8 @@ fn network_error_on_fresh_session_persists_user_message() {
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle,
             visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
         },
     );
 
@@ -724,6 +754,8 @@ fn hard_error_on_first_llm_call_persists_user_message() {
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle,
             visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
         },
     );
 
@@ -797,6 +829,8 @@ fn hard_error_no_session_persists_nothing() {
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle,
             visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
         },
     );
 
@@ -879,6 +913,8 @@ fn prompt_cancelled_with_unpaired_tool_call_injects_synthetic_result() {
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle,
             visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
         },
     );
 
@@ -981,6 +1017,8 @@ fn unknown_tool_error_with_unpaired_tool_call_injects_synthetic_result() {
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle,
             visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
         },
     );
 
@@ -1044,7 +1082,7 @@ fn unknown_tool_error_with_unpaired_tool_call_injects_synthetic_result() {
 #[test]
 fn error_classifier_returns_human_readable_message_for_tool_use_invalid_request() {
     let raw_error = r#"invalid_request_body: tool_use block requires a subsequent tool_result"#;
-    let (kind, user_msg) = classify_completion_error(raw_error, None);
+    let (kind, user_msg) = classify_completion_error(raw_error);
     assert_eq!(kind, CompletionErrorKind::ToolStructure);
     assert_eq!(
         user_msg,
@@ -1055,7 +1093,7 @@ fn error_classifier_returns_human_readable_message_for_tool_use_invalid_request(
 #[test]
 fn error_classifier_returns_human_readable_message_for_tool_result_invalid_request() {
     let raw_error = r#"invalid_request_body: tool_result block has no matching tool call"#;
-    let (kind, user_msg) = classify_completion_error(raw_error, None);
+    let (kind, user_msg) = classify_completion_error(raw_error);
     assert_eq!(kind, CompletionErrorKind::ToolStructure);
     assert_eq!(
         user_msg,
@@ -1066,7 +1104,7 @@ fn error_classifier_returns_human_readable_message_for_tool_result_invalid_reque
 #[test]
 fn error_classifier_passes_through_unrelated_errors() {
     let raw_error = "502 bad gateway proxy error";
-    let (kind, user_msg) = classify_completion_error(raw_error, None);
+    let (kind, user_msg) = classify_completion_error(raw_error);
     assert_eq!(kind, CompletionErrorKind::Unknown);
     assert_eq!(user_msg, "Turn failed: 502 bad gateway proxy error");
 }
@@ -1077,97 +1115,97 @@ fn error_classifier_passes_through_unrelated_errors() {
 
 #[test]
 fn classify_tool_structure_error() {
-    let (kind, _) = classify_completion_error("invalid_request_body contains tool_use block", None);
+    let (kind, _) = classify_completion_error("invalid_request_body contains tool_use block");
     assert_eq!(kind, CompletionErrorKind::ToolStructure);
 }
 
 #[test]
 fn classify_context_overflow_context_length_exceeded() {
-    let (kind, _) = classify_completion_error("context_length_exceeded in prompt", None);
+    let (kind, _) = classify_completion_error("context_length_exceeded in prompt");
     assert_eq!(kind, CompletionErrorKind::ContextOverflow);
 }
 
 #[test]
 fn classify_context_overflow_input_too_long() {
-    let (kind, _) = classify_completion_error("input is too long for requested model", None);
+    let (kind, _) = classify_completion_error("input is too long for requested model");
     assert_eq!(kind, CompletionErrorKind::ContextOverflow);
 }
 
 #[test]
 fn classify_context_overflow_reduce_length() {
-    let (kind, _) = classify_completion_error("reduce the length of your prompt", None);
+    let (kind, _) = classify_completion_error("reduce the length of your prompt");
     assert_eq!(kind, CompletionErrorKind::ContextOverflow);
 }
 
 #[test]
 fn classify_request_too_large() {
-    let (kind, _) = classify_completion_error("413 request_too_large response", None);
+    let (kind, _) = classify_completion_error("413 request_too_large response");
     assert_eq!(kind, CompletionErrorKind::RequestTooLarge);
 }
 
 #[test]
 fn classify_refusal_content_policy() {
-    let (kind, _) = classify_completion_error("content policy violation detected", None);
+    let (kind, _) = classify_completion_error("content policy violation detected");
     assert_eq!(kind, CompletionErrorKind::Refusal);
 }
 
 #[test]
 fn classify_credits_exhausted() {
-    let (kind, _) = classify_completion_error("account out of credits", None);
+    let (kind, _) = classify_completion_error("account out of credits");
     assert_eq!(kind, CompletionErrorKind::CreditsExhausted);
 }
 
 #[test]
 fn classify_quota_billing_error() {
-    let (kind, _) = classify_completion_error("402 billing_error", None);
+    let (kind, _) = classify_completion_error("402 billing_error");
     assert_eq!(kind, CompletionErrorKind::Quota);
 }
 
 #[test]
 fn classify_rate_limit() {
-    let (kind, _) = classify_completion_error("rate limit exceeded 429", None);
+    let (kind, _) = classify_completion_error("rate limit exceeded 429");
     assert_eq!(kind, CompletionErrorKind::RateLimit);
 }
 
 #[test]
 fn classify_overloaded() {
-    let (kind, _) = classify_completion_error("529 overloaded_error service busy", None);
+    let (kind, _) = classify_completion_error("529 overloaded_error service busy");
     assert_eq!(kind, CompletionErrorKind::Overloaded);
 }
 
 #[test]
 fn classify_server_error() {
-    let (kind, _) = classify_completion_error("500 api_error internal server", None);
+    let (kind, _) = classify_completion_error("500 api_error internal server");
     assert_eq!(kind, CompletionErrorKind::ServerError);
 }
 
 #[test]
 fn classify_network_error_sending_request() {
-    let (kind, _) = classify_completion_error("error sending request for url", None);
+    let (kind, _) = classify_completion_error("error sending request for url");
     assert_eq!(kind, CompletionErrorKind::Network);
 }
 
 #[test]
 fn classify_network_stream_decode_invalid_utf8() {
-    let (kind, _) = classify_completion_error("stream decode error: invalid utf-8", None);
+    let (kind, _) = classify_completion_error("stream decode error: invalid utf-8");
     assert_eq!(kind, CompletionErrorKind::Network);
 }
 
 #[test]
 fn classify_endpoint_not_found() {
-    let (kind, _) = classify_completion_error("404 endpoint not found", None);
+    let (kind, _) = classify_completion_error("404 endpoint not found");
     assert_eq!(kind, CompletionErrorKind::EndpointNotFound);
 }
 
 #[test]
 fn classify_auth_error() {
-    let (kind, _) = classify_completion_error("401 authentication_error invalid key", None);
+    let (kind, _) = classify_completion_error("401 authentication_error invalid key");
     assert_eq!(kind, CompletionErrorKind::Auth);
 }
 
 #[test]
 fn classify_unknown_502_bad_gateway() {
-    let (kind, _) = classify_completion_error("502 bad gateway proxy error", None);
+    let (kind, _) = classify_completion_error("502 bad gateway proxy error");
     assert_eq!(kind, CompletionErrorKind::Unknown);
 }
 
@@ -1233,15 +1271,15 @@ fn is_retryable_matches_spec() {
 #[test]
 fn classify_does_not_misclassify_number_in_token_count() {
     // "5000" contains "500" as substring — must NOT match ServerError
-    let (kind, _) = classify_completion_error("processing 5000 tokens per request", None);
+    let (kind, _) = classify_completion_error("processing 5000 tokens per request");
     assert_eq!(kind, CompletionErrorKind::Unknown);
 
     // "4042" contains "404" as substring — must NOT match EndpointNotFound
-    let (kind, _) = classify_completion_error("step 4042 of pipeline", None);
+    let (kind, _) = classify_completion_error("step 4042 of pipeline");
     assert_eq!(kind, CompletionErrorKind::Unknown);
 
     // "500" as a standalone token (standalone HTTP status) MUST match ServerError
-    let (kind, _) = classify_completion_error("HTTP 500 internal server error", None);
+    let (kind, _) = classify_completion_error("HTTP 500 internal server error");
     assert_eq!(kind, CompletionErrorKind::ServerError);
 }
 
@@ -1250,7 +1288,7 @@ fn classify_network_timeout_is_unknown_not_network() {
     // "network timeout" does not match any Network patterns (no "decode error",
     // "connection reset", etc.) — it falls through to Unknown.
     // Confirm this is stable and hasn't been accidentally absorbed.
-    let (kind, _) = classify_completion_error("network timeout after 30s", None);
+    let (kind, _) = classify_completion_error("network timeout after 30s");
     assert_eq!(kind, CompletionErrorKind::Unknown);
 }
 
@@ -1258,7 +1296,7 @@ fn classify_network_timeout_is_unknown_not_network() {
 fn classify_insufficient_quota_is_quota_not_credits_exhausted() {
     // Fix 1: "insufficient_quota" belongs to Quota (OpenAI billing quota),
     // not CreditsExhausted (account credit balance exhausted).
-    let (kind, _) = classify_completion_error("insufficient_quota for this API key", None);
+    let (kind, _) = classify_completion_error("insufficient_quota for this API key");
     assert_eq!(kind, CompletionErrorKind::Quota);
 }
 
@@ -1266,7 +1304,7 @@ fn classify_insufficient_quota_is_quota_not_credits_exhausted() {
 fn classify_request_entity_too_large_is_request_too_large_not_context_overflow() {
     // Fix 2: "request entity too large" is HTTP 413 (payload too large),
     // not ContextOverflow (conversation context window exceeded).
-    let (kind, _) = classify_completion_error("request entity too large", None);
+    let (kind, _) = classify_completion_error("request entity too large");
     assert_eq!(kind, CompletionErrorKind::RequestTooLarge);
 }
 
@@ -1333,6 +1371,8 @@ fn hard_error_after_prior_history_persists_user_message() {
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle,
             visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
         },
     );
 
@@ -1485,6 +1525,8 @@ fn hard_error_after_prior_history_persists_only_delta() {
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle,
             visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
         },
     );
 
@@ -1563,6 +1605,8 @@ fn hard_error_twice_does_not_double_history() {
                 mcp_registry: Arc::new(mcp_registry),
                 tool_server_handle,
                 visible_tool_definitions: vec![],
+                circuit_breaker: default_circuit_breaker(),
+                doom_state: default_doom_state(),
             },
         );
         let result = executor.execute(
@@ -1601,6 +1645,8 @@ fn hard_error_twice_does_not_double_history() {
                 mcp_registry: Arc::new(mcp_registry),
                 tool_server_handle,
                 visible_tool_definitions: vec![],
+                circuit_breaker: default_circuit_breaker(),
+                doom_state: default_doom_state(),
             },
         );
         let _ = executor.execute(
@@ -1638,6 +1684,8 @@ fn hard_error_twice_does_not_double_history() {
                 mcp_registry: Arc::new(mcp_registry),
                 tool_server_handle,
                 visible_tool_definitions: vec![],
+                circuit_breaker: default_circuit_breaker(),
+                doom_state: default_doom_state(),
             },
         );
         let _ = executor.execute(
@@ -1731,6 +1779,8 @@ fn cancelled_turn_after_prior_history_persists_only_delta() {
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle,
             visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
         },
     );
 
@@ -1810,6 +1860,8 @@ fn hard_error_on_first_llm_call_no_prior_history_persists_user_message() {
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle,
             visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
         },
     );
 
@@ -1885,6 +1937,31 @@ fn hard_error_on_first_llm_call_no_prior_history_persists_user_message() {
 ///   persisted = [user_msg, assistant_tool_call_msg, tool_result_user_msg]
 ///
 /// Key assertion: every persisted ToolCall has a following ToolResult NOT containing "[interrupted]".
+///
+/// The tool must be registered in the ToolServer so rig dispatches it normally.
+/// Previously this test relied on `on_invalid_tool_call` → `Skip` to produce a
+/// ToolResult, but `Retry` no longer persists the malformed call.
+struct SimpleEchoTool;
+
+impl rig::tool::Tool for SimpleEchoTool {
+    const NAME: &'static str = "some_tool";
+    type Error = std::convert::Infallible;
+    type Args = serde_json::Value;
+    type Output = String;
+
+    async fn definition(&self, _prompt: String) -> rig::completion::ToolDefinition {
+        rig::completion::ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "Simple echo tool for testing".to_string(),
+            parameters: serde_json::json!({"type": "object", "properties": {"x": {"type": "number"}}}),
+        }
+    }
+
+    async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
+        Ok("real_tool_output".to_string())
+    }
+}
+
 #[test]
 fn hard_error_mid_tool_loop_preserves_real_tool_results() {
     let config = test_config();
@@ -1909,7 +1986,9 @@ fn hard_error_mid_tool_loop_preserves_real_tool_results() {
 
     let closure_registry = crate::tools::closure::ClosureRegistry::new();
     let mcp_registry = crate::tools::handler::McpToolRegistry::from_names(Vec::<String>::new());
-    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+    let tool_server_handle = rig::tool::server::ToolServer::new()
+        .tool(SimpleEchoTool)
+        .run();
 
     let mut executor = TurnExecutor::new(
         &config,
@@ -1919,7 +1998,13 @@ fn hard_error_mid_tool_loop_preserves_real_tool_results() {
             closure_registry: Arc::new(closure_registry),
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle,
-            visible_tool_definitions: vec![],
+            visible_tool_definitions: vec![rig::completion::ToolDefinition {
+                name: "some_tool".to_string(),
+                description: "Simple echo tool for testing".to_string(),
+                parameters: serde_json::json!({"type": "object", "properties": {"x": {"type": "number"}}}),
+            }],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
         },
     );
 
@@ -2202,6 +2287,8 @@ fn retry_succeeds_on_second_attempt() {
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle,
             visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
         },
     );
 
@@ -2275,6 +2362,8 @@ fn retry_exhausted_surfaces_attempt_count() {
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle,
             visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
         },
     );
 
@@ -2336,6 +2425,8 @@ fn non_retryable_error_not_retried() {
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle,
             visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
         },
     );
 
@@ -2400,6 +2491,8 @@ fn retry_disabled_when_max_retries_is_zero() {
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle,
             visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
         },
     );
 
@@ -2450,7 +2543,6 @@ fn retry_not_attempted_when_no_partial_history() {
         messages: None,
         last_known_history: vec![], // empty — no partial history
         pre_turn_message_count: 0,
-        estimated_request_bytes: None,
     };
 
     let has_partial_history = !turn_error_empty_history.last_known_history.is_empty();
@@ -2469,7 +2561,6 @@ fn retry_not_attempted_when_no_partial_history() {
         messages: None,
         last_known_history: vec![crate::types::Message::user("prompt")],
         pre_turn_message_count: 0,
-        estimated_request_bytes: None,
     };
     let has_partial_history_non_empty = !turn_error_with_history.last_known_history.is_empty();
     assert!(
@@ -2638,6 +2729,8 @@ fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
             description: "Tool that cancels after first call".to_string(),
             parameters: serde_json::json!({"type": "object", "properties": {}}),
         }],
+        circuit_breaker: default_circuit_breaker(),
+        doom_state: default_doom_state(),
     };
 
     let cached_client = CachedProviderClient::Mock(model);
@@ -2735,69 +2828,17 @@ fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
 // Size-aware error classification tests
 // ---------------------------------------------------------------------------
 
-/// "error sending request" with estimated_request_bytes > 100 KB must be classified
-/// as `RequestTooLarge` (non-retryable), not `Network` (retryable).
+/// "error sending request" must be classified as `Network` (retryable).
 #[test]
-fn classify_error_sending_request_large_payload_is_request_too_large() {
+fn classify_error_sending_request_is_network() {
     let msg = "error sending request for url https://api.example.com/v1/chat";
-    let large_payload = Some(200 * 1024); // 200 KB — well above 100 KB threshold
-    let (kind, user_msg) = classify_completion_error(msg, large_payload);
-    assert_eq!(
-        kind,
-        CompletionErrorKind::RequestTooLarge,
-        "large payload 'error sending request' must be RequestTooLarge, not Network"
-    );
-    assert!(
-        !kind.is_retryable(),
-        "RequestTooLarge must not be retryable"
-    );
-    assert!(
-        user_msg.contains("too large"),
-        "user message must mention 'too large'; got: {user_msg}"
-    );
-}
-
-/// "error sending request" with no estimated_request_bytes must remain `Network`
-/// (retryable) — the fallback for genuine network failures.
-#[test]
-fn classify_error_sending_request_no_size_is_network() {
-    let msg = "error sending request for url https://api.example.com/v1/chat";
-    let (kind, _) = classify_completion_error(msg, None);
+    let (kind, _) = classify_completion_error(msg);
     assert_eq!(
         kind,
         CompletionErrorKind::Network,
-        "'error sending request' without size info must be Network"
+        "'error sending request' must be Network"
     );
     assert!(kind.is_retryable(), "Network must be retryable");
-}
-
-/// "error sending request" with estimated_request_bytes below the 100 KB threshold
-/// must remain `Network` (retryable).
-#[test]
-fn classify_error_sending_request_small_payload_is_network() {
-    let msg = "error sending request for url https://api.example.com/v1/chat";
-    let small_payload = Some(50 * 1024); // 50 KB — below 100 KB threshold
-    let (kind, _) = classify_completion_error(msg, small_payload);
-    assert_eq!(
-        kind,
-        CompletionErrorKind::Network,
-        "small payload 'error sending request' must be Network, not RequestTooLarge"
-    );
-    assert!(kind.is_retryable(), "Network must be retryable");
-}
-
-/// "error sending request" with estimated_request_bytes exactly at the 100 KB
-/// boundary must remain `Network` — the threshold is strictly greater-than.
-#[test]
-fn classify_error_sending_request_at_boundary_is_network() {
-    let msg = "error sending request for url https://api.example.com/v1/chat";
-    let boundary = Some(100 * 1024); // exactly 100 KB
-    let (kind, _) = classify_completion_error(msg, boundary);
-    assert_eq!(
-        kind,
-        CompletionErrorKind::Network,
-        "boundary (100 KB exact) must be Network — threshold is strictly greater-than"
-    );
 }
 
 // ---------------------------------------------------------------------------

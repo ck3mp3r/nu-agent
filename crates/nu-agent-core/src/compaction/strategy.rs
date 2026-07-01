@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 /// Strategy for compacting messages when threshold is exceeded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CompactionStrategy {
-    /// Summarize old messages and keep a recent verbatim window.
+    /// Summarize all messages into a single system message. No verbatim messages are kept.
     #[serde(
         rename = "sliding_summary",
         alias = "truncate",

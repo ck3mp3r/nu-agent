@@ -7,7 +7,7 @@ pub fn llm_visible_tool_definitions(
     mcp_registry: &McpToolRegistry,
     permissions: &PermissionsConfig,
 ) -> Vec<ToolDefinition> {
-    tool_definitions
+    let result: Vec<_> = tool_definitions
         .iter()
         .filter(|tool| {
             if !permissions.is_tool_visible(&tool.name) {
@@ -20,7 +20,13 @@ pub fn llm_visible_tool_definitions(
             }
         })
         .cloned()
-        .collect()
+        .collect();
+    log::debug!(
+        "llm_visible_tool_definitions: total={} visible={}",
+        tool_definitions.len(),
+        result.len()
+    );
+    result
 }
 
 #[cfg(test)]

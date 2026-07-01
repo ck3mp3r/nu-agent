@@ -15,11 +15,21 @@ use super::test_utils::{MockResolver, MockUi, test_config};
 use super::*;
 use crate::conversation::providers::CachedProviderClient;
 use crate::conversation::state::memory::MemoryState;
+use crate::hook::agent_hook::DoomLoopState;
 use crate::protocol::event::UiEvent;
 use crate::session::ConversationStore;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
+use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
 use crate::types::Message;
+
+fn default_circuit_breaker() -> Arc<std::sync::Mutex<McpCircuitBreaker>> {
+    Arc::new(std::sync::Mutex::new(McpCircuitBreaker::default()))
+}
+
+fn default_doom_state() -> Arc<std::sync::Mutex<DoomLoopState>> {
+    Arc::new(std::sync::Mutex::new(DoomLoopState::default()))
+}
 
 // ---------------------------------------------------------------------------
 // SSE body helpers for wiremock integration tests
@@ -216,6 +226,8 @@ fn no_tools() -> ToolInfra {
         mcp_registry: Arc::new(McpToolRegistry::from_names(Vec::<String>::new())),
         tool_server_handle: rig::tool::server::ToolServer::new().run(),
         visible_tool_definitions: vec![],
+        circuit_breaker: default_circuit_breaker(),
+        doom_state: default_doom_state(),
     }
 }
 
@@ -260,6 +272,8 @@ fn nu_shell_tool(response: &'static str) -> ToolInfra {
             description: "Execute a Nushell command".to_string(),
             parameters: serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}),
         }],
+        circuit_breaker: default_circuit_breaker(),
+        doom_state: default_doom_state(),
     }
 }
 
@@ -329,6 +343,8 @@ fn nu_shell_tool_truncating(response: &'static str, max_tool_result_bytes: usize
             description: "Execute a Nushell command".to_string(),
             parameters: serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}),
         }],
+        circuit_breaker: default_circuit_breaker(),
+        doom_state: default_doom_state(),
     }
 }
 
@@ -401,6 +417,8 @@ fn echo_tool(response: &'static str) -> ToolInfra {
             description: "Test echo tool".to_string(),
             parameters: serde_json::json!({"type": "object", "properties": {}}),
         }],
+        circuit_breaker: default_circuit_breaker(),
+        doom_state: default_doom_state(),
     }
 }
 
@@ -473,6 +491,8 @@ fn nu_shell_cancelling_tool(
             description: "Execute a Nushell command".to_string(),
             parameters: serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}),
         }],
+        circuit_breaker: default_circuit_breaker(),
+        doom_state: default_doom_state(),
     }
 }
 
@@ -1495,6 +1515,8 @@ fn skill_via_builtin_adapter(max_tool_result_bytes: usize, cwd: std::path::PathB
                 "required": ["name"]
             }),
         }],
+        circuit_breaker: default_circuit_breaker(),
+        doom_state: default_doom_state(),
     }
 }
 
@@ -1848,5 +1870,113 @@ fn journey_empty_tool_result_replaced_with_placeholder() {
     assert!(
         has_placeholder,
         "in-memory history must contain '(empty result)' placeholder after repair; msgs: {all_msgs:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Null-args ToolCall repair integration test
+// ---------------------------------------------------------------------------
+
+/// Verifies that a session containing a ToolCall with `arguments: null` (the poison
+/// pattern from `on_invalid_tool_call` → Skip → rollback_messages) is transparently
+/// healed on load and the next turn succeeds.
+///
+/// The repair happens inside `JournalConversationMemory::load()` via `repair_messages()`.
+/// The `fix_null_tool_arguments` pass replaces `null` with `{}` before rig sees the history.
+#[test]
+fn journey_null_args_tool_call_repaired_on_load() {
+    use std::io::Write;
+
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let path = temp_dir.path().to_path_buf();
+    let session_id = "journey-null-args-repair";
+    let config = test_config();
+
+    // Write corrupt JSONL directly to the session file.
+    // The corrupt pattern: ToolCall with `arguments: null` and its matching ToolResult.
+    {
+        use crate::types::{
+            AssistantContent, Message, ToolCall, ToolFunction, ToolResult, ToolResultContent,
+            UserContent,
+        };
+        use rig::one_or_many::OneOrMany;
+
+        let session_file = path.join(format!("{session_id}.jsonl"));
+        let mut f = std::fs::File::create(&session_file).expect("create session file");
+
+        // metadata line (required by JsonlConversationStore::load as first line)
+        let metadata = serde_json::json!({
+            "type": "session",
+            "session_id": session_id,
+            "created_at": "2024-01-01T00:00:00Z",
+            "compaction_count": 0
+        });
+        writeln!(
+            f,
+            "{}",
+            serde_json::to_string(&metadata).expect("serialize metadata")
+        )
+        .expect("write metadata");
+
+        let corrupt_messages: Vec<Message> = vec![
+            // user("run something")
+            Message::user("run something"),
+            // assistant(tool_call tc1 with null arguments) — THE POISON
+            Message::Assistant {
+                id: None,
+                content: OneOrMany::one(AssistantContent::ToolCall(ToolCall::new(
+                    "tc_poison".to_string(),
+                    ToolFunction::new(
+                        "tmux__send_and_capture".to_string(),
+                        serde_json::Value::Null,
+                    ),
+                ))),
+            },
+            // user(tool_result tc1 — the Skip reason)
+            Message::User {
+                content: OneOrMany::one(UserContent::ToolResult(ToolResult {
+                    id: "tc_poison".to_string(),
+                    call_id: None,
+                    content: OneOrMany::one(ToolResultContent::text("Tool not available")),
+                })),
+            },
+            // assistant closing text
+            Message::assistant("I see the tool is unavailable."),
+        ];
+
+        for msg in &corrupt_messages {
+            writeln!(f, "{}", serde_json::to_string(msg).expect("serialize msg"))
+                .expect("write msg");
+        }
+    }
+
+    // Create a fresh MemoryState that loads the corrupt JSONL. Repair fires inside load().
+    let rt = tokio::runtime::Runtime::new().expect("rt");
+    let mut ms = crate::conversation::state::memory::MemoryState::new(path.clone());
+
+    let model = MockCompletionModel::from_stream_turns([[
+        MockStreamEvent::Text("The tool was unavailable but we can continue.".into()),
+        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+    ]]);
+
+    let mut ui = MockUi::new();
+    let mut executor = TurnExecutor::new(&config, &rt, &mut ms, no_tools());
+    let outcome = executor.execute(
+        &mut ui,
+        ExecuteInput {
+            prompt: "what happened?".to_string(),
+            preamble: None,
+            span: nu_protocol::Span::test_data(),
+        },
+        &CachedProviderClient::Mock(model),
+        MockResolver,
+        Some(session_id),
+        None,
+    );
+
+    // The turn must succeed — repair healed the null-args poison on load.
+    assert!(
+        outcome.is_ok(),
+        "turn must succeed after null-args ToolCall is repaired on load; got: {outcome:?}"
     );
 }

@@ -1,4 +1,3 @@
-use super::helpers::{has_tool_call, has_tool_result};
 use super::*;
 use crate::session::{JournalConversationMemory, StoreEntry, extract_llm_context};
 use crate::types::{
@@ -60,8 +59,8 @@ fn make_tool_result_message(call_id: &str, result_text: &str) -> Message {
 }
 
 #[test]
-fn compact_splits_at_keep_recent() {
-    // RED: Test that compaction loads from memory, splits correctly, and stores back
+fn compact_summarizes_all_messages() {
+    // SlidingSummary summarizes ALL messages — no kept recent messages
     let temp_dir = TempDir::new().unwrap();
     let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let session_id = "test_session";
@@ -91,39 +90,30 @@ fn compact_splits_at_keep_recent() {
         .block_on(async { super::compact(session_id, &config, &memory, summarizer).await })
         .unwrap();
 
-    // Verify: 7 messages summarized, 3 kept recent
-    assert_eq!(outcome.summarized_count, 7);
-    assert_eq!(outcome.kept_recent_count, 3);
-    assert_eq!(outcome.summary_text, "Summary of 7 messages");
+    // Verify: ALL 10 messages summarized, 0 kept recent
+    assert_eq!(outcome.summarized_count, 10);
+    assert_eq!(outcome.kept_recent_count, 0);
+    assert_eq!(outcome.summary_text, "Summary of 10 messages");
 
-    // Verify: memory contains summary + 3 recent messages = 4 total
+    // Verify: memory contains only the summary system message
     let final_messages = tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(async { memory.load(session_id).await.unwrap() });
 
-    assert_eq!(final_messages.len(), 4);
+    assert_eq!(final_messages.len(), 1);
 
-    // First message should be system with summary
+    // The only message is the system summary
     match &final_messages[0] {
         Message::System { content } => {
-            assert_eq!(content, "Summary of 7 messages");
+            assert_eq!(content, "Summary of 10 messages");
         }
         _ => panic!("Expected first message to be system"),
-    }
-
-    // Remaining 3 should be the kept recent messages (mixed user/assistant)
-    for msg in final_messages.iter().skip(1) {
-        assert!(
-            matches!(msg, Message::User { .. } | Message::Assistant { .. }),
-            "Expected user or assistant message, got: {:?}",
-            msg
-        );
     }
 }
 
 #[test]
 fn compact_persists_to_store() {
-    // RED: Test that compacted messages are persisted to ConversationStore
+    // SlidingSummary: marker is the last entry — no kept messages after it
     let temp_dir = TempDir::new().unwrap();
     let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let session_id = "test_persist";
@@ -148,22 +138,18 @@ fn compact_persists_to_store() {
         .block_on(async { super::compact(session_id, &config, &memory, summarizer).await })
         .unwrap();
 
-    // Verify: store contains all original messages + compaction marker + re-appended kept
+    // Verify: store contains all original messages + compaction marker (no kept after)
     let (stored, _) = memory.load_all(session_id).unwrap();
-    assert_eq!(stored.len(), 9); // 6 original + 1 marker + 2 kept
+    assert_eq!(stored.len(), 7); // 6 original + 1 marker
 
-    // Marker should be at index 6
+    // Marker should be the last entry at index 6
     match &stored[6] {
         StoreEntry::Marker(marker) => {
             assert_eq!(marker.summary, "Summary");
-            assert_eq!(marker.kept_recent_count, 2);
+            assert_eq!(marker.kept_recent_count, 0);
         }
         _ => panic!("Expected compaction marker at index 6"),
     }
-
-    // Last 2 entries should be re-appended kept messages
-    assert!(matches!(&stored[7], StoreEntry::Message(_)));
-    assert!(matches!(&stored[8], StoreEntry::Message(_)));
 }
 
 #[test]
@@ -235,12 +221,12 @@ fn compact_clears_before_append() {
         .block_on(async { super::compact(session_id, &config, &memory, summarizer).await })
         .unwrap();
 
-    // Memory should contain exactly 3 messages (summary + 2 recent), not 6 + 3
+    // Memory should contain exactly 1 message (summary only), not 6 + 3
     let final_messages = tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(async { memory.load(session_id).await.unwrap() });
 
-    assert_eq!(final_messages.len(), 3);
+    assert_eq!(final_messages.len(), 1);
 }
 
 #[test]
@@ -284,22 +270,20 @@ fn compact_with_async_summarizer_does_not_panic() {
         .block_on(async { super::compact(session_id, &config, &memory, summarizer).await })
         .unwrap();
 
-    assert_eq!(outcome.summarized_count, 4); // 6 messages - 2 kept = 4 summarized
-    assert_eq!(outcome.kept_recent_count, 2);
+    assert_eq!(outcome.summarized_count, 6); // all 6 messages summarized
+    assert_eq!(outcome.kept_recent_count, 0);
 }
 
 #[test]
 fn compact_does_not_split_tool_call_result_pair() {
-    // Integration test: 11 messages where TC/TR pair is at indices 6-7.
-    // Naive split_index = 11 - 4 = 7, which would cut between TC (index 6) and TR (index 7).
-    // Safe split should move back to index 6, keeping both in the recent window.
+    // Integration test: SlidingSummary now summarizes ALL messages.
+    // The split logic is still used for SlidingWindow, but for SlidingSummary
+    // all messages are summarized and the result is [System(summary)] only.
     let temp_dir = TempDir::new().unwrap();
     let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let session_id = "test_tool_pair_split";
 
     // Starts with assistant, ends with assistant, no consecutive same-role messages.
-    // TC is at index 6 (preceded by user at 5 — no consecutive-assistant issue).
-    // TR is at index 7. Split at naive_index=7 would put TC in old, TR in recent (unsafe).
     let messages: Vec<Message> = vec![
         Message::assistant("a0"),
         Message::user("u1"),
@@ -334,28 +318,24 @@ fn compact_does_not_split_tool_call_result_pair() {
         .block_on(async { super::compact(session_id, &config, &memory, summarizer).await })
         .unwrap();
 
-    // Naive split at 7 → safe split at 6 → 6 summarized, 5 kept
-    assert_eq!(outcome.summarized_count, 6);
-    assert_eq!(outcome.kept_recent_count, 5);
+    // All 11 messages summarized, 0 kept
+    assert_eq!(outcome.summarized_count, 11);
+    assert_eq!(outcome.kept_recent_count, 0);
 
-    // Verify memory: summary + 5 recent = 6 messages
+    // Verify memory: summary only = 1 message
     let final_messages = tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(async { memory.load(session_id).await.unwrap() });
 
-    assert_eq!(final_messages.len(), 6);
+    assert_eq!(final_messages.len(), 1);
 
-    // First is the system summary
+    // The only message is the system summary
     match &final_messages[0] {
         Message::System { content } => {
-            assert_eq!(content, "Summary of 6 messages");
+            assert_eq!(content, "Summary of 11 messages");
         }
         _ => panic!("Expected system message"),
     }
-
-    // The tool call pair (indices 1-2 in compacted) must be intact
-    assert!(has_tool_call(&final_messages[1]));
-    assert!(has_tool_result(&final_messages[2]));
 }
 
 #[test]
@@ -391,15 +371,15 @@ fn compact_store_written_before_memory() {
         .block_on(async { super::compact(session_id, &config, &memory, summarizer).await })
         .unwrap();
 
-    // Store must have all original messages + compaction marker + re-appended kept
+    // Store must have all original messages + compaction marker (no kept after)
     let (stored, _) = memory.load_all(session_id).unwrap();
-    assert_eq!(stored.len(), 12); // 8 original + 1 marker + 3 kept
+    assert_eq!(stored.len(), 9); // 8 original + 1 marker
 
-    // Marker should be at index 8
+    // Marker should be at index 8 (last entry)
     match &stored[8] {
         StoreEntry::Marker(marker) => {
-            assert_eq!(marker.summary, "Summary of 5 messages");
-            assert_eq!(marker.kept_recent_count, 3);
+            assert_eq!(marker.summary, "Summary of 8 messages");
+            assert_eq!(marker.kept_recent_count, 0);
         }
         _ => panic!("Expected compaction marker at index 8"),
     }
@@ -407,7 +387,7 @@ fn compact_store_written_before_memory() {
 
 #[test]
 fn compact_successful_produces_correct_state() {
-    // After a successful compact, memory has LLM context (summary + recent)
+    // After a successful compact, memory has LLM context (summary only)
     // and store has full append-only history (all messages + marker).
     let temp_dir = TempDir::new().unwrap();
     let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
@@ -440,15 +420,15 @@ fn compact_successful_produces_correct_state() {
         .block_on(async { super::compact(session_id, &config, &memory, summarizer).await })
         .unwrap();
 
-    // Memory has LLM context (summary + 2 recent = 3 messages)
+    // Memory has LLM context (summary only = 1 message)
     let from_memory = tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(async { memory.load(session_id).await.unwrap() });
-    assert_eq!(from_memory.len(), 3); // summary + 2 recent
+    assert_eq!(from_memory.len(), 1); // summary only
 
-    // Store has full history: 6 original messages + 1 marker + 2 kept = 9 entries
+    // Store has full history: 6 original messages + 1 marker = 7 entries
     let (stored_entries, _) = memory.load_all(session_id).unwrap();
-    assert_eq!(stored_entries.len(), 9);
+    assert_eq!(stored_entries.len(), 7);
 
     // extract_llm_context from store should produce the same messages as memory
     let context_from_store = extract_llm_context(&stored_entries);
@@ -723,7 +703,7 @@ fn compact_appends_marker_preserving_history() {
         .unwrap();
 
     let (entries, _) = memory.load_all(session_id).unwrap();
-    assert_eq!(entries.len(), 9); // 6 original + 1 marker + 2 kept
+    assert_eq!(entries.len(), 7); // 6 original + 1 marker
 
     // First 6 are messages
     for entry in &entries[..6] {
@@ -733,19 +713,11 @@ fn compact_appends_marker_preserving_history() {
         );
     }
 
-    // Index 6 is marker
+    // Index 6 is marker (last entry)
     assert!(
         matches!(&entries[6], StoreEntry::Marker(_)),
         "Expected marker at index 6"
     );
-
-    // Last 2 are re-appended kept messages
-    for entry in &entries[7..9] {
-        assert!(
-            matches!(entry, StoreEntry::Message(_)),
-            "Expected re-appended kept message"
-        );
-    }
 }
 
 #[test]
@@ -779,21 +751,21 @@ fn compact_marker_has_correct_fields() {
         .unwrap();
 
     let (entries, _) = memory.load_all(session_id).unwrap();
-    // Marker should be at index 8 (8 original msgs + marker at index 8, then 3 kept after)
+    // Marker should be at index 8 (8 original msgs + marker, no kept after)
     let marker = match &entries[8] {
         StoreEntry::Marker(m) => m,
         _ => panic!("Expected marker at index 8"),
     };
 
-    assert_eq!(marker.summary, "Summarized 5 old messages");
-    assert_eq!(marker.kept_recent_count, 3);
-    assert_eq!(marker.summarized_count, 5);
+    assert_eq!(marker.summary, "Summarized 8 old messages");
+    assert_eq!(marker.kept_recent_count, 0);
+    assert_eq!(marker.summarized_count, 8);
     assert_eq!(marker.strategy, "sliding_summary");
 }
 
 #[test]
 fn compact_memory_has_llm_context_only() {
-    // Memory has summary + recent only, not the full history
+    // Memory has summary only, not the full history or kept recent messages
     let temp_dir = TempDir::new().unwrap();
     let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let session_id = "test_memory_llm_context";
@@ -822,21 +794,12 @@ fn compact_memory_has_llm_context_only() {
         .unwrap()
         .block_on(async { memory.load(session_id).await.unwrap() });
 
-    assert_eq!(from_memory.len(), 3); // summary + 2 recent
+    assert_eq!(from_memory.len(), 1); // summary only
 
-    // First is system summary
+    // The only message is the system summary
     match &from_memory[0] {
         Message::System { content } => assert_eq!(content, "LLM summary"),
         _ => panic!("Expected system message"),
-    }
-
-    // Remaining are user or assistant messages (mixed in alternating conversation)
-    for msg in from_memory.iter().skip(1) {
-        assert!(
-            matches!(msg, Message::User { .. } | Message::Assistant { .. }),
-            "Expected user or assistant message, got {:?}",
-            msg
-        );
     }
 }
 
@@ -940,15 +903,15 @@ fn multiple_compactions_append_multiple_markers() {
         token_budget: None,
     };
 
-    // First compaction: 10 messages → 7 summarized, 3 kept
+    // First compaction: 10 messages → all 10 summarized, 0 kept
     let summarizer1 = |_: &[Message]| async move { Ok(("Summary 1".to_string(), None)) };
     tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(async { super::compact(session_id, &config, &memory, summarizer1).await })
         .unwrap();
 
-    // After first compact, memory has 4 messages (summary + 3 recent).
-    // Add 4 more alternating messages to trigger second compaction (4 + 4 = 8 > keep_recent=3).
+    // After first compact, memory has 1 message (summary only).
+    // Add 4 more alternating messages to trigger second compaction (1 + 4 = 5 > keep_recent=3).
     let more_messages = make_test_messages(4); // ends with assistant
 
     tokio::runtime::Runtime::new().unwrap().block_on(async {
@@ -1011,10 +974,10 @@ fn compact_writes_null_tokens_to_store() {
 }
 
 #[tokio::test]
-async fn compact_no_double_write_kept_messages() {
+async fn compact_no_messages_after_marker_for_sliding_summary() {
     let temp_dir = TempDir::new().unwrap();
     let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
-    let session_id = "test_no_double_write";
+    let session_id = "test_no_messages_after_marker";
     let config = CompactionParams {
         keep_recent: 3,
         compaction_strategy: CompactionStrategy::SlidingSummary,
@@ -1037,8 +1000,8 @@ async fn compact_no_double_write_kept_messages() {
         .filter(|e| matches!(e, StoreEntry::Message(_)))
         .count();
     assert_eq!(
-        after_marker, 3,
-        "kept messages must appear exactly once after marker, not doubled"
+        after_marker, 0,
+        "SlidingSummary must not write any messages after marker"
     );
 }
 
@@ -1094,6 +1057,7 @@ async fn compact_rollback_clears_cache() {
         .await
         .unwrap();
     let from_cache = memory.load(session_id).await.unwrap();
+    assert_eq!(from_cache.len(), 1); // summary only
     assert!(!from_cache.is_empty());
     memory.clear(session_id).await.unwrap();
     let from_jsonl = memory.load(session_id).await.unwrap();
@@ -1105,10 +1069,10 @@ async fn compact_rollback_clears_cache() {
 }
 
 #[test]
-fn compact_writes_null_tokens_to_marker_and_kept_messages() {
-    // After compact, the JSONL file must have null last_total_tokens on the marker
-    // and post-marker (kept) messages. The stale pre-compaction value must not be
-    // persisted — the real post-compaction count comes from the streaming Final chunk.
+fn compact_writes_null_tokens_to_marker() {
+    // After compact, the JSONL file must have null last_total_tokens on the marker.
+    // The stale pre-compaction value must not be persisted — the real post-compaction
+    // count comes from the streaming Final chunk.
     let temp_dir = TempDir::new().unwrap();
     let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
     let session_id = "test_null_tokens_marker";
@@ -1134,17 +1098,13 @@ fn compact_writes_null_tokens_to_marker_and_kept_messages() {
         .unwrap();
 
     // load_all returns the last non-null last_total_tokens from the file.
-    // Since marker and kept messages are written with None, no token value exists
-    // after the marker in the file.
+    // Since marker is written with None, no token value exists after it.
     let (entries, last_tokens) = memory.load_all(session_id).unwrap();
 
-    // Marker and kept messages written with None → load_all returns None
-    assert_eq!(
-        last_tokens, None,
-        "marker and kept messages must have null tokens in JSONL"
-    );
+    // Marker written with None → load_all returns None
+    assert_eq!(last_tokens, None, "marker must have null tokens in JSONL");
 
-    // Verify entries contain a marker and kept messages (sanity check)
+    // Verify entries contain a marker (sanity check) and no messages after it
     let marker_idx = entries
         .iter()
         .rposition(|e| matches!(e, StoreEntry::Marker(_)))
@@ -1155,8 +1115,8 @@ fn compact_writes_null_tokens_to_marker_and_kept_messages() {
         .collect();
     assert_eq!(
         after_marker.len(),
-        2,
-        "expected 2 kept messages after marker"
+        0,
+        "SlidingSummary must not write messages after marker"
     );
 
     // Inspect the raw JSONL file to confirm null fields
@@ -1164,14 +1124,14 @@ fn compact_writes_null_tokens_to_marker_and_kept_messages() {
     let contents = std::fs::read_to_string(file_path).unwrap();
     let lines: Vec<&str> = contents.lines().collect();
 
-    // Lines after the first (metadata) should include a marker and kept messages.
-    // None of the lines after the original 6 messages should contain last_total_tokens.
+    // Lines after the first (metadata) should include only a marker.
+    // The marker line (after 6 original messages) must not contain last_total_tokens.
     for line in lines.iter().skip(7) {
         // skip metadata + 6 original messages
         let value: serde_json::Value = serde_json::from_str(line).unwrap();
         assert!(
             value.get("last_total_tokens").is_none(),
-            "marker/kept lines must not have last_total_tokens field: {line}"
+            "marker line must not have last_total_tokens field: {line}"
         );
     }
 }
@@ -1207,5 +1167,354 @@ fn compact_outcome_includes_summary_tokens() {
         outcome.summary_total_tokens,
         Some(5000),
         "CompactionOutcome must carry the token count from the summarizer"
+    );
+}
+
+// --- Part 3: Compaction overhaul tests ---
+
+#[test]
+fn compaction_produces_summary_only_no_kept_messages() {
+    // Run compaction on 20 messages
+    // Assert: llm_context.len() == 1 (just the System summary)
+    // Assert: llm_context[0] is Message::System containing the summary text
+    let temp_dir = TempDir::new().unwrap();
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
+    let session_id = "test_summary_only";
+
+    let messages = make_test_messages(20);
+
+    tokio::runtime::Runtime::new().unwrap().block_on(async {
+        memory.append(session_id, messages).await.unwrap();
+    });
+
+    let config = CompactionParams {
+        compaction_strategy: CompactionStrategy::SlidingSummary,
+        keep_recent: 5,
+        token_budget: None,
+    };
+
+    let summarizer =
+        |_: &[Message]| async move { Ok(("Full conversation summary".to_string(), None)) };
+
+    tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(async { super::compact(session_id, &config, &memory, summarizer).await })
+        .unwrap();
+
+    let llm_context = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(async { memory.load(session_id).await.unwrap() });
+
+    assert_eq!(
+        llm_context.len(),
+        1,
+        "llm_context must contain only the summary"
+    );
+    match &llm_context[0] {
+        Message::System { content } => {
+            assert_eq!(content, "Full conversation summary");
+        }
+        other => panic!("Expected Message::System, got: {:?}", other),
+    }
+}
+
+#[test]
+fn compaction_marker_is_last_entry_in_jsonl() {
+    // Run compaction
+    // Read JSONL entries via load_all()
+    // Assert: last entry is StoreEntry::Marker — nothing after it from compaction
+    let temp_dir = TempDir::new().unwrap();
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
+    let session_id = "test_marker_last_entry";
+
+    let messages = make_test_messages(10);
+
+    tokio::runtime::Runtime::new().unwrap().block_on(async {
+        memory.append(session_id, messages).await.unwrap();
+    });
+
+    let config = CompactionParams {
+        compaction_strategy: CompactionStrategy::SlidingSummary,
+        keep_recent: 3,
+        token_budget: None,
+    };
+
+    let summarizer = |_: &[Message]| async move { Ok(("summary".to_string(), None)) };
+
+    tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(async { super::compact(session_id, &config, &memory, summarizer).await })
+        .unwrap();
+
+    let (entries, _) = memory.load_all(session_id).unwrap();
+
+    // Last entry must be the compaction marker
+    match entries.last() {
+        Some(StoreEntry::Marker(_)) => {} // correct
+        other => panic!(
+            "Expected last entry to be StoreEntry::Marker, got: {:?}",
+            other
+        ),
+    }
+}
+
+#[test]
+fn extract_llm_context_after_clean_compaction() {
+    // Run compaction, then simulate a turn (append 2 messages to store)
+    // Call extract_llm_context on the entries
+    // Assert: result is [System(summary), user("new"), asst("reply")]
+    let temp_dir = TempDir::new().unwrap();
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
+    let session_id = "test_extract_after_compaction";
+
+    let messages = make_test_messages(10);
+
+    tokio::runtime::Runtime::new().unwrap().block_on(async {
+        memory.append(session_id, messages).await.unwrap();
+    });
+
+    let config = CompactionParams {
+        compaction_strategy: CompactionStrategy::SlidingSummary,
+        keep_recent: 3,
+        token_budget: None,
+    };
+
+    let summarizer = |_: &[Message]| async move { Ok(("conversation summary".to_string(), None)) };
+
+    tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(async { super::compact(session_id, &config, &memory, summarizer).await })
+        .unwrap();
+
+    // Simulate a new turn: append user + assistant messages to store
+    let new_turn = vec![
+        Message::user("new question"),
+        Message::assistant("new reply"),
+    ];
+    tokio::runtime::Runtime::new().unwrap().block_on(async {
+        memory.append(session_id, new_turn).await.unwrap();
+    });
+
+    // extract_llm_context from store should give [System(summary), user, assistant]
+    let (entries, _) = memory.load_all(session_id).unwrap();
+    let context = extract_llm_context(&entries);
+
+    assert_eq!(context.len(), 3, "Expected [summary, user, assistant]");
+    match &context[0] {
+        Message::System { content } => assert_eq!(content, "conversation summary"),
+        other => panic!("Expected System message, got: {:?}", other),
+    }
+    assert!(matches!(&context[1], Message::User { .. }));
+    assert!(matches!(&context[2], Message::Assistant { .. }));
+}
+
+#[test]
+fn compaction_summarizes_all_messages_including_recent() {
+    // Run compaction on 20 messages
+    // Assert: summarized_count == 20 (all messages summarized)
+    let temp_dir = TempDir::new().unwrap();
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
+    let session_id = "test_summarize_all";
+
+    let messages = make_test_messages(20);
+
+    tokio::runtime::Runtime::new().unwrap().block_on(async {
+        memory.append(session_id, messages).await.unwrap();
+    });
+
+    let config = CompactionParams {
+        compaction_strategy: CompactionStrategy::SlidingSummary,
+        keep_recent: 5,
+        token_budget: None,
+    };
+
+    let summarizer = |msgs: &[Message]| {
+        let count = msgs.len();
+        async move { Ok((format!("Summarized {} messages", count), None)) }
+    };
+
+    let outcome = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(async { super::compact(session_id, &config, &memory, summarizer).await })
+        .unwrap();
+
+    assert_eq!(
+        outcome.summarized_count, 20,
+        "All 20 messages must be summarized, not 20 - keep_recent"
+    );
+}
+
+#[test]
+fn compaction_marker_shows_zero_kept() {
+    // Run compaction
+    // Assert: marker's kept_recent_count == 0
+    let temp_dir = TempDir::new().unwrap();
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
+    let session_id = "test_marker_zero_kept";
+
+    let messages = make_test_messages(10);
+
+    tokio::runtime::Runtime::new().unwrap().block_on(async {
+        memory.append(session_id, messages).await.unwrap();
+    });
+
+    let config = CompactionParams {
+        compaction_strategy: CompactionStrategy::SlidingSummary,
+        keep_recent: 4,
+        token_budget: None,
+    };
+
+    let summarizer = |_: &[Message]| async move { Ok(("summary".to_string(), None)) };
+
+    tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(async { super::compact(session_id, &config, &memory, summarizer).await })
+        .unwrap();
+
+    let (entries, _) = memory.load_all(session_id).unwrap();
+    let marker = entries
+        .iter()
+        .rev()
+        .find_map(|e| match e {
+            StoreEntry::Marker(m) => Some(m),
+            _ => None,
+        })
+        .expect("expected a compaction marker");
+
+    assert_eq!(
+        marker.kept_recent_count, 0,
+        "SlidingSummary marker must show 0 kept"
+    );
+}
+
+// --- Part 4: Failure-aware compaction summary tests ---
+
+#[test]
+fn detect_failure_patterns_finds_transport_closed() {
+    let messages = vec![
+        Message::user("Please read the file"),
+        Message::assistant("Error: Transport closed while processing request"),
+    ];
+    let found = super::detect_failure_patterns(&messages);
+    assert_eq!(found, vec!["transport closed"]);
+}
+
+#[test]
+fn detect_failure_patterns_finds_multiple() {
+    let messages = vec![
+        Message::user("Do something"),
+        Message::assistant("Transport closed: server went away"),
+        Message::user("Try again"),
+        Message::assistant("Doom loop detected: circuit breaker tripped"),
+    ];
+    let found = super::detect_failure_patterns(&messages);
+    assert!(found.contains(&"transport closed".to_string()));
+    assert!(found.contains(&"doom loop detected".to_string()));
+    assert_eq!(found.len(), 2);
+}
+
+#[test]
+fn detect_failure_patterns_empty_on_clean_session() {
+    let messages = vec![
+        Message::user("Hello, read the file"),
+        Message::assistant("Sure, here are the contents"),
+        Message::user("Thanks, now refactor it"),
+        Message::assistant("Done! I've refactored the module"),
+    ];
+    let found = super::detect_failure_patterns(&messages);
+    assert!(found.is_empty());
+}
+
+#[test]
+fn compaction_summary_prompt_includes_failure_warning() {
+    // When messages contain failure patterns, the summarizer should receive
+    // an extra system message with the failure warning appended.
+    let temp_dir = TempDir::new().unwrap();
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
+    let session_id = "test_failure_warning";
+
+    // Messages that include a failure pattern
+    let messages = vec![
+        Message::user("Read the config"),
+        Message::assistant("Transport closed: MCP server disconnected"),
+        Message::user("Try something else"),
+        Message::assistant("Connection refused when calling tool"),
+    ];
+
+    tokio::runtime::Runtime::new().unwrap().block_on(async {
+        memory.append(session_id, messages).await.unwrap();
+    });
+
+    let config = CompactionParams {
+        compaction_strategy: CompactionStrategy::SlidingSummary,
+        keep_recent: 2,
+        token_budget: None,
+    };
+
+    // Summarizer captures whether the warning system message was present
+    let summarizer = |msgs: &[Message]| {
+        let has_warning = msgs.iter().any(|m| {
+            matches!(m, Message::System { content }
+                if content.contains("IMPORTANT: The conversation contains tool/MCP failures"))
+        });
+        async move { Ok((format!("Summary (warning_present={})", has_warning), None)) }
+    };
+
+    let outcome = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(async { super::compact(session_id, &config, &memory, summarizer).await })
+        .unwrap();
+
+    assert!(
+        outcome.summary_text.contains("warning_present=true"),
+        "Summarizer must receive the failure warning when failures are present, got: {}",
+        outcome.summary_text
+    );
+}
+
+#[test]
+fn compaction_summary_prompt_unchanged_on_clean_session() {
+    // When messages contain NO failure patterns, the summarizer should NOT
+    // receive the failure warning system message.
+    let temp_dir = TempDir::new().unwrap();
+    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
+    let session_id = "test_no_failure_warning";
+
+    // Clean messages — no failure patterns
+    let messages = vec![
+        Message::user("Hello"),
+        Message::assistant("Hi there"),
+        Message::user("Read the file"),
+        Message::assistant("Here are the contents of the file"),
+    ];
+
+    tokio::runtime::Runtime::new().unwrap().block_on(async {
+        memory.append(session_id, messages).await.unwrap();
+    });
+
+    let config = CompactionParams {
+        compaction_strategy: CompactionStrategy::SlidingSummary,
+        keep_recent: 2,
+        token_budget: None,
+    };
+
+    // Summarizer checks that NO warning system message is present
+    let summarizer = |msgs: &[Message]| {
+        let has_warning = msgs.iter().any(|m| {
+            matches!(m, Message::System { content }
+                if content.contains("IMPORTANT: The conversation contains tool/MCP failures"))
+        });
+        async move { Ok((format!("Summary (warning_present={})", has_warning), None)) }
+    };
+
+    let outcome = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(async { super::compact(session_id, &config, &memory, summarizer).await })
+        .unwrap();
+
+    assert!(
+        outcome.summary_text.contains("warning_present=false"),
+        "Summarizer must NOT receive the failure warning on clean sessions, got: {}",
+        outcome.summary_text
     );
 }

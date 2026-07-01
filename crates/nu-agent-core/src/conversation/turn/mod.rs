@@ -10,7 +10,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::Config;
-use crate::hook::agent_hook::AgentHook;
+use crate::hook::agent_hook::{AgentHook, HookState};
 use crate::hook::permission_resolver::AsyncPermissionResolver;
 use crate::protocol::contracts::ProgressUi;
 use crate::protocol::event::UiEvent;
@@ -78,11 +78,6 @@ pub struct TurnError {
     /// `last_known_history` / `messages` when deciding what to persist.
     /// Defaults to 0 in all `From` impls; overwritten by `execute_turn_with_channel`.
     pub pre_turn_message_count: usize,
-    /// Estimated size of the request payload in bytes, derived from message text
-    /// lengths × 1.5 (JSON overhead). Used by the classifier to distinguish large
-    /// payloads failing with "error sending request" (→ `RequestTooLarge`, permanent)
-    /// from genuine network failures (→ `Network`, retryable).
-    pub estimated_request_bytes: Option<usize>,
 }
 
 impl std::fmt::Display for TurnError {
@@ -109,7 +104,6 @@ impl From<rig::completion::PromptError> for TurnError {
                 messages: Some(chat_history),
                 last_known_history: vec![],
                 pre_turn_message_count: 0,
-                estimated_request_bytes: None,
             },
             rig::completion::PromptError::MaxTurnsError {
                 max_turns,
@@ -121,7 +115,6 @@ impl From<rig::completion::PromptError> for TurnError {
                 messages: Some(*chat_history),
                 last_known_history: vec![],
                 pre_turn_message_count: 0,
-                estimated_request_bytes: None,
             },
             rig::completion::PromptError::UnknownToolCall {
                 tool_name,
@@ -133,7 +126,6 @@ impl From<rig::completion::PromptError> for TurnError {
                 messages: Some(*chat_history),
                 last_known_history: vec![],
                 pre_turn_message_count: 0,
-                estimated_request_bytes: None,
             },
             other => TurnError {
                 msg: other.to_string(),
@@ -141,7 +133,6 @@ impl From<rig::completion::PromptError> for TurnError {
                 messages: None,
                 last_known_history: vec![],
                 pre_turn_message_count: 0,
-                estimated_request_bytes: None,
             },
         }
     }
@@ -160,7 +151,6 @@ impl From<rig::agent::StreamingError> for TurnError {
                     messages: Some(chat_history),
                     last_known_history: vec![],
                     pre_turn_message_count: 0,
-                    estimated_request_bytes: None,
                 },
                 rig::completion::PromptError::MaxTurnsError {
                     max_turns,
@@ -172,7 +162,6 @@ impl From<rig::agent::StreamingError> for TurnError {
                     messages: Some(*chat_history),
                     last_known_history: vec![],
                     pre_turn_message_count: 0,
-                    estimated_request_bytes: None,
                 },
                 rig::completion::PromptError::UnknownToolCall {
                     tool_name,
@@ -184,7 +173,6 @@ impl From<rig::agent::StreamingError> for TurnError {
                     messages: Some(*chat_history),
                     last_known_history: vec![],
                     pre_turn_message_count: 0,
-                    estimated_request_bytes: None,
                 },
                 other => TurnError {
                     msg: other.to_string(),
@@ -192,7 +180,6 @@ impl From<rig::agent::StreamingError> for TurnError {
                     messages: None,
                     last_known_history: vec![],
                     pre_turn_message_count: 0,
-                    estimated_request_bytes: None,
                 },
             },
             other => TurnError {
@@ -201,7 +188,6 @@ impl From<rig::agent::StreamingError> for TurnError {
                 messages: None,
                 last_known_history: vec![],
                 pre_turn_message_count: 0,
-                estimated_request_bytes: None,
             },
         }
     }
@@ -346,6 +332,10 @@ where
         vec![]
     };
     let pre_turn_count = pre_turn_messages.len();
+    log::debug!(
+        "execute_turn: pre_turn_count={pre_turn_count} session={}",
+        ctx.conversation.has_session
+    );
 
     // Pre-flight repair: fix structural violations before handing history to rig.
     // Ephemeral — applies for this turn only; the JSONL backing store is not written.
@@ -370,6 +360,7 @@ where
         let estimated = token_estimate::estimate_token_count(&repaired_messages);
         let threshold =
             (limit as f32 * ctx.config.context_warning_threshold.unwrap_or(0.6)) as usize;
+        log::debug!("execute_turn: token_estimate={estimated} threshold={threshold} limit={limit}");
         if estimated >= threshold {
             let _ = ui_tx.send(UiEvent::Warning {
                 message: format!(
@@ -385,7 +376,10 @@ where
     // Create cancel token — use an externally supplied token if the UI provides one
     // (e.g. MockUi::with_external_cancel() in tests, or a real UI that wants to cancel
     // from outside the drain loop). Falls back to a fresh token when none is provided.
-    let cancel_token = ui.external_cancel_token().unwrap_or_default();
+    let ext_token = ui.external_cancel_token();
+    let external = ext_token.is_some();
+    log::debug!("execute_turn: cancel_token external={external}");
+    let cancel_token = ext_token.unwrap_or_default();
 
     // Build the hook using AgentHook<P> — no HookDriver needed
     let hook = AgentHook::new(
@@ -395,6 +389,10 @@ where
         ctx.tool_infra.closure_registry.clone(),
         ctx.tool_infra.mcp_registry.clone(),
         ctx.config.max_tool_calls_per_subturn,
+        HookState {
+            circuit_breaker: ctx.tool_infra.circuit_breaker.clone(),
+            doom_state: ctx.tool_infra.doom_state.clone(),
+        },
     );
 
     // Clone the Arc BEFORE hook moves into config so we can read history after a
@@ -456,20 +454,21 @@ where
     log::info!("execute_turn: ui_rx drained, joining spawn handle");
 
     // Collect the result from the spawned task
-    let join_result = ctx.runtime.block_on(prompt_handle).map_err(|e| TurnError {
-        msg: format!("Agent task panicked: {}", e),
-        cancelled: false,
-        messages: None,
-        last_known_history: vec![],
-        pre_turn_message_count: 0,
-        estimated_request_bytes: None,
+    let join_result = ctx.runtime.block_on(prompt_handle).map_err(|e| {
+        log::error!("Agent task panicked: {e}");
+        TurnError {
+            msg: format!("Agent task panicked: {}", e),
+            cancelled: false,
+            messages: None,
+            last_known_history: vec![],
+            pre_turn_message_count: 0,
+        }
     })?;
 
     let response = join_result.map_err(|e| {
         let mut err = TurnError::from(e);
         err.last_known_history = last_known_history_arc.lock().unwrap().clone();
         err.pre_turn_message_count = pre_turn_count;
-        err.estimated_request_bytes = Some(estimate_request_bytes(&err.last_known_history));
         err
     })?;
 
@@ -648,6 +647,7 @@ where
             biased;
             item = stream.next() => item,
             _ = cancel_token.cancelled() => {
+                log::debug!("Stream cancelled via cancel_token");
                 cancelled = true;
                 break;
             }
@@ -707,6 +707,10 @@ where
                 match e {
                     rig::agent::StreamingError::Prompt(boxed) => match *boxed {
                         rig::completion::PromptError::PromptCancelled { chat_history, .. } => {
+                            log::debug!(
+                                "Stream PromptCancelled: history_len={}",
+                                chat_history.len()
+                            );
                             messages = Some(chat_history);
                             cancelled = true;
                             break;
@@ -718,7 +722,10 @@ where
                     other => return Err(other),
                 }
             }
-            None => break,
+            None => {
+                log::debug!("Stream completed normally");
+                break;
+            }
         }
     }
 
@@ -736,49 +743,6 @@ where
 pub mod executor;
 
 pub(crate) mod token_estimate;
-
-/// Estimate the total request payload size in bytes from a message history.
-///
-/// Sums the text lengths of all message content and applies a 1.5× multiplier
-/// to account for JSON serialisation overhead (field names, escaping, nesting).
-/// Used by the error classifier to distinguish large payloads that fail with
-/// "error sending request" (→ `RequestTooLarge`, permanent) from genuine
-/// network failures (→ `Network`, retryable).
-fn estimate_request_bytes(messages: &[Message]) -> usize {
-    let raw_bytes: usize = messages
-        .iter()
-        .map(|msg| match msg {
-            Message::User { content } => content
-                .iter()
-                .map(|c| match c {
-                    UserContent::Text(t) => t.text.len(),
-                    UserContent::ToolResult(tr) => tr
-                        .content
-                        .iter()
-                        .map(|rc| match rc {
-                            crate::types::ToolResultContent::Text(t) => t.text.len(),
-                            _ => 0,
-                        })
-                        .sum(),
-                    _ => 0,
-                })
-                .sum(),
-            Message::Assistant { content, .. } => content
-                .iter()
-                .map(|c| match c {
-                    crate::types::AssistantContent::Text(t) => t.text.len(),
-                    crate::types::AssistantContent::ToolCall(tc) => {
-                        tc.function.name.len() + tc.function.arguments.to_string().len()
-                    }
-                    _ => 0,
-                })
-                .sum(),
-            Message::System { content } => content.len(),
-        })
-        .sum();
-    // 1.5× multiplier for JSON serialisation overhead
-    (raw_bytes as f64 * 1.5) as usize
-}
 
 #[cfg(test)]
 mod test;

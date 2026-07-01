@@ -1,7 +1,7 @@
 use super::repair::{
-    fix_empty_tool_results, fix_tool_call_integrity, inject_assistant_after_dangling_tool_results,
-    inject_missing_tool_results, merge_consecutive_same_role, remove_empty_messages,
-    repair_messages, trim_trailing_user,
+    fix_empty_tool_results, fix_null_tool_arguments, fix_tool_call_integrity,
+    inject_assistant_after_dangling_tool_results, inject_missing_tool_results,
+    merge_consecutive_same_role, remove_empty_messages, repair_messages, trim_trailing_user,
 };
 use crate::types::{AssistantContent, Message, ToolCall, ToolFunction, ToolResult, UserContent};
 use rig::one_or_many::OneOrMany;
@@ -944,5 +944,101 @@ fn repair_messages_pipeline_includes_empty_tool_result_fix() {
     assert!(
         issues.iter().any(|i| i.contains("tcX")),
         "repair_messages must emit issue for empty tool result fix; issues: {issues:?}"
+    );
+}
+
+// ================================================================
+// fix_null_tool_arguments tests
+// ================================================================
+
+fn make_null_args_tool_call(id: &str, name: &str) -> AssistantContent {
+    AssistantContent::ToolCall(ToolCall::new(
+        id.to_string(),
+        ToolFunction::new(name.to_string(), serde_json::Value::Null),
+    ))
+}
+
+#[test]
+fn fix_null_tool_arguments_replaces_null_args() {
+    let msgs = vec![
+        Message::user("prompt"),
+        assistant_with_content(vec![make_null_args_tool_call(
+            "tc1",
+            "tmux__send_and_capture",
+        )]),
+        user_with_content(vec![make_tool_result("tc1", "Tool not available")]),
+    ];
+    let mut issues = Vec::new();
+    let result = fix_null_tool_arguments(msgs, &mut issues);
+
+    // The ToolCall arguments must be replaced with {}
+    match &result[1] {
+        Message::Assistant { content, .. } => {
+            let tc = content.iter().find_map(|c| match c {
+                AssistantContent::ToolCall(tc) => Some(tc),
+                _ => None,
+            });
+            let tc = tc.expect("ToolCall must still be present");
+            assert_eq!(
+                tc.function.arguments,
+                serde_json::json!({}),
+                "null arguments must be replaced with {{}}"
+            );
+        }
+        _ => panic!("expected Assistant message at index 1"),
+    }
+    assert!(
+        issues
+            .iter()
+            .any(|i| i.contains("replaced null tool call arguments")),
+        "must emit diagnostic; issues: {issues:?}"
+    );
+}
+
+#[test]
+fn fix_null_tool_arguments_noop_when_valid() {
+    let msgs = vec![
+        Message::user("prompt"),
+        assistant_with_content(vec![make_tool_call("tc1", "nu__shell")]),
+        user_with_content(vec![make_tool_result("tc1", "file1")]),
+    ];
+    let original = msgs.clone();
+    let mut issues = Vec::new();
+    let result = fix_null_tool_arguments(msgs, &mut issues);
+    assert_msgs_eq(&result, &original);
+    assert!(issues.is_empty(), "no issues for valid args");
+}
+
+#[test]
+fn repair_messages_heals_null_args_end_to_end() {
+    let msgs = vec![
+        Message::user("prompt"),
+        assistant_with_content(vec![make_null_args_tool_call(
+            "tc1",
+            "tmux__send_and_capture",
+        )]),
+        user_with_content(vec![make_tool_result("tc1", "Tool not available")]),
+        Message::assistant("ok"),
+    ];
+    let (result, issues) = repair_messages(msgs);
+
+    // Find the ToolCall and verify its arguments are {}
+    let tc_args = result.iter().find_map(|msg| match msg {
+        Message::Assistant { content, .. } => content.iter().find_map(|c| match c {
+            AssistantContent::ToolCall(tc) => Some(tc.function.arguments.clone()),
+            _ => None,
+        }),
+        _ => None,
+    });
+    assert_eq!(
+        tc_args,
+        Some(serde_json::json!({})),
+        "repair_messages must heal null ToolCall arguments; result: {result:?}"
+    );
+    assert!(
+        issues
+            .iter()
+            .any(|i| i.contains("replaced null tool call arguments")),
+        "must emit null-args diagnostic; issues: {issues:?}"
     );
 }

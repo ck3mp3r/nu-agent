@@ -35,6 +35,7 @@ impl<'a, R: ExtendedRuntime + Send> CommandRouter<'a, R> {
     ) -> bool {
         match cmd {
             WorkerCommand::ExecuteTurn { prompt, span } => {
+                log::debug!("Router: ExecuteTurn prompt_len={}", prompt.len());
                 let result = self.runtime.execute_turn(ui, prompt, None, span);
                 // Convert Result<Value, LabeledError> to TurnOutcome
                 // Detect cancellation by message content:
@@ -50,12 +51,15 @@ impl<'a, R: ExtendedRuntime + Send> CommandRouter<'a, R> {
                 true
             }
             WorkerCommand::EvaluateAutoCompaction { response_tx } => {
+                log::debug!("Router: EvaluateAutoCompaction");
                 let warning = match self.runtime.evaluate_auto_compaction() {
-                    Some(CompactionTriggerDecision::Fire { source, .. }) => self
-                        .runtime
-                        .execute_compaction_trigger(ui, source)
-                        .err()
-                        .map(|_error| COMPACTION_FAILURE_WARNING.to_string()),
+                    Some(CompactionTriggerDecision::Fire { source, .. }) => {
+                        log::debug!("Auto-compaction firing: source={source:?}");
+                        self.runtime
+                            .execute_compaction_trigger(ui, source)
+                            .err()
+                            .map(|_error| COMPACTION_FAILURE_WARNING.to_string())
+                    }
                     _ => None,
                 };
                 let _ = response_tx.send(warning);
@@ -65,6 +69,7 @@ impl<'a, R: ExtendedRuntime + Send> CommandRouter<'a, R> {
                 source,
                 response_tx,
             } => {
+                log::debug!("Router: ExecuteCompactionTrigger source={source:?}");
                 let warning = self
                     .runtime
                     .execute_compaction_trigger(ui, source)
@@ -78,12 +83,17 @@ impl<'a, R: ExtendedRuntime + Send> CommandRouter<'a, R> {
                 enable,
                 response_tx,
             } => {
+                log::debug!("Router dispatching ToggleMcp: server={server_name} enable={enable}");
                 let result = self.runtime.set_mcp_server_enabled(&server_name, enable);
                 let visible_count = self.runtime.llm_visible_mcp_tool_count();
                 let visible_count_for_server = self
                     .runtime
                     .llm_visible_mcp_tool_count_for_server(&server_name);
                 let visible_names_by_server = self.runtime.llm_visible_mcp_tool_names_by_server();
+                let success = result.is_ok();
+                log::debug!(
+                    "Router ToggleMcp result: server={server_name} success={success} visible_count={visible_count}"
+                );
                 let _ = response_tx.send((
                     result,
                     visible_count,
@@ -96,6 +106,7 @@ impl<'a, R: ExtendedRuntime + Send> CommandRouter<'a, R> {
                 model_spec,
                 response_tx,
             } => {
+                log::debug!("Router: SwitchModel spec={model_spec}");
                 let _ = response_tx.send(self.runtime.switch_model(&model_spec));
                 true
             }
@@ -103,6 +114,7 @@ impl<'a, R: ExtendedRuntime + Send> CommandRouter<'a, R> {
                 agent_name,
                 response_tx,
             } => {
+                log::debug!("Router: SwitchAgent name={agent_name}");
                 let result = self.runtime.switch_agent(&agent_name);
                 let response = result.map(|agent_identity| {
                     let model_identity = self.runtime.active_model_identity();
@@ -113,14 +125,19 @@ impl<'a, R: ExtendedRuntime + Send> CommandRouter<'a, R> {
                 true
             }
             WorkerCommand::ClearSession => {
+                log::info!("Router: ClearSession");
                 self.runtime.clear_session();
                 true
             }
             WorkerCommand::NewSession => {
+                log::info!("Router: NewSession");
                 self.runtime.new_session();
                 true
             }
-            WorkerCommand::Shutdown => false,
+            WorkerCommand::Shutdown => {
+                log::info!("Router: Shutdown");
+                false
+            }
         }
     }
 }

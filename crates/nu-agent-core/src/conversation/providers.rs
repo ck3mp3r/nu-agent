@@ -61,6 +61,7 @@ pub(super) fn build_copilot_client(
 
     // 1. Explicit api_key from --api-key flag or plugin config
     if let Some(key) = &config.api_key {
+        log::debug!("Copilot auth: using explicit api_key");
         let mut b = rig::providers::copilot::Client::builder()
             .http_client(build_http_client(config.read_timeout_secs));
         if let Some(url) = &base_url {
@@ -77,6 +78,7 @@ pub(super) fn build_copilot_client(
         std::env::var("GITHUB_COPILOT_API_KEY").or_else(|_| std::env::var("COPILOT_API_KEY"))
         && !key.trim().is_empty()
     {
+        log::debug!("Copilot auth: using GITHUB_COPILOT_API_KEY");
         let mut b = rig::providers::copilot::Client::builder()
             .http_client(build_http_client(config.read_timeout_secs));
         if let Some(url) = &base_url {
@@ -93,6 +95,7 @@ pub(super) fn build_copilot_client(
         std::env::var("COPILOT_GITHUB_ACCESS_TOKEN").or_else(|_| std::env::var("GITHUB_TOKEN"))
         && !token.trim().is_empty()
     {
+        log::debug!("Copilot auth: using COPILOT_GITHUB_ACCESS_TOKEN/GITHUB_TOKEN");
         let mut b = rig::providers::copilot::Client::builder()
             .http_client(build_http_client(config.read_timeout_secs));
         if let Some(url) = &base_url {
@@ -103,6 +106,7 @@ pub(super) fn build_copilot_client(
 
     // 4. OAuth — delegate the full lifecycle to rig-core: reads cached access-token,
     //    checks api-key.json expiry, retries on 401/403 with device-code re-auth.
+    log::debug!("Copilot auth: falling back to OAuth");
     let mut b = rig::providers::copilot::Client::builder()
         .http_client(build_http_client(config.read_timeout_secs));
     if let Some(url) = &base_url {
@@ -118,6 +122,11 @@ pub(super) fn build_copilot_client(
 pub(super) fn build_openai_client(
     config: &Config,
 ) -> Result<rig::providers::openai::Client, LabeledError> {
+    log::debug!(
+        "OpenAI client: api_key={} base_url={:?}",
+        config.api_key.is_some(),
+        config.base_url
+    );
     let map_build_err = |e: rig::http_client::Error| {
         LabeledError::new(format!(
             "OpenAI client initialization failed: {e}. Ensure OPENAI_API_KEY is set."
@@ -154,6 +163,7 @@ pub(super) fn build_openai_client(
 pub(super) fn build_anthropic_client(
     config: &Config,
 ) -> Result<rig::providers::anthropic::Client, LabeledError> {
+    log::debug!("Anthropic client: api_key={}", config.api_key.is_some());
     let map_build_err = |e: rig::http_client::Error| {
         LabeledError::new(format!(
             "Anthropic client initialization failed: {e}. Ensure ANTHROPIC_API_KEY is set."
@@ -201,6 +211,8 @@ pub(super) fn build_ollama_client(
         std::env::var("OLLAMA_API_BASE_URL")
             .unwrap_or_else(|_| "http://localhost:11434".to_string())
     });
+
+    log::debug!("Ollama client: base_url={base_url}");
 
     rig::providers::ollama::Client::builder()
         .http_client(build_http_client(config.read_timeout_secs))
@@ -253,6 +265,7 @@ impl CachedProviderClient {
     /// concrete completion model and passes it to `visitor.visit(model)`, which
     /// is monomorphised per variant — no dynamic dispatch needed.
     pub fn with_model<V: ModelVisitor>(&self, model_name: &str, visitor: V) -> V::Output {
+        log::debug!("with_model: model={model_name}");
         use rig::client::CompletionClient;
         match self {
             CachedProviderClient::Copilot(c) => visitor.visit(c.completion_model(model_name)),

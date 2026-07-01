@@ -8,7 +8,9 @@ use nu_protocol::{LabeledError, Span, Value};
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 
+use crate::hook::agent_hook::DoomLoopState;
 use crate::session::SessionStore;
+use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
 
 use super::compaction::CompactionGuard;
 use super::compaction::executor::CompactionExecutor;
@@ -92,6 +94,12 @@ pub struct AgentConversationRuntime {
     ///
     /// Set to `None` in TTY mode (default from `build_runtime`).
     pub interactive_pending: Option<PendingPermissions>,
+    /// Circuit breaker for MCP transport failures. Shared across turns so that
+    /// consecutive failures within a session accumulate correctly.
+    pub circuit_breaker: Arc<Mutex<McpCircuitBreaker>>,
+    /// Doom loop state shared across turns so that repetitive tool call patterns
+    /// are detected even when they span multiple consecutive turns.
+    pub doom_state: Arc<Mutex<DoomLoopState>>,
 }
 
 impl CoreRuntime for AgentConversationRuntime {
@@ -153,6 +161,8 @@ impl CoreRuntime for AgentConversationRuntime {
                     mcp_registry: Arc::clone(&mcp_registry),
                     tool_server_handle: self.tool_server_handle.clone(),
                     visible_tool_definitions,
+                    circuit_breaker: Arc::clone(&self.circuit_breaker),
+                    doom_state: Arc::clone(&self.doom_state),
                 },
             );
 

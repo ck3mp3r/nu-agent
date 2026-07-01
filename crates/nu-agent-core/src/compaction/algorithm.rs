@@ -4,21 +4,21 @@ use std::io;
 use super::helpers::{estimate_tokens, find_safe_split_index};
 use super::strategy::{CompactionOutcome, CompactionParams, CompactionStrategy};
 use crate::session::{CompactionMarker, JournalConversationMemory};
-use crate::types::Message;
+use crate::types::{AssistantContent, Message, ToolResultContent, UserContent};
 use rig::memory::ConversationMemory;
 
 /// Compacts messages using `JournalConversationMemory`.
 ///
 /// This function:
 /// 1. Loads messages from the conversation memory (cache or JSONL on miss)
-/// 2. Splits at `len - keep_recent`
-/// 3. Formats old messages for summarization
-/// 4. Calls summarizer with old messages
-/// 5. Builds compacted list: [Message::system(summary)] + recent
-/// 6. Appends compaction marker to JSONL (durable commit point)
-/// 7. Appends kept messages to JSONL only (no cache update)
-/// 8. Clears in-memory cache
-/// 9. Resets cache to LLM context (in-memory only — no JSONL write)
+/// 2. Applies strategy-specific compaction:
+///    - **SlidingSummary**: summarizes ALL messages, LLM context = `[System(summary)]` only
+///    - **SlidingWindow**: keeps last N messages verbatim
+///    - **TokenTruncate**: keeps newest messages within token budget
+/// 3. Appends compaction marker to JSONL (durable commit point)
+/// 4. For non-SlidingSummary strategies, re-appends kept messages to JSONL
+/// 5. Clears in-memory cache
+/// 6. Resets cache to LLM context (in-memory only — no JSONL write)
 ///
 /// Note: The caller is responsible for incrementing its own compaction_count.
 ///
@@ -53,7 +53,8 @@ where
 
     // Strategy-specific: build compacted messages, summary text, and counts.
     // TokenTruncate uses token budgets on ALL messages (ignores keep_recent/split).
-    // SlidingSummary and SlidingWindow split messages into old/recent at a fixed index.
+    // SlidingSummary summarizes ALL messages — the split is used only for the early-return guard.
+    // SlidingWindow splits messages into old/recent at a fixed index.
     let (
         llm_context,
         summary_text,
@@ -97,7 +98,9 @@ where
             )
         }
         _ => {
-            // For SlidingSummary and SlidingWindow, use keep_recent split
+            // SlidingWindow uses keep_recent split to preserve recent messages verbatim.
+            // SlidingSummary enters this branch for the early-return guard only;
+            // it then summarizes ALL messages (split variables are unused).
             if messages.len() <= keep_count {
                 return Ok(CompactionOutcome {
                     summarized_count: 0,
@@ -118,18 +121,32 @@ where
 
             match config.compaction_strategy {
                 CompactionStrategy::SlidingSummary => {
-                    let (summary, summary_tokens) = summarizer(old_messages).await?;
-                    let summary_message = Message::system(&summary);
-                    let mut compacted = vec![summary_message];
-                    compacted.extend_from_slice(recent_messages);
-                    let store_kept = recent_messages.to_vec();
+                    // Summarize ALL messages — recent are included in the summary.
+                    let all_count = messages.len();
+
+                    // Defense in depth: scan for tool/MCP failure patterns and inject
+                    // a warning into the summarizer input so the summary preserves
+                    // failure context. This prevents the LLM from retrying broken
+                    // tools after compaction discards the original error messages.
+                    let failures = detect_failure_patterns(&messages);
+                    let extra = if failures.is_empty() {
+                        None
+                    } else {
+                        let mut input = messages.clone();
+                        input.push(Message::system(FAILURE_WARNING));
+                        Some(input)
+                    };
+                    let summarizer_input = extra.as_deref().unwrap_or(&messages);
+
+                    let (summary, summary_tokens) = summarizer(summarizer_input).await?;
+                    let compacted = vec![Message::system(&summary)];
                     (
                         compacted,
                         summary,
-                        summarized_count,
-                        kept_recent_count,
+                        all_count,
+                        0,
                         "sliding_summary",
-                        store_kept,
+                        Vec::new(),
                         summary_tokens,
                     )
                 }
@@ -166,9 +183,8 @@ where
         .append_marker(session_id, &marker, None)
         .map_err(|e| io::Error::other(e.to_string()))?;
 
-    // Re-append kept messages to JSONL only — no in-memory update yet.
-    // This avoids the double-write that would occur if we used memory.append()
-    // after already writing to the store.
+    // Re-append kept messages to JSONL only (TokenTruncate and SlidingWindow).
+    // SlidingSummary returns empty store_kept_messages — marker is the last entry.
     if !store_kept_messages.is_empty() {
         memory
             .append_messages_to_store_only(session_id, &store_kept_messages, None)
@@ -194,4 +210,79 @@ where
         summary_text,
         summary_total_tokens,
     })
+}
+
+/// Warning text injected into the summarizer input when failure patterns are detected.
+/// Defense in depth — the circuit breaker (Part 1) and doom loop persistence (Part 2)
+/// are the primary defenses; this ensures the summary preserves failure context.
+const FAILURE_WARNING: &str = "IMPORTANT: The conversation contains tool/MCP failures. \
+    Your summary MUST include a section noting which tools or MCP servers failed and why \
+    (e.g., 'Transport closed', 'server disconnected'). This prevents the next turn from \
+    retrying broken tools.";
+
+/// Patterns (case-insensitive) that indicate tool or MCP failures in message content.
+const FAILURE_PATTERNS: &[&str] = &[
+    "transport closed",
+    "transport error",
+    "connection refused",
+    "is not available",
+    "doom loop detected",
+    "[turn failed:",
+    "mcp server",
+];
+
+/// Scans messages for tool/MCP failure patterns.
+///
+/// Returns a deduplicated list of matched patterns (lowercased). Uses the same
+/// text extraction approach as `message_char_count` in `token_estimate.rs`.
+pub(crate) fn detect_failure_patterns(messages: &[Message]) -> Vec<String> {
+    let mut found = Vec::new();
+    for msg in messages {
+        let text = extract_message_text(msg);
+        let lower = text.to_lowercase();
+        for pattern in FAILURE_PATTERNS {
+            if lower.contains(pattern) && !found.contains(&(*pattern).to_string()) {
+                found.push((*pattern).to_string());
+            }
+        }
+    }
+    found
+}
+
+/// Extracts text content from a message for failure pattern matching.
+///
+/// Covers User (Text + ToolResult text), Assistant (Text only — ToolCall arguments
+/// are request JSON, not error text), and System messages.
+///
+/// Mirrors the `message_char_count` pattern in `token_estimate.rs` but returns
+/// concatenated text instead of a character count.
+fn extract_message_text(msg: &Message) -> String {
+    match msg {
+        Message::User { content } => content
+            .iter()
+            .map(|c| match c {
+                UserContent::Text(t) => t.text.clone(),
+                UserContent::ToolResult(tr) => tr
+                    .content
+                    .iter()
+                    .map(|tc| match tc {
+                        ToolResultContent::Text(t) => t.text.clone(),
+                        _ => String::new(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                _ => String::new(),
+            })
+            .collect::<Vec<_>>()
+            .join(" "),
+        Message::Assistant { content, .. } => content
+            .iter()
+            .map(|c| match c {
+                AssistantContent::Text(t) => t.text.clone(),
+                _ => String::new(),
+            })
+            .collect::<Vec<_>>()
+            .join(" "),
+        Message::System { content } => content.clone(),
+    }
 }

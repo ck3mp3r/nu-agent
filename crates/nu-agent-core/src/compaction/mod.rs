@@ -13,4 +13,6 @@ mod helpers_test;
 mod strategy_test;
 
 pub use algorithm::compact;
+#[cfg(test)]
+pub(crate) use algorithm::detect_failure_patterns;
 pub use strategy::{CompactionOutcome, CompactionParams, CompactionStrategy};

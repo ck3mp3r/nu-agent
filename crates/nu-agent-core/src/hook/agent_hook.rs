@@ -19,6 +19,7 @@ use rig::message::Message;
 use crate::protocol::event::UiEvent;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
+use crate::tools::mcp::circuit_breaker::{McpCircuitBreaker, is_transport_error};
 
 use super::permission_bridge::resolve_tool_source;
 use super::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
@@ -44,11 +45,16 @@ pub(crate) fn is_tool_failure(result_text: &str) -> bool {
 
 /// Tracks recent tool call signatures for doom loop detection.
 #[derive(Debug, Clone, Default)]
-struct DoomLoopState {
+pub struct DoomLoopState {
     recent_signatures: Vec<(String, String)>, // (tool_name, arguments)
 }
 
 impl DoomLoopState {
+    /// Clears accumulated signatures, resetting doom loop detection.
+    pub fn reset(&mut self) {
+        self.recent_signatures.clear();
+    }
+
     /// Returns `Some(tool_name)` if a doom loop is detected.
     fn check_and_record(&mut self, name: &str, args: &str) -> Option<String> {
         self.recent_signatures
@@ -70,6 +76,17 @@ impl DoomLoopState {
 
 /// Default cap on tool calls per sub-turn when not configured.
 const DEFAULT_MAX_TOOL_CALLS_PER_SUBTURN: usize = 10;
+
+/// Session-scoped state shared across turns via the hook.
+///
+/// Bundles the `Arc<Mutex<…>>` state that outlives individual turns and
+/// must accumulate across them (circuit breaker failures, doom loop
+/// signatures).
+#[derive(Clone)]
+pub struct HookState {
+    pub circuit_breaker: Arc<Mutex<McpCircuitBreaker>>,
+    pub doom_state: Arc<Mutex<DoomLoopState>>,
+}
 
 /// Generic `PromptHook` implementation parameterized by an async permission resolver.
 ///
@@ -96,6 +113,9 @@ pub struct AgentHook<P: AsyncPermissionResolver> {
     /// Counter of tool calls executed in the current sub-turn, reset on each
     /// `on_completion_call` (which fires before each new LLM request).
     tool_calls_this_subturn: Arc<Mutex<usize>>,
+    /// Circuit breaker for MCP transport failures. Shared across clones of this
+    /// hook so failure counts accumulate correctly within a single turn.
+    circuit_breaker: Arc<Mutex<McpCircuitBreaker>>,
 }
 
 impl<P: AsyncPermissionResolver> AgentHook<P> {
@@ -106,18 +126,20 @@ impl<P: AsyncPermissionResolver> AgentHook<P> {
         closure_registry: Arc<ClosureRegistry>,
         mcp_registry: Arc<McpToolRegistry>,
         max_tool_calls_per_subturn: Option<usize>,
+        hook_state: HookState,
     ) -> Self {
         Self {
             cancel_token,
             ui_tx,
             permission_resolver,
-            doom_state: Arc::new(Mutex::new(DoomLoopState::default())),
+            doom_state: hook_state.doom_state,
             closure_registry,
             mcp_registry,
             last_known_history: Arc::new(Mutex::new(Vec::new())),
             max_tool_calls_per_subturn: max_tool_calls_per_subturn
                 .unwrap_or(DEFAULT_MAX_TOOL_CALLS_PER_SUBTURN),
             tool_calls_this_subturn: Arc::new(Mutex::new(0)),
+            circuit_breaker: hook_state.circuit_breaker,
         }
     }
 
@@ -143,6 +165,25 @@ where
         // Reset the per-sub-turn tool call counter — a new LLM request is about
         // to fire, so any tool calls that follow belong to a fresh sub-turn.
         *self.tool_calls_this_subturn.lock().unwrap() = 0;
+
+        // Trace-level payload logging for debugging LLM request contents.
+        if log::log_enabled!(log::Level::Trace) {
+            log::trace!(
+                "on_completion_call: history_len={} prompt={}",
+                history.len(),
+                serde_json::to_string(prompt).unwrap_or_else(|_| "<serialize error>".into()),
+            );
+            for (i, msg) in history.iter().enumerate() {
+                log::trace!(
+                    "  history[{}]: {}",
+                    i,
+                    serde_json::to_string(msg).unwrap_or_else(|_| "<serialize error>".into()),
+                );
+            }
+        } else if log::log_enabled!(log::Level::Debug) {
+            log::debug!("on_completion_call: history_len={}", history.len());
+        }
+
         if self.cancel_token.is_cancelled() {
             return HookAction::Terminate {
                 reason: "Cancelled by user".into(),
@@ -171,6 +212,8 @@ where
         _internal_call_id: &str,
         args: &str,
     ) -> ToolCallHookAction {
+        log::debug!("on_tool_call: tool={tool_name}");
+
         // 1. Check cancellation
         if self.cancel_token.is_cancelled() {
             return ToolCallHookAction::Terminate {
@@ -182,6 +225,11 @@ where
         if self.max_tool_calls_per_subturn > 0 {
             let mut count = self.tool_calls_this_subturn.lock().unwrap();
             if *count >= self.max_tool_calls_per_subturn {
+                log::warn!(
+                    "Tool call cap: tool={tool_name} count={} max={}",
+                    *count,
+                    self.max_tool_calls_per_subturn
+                );
                 return ToolCallHookAction::Skip {
                     reason: "Tool call limit exceeded for this sub-turn. Remaining calls skipped."
                         .to_string(),
@@ -194,6 +242,7 @@ where
         {
             let mut state = self.doom_state.lock().unwrap();
             if let Some(tool) = state.check_and_record(tool_name, args) {
+                log::warn!("Doom loop detected: tool={tool_name}");
                 let message = format!(
                     "Doom loop detected: '{}' called {} times with identical arguments",
                     tool, DOOM_LOOP_THRESHOLD
@@ -205,25 +254,39 @@ where
             }
         }
 
-        // 4. Resolve tool source
+        // 4. Check if this is an MCP tool from a disabled server (circuit breaker)
+        if let Some(server_name) = self.mcp_registry.server_name_for(tool_name)
+            && !self.mcp_registry.is_server_enabled(server_name)
+        {
+            log::debug!("on_tool_call: MCP server '{server_name}' disabled, skipping {tool_name}");
+            return ToolCallHookAction::Skip {
+                reason: format!(
+                    "MCP server '{}' is disabled (circuit breaker tripped). \
+                     Re-enable via MCP panel.",
+                    server_name
+                ),
+            };
+        }
+
+        // 5. Resolve tool source
         let source = resolve_tool_source(tool_name, &self.closure_registry, &self.mcp_registry)
             .as_str()
             .to_string();
 
-        // 5. Announce tool call
+        // 6. Announce tool call
         let _ = self.ui_tx.send(UiEvent::ToolStart {
             name: tool_name.to_string(),
             source: source.clone(),
             arguments: args.to_string(),
         });
 
-        // 6. Ask permission
+        // 7. Ask permission
         let decision = self
             .permission_resolver
             .resolve(tool_name, args, tool_call_id, Some(self.ui_tx.clone()))
             .await;
 
-        // 7. Act on decision
+        // 8. Act on decision
         match decision {
             PermissionDecision::Allow => ToolCallHookAction::Continue,
             PermissionDecision::Deny => {
@@ -252,6 +315,21 @@ where
         args: &str,
         result: &str,
     ) -> HookAction {
+        log::debug!(
+            "on_tool_result: tool={tool_name} success={} result_len={}",
+            !is_tool_failure(result),
+            result.len(),
+        );
+        if log::log_enabled!(log::Level::Trace) {
+            // Truncate very large results to keep log files manageable.
+            let preview = if result.len() > 2000 {
+                format!("{}...<truncated {} bytes>", &result[..2000], result.len())
+            } else {
+                result.to_string()
+            };
+            log::trace!("  result_body: {preview}");
+        }
+
         // 1. Parse result JSON and extract display
         let display = serde_json::from_str::<serde_json::Value>(result)
             .ok()
@@ -277,6 +355,35 @@ where
             error_kind: None,
             message: None,
         });
+
+        // 4. MCP circuit breaker: track transport failures per server
+        if let Some(server_name) = self.mcp_registry.server_name_for(tool_name) {
+            if is_transport_error(result) {
+                let tripped = {
+                    let mut cb = self.circuit_breaker.lock().unwrap();
+                    cb.record_failure(server_name)
+                };
+                if tripped {
+                    log::warn!(
+                        "MCP circuit breaker tripped for server '{}' after transport errors",
+                        server_name
+                    );
+                    if let Err(e) = self.mcp_registry.set_server_enabled(server_name, false) {
+                        log::error!("Failed to disable MCP server '{}': {}", server_name, e);
+                    }
+                    let _ = self.ui_tx.send(UiEvent::Warning {
+                        message: format!(
+                            "MCP server '{}' disconnected — tools disabled. \
+                             Re-enable via MCP panel.",
+                            server_name
+                        ),
+                    });
+                }
+            } else if success {
+                let mut cb = self.circuit_breaker.lock().unwrap();
+                cb.record_success(server_name);
+            }
+        }
 
         HookAction::Continue
     }
@@ -305,7 +412,8 @@ where
         &self,
         context: &InvalidToolCallContext,
     ) -> impl std::future::Future<Output = InvalidToolCallHookAction> + Send {
-        let reason = format!(
+        log::warn!("Invalid tool call: tool={}", context.tool_name);
+        let feedback = format!(
             "Tool '{}' is not available. Available tools: [{}]",
             context.tool_name,
             context.available_tools.join(", ")
@@ -313,9 +421,9 @@ where
         let ui_tx = self.ui_tx.clone();
         async move {
             let _ = ui_tx.send(UiEvent::Warning {
-                message: reason.clone(),
+                message: feedback.clone(),
             });
-            InvalidToolCallHookAction::Skip { reason }
+            InvalidToolCallHookAction::Retry { feedback }
         }
     }
 }

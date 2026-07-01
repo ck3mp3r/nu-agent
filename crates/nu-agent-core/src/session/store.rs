@@ -482,8 +482,9 @@ pub(crate) fn validate_tool_call_adjacency(messages: Vec<Message>) -> Vec<Messag
 ///
 /// If there are compaction markers, uses the **last** marker to determine context:
 /// - Prepends the marker's summary as a system message (if non-empty)
-/// - Includes all messages after the marker (kept messages are re-appended after
-///   the marker during compaction, followed by any post-compaction new messages)
+/// - Includes all messages after the marker (for SlidingSummary, only post-compaction
+///   new messages appear here; for SlidingWindow/TokenTruncate, kept messages may also
+///   be re-appended after the marker)
 ///
 /// If there are no markers, returns all messages.
 pub fn extract_llm_context(entries: &[StoreEntry]) -> Vec<Message> {

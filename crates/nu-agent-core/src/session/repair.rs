@@ -24,6 +24,7 @@ pub fn inject_missing_tool_results(messages: Vec<Message>) -> Vec<Message> {
         .collect();
 
     let mut result: Vec<Message> = Vec::with_capacity(messages.len());
+    let mut patch_count: usize = 0;
 
     for msg in messages {
         match &msg {
@@ -50,6 +51,7 @@ pub fn inject_missing_tool_results(messages: Vec<Message>) -> Vec<Message> {
                     let tool_results: Vec<UserContent> = unpaired_ids
                         .into_iter()
                         .map(|id| {
+                            patch_count += 1;
                             UserContent::ToolResult(ToolResult {
                                 id,
                                 call_id: None,
@@ -67,6 +69,10 @@ pub fn inject_missing_tool_results(messages: Vec<Message>) -> Vec<Message> {
             }
             _ => result.push(msg),
         }
+    }
+
+    if patch_count > 0 {
+        log::debug!("inject_missing_tool_results: inserted {patch_count} synthetic results");
     }
 
     result
@@ -99,6 +105,7 @@ pub(crate) fn inject_assistant_after_dangling_tool_results(
             issues.push("injected synthetic assistant after dangling tool results".to_string());
         }
     }
+
     result
 }
 
@@ -108,16 +115,17 @@ pub(crate) fn inject_assistant_after_dangling_tool_results(
 /// what was changed (empty if no repairs were needed).
 pub fn repair_messages(messages: Vec<Message>) -> (Vec<Message>, Vec<String>) {
     let mut issues = Vec::new();
-    // Pass ordering (fix 4): fix_tool_call_integrity runs LAST so that any
-    // violations introduced by earlier passes are caught.  A second
-    // trim_trailing_user follows because integrity removal can leave a new
-    // trailing User(Text) message exposed (e.g. when the assistant message
-    // that followed it was stripped).
+    // Pass ordering: each pass may expose issues for later passes.
+    // fix_tool_call_integrity runs late so earlier passes' violations are caught.
+    // fix_null_tool_arguments follows to heal null-args ToolCalls.
+    // A final trim_trailing_user cleans up any trailing User(Text) exposed
+    // by integrity removal or argument fixing.
     let messages = inject_assistant_after_dangling_tool_results(messages, &mut issues); // NEW — first
     let messages = remove_empty_messages(messages, &mut issues);
     let messages = merge_consecutive_same_role(messages, &mut issues);
     let messages = trim_trailing_user(messages, &mut issues);
     let messages = fix_tool_call_integrity(messages, &mut issues);
+    let messages = fix_null_tool_arguments(messages, &mut issues);
     let messages = trim_trailing_user(messages, &mut issues);
     let messages = ensure_valid(messages, &mut issues);
     let messages = fix_empty_tool_results(messages, &mut issues);
@@ -166,6 +174,43 @@ fn role_name(msg: &Message) -> &'static str {
         Message::User { .. } => "user",
         Message::Assistant { .. } => "assistant",
     }
+}
+
+/// Replaces `null` arguments in ToolCall messages with `{}` (empty JSON object).
+/// Heals sessions poisoned before the `on_invalid_tool_call` → Retry migration.
+/// Also guards against any future path that may persist a null-args ToolCall.
+pub(crate) fn fix_null_tool_arguments(
+    messages: Vec<Message>,
+    issues: &mut Vec<String>,
+) -> Vec<Message> {
+    messages
+        .into_iter()
+        .map(|msg| match msg {
+            Message::Assistant { id, content } => {
+                let mut fixed = false;
+                let new_content: Vec<_> = content
+                    .into_iter()
+                    .map(|c| match c {
+                        AssistantContent::ToolCall(mut tc) if tc.function.arguments.is_null() => {
+                            tc.function.arguments = serde_json::json!({});
+                            fixed = true;
+                            AssistantContent::ToolCall(tc)
+                        }
+                        other => other,
+                    })
+                    .collect();
+                if fixed {
+                    issues.push("replaced null tool call arguments with {}".to_string());
+                }
+                Message::Assistant {
+                    id,
+                    content: rig::one_or_many::OneOrMany::many(new_content)
+                        .expect("non-empty assistant content"),
+                }
+            }
+            other => other,
+        })
+        .collect()
 }
 
 pub(crate) fn fix_tool_call_integrity(

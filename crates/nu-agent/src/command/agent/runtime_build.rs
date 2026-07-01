@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 use nu_plugin::{EngineInterface, EvaluatedCall};
 use nu_protocol::{LabeledError, Value};
 
@@ -7,6 +9,7 @@ use nu_agent_core::conversation::runtime::AgentConversationRuntime;
 use nu_agent_core::protocol::preamble::{
     PreambleDefaults, UserPreambleInput, classify_model_family, resolve_preamble,
 };
+use nu_agent_core::tools::mcp::circuit_breaker::McpCircuitBreaker;
 
 /// Trait abstracting the engine interface functionality needed for config resolution.
 ///
@@ -512,5 +515,7 @@ pub(crate) fn build_runtime(params: RuntimeBuildParams) -> AgentConversationRunt
         ),
         cwd: params.cwd,
         interactive_pending: None,
+        circuit_breaker: Arc::new(Mutex::new(McpCircuitBreaker::default())),
+        doom_state: Arc::new(Mutex::new(nu_agent_core::hook::DoomLoopState::default())),
     }
 }

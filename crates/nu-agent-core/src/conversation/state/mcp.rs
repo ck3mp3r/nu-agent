@@ -57,6 +57,7 @@ impl McpState {
         runtime: &tokio::runtime::Handle,
     ) -> Result<McpUsabilityState, String> {
         if !enabled {
+            log::info!("MCP disable: server={server_name}");
             // Disable path: just toggle visibility in the registry.
             // Sessions stay alive and tools remain registered on the handle —
             // McpToolRegistry.contains() gates LLM visibility, so tools are hidden
@@ -76,6 +77,7 @@ impl McpState {
             .iter()
             .any(|server| server.name == server_name)
         {
+            log::debug!("MCP enable: server={server_name} not in config, marking failed");
             self.mcp_registry.set_server_enabled(server_name, false)?;
             self.mcp_lifecycle_projection = rebuild_mcp_lifecycle_projection(
                 self.mcp_runtime.as_ref(),
@@ -92,7 +94,10 @@ impl McpState {
             .as_ref()
             .is_some_and(|rt| rt.has_server(server_name));
 
+        log::debug!("MCP enable: server={server_name} already_connected={already_connected}");
+
         if already_connected {
+            log::info!("MCP enable Case A (re-enable visibility): server={server_name}");
             // Case A: Session is alive, tools are registered on the handle.
             // Just re-enable visibility in the registry — no reconnection needed.
             self.mcp_registry.set_server_enabled(server_name, true)?;
@@ -107,6 +112,7 @@ impl McpState {
 
         // Case B: Server has never been connected (configured with enabled: false at
         // startup, or first-time enable). Connect only this single server.
+        log::info!("MCP enable Case B (first-time connect): server={server_name}");
         // Force enabled: true so select_enabled_servers() doesn't filter it out.
         let single_server_config: Vec<McpServerConfig> = self
             .mcp_server_configs
@@ -126,6 +132,10 @@ impl McpState {
         )) {
             Ok(new_rt) if new_rt.has_sessions() => {
                 let discovered = new_rt.discovered_tools().to_vec();
+                log::info!(
+                    "MCP connect succeeded: server={server_name} discovered={}",
+                    discovered.len()
+                );
 
                 let (staged_tool_definitions, staged_registry) = stage_enabled_mcp_runtime_state(
                     tool_definitions,
@@ -152,7 +162,19 @@ impl McpState {
 
                 Ok(McpUsabilityState::Enabled)
             }
-            Ok(_) | Err(_) => {
+            Ok(_) => {
+                log::warn!("MCP connect returned no sessions: server={server_name}");
+                self.mcp_registry.set_server_enabled(server_name, false)?;
+                self.mcp_lifecycle_projection = rebuild_mcp_lifecycle_projection(
+                    self.mcp_runtime.as_ref(),
+                    &self.mcp_server_configs,
+                    &self.mcp_registry,
+                    tool_definitions,
+                );
+                Ok(McpUsabilityState::Failed)
+            }
+            Err(e) => {
+                log::warn!("MCP connect failed: server={server_name} error={e}");
                 self.mcp_registry.set_server_enabled(server_name, false)?;
                 self.mcp_lifecycle_projection = rebuild_mcp_lifecycle_projection(
                     self.mcp_runtime.as_ref(),

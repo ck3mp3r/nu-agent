@@ -186,6 +186,11 @@ impl AppState {
             return false;
         };
 
+        log::debug!(
+            "MCP toggle requested: server={} current_state={:?}",
+            server.name,
+            server.state
+        );
         let request = match server.state {
             McpServerUsabilityState::Enabled => {
                 server.state = McpServerUsabilityState::Disabled;

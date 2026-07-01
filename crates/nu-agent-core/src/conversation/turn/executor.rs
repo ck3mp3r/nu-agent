@@ -4,7 +4,7 @@
 //! Extracted from `AgentConversationRuntime::execute_turn` to give it a single
 //! responsibility. `AgentConversationRuntime` constructs a `TurnExecutor` and delegates.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use nu_protocol::{LabeledError, Span, Value};
 use rig::memory::ConversationMemory;
@@ -13,6 +13,7 @@ use tokio::sync::mpsc;
 use crate::config::Config;
 use crate::conversation::providers::{CachedProviderClient, ModelVisitor};
 use crate::conversation::turn::{TurnContext, TurnResult, execute_turn, execute_turn_with_channel};
+use crate::hook::agent_hook::DoomLoopState;
 use crate::hook::permission_resolver::AsyncPermissionResolver;
 use crate::protocol::contracts::ProgressUi;
 use crate::protocol::event::UiEvent;
@@ -20,6 +21,7 @@ use crate::session::JournalConversationMemory;
 use crate::session::repair::inject_missing_tool_results;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
+use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
 use crate::types::{Message, ToolDefinition};
 
 /// Outcome of `TurnExecutor::execute` — either a completed turn whose results
@@ -57,6 +59,8 @@ pub struct ToolInfra {
     pub mcp_registry: Arc<McpToolRegistry>,
     pub tool_server_handle: rig::tool::server::ToolServerHandle,
     pub visible_tool_definitions: Vec<ToolDefinition>,
+    pub circuit_breaker: Arc<Mutex<McpCircuitBreaker>>,
+    pub doom_state: Arc<Mutex<DoomLoopState>>,
 }
 
 pub struct TurnExecutor<'a> {
@@ -163,14 +167,25 @@ impl<'a> TurnExecutor<'a> {
                     } else {
                         None
                     },
+                    circuit_breaker: self.tool_infra.circuit_breaker.clone(),
+                    doom_state: self.tool_infra.doom_state.clone(),
                 },
             );
 
             match &result {
                 Err(e) if e.messages.is_none() && !e.cancelled => {
                     // Hard error path — check if retryable
-                    let (kind, _) = classify_completion_error(&e.msg, e.estimated_request_bytes);
+                    let (kind, _) = classify_completion_error(&e.msg);
+                    log::debug!(
+                        "classify_completion_error: kind={kind:?} msg_preview={}",
+                        &e.msg[..e.msg.len().min(200)]
+                    );
                     let has_partial_history = !e.last_known_history.is_empty();
+                    log::debug!(
+                        "Hard error: kind={kind:?} retryable={} history_len={}",
+                        kind.is_retryable(),
+                        e.last_known_history.len()
+                    );
                     if kind.is_retryable()
                         && attempt < self.config.max_retries.unwrap_or(3)
                         && has_partial_history
@@ -199,6 +214,7 @@ impl<'a> TurnExecutor<'a> {
                     }
                     // Exhausted retries — wrap the error with attempt count
                     if attempt > 0 {
+                        log::warn!("Retries exhausted after {attempt} attempts: {kind:?}");
                         let msg = format!("Turn failed after {attempt} retries. {}", e.msg);
                         break Err(crate::conversation::turn::TurnError {
                             msg: msg.clone(),
@@ -206,7 +222,6 @@ impl<'a> TurnExecutor<'a> {
                             messages: None,
                             last_known_history: e.last_known_history.clone(),
                             pre_turn_message_count: e.pre_turn_message_count,
-                            estimated_request_bytes: e.estimated_request_bytes,
                         });
                     }
                     break result;
@@ -236,6 +251,11 @@ impl<'a> TurnExecutor<'a> {
                             .skip(e.pre_turn_message_count)
                             .cloned()
                             .collect();
+                        log::debug!(
+                            "Path A non-cancelled: delta_count={} pre_turn={}",
+                            delta.len(),
+                            e.pre_turn_message_count
+                        );
                         if !delta.is_empty() {
                             let patched = inject_missing_tool_results(delta);
                             if let Err(mem_err) = self.runtime.block_on(
@@ -248,8 +268,15 @@ impl<'a> TurnExecutor<'a> {
                             }
                         }
                     }
-                    let (_kind, user_msg) =
-                        classify_completion_error(&e.msg, e.estimated_request_bytes);
+                    let (kind, user_msg) = classify_completion_error(&e.msg);
+                    log::debug!(
+                        "classify_completion_error: kind={kind:?} msg_preview={}",
+                        &e.msg[..e.msg.len().min(200)]
+                    );
+                    log::error!(
+                        "Turn error (path A non-cancelled): {}",
+                        &e.msg[..e.msg.len().min(200)]
+                    );
                     return Err(LabeledError::new(user_msg.clone()).with_label(user_msg, span));
                 }
                 Err(e) if e.cancelled => {
@@ -266,6 +293,11 @@ impl<'a> TurnExecutor<'a> {
                             .skip(e.pre_turn_message_count)
                             .cloned()
                             .collect();
+                        log::debug!(
+                            "Path A cancelled: delta_count={} pre_turn={}",
+                            delta.len(),
+                            e.pre_turn_message_count
+                        );
                         if !delta.is_empty() {
                             let patched = inject_missing_tool_results(delta);
                             let patched = close_open_tool_result_block(patched, "[cancelled]");
@@ -312,14 +344,17 @@ impl<'a> TurnExecutor<'a> {
                     let user_msg = if e.msg.starts_with("Turn failed after") {
                         e.msg.clone()
                     } else {
-                        let (_kind, msg) =
-                            classify_completion_error(&e.msg, e.estimated_request_bytes);
+                        let (kind, msg) = classify_completion_error(&e.msg);
+                        log::debug!(
+                            "classify_completion_error: kind={kind:?} msg_preview={}",
+                            &e.msg[..e.msg.len().min(200)]
+                        );
                         msg
                     };
                     log::error!(
                         "Turn failed with unrecoverable error: session={:?} error={}",
                         final_session_id,
-                        e.msg
+                        &e.msg[..e.msg.len().min(200)]
                     );
                     if let Some(session_id) = final_session_id {
                         let delta: Vec<Message> = e
@@ -328,6 +363,11 @@ impl<'a> TurnExecutor<'a> {
                             .skip(e.pre_turn_message_count)
                             .cloned()
                             .collect();
+                        log::debug!(
+                            "Hard error: delta_count={} pre_turn={}",
+                            delta.len(),
+                            e.pre_turn_message_count
+                        );
                         if !delta.is_empty() {
                             let patched = inject_missing_tool_results(delta);
                             let patched = close_open_tool_result_block(patched, &e.msg);
@@ -343,6 +383,9 @@ impl<'a> TurnExecutor<'a> {
                             // delta is empty: hook never fired OR error before any new messages
                             // were added. Synthesise a placeholder to maintain the alternating
                             // user/assistant structure.
+                            log::debug!(
+                                "Hard error: delta empty, synthesizing fallback placeholder"
+                            );
                             let fallback = vec![
                                 Message::user(prompt.clone()),
                                 Message::assistant(format!("[Turn failed: {}]", e.msg)),
@@ -382,6 +425,11 @@ impl<'a> TurnExecutor<'a> {
                         .skip(turn_result.pre_turn_message_count)
                         .cloned()
                         .collect();
+                    log::debug!(
+                        "Path C cancelled: delta_count={} pre_turn={}",
+                        delta.len(),
+                        turn_result.pre_turn_message_count
+                    );
                     if !delta.is_empty() {
                         let patched = inject_missing_tool_results(delta);
                         let patched = close_open_tool_result_block(patched, "[cancelled]");
@@ -407,6 +455,10 @@ impl<'a> TurnExecutor<'a> {
                             .skip(turn_result.pre_turn_message_count)
                             .cloned()
                             .collect();
+                        log::debug!(
+                            "Path B fallback: last_known_history delta_count={}",
+                            delta.len()
+                        );
                         if !delta.is_empty() {
                             let patched = inject_missing_tool_results(delta);
                             let patched = close_open_tool_result_block(patched, "[cancelled]");
@@ -421,6 +473,7 @@ impl<'a> TurnExecutor<'a> {
                         }
                     } else {
                         // True fallback: hook never fired, synthesize minimal placeholder
+                        log::debug!("Path B true fallback: synthesizing minimal placeholder");
                         let mut cancelled_messages = vec![Message::user(prompt.clone())];
                         if !turn_result.text.is_empty() {
                             cancelled_messages.push(Message::assistant(turn_result.text.clone()));
@@ -463,7 +516,16 @@ impl<'a> TurnExecutor<'a> {
         // The actual JSONL write was already done by rig calling memory.append() at turn end.
         if final_session_id.is_some() {
             *self.memory_state.last_total_tokens_mut() = Some(turn_result.last_total_tokens);
+            log::debug!(
+                "Turn completed: session={:?} last_total_tokens={}",
+                final_session_id,
+                turn_result.last_total_tokens
+            );
         }
+
+        // Successful turn: reset doom loop state so accumulated signatures
+        // from prior turns don't carry over into the next healthy turn.
+        self.tool_infra.doom_state.lock().unwrap().reset();
 
         // Emit UI events
         if !turn_result.deltas_emitted {
@@ -516,6 +578,8 @@ struct TurnVisitor<'a, 'b, U, P> {
         mpsc::UnboundedSender<UiEvent>,
         mpsc::UnboundedReceiver<UiEvent>,
     )>,
+    circuit_breaker: Arc<Mutex<McpCircuitBreaker>>,
+    doom_state: Arc<Mutex<DoomLoopState>>,
 }
 
 impl<U: ProgressUi, P: AsyncPermissionResolver> ModelVisitor for TurnVisitor<'_, '_, U, P> {
@@ -543,6 +607,8 @@ impl<U: ProgressUi, P: AsyncPermissionResolver> ModelVisitor for TurnVisitor<'_,
                 mcp_registry: self.mcp_registry.clone(),
                 tool_server_handle: self.tool_server_handle.clone(),
                 visible_tool_definitions: self.visible_tool_definitions,
+                circuit_breaker: self.circuit_breaker.clone(),
+                doom_state: self.doom_state.clone(),
             },
             self.config,
         );
@@ -565,6 +631,7 @@ pub fn close_open_tool_result_block(messages: Vec<Message>, error_msg: &str) -> 
         Some(Message::User { content }) if content.iter().all(|c| matches!(c, crate::types::UserContent::ToolResult(_)))
     );
     if needs_closing {
+        log::debug!("close_open_tool_result_block: appending synthetic assistant");
         let mut msgs = messages;
         msgs.push(Message::assistant(format!("[Turn failed: {error_msg}]")));
         msgs
@@ -633,15 +700,9 @@ fn contains_status_code(msg: &str, code: &str) -> bool {
 /// The `CompletionErrorKind` captures the error category for retry/repair policy decisions.
 /// The `String` is a human-readable message suitable for display to the user.
 ///
-/// `estimated_request_bytes`: when provided, "error sending request" with a large payload
-/// (>100 KB) is classified as `RequestTooLarge` (permanent) instead of `Network` (retryable).
-///
 /// Patterns are ordered most-specific first to prevent misclassification (e.g. ToolStructure
 /// is checked before generic 400-class patterns; ContextOverflow before RequestTooLarge).
-pub fn classify_completion_error(
-    msg: &str,
-    estimated_request_bytes: Option<usize>,
-) -> (CompletionErrorKind, String) {
+pub fn classify_completion_error(msg: &str) -> (CompletionErrorKind, String) {
     // ToolStructure — most specific (400 + tool keyword)
     if (msg.contains("invalid_request_body") || msg.contains("invalid_request_error"))
         && (msg.contains("tool_use") || msg.contains("tool_result"))
@@ -763,23 +824,7 @@ pub fn classify_completion_error(
         );
     }
 
-    // Size-aware network error reclassification: "error sending request" with a large
-    // payload (>100 KB) is almost certainly a RequestTooLarge, not a transient network
-    // issue. Check this BEFORE the generic Network match to avoid misclassifying large
-    // payloads as retryable.
-    const REQUEST_SIZE_THRESHOLD: usize = 100 * 1024; // 100 KB
-    if msg_lower.contains("error sending request")
-        && estimated_request_bytes.is_some_and(|size| size > REQUEST_SIZE_THRESHOLD)
-    {
-        return (
-            CompletionErrorKind::RequestTooLarge,
-            "Turn failed: request payload too large (estimated >100 KB). \
-             Run 'agent session compact' or lower max_tool_result_bytes in config."
-                .into(),
-        );
-    }
-
-    // Network — includes stream decode errors (retryable per Goose)
+    // Network — includes stream decode errors (retryable)
     if msg_lower.contains("error sending request")
         || msg_lower.contains("connection reset")
         || msg_lower.contains("connection refused")

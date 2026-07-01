@@ -132,6 +132,7 @@ impl ConversationMemory for JournalConversationMemory {
             {
                 let cache = self.lock_cache()?;
                 if let Some(messages) = cache.get(conversation_id) {
+                    log::debug!("JournalMemory.load: session={conversation_id} cache_hit=true");
                     let (repaired, issues) =
                         crate::session::repair::repair_messages(messages.clone());
                     for issue in &issues {
@@ -142,6 +143,7 @@ impl ConversationMemory for JournalConversationMemory {
             }
 
             // Cache miss — load from JSONL
+            log::debug!("JournalMemory.load: session={conversation_id} cache_hit=false");
             let (entries, _last_total_tokens) = self
                 .store
                 .load_all(conversation_id)
@@ -163,6 +165,10 @@ impl ConversationMemory for JournalConversationMemory {
 
             // Extract LLM context (handles compaction markers)
             let messages = extract_llm_context(&entries);
+            log::debug!(
+                "JournalMemory.load: session={conversation_id} messages={} markers={marker_count}",
+                messages.len()
+            );
 
             // Populate cache
             {
@@ -180,6 +186,10 @@ impl ConversationMemory for JournalConversationMemory {
         messages: Vec<Message>,
     ) -> WasmBoxedFuture<'a, Result<(), MemoryError>> {
         Box::pin(async move {
+            log::debug!(
+                "JournalMemory.append: session={conversation_id} count={}",
+                messages.len()
+            );
             // Append to in-memory cache
             {
                 let mut cache = self.lock_cache()?;

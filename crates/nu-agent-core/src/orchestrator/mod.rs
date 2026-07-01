@@ -175,6 +175,7 @@ where
                 enable,
             }) = ui.take_next_mcp_toggle_request()
             {
+                log::debug!("Dequeued MCP toggle: server={server_name} enable={enable}");
                 let (response_tx, response_rx) = mpsc::channel();
                 let send_result = worker_cmd_tx.send(WorkerCommand::ToggleMcp {
                     server_name: server_name.clone(),
@@ -183,6 +184,7 @@ where
                 });
 
                 if send_result.is_err() {
+                    log::warn!("ToggleMcp send failed (channel closed): server={server_name}");
                     ui.set_mcp_server_state_with_details(
                         &server_name,
                         McpUsabilityState::Failed,
@@ -192,12 +194,14 @@ where
                     continue;
                 }
 
+                log::debug!("ToggleMcp dispatched to worker: server={server_name} enable={enable}");
                 pending_mcp_toggles.push((server_name, response_rx));
             }
 
             if let Some(response_rx) = pending_model_switch.take() {
                 match poll_pending(response_rx) {
                     PollOutcome::Ready(Ok((active_identity, max_tokens))) => {
+                        log::debug!("Model switch succeeded: {active_identity}");
                         ui.set_active_model_identity(active_identity.as_str());
                         ui.set_context_window_max_tokens(max_tokens);
                         ui.emit(&UiEvent::Warning {
@@ -205,6 +209,7 @@ where
                         });
                     }
                     PollOutcome::Ready(Err(message)) => {
+                        log::warn!("Model switch failed: {message}");
                         ui.emit(&UiEvent::Warning { message });
                     }
                     PollOutcome::Pending(rx) => pending_model_switch = Some(rx),
@@ -219,6 +224,7 @@ where
             if let Some(response_rx) = pending_agent_switch.take() {
                 match poll_pending(response_rx) {
                     PollOutcome::Ready(Ok((agent_identity, model_identity, max_tokens))) => {
+                        log::debug!("Agent switch succeeded: {agent_identity}");
                         ui.set_active_agent_identity(&agent_identity);
                         ui.set_active_model_identity(&model_identity);
                         ui.set_context_window_max_tokens(max_tokens);
@@ -227,6 +233,7 @@ where
                         });
                     }
                     PollOutcome::Ready(Err(message)) => {
+                        log::warn!("Agent switch failed: {message}");
                         ui.emit(&UiEvent::Warning { message });
                     }
                     PollOutcome::Pending(rx) => pending_agent_switch = Some(rx),
@@ -247,6 +254,9 @@ where
                         visible_count_for_server,
                         visible_names_by_server,
                     )) => {
+                        log::info!(
+                            "MCP toggle succeeded: server={server_name} state={state:?} visible_count={visible_count}"
+                        );
                         last_authoritative_visible_count = visible_count;
                         ui.set_mcp_visible_tool_count_by_server_name(
                             &server_name,
@@ -268,6 +278,7 @@ where
                         visible_count_for_server,
                         visible_names_by_server,
                     )) => {
+                        log::warn!("MCP toggle failed: server={server_name} error={err}");
                         last_authoritative_visible_count = visible_count;
                         ui.set_mcp_visible_tool_count_by_server_name(
                             &server_name,
@@ -284,12 +295,15 @@ where
                         )
                     }
                     Err(mpsc::TryRecvError::Empty) => retained.push((server_name, response_rx)),
-                    Err(mpsc::TryRecvError::Disconnected) => ui.set_mcp_server_state_with_details(
-                        &server_name,
-                        McpUsabilityState::Failed,
-                        Some("toggle worker disconnected".to_string()),
-                        last_authoritative_visible_count,
-                    ),
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        log::warn!("MCP toggle worker disconnected: server={server_name}");
+                        ui.set_mcp_server_state_with_details(
+                            &server_name,
+                            McpUsabilityState::Failed,
+                            Some("toggle worker disconnected".to_string()),
+                            last_authoritative_visible_count,
+                        );
+                    }
                 }
             }
             pending_mcp_toggles = retained;
@@ -341,11 +355,17 @@ where
             while let Ok(outcome) = worker_result_rx.try_recv() {
                 worker_active = false;
                 match outcome {
-                    TurnOutcome::Success(_) => {}
+                    TurnOutcome::Success(_) => {
+                        log::debug!("Turn outcome: Success");
+                    }
                     TurnOutcome::Cancelled => {
-                        // Silently ignore cancellation
+                        log::debug!("Turn outcome: Cancelled");
                     }
                     TurnOutcome::Error(error) => {
+                        log::warn!(
+                            "Turn outcome: Error msg={}",
+                            &error.msg[..error.msg.len().min(200)]
+                        );
                         // Display error inline as a turn error
                         ui.emit(&UiEvent::TurnError {
                             message: format!("Turn failed: {}", error.msg),
@@ -554,6 +574,7 @@ where
             // Poll mailbox for incoming messages
             if let Some(ref rx) = mailbox_rx {
                 while let Ok(msg) = rx.try_recv() {
+                    log::debug!("Mailbox message: from={} kind={}", msg.from, msg.kind);
                     if msg.message == "/clear" {
                         let _ = worker_cmd_tx.send(WorkerCommand::ClearSession);
                         ui.clear_transcript();
@@ -579,20 +600,25 @@ where
                         break;
                     } else {
                         pending_mailbox_prompts.push(prompt);
+                        log::debug!(
+                            "Mailbox prompt queued: pending={}",
+                            pending_mailbox_prompts.len()
+                        );
                     }
                 }
             }
 
             // Drain pending mailbox prompts when worker becomes idle
-            if !worker_active
-                && !pending_mailbox_prompts.is_empty()
-                && let Some(prompt) = pending_mailbox_prompts.drain(0..1).next()
-            {
-                ui.display_incoming_message(&prompt);
-                worker_cmd_tx
-                    .send(WorkerCommand::ExecuteTurn { prompt, span })
-                    .map_err(|_| LabeledError::new("Worker channel closed"))?;
-                worker_active = true;
+            if !worker_active && !pending_mailbox_prompts.is_empty() {
+                let remaining = pending_mailbox_prompts.len() - 1;
+                if let Some(prompt) = pending_mailbox_prompts.drain(0..1).next() {
+                    log::debug!("Draining mailbox prompt: remaining={remaining}");
+                    ui.display_incoming_message(&prompt);
+                    worker_cmd_tx
+                        .send(WorkerCommand::ExecuteTurn { prompt, span })
+                        .map_err(|_| LabeledError::new("Worker channel closed"))?;
+                    worker_active = true;
+                }
             }
 
             if ui.quit_requested() {

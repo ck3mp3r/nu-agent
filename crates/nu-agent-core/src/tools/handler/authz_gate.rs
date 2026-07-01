@@ -25,11 +25,22 @@ pub fn enforce_authorization_for_tool_call(
     // `BuiltinFs` tools (edit, patch) are NOT in this set — they mutate the filesystem
     // and must go through the full permission flow below, same as MCP/closure tools.
     if source == ToolSource::Builtin {
+        log::debug!(
+            "Authz bypass: tool={} source=Builtin",
+            tool_call.function.name
+        );
         return None;
     }
 
     let mut auth_decision =
         permissions.evaluate(&tool_call.function.name, &tool_call.function.arguments);
+    log::debug!(
+        "Authz evaluate: tool={} source={:?} action={:?}",
+        tool_call.function.name,
+        source,
+        auth_decision.action
+    );
+    let pre_grant_action = auth_decision.action;
     auth_decision = apply_session_grant_override(
         auth_decision,
         grant_cache,
@@ -37,6 +48,12 @@ pub fn enforce_authorization_for_tool_call(
         source.as_str(),
         &tool_call.function.arguments,
     );
+    if pre_grant_action == PermissionAction::Ask && auth_decision.action != PermissionAction::Ask {
+        log::debug!(
+            "Authz: session grant override for tool={}",
+            tool_call.function.name
+        );
+    }
     if auth_decision.action == PermissionAction::Ask {
         let choice = ask_hook.choose(
             &auth_decision,
@@ -56,6 +73,13 @@ pub fn enforce_authorization_for_tool_call(
         );
     }
     if auth_decision.action == PermissionAction::Deny {
+        log::warn!(
+            "Authz DENIED: tool={} rule={} scope={} pattern={:?}",
+            tool_call.function.name,
+            auth_decision.matched_rule.identity,
+            auth_decision.matched_rule.scope,
+            auth_decision.matched_rule.pattern
+        );
         let denied_details = AuthorizationDeniedDetails {
             rule_identity: auth_decision.matched_rule.identity.clone(),
             scope: auth_decision.matched_rule.scope.to_string(),

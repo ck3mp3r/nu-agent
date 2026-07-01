@@ -82,7 +82,11 @@ pub(super) fn run_command(
                 .filter_level(log_level)
                 .target(env_logger::Target::Pipe(Box::new(log_file)))
                 .format_timestamp_millis()
-                .try_init(); // Ignore error if already initialized
+                .try_init();
+            // Always force the global max level — try_init() is a no-op when a
+            // logger is already registered (e.g. by nu-plugin internals),
+            // silently discarding our filter_level. set_max_level() always wins.
+            log::set_max_level(log_level);
         }
     }
 

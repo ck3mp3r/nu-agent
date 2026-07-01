@@ -34,6 +34,11 @@ pub(super) fn merge_new_mcp_tools_into_runtime(
     mcp_registry: &mut McpToolRegistry,
     discovered_tools: &[crate::tools::mcp::client::McpToolDefinition],
 ) -> Result<(), String> {
+    log::debug!(
+        "merge_new_mcp_tools: discovered={} existing={}",
+        discovered_tools.len(),
+        tool_definitions.len()
+    );
     if discovered_tools.is_empty() {
         return Ok(());
     }
@@ -47,6 +52,7 @@ pub(super) fn merge_new_mcp_tools_into_runtime(
 
     for tool in discovered_tools {
         if !known_names.contains(tool.name.as_str()) {
+            log::debug!("New MCP tool added: {}", tool.name);
             tool_definitions.push(mcp_tool_definition_from_discovered(tool));
         }
     }
@@ -60,6 +66,10 @@ pub(super) fn stage_enabled_mcp_runtime_state(
     server_name: &str,
     discovered_tools: &[crate::tools::mcp::client::McpToolDefinition],
 ) -> Result<(Vec<ToolDefinition>, McpToolRegistry), String> {
+    log::debug!(
+        "stage_enabled_mcp_runtime_state: server={server_name} discovered={}",
+        discovered_tools.len()
+    );
     let mut staged_tool_definitions = current_tool_definitions.to_vec();
     let mut staged_registry = current_registry.clone();
 
