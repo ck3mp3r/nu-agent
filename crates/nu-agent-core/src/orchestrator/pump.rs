@@ -33,7 +33,7 @@ impl EventPump {
         }
         let count = batch.len();
         if !batch.is_empty() {
-            log::debug!("orchestrator: forwarding {} worker events to UI", count);
+            log::trace!("orchestrator: forwarding {} worker events to UI", count);
             ui.emit_batch(&batch);
         }
         count

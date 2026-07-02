@@ -181,7 +181,7 @@ where
                 );
             }
         } else if log::log_enabled!(log::Level::Debug) {
-            log::debug!("on_completion_call: history_len={}", history.len());
+            log::trace!("on_completion_call: history_len={}", history.len());
         }
 
         if self.cancel_token.is_cancelled() {
@@ -212,7 +212,7 @@ where
         _internal_call_id: &str,
         args: &str,
     ) -> ToolCallHookAction {
-        log::debug!("on_tool_call: tool={tool_name}");
+        log::trace!("on_tool_call: tool={tool_name}");
 
         // 1. Check cancellation
         if self.cancel_token.is_cancelled() {
@@ -258,7 +258,7 @@ where
         if let Some(server_name) = self.mcp_registry.server_name_for(tool_name)
             && !self.mcp_registry.is_server_enabled(server_name)
         {
-            log::debug!("on_tool_call: MCP server '{server_name}' disabled, skipping {tool_name}");
+            log::trace!("on_tool_call: MCP server '{server_name}' disabled, skipping {tool_name}");
             return ToolCallHookAction::Skip {
                 reason: format!(
                     "MCP server '{}' is disabled (circuit breaker tripped). \
@@ -315,7 +315,7 @@ where
         args: &str,
         result: &str,
     ) -> HookAction {
-        log::debug!(
+        log::trace!(
             "on_tool_result: tool={tool_name} success={} result_len={}",
             !is_tool_failure(result),
             result.len(),

@@ -175,7 +175,7 @@ where
                 enable,
             }) = ui.take_next_mcp_toggle_request()
             {
-                log::debug!("Dequeued MCP toggle: server={server_name} enable={enable}");
+                log::trace!("Dequeued MCP toggle: server={server_name} enable={enable}");
                 let (response_tx, response_rx) = mpsc::channel();
                 let send_result = worker_cmd_tx.send(WorkerCommand::ToggleMcp {
                     server_name: server_name.clone(),
@@ -194,7 +194,7 @@ where
                     continue;
                 }
 
-                log::debug!("ToggleMcp dispatched to worker: server={server_name} enable={enable}");
+                log::trace!("ToggleMcp dispatched to worker: server={server_name} enable={enable}");
                 pending_mcp_toggles.push((server_name, response_rx));
             }
 
@@ -254,7 +254,7 @@ where
                         visible_count_for_server,
                         visible_names_by_server,
                     )) => {
-                        log::info!(
+                        log::debug!(
                             "MCP toggle succeeded: server={server_name} state={state:?} visible_count={visible_count}"
                         );
                         last_authoritative_visible_count = visible_count;
@@ -356,10 +356,10 @@ where
                 worker_active = false;
                 match outcome {
                     TurnOutcome::Success(_) => {
-                        log::debug!("Turn outcome: Success");
+                        log::info!("Turn outcome: Success");
                     }
                     TurnOutcome::Cancelled => {
-                        log::debug!("Turn outcome: Cancelled");
+                        log::info!("Turn outcome: Cancelled");
                     }
                     TurnOutcome::Error(error) => {
                         log::warn!(
@@ -574,7 +574,7 @@ where
             // Poll mailbox for incoming messages
             if let Some(ref rx) = mailbox_rx {
                 while let Ok(msg) = rx.try_recv() {
-                    log::debug!("Mailbox message: from={} kind={}", msg.from, msg.kind);
+                    log::trace!("Mailbox message: from={} kind={}", msg.from, msg.kind);
                     if msg.message == "/clear" {
                         let _ = worker_cmd_tx.send(WorkerCommand::ClearSession);
                         ui.clear_transcript();
@@ -600,7 +600,7 @@ where
                         break;
                     } else {
                         pending_mailbox_prompts.push(prompt);
-                        log::debug!(
+                        log::trace!(
                             "Mailbox prompt queued: pending={}",
                             pending_mailbox_prompts.len()
                         );
@@ -612,7 +612,7 @@ where
             if !worker_active && !pending_mailbox_prompts.is_empty() {
                 let remaining = pending_mailbox_prompts.len() - 1;
                 if let Some(prompt) = pending_mailbox_prompts.drain(0..1).next() {
-                    log::debug!("Draining mailbox prompt: remaining={remaining}");
+                    log::trace!("Draining mailbox prompt: remaining={remaining}");
                     ui.display_incoming_message(&prompt);
                     worker_cmd_tx
                         .send(WorkerCommand::ExecuteTurn { prompt, span })

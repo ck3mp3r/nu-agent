@@ -132,7 +132,7 @@ impl ConversationMemory for JournalConversationMemory {
             {
                 let cache = self.lock_cache()?;
                 if let Some(messages) = cache.get(conversation_id) {
-                    log::debug!("JournalMemory.load: session={conversation_id} cache_hit=true");
+                    log::trace!("JournalMemory.load: session={conversation_id} cache_hit=true");
                     let (repaired, issues) =
                         crate::session::repair::repair_messages(messages.clone());
                     for issue in &issues {
@@ -186,7 +186,7 @@ impl ConversationMemory for JournalConversationMemory {
         messages: Vec<Message>,
     ) -> WasmBoxedFuture<'a, Result<(), MemoryError>> {
         Box::pin(async move {
-            log::debug!(
+            log::trace!(
                 "JournalMemory.append: session={conversation_id} count={}",
                 messages.len()
             );

@@ -51,10 +51,10 @@ impl<'a, R: ExtendedRuntime + Send> CommandRouter<'a, R> {
                 true
             }
             WorkerCommand::EvaluateAutoCompaction { response_tx } => {
-                log::debug!("Router: EvaluateAutoCompaction");
+                log::trace!("Router: EvaluateAutoCompaction");
                 let warning = match self.runtime.evaluate_auto_compaction() {
                     Some(CompactionTriggerDecision::Fire { source, .. }) => {
-                        log::debug!("Auto-compaction firing: source={source:?}");
+                        log::trace!("Auto-compaction firing: source={source:?}");
                         self.runtime
                             .execute_compaction_trigger(ui, source)
                             .err()
@@ -69,7 +69,7 @@ impl<'a, R: ExtendedRuntime + Send> CommandRouter<'a, R> {
                 source,
                 response_tx,
             } => {
-                log::debug!("Router: ExecuteCompactionTrigger source={source:?}");
+                log::trace!("Router: ExecuteCompactionTrigger source={source:?}");
                 let warning = self
                     .runtime
                     .execute_compaction_trigger(ui, source)

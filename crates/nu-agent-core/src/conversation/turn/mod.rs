@@ -647,7 +647,7 @@ where
             biased;
             item = stream.next() => item,
             _ = cancel_token.cancelled() => {
-                log::debug!("Stream cancelled via cancel_token");
+                log::trace!("Stream cancelled via cancel_token");
                 cancelled = true;
                 break;
             }
@@ -707,7 +707,7 @@ where
                 match e {
                     rig::agent::StreamingError::Prompt(boxed) => match *boxed {
                         rig::completion::PromptError::PromptCancelled { chat_history, .. } => {
-                            log::debug!(
+                            log::trace!(
                                 "Stream PromptCancelled: history_len={}",
                                 chat_history.len()
                             );
@@ -723,7 +723,7 @@ where
                 }
             }
             None => {
-                log::debug!("Stream completed normally");
+                log::trace!("Stream completed normally");
                 break;
             }
         }
