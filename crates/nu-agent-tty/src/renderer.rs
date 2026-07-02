@@ -229,7 +229,6 @@ impl<W: Write> StderrUiRenderer<W> {
             UiEvent::CompactionTriggered {
                 source,
                 summarized_count,
-                kept_recent_count,
                 summary_preview,
                 ..
             } => {
@@ -237,7 +236,7 @@ impl<W: Write> StderrUiRenderer<W> {
                     None
                 } else {
                     Some(format!(
-                        "compaction: source={source} summarized={summarized_count} kept={kept_recent_count} preview={summary_preview}"
+                        "compaction: source={source} summarized={summarized_count} preview={summary_preview}"
                     ))
                 }
             }

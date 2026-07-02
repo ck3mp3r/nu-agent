@@ -457,7 +457,7 @@ built-ins.
 - Manual and auto trigger sources share one execution path, and compaction persistence is durable:
   - session JSONL content is rewritten through session APIs
   - compacted message set and `compaction_count` metadata are persisted
-  - transcript-visible compaction summary artifact includes source + summarized/kept counts
+  - transcript-visible compaction summary artifact includes source + summarized counts
   - compaction summary artifact includes summary preview/body from the produced summary text
 
 ### Compaction strategies

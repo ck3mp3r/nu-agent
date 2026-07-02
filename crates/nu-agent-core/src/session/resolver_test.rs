@@ -339,14 +339,10 @@ fn hydrate_store_entries_marker_format() {
     assert_eq!(snapshots[0].role(), "compaction");
 
     let content = snapshots[0].content();
-    // Content must include stats header (summarized_count, kept_recent_count, strategy)
+    // Content must include stats header (summarized_count, strategy)
     assert!(
         content.contains("10 summarized"),
         "Expected summarized_count in content, got: {content}"
-    );
-    assert!(
-        content.contains("3 kept"),
-        "Expected kept_recent_count in content, got: {content}"
     );
     assert!(
         content.contains("SummarizeOldest"),
@@ -420,10 +416,6 @@ fn hydrate_store_entries_empty_summary_marker() {
     assert!(
         content.contains("8 summarized"),
         "Expected summarized_count in content for empty-summary marker, got: {content}"
-    );
-    assert!(
-        content.contains("5 kept"),
-        "Expected kept_recent_count in content for empty-summary marker, got: {content}"
     );
     assert!(
         content.contains("SlidingWindow"),
@@ -581,7 +573,7 @@ fn test_tool_result_with_explicit_display_key() {
 /// post-compaction messages produces a transcript where:
 /// - The compaction entry appears at the correct position
 /// - The compaction entry has role "compaction"
-/// - The compaction entry content includes strategy, summarized_count, kept_recent_count,
+/// - The compaction entry content includes strategy, summarized_count,
 ///   and the summary body
 #[test]
 fn hydrate_store_entries_marker_shows_strategy_and_counts() {
@@ -647,10 +639,6 @@ fn hydrate_store_entries_marker_shows_strategy_and_counts() {
     assert!(
         compaction_content.contains("7 summarized"),
         "expected summarized_count=7 in compaction content, got: {compaction_content}"
-    );
-    assert!(
-        compaction_content.contains("2 kept"),
-        "expected kept_recent_count=2 in compaction content, got: {compaction_content}"
     );
     assert!(
         compaction_content.contains("sliding_summary"),

@@ -73,7 +73,7 @@ fn help_describes_compaction_strategies() {
 fn docs_describe_transcript_visible_compaction_summary() {
     let docs = read_usage_docs();
     assert!(docs.contains("transcript-visible compaction summary"));
-    assert!(docs.contains("source + summarized/kept counts"));
+    assert!(docs.contains("source + summarized counts"));
 }
 
 #[test]

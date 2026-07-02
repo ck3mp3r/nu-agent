@@ -194,7 +194,7 @@ const COMPACTION_SUMMARY_MAX_CHARS: usize = 500;
 ///
 /// Produces a stats header line followed by the (optionally truncated) summary body:
 /// ```text
-/// 10 summarized · 3 kept · strategy: sliding_summary
+/// 10 summarized · strategy: sliding_summary
 ///
 /// Summary text here...
 /// ```
@@ -202,8 +202,8 @@ const COMPACTION_SUMMARY_MAX_CHARS: usize = 500;
 /// If the summary is empty, only the stats header is emitted.
 fn format_compaction_content(marker: &crate::session::CompactionMarker) -> String {
     let stats = format!(
-        "{} summarized · {} kept · strategy: {}",
-        marker.summarized_count, marker.kept_recent_count, marker.strategy
+        "{} summarized · strategy: {}",
+        marker.summarized_count, marker.strategy
     );
 
     let body = marker.summary.trim();
