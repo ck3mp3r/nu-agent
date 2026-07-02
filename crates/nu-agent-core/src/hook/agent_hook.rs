@@ -250,7 +250,7 @@ where
                 let _ = self.ui_tx.send(UiEvent::Warning {
                     message: message.clone(),
                 });
-                return ToolCallHookAction::Skip { reason: message };
+                return ToolCallHookAction::Terminate { reason: message };
             }
         }
 

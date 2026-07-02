@@ -380,7 +380,7 @@ async fn on_tool_result_emits_success_true_for_normal_result() {
 }
 
 #[tokio::test]
-async fn doom_loop_returns_skip_not_terminate() {
+async fn doom_loop_returns_terminate() {
     let (hook, _rx) = make_hook_with_resolver(MockResolver(PermissionDecision::Allow));
 
     for i in 0..DOOM_LOOP_THRESHOLD {
@@ -399,8 +399,8 @@ async fn doom_loop_returns_skip_not_terminate() {
             );
         } else {
             assert!(
-                matches!(result, ToolCallHookAction::Skip { .. }),
-                "iteration {i} should be Skip (not Terminate)"
+                matches!(result, ToolCallHookAction::Terminate { .. }),
+                "iteration {i} should Terminate the turn"
             );
         }
     }
@@ -698,8 +698,8 @@ async fn doom_state_persists_across_hooks() {
     )
     .await;
     assert!(
-        matches!(result, ToolCallHookAction::Skip { .. }),
-        "hook2 call 5 should Skip (doom loop)"
+        matches!(result, ToolCallHookAction::Terminate { .. }),
+        "hook2 call 5 should Terminate (doom loop)"
     );
 }
 
