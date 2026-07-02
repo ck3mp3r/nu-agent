@@ -21,7 +21,7 @@ fn build_http_client(read_timeout_secs: Option<u64>) -> reqwest::Client {
     let mut builder = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .pool_idle_timeout(Duration::from_secs(20))
-        .pool_max_idle_per_host(0);
+        .pool_max_idle_per_host(5);
     if read_timeout > 0 {
         builder = builder.read_timeout(Duration::from_secs(read_timeout));
     }

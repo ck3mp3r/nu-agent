@@ -41,6 +41,7 @@ struct FakeInteractiveUi {
     submitted: std::collections::VecDeque<String>,
     quit: bool,
     pump_count: usize,
+    min_pump_count: usize,
     call_order: Vec<&'static str>,
     hydrated_messages: Vec<UiMessageSnapshot>,
     mcp_toggle_requests: std::collections::VecDeque<McpToggleRequest>,
@@ -62,6 +63,7 @@ impl FakeInteractiveUi {
             submitted: prompts.iter().map(|s| s.to_string()).collect(),
             quit: false,
             pump_count: 0,
+            min_pump_count: 1,
             call_order: Vec::new(),
             hydrated_messages: Vec::new(),
             mcp_toggle_requests: std::collections::VecDeque::new(),
@@ -80,6 +82,11 @@ impl FakeInteractiveUi {
 
     fn with_expected_mcp_updates(mut self, expected_mcp_updates: usize) -> Self {
         self.expected_mcp_updates = expected_mcp_updates;
+        self
+    }
+
+    fn with_min_pump_count(mut self, min_pump_count: usize) -> Self {
+        self.min_pump_count = min_pump_count;
         self
     }
 }
@@ -108,7 +115,7 @@ impl LifecycleUi for FakeInteractiveUi {
         if self.submitted.is_empty()
             && self.mcp_toggle_requests.is_empty()
             && self.mcp_states.len() >= self.expected_mcp_updates
-            && self.pump_count > 1
+            && self.pump_count > self.min_pump_count
         {
             self.quit = true;
         }
@@ -398,19 +405,11 @@ fn interactive_loop_skips_auto_compaction_when_policy_no_fire() {
 #[test]
 fn interactive_loop_does_not_duplicate_auto_compaction_while_disarmed() {
     let mut runtime = FakeRuntime {
-        auto_decisions: [
-            CompactionTriggerDecision::Fire {
-                source: CompactionTriggerSource::AutoThreshold,
-                reason: "threshold_reached".to_string(),
-                strategy: CompactionStrategy::SlidingSummary,
-            },
-            CompactionTriggerDecision::NoFire {
-                reason: "disarmed".to_string(),
-            },
-            CompactionTriggerDecision::NoFire {
-                reason: "disarmed".to_string(),
-            },
-        ]
+        auto_decisions: [CompactionTriggerDecision::Fire {
+            source: CompactionTriggerSource::AutoThreshold,
+            reason: "threshold_reached".to_string(),
+            strategy: CompactionStrategy::SlidingSummary,
+        }]
         .into_iter()
         .collect(),
         ..Default::default()
@@ -425,6 +424,51 @@ fn interactive_loop_does_not_duplicate_auto_compaction_while_disarmed() {
     assert_eq!(
         runtime.executed_compaction_sources[0],
         CompactionTriggerSource::AutoThreshold
+    );
+}
+
+#[test]
+fn auto_compaction_rearms_after_turn_completion() {
+    let mut runtime = FakeRuntime {
+        auto_decisions: [
+            CompactionTriggerDecision::Fire {
+                source: CompactionTriggerSource::AutoThreshold,
+                reason: "threshold_reached".to_string(),
+                strategy: CompactionStrategy::SlidingSummary,
+            },
+            CompactionTriggerDecision::Fire {
+                source: CompactionTriggerSource::AutoThreshold,
+                reason: "threshold_reached_again".to_string(),
+                strategy: CompactionStrategy::SlidingSummary,
+            },
+        ]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    };
+    // 10 pumps: startup eval → dispatch prompt → collect result → re-arm → second eval
+    let mut ui = FakeInteractiveUi::with_prompts(&["hello"]).with_min_pump_count(10);
+
+    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+        .expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(
+        runtime.prompts,
+        vec!["hello".to_string()],
+        "prompt must be processed"
+    );
+    assert_eq!(
+        runtime.auto_decisions.len(),
+        0,
+        "all decisions must be consumed"
+    );
+    assert_eq!(
+        runtime.executed_compaction_sources,
+        vec![
+            CompactionTriggerSource::AutoThreshold,
+            CompactionTriggerSource::AutoThreshold,
+        ]
     );
 }
 

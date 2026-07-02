@@ -162,6 +162,7 @@ where
         let mut worker_active = false;
         let mut pending_mcp_toggles: Vec<PendingMcpToggle> = Vec::new();
         let mut pending_auto_compaction: Option<PendingAutoCompaction> = None;
+        let mut should_evaluate_compaction = true; // evaluate once on startup (session resume)
         let mut pending_compaction_trigger: Option<PendingCompactionTrigger> = None;
         let mut pending_model_switch: Option<PendingModelSwitch> = None;
         let mut pending_agent_switch: Option<PendingAgentSwitch> = None;
@@ -322,7 +323,8 @@ where
                     }
                 }
 
-                if pending_auto_compaction.is_none() {
+                if should_evaluate_compaction && pending_auto_compaction.is_none() {
+                    should_evaluate_compaction = false;
                     let (response_tx, response_rx) = mpsc::channel();
                     if worker_cmd_tx
                         .send(WorkerCommand::EvaluateAutoCompaction { response_tx })
@@ -344,6 +346,7 @@ where
             } else {
                 pending_auto_compaction = None;
                 pending_compaction_trigger = None;
+                should_evaluate_compaction = false;
             }
 
             if ui.take_cancel_requested() {
@@ -354,6 +357,7 @@ where
 
             while let Ok(outcome) = worker_result_rx.try_recv() {
                 worker_active = false;
+                should_evaluate_compaction = true;
                 match outcome {
                     TurnOutcome::Success(_) => {
                         log::info!("Turn outcome: Success");
@@ -631,6 +635,7 @@ where
                     || !pending_mcp_toggles.is_empty()
                     || pending_auto_compaction.is_some()
                     || pending_compaction_trigger.is_some()
+                    || should_evaluate_compaction
                 {
                     continue;
                 }
