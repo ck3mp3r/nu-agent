@@ -328,7 +328,6 @@ impl<'a> TurnExecutor<'a> {
                         &llm_response,
                         self.config,
                         final_session_id,
-                        0, // compaction_count not relevant for cancelled turns
                         span,
                     )));
                 }
@@ -507,7 +506,6 @@ impl<'a> TurnExecutor<'a> {
                 },
                 self.config,
                 final_session_id,
-                0,
                 span,
             )));
         }
@@ -866,13 +864,11 @@ pub fn classify_completion_error(msg: &str) -> (CompletionErrorKind, String) {
 }
 
 /// Build the final response `Value` from turn data. Called by the delegate after
-/// auto-compaction has been evaluated, so `compaction_count` reflects the current
-/// post-compaction value.
+/// auto-compaction has been evaluated.
 pub fn build_response(
     response_data: Option<TurnResponseData>,
     config: &Config,
     session_id: Option<&str>,
-    compaction_count: usize,
     span: Span,
 ) -> Value {
     let data = response_data.unwrap_or(TurnResponseData {
@@ -904,8 +900,7 @@ pub fn build_response(
         tool_call_metadata: Vec::new(), // TODO: track tool metadata in TurnResult
     };
 
-    let response_value =
-        crate::llm::format_response(&llm_response, config, session_id, compaction_count, span);
+    let response_value = crate::llm::format_response(&llm_response, config, session_id, span);
 
     if data.has_session
         && let Ok(record) = response_value.as_record()

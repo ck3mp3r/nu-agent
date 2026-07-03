@@ -222,7 +222,6 @@ impl ConversationStore for JsonlConversationStore {
                 metadata_type: "session".to_string(),
                 session_id: session_id.to_string(),
                 created_at: chrono::Utc::now(),
-                compaction_count: 0,
             };
 
             let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
@@ -274,7 +273,6 @@ impl ConversationStore for JsonlConversationStore {
                 metadata_type: "session".to_string(),
                 session_id: session_id.to_string(),
                 created_at: chrono::Utc::now(),
-                compaction_count: 0,
             };
 
             let mut file = OpenOptions::new().create(true).append(true).open(&path)?;

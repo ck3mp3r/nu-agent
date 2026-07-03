@@ -20,8 +20,6 @@ use rig::memory::ConversationMemory;
 /// 5. Clears in-memory cache
 /// 6. Resets cache to LLM context (in-memory only — no JSONL write)
 ///
-/// Note: The caller is responsible for incrementing its own compaction_count.
-///
 /// # Arguments
 /// * `session_id` - The session ID to compact
 /// * `config` - Compaction parameters (thresholds, strategy, budget)

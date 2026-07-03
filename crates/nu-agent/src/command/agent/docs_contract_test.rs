@@ -49,7 +49,6 @@ fn docs_do_not_claim_skills_listing_tool_for_slash_commands() {
 fn docs_describe_session_memory_persistence_after_compaction() {
     let docs = read_usage_docs();
     assert!(docs.contains("session JSONL"));
-    assert!(docs.contains("compaction_count"));
 }
 
 #[test]

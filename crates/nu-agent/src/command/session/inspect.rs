@@ -132,10 +132,6 @@ impl AgentSessionInspect {
             "message_count",
             Value::int(messages.len() as i64, call.head),
         );
-        session_record.push(
-            "compaction_count",
-            Value::int(session.compaction_count() as i64, call.head),
-        );
         session_record.push("config", Value::record(config_record, call.head));
         session_record.push("messages", Value::list(message_values, call.head));
 
@@ -155,7 +151,7 @@ impl SimplePluginCommand for AgentSessionInspect {
     }
 
     fn extra_description(&self) -> &str {
-        "Shows full session details including config, message history, and compaction count."
+        "Shows full session details including config and message history."
     }
 
     fn search_terms(&self) -> Vec<&str> {

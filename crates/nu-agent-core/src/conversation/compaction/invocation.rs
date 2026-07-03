@@ -84,8 +84,6 @@ where
     .await
     .map_err(|e| e.to_string())?;
 
-    session.increment_compaction_count();
-
     if outcome.summarized_count == 0 {
         return Ok(None);
     }

@@ -1170,8 +1170,7 @@ fn journey_corrupt_session_healed_by_repair_on_load() {
         let metadata = serde_json::json!({
             "type": "session",
             "session_id": session_id,
-            "created_at": "2024-01-01T00:00:00Z",
-            "compaction_count": 0
+            "created_at": "2024-01-01T00:00:00Z"
         });
         writeln!(f, "{}", serde_json::to_string(&metadata).unwrap()).unwrap();
 
@@ -1908,8 +1907,7 @@ fn journey_null_args_tool_call_repaired_on_load() {
         let metadata = serde_json::json!({
             "type": "session",
             "session_id": session_id,
-            "created_at": "2024-01-01T00:00:00Z",
-            "compaction_count": 0
+            "created_at": "2024-01-01T00:00:00Z"
         });
         writeln!(
             f,

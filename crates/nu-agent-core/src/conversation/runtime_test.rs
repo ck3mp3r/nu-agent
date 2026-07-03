@@ -1004,23 +1004,11 @@ fn accessor_take_mailbox_rx_returns_some_and_drains() {
 // ========================================================================
 
 #[test]
-fn compaction_state_compaction_count_starts_at_zero() {
-    let state = super::super::compaction::state::CompactionState::new(
-        200_000,
-        0.80,
-        0,
-        CompactionStrategy::SlidingSummary,
-    );
-    assert_eq!(state.compaction_count(), 0);
-}
-
-#[test]
 fn compaction_state_compacting_flag_starts_false() {
     use std::sync::atomic::Ordering;
     let state = super::super::compaction::state::CompactionState::new(
         200_000,
         0.80,
-        0,
         CompactionStrategy::SlidingSummary,
     );
     assert!(!state.compacting().load(Ordering::SeqCst));

@@ -7,7 +7,6 @@ pub fn format_response(
     llm_response: &LlmResponse,
     config: &Config,
     session_id: Option<&str>,
-    compaction_count: usize,
     span: Span,
 ) -> Value {
     use chrono::Utc;
@@ -46,15 +45,6 @@ pub fn format_response(
     if let Some(id) = session_id {
         meta_fields.push(("session_id".to_string(), Value::string(id, span)));
     }
-
-    meta_fields.push((
-        "compacted".to_string(),
-        Value::bool(compaction_count > 0, span),
-    ));
-    meta_fields.push((
-        "compaction_count".to_string(),
-        Value::int(compaction_count as i64, span),
-    ));
 
     let tool_calls_list = build_tool_call_values(llm_response, span);
     meta_fields.push(("tool_calls".to_string(), Value::list(tool_calls_list, span)));

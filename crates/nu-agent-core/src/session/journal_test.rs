@@ -182,7 +182,6 @@ async fn load_is_cached() {
     // First load: cache miss — reads from JSONL and populates cache
     let first = mem.load("conv-1").await.unwrap();
     assert_eq!(first.len(), 2);
-    let count_after_first = mem.compaction_count();
 
     // Mutate the JSONL file — add more messages (bypasses cache)
     store
@@ -195,13 +194,6 @@ async fn load_is_cached() {
         second.len(),
         2,
         "second load must hit cache, not re-read JSONL"
-    );
-
-    // compaction_count must be unchanged — only updates on cache-miss
-    assert_eq!(
-        mem.compaction_count(),
-        count_after_first,
-        "compaction_count must not change on a cache-hit load"
     );
 }
 
@@ -302,35 +294,6 @@ async fn reset_context_replaces_cache_only() {
         1,
         "JSONL should still have only the original message"
     );
-}
-
-#[tokio::test]
-async fn compaction_count_populated_after_load() {
-    let tmp = TempDir::new().unwrap();
-    let mem = JournalConversationMemory::new(tmp.path().to_path_buf());
-
-    // Write two compaction markers to the JSONL
-    let store = JsonlConversationStore::new(tmp.path().to_path_buf());
-    store
-        .append("conv-1", &[Message::user("m1")], None)
-        .unwrap();
-
-    let marker1 = CompactionMarker::new("Summary1".to_string(), 1, 1, "sliding_summary");
-    store.append_marker("conv-1", &marker1, None).unwrap();
-    store
-        .append("conv-1", &[Message::user("m2")], None)
-        .unwrap();
-
-    let marker2 = CompactionMarker::new("Summary2".to_string(), 1, 2, "sliding_summary");
-    store.append_marker("conv-1", &marker2, None).unwrap();
-    store
-        .append("conv-1", &[Message::user("m3")], None)
-        .unwrap();
-
-    // Load to populate compaction_count
-    let _ = mem.load("conv-1").await.unwrap();
-
-    assert_eq!(mem.compaction_count(), 2);
 }
 
 #[tokio::test]

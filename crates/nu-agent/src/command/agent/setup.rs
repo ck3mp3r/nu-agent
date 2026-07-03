@@ -9,7 +9,6 @@ pub(crate) struct SetupResult {
     pub(crate) parent_name: Option<String>,
     pub(crate) merged_compaction: nu_agent_core::config::CompactionConfig,
     pub(crate) compaction_strategy: nu_agent_core::compaction::CompactionStrategy,
-    pub(crate) compaction_count: usize,
 }
 
 pub(crate) struct RegisterToolsInput<'a> {
@@ -193,13 +192,10 @@ pub(crate) fn register_tools(input: RegisterToolsInput<'_>) -> Result<SetupResul
     // Extract compaction policy fields (not in CompactionParams)
     let compaction_strategy = compaction_params.compaction_strategy;
 
-    // Apply config to session and extract session metadata
-    let compaction_count = if let Some(session) = session {
+    // Apply config to session
+    if let Some(session) = session {
         session.set_compaction_config(compaction_params);
-        session.compaction_count()
-    } else {
-        0
-    };
+    }
 
     // Connect to broker if flags provided
     let (broker_sender, mailbox_rx, parent_name) = if let Some(flags) = broker_flags {
@@ -278,6 +274,5 @@ pub(crate) fn register_tools(input: RegisterToolsInput<'_>) -> Result<SetupResul
         parent_name,
         merged_compaction,
         compaction_strategy,
-        compaction_count,
     })
 }

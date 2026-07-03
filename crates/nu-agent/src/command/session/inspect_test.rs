@@ -72,9 +72,6 @@ fn test_agent_session_inspect_displays_full_session_details() {
         }
     }
 
-    // Verify compaction count (should be 0 for new session)
-    assert_eq!(session.compaction_count(), 0);
-
     // Verify config is present (default config)
     let config = session.compaction_config();
     assert_eq!(

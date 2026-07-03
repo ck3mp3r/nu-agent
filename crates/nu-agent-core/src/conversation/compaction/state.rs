@@ -9,7 +9,6 @@ use crate::protocol::compaction::{
 pub struct CompactionState {
     context_window_max_tokens: u64,
     compaction_threshold_pct: f64,
-    compaction_count: usize,
     compaction_strategy: CompactionStrategy,
     compacting: Arc<AtomicBool>,
 }
@@ -18,24 +17,14 @@ impl CompactionState {
     pub fn new(
         context_window_max_tokens: u64,
         compaction_threshold_pct: f64,
-        compaction_count: usize,
         compaction_strategy: CompactionStrategy,
     ) -> Self {
         Self {
             context_window_max_tokens,
             compaction_threshold_pct,
-            compaction_count,
             compaction_strategy,
             compacting: Arc::new(AtomicBool::new(false)),
         }
-    }
-
-    pub fn compaction_count(&self) -> usize {
-        self.compaction_count
-    }
-
-    pub fn set_compaction_count(&mut self, count: usize) {
-        self.compaction_count = count;
     }
 
     pub fn compacting(&self) -> &Arc<AtomicBool> {

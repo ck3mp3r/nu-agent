@@ -431,7 +431,6 @@ pub(crate) struct RuntimeBuildParams {
     pub(crate) final_session_id: Option<String>,
     pub(crate) context_window_max_tokens: u64,
     pub(crate) compaction_threshold_pct: f64,
-    pub(crate) compaction_count: usize,
     pub(crate) compaction_strategy: nu_agent_core::compaction::CompactionStrategy,
     pub(crate) effective_permissions: nu_agent_core::tools::authz::PermissionsConfig,
     pub(crate) permissions_startup_summary: String,
@@ -491,7 +490,6 @@ pub(crate) fn build_runtime(params: RuntimeBuildParams) -> AgentConversationRunt
         compaction_state: CompactionState::new(
             params.context_window_max_tokens,
             params.compaction_threshold_pct,
-            params.compaction_count,
             params.compaction_strategy,
         ),
         permission_state: PermissionState::new(

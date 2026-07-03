@@ -49,10 +49,6 @@ fn test_agent_session_list_returns_table_with_session_stats() {
         session1_info.message_count, 5,
         "Session1 should have 5 messages"
     );
-    assert_eq!(
-        session1_info.compaction_count, 0,
-        "Session1 should have 0 compactions"
-    );
 
     // Find session2 and verify its message count
     let session2_info = sessions
@@ -63,10 +59,6 @@ fn test_agent_session_list_returns_table_with_session_stats() {
     assert_eq!(
         session2_info.message_count, 10,
         "Session2 should have 10 messages"
-    );
-    assert_eq!(
-        session2_info.compaction_count, 0,
-        "Session2 should have 0 compactions"
     );
 }
 

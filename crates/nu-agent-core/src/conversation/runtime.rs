@@ -229,22 +229,18 @@ impl CoreRuntime for AgentConversationRuntime {
             TurnOutcome::EarlyReturn(value) => Ok(value),
             TurnOutcome::Completed => {
                 // Evaluate auto-compaction (runtime method) after turn completes
-                let mut compaction_count = 0;
-                if self.final_session_id.is_some() {
-                    if let Some(CompactionTriggerDecision::Fire { source, .. }) =
+                if self.final_session_id.is_some()
+                    && let Some(CompactionTriggerDecision::Fire { source, .. }) =
                         self.evaluate_auto_compaction()
-                        && let Err(error) = self.execute_compaction_event(ui, source)
-                    {
-                        ui.emit(&UiEvent::Warning { message: error });
-                    }
-                    compaction_count = self.compaction_state.compaction_count();
+                    && let Err(error) = self.execute_compaction_event(ui, source)
+                {
+                    ui.emit(&UiEvent::Warning { message: error });
                 }
 
                 Ok(build_response(
                     response_data,
                     self.provider_state.config(),
                     self.final_session_id.as_deref(),
-                    compaction_count,
                     span,
                 ))
             }
@@ -466,8 +462,7 @@ impl AgentConversationRuntime {
         )
         .execute(ui, source, self.provider_state.client().unwrap())?;
 
-        if let Some((new_count, summary_total_tokens)) = result {
-            self.compaction_state.set_compaction_count(new_count);
+        if let Some(summary_total_tokens) = result {
             // Use the summary token count captured from the streaming Final chunk.
             // If the provider didn't yield usage, fall back to None so the stale
             // pre-compaction count doesn't re-trigger compaction on next load.

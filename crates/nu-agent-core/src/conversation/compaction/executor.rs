@@ -43,17 +43,17 @@ impl<'a> CompactionExecutor<'a> {
         self.final_session_id
     }
 
-    /// Execute compaction. Returns `Ok(Some((new_compaction_count, summary_total_tokens)))` when
+    /// Execute compaction. Returns `Ok(Some(summary_total_tokens))` when
     /// compaction was triggered, or `Ok(None)` when compaction was skipped.
-    /// Caller is responsible for updating `compaction_count` and setting
-    /// `last_total_tokens` to `summary_total_tokens` when `Some` is returned.
+    /// Caller is responsible for setting `last_total_tokens` to
+    /// `summary_total_tokens` when `Some` is returned.
     /// Returns `Err(message)` on failure.
     pub fn execute<U: ProgressUi>(
         &self,
         ui: &mut U,
         source: CompactionTriggerSource,
         cached_client: &CachedProviderClient,
-    ) -> Result<Option<(usize, Option<u64>)>, String> {
+    ) -> Result<Option<Option<u64>>, String> {
         let source_label = source.as_str().to_string();
 
         // Load session temporarily for compaction
@@ -111,7 +111,7 @@ impl<'a> CompactionExecutor<'a> {
                     source: source_label,
                 });
                 ui.emit(&event);
-                Ok(Some((session.compaction_count(), summary_total_tokens)))
+                Ok(Some(summary_total_tokens))
             }
             Ok(None) => Ok(None),
             Err(error) => {

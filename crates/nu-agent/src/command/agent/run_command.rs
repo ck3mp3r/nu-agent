@@ -259,7 +259,6 @@ pub(super) fn run_command(
         parent_name,
         merged_compaction,
         compaction_strategy,
-        compaction_count,
     } = super::setup::register_tools(super::setup::RegisterToolsInput {
         runtime: &runtime,
         tool_server_handle: &tool_server_handle,
@@ -308,7 +307,6 @@ pub(super) fn run_command(
             final_session_id: session_resolution.final_session_id,
             context_window_max_tokens,
             compaction_threshold_pct: merged_compaction.proactive_threshold_pct.unwrap_or(0.80),
-            compaction_count,
             compaction_strategy,
             effective_permissions,
             permissions_startup_summary,

@@ -50,8 +50,6 @@ pub struct Session {
     created_at: DateTime<Utc>,
     #[serde(default)]
     config: CompactionParams,
-    #[serde(default)]
-    compaction_count: usize,
 }
 
 /// Information about a session, extracted from metadata without loading all messages.
@@ -62,8 +60,6 @@ pub struct SessionInfo {
     pub id: String,
     /// Number of messages in the session (excluding metadata line)
     pub message_count: usize,
-    /// Number of compactions performed on this session
-    pub compaction_count: usize,
     /// Timestamp of last activity (currently same as created_at)
     pub last_active: DateTime<Utc>,
 }
@@ -80,7 +76,6 @@ impl Session {
             id,
             created_at: Utc::now(),
             config: CompactionParams::default(),
-            compaction_count: 0,
         }
     }
 
@@ -98,16 +93,6 @@ impl Session {
     pub fn created_at(&self) -> &DateTime<Utc> {
         &self.created_at
     }
-
-    /// Returns the compaction count.
-    pub fn compaction_count(&self) -> usize {
-        self.compaction_count
-    }
-
-    /// Increments the compaction count by one.
-    pub fn increment_compaction_count(&mut self) {
-        self.compaction_count += 1;
-    }
 }
 
 /// Metadata stored as the first line of a JSONL file.
@@ -117,8 +102,6 @@ pub struct SessionMetadata {
     pub metadata_type: String,
     pub session_id: String,
     pub created_at: DateTime<Utc>,
-    #[serde(default)]
-    pub compaction_count: usize,
 }
 
 impl SessionStore {
@@ -246,7 +229,6 @@ impl SessionStore {
             id: metadata.session_id,
             created_at: metadata.created_at,
             config: CompactionParams::default(), // Use default config for loaded sessions
-            compaction_count: metadata.compaction_count,
         })
     }
 
@@ -318,7 +300,6 @@ impl SessionStore {
         Ok(SessionInfo {
             id: metadata.session_id,
             message_count,
-            compaction_count: metadata.compaction_count,
             last_active: metadata.created_at,
         })
     }
@@ -330,7 +311,6 @@ impl SessionStore {
             metadata_type: "meta".to_string(),
             session_id: session.id.clone(),
             created_at: session.created_at,
-            compaction_count: session.compaction_count,
         };
 
         let metadata_json = serde_json::to_string(&metadata).map_err(|e| {

@@ -32,8 +32,6 @@ pub struct JournalConversationMemory {
     cache: Arc<Mutex<HashMap<String, Vec<Message>>>>,
     /// The JSONL backing store.
     store: Arc<JsonlConversationStore>,
-    /// Number of compaction markers seen during the last load.
-    compaction_count: Arc<Mutex<usize>>,
 }
 
 impl JournalConversationMemory {
@@ -42,16 +40,7 @@ impl JournalConversationMemory {
         Self {
             cache: Arc::new(Mutex::new(HashMap::new())),
             store: Arc::new(JsonlConversationStore::new(cache_dir)),
-            compaction_count: Arc::new(Mutex::new(0)),
         }
-    }
-
-    /// Return the number of compaction markers seen in the last `load`.
-    pub fn compaction_count(&self) -> usize {
-        *self
-            .compaction_count
-            .lock()
-            .expect("compaction_count lock poisoned")
     }
 
     /// Write a compaction marker to JSONL only — does not update the in-memory cache.
@@ -149,24 +138,10 @@ impl ConversationMemory for JournalConversationMemory {
                 .load_all(conversation_id)
                 .map_err(|e| MemoryError::Backend(e.to_string().into()))?;
 
-            // Count compaction markers
-            let marker_count = entries
-                .iter()
-                .filter(|e| matches!(e, StoreEntry::Marker(_)))
-                .count();
-
-            {
-                let mut count = self
-                    .compaction_count
-                    .lock()
-                    .map_err(|e| MemoryError::Internal(e.to_string()))?;
-                *count = marker_count;
-            }
-
             // Extract LLM context (handles compaction markers)
             let messages = extract_llm_context(&entries);
             log::debug!(
-                "JournalMemory.load: session={conversation_id} messages={} markers={marker_count}",
+                "JournalMemory.load: session={conversation_id} messages={}",
                 messages.len()
             );
 

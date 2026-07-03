@@ -83,10 +83,6 @@ impl SimplePluginCommand for AgentSessionList {
                     Value::int(info.message_count as i64, call.head),
                 );
                 record.push(
-                    "compaction_count",
-                    Value::int(info.compaction_count as i64, call.head),
-                );
-                record.push(
                     "last_active",
                     Value::string(info.last_active.to_rfc3339(), call.head),
                 );
