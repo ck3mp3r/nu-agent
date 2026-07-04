@@ -177,16 +177,12 @@ where
         summarized_count,
         strategy_name,
     );
-    memory
-        .append_marker(session_id, &marker, None)
-        .map_err(|e| io::Error::other(e.to_string()))?;
+    memory.append_marker(session_id, &marker, None)?;
 
     // Re-append kept messages to JSONL only (TokenTruncate and SlidingWindow).
     // SlidingSummary returns empty store_kept_messages — marker is the last entry.
     if !store_kept_messages.is_empty() {
-        memory
-            .append_messages_to_store_only(session_id, &store_kept_messages, None)
-            .map_err(|e| io::Error::other(e.to_string()))?;
+        memory.append_messages_to_store_only(session_id, &store_kept_messages, None)?;
     }
 
     // Reset the in-memory cache to the compacted LLM context.

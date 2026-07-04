@@ -43,7 +43,9 @@ impl MockStore {
 }
 
 impl ConversationStore for MockStore {
-    fn load(&self, _session_id: &str) -> Result<Vec<Message>, Box<dyn std::error::Error>> {
+    type Error = std::io::Error;
+
+    fn load(&self, _session_id: &str) -> Result<Vec<Message>, std::io::Error> {
         Ok(vec![])
     }
 
@@ -52,11 +54,11 @@ impl ConversationStore for MockStore {
         _session_id: &str,
         _messages: &[Message],
         _last_total_tokens: Option<u64>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), std::io::Error> {
         Ok(())
     }
 
-    fn clear(&self, _session_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+    fn clear(&self, _session_id: &str) -> Result<(), std::io::Error> {
         Ok(())
     }
 
@@ -65,14 +67,14 @@ impl ConversationStore for MockStore {
         _session_id: &str,
         _marker: &CompactionMarker,
         _last_total_tokens: Option<u64>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), std::io::Error> {
         Ok(())
     }
 
     fn load_all(
         &self,
         _session_id: &str,
-    ) -> Result<(Vec<StoreEntry>, Option<u64>), Box<dyn std::error::Error>> {
+    ) -> Result<(Vec<StoreEntry>, Option<u64>), std::io::Error> {
         Ok((vec![], None))
     }
 }

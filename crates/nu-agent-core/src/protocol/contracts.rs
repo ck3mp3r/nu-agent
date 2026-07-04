@@ -1,8 +1,11 @@
 use nu_protocol::{LabeledError, Span, Value};
 
 use crate::protocol::{
-    compaction::{CompactionTriggerDecision, CompactionTriggerSource},
+    compaction_runtime::HasCompaction,
     event::{PermissionDecisionSubmission, ToolDisplay, UiEvent},
+    mcp_management::HasMcpManagement,
+    model_switching::HasModelSwitching,
+    session_management::HasSessionManagement,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -209,65 +212,22 @@ pub trait CoreRuntime {
 }
 
 /// Full runtime with MCP, model switching, compaction, and session management.
-/// Used by run_interactive_loop. All methods have no-op defaults.
-pub trait ExtendedRuntime: CoreRuntime {
-    fn set_mcp_server_enabled(
-        &mut self,
-        _server_name: &str,
-        _enabled: bool,
-    ) -> Result<McpUsabilityState, String> {
-        Ok(McpUsabilityState::Disabled)
-    }
+/// Used by run_interactive_loop.
+///
+/// # Deprecation
+///
+/// This trait is deprecated. Prefer the focused capability traits:
+/// `CoreRuntime + HasMcpManagement + HasModelSwitching + HasSessionManagement + HasCompaction`
+#[deprecated(
+    note = "Use focused traits: CoreRuntime + HasMcpManagement + HasModelSwitching + HasSessionManagement + HasCompaction"
+)]
+pub trait ExtendedRuntime:
+    CoreRuntime + HasMcpManagement + HasModelSwitching + HasSessionManagement + HasCompaction
+{
+}
 
-    fn llm_visible_mcp_tool_count(&self) -> usize {
-        0
-    }
-
-    fn llm_visible_mcp_tool_count_for_server(&self, _server_name: &str) -> usize {
-        0
-    }
-
-    fn llm_visible_mcp_tool_names_by_server(&self) -> Vec<(String, Vec<String>)> {
-        Vec::new()
-    }
-
-    fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
-        Err("model switching not supported".to_string())
-    }
-
-    fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
-        Err("agent switch not supported in this runtime".to_string())
-    }
-
-    fn active_model_identity(&self) -> String {
-        "unknown/unknown".to_string()
-    }
-
-    fn max_context_tokens(&self) -> Option<u64> {
-        None
-    }
-
-    fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
-        None
-    }
-
-    fn execute_compaction_trigger<U: ProgressUi>(
-        &mut self,
-        _ui: &mut U,
-        _source: CompactionTriggerSource,
-    ) -> Result<(), String> {
-        Ok(())
-    }
-
-    fn clear_session(&mut self) {}
-
-    fn new_session(&mut self) {}
-
-    /// Seed `MemoryState.last_total_tokens` from a loaded session so that
-    /// compaction can fire on the first turn after a session resume.
-    ///
-    /// Called by `run_hydrated_interactive_loop` immediately after the UI
-    /// transcript hydration. The default implementation is a no-op, which is
-    /// correct for test runtimes that do not have a `MemoryState`.
-    fn seed_last_total_tokens(&mut self, _tokens: Option<u64>) {}
+#[allow(deprecated)]
+impl<T> ExtendedRuntime for T where
+    T: CoreRuntime + HasMcpManagement + HasModelSwitching + HasSessionManagement + HasCompaction
+{
 }

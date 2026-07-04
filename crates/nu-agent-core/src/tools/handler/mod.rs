@@ -1,4 +1,5 @@
 mod authz_gate;
+pub mod builtin_kinds;
 mod conversion;
 mod dispatch;
 pub mod fs;
@@ -25,27 +26,18 @@ pub use types::{
     ToolHandlerContext, ToolHandlerError, ToolSource,
 };
 
-// Export authz_gate types for permission_bridge
+// Export authz_gate types for permission resolvers
 pub use authz_gate::{AuthorizationFlowContext, enforce_authorization_for_tool_call};
 
 /// Returns true for filesystem-mutating builtin tools (`edit`, `patch`).
 /// These are classified as `ToolSource::BuiltinFs` and go through the full
 /// permission flow — they are NOT auto-approved despite being built-in.
 pub fn is_fs_tool_name(tool_name: &str) -> bool {
-    matches!(tool_name, "edit" | "patch")
+    tool_name
+        .parse::<builtin_kinds::BuiltinKind>()
+        .is_ok_and(|b| b.is_fs())
 }
 
 pub fn is_builtin_tool_name(tool_name: &str) -> bool {
-    matches!(
-        tool_name,
-        "read"
-            | "edit"
-            | "patch"
-            | "skill"
-            | "spawn_agent"
-            | "terminate_agent"
-            | "send_message"
-            | "list_agents"
-            | "http"
-    )
+    tool_name.parse::<builtin_kinds::BuiltinKind>().is_ok()
 }

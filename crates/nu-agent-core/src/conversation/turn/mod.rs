@@ -2,7 +2,7 @@
 //!
 //! This module provides `execute_turn` which handles a single conversation turn:
 //! sending user input to the LLM, executing tool calls via hooks, and returning
-//! the final response. Uses `AgentHook<P>` + a tokio MPSC channel to bridge async
+//! the final response. Uses `HookChain<P>` + a tokio MPSC channel to bridge async
 //! events to the sync UI.
 
 use futures::StreamExt;
@@ -10,7 +10,8 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::Config;
-use crate::hook::agent_hook::{AgentHook, HookState};
+use crate::hook::agent_hook::HookState;
+use crate::hook::chain::HookChain;
 use crate::hook::permission_resolver::AsyncPermissionResolver;
 use crate::protocol::contracts::ProgressUi;
 use crate::protocol::event::UiEvent;
@@ -51,146 +52,11 @@ pub struct TurnResult {
     /// is not doubled when a cancelled turn follows prior session history.
     pub pre_turn_message_count: usize,
     /// History snapshot from hook, captured before the last LLM call.
-    /// Populated from `AgentHook::last_known_history()` Arc after the turn completes.
+    /// Populated from `HookChain::last_known_history()` Arc after the turn completes.
     /// Used by executor's Path B cancel fallback when `messages` is `None` (tokio::select
     /// cancelled before rig yielded PromptCancelled) to persist completed tool calls
     /// instead of synthesizing a minimal `[user(prompt)]` placeholder.
     pub last_known_history: Vec<Message>,
-}
-
-/// Error from a conversation turn
-#[derive(Debug)]
-pub struct TurnError {
-    /// Error message
-    pub msg: String,
-    /// Whether the error was due to user cancellation
-    pub cancelled: bool,
-    /// Messages captured at the error site (from rig's chat_history).
-    /// Present for `PromptCancelled`, `MaxTurnsError`, and `UnknownToolCall` errors.
-    /// `None` for errors where rig's internal history is genuinely unrecoverable
-    /// (e.g. `CompletionError`, `ToolError`).
-    pub messages: Option<Vec<Message>>,
-    /// History snapshot from hook, captured before the last LLM call.
-    /// Empty if no `on_completion_call` fired (failure before first HTTP request).
-    pub last_known_history: Vec<Message>,
-    /// Number of messages in persistent storage before this turn started.
-    /// Used by executor error paths to slice only the new-message delta from
-    /// `last_known_history` / `messages` when deciding what to persist.
-    /// Defaults to 0 in all `From` impls; overwritten by `execute_turn_with_channel`.
-    pub pre_turn_message_count: usize,
-}
-
-impl std::fmt::Display for TurnError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.cancelled {
-            write!(f, "Cancelled: {}", self.msg)
-        } else {
-            write!(f, "{}", self.msg)
-        }
-    }
-}
-
-impl std::error::Error for TurnError {}
-
-impl From<rig::completion::PromptError> for TurnError {
-    fn from(err: rig::completion::PromptError) -> Self {
-        match err {
-            rig::completion::PromptError::PromptCancelled {
-                reason,
-                chat_history,
-            } => TurnError {
-                msg: reason,
-                cancelled: true,
-                messages: Some(chat_history),
-                last_known_history: vec![],
-                pre_turn_message_count: 0,
-            },
-            rig::completion::PromptError::MaxTurnsError {
-                max_turns,
-                chat_history,
-                ..
-            } => TurnError {
-                msg: format!("Max turns ({max_turns}) exceeded"),
-                cancelled: false,
-                messages: Some(*chat_history),
-                last_known_history: vec![],
-                pre_turn_message_count: 0,
-            },
-            rig::completion::PromptError::UnknownToolCall {
-                tool_name,
-                chat_history,
-                ..
-            } => TurnError {
-                msg: format!("Unknown tool: {tool_name}"),
-                cancelled: false,
-                messages: Some(*chat_history),
-                last_known_history: vec![],
-                pre_turn_message_count: 0,
-            },
-            other => TurnError {
-                msg: other.to_string(),
-                cancelled: false,
-                messages: None,
-                last_known_history: vec![],
-                pre_turn_message_count: 0,
-            },
-        }
-    }
-}
-
-impl From<rig::agent::StreamingError> for TurnError {
-    fn from(e: rig::agent::StreamingError) -> Self {
-        match e {
-            rig::agent::StreamingError::Prompt(boxed) => match *boxed {
-                rig::completion::PromptError::PromptCancelled {
-                    reason,
-                    chat_history,
-                } => TurnError {
-                    msg: reason,
-                    cancelled: true,
-                    messages: Some(chat_history),
-                    last_known_history: vec![],
-                    pre_turn_message_count: 0,
-                },
-                rig::completion::PromptError::MaxTurnsError {
-                    max_turns,
-                    chat_history,
-                    ..
-                } => TurnError {
-                    msg: format!("Max turns ({max_turns}) exceeded"),
-                    cancelled: false,
-                    messages: Some(*chat_history),
-                    last_known_history: vec![],
-                    pre_turn_message_count: 0,
-                },
-                rig::completion::PromptError::UnknownToolCall {
-                    tool_name,
-                    chat_history,
-                    ..
-                } => TurnError {
-                    msg: format!("Unknown tool: {tool_name}"),
-                    cancelled: false,
-                    messages: Some(*chat_history),
-                    last_known_history: vec![],
-                    pre_turn_message_count: 0,
-                },
-                other => TurnError {
-                    msg: other.to_string(),
-                    cancelled: false,
-                    messages: None,
-                    last_known_history: vec![],
-                    pre_turn_message_count: 0,
-                },
-            },
-            other => TurnError {
-                msg: other.to_string(),
-                cancelled: false,
-                messages: None,
-                last_known_history: vec![],
-                pre_turn_message_count: 0,
-            },
-        }
-    }
 }
 
 /// Context for executing a conversation turn.
@@ -254,7 +120,7 @@ where
 /// Execute a conversation turn using the agent loop with hooks.
 ///
 /// This handles a single conversation turn: sends user input through the agent,
-/// which manages tool calls and LLM interactions internally. The `AgentHook<P>`
+/// which manages tool calls and LLM interactions internally. The `HookChain<P>`
 /// intercepts events (tool calls, LLM calls) and forwards them via an MPSC channel
 /// to this function, which runs on the main thread and bridges to the sync UI.
 ///
@@ -264,7 +130,7 @@ where
 /// Main thread (blocking):          Tokio runtime (async):
 /// ┌─────────────────────┐         ┌──────────────────────┐
 /// │ execute_turn        │ spawn → │ agent completion     │
-/// │   ui_rx drain loop  │ ← ch ← │   AgentHook<P>       │
+/// │   ui_rx drain loop  │ ← ch ← │   HookChain<P>       │
 /// │     ui.emit(...)    │         │     on_tool_call     │
 /// │     cancel_token    │         │     on_llm_start     │
 /// └─────────────────────┘         └──────────────────────┘
@@ -279,11 +145,11 @@ where
 /// Returns `TurnError` if:
 /// - The agent completion fails (LLM error, network, etc.)
 /// - User cancels via UI
-pub fn execute_turn<M, U, P>(
+pub(crate) fn execute_turn<M, U, P>(
     ctx: TurnContext<'_, M>,
     ui: &mut U,
     permission_resolver: P,
-) -> Result<TurnResult, TurnError>
+) -> Result<TurnResult, (TurnError, error::TurnContext)>
 where
     M: rig::completion::CompletionModel + Clone + 'static,
     M::StreamingResponse: rig::completion::request::GetTokenUsage,
@@ -299,7 +165,7 @@ where
 /// This variant is used by TUI mode where the caller creates `(ui_tx, ui_rx)` first
 /// so the hook's `ui_tx` clone and the drain loop's `ui_rx` share the same channel.
 /// The `InteractivePermissionResolver` does NOT own a `ui_tx` — it receives one
-/// per-call from the `AgentHook` (which gets it from this same channel).
+/// per-call from the `HookChain` (which gets it from this same channel).
 ///
 /// For non-interactive (TTY/policy) mode, use `execute_turn` which creates its own channel.
 pub(crate) fn execute_turn_with_channel<M, U, P>(
@@ -308,7 +174,7 @@ pub(crate) fn execute_turn_with_channel<M, U, P>(
     permission_resolver: P,
     ui_tx: mpsc::UnboundedSender<UiEvent>,
     mut ui_rx: mpsc::UnboundedReceiver<UiEvent>,
-) -> Result<TurnResult, TurnError>
+) -> Result<TurnResult, (TurnError, error::TurnContext)>
 where
     M: rig::completion::CompletionModel + Clone + 'static,
     M::StreamingResponse: rig::completion::request::GetTokenUsage,
@@ -318,7 +184,7 @@ where
     log::info!("execute_turn: starting turn");
 
     // Snapshot message count before this turn. Used by error paths to slice only
-    // the new-message delta from last_known_history / e.messages.
+    // the new-message delta from the error variant's history fields.
     // Cache-first load: no JSONL I/O if the cache is already warm.
     let pre_turn_messages: Vec<Message> = if ctx.conversation.has_session {
         ctx.runtime
@@ -381,8 +247,8 @@ where
     log::debug!("execute_turn: cancel_token external={external}");
     let cancel_token = ext_token.unwrap_or_default();
 
-    // Build the hook using AgentHook<P> — no HookDriver needed
-    let hook = AgentHook::new(
+    // Build the hook using HookChain<P> — no HookDriver needed
+    let hook = HookChain::new(
         cancel_token.clone(),
         ui_tx,
         permission_resolver,
@@ -456,20 +322,30 @@ where
     // Collect the result from the spawned task
     let join_result = ctx.runtime.block_on(prompt_handle).map_err(|e| {
         log::error!("Agent task panicked: {e}");
-        TurnError {
+        let err = TurnError::CompletionFailed {
             msg: format!("Agent task panicked: {}", e),
-            cancelled: false,
-            messages: None,
-            last_known_history: vec![],
-            pre_turn_message_count: 0,
-        }
+            kind: executor::CompletionErrorKind::Unknown,
+        };
+        let ctx = error::TurnContext {
+            last_known_history: last_known_history_arc
+                .lock()
+                .expect("mutex poisoned")
+                .clone(),
+            pre_turn_message_count: pre_turn_count,
+        };
+        (err, ctx)
     })?;
 
     let response = join_result.map_err(|e| {
-        let mut err = TurnError::from(e);
-        err.last_known_history = last_known_history_arc.lock().unwrap().clone();
-        err.pre_turn_message_count = pre_turn_count;
-        err
+        let err = TurnError::from(e);
+        let ctx = error::TurnContext {
+            last_known_history: last_known_history_arc
+                .lock()
+                .expect("mutex poisoned")
+                .clone(),
+            pre_turn_message_count: pre_turn_count,
+        };
+        (err, ctx)
     })?;
 
     log::info!(
@@ -493,7 +369,7 @@ where
 
 /// Configuration for building and prompting an agent.
 struct AgentPromptConfig<P: AsyncPermissionResolver> {
-    hook: AgentHook<P>,
+    hook: HookChain<P>,
     preamble: Option<String>,
     prompt: Message,
     memory: JournalConversationMemory,
@@ -741,6 +617,9 @@ where
 }
 
 pub mod executor;
+
+pub(crate) mod error;
+pub use error::TurnError;
 
 pub(crate) mod token_estimate;
 

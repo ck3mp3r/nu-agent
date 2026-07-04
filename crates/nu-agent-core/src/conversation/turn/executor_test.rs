@@ -1079,134 +1079,255 @@ fn unknown_tool_error_with_unpaired_tool_call_injects_synthetic_result() {
 // Subtask 2 — error classification test
 // ---------------------------------------------------------------------------
 
-#[test]
-fn error_classifier_returns_human_readable_message_for_tool_use_invalid_request() {
-    let raw_error = r#"invalid_request_body: tool_use block requires a subsequent tool_result"#;
-    let (kind, user_msg) = classify_completion_error(raw_error);
-    assert_eq!(kind, CompletionErrorKind::ToolStructure);
-    assert_eq!(
-        user_msg,
-        "Turn failed: the API rejected this turn — a tool call was missing its result. The session has been repaired."
+// ---------------------------------------------------------------------------
+// Subtask 2 — error classification tests
+// (Uses From<StreamingError> structural matching — kind is set at the error
+// boundary, not via post-hoc string parsing)
+// ---------------------------------------------------------------------------
+
+/// Helper: build a `TurnError::CompletionFailed` via `From<StreamingError>` using
+/// an `InvalidStatusCode` HTTP error (numeric status code, no body).
+fn turn_error_from_http_status(status: u16) -> CompletionErrorKind {
+    use rig::http_client;
+    let http_err = http_client::Error::InvalidStatusCode(
+        reqwest::StatusCode::from_u16(status).expect("valid status code"),
     );
+    let streaming_err = rig::agent::StreamingError::Completion(
+        rig::completion::CompletionError::HttpError(http_err),
+    );
+    match crate::conversation::turn::TurnError::from(streaming_err) {
+        crate::conversation::turn::TurnError::CompletionFailed { kind, .. } => kind,
+        other => panic!("expected CompletionFailed, got: {other:?}"),
+    }
 }
 
-#[test]
-fn error_classifier_returns_human_readable_message_for_tool_result_invalid_request() {
-    let raw_error = r#"invalid_request_body: tool_result block has no matching tool call"#;
-    let (kind, user_msg) = classify_completion_error(raw_error);
-    assert_eq!(kind, CompletionErrorKind::ToolStructure);
-    assert_eq!(
-        user_msg,
-        "Turn failed: the API rejected this turn — a tool call was missing its result. The session has been repaired."
+/// Helper: build a `TurnError::CompletionFailed` via `From<StreamingError>` using
+/// an `InvalidStatusCodeWithMessage` HTTP error (status + body string).
+fn turn_error_from_http_status_with_msg(status: u16, body: &str) -> CompletionErrorKind {
+    use rig::http_client;
+    let http_err = http_client::Error::InvalidStatusCodeWithMessage(
+        reqwest::StatusCode::from_u16(status).expect("valid status code"),
+        body.to_string(),
     );
+    let streaming_err = rig::agent::StreamingError::Completion(
+        rig::completion::CompletionError::HttpError(http_err),
+    );
+    match crate::conversation::turn::TurnError::from(streaming_err) {
+        crate::conversation::turn::TurnError::CompletionFailed { kind, .. } => kind,
+        other => panic!("expected CompletionFailed, got: {other:?}"),
+    }
 }
 
-#[test]
-fn error_classifier_passes_through_unrelated_errors() {
-    let raw_error = "502 bad gateway proxy error";
-    let (kind, user_msg) = classify_completion_error(raw_error);
-    assert_eq!(kind, CompletionErrorKind::Unknown);
-    assert_eq!(user_msg, "Turn failed: 502 bad gateway proxy error");
+/// Helper: build a `TurnError::CompletionFailed` via `From<StreamingError>` using
+/// a `ResponseError` (provider returned a parseable error string).
+fn turn_error_from_response_error(msg: &str) -> CompletionErrorKind {
+    let streaming_err = rig::agent::StreamingError::Completion(
+        rig::completion::CompletionError::ResponseError(msg.to_string()),
+    );
+    match crate::conversation::turn::TurnError::from(streaming_err) {
+        crate::conversation::turn::TurnError::CompletionFailed { kind, .. } => kind,
+        other => panic!("expected CompletionFailed, got: {other:?}"),
+    }
 }
 
 // ---------------------------------------------------------------------------
-// Gap 4 — CompletionErrorKind comprehensive classification tests
+// Phase 1.2: New structural classification tests
 // ---------------------------------------------------------------------------
 
+/// TDD (task step 7): `InvalidStatusCodeWithMessage(429, ...)` must classify as `RateLimit`.
+/// This is the primary bug-fix test: RateLimit is now derived from the HTTP status code
+/// structurally, not from string matching on the display message.
 #[test]
-fn classify_tool_structure_error() {
-    let (kind, _) = classify_completion_error("invalid_request_body contains tool_use block");
-    assert_eq!(kind, CompletionErrorKind::ToolStructure);
+fn from_streaming_http_429_with_message_is_rate_limit() {
+    let kind = turn_error_from_http_status_with_msg(429, "rate_limit_error");
+    assert_eq!(
+        kind,
+        CompletionErrorKind::RateLimit,
+        "HTTP 429 with message must classify as RateLimit"
+    );
+    assert!(kind.is_retryable(), "RateLimit must be retryable");
 }
 
+/// TDD (task step 7): `InvalidStatusCode(429)` (no body) must also classify as `RateLimit`.
 #[test]
-fn classify_context_overflow_context_length_exceeded() {
-    let (kind, _) = classify_completion_error("context_length_exceeded in prompt");
-    assert_eq!(kind, CompletionErrorKind::ContextOverflow);
+fn from_streaming_http_429_no_body_is_rate_limit() {
+    let kind = turn_error_from_http_status(429);
+    assert_eq!(
+        kind,
+        CompletionErrorKind::RateLimit,
+        "HTTP 429 no body must classify as RateLimit"
+    );
 }
 
+/// `InvalidStatusCode(500)` must classify as `ServerError`.
 #[test]
-fn classify_context_overflow_input_too_long() {
-    let (kind, _) = classify_completion_error("input is too long for requested model");
-    assert_eq!(kind, CompletionErrorKind::ContextOverflow);
-}
-
-#[test]
-fn classify_context_overflow_reduce_length() {
-    let (kind, _) = classify_completion_error("reduce the length of your prompt");
-    assert_eq!(kind, CompletionErrorKind::ContextOverflow);
-}
-
-#[test]
-fn classify_request_too_large() {
-    let (kind, _) = classify_completion_error("413 request_too_large response");
-    assert_eq!(kind, CompletionErrorKind::RequestTooLarge);
-}
-
-#[test]
-fn classify_refusal_content_policy() {
-    let (kind, _) = classify_completion_error("content policy violation detected");
-    assert_eq!(kind, CompletionErrorKind::Refusal);
-}
-
-#[test]
-fn classify_credits_exhausted() {
-    let (kind, _) = classify_completion_error("account out of credits");
-    assert_eq!(kind, CompletionErrorKind::CreditsExhausted);
-}
-
-#[test]
-fn classify_quota_billing_error() {
-    let (kind, _) = classify_completion_error("402 billing_error");
-    assert_eq!(kind, CompletionErrorKind::Quota);
-}
-
-#[test]
-fn classify_rate_limit() {
-    let (kind, _) = classify_completion_error("rate limit exceeded 429");
-    assert_eq!(kind, CompletionErrorKind::RateLimit);
-}
-
-#[test]
-fn classify_overloaded() {
-    let (kind, _) = classify_completion_error("529 overloaded_error service busy");
-    assert_eq!(kind, CompletionErrorKind::Overloaded);
-}
-
-#[test]
-fn classify_server_error() {
-    let (kind, _) = classify_completion_error("500 api_error internal server");
+fn from_streaming_http_500_is_server_error() {
+    let kind = turn_error_from_http_status(500);
     assert_eq!(kind, CompletionErrorKind::ServerError);
+    assert!(kind.is_retryable());
 }
 
+/// `InvalidStatusCode(503)` must classify as `Overloaded`.
 #[test]
-fn classify_network_error_sending_request() {
-    let (kind, _) = classify_completion_error("error sending request for url");
-    assert_eq!(kind, CompletionErrorKind::Network);
+fn from_streaming_http_503_is_overloaded() {
+    let kind = turn_error_from_http_status(503);
+    assert_eq!(kind, CompletionErrorKind::Overloaded);
+    assert!(kind.is_retryable());
 }
 
+/// `InvalidStatusCode(529)` must classify as `Overloaded`.
 #[test]
-fn classify_network_stream_decode_invalid_utf8() {
-    let (kind, _) = classify_completion_error("stream decode error: invalid utf-8");
-    assert_eq!(kind, CompletionErrorKind::Network);
+fn from_streaming_http_529_is_overloaded() {
+    let kind = turn_error_from_http_status(529);
+    assert_eq!(kind, CompletionErrorKind::Overloaded);
+    assert!(kind.is_retryable());
 }
 
+/// `InvalidStatusCode(504)` must classify as `ServerError`.
 #[test]
-fn classify_endpoint_not_found() {
-    let (kind, _) = classify_completion_error("404 endpoint not found");
-    assert_eq!(kind, CompletionErrorKind::EndpointNotFound);
+fn from_streaming_http_504_is_server_error() {
+    let kind = turn_error_from_http_status(504);
+    assert_eq!(kind, CompletionErrorKind::ServerError);
+    assert!(kind.is_retryable());
 }
 
+/// `InvalidStatusCode(413)` must classify as `RequestTooLarge`.
 #[test]
-fn classify_auth_error() {
-    let (kind, _) = classify_completion_error("401 authentication_error invalid key");
+fn from_streaming_http_413_is_request_too_large() {
+    let kind = turn_error_from_http_status(413);
+    assert_eq!(kind, CompletionErrorKind::RequestTooLarge);
+    assert!(!kind.is_retryable());
+}
+
+/// `InvalidStatusCode(401)` must classify as `Auth`.
+#[test]
+fn from_streaming_http_401_is_auth() {
+    let kind = turn_error_from_http_status(401);
     assert_eq!(kind, CompletionErrorKind::Auth);
+    assert!(!kind.is_retryable());
 }
 
+/// `InvalidStatusCode(403)` must classify as `Auth`.
 #[test]
-fn classify_unknown_502_bad_gateway() {
-    let (kind, _) = classify_completion_error("502 bad gateway proxy error");
+fn from_streaming_http_403_is_auth() {
+    let kind = turn_error_from_http_status(403);
+    assert_eq!(kind, CompletionErrorKind::Auth);
+    assert!(!kind.is_retryable());
+}
+
+/// `InvalidStatusCode(402)` must classify as `Quota`.
+#[test]
+fn from_streaming_http_402_is_quota() {
+    let kind = turn_error_from_http_status(402);
+    assert_eq!(kind, CompletionErrorKind::Quota);
+    assert!(!kind.is_retryable());
+}
+
+/// `InvalidStatusCode(404)` must classify as `EndpointNotFound`.
+#[test]
+fn from_streaming_http_404_is_endpoint_not_found() {
+    let kind = turn_error_from_http_status(404);
+    assert_eq!(kind, CompletionErrorKind::EndpointNotFound);
+    assert!(!kind.is_retryable());
+}
+
+/// `InvalidStatusCode(502)` — unrecognised → `Unknown`.
+#[test]
+fn from_streaming_http_502_is_unknown() {
+    let kind = turn_error_from_http_status(502);
     assert_eq!(kind, CompletionErrorKind::Unknown);
+    assert!(!kind.is_retryable());
+}
+
+/// `StreamEnded` must classify as `Network` (retryable).
+#[test]
+fn from_streaming_http_stream_ended_is_network() {
+    use rig::http_client;
+    let http_err = http_client::Error::StreamEnded;
+    let streaming_err = rig::agent::StreamingError::Completion(
+        rig::completion::CompletionError::HttpError(http_err),
+    );
+    let kind = match crate::conversation::turn::TurnError::from(streaming_err) {
+        crate::conversation::turn::TurnError::CompletionFailed { kind, .. } => kind,
+        other => panic!("expected CompletionFailed, got: {other:?}"),
+    };
+    assert_eq!(kind, CompletionErrorKind::Network);
+    assert!(kind.is_retryable());
+}
+
+/// TDD (task step 8): `Instance(Box<dyn Error>)` with display `"error decoding response body"`
+/// must classify as `Network` (retryable).  This is the BUG FIX test: the old string-matcher
+/// used the pattern `"decode error"` but reqwest's actual Display string is
+/// `"error decoding response body"`, so the old code returned `Unknown` (non-retryable).
+/// The new `classify_from_display` uses `"error decoding"` which correctly matches.
+#[test]
+fn from_streaming_http_instance_error_decoding_response_body_is_network() {
+    // The concrete type is erased, so we can only test through the Display string.
+    // We simulate this via ResponseError (which uses classify_from_display) since we cannot
+    // construct http_client::Error::Instance without a real Box<dyn std::error::Error>.
+    let kind = turn_error_from_response_error("error decoding response body");
+    assert_eq!(
+        kind,
+        CompletionErrorKind::Network,
+        "'error decoding response body' must classify as Network (retryable), not Unknown"
+    );
+    assert!(
+        kind.is_retryable(),
+        "Network must be retryable — this is the bug fix"
+    );
+}
+
+/// `"error sending request for url ..."` must classify as `Network` via display matching.
+#[test]
+fn from_streaming_response_error_sending_request_is_network() {
+    let kind =
+        turn_error_from_response_error("error sending request for url https://api.example.com");
+    assert_eq!(kind, CompletionErrorKind::Network);
+    assert!(kind.is_retryable());
+}
+
+/// `"connection reset by peer"` must classify as `Network`.
+#[test]
+fn from_streaming_response_connection_reset_is_network() {
+    let kind = turn_error_from_response_error("connection reset by peer");
+    assert_eq!(kind, CompletionErrorKind::Network);
+    assert!(kind.is_retryable());
+}
+
+/// `"context_length_exceeded"` via ResponseError must classify as `ContextOverflow`.
+#[test]
+fn from_streaming_response_context_length_exceeded_is_context_overflow() {
+    let kind = turn_error_from_response_error("context_length_exceeded in prompt");
+    assert_eq!(kind, CompletionErrorKind::ContextOverflow);
+    assert!(!kind.is_retryable());
+}
+
+/// `"rate_limit"` via ResponseError must classify as `RateLimit`.
+#[test]
+fn from_streaming_response_rate_limit_string_is_rate_limit() {
+    let kind = turn_error_from_response_error("rate_limit exceeded");
+    assert_eq!(kind, CompletionErrorKind::RateLimit);
+    assert!(kind.is_retryable());
+}
+
+/// Unknown error string via ResponseError falls through to `Unknown`.
+#[test]
+fn from_streaming_response_unknown_string_is_unknown() {
+    let kind = turn_error_from_response_error("502 bad gateway proxy error");
+    assert_eq!(kind, CompletionErrorKind::Unknown);
+    assert!(!kind.is_retryable());
+}
+
+/// `PromptCancelled` via StreamingError must produce `Cancelled` variant.
+#[test]
+fn from_streaming_prompt_cancelled_produces_cancelled_variant() {
+    let inner = rig::completion::PromptError::PromptCancelled {
+        reason: "cancelled".to_string(),
+        chat_history: vec![],
+    };
+    let streaming_err = rig::agent::StreamingError::Prompt(Box::new(inner));
+    let turn_err = crate::conversation::turn::TurnError::from(streaming_err);
+    assert!(turn_err.is_cancelled());
 }
 
 #[test]
@@ -1266,46 +1387,6 @@ fn is_retryable_matches_spec() {
         !CompletionErrorKind::Unknown.is_retryable(),
         "Unknown must not be retryable"
     );
-}
-
-#[test]
-fn classify_does_not_misclassify_number_in_token_count() {
-    // "5000" contains "500" as substring — must NOT match ServerError
-    let (kind, _) = classify_completion_error("processing 5000 tokens per request");
-    assert_eq!(kind, CompletionErrorKind::Unknown);
-
-    // "4042" contains "404" as substring — must NOT match EndpointNotFound
-    let (kind, _) = classify_completion_error("step 4042 of pipeline");
-    assert_eq!(kind, CompletionErrorKind::Unknown);
-
-    // "500" as a standalone token (standalone HTTP status) MUST match ServerError
-    let (kind, _) = classify_completion_error("HTTP 500 internal server error");
-    assert_eq!(kind, CompletionErrorKind::ServerError);
-}
-
-#[test]
-fn classify_network_timeout_is_unknown_not_network() {
-    // "network timeout" does not match any Network patterns (no "decode error",
-    // "connection reset", etc.) — it falls through to Unknown.
-    // Confirm this is stable and hasn't been accidentally absorbed.
-    let (kind, _) = classify_completion_error("network timeout after 30s");
-    assert_eq!(kind, CompletionErrorKind::Unknown);
-}
-
-#[test]
-fn classify_insufficient_quota_is_quota_not_credits_exhausted() {
-    // Fix 1: "insufficient_quota" belongs to Quota (OpenAI billing quota),
-    // not CreditsExhausted (account credit balance exhausted).
-    let (kind, _) = classify_completion_error("insufficient_quota for this API key");
-    assert_eq!(kind, CompletionErrorKind::Quota);
-}
-
-#[test]
-fn classify_request_entity_too_large_is_request_too_large_not_context_overflow() {
-    // Fix 2: "request entity too large" is HTTP 413 (payload too large),
-    // not ContextOverflow (conversation context window exceeded).
-    let (kind, _) = classify_completion_error("request entity too large");
-    assert_eq!(kind, CompletionErrorKind::RequestTooLarge);
 }
 
 // ---------------------------------------------------------------------------
@@ -2521,31 +2602,23 @@ fn retry_disabled_when_max_retries_is_zero() {
 /// When `last_known_history` is empty the retry guard (`has_partial_history`) prevents
 /// any retry from being attempted, even when `max_retries > 0` and the error is retryable.
 ///
-/// Architecture note: In the current executor, `last_known_history` comes from
-/// `TurnError::last_known_history`, which is populated by `on_completion_call` in the
-/// rig hook. With `MockCompletionModel`, `on_completion_call` always fires (capturing
-/// `[user_prompt]`), so `last_known_history` is never truly empty through the full
-/// executor path.
-///
-/// Therefore, this test exercises the guard logic directly by constructing a `TurnError`
-/// with `last_known_history: vec![]` and asserting that the guard condition evaluates to
-/// `false` — confirming that an empty history would suppress retry.
+/// After the refactor, caller-local context lives in `TurnContext` (from `error.rs`),
+/// not in `TurnError`. This test verifies the guard logic directly by constructing
+/// `TurnContext` values and checking that `last_known_history.is_empty()` correctly
+/// controls the guard condition.
 ///
 /// For the full-path scenario (history always non-empty via MockCompletionModel), see
 /// `retry_disabled_when_max_retries_is_zero` which tests the equivalent observable outcome.
 #[test]
 fn retry_not_attempted_when_no_partial_history() {
-    // Test the guard condition: `has_partial_history = !e.last_known_history.is_empty()`.
-    // Construct a TurnError with empty last_known_history and verify the guard is false.
-    let turn_error_empty_history = crate::conversation::turn::TurnError {
-        msg: "500 api_error server error".to_string(),
-        cancelled: false,
-        messages: None,
-        last_known_history: vec![], // empty — no partial history
+    use crate::conversation::turn::error::TurnContext;
+
+    // Empty history: has_partial_history guard must be false.
+    let ctx_empty = TurnContext {
+        last_known_history: vec![],
         pre_turn_message_count: 0,
     };
-
-    let has_partial_history = !turn_error_empty_history.last_known_history.is_empty();
+    let has_partial_history = !ctx_empty.last_known_history.is_empty();
 
     // Guard must evaluate to false with empty history — retry must not be attempted.
     assert!(
@@ -2555,14 +2628,11 @@ fn retry_not_attempted_when_no_partial_history() {
     );
 
     // Confirm the mirror case: non-empty history enables the guard.
-    let turn_error_with_history = crate::conversation::turn::TurnError {
-        msg: "500 api_error server error".to_string(),
-        cancelled: false,
-        messages: None,
+    let ctx_non_empty = TurnContext {
         last_known_history: vec![crate::types::Message::user("prompt")],
         pre_turn_message_count: 0,
     };
-    let has_partial_history_non_empty = !turn_error_with_history.last_known_history.is_empty();
+    let has_partial_history_non_empty = !ctx_non_empty.last_known_history.is_empty();
     assert!(
         has_partial_history_non_empty,
         "has_partial_history guard must be true when last_known_history is non-empty"
@@ -2829,10 +2899,12 @@ fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
 // ---------------------------------------------------------------------------
 
 /// "error sending request" must be classified as `Network` (retryable).
+/// Tests the `classify_from_display` path for the `Instance` case.
 #[test]
 fn classify_error_sending_request_is_network() {
-    let msg = "error sending request for url https://api.example.com/v1/chat";
-    let (kind, _) = classify_completion_error(msg);
+    let kind = turn_error_from_response_error(
+        "error sending request for url https://api.example.com/v1/chat",
+    );
     assert_eq!(
         kind,
         CompletionErrorKind::Network,

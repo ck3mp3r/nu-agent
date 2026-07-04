@@ -1,3 +1,4 @@
+use super::super::managers::PersonaManager;
 use crate::config::Config;
 
 pub struct PersonaState {
@@ -106,5 +107,48 @@ impl PersonaState {
 
     pub fn active_model_identity(&self, config: &Config) -> String {
         format!("{}/{}", config.provider, config.model)
+    }
+}
+
+impl PersonaManager for PersonaState {
+    fn agent_persona_body(&self) -> Option<&str> {
+        self.agent_persona_body.as_deref()
+    }
+
+    fn cached_sub_agent_instruction(&self) -> Option<&str> {
+        self.cached_sub_agent_instruction.as_deref()
+    }
+
+    fn cached_agents_chain(&self) -> Option<&str> {
+        self.cached_agents_chain.as_deref()
+    }
+
+    fn cached_available_skills(&self) -> Option<&str> {
+        self.cached_available_skills.as_deref()
+    }
+
+    fn agent_identity(&self) -> Option<&str> {
+        self.agent_identity.as_deref()
+    }
+
+    fn persona_body_len(&self) -> Option<usize> {
+        self.agent_persona_body.as_ref().map(|b| b.len())
+    }
+
+    fn agent_description(&self) -> Option<&str> {
+        self.agent_description.as_deref()
+    }
+
+    fn active_model_identity(&self, config: &Config) -> String {
+        self.active_model_identity(config)
+    }
+
+    fn switch_agent(
+        &mut self,
+        agent_name: &str,
+        cwd: &std::path::Path,
+        agents_config: &crate::config::AgentsConfig,
+    ) -> Result<SwitchAgentResult, String> {
+        self.switch_agent(agent_name, cwd, agents_config)
     }
 }

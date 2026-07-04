@@ -13,11 +13,16 @@ use std::time::Duration;
 
 use crate::orchestrator::run_interactive_loop;
 use crate::protocol::{
+    compaction::{CompactionTriggerDecision, CompactionTriggerSource},
+    compaction_runtime::HasCompaction,
     contracts::{
-        CoreRuntime, DisplayStateUi, ExtendedRuntime, LifecycleUi, McpUsabilityState, ProgressUi,
-        SharedUiAction, TranscriptUi, UiMessageSnapshot, UserInputUi,
+        CoreRuntime, DisplayStateUi, LifecycleUi, McpUsabilityState, ProgressUi, SharedUiAction,
+        TranscriptUi, UiMessageSnapshot, UserInputUi,
     },
     event::UiEvent,
+    mcp_management::HasMcpManagement,
+    model_switching::HasModelSwitching,
+    session_management::HasSessionManagement,
 };
 
 // ---------------------------------------------------------------------------
@@ -53,7 +58,33 @@ impl CoreRuntime for AgentSwitchRuntime {
     }
 }
 
-impl ExtendedRuntime for AgentSwitchRuntime {
+impl HasMcpManagement for AgentSwitchRuntime {
+    fn set_mcp_server_enabled(
+        &mut self,
+        _name: &str,
+        _enabled: bool,
+    ) -> Result<McpUsabilityState, String> {
+        Ok(McpUsabilityState::Disabled)
+    }
+
+    fn llm_visible_mcp_tool_count(&self) -> usize {
+        0
+    }
+
+    fn llm_visible_mcp_tool_count_for_server(&self, _server_name: &str) -> usize {
+        0
+    }
+
+    fn llm_visible_mcp_tool_names_by_server(&self) -> Vec<(String, Vec<String>)> {
+        Vec::new()
+    }
+}
+
+impl HasModelSwitching for AgentSwitchRuntime {
+    fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
+        Err("model switching not supported".to_string())
+    }
+
     fn switch_agent(&mut self, agent_name: &str) -> Result<String, String> {
         self.switched_agents.push(agent_name.to_string());
         if let Some(result) = self.switch_agent_result.clone() {
@@ -64,6 +95,30 @@ impl ExtendedRuntime for AgentSwitchRuntime {
 
     fn active_model_identity(&self) -> String {
         self.active_model.clone()
+    }
+
+    fn max_context_tokens(&self) -> Option<u64> {
+        None
+    }
+}
+
+impl HasSessionManagement for AgentSwitchRuntime {
+    fn clear_session(&mut self) {}
+    fn new_session(&mut self) {}
+    fn seed_last_total_tokens(&mut self, _tokens: Option<u64>) {}
+}
+
+impl HasCompaction for AgentSwitchRuntime {
+    fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
+        None
+    }
+
+    fn execute_compaction_trigger<U: ProgressUi>(
+        &mut self,
+        _ui: &mut U,
+        _source: CompactionTriggerSource,
+    ) -> Result<(), String> {
+        Ok(())
     }
 }
 
@@ -216,7 +271,33 @@ impl CoreRuntime for LongRunningAgentRuntime {
     }
 }
 
-impl ExtendedRuntime for LongRunningAgentRuntime {
+impl HasMcpManagement for LongRunningAgentRuntime {
+    fn set_mcp_server_enabled(
+        &mut self,
+        _name: &str,
+        _enabled: bool,
+    ) -> Result<McpUsabilityState, String> {
+        Ok(McpUsabilityState::Disabled)
+    }
+
+    fn llm_visible_mcp_tool_count(&self) -> usize {
+        0
+    }
+
+    fn llm_visible_mcp_tool_count_for_server(&self, _server_name: &str) -> usize {
+        0
+    }
+
+    fn llm_visible_mcp_tool_names_by_server(&self) -> Vec<(String, Vec<String>)> {
+        Vec::new()
+    }
+}
+
+impl HasModelSwitching for LongRunningAgentRuntime {
+    fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
+        Err("model switching not supported".to_string())
+    }
+
     fn switch_agent(&mut self, agent_name: &str) -> Result<String, String> {
         self.switched_agents
             .lock()
@@ -227,6 +308,30 @@ impl ExtendedRuntime for LongRunningAgentRuntime {
 
     fn active_model_identity(&self) -> String {
         self.active_model.clone()
+    }
+
+    fn max_context_tokens(&self) -> Option<u64> {
+        None
+    }
+}
+
+impl HasSessionManagement for LongRunningAgentRuntime {
+    fn clear_session(&mut self) {}
+    fn new_session(&mut self) {}
+    fn seed_last_total_tokens(&mut self, _tokens: Option<u64>) {}
+}
+
+impl HasCompaction for LongRunningAgentRuntime {
+    fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
+        None
+    }
+
+    fn execute_compaction_trigger<U: ProgressUi>(
+        &mut self,
+        _ui: &mut U,
+        _source: CompactionTriggerSource,
+    ) -> Result<(), String> {
+        Ok(())
     }
 }
 

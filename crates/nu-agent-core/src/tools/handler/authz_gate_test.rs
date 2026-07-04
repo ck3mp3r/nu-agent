@@ -65,7 +65,7 @@ fn builtin_tools_bypass_permission_flow() {
             &mut sink,
         );
         assert!(
-            result.is_none(),
+            !result,
             "builtin tool '{}' should be auto-allowed but was denied",
             tool_name,
         );
@@ -94,7 +94,7 @@ fn fs_tools_go_through_permission_flow() {
             &mut sink,
         );
         assert!(
-            result.is_some(),
+            result,
             "BuiltinFs tool '{}' should go through permission flow and be denied by AlwaysDenyHook",
             tool_name,
         );
@@ -123,7 +123,7 @@ fn non_builtin_tools_go_through_permission_flow() {
         &mut sink,
     );
     assert!(
-        result.is_some(),
+        result,
         "non-builtin tool should go through permission flow and be denied",
     );
 }

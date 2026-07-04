@@ -3,8 +3,7 @@ use std::sync::{Arc, Mutex};
 use nu_plugin::{EngineInterface, EvaluatedCall};
 use nu_protocol::{LabeledError, Value};
 
-use nu_agent_core::compaction::CompactionParams;
-use nu_agent_core::config::{CompactionConfig, Config, PluginConfig};
+use nu_agent_core::config::{Config, PluginConfig};
 use nu_agent_core::conversation::runtime::AgentConversationRuntime;
 use nu_agent_core::protocol::preamble::{
     PreambleDefaults, UserPreambleInput, classify_model_family, resolve_preamble,
@@ -338,45 +337,6 @@ pub(crate) fn apply_persona_model(
     true
 }
 
-/// Merge two `CompactionConfig`s with `override_cfg` taking precedence.
-///
-/// For each field, if `override_cfg` has `Some`, use it; otherwise keep `base`.
-/// Both inputs are `Option<&CompactionConfig>` — `None` means "no config from this source".
-pub(crate) fn merge_compaction_configs(
-    base: Option<&CompactionConfig>,
-    override_cfg: &CompactionConfig,
-) -> CompactionConfig {
-    let base = base.cloned().unwrap_or_default();
-    CompactionConfig {
-        strategy: override_cfg.strategy.or(base.strategy),
-        keep_recent: override_cfg.keep_recent.or(base.keep_recent),
-        token_budget: override_cfg.token_budget.or(base.token_budget),
-        proactive_threshold_pct: override_cfg
-            .proactive_threshold_pct
-            .or(base.proactive_threshold_pct),
-    }
-}
-
-/// Build a `CompactionParams` from a merged `CompactionConfig`.
-///
-/// Applies `CompactionConfig` field overrides on top of `CompactionParams::default()`.
-/// Fields that are `None` in the config use the `CompactionParams` defaults.
-pub(crate) fn build_compaction_params(merged: &CompactionConfig) -> CompactionParams {
-    let mut config = CompactionParams::default();
-
-    if let Some(strategy) = merged.strategy {
-        config.compaction_strategy = strategy;
-    }
-    if let Some(keep_recent) = merged.keep_recent {
-        config.keep_recent = keep_recent;
-    }
-    if let Some(token_budget) = merged.token_budget {
-        config.token_budget = Some(token_budget);
-    }
-
-    config
-}
-
 /// Cache preamble components once at startup — loaded once, reused every turn.
 /// Returns (cached_agents_chain, cached_available_skills, cached_sub_agent_instruction).
 pub(crate) fn build_preamble_cache(
@@ -464,14 +424,14 @@ pub(crate) fn build_runtime(params: RuntimeBuildParams) -> AgentConversationRunt
     AgentConversationRuntime {
         runtime: params.runtime,
         tool_server_handle: params.tool_server_handle,
-        provider_state: ProviderState::new(
+        provider: ProviderState::new(
             params.config,
             params
                 .plugin_config_value
                 .as_ref()
                 .and_then(|value| PluginConfig::from_plugin_config(value).ok()),
         ),
-        tool_state: ToolState::new(
+        tools: ToolState::new(
             params.tool_definitions,
             params.baseline_tool_definitions,
             params.closure_registry,
@@ -487,7 +447,7 @@ pub(crate) fn build_runtime(params: RuntimeBuildParams) -> AgentConversationRunt
         engine: params.engine,
         store: params.store,
         final_session_id: params.final_session_id,
-        compaction_state: CompactionState::new(
+        compaction: CompactionState::new(
             params.context_window_max_tokens,
             params.compaction_threshold_pct,
             params.compaction_strategy,
@@ -497,8 +457,8 @@ pub(crate) fn build_runtime(params: RuntimeBuildParams) -> AgentConversationRunt
             nu_agent_core::tools::authz::SessionGrantCache::default(),
             params.permissions_startup_summary,
         ),
-        memory_state: MemoryState::new(cache_dir),
-        persona_state: PersonaState::new(
+        session: MemoryState::new(cache_dir),
+        persona: PersonaState::new(
             params.persona_body,
             params.agent_identity,
             params.agent_description,
@@ -506,7 +466,7 @@ pub(crate) fn build_runtime(params: RuntimeBuildParams) -> AgentConversationRunt
             params.cached_available_skills,
             params.cached_sub_agent_instruction,
         ),
-        multi_agent_state: MultiAgentState::new(
+        multi_agent: MultiAgentState::new(
             params.mailbox_rx,
             params.available_agents,
             params.agents_config,

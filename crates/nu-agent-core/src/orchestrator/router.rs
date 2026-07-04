@@ -1,7 +1,11 @@
 use crate::orchestrator::{WorkerCommand, turn_outcome::TurnOutcome};
 use crate::protocol::{
     compaction::CompactionTriggerDecision,
-    contracts::{ExtendedRuntime, ProgressUi},
+    compaction_runtime::HasCompaction,
+    contracts::{CoreRuntime, ProgressUi},
+    mcp_management::HasMcpManagement,
+    model_switching::HasModelSwitching,
+    session_management::HasSessionManagement,
 };
 
 use std::sync::mpsc;
@@ -9,16 +13,28 @@ use std::sync::mpsc;
 const COMPACTION_FAILURE_WARNING: &str =
     "Session compaction failed: sliding_summary summarization unavailable";
 
-/// Dispatches [`WorkerCommand`] variants to an [`ExtendedRuntime`].
+/// Dispatches [`WorkerCommand`] variants to a runtime that implements all
+/// focused capability traits.
 ///
 /// This struct encapsulates the worker-thread dispatch logic that was previously
 /// inline inside `run_interactive_loop`. Each match arm is identical to the
 /// original orchestrator implementation — this is a pure extraction.
-pub struct CommandRouter<'a, R: ExtendedRuntime> {
+pub struct CommandRouter<'a, R>
+where
+    R: CoreRuntime + HasMcpManagement + HasModelSwitching + HasSessionManagement + HasCompaction,
+{
     runtime: &'a mut R,
 }
 
-impl<'a, R: ExtendedRuntime + Send> CommandRouter<'a, R> {
+impl<'a, R> CommandRouter<'a, R>
+where
+    R: CoreRuntime
+        + HasMcpManagement
+        + HasModelSwitching
+        + HasSessionManagement
+        + HasCompaction
+        + Send,
+{
     pub fn new(runtime: &'a mut R) -> Self {
         Self { runtime }
     }

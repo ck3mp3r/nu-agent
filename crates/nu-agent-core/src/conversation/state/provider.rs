@@ -1,3 +1,4 @@
+use super::super::managers::ProviderManager;
 use super::super::providers::{
     CachedProviderClient, ClientCacheKey, build_anthropic_client, build_copilot_client,
     build_ollama_client, build_openai_client, resolve_provider_type,
@@ -32,16 +33,6 @@ impl ProviderState {
             self.config.api_key.clone(),
             self.config.base_url.clone(),
         )
-    }
-
-    /// Take the cached client out temporarily (caller must restore via restore_client).
-    pub fn take_client(&mut self) -> Option<CachedProviderClient> {
-        self.cached_client.take()
-    }
-
-    /// Restore a client taken via take_client.
-    pub fn restore_client(&mut self, client: CachedProviderClient) {
-        self.cached_client = Some(client);
     }
 
     /// Return a reference to the cached client (if any).
@@ -100,5 +91,31 @@ impl ProviderState {
         self.config = resolved;
         self.invalidate_cache();
         Ok(format!("{}/{}", self.config.provider, self.config.model))
+    }
+}
+
+impl ProviderManager for ProviderState {
+    fn provider_config(&self) -> &Config {
+        &self.config
+    }
+
+    fn ensure_client_cached(&mut self) -> Result<(), LabeledError> {
+        self.ensure_client_cached()
+    }
+
+    fn cached_client(&self) -> Option<&CachedProviderClient> {
+        self.cached_client.as_ref()
+    }
+
+    fn invalidate_cache(&mut self) {
+        self.invalidate_cache()
+    }
+
+    fn switch_model(&mut self, model_spec: &str) -> Result<String, String> {
+        self.switch_model(model_spec)
+    }
+
+    fn startup_plugin_config(&self) -> Option<&PluginConfig> {
+        self.startup_plugin_config.as_ref()
     }
 }

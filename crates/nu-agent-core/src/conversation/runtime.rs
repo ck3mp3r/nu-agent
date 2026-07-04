@@ -14,6 +14,10 @@ use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
 
 use super::compaction::CompactionGuard;
 use super::compaction::executor::CompactionExecutor;
+use super::managers::{
+    CompactionManager, MultiAgentManager, PersonaManager, ProviderManager, SessionManager,
+    ToolManager,
+};
 use crate::protocol::event::PermissionDecision as ProtocolPermissionDecision;
 
 /// Shared pending-permission map for TUI mode: maps request IDs to oneshot senders
@@ -22,8 +26,12 @@ pub type PendingPermissions =
     Arc<Mutex<HashMap<String, oneshot::Sender<ProtocolPermissionDecision>>>>;
 use crate::protocol::{
     compaction::{CompactionTriggerDecision, CompactionTriggerSource},
-    contracts::{CoreRuntime, ExtendedRuntime, McpUsabilityState, ProgressUi},
+    compaction_runtime::HasCompaction,
+    contracts::{CoreRuntime, McpUsabilityState, ProgressUi},
     event::UiEvent,
+    mcp_management::HasMcpManagement,
+    model_switching::HasModelSwitching,
+    session_management::HasSessionManagement,
 };
 
 /// Build system preamble from components.
@@ -70,20 +78,30 @@ fn build_system_preamble(
     }
 }
 
-pub struct AgentConversationRuntime {
+/// Generic agent runtime composed of independent domain managers.
+///
+/// Each generic parameter is a manager type that owns one domain of state.
+/// The concrete infrastructure fields (tokio runtime, MCP state, permissions,
+/// session store) remain as named fields because they are not interchangeable.
+///
+/// Use the `AgentConversationRuntime` type alias for the concrete production type.
+pub struct AgentRuntime<Prov, Tools, Sess, Comp, Persona, Multi>
+where
+    Prov: ProviderManager,
+    Tools: ToolManager,
+    Sess: SessionManager,
+    Comp: CompactionManager,
+    Persona: PersonaManager,
+    Multi: MultiAgentManager,
+{
+    // ── Concrete infrastructure ──────────────────────────────────────────────
     pub runtime: tokio::runtime::Runtime,
     pub tool_server_handle: rig::tool::server::ToolServerHandle,
-    pub provider_state: super::state::provider::ProviderState,
-    pub tool_state: super::state::tool::ToolState,
     pub mcp_state: super::state::mcp::McpState,
+    pub permission_state: super::state::permission::PermissionState,
     pub engine: EngineInterface,
     pub store: SessionStore,
     pub final_session_id: Option<String>,
-    pub compaction_state: super::compaction::state::CompactionState,
-    pub permission_state: super::state::permission::PermissionState,
-    pub memory_state: super::state::memory::MemoryState,
-    pub persona_state: super::state::persona::PersonaState,
-    pub multi_agent_state: super::state::multi_agent::MultiAgentState,
     pub cwd: PathBuf,
     /// Shared pending-decision map for interactive (TUI) mode.
     ///
@@ -100,9 +118,35 @@ pub struct AgentConversationRuntime {
     /// Doom loop state shared across turns so that repetitive tool call patterns
     /// are detected even when they span multiple consecutive turns.
     pub doom_state: Arc<Mutex<DoomLoopState>>,
+    // ── Domain managers ──────────────────────────────────────────────────────
+    pub provider: Prov,
+    pub tools: Tools,
+    pub session: Sess,
+    pub compaction: Comp,
+    pub persona: Persona,
+    pub multi_agent: Multi,
 }
 
-impl CoreRuntime for AgentConversationRuntime {
+/// Concrete production runtime: all managers use their default state types.
+pub type AgentConversationRuntime = AgentRuntime<
+    super::state::provider::ProviderState,
+    super::state::tool::ToolState,
+    super::state::memory::MemoryState,
+    super::compaction::state::CompactionState,
+    super::state::persona::PersonaState,
+    super::state::multi_agent::MultiAgentState,
+>;
+
+impl<Prov, Tools, Sess, Comp, Persona, Multi> CoreRuntime
+    for AgentRuntime<Prov, Tools, Sess, Comp, Persona, Multi>
+where
+    Prov: ProviderManager,
+    Tools: ToolManager,
+    Sess: SessionManager,
+    Comp: CompactionManager,
+    Persona: PersonaManager,
+    Multi: MultiAgentManager,
+{
     fn execute_turn<U: ProgressUi>(
         &mut self,
         ui: &mut U,
@@ -119,12 +163,12 @@ impl CoreRuntime for AgentConversationRuntime {
 
         // Build system preamble from cached components
         let preamble = build_system_preamble(
-            self.provider_state.config().preamble.as_deref(),
-            self.persona_state.agent_persona_body(),
-            self.persona_state.cached_sub_agent_instruction(),
+            self.provider.provider_config().preamble.as_deref(),
+            self.persona.agent_persona_body(),
+            self.persona.cached_sub_agent_instruction(),
             context.as_deref(),
-            self.persona_state.cached_agents_chain(),
-            self.persona_state.cached_available_skills(),
+            self.persona.cached_agents_chain(),
+            self.persona.cached_available_skills(),
         );
 
         log::debug!(
@@ -134,28 +178,30 @@ impl CoreRuntime for AgentConversationRuntime {
         );
 
         // Provider dispatch - build model from cached client
-        self.provider_state.ensure_client_cached()?;
+        self.provider.ensure_client_cached()?;
 
         // Compute filtered tool definitions before entering the mutable borrow scope
-        let visible_tool_definitions = self.tool_state.active_definitions(
+        let visible_tool_definitions = self.tools.active_definitions(
             self.mcp_state.mcp_registry(),
             self.permission_state.permissions(),
         );
 
-        let closure_registry = Arc::new(self.tool_state.closure_registry().clone());
+        let closure_registry = Arc::new(self.tools.closure_registry().clone());
         let mcp_registry = Arc::new(self.mcp_state.mcp_registry().clone());
         let permissions = Arc::new(self.permission_state.permissions().clone());
         let session_grants = self.permission_state.session_grants_arc();
 
-        // Take the client temporarily to avoid overlapping borrows with `self`.
-        let cached_client = self.provider_state.take_client().unwrap();
+        let cached_client = self
+            .provider
+            .cached_client()
+            .expect("client must be cached before execute_turn");
 
         // Scope the executor so its borrows are released before compaction.
         let (outcome, response_data) = {
             let mut executor = TurnExecutor::new(
-                self.provider_state.config(),
+                self.provider.provider_config(),
                 &self.runtime,
-                &mut self.memory_state,
+                &mut self.session,
                 ToolInfra {
                     closure_registry: Arc::clone(&closure_registry),
                     mcp_registry: Arc::clone(&mcp_registry),
@@ -190,7 +236,7 @@ impl CoreRuntime for AgentConversationRuntime {
                         preamble,
                         span,
                     },
-                    &cached_client,
+                    cached_client,
                     resolver,
                     self.final_session_id.as_deref(),
                     Some((ui_tx, ui_rx)),
@@ -210,7 +256,7 @@ impl CoreRuntime for AgentConversationRuntime {
                         preamble,
                         span,
                     },
-                    &cached_client,
+                    cached_client,
                     permission_resolver,
                     self.final_session_id.as_deref(),
                     None,
@@ -221,9 +267,6 @@ impl CoreRuntime for AgentConversationRuntime {
             let response_data = executor.take_response_data();
             (outcome, response_data)
         };
-
-        // Restore the client immediately after the executor completes.
-        self.provider_state.restore_client(cached_client);
 
         match outcome? {
             TurnOutcome::EarlyReturn(value) => Ok(value),
@@ -239,7 +282,7 @@ impl CoreRuntime for AgentConversationRuntime {
 
                 Ok(build_response(
                     response_data,
-                    self.provider_state.config(),
+                    self.provider.provider_config(),
                     self.final_session_id.as_deref(),
                     span,
                 ))
@@ -248,25 +291,34 @@ impl CoreRuntime for AgentConversationRuntime {
     }
 }
 
-impl ExtendedRuntime for AgentConversationRuntime {
+impl<Prov, Tools, Sess, Comp, Persona, Multi> HasMcpManagement
+    for AgentRuntime<Prov, Tools, Sess, Comp, Persona, Multi>
+where
+    Prov: ProviderManager,
+    Tools: ToolManager,
+    Sess: SessionManager,
+    Comp: CompactionManager,
+    Persona: PersonaManager,
+    Multi: MultiAgentManager,
+{
     fn set_mcp_server_enabled(
         &mut self,
-        server_name: &str,
+        name: &str,
         enabled: bool,
     ) -> Result<McpUsabilityState, String> {
         let handle = self.tool_server_handle.clone();
         self.mcp_state.set_mcp_server_enabled(
             &handle,
-            server_name,
+            name,
             enabled,
-            self.tool_state.tool_definitions_mut(),
+            self.tools.tool_definitions_mut(),
             &self.runtime.handle().clone(),
         )
     }
 
     fn llm_visible_mcp_tool_count(&self) -> usize {
         self.mcp_state
-            .llm_visible_mcp_tool_count(&self.tool_state.active_definitions(
+            .llm_visible_mcp_tool_count(&self.tools.active_definitions(
                 self.mcp_state.mcp_registry(),
                 self.permission_state.permissions(),
             ))
@@ -275,7 +327,7 @@ impl ExtendedRuntime for AgentConversationRuntime {
     fn llm_visible_mcp_tool_count_for_server(&self, server_name: &str) -> usize {
         self.mcp_state.llm_visible_mcp_tool_count_for_server(
             server_name,
-            &self.tool_state.active_definitions(
+            &self.tools.active_definitions(
                 self.mcp_state.mcp_registry(),
                 self.permission_state.permissions(),
             ),
@@ -284,14 +336,25 @@ impl ExtendedRuntime for AgentConversationRuntime {
 
     fn llm_visible_mcp_tool_names_by_server(&self) -> Vec<(String, Vec<String>)> {
         self.mcp_state
-            .llm_visible_mcp_tool_names_by_server(&self.tool_state.active_definitions(
+            .llm_visible_mcp_tool_names_by_server(&self.tools.active_definitions(
                 self.mcp_state.mcp_registry(),
                 self.permission_state.permissions(),
             ))
     }
+}
 
+impl<Prov, Tools, Sess, Comp, Persona, Multi> HasModelSwitching
+    for AgentRuntime<Prov, Tools, Sess, Comp, Persona, Multi>
+where
+    Prov: ProviderManager,
+    Tools: ToolManager,
+    Sess: SessionManager,
+    Comp: CompactionManager,
+    Persona: PersonaManager,
+    Multi: MultiAgentManager,
+{
     fn switch_model(&mut self, model_spec: &str) -> Result<(String, Option<u64>), String> {
-        let identity = self.provider_state.switch_model(model_spec)?;
+        let identity = self.provider.switch_model(model_spec)?;
         let max_tokens = self.max_context_tokens();
         Ok((identity, max_tokens))
     }
@@ -303,38 +366,47 @@ impl ExtendedRuntime for AgentConversationRuntime {
             .map(|p| p.to_path_buf())
             .ok_or_else(|| "agent switch unavailable: working directory not set".to_string())?;
 
-        let result = self.persona_state.switch_agent(
-            agent_name,
-            &cwd,
-            self.multi_agent_state.agents_config(),
-        )?;
+        let result =
+            self.persona
+                .switch_agent(agent_name, &cwd, self.multi_agent.agents_config())?;
 
         // If persona specifies a model, attempt to switch (ignore errors)
         if let Some(ref model) = result.model {
-            let _ = self.switch_model(model);
+            let _ = self.provider.switch_model(model);
         }
 
         // Reset tool definitions to baseline on agent switch
-        self.tool_state.reset_to_baseline();
+        self.tools.reset_to_baseline();
 
         // Invalidate cached client to pick up any changes
-        self.provider_state.invalidate_cache();
+        self.provider.invalidate_cache();
 
         Ok(result.identity)
     }
 
     fn active_model_identity(&self) -> String {
-        self.persona_state
-            .active_model_identity(self.provider_state.config())
+        self.persona
+            .active_model_identity(self.provider.provider_config())
     }
 
     fn max_context_tokens(&self) -> Option<u64> {
-        AgentConversationRuntime::max_context_tokens(self)
+        AgentRuntime::<Prov, Tools, Sess, Comp, Persona, Multi>::max_context_tokens(self)
     }
+}
 
+impl<Prov, Tools, Sess, Comp, Persona, Multi> HasCompaction
+    for AgentRuntime<Prov, Tools, Sess, Comp, Persona, Multi>
+where
+    Prov: ProviderManager,
+    Tools: ToolManager,
+    Sess: SessionManager,
+    Comp: CompactionManager,
+    Persona: PersonaManager,
+    Multi: MultiAgentManager,
+{
     fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
-        self.compaction_state
-            .evaluate_auto_compaction(self.memory_state.last_total_tokens())
+        self.compaction
+            .evaluate_auto_compaction(self.session.last_total_tokens())
     }
 
     fn execute_compaction_trigger<U: ProgressUi>(
@@ -344,13 +416,24 @@ impl ExtendedRuntime for AgentConversationRuntime {
     ) -> Result<(), String> {
         self.execute_compaction_event(ui, source)
     }
+}
 
+impl<Prov, Tools, Sess, Comp, Persona, Multi> HasSessionManagement
+    for AgentRuntime<Prov, Tools, Sess, Comp, Persona, Multi>
+where
+    Prov: ProviderManager,
+    Tools: ToolManager,
+    Sess: SessionManager,
+    Comp: CompactionManager,
+    Persona: PersonaManager,
+    Multi: MultiAgentManager,
+{
     fn clear_session(&mut self) {
-        self.memory_state.clear();
+        self.session.clear();
     }
 
     fn new_session(&mut self) {
-        self.memory_state.clear();
+        self.session.clear();
         let new_id = crate::session::resolver::generate_session_id();
         let prefix = crate::session::prefix::dir_prefix(&self.cwd);
         let new_id = format!("{prefix}-{new_id}");
@@ -359,11 +442,19 @@ impl ExtendedRuntime for AgentConversationRuntime {
     }
 
     fn seed_last_total_tokens(&mut self, tokens: Option<u64>) {
-        *self.memory_state.last_total_tokens_mut() = tokens;
+        *self.session.last_total_tokens_mut() = tokens;
     }
 }
 
-impl AgentConversationRuntime {
+impl<Prov, Tools, Sess, Comp, Persona, Multi> AgentRuntime<Prov, Tools, Sess, Comp, Persona, Multi>
+where
+    Prov: ProviderManager,
+    Tools: ToolManager,
+    Sess: SessionManager,
+    Comp: CompactionManager,
+    Persona: PersonaManager,
+    Multi: MultiAgentManager,
+{
     // ── Phase I accessor methods ────────────────────────────────────
 
     /// Spawn a future on the tokio runtime.
@@ -386,27 +477,35 @@ impl AgentConversationRuntime {
         self.interactive_pending.as_ref().map(Arc::clone)
     }
 
-    pub fn provider(&self) -> &str {
-        &self.provider_state.config().provider
+    pub fn provider_name(&self) -> &str {
+        &self.provider.provider_config().provider
     }
 
     pub fn model(&self) -> &str {
-        &self.provider_state.config().model
+        &self.provider.provider_config().model
     }
 
     pub fn max_context_tokens(&self) -> Option<u64> {
-        self.provider_state
-            .config()
+        self.provider
+            .provider_config()
             .max_context_tokens
             .map(u64::from)
     }
 
     pub fn startup_plugin_config(&self) -> Option<&crate::config::PluginConfig> {
-        self.provider_state.startup_plugin_config()
+        self.provider.startup_plugin_config()
     }
 
     pub fn agent_identity(&self) -> Option<&str> {
-        self.persona_state.agent_identity()
+        self.persona.agent_identity()
+    }
+
+    pub fn persona_body_len(&self) -> Option<usize> {
+        self.persona.persona_body_len()
+    }
+
+    pub fn agent_description(&self) -> Option<&str> {
+        self.persona.agent_description()
     }
 
     pub fn mcp_caller_cwd(&self) -> Option<&std::path::Path> {
@@ -418,13 +517,13 @@ impl AgentConversationRuntime {
     }
 
     pub fn available_agent_summaries(&self) -> &[crate::protocol::persona::PersonaSummary] {
-        self.multi_agent_state.available_agent_summaries()
+        self.multi_agent.available_agent_summaries()
     }
 
     pub fn take_mailbox_rx(
         &mut self,
     ) -> Option<std::sync::mpsc::Receiver<crate::mailbox::IncomingMessage>> {
-        self.multi_agent_state.take_mailbox_rx()
+        self.multi_agent.take_mailbox_rx()
     }
 
     // ── End Phase I accessor methods ────────────────────────────────
@@ -435,16 +534,16 @@ impl AgentConversationRuntime {
         source: CompactionTriggerSource,
     ) -> Result<(), String> {
         if self
-            .compaction_state
+            .compaction
             .compacting()
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
             .is_err()
         {
             return Ok(());
         }
-        let _guard = CompactionGuard(Arc::clone(self.compaction_state.compacting()));
+        let _guard = CompactionGuard(Arc::clone(self.compaction.compacting()));
 
-        self.provider_state
+        self.provider
             .ensure_client_cached()
             .map_err(|e| e.to_string())?;
 
@@ -454,19 +553,25 @@ impl AgentConversationRuntime {
             .ok_or_else(|| "session_unavailable".to_string())?;
 
         let result = CompactionExecutor::new(
-            self.provider_state.config(),
+            self.provider.provider_config(),
             &self.runtime,
-            self.memory_state.memory(),
+            self.session.memory(),
             &self.store,
             session_id,
         )
-        .execute(ui, source, self.provider_state.client().unwrap())?;
+        .execute(
+            ui,
+            source,
+            self.provider
+                .cached_client()
+                .expect("client must be cached during compaction"),
+        )?;
 
         if let Some(summary_total_tokens) = result {
             // Use the summary token count captured from the streaming Final chunk.
             // If the provider didn't yield usage, fall back to None so the stale
             // pre-compaction count doesn't re-trigger compaction on next load.
-            *self.memory_state.last_total_tokens_mut() = summary_total_tokens;
+            *self.session.last_total_tokens_mut() = summary_total_tokens;
         }
 
         Ok(())

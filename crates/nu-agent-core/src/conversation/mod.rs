@@ -1,4 +1,6 @@
+pub mod builder;
 pub mod compaction;
+pub mod managers;
 pub mod mcp_helpers;
 pub mod providers;
 pub mod runtime;

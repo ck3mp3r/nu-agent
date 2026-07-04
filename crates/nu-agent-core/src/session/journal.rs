@@ -5,6 +5,7 @@ use crate::types::Message;
 use rig::memory::{ConversationMemory, MemoryError};
 use rig::wasm_compat::WasmBoxedFuture;
 use std::collections::HashMap;
+use std::io;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -51,7 +52,7 @@ impl JournalConversationMemory {
         conversation_id: &str,
         marker: &CompactionMarker,
         last_total_tokens: Option<u64>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), io::Error> {
         self.store
             .append_marker(conversation_id, marker, last_total_tokens)
     }
@@ -64,7 +65,7 @@ impl JournalConversationMemory {
         conversation_id: &str,
         messages: &[Message],
         last_total_tokens: Option<u64>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), io::Error> {
         self.store
             .append(conversation_id, messages, last_total_tokens)
     }
@@ -83,7 +84,7 @@ impl JournalConversationMemory {
     pub fn load_all(
         &self,
         conversation_id: &str,
-    ) -> Result<(Vec<StoreEntry>, Option<u64>), Box<dyn std::error::Error>> {
+    ) -> Result<(Vec<StoreEntry>, Option<u64>), io::Error> {
         self.store.load_all(conversation_id)
     }
 

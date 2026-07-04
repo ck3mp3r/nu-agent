@@ -9,15 +9,18 @@ use crate::compaction::CompactionStrategy;
 use crate::orchestrator::{run_hydrated_interactive_loop, run_interactive_loop, run_single_turn};
 use crate::protocol::{
     compaction::{CompactionTriggerDecision, CompactionTriggerSource},
+    compaction_runtime::HasCompaction,
     contracts::{
-        CoreRuntime, DisplayStateUi, ExtendedRuntime, LifecycleUi, McpToggleRequest,
-        McpUsabilityState, ProgressUi, SharedUiAction, TranscriptUi, UiMessageSnapshot,
-        UiMessageUsageSnapshot, UserInputUi,
+        CoreRuntime, DisplayStateUi, LifecycleUi, McpToggleRequest, McpUsabilityState, ProgressUi,
+        SharedUiAction, TranscriptUi, UiMessageSnapshot, UiMessageUsageSnapshot, UserInputUi,
     },
     event::{
         PermissionDecision, PermissionDecisionSubmission, PermissionRequestContext, ToolDisplay,
         ToolDisplaySection, UiEvent,
     },
+    mcp_management::HasMcpManagement,
+    model_switching::HasModelSwitching,
+    session_management::HasSessionManagement,
 };
 
 #[derive(Default)]
@@ -249,10 +252,10 @@ impl CoreRuntime for ToolDisplayOnlyRuntime {
     }
 }
 
-impl ExtendedRuntime for ToolDisplayOnlyRuntime {
+impl HasMcpManagement for ToolDisplayOnlyRuntime {
     fn set_mcp_server_enabled(
         &mut self,
-        _server_name: &str,
+        _name: &str,
         enabled: bool,
     ) -> Result<McpUsabilityState, String> {
         Ok(if enabled {
@@ -260,6 +263,56 @@ impl ExtendedRuntime for ToolDisplayOnlyRuntime {
         } else {
             McpUsabilityState::Disabled
         })
+    }
+
+    fn llm_visible_mcp_tool_count(&self) -> usize {
+        0
+    }
+
+    fn llm_visible_mcp_tool_count_for_server(&self, _server_name: &str) -> usize {
+        0
+    }
+
+    fn llm_visible_mcp_tool_names_by_server(&self) -> Vec<(String, Vec<String>)> {
+        Vec::new()
+    }
+}
+
+impl HasModelSwitching for ToolDisplayOnlyRuntime {
+    fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
+        Err("model switching not supported".to_string())
+    }
+
+    fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
+        Err("agent switch not supported in this runtime".to_string())
+    }
+
+    fn active_model_identity(&self) -> String {
+        "unknown/unknown".to_string()
+    }
+
+    fn max_context_tokens(&self) -> Option<u64> {
+        None
+    }
+}
+
+impl HasSessionManagement for ToolDisplayOnlyRuntime {
+    fn clear_session(&mut self) {}
+    fn new_session(&mut self) {}
+    fn seed_last_total_tokens(&mut self, _tokens: Option<u64>) {}
+}
+
+impl HasCompaction for ToolDisplayOnlyRuntime {
+    fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
+        None
+    }
+
+    fn execute_compaction_trigger<U: ProgressUi>(
+        &mut self,
+        _ui: &mut U,
+        _source: CompactionTriggerSource,
+    ) -> Result<(), String> {
+        Ok(())
     }
 }
 
@@ -316,10 +369,10 @@ impl CoreRuntime for FakeRuntime {
     }
 }
 
-impl ExtendedRuntime for FakeRuntime {
+impl HasMcpManagement for FakeRuntime {
     fn set_mcp_server_enabled(
         &mut self,
-        _server_name: &str,
+        _name: &str,
         enabled: bool,
     ) -> Result<McpUsabilityState, String> {
         Ok(if enabled {
@@ -329,6 +382,48 @@ impl ExtendedRuntime for FakeRuntime {
         })
     }
 
+    fn llm_visible_mcp_tool_count(&self) -> usize {
+        0
+    }
+
+    fn llm_visible_mcp_tool_count_for_server(&self, _server_name: &str) -> usize {
+        0
+    }
+
+    fn llm_visible_mcp_tool_names_by_server(&self) -> Vec<(String, Vec<String>)> {
+        Vec::new()
+    }
+}
+
+impl HasModelSwitching for FakeRuntime {
+    fn switch_model(&mut self, model_spec: &str) -> Result<(String, Option<u64>), String> {
+        self.switched_models.push(model_spec.to_string());
+        if let Some(result) = self.switch_model_result.clone() {
+            return result.map(|identity| (identity, None));
+        }
+        Ok((model_spec.to_string(), None))
+    }
+
+    fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
+        Err("agent switch not supported in this runtime".to_string())
+    }
+
+    fn active_model_identity(&self) -> String {
+        "openai/gpt-4o-mini".to_string()
+    }
+
+    fn max_context_tokens(&self) -> Option<u64> {
+        None
+    }
+}
+
+impl HasSessionManagement for FakeRuntime {
+    fn clear_session(&mut self) {}
+    fn new_session(&mut self) {}
+    fn seed_last_total_tokens(&mut self, _tokens: Option<u64>) {}
+}
+
+impl HasCompaction for FakeRuntime {
     fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
         self.auto_decisions.pop_front()
     }
@@ -344,18 +439,6 @@ impl ExtendedRuntime for FakeRuntime {
             return Err("auto compaction failed".to_string());
         }
         Ok(())
-    }
-
-    fn switch_model(&mut self, model_spec: &str) -> Result<(String, Option<u64>), String> {
-        self.switched_models.push(model_spec.to_string());
-        if let Some(result) = self.switch_model_result.clone() {
-            return result.map(|identity| (identity, None));
-        }
-        Ok((model_spec.to_string(), None))
-    }
-
-    fn active_model_identity(&self) -> String {
-        "openai/gpt-4o-mini".to_string()
     }
 }
 
@@ -997,10 +1080,10 @@ impl CoreRuntime for FakeValueRuntime {
     }
 }
 
-impl ExtendedRuntime for FakeValueRuntime {
+impl HasMcpManagement for FakeValueRuntime {
     fn set_mcp_server_enabled(
         &mut self,
-        _server_name: &str,
+        _name: &str,
         enabled: bool,
     ) -> Result<McpUsabilityState, String> {
         Ok(if enabled {
@@ -1008,6 +1091,56 @@ impl ExtendedRuntime for FakeValueRuntime {
         } else {
             McpUsabilityState::Disabled
         })
+    }
+
+    fn llm_visible_mcp_tool_count(&self) -> usize {
+        0
+    }
+
+    fn llm_visible_mcp_tool_count_for_server(&self, _server_name: &str) -> usize {
+        0
+    }
+
+    fn llm_visible_mcp_tool_names_by_server(&self) -> Vec<(String, Vec<String>)> {
+        Vec::new()
+    }
+}
+
+impl HasModelSwitching for FakeValueRuntime {
+    fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
+        Err("model switching not supported".to_string())
+    }
+
+    fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
+        Err("agent switch not supported in this runtime".to_string())
+    }
+
+    fn active_model_identity(&self) -> String {
+        "unknown/unknown".to_string()
+    }
+
+    fn max_context_tokens(&self) -> Option<u64> {
+        None
+    }
+}
+
+impl HasSessionManagement for FakeValueRuntime {
+    fn clear_session(&mut self) {}
+    fn new_session(&mut self) {}
+    fn seed_last_total_tokens(&mut self, _tokens: Option<u64>) {}
+}
+
+impl HasCompaction for FakeValueRuntime {
+    fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
+        None
+    }
+
+    fn execute_compaction_trigger<U: ProgressUi>(
+        &mut self,
+        _ui: &mut U,
+        _source: CompactionTriggerSource,
+    ) -> Result<(), String> {
+        Ok(())
     }
 }
 
@@ -1045,10 +1178,10 @@ impl CoreRuntime for CancelFirstRuntime {
     }
 }
 
-impl ExtendedRuntime for CancelFirstRuntime {
+impl HasMcpManagement for CancelFirstRuntime {
     fn set_mcp_server_enabled(
         &mut self,
-        _server_name: &str,
+        _name: &str,
         enabled: bool,
     ) -> Result<McpUsabilityState, String> {
         Ok(if enabled {
@@ -1056,6 +1189,56 @@ impl ExtendedRuntime for CancelFirstRuntime {
         } else {
             McpUsabilityState::Disabled
         })
+    }
+
+    fn llm_visible_mcp_tool_count(&self) -> usize {
+        0
+    }
+
+    fn llm_visible_mcp_tool_count_for_server(&self, _server_name: &str) -> usize {
+        0
+    }
+
+    fn llm_visible_mcp_tool_names_by_server(&self) -> Vec<(String, Vec<String>)> {
+        Vec::new()
+    }
+}
+
+impl HasModelSwitching for CancelFirstRuntime {
+    fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
+        Err("model switching not supported".to_string())
+    }
+
+    fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
+        Err("agent switch not supported in this runtime".to_string())
+    }
+
+    fn active_model_identity(&self) -> String {
+        "unknown/unknown".to_string()
+    }
+
+    fn max_context_tokens(&self) -> Option<u64> {
+        None
+    }
+}
+
+impl HasSessionManagement for CancelFirstRuntime {
+    fn clear_session(&mut self) {}
+    fn new_session(&mut self) {}
+    fn seed_last_total_tokens(&mut self, _tokens: Option<u64>) {}
+}
+
+impl HasCompaction for CancelFirstRuntime {
+    fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
+        None
+    }
+
+    fn execute_compaction_trigger<U: ProgressUi>(
+        &mut self,
+        _ui: &mut U,
+        _source: CompactionTriggerSource,
+    ) -> Result<(), String> {
+        Ok(())
     }
 }
 
@@ -1096,10 +1279,10 @@ impl CoreRuntime for ErrorFirstRuntime {
     }
 }
 
-impl ExtendedRuntime for ErrorFirstRuntime {
+impl HasMcpManagement for ErrorFirstRuntime {
     fn set_mcp_server_enabled(
         &mut self,
-        _server_name: &str,
+        _name: &str,
         enabled: bool,
     ) -> Result<McpUsabilityState, String> {
         Ok(if enabled {
@@ -1107,6 +1290,56 @@ impl ExtendedRuntime for ErrorFirstRuntime {
         } else {
             McpUsabilityState::Disabled
         })
+    }
+
+    fn llm_visible_mcp_tool_count(&self) -> usize {
+        0
+    }
+
+    fn llm_visible_mcp_tool_count_for_server(&self, _server_name: &str) -> usize {
+        0
+    }
+
+    fn llm_visible_mcp_tool_names_by_server(&self) -> Vec<(String, Vec<String>)> {
+        Vec::new()
+    }
+}
+
+impl HasModelSwitching for ErrorFirstRuntime {
+    fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
+        Err("model switching not supported".to_string())
+    }
+
+    fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
+        Err("agent switch not supported in this runtime".to_string())
+    }
+
+    fn active_model_identity(&self) -> String {
+        "unknown/unknown".to_string()
+    }
+
+    fn max_context_tokens(&self) -> Option<u64> {
+        None
+    }
+}
+
+impl HasSessionManagement for ErrorFirstRuntime {
+    fn clear_session(&mut self) {}
+    fn new_session(&mut self) {}
+    fn seed_last_total_tokens(&mut self, _tokens: Option<u64>) {}
+}
+
+impl HasCompaction for ErrorFirstRuntime {
+    fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
+        None
+    }
+
+    fn execute_compaction_trigger<U: ProgressUi>(
+        &mut self,
+        _ui: &mut U,
+        _source: CompactionTriggerSource,
+    ) -> Result<(), String> {
+        Ok(())
     }
 }
 
@@ -1253,10 +1486,10 @@ impl CoreRuntime for LongRunningRuntime {
     }
 }
 
-impl ExtendedRuntime for LongRunningRuntime {
+impl HasMcpManagement for LongRunningRuntime {
     fn set_mcp_server_enabled(
         &mut self,
-        _server_name: &str,
+        _name: &str,
         enabled: bool,
     ) -> Result<McpUsabilityState, String> {
         Ok(if enabled {
@@ -1266,6 +1499,20 @@ impl ExtendedRuntime for LongRunningRuntime {
         })
     }
 
+    fn llm_visible_mcp_tool_count(&self) -> usize {
+        0
+    }
+
+    fn llm_visible_mcp_tool_count_for_server(&self, _server_name: &str) -> usize {
+        0
+    }
+
+    fn llm_visible_mcp_tool_names_by_server(&self) -> Vec<(String, Vec<String>)> {
+        Vec::new()
+    }
+}
+
+impl HasModelSwitching for LongRunningRuntime {
     fn switch_model(&mut self, model_spec: &str) -> Result<(String, Option<u64>), String> {
         self.action_log
             .lock()
@@ -1285,8 +1532,36 @@ impl ExtendedRuntime for LongRunningRuntime {
         Ok((model_spec.to_string(), None))
     }
 
+    fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
+        Err("agent switch not supported in this runtime".to_string())
+    }
+
     fn active_model_identity(&self) -> String {
         self.active_identity.lock().expect("identity lock").clone()
+    }
+
+    fn max_context_tokens(&self) -> Option<u64> {
+        None
+    }
+}
+
+impl HasSessionManagement for LongRunningRuntime {
+    fn clear_session(&mut self) {}
+    fn new_session(&mut self) {}
+    fn seed_last_total_tokens(&mut self, _tokens: Option<u64>) {}
+}
+
+impl HasCompaction for LongRunningRuntime {
+    fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
+        None
+    }
+
+    fn execute_compaction_trigger<U: ProgressUi>(
+        &mut self,
+        _ui: &mut U,
+        _source: CompactionTriggerSource,
+    ) -> Result<(), String> {
+        Ok(())
     }
 }
 
@@ -1391,7 +1666,65 @@ impl CoreRuntime for PermissionGateRuntime {
     }
 }
 
-impl ExtendedRuntime for PermissionGateRuntime {}
+impl HasMcpManagement for PermissionGateRuntime {
+    fn set_mcp_server_enabled(
+        &mut self,
+        _name: &str,
+        _enabled: bool,
+    ) -> Result<McpUsabilityState, String> {
+        Ok(McpUsabilityState::Disabled)
+    }
+
+    fn llm_visible_mcp_tool_count(&self) -> usize {
+        0
+    }
+
+    fn llm_visible_mcp_tool_count_for_server(&self, _server_name: &str) -> usize {
+        0
+    }
+
+    fn llm_visible_mcp_tool_names_by_server(&self) -> Vec<(String, Vec<String>)> {
+        Vec::new()
+    }
+}
+
+impl HasModelSwitching for PermissionGateRuntime {
+    fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
+        Err("model switching not supported".to_string())
+    }
+
+    fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
+        Err("agent switch not supported in this runtime".to_string())
+    }
+
+    fn active_model_identity(&self) -> String {
+        "unknown/unknown".to_string()
+    }
+
+    fn max_context_tokens(&self) -> Option<u64> {
+        None
+    }
+}
+
+impl HasSessionManagement for PermissionGateRuntime {
+    fn clear_session(&mut self) {}
+    fn new_session(&mut self) {}
+    fn seed_last_total_tokens(&mut self, _tokens: Option<u64>) {}
+}
+
+impl HasCompaction for PermissionGateRuntime {
+    fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
+        None
+    }
+
+    fn execute_compaction_trigger<U: ProgressUi>(
+        &mut self,
+        _ui: &mut U,
+        _source: CompactionTriggerSource,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+}
 
 struct PermissionOrderingUi {
     submitted: std::collections::VecDeque<String>,
@@ -2058,7 +2391,15 @@ impl CoreRuntime for StartupHydrationRuntime {
     }
 }
 
-impl ExtendedRuntime for StartupHydrationRuntime {
+impl HasMcpManagement for StartupHydrationRuntime {
+    fn set_mcp_server_enabled(
+        &mut self,
+        _name: &str,
+        _enabled: bool,
+    ) -> Result<McpUsabilityState, String> {
+        Ok(McpUsabilityState::Disabled)
+    }
+
     fn llm_visible_mcp_tool_count(&self) -> usize {
         self.names_by_server
             .iter()
@@ -2066,8 +2407,50 @@ impl ExtendedRuntime for StartupHydrationRuntime {
             .sum()
     }
 
+    fn llm_visible_mcp_tool_count_for_server(&self, _server_name: &str) -> usize {
+        0
+    }
+
     fn llm_visible_mcp_tool_names_by_server(&self) -> Vec<(String, Vec<String>)> {
         self.names_by_server.clone()
+    }
+}
+
+impl HasModelSwitching for StartupHydrationRuntime {
+    fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
+        Err("model switching not supported".to_string())
+    }
+
+    fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
+        Err("agent switch not supported in this runtime".to_string())
+    }
+
+    fn active_model_identity(&self) -> String {
+        "unknown/unknown".to_string()
+    }
+
+    fn max_context_tokens(&self) -> Option<u64> {
+        None
+    }
+}
+
+impl HasSessionManagement for StartupHydrationRuntime {
+    fn clear_session(&mut self) {}
+    fn new_session(&mut self) {}
+    fn seed_last_total_tokens(&mut self, _tokens: Option<u64>) {}
+}
+
+impl HasCompaction for StartupHydrationRuntime {
+    fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
+        None
+    }
+
+    fn execute_compaction_trigger<U: ProgressUi>(
+        &mut self,
+        _ui: &mut U,
+        _source: CompactionTriggerSource,
+    ) -> Result<(), String> {
+        Ok(())
     }
 }
 
@@ -2106,7 +2489,7 @@ impl CoreRuntime for McpToggleRuntime {
     }
 }
 
-impl ExtendedRuntime for McpToggleRuntime {
+impl HasMcpManagement for McpToggleRuntime {
     fn set_mcp_server_enabled(
         &mut self,
         server_name: &str,
@@ -2122,6 +2505,48 @@ impl ExtendedRuntime for McpToggleRuntime {
 
     fn llm_visible_mcp_tool_count_for_server(&self, _server_name: &str) -> usize {
         self.visible_count_by_server
+    }
+
+    fn llm_visible_mcp_tool_names_by_server(&self) -> Vec<(String, Vec<String>)> {
+        Vec::new()
+    }
+}
+
+impl HasModelSwitching for McpToggleRuntime {
+    fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
+        Err("model switching not supported".to_string())
+    }
+
+    fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
+        Err("agent switch not supported in this runtime".to_string())
+    }
+
+    fn active_model_identity(&self) -> String {
+        "unknown/unknown".to_string()
+    }
+
+    fn max_context_tokens(&self) -> Option<u64> {
+        None
+    }
+}
+
+impl HasSessionManagement for McpToggleRuntime {
+    fn clear_session(&mut self) {}
+    fn new_session(&mut self) {}
+    fn seed_last_total_tokens(&mut self, _tokens: Option<u64>) {}
+}
+
+impl HasCompaction for McpToggleRuntime {
+    fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
+        None
+    }
+
+    fn execute_compaction_trigger<U: ProgressUi>(
+        &mut self,
+        _ui: &mut U,
+        _source: CompactionTriggerSource,
+    ) -> Result<(), String> {
+        Ok(())
     }
 }
 
@@ -2241,7 +2666,7 @@ impl CoreRuntime for FailingMcpToggleRuntime {
     }
 }
 
-impl ExtendedRuntime for FailingMcpToggleRuntime {
+impl HasMcpManagement for FailingMcpToggleRuntime {
     fn set_mcp_server_enabled(
         &mut self,
         server_name: &str,
@@ -2257,6 +2682,48 @@ impl ExtendedRuntime for FailingMcpToggleRuntime {
 
     fn llm_visible_mcp_tool_count_for_server(&self, _server_name: &str) -> usize {
         0
+    }
+
+    fn llm_visible_mcp_tool_names_by_server(&self) -> Vec<(String, Vec<String>)> {
+        Vec::new()
+    }
+}
+
+impl HasModelSwitching for FailingMcpToggleRuntime {
+    fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
+        Err("model switching not supported".to_string())
+    }
+
+    fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
+        Err("agent switch not supported in this runtime".to_string())
+    }
+
+    fn active_model_identity(&self) -> String {
+        "unknown/unknown".to_string()
+    }
+
+    fn max_context_tokens(&self) -> Option<u64> {
+        None
+    }
+}
+
+impl HasSessionManagement for FailingMcpToggleRuntime {
+    fn clear_session(&mut self) {}
+    fn new_session(&mut self) {}
+    fn seed_last_total_tokens(&mut self, _tokens: Option<u64>) {}
+}
+
+impl HasCompaction for FailingMcpToggleRuntime {
+    fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
+        None
+    }
+
+    fn execute_compaction_trigger<U: ProgressUi>(
+        &mut self,
+        _ui: &mut U,
+        _source: CompactionTriggerSource,
+    ) -> Result<(), String> {
+        Ok(())
     }
 }
 
@@ -2317,7 +2784,7 @@ impl CoreRuntime for SequencedMcpToggleRuntime {
     }
 }
 
-impl ExtendedRuntime for SequencedMcpToggleRuntime {
+impl HasMcpManagement for SequencedMcpToggleRuntime {
     fn set_mcp_server_enabled(
         &mut self,
         server_name: &str,
@@ -2341,6 +2808,48 @@ impl ExtendedRuntime for SequencedMcpToggleRuntime {
 
     fn llm_visible_mcp_tool_count_for_server(&self, _server_name: &str) -> usize {
         self.current_visible_count_by_server
+    }
+
+    fn llm_visible_mcp_tool_names_by_server(&self) -> Vec<(String, Vec<String>)> {
+        Vec::new()
+    }
+}
+
+impl HasModelSwitching for SequencedMcpToggleRuntime {
+    fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
+        Err("model switching not supported".to_string())
+    }
+
+    fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
+        Err("agent switch not supported in this runtime".to_string())
+    }
+
+    fn active_model_identity(&self) -> String {
+        "unknown/unknown".to_string()
+    }
+
+    fn max_context_tokens(&self) -> Option<u64> {
+        None
+    }
+}
+
+impl HasSessionManagement for SequencedMcpToggleRuntime {
+    fn clear_session(&mut self) {}
+    fn new_session(&mut self) {}
+    fn seed_last_total_tokens(&mut self, _tokens: Option<u64>) {}
+}
+
+impl HasCompaction for SequencedMcpToggleRuntime {
+    fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
+        None
+    }
+
+    fn execute_compaction_trigger<U: ProgressUi>(
+        &mut self,
+        _ui: &mut U,
+        _source: CompactionTriggerSource,
+    ) -> Result<(), String> {
+        Ok(())
     }
 }
 
@@ -2395,10 +2904,10 @@ impl CoreRuntime for PanicOnToggleRuntime {
     }
 }
 
-impl ExtendedRuntime for PanicOnToggleRuntime {
+impl HasMcpManagement for PanicOnToggleRuntime {
     fn set_mcp_server_enabled(
         &mut self,
-        _server_name: &str,
+        _name: &str,
         _enabled: bool,
     ) -> Result<McpUsabilityState, String> {
         panic!("toggle panic")
@@ -2406,6 +2915,52 @@ impl ExtendedRuntime for PanicOnToggleRuntime {
 
     fn llm_visible_mcp_tool_count(&self) -> usize {
         self.visible_count
+    }
+
+    fn llm_visible_mcp_tool_count_for_server(&self, _server_name: &str) -> usize {
+        0
+    }
+
+    fn llm_visible_mcp_tool_names_by_server(&self) -> Vec<(String, Vec<String>)> {
+        Vec::new()
+    }
+}
+
+impl HasModelSwitching for PanicOnToggleRuntime {
+    fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
+        Err("model switching not supported".to_string())
+    }
+
+    fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
+        Err("agent switch not supported in this runtime".to_string())
+    }
+
+    fn active_model_identity(&self) -> String {
+        "unknown/unknown".to_string()
+    }
+
+    fn max_context_tokens(&self) -> Option<u64> {
+        None
+    }
+}
+
+impl HasSessionManagement for PanicOnToggleRuntime {
+    fn clear_session(&mut self) {}
+    fn new_session(&mut self) {}
+    fn seed_last_total_tokens(&mut self, _tokens: Option<u64>) {}
+}
+
+impl HasCompaction for PanicOnToggleRuntime {
+    fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
+        None
+    }
+
+    fn execute_compaction_trigger<U: ProgressUi>(
+        &mut self,
+        _ui: &mut U,
+        _source: CompactionTriggerSource,
+    ) -> Result<(), String> {
+        Ok(())
     }
 }
 
@@ -2699,9 +3254,67 @@ impl CoreRuntime for MailboxTestRuntime {
     }
 }
 
-impl ExtendedRuntime for MailboxTestRuntime {
+impl HasMcpManagement for MailboxTestRuntime {
+    fn set_mcp_server_enabled(
+        &mut self,
+        _name: &str,
+        _enabled: bool,
+    ) -> Result<McpUsabilityState, String> {
+        Ok(McpUsabilityState::Disabled)
+    }
+
+    fn llm_visible_mcp_tool_count(&self) -> usize {
+        0
+    }
+
+    fn llm_visible_mcp_tool_count_for_server(&self, _server_name: &str) -> usize {
+        0
+    }
+
+    fn llm_visible_mcp_tool_names_by_server(&self) -> Vec<(String, Vec<String>)> {
+        Vec::new()
+    }
+}
+
+impl HasModelSwitching for MailboxTestRuntime {
+    fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
+        Err("model switching not supported".to_string())
+    }
+
+    fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
+        Err("agent switch not supported in this runtime".to_string())
+    }
+
+    fn active_model_identity(&self) -> String {
+        "unknown/unknown".to_string()
+    }
+
+    fn max_context_tokens(&self) -> Option<u64> {
+        None
+    }
+}
+
+impl HasSessionManagement for MailboxTestRuntime {
     fn clear_session(&mut self) {
         self.clear_session_calls += 1;
+    }
+
+    fn new_session(&mut self) {}
+
+    fn seed_last_total_tokens(&mut self, _tokens: Option<u64>) {}
+}
+
+impl HasCompaction for MailboxTestRuntime {
+    fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
+        None
+    }
+
+    fn execute_compaction_trigger<U: ProgressUi>(
+        &mut self,
+        _ui: &mut U,
+        _source: CompactionTriggerSource,
+    ) -> Result<(), String> {
+        Ok(())
     }
 }
 
@@ -2901,7 +3514,65 @@ fn mailbox_queued_when_worker_busy() {
         }
     }
 
-    impl ExtendedRuntime for BusyRuntime {}
+    impl HasMcpManagement for BusyRuntime {
+        fn set_mcp_server_enabled(
+            &mut self,
+            _name: &str,
+            _enabled: bool,
+        ) -> Result<McpUsabilityState, String> {
+            Ok(McpUsabilityState::Disabled)
+        }
+
+        fn llm_visible_mcp_tool_count(&self) -> usize {
+            0
+        }
+
+        fn llm_visible_mcp_tool_count_for_server(&self, _server_name: &str) -> usize {
+            0
+        }
+
+        fn llm_visible_mcp_tool_names_by_server(&self) -> Vec<(String, Vec<String>)> {
+            Vec::new()
+        }
+    }
+
+    impl HasModelSwitching for BusyRuntime {
+        fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
+            Err("model switching not supported".to_string())
+        }
+
+        fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
+            Err("agent switch not supported in this runtime".to_string())
+        }
+
+        fn active_model_identity(&self) -> String {
+            "unknown/unknown".to_string()
+        }
+
+        fn max_context_tokens(&self) -> Option<u64> {
+            None
+        }
+    }
+
+    impl HasSessionManagement for BusyRuntime {
+        fn clear_session(&mut self) {}
+        fn new_session(&mut self) {}
+        fn seed_last_total_tokens(&mut self, _tokens: Option<u64>) {}
+    }
+
+    impl HasCompaction for BusyRuntime {
+        fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
+            None
+        }
+
+        fn execute_compaction_trigger<U: ProgressUi>(
+            &mut self,
+            _ui: &mut U,
+            _source: CompactionTriggerSource,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+    }
 
     let mut runtime = BusyRuntime {
         prompts: prompts_clone,
@@ -3076,9 +3747,14 @@ fn _assert_single_turn_accepts_core_runtime<R: CoreRuntime + Send, U: ProgressUi
     // if this compiles, the bound is correct
 }
 
-// Compile-time check: run_interactive_loop must accept anything that impls ExtendedRuntime
+// Compile-time check: run_interactive_loop must accept anything that impls the focused capability traits
 fn _assert_interactive_loop_accepts_extended_runtime<
-    R: ExtendedRuntime + Send,
+    R: CoreRuntime
+        + HasMcpManagement
+        + HasModelSwitching
+        + HasSessionManagement
+        + HasCompaction
+        + Send,
     U: ProgressUi + UserInputUi + DisplayStateUi + LifecycleUi + TranscriptUi,
 >(
     _r: R,
@@ -3116,10 +3792,36 @@ impl CoreRuntime for ContextWindowRuntime {
     }
 }
 
-impl ExtendedRuntime for ContextWindowRuntime {
+impl HasMcpManagement for ContextWindowRuntime {
+    fn set_mcp_server_enabled(
+        &mut self,
+        _name: &str,
+        _enabled: bool,
+    ) -> Result<McpUsabilityState, String> {
+        Ok(McpUsabilityState::Disabled)
+    }
+
+    fn llm_visible_mcp_tool_count(&self) -> usize {
+        0
+    }
+
+    fn llm_visible_mcp_tool_count_for_server(&self, _server_name: &str) -> usize {
+        0
+    }
+
+    fn llm_visible_mcp_tool_names_by_server(&self) -> Vec<(String, Vec<String>)> {
+        Vec::new()
+    }
+}
+
+impl HasModelSwitching for ContextWindowRuntime {
     fn switch_model(&mut self, model_spec: &str) -> Result<(String, Option<u64>), String> {
         self.switched_models.push(model_spec.to_string());
         Ok((model_spec.to_string(), self.max_context_tokens))
+    }
+
+    fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
+        Err("agent switch not supported in this runtime".to_string())
     }
 
     fn active_model_identity(&self) -> String {
@@ -3128,6 +3830,26 @@ impl ExtendedRuntime for ContextWindowRuntime {
 
     fn max_context_tokens(&self) -> Option<u64> {
         self.max_context_tokens
+    }
+}
+
+impl HasSessionManagement for ContextWindowRuntime {
+    fn clear_session(&mut self) {}
+    fn new_session(&mut self) {}
+    fn seed_last_total_tokens(&mut self, _tokens: Option<u64>) {}
+}
+
+impl HasCompaction for ContextWindowRuntime {
+    fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
+        None
+    }
+
+    fn execute_compaction_trigger<U: ProgressUi>(
+        &mut self,
+        _ui: &mut U,
+        _source: CompactionTriggerSource,
+    ) -> Result<(), String> {
+        Ok(())
     }
 }
 
@@ -3284,10 +4006,10 @@ impl CoreRuntime for TokenSeedingRuntime {
     }
 }
 
-impl ExtendedRuntime for TokenSeedingRuntime {
+impl HasMcpManagement for TokenSeedingRuntime {
     fn set_mcp_server_enabled(
         &mut self,
-        _server_name: &str,
+        _name: &str,
         enabled: bool,
     ) -> Result<McpUsabilityState, String> {
         Ok(if enabled {
@@ -3297,8 +4019,58 @@ impl ExtendedRuntime for TokenSeedingRuntime {
         })
     }
 
+    fn llm_visible_mcp_tool_count(&self) -> usize {
+        0
+    }
+
+    fn llm_visible_mcp_tool_count_for_server(&self, _server_name: &str) -> usize {
+        0
+    }
+
+    fn llm_visible_mcp_tool_names_by_server(&self) -> Vec<(String, Vec<String>)> {
+        Vec::new()
+    }
+}
+
+impl HasModelSwitching for TokenSeedingRuntime {
+    fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
+        Err("model switching not supported".to_string())
+    }
+
+    fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
+        Err("agent switch not supported in this runtime".to_string())
+    }
+
+    fn active_model_identity(&self) -> String {
+        "unknown/unknown".to_string()
+    }
+
+    fn max_context_tokens(&self) -> Option<u64> {
+        None
+    }
+}
+
+impl HasSessionManagement for TokenSeedingRuntime {
+    fn clear_session(&mut self) {}
+
+    fn new_session(&mut self) {}
+
     fn seed_last_total_tokens(&mut self, tokens: Option<u64>) {
         self.seeded_tokens = Some(tokens);
+    }
+}
+
+impl HasCompaction for TokenSeedingRuntime {
+    fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
+        None
+    }
+
+    fn execute_compaction_trigger<U: ProgressUi>(
+        &mut self,
+        _ui: &mut U,
+        _source: CompactionTriggerSource,
+    ) -> Result<(), String> {
+        Ok(())
     }
 }
 

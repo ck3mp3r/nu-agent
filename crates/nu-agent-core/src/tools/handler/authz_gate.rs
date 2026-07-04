@@ -5,7 +5,7 @@ use crate::tools::authz::{
     SessionGrantCache, apply_ask_choice, apply_session_grant_override,
 };
 
-use super::types::{AuthorizationDeniedDetails, AuthorizationDiagnostic, ToolSource};
+use super::types::ToolSource;
 
 #[derive(Debug, Clone)]
 pub struct AuthorizationFlowContext {
@@ -20,7 +20,7 @@ pub fn enforce_authorization_for_tool_call(
     flow_context: &AuthorizationFlowContext,
     ask_hook: &mut impl AskApprovalHook,
     event_sink: &mut impl PermissionEventSink,
-) -> Option<AuthorizationDeniedDetails> {
+) -> bool {
     // `Builtin` tools (read-only + agent-coordination) bypass permissions entirely.
     // `BuiltinFs` tools (edit, patch) are NOT in this set — they mutate the filesystem
     // and must go through the full permission flow below, same as MCP/closure tools.
@@ -29,7 +29,7 @@ pub fn enforce_authorization_for_tool_call(
             "Authz bypass: tool={} source=Builtin",
             tool_call.function.name
         );
-        return None;
+        return false;
     }
 
     let mut auth_decision =
@@ -80,26 +80,9 @@ pub fn enforce_authorization_for_tool_call(
             auth_decision.matched_rule.scope,
             auth_decision.matched_rule.pattern
         );
-        let denied_details = AuthorizationDeniedDetails {
-            rule_identity: auth_decision.matched_rule.identity.clone(),
-            scope: auth_decision.matched_rule.scope.to_string(),
-            target_field: auth_decision
-                .matched_rule
-                .target_field
-                .map(|field| field.to_string()),
-            pattern: auth_decision.matched_rule.pattern.clone(),
-            diagnostics: auth_decision
-                .diagnostics
-                .iter()
-                .map(|diagnostic| AuthorizationDiagnostic {
-                    code: diagnostic.code.to_string(),
-                    message: diagnostic.message.clone(),
-                })
-                .collect(),
-        };
-        return Some(denied_details);
+        return true;
     }
-    None
+    false
 }
 
 #[cfg(test)]

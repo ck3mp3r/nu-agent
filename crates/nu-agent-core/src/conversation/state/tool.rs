@@ -1,3 +1,4 @@
+use super::super::managers::ToolManager;
 use crate::tools::authz::PermissionsConfig;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::{self, McpToolRegistry};
@@ -40,5 +41,27 @@ impl ToolState {
         permissions: &PermissionsConfig,
     ) -> Vec<ToolDefinition> {
         handler::llm_visible_tool_definitions(&self.tool_definitions, mcp_registry, permissions)
+    }
+}
+
+impl ToolManager for ToolState {
+    fn closure_registry(&self) -> &ClosureRegistry {
+        &self.closure_registry
+    }
+
+    fn tool_definitions_mut(&mut self) -> &mut Vec<ToolDefinition> {
+        &mut self.tool_definitions
+    }
+
+    fn reset_to_baseline(&mut self) {
+        self.reset_to_baseline()
+    }
+
+    fn active_definitions(
+        &self,
+        mcp_registry: &McpToolRegistry,
+        permissions: &PermissionsConfig,
+    ) -> Vec<ToolDefinition> {
+        self.active_definitions(mcp_registry, permissions)
     }
 }

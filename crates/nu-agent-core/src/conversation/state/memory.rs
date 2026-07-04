@@ -1,3 +1,4 @@
+use super::super::managers::SessionManager;
 use crate::session::JournalConversationMemory;
 
 pub struct MemoryState {
@@ -39,5 +40,27 @@ impl MemoryState {
     pub fn clear(&mut self) {
         self.memory.clear_all();
         self.last_total_tokens = None;
+    }
+}
+
+impl SessionManager for MemoryState {
+    fn memory(&self) -> &JournalConversationMemory {
+        &self.memory
+    }
+
+    fn memory_mut(&mut self) -> &mut JournalConversationMemory {
+        &mut self.memory
+    }
+
+    fn clear(&mut self) {
+        self.clear()
+    }
+
+    fn last_total_tokens(&self) -> Option<u64> {
+        self.last_total_tokens
+    }
+
+    fn last_total_tokens_mut(&mut self) -> &mut Option<u64> {
+        &mut self.last_total_tokens
     }
 }

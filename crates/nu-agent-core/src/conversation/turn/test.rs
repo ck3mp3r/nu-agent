@@ -238,27 +238,23 @@ fn turn_result_can_be_constructed() {
 
 #[test]
 fn turn_error_can_be_constructed() {
-    let error = TurnError {
+    let error = TurnError::CompletionFailed {
         msg: "Test error".to_string(),
-        cancelled: false,
-        messages: None,
-        last_known_history: vec![],
-        pre_turn_message_count: 0,
+        kind: executor::CompletionErrorKind::Unknown,
     };
 
-    assert_eq!(error.msg, "Test error");
-    assert!(!error.cancelled);
-    assert!(error.messages.is_none());
+    assert!(!error.is_cancelled());
+    let msg = match &error {
+        TurnError::CompletionFailed { msg, .. } => msg.as_str(),
+        _ => panic!("expected CompletionFailed"),
+    };
+    assert_eq!(msg, "Test error");
 
-    let cancelled = TurnError {
+    let cancelled = TurnError::Cancelled {
         msg: "Cancelled".to_string(),
-        cancelled: true,
-        messages: None,
-        last_known_history: vec![],
-        pre_turn_message_count: 0,
+        messages: vec![],
     };
-    assert!(cancelled.cancelled);
-    assert!(cancelled.messages.is_none());
+    assert!(cancelled.is_cancelled());
 }
 
 #[test]
@@ -277,14 +273,15 @@ fn prompt_cancelled_error_is_detected_as_cancellation() {
     let turn_err = TurnError::from(err);
 
     assert!(
-        turn_err.cancelled,
+        turn_err.is_cancelled(),
         "PromptCancelled variant should be detected as cancellation"
     );
-    assert!(turn_err.msg.contains("Cancelled by user"));
+    let (msg, messages) = match &turn_err {
+        TurnError::Cancelled { msg, messages, .. } => (msg, messages),
+        _ => panic!("expected Cancelled variant"),
+    };
+    assert!(msg.contains("Cancelled by user"));
 
-    let messages = turn_err
-        .messages
-        .expect("PromptCancelled should capture chat_history as messages");
     assert_eq!(
         messages.len(),
         1,
@@ -301,7 +298,7 @@ fn other_prompt_errors_are_not_cancelled() {
     let turn_err = TurnError::from(err);
 
     assert!(
-        !turn_err.cancelled,
+        !turn_err.is_cancelled(),
         "Non-cancellation errors should not be detected as cancellation"
     );
 }
@@ -322,7 +319,7 @@ fn max_turns_error_is_not_cancelled() {
     let turn_err = TurnError::from(err);
 
     assert!(
-        !turn_err.cancelled,
+        !turn_err.is_cancelled(),
         "MaxTurnsError should not be detected as cancellation"
     );
 }
@@ -362,12 +359,12 @@ fn streaming_error_from_prompt_cancelled_captures_messages() {
 
     let turn_err = TurnError::from(streaming_err);
 
-    assert!(turn_err.cancelled);
-    assert_eq!(turn_err.msg, "Hook cancelled");
-
-    let messages = turn_err
-        .messages
-        .expect("StreamingError wrapping PromptCancelled should capture chat_history");
+    assert!(turn_err.is_cancelled());
+    let (msg, messages) = match &turn_err {
+        TurnError::Cancelled { msg, messages, .. } => (msg.as_str(), messages),
+        _ => panic!("expected Cancelled variant"),
+    };
+    assert_eq!(msg, "Hook cancelled");
     assert_eq!(messages.len(), 1);
 }
 
@@ -457,12 +454,13 @@ fn turn_error_from_prompt_cancelled_captures_messages() {
 
     let turn_err = TurnError::from(err);
 
-    assert!(turn_err.cancelled);
-    assert_eq!(turn_err.msg, "User pressed Esc");
+    assert!(turn_err.is_cancelled());
+    let (msg, messages) = match &turn_err {
+        TurnError::Cancelled { msg, messages, .. } => (msg.as_str(), messages),
+        _ => panic!("expected Cancelled variant"),
+    };
+    assert_eq!(msg, "User pressed Esc");
 
-    let messages = turn_err
-        .messages
-        .expect("PromptCancelled should preserve chat_history");
     assert_eq!(
         messages.len(),
         2,
@@ -478,10 +476,10 @@ fn turn_error_from_non_cancelled_has_no_messages() {
 
     let turn_err = TurnError::from(err);
 
-    assert!(!turn_err.cancelled);
+    assert!(!turn_err.is_cancelled());
     assert!(
-        turn_err.messages.is_none(),
-        "Non-cancelled errors should not have messages"
+        !matches!(turn_err, TurnError::Cancelled { .. }),
+        "Non-cancelled errors should not be Cancelled variant"
     );
 }
 
@@ -663,13 +661,15 @@ fn cancel_mid_tool_call_preserves_tool_call_and_tool_result_in_history() {
 
     let turn_err = TurnError::from(err);
 
-    assert!(turn_err.cancelled, "TurnError must be marked as cancelled");
-    assert_eq!(turn_err.msg, "User pressed Esc during tool execution");
-
-    let messages = turn_err.messages.expect(
-        "chat_history must be preserved — PromptCancelled provides full history including \
-         tool_call + tool_result pairs",
+    assert!(
+        turn_err.is_cancelled(),
+        "TurnError must be marked as cancelled"
     );
+    let (msg, messages) = match &turn_err {
+        TurnError::Cancelled { msg, messages, .. } => (msg.as_str(), messages),
+        _ => panic!("expected Cancelled variant"),
+    };
+    assert_eq!(msg, "User pressed Esc during tool execution");
 
     assert_eq!(
         messages.len(),
@@ -772,11 +772,14 @@ fn cancel_preserves_multiple_tool_use_cycles() {
 
     let turn_err = TurnError::from(err);
 
-    assert!(turn_err.cancelled);
+    assert!(turn_err.is_cancelled());
 
-    let messages = turn_err.messages.expect(
-        "All accumulated messages must be preserved on cancel — including 2 completed tool cycles",
-    );
+    let messages = match &turn_err {
+        TurnError::Cancelled { messages, .. } => messages,
+        _ => panic!(
+            "expected Cancelled variant: all accumulated messages must be preserved on cancel — including 2 completed tool cycles"
+        ),
+    };
 
     assert_eq!(
         messages.len(),

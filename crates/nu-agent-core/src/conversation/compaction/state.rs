@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use crate::compaction::CompactionStrategy;
+use crate::conversation::managers::CompactionManager;
 use crate::protocol::compaction::{
     CompactionTriggerDecision, CompactionTriggerPolicy, TokenCompactionPolicy,
 };
@@ -41,5 +42,18 @@ impl CompactionState {
             self.compaction_strategy,
         );
         Some(policy.evaluate(last_total_tokens))
+    }
+}
+
+impl CompactionManager for CompactionState {
+    fn evaluate_auto_compaction(
+        &mut self,
+        last_total_tokens: Option<u64>,
+    ) -> Option<CompactionTriggerDecision> {
+        self.evaluate_auto_compaction(last_total_tokens)
+    }
+
+    fn compacting(&self) -> &Arc<AtomicBool> {
+        &self.compacting
     }
 }

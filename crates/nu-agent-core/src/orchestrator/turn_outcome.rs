@@ -14,7 +14,7 @@ use nu_protocol::{LabeledError, Value};
 /// # Future Improvement
 ///
 /// The v1 and v2 paths should be updated to return `TurnOutcome` directly,
-/// eliminating the need for string matching. The `TurnError.cancelled` flag
+/// eliminating the need for string matching.  The `TurnError::Cancelled` variant
 /// provides the typed information needed but is currently lost when converting
 /// to `LabeledError`.
 #[derive(Debug, Clone)]

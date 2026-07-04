@@ -2,9 +2,8 @@ use super::SessionMetadata;
 use crate::types::Message;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::error::Error;
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader, Write};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -59,6 +58,9 @@ pub enum StoreEntry {
 /// - Error handling: All methods return Result for consistent error handling
 /// - Session isolation: Each session is identified by a unique session_id string
 pub trait ConversationStore {
+    /// The concrete error type returned by all storage operations.
+    type Error: std::error::Error;
+
     /// Load all messages for a session.
     ///
     /// Returns an empty vector for new or missing sessions (not an error).
@@ -68,7 +70,7 @@ pub trait ConversationStore {
     ///
     /// # Returns
     /// A vector of messages in the order they were stored, or empty vec if session doesn't exist.
-    fn load(&self, session_id: &str) -> Result<Vec<Message>, Box<dyn Error>>;
+    fn load(&self, session_id: &str) -> Result<Vec<Message>, Self::Error>;
 
     /// Append new messages to an existing session.
     ///
@@ -85,7 +87,7 @@ pub trait ConversationStore {
         session_id: &str,
         messages: &[Message],
         last_total_tokens: Option<u64>,
-    ) -> Result<(), Box<dyn Error>>;
+    ) -> Result<(), Self::Error>;
 
     /// Clear all messages from a session.
     ///
@@ -97,7 +99,7 @@ pub trait ConversationStore {
     ///
     /// # Returns
     /// Ok(()) on success, or an error if the operation fails.
-    fn clear(&self, session_id: &str) -> Result<(), Box<dyn Error>>;
+    fn clear(&self, session_id: &str) -> Result<(), Self::Error>;
 
     /// Append a compaction marker to the session log.
     ///
@@ -114,7 +116,7 @@ pub trait ConversationStore {
         session_id: &str,
         marker: &CompactionMarker,
         last_total_tokens: Option<u64>,
-    ) -> Result<(), Box<dyn Error>>;
+    ) -> Result<(), Self::Error>;
 
     /// Load all entries (messages + markers) preserving JSONL order.
     ///
@@ -125,7 +127,7 @@ pub trait ConversationStore {
     ///
     /// # Returns
     /// A vector of StoreEntry in the order they were stored.
-    fn load_all(&self, session_id: &str) -> Result<(Vec<StoreEntry>, Option<u64>), Box<dyn Error>>;
+    fn load_all(&self, session_id: &str) -> Result<(Vec<StoreEntry>, Option<u64>), Self::Error>;
 }
 
 /// JSONL-based implementation of ConversationStore.
@@ -160,7 +162,9 @@ impl JsonlConversationStore {
 }
 
 impl ConversationStore for JsonlConversationStore {
-    fn load(&self, session_id: &str) -> Result<Vec<Message>, Box<dyn Error>> {
+    type Error = io::Error;
+
+    fn load(&self, session_id: &str) -> Result<Vec<Message>, io::Error> {
         let path = self.session_path(session_id);
 
         // Return empty vec if file doesn't exist (new session)
@@ -208,7 +212,7 @@ impl ConversationStore for JsonlConversationStore {
         session_id: &str,
         messages: &[Message],
         last_total_tokens: Option<u64>,
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<(), io::Error> {
         let path = self.session_path(session_id);
 
         // Ensure base directory exists
@@ -226,24 +230,26 @@ impl ConversationStore for JsonlConversationStore {
 
             let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
 
-            writeln!(file, "{}", serde_json::to_string(&metadata)?)?;
+            let json = serde_json::to_string(&metadata).map_err(io::Error::other)?;
+            writeln!(file, "{}", json)?;
         }
 
         // Append messages
         let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
 
         for message in messages {
-            let mut value = serde_json::to_value(message)?;
+            let mut value = serde_json::to_value(message).map_err(io::Error::other)?;
             if let (Some(obj), Some(tokens)) = (value.as_object_mut(), last_total_tokens) {
                 obj.insert("last_total_tokens".to_string(), serde_json::json!(tokens));
             }
-            writeln!(file, "{}", serde_json::to_string(&value)?)?;
+            let json = serde_json::to_string(&value).map_err(io::Error::other)?;
+            writeln!(file, "{}", json)?;
         }
 
         Ok(())
     }
 
-    fn clear(&self, session_id: &str) -> Result<(), Box<dyn Error>> {
+    fn clear(&self, session_id: &str) -> Result<(), io::Error> {
         let path = self.session_path(session_id);
 
         // Only attempt to remove if file exists
@@ -259,7 +265,7 @@ impl ConversationStore for JsonlConversationStore {
         session_id: &str,
         marker: &CompactionMarker,
         last_total_tokens: Option<u64>,
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<(), io::Error> {
         let path = self.session_path(session_id);
 
         // Ensure base directory exists
@@ -277,22 +283,24 @@ impl ConversationStore for JsonlConversationStore {
 
             let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
 
-            writeln!(file, "{}", serde_json::to_string(&metadata)?)?;
+            let json = serde_json::to_string(&metadata).map_err(io::Error::other)?;
+            writeln!(file, "{}", json)?;
         }
 
         // Append marker
         let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
 
-        let mut value = serde_json::to_value(marker)?;
+        let mut value = serde_json::to_value(marker).map_err(io::Error::other)?;
         if let (Some(obj), Some(tokens)) = (value.as_object_mut(), last_total_tokens) {
             obj.insert("last_total_tokens".to_string(), serde_json::json!(tokens));
         }
-        writeln!(file, "{}", serde_json::to_string(&value)?)?;
+        let json = serde_json::to_string(&value).map_err(io::Error::other)?;
+        writeln!(file, "{}", json)?;
 
         Ok(())
     }
 
-    fn load_all(&self, session_id: &str) -> Result<(Vec<StoreEntry>, Option<u64>), Box<dyn Error>> {
+    fn load_all(&self, session_id: &str) -> Result<(Vec<StoreEntry>, Option<u64>), io::Error> {
         let path = self.session_path(session_id);
 
         // Return empty vec if file doesn't exist (new session)

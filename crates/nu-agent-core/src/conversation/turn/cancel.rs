@@ -78,22 +78,21 @@ fn prompt_cancelled_preserves_tool_call_history() {
 
     // CRITICAL ASSERTION 1: cancelled flag must be true
     assert!(
-        turn_err.cancelled,
-        "TurnError must have cancelled=true for PromptCancelled"
+        turn_err.is_cancelled(),
+        "TurnError must be Cancelled variant for PromptCancelled"
     );
 
     // VERIFY: msg should match the cancellation reason
+    let (msg, messages) = match &turn_err {
+        TurnError::Cancelled { msg, messages, .. } => (msg.as_str(), messages),
+        _ => panic!("expected Cancelled variant"),
+    };
     assert_eq!(
-        turn_err.msg, "User pressed Esc during read_file",
+        msg, "User pressed Esc during read_file",
         "TurnError msg should be the cancellation reason"
     );
 
-    // CRITICAL ASSERTION 2: messages must be Some and NOT empty
-    let messages = turn_err.messages.expect(
-        "PromptCancelled chat_history must be preserved — PromptCancelled provides full history \
-         including tool_call + tool_result pairs after rig v0.39.0 fix",
-    );
-
+    // CRITICAL ASSERTION 2: messages must be non-empty
     // CRITICAL ASSERTION 3: we need >= 3 messages (user text + tool_call message + tool_result)
     assert!(
         messages.len() >= 3,
@@ -178,14 +177,14 @@ fn prompt_cancelled_with_tool_calls_earlier_has_non_empty_history() {
     let turn_err = TurnError::from(err);
 
     // cancelled must be true
-    assert!(turn_err.cancelled);
+    assert!(turn_err.is_cancelled());
 
     // The older pattern still preserves what it has — at minimum >= 2 messages (user + assistant).
     // This is the "non-empty history" part: even minimal chat_history survives.
-    let messages = turn_err.messages.expect(
-        "Even minimal chat_history should be preserved after cancel — \
-         PromptCancelled provides whatever was accumulated",
-    );
+    let messages = match &turn_err {
+        TurnError::Cancelled { messages, .. } => messages,
+        _ => panic!("expected Cancelled variant"),
+    };
 
     assert!(
         messages.len() >= 2,

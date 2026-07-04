@@ -10,8 +10,7 @@ use nu_agent_core::{
     orchestrator::{run_hydrated_interactive_loop, run_interactive_loop, run_single_turn},
     policy::UiPolicy,
     protocol::{
-        contracts::{ExtendedRuntime, UiMessageSnapshot},
-        event::PermissionDecision,
+        contracts::UiMessageSnapshot, event::PermissionDecision, mcp_management::HasMcpManagement,
     },
 };
 use nu_agent_tty::StderrProgressUi;
@@ -93,8 +92,10 @@ pub(crate) fn run_tui_mode(
     .map_err(|err| LabeledError::new(format!("Failed to initialize TUI renderer: {err}")))?;
 
     let mut tui_ui = TuiInteractiveUi::new(runtime_renderer);
-    let active_model_identity =
-        super::picker::format_active_model_identity(runtime_impl.provider(), runtime_impl.model());
+    let active_model_identity = super::picker::format_active_model_identity(
+        runtime_impl.provider_name(),
+        runtime_impl.model(),
+    );
     tui_ui.set_active_model_identity(active_model_identity.clone());
     let model_picker_catalog =
         super::picker::model_picker_catalog_from_cached_startup_plugin_config(

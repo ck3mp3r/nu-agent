@@ -21,11 +21,30 @@ use crate::tools::authz::{
 };
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::{
-    AuthorizationFlowContext, McpToolRegistry, enforce_authorization_for_tool_call,
+    AuthorizationFlowContext, McpToolRegistry, ToolSource, builtin_kinds::BuiltinKind,
+    enforce_authorization_for_tool_call,
 };
 use crate::types::{ToolCall, ToolFunction};
 
-use super::permission_bridge::resolve_tool_source;
+fn resolve_tool_source(
+    name: &str,
+    closures: &ClosureRegistry,
+    mcp: &McpToolRegistry,
+) -> ToolSource {
+    if closures.get(name).is_some() {
+        ToolSource::Closure
+    } else if let Ok(kind) = name.parse::<BuiltinKind>() {
+        if kind.is_fs() {
+            ToolSource::BuiltinFs
+        } else {
+            ToolSource::Builtin
+        }
+    } else if mcp.contains(name) {
+        ToolSource::Mcp
+    } else {
+        ToolSource::Unknown
+    }
+}
 
 /// Permission decision returned by the async resolver (and from driver to hook).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -169,7 +188,7 @@ impl AsyncPermissionResolver for PolicyPermissionResolver {
                 &mut NoOpSink,
             );
 
-            if denied.is_some() {
+            if denied {
                 PermissionDecision::Deny
             } else {
                 PermissionDecision::Allow
@@ -333,7 +352,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
 
             if !capture_hook.was_called {
                 // Policy had an explicit Allow or Deny — no user interaction needed.
-                if denied.is_some() {
+                if denied {
                     PermissionDecision::Deny
                 } else {
                     PermissionDecision::Allow

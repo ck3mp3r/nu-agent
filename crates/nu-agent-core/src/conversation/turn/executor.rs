@@ -11,8 +11,11 @@ use rig::memory::ConversationMemory;
 use tokio::sync::mpsc;
 
 use crate::config::Config;
+use crate::conversation::managers::SessionManager;
 use crate::conversation::providers::{CachedProviderClient, ModelVisitor};
-use crate::conversation::turn::{TurnContext, TurnResult, execute_turn, execute_turn_with_channel};
+use crate::conversation::turn::{
+    TurnContext, TurnResult, error, execute_turn, execute_turn_with_channel,
+};
 use crate::hook::agent_hook::DoomLoopState;
 use crate::hook::permission_resolver::AsyncPermissionResolver;
 use crate::protocol::contracts::ProgressUi;
@@ -63,20 +66,20 @@ pub struct ToolInfra {
     pub doom_state: Arc<Mutex<DoomLoopState>>,
 }
 
-pub struct TurnExecutor<'a> {
+pub struct TurnExecutor<'a, S: SessionManager> {
     pub config: &'a Config,
     pub runtime: &'a tokio::runtime::Runtime,
-    pub memory_state: &'a mut super::super::state::memory::MemoryState,
+    pub memory_state: &'a mut S,
     pub tool_infra: ToolInfra,
     /// Stored after a completed turn so the delegate can extract it for response formatting.
     response_data: Option<TurnResponseData>,
 }
 
-impl<'a> TurnExecutor<'a> {
+impl<'a, S: SessionManager> TurnExecutor<'a, S> {
     pub fn new(
         config: &'a Config,
         runtime: &'a tokio::runtime::Runtime,
-        memory_state: &'a mut super::super::state::memory::MemoryState,
+        memory_state: &'a mut S,
         tool_infra: ToolInfra,
     ) -> Self {
         Self {
@@ -173,18 +176,16 @@ impl<'a> TurnExecutor<'a> {
             );
 
             match &result {
-                Err(e) if e.messages.is_none() && !e.cancelled => {
-                    // Hard error path — check if retryable
-                    let (kind, _) = classify_completion_error(&e.msg);
-                    log::debug!(
-                        "classify_completion_error: kind={kind:?} msg_preview={}",
-                        &e.msg[..e.msg.len().min(200)]
-                    );
-                    let has_partial_history = !e.last_known_history.is_empty();
+                Err((
+                    crate::conversation::turn::TurnError::CompletionFailed { kind, msg },
+                    ctx,
+                )) => {
+                    // Hard error path — check if retryable using the pre-classified kind
+                    let has_partial_history = !ctx.last_known_history.is_empty();
                     log::debug!(
                         "Hard error: kind={kind:?} retryable={} history_len={}",
                         kind.is_retryable(),
-                        e.last_known_history.len()
+                        ctx.last_known_history.len()
                     );
                     if kind.is_retryable()
                         && attempt < self.config.max_retries.unwrap_or(3)
@@ -199,8 +200,8 @@ impl<'a> TurnExecutor<'a> {
                             .min(30_000);
                         // Random jitter: ±20% (0.8–1.2× multiplier) per Goose strategy
                         let jitter_factor = 0.8 + (rand::random::<f64>() * 0.4);
-                        let raw_delay = if kind == CompletionErrorKind::RateLimit {
-                            extract_retry_after_ms(&e.msg).unwrap_or(base_delay)
+                        let raw_delay = if *kind == CompletionErrorKind::RateLimit {
+                            extract_retry_after_ms(msg).unwrap_or(base_delay)
                         } else {
                             base_delay
                         };
@@ -215,14 +216,17 @@ impl<'a> TurnExecutor<'a> {
                     // Exhausted retries — wrap the error with attempt count
                     if attempt > 0 {
                         log::warn!("Retries exhausted after {attempt} attempts: {kind:?}");
-                        let msg = format!("Turn failed after {attempt} retries. {}", e.msg);
-                        break Err(crate::conversation::turn::TurnError {
-                            msg: msg.clone(),
-                            cancelled: false,
-                            messages: None,
-                            last_known_history: e.last_known_history.clone(),
-                            pre_turn_message_count: e.pre_turn_message_count,
-                        });
+                        let retry_msg = format!("Turn failed after {attempt} retries. {msg}");
+                        break Err((
+                            crate::conversation::turn::TurnError::CompletionFailed {
+                                msg: retry_msg,
+                                kind: kind.clone(),
+                            },
+                            error::TurnContext {
+                                last_known_history: ctx.last_known_history.clone(),
+                                pre_turn_message_count: ctx.pre_turn_message_count,
+                            },
+                        ));
                     }
                     break result;
                 }
@@ -233,14 +237,27 @@ impl<'a> TurnExecutor<'a> {
         let turn_result =
             match visitor_result {
                 Ok(result) => result,
-                Err(e) if e.messages.is_some() && !e.cancelled => {
+                Err((
+                    crate::conversation::turn::TurnError::MaxTurnsExceeded {
+                        ref msg,
+                        ref messages,
+                        ..
+                    },
+                    ref ctx,
+                ))
+                | Err((
+                    crate::conversation::turn::TurnError::UnknownTool {
+                        ref msg,
+                        ref messages,
+                        ..
+                    },
+                    ref ctx,
+                )) => {
                     // Path A (non-cancelled): MaxTurnsError / UnknownToolCall carry full chat_history.
                     // Persist only the delta (new messages from this turn) so the session remembers
                     // the failed turn without re-appending messages already in persistent storage.
-                    if let Some(session_id) = final_session_id
-                        && let Some(ref messages) = e.messages
-                    {
-                        // e.messages for MaxTurnsError/UnknownToolCall is rig's full accumulated
+                    if let Some(session_id) = final_session_id {
+                        // messages for MaxTurnsError/UnknownToolCall is rig's full accumulated
                         // chat_history (from AgentRun::full_history()), which DOES include the
                         // current-turn user prompt and any tool call exchanges from this turn.
                         // This is unlike last_known_history (from on_completion_call's `history`
@@ -248,13 +265,13 @@ impl<'a> TurnExecutor<'a> {
                         // correctly yields [user_prompt, assistant_tool_calls...] — the new messages.
                         let delta: Vec<Message> = messages
                             .iter()
-                            .skip(e.pre_turn_message_count)
+                            .skip(ctx.pre_turn_message_count)
                             .cloned()
                             .collect();
                         log::debug!(
                             "Path A non-cancelled: delta_count={} pre_turn={}",
                             delta.len(),
-                            e.pre_turn_message_count
+                            ctx.pre_turn_message_count
                         );
                         if !delta.is_empty() {
                             let patched = inject_missing_tool_results(delta);
@@ -268,35 +285,30 @@ impl<'a> TurnExecutor<'a> {
                             }
                         }
                     }
-                    let (kind, user_msg) = classify_completion_error(&e.msg);
-                    log::debug!(
-                        "classify_completion_error: kind={kind:?} msg_preview={}",
-                        &e.msg[..e.msg.len().min(200)]
-                    );
-                    log::error!(
-                        "Turn error (path A non-cancelled): {}",
-                        &e.msg[..e.msg.len().min(200)]
-                    );
+                    let msg_preview = &msg[..msg.len().min(200)];
+                    log::error!("Turn error (path A non-cancelled): {msg_preview}");
+                    let user_msg = msg.clone();
                     return Err(LabeledError::new(user_msg.clone()).with_label(user_msg, span));
                 }
-                Err(e) if e.cancelled => {
+                Err((
+                    crate::conversation::turn::TurnError::Cancelled { ref messages, .. },
+                    ref ctx,
+                )) => {
                     // Path A: rig hook cancelled — persist chat_history delta if available.
-                    // e.messages for PromptCancelled is rig's full_history() — it DOES include
+                    // messages for PromptCancelled is rig's full_history() — it DOES include
                     // the current-turn user prompt and any tool exchanges. skip(pre_turn_message_count)
                     // yields only the new messages from this turn, preventing double-appending the
                     // prior session history when a cancelled turn follows prior session messages.
-                    if let Some(session_id) = final_session_id
-                        && let Some(ref messages) = e.messages
-                    {
+                    if let Some(session_id) = final_session_id {
                         let delta: Vec<Message> = messages
                             .iter()
-                            .skip(e.pre_turn_message_count)
+                            .skip(ctx.pre_turn_message_count)
                             .cloned()
                             .collect();
                         log::debug!(
                             "Path A cancelled: delta_count={} pre_turn={}",
                             delta.len(),
-                            e.pre_turn_message_count
+                            ctx.pre_turn_message_count
                         );
                         if !delta.is_empty() {
                             let patched = inject_missing_tool_results(delta);
@@ -331,45 +343,61 @@ impl<'a> TurnExecutor<'a> {
                         span,
                     )));
                 }
-                Err(e) => {
-                    // Hard error: CompletionError or ToolError.
+                Err((e, ctx)) => {
+                    // Hard error: CompletionFailed or ToolExecutionFailed.
                     // If on_completion_call fired at least once, we have a partial history snapshot
                     // from the hook Arc. Persist it so completed sub-turns are not lost.
                     // If no on_completion_call fired (failure before first HTTP request), fall back
                     // to a synthetic user+assistant placeholder pair to maintain alternating structure.
 
-                    // For retry-exhausted errors, use the already-formatted message directly
-                    // (it contains the retry count and the original classified error).
-                    let user_msg = if e.msg.starts_with("Turn failed after") {
-                        e.msg.clone()
-                    } else {
-                        let (kind, msg) = classify_completion_error(&e.msg);
-                        log::debug!(
-                            "classify_completion_error: kind={kind:?} msg_preview={}",
-                            &e.msg[..e.msg.len().min(200)]
-                        );
-                        msg
+                    // Extract fields needed for history persistence and error message.
+                    let (msg, kind_opt) = match &e {
+                        crate::conversation::turn::TurnError::CompletionFailed { msg, kind } => {
+                            (msg, Some(kind))
+                        }
+                        crate::conversation::turn::TurnError::ToolExecutionFailed { msg } => {
+                            (msg, None)
+                        }
+                        // Other variants (Cancelled, MaxTurnsExceeded, UnknownTool) are already
+                        // handled above; this catch-all is for exhaustiveness.
+                        _ => {
+                            return Err(
+                                LabeledError::new(e.to_string()).with_label(e.to_string(), span)
+                            );
+                        }
                     };
+
+                    // For retry-exhausted errors, the message already contains the retry count.
+                    // Otherwise, use the pre-classified kind to build the user-facing message.
+                    let user_msg = if msg.starts_with("Turn failed after") {
+                        msg.clone()
+                    } else if let Some(kind) = kind_opt {
+                        kind_to_user_msg(kind, msg)
+                    } else {
+                        // ToolExecutionFailed — no kind, use raw message
+                        format!("Turn failed: {msg}")
+                    };
+
                     log::error!(
                         "Turn failed with unrecoverable error: session={:?} error={}",
                         final_session_id,
-                        &e.msg[..e.msg.len().min(200)]
+                        &msg[..msg.len().min(200)]
                     );
                     if let Some(session_id) = final_session_id {
-                        let delta: Vec<Message> = e
+                        let delta: Vec<Message> = ctx
                             .last_known_history
                             .iter()
-                            .skip(e.pre_turn_message_count)
+                            .skip(ctx.pre_turn_message_count)
                             .cloned()
                             .collect();
                         log::debug!(
                             "Hard error: delta_count={} pre_turn={}",
                             delta.len(),
-                            e.pre_turn_message_count
+                            ctx.pre_turn_message_count
                         );
                         if !delta.is_empty() {
                             let patched = inject_missing_tool_results(delta);
-                            let patched = close_open_tool_result_block(patched, &e.msg);
+                            let patched = close_open_tool_result_block(patched, msg);
                             if let Err(mem_err) = self.runtime.block_on(
                                 self.memory_state.memory_mut().append(session_id, patched),
                             ) {
@@ -387,7 +415,7 @@ impl<'a> TurnExecutor<'a> {
                             );
                             let fallback = vec![
                                 Message::user(prompt.clone()),
-                                Message::assistant(format!("[Turn failed: {}]", e.msg)),
+                                Message::assistant(format!("[Turn failed: {msg}]")),
                             ];
                             if let Err(mem_err) = self.runtime.block_on(
                                 self.memory_state.memory_mut().append(session_id, fallback),
@@ -581,13 +609,13 @@ struct TurnVisitor<'a, 'b, U, P> {
 }
 
 impl<U: ProgressUi, P: AsyncPermissionResolver> ModelVisitor for TurnVisitor<'_, '_, U, P> {
-    type Output = Result<TurnResult, crate::conversation::turn::TurnError>;
+    type Output = Result<TurnResult, (crate::conversation::turn::TurnError, error::TurnContext)>;
 
     fn visit<M>(self, model: M) -> Self::Output
     where
         M: rig::completion::CompletionModel + Clone + 'static,
     {
-        let ctx = TurnContext::new(
+        let turn_ctx = TurnContext::new(
             self.runtime.handle(),
             model,
             super::TurnConversation {
@@ -611,9 +639,9 @@ impl<U: ProgressUi, P: AsyncPermissionResolver> ModelVisitor for TurnVisitor<'_,
             self.config,
         );
         if let Some((ui_tx, ui_rx)) = self.ui_channel {
-            execute_turn_with_channel(ctx, self.ui, self.permission_resolver, ui_tx, ui_rx)
+            execute_turn_with_channel(turn_ctx, self.ui, self.permission_resolver, ui_tx, ui_rx)
         } else {
-            execute_turn(ctx, self.ui, self.permission_resolver)
+            execute_turn(turn_ctx, self.ui, self.permission_resolver)
         }
     }
 }
@@ -641,8 +669,8 @@ pub fn close_open_tool_result_block(messages: Vec<Message>, error_msg: &str) -> 
 /// Describes the category of a completion failure.
 ///
 /// Used by callers to decide whether to retry, surface a user-readable message,
-/// or trigger session repair. The structured return from `classify_completion_error`
-/// makes these decisions explicit rather than embedding policy in string matching.
+/// or trigger session repair.  The enum makes these decisions explicit rather
+/// than embedding policy in string matching.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompletionErrorKind {
     /// 429 — temporary rate limit; retryable.
@@ -683,184 +711,46 @@ impl CompletionErrorKind {
     }
 }
 
-/// Returns `true` if `code` appears as a standalone token in `msg`.
+/// Returns a user-visible error message for a given `CompletionErrorKind`.
 ///
-/// Splits on whitespace and checks each word after stripping leading/trailing
-/// non-digit punctuation. This prevents substring false-positives like
-/// `"5000 tokens"` matching `"500"` or `"step 4042"` matching `"404"`.
-fn contains_status_code(msg: &str, code: &str) -> bool {
-    msg.split_whitespace()
-        .any(|word| word.trim_matches(|c: char| !c.is_ascii_digit()) == code)
-}
-
-/// Classify a `CompletionError` message string into a structured `(CompletionErrorKind, String)`.
-///
-/// The `CompletionErrorKind` captures the error category for retry/repair policy decisions.
-/// The `String` is a human-readable message suitable for display to the user.
-///
-/// Patterns are ordered most-specific first to prevent misclassification (e.g. ToolStructure
-/// is checked before generic 400-class patterns; ContextOverflow before RequestTooLarge).
-pub fn classify_completion_error(msg: &str) -> (CompletionErrorKind, String) {
-    // ToolStructure — most specific (400 + tool keyword)
-    if (msg.contains("invalid_request_body") || msg.contains("invalid_request_error"))
-        && (msg.contains("tool_use") || msg.contains("tool_result"))
-    {
-        return (
-            CompletionErrorKind::ToolStructure,
-            "Turn failed: the API rejected this turn — a tool call was missing its result. The session has been repaired.".into(),
-        );
-    }
-
-    // ContextOverflow — 14 patterns (case-insensitive)
-    let msg_lower = msg.to_lowercase();
-    if msg_lower.contains("context_length_exceeded")
-        || msg_lower.contains("context length exceeded")
-        || msg_lower.contains("exceeds the context window")
-        || msg_lower.contains("prompt is too long")
-        || msg_lower.contains("input is too long for requested model")
-        || msg_lower.contains("input token count")
-        || msg_lower.contains("maximum context length")
-        // NOTE: "max tokens" is broad — could match rate-limit messages like
-        // "limited to 4096 max tokens per minute". This is accepted per OpenCode spec
-        // and matches the known provider error corpus. Watch for misclassification
-        // if new providers are onboarded.
-        || msg_lower.contains("max tokens")
-        || msg_lower.contains("token limit")
-        || msg_lower.contains("context window is full")
-        || msg_lower.contains("context window exceeded")
-        || msg_lower.contains("reduce the length")
-        || msg_lower.contains("too many tokens")
-        || msg_lower.contains("string too long")
-    {
-        return (
-            CompletionErrorKind::ContextOverflow,
-            "Turn failed: conversation too long. Run 'agent session compact' to summarise.".into(),
-        );
-    }
-
-    // RequestTooLarge
-    if msg_lower.contains("request_too_large")
-        || msg_lower.contains("request entity too large")
-        || contains_status_code(msg, "413")
-    {
-        return (
-            CompletionErrorKind::RequestTooLarge,
-            "Turn failed: tool results too large. Lower max_tool_result_bytes in config.".into(),
-        );
-    }
-
-    // Refusal
-    if msg_lower.contains("content_policy")
-        || msg_lower.contains("content policy")
-        || msg_lower.contains("safety")
-        || msg_lower.contains("moderation")
-        || msg_lower.contains("refusal")
-        || msg_lower.contains("refused")
-    {
-        return (
-            CompletionErrorKind::Refusal,
+/// The message describes what went wrong in human-readable terms. Called by the
+/// hard-error path in `TurnExecutor::execute` to produce the `LabeledError` returned
+/// to the Nushell caller.
+fn kind_to_user_msg(kind: &CompletionErrorKind, raw_msg: &str) -> String {
+    match kind {
+        CompletionErrorKind::ToolStructure => {
+            "Turn failed: the API rejected this turn — a tool call was missing its result. The session has been repaired.".to_string()
+        }
+        CompletionErrorKind::ContextOverflow => {
+            "Turn failed: conversation too long. Run 'agent session compact' to summarise."
+                .to_string()
+        }
+        CompletionErrorKind::RequestTooLarge => {
+            "Turn failed: tool results too large. Lower max_tool_result_bytes in config."
+                .to_string()
+        }
+        CompletionErrorKind::Refusal => {
             "Turn failed: the provider refused this request (content policy or safety filter)."
-                .into(),
-        );
+                .to_string()
+        }
+        CompletionErrorKind::CreditsExhausted => {
+            "Turn failed: account credits exhausted. Top up your provider account.".to_string()
+        }
+        CompletionErrorKind::Quota => {
+            "Turn failed: billing limit reached. Check your provider account.".to_string()
+        }
+        CompletionErrorKind::RateLimit => "Turn failed: rate limit reached.".to_string(),
+        CompletionErrorKind::Overloaded => "Turn failed: provider overloaded.".to_string(),
+        CompletionErrorKind::ServerError => "Turn failed: provider server error.".to_string(),
+        CompletionErrorKind::Network => "Turn failed: network error.".to_string(),
+        CompletionErrorKind::EndpointNotFound => {
+            "Turn failed: API endpoint not found. Check your provider configuration.".to_string()
+        }
+        CompletionErrorKind::Auth => {
+            "Turn failed: authentication failed. Check your API key.".to_string()
+        }
+        CompletionErrorKind::Unknown => format!("Turn failed: {raw_msg}"),
     }
-
-    // CreditsExhausted
-    if msg_lower.contains("credits")
-        || msg_lower.contains("out of credits")
-        || msg_lower.contains("top up")
-    {
-        return (
-            CompletionErrorKind::CreditsExhausted,
-            "Turn failed: account credits exhausted. Top up your provider account.".into(),
-        );
-    }
-
-    // Quota / billing
-    if contains_status_code(msg, "402")
-        || msg_lower.contains("billing_error")
-        || msg_lower.contains("billing")
-        || msg_lower.contains("quota")
-        || msg_lower.contains("insufficient_quota")
-    {
-        return (
-            CompletionErrorKind::Quota,
-            "Turn failed: billing limit reached. Check your provider account.".into(),
-        );
-    }
-
-    // RateLimit
-    if msg_lower.contains("rate_limit")
-        || msg_lower.contains("rate limit")
-        || contains_status_code(msg, "429")
-    {
-        return (
-            CompletionErrorKind::RateLimit,
-            "Turn failed: rate limit reached.".into(),
-        );
-    }
-
-    // Overloaded
-    if msg_lower.contains("overloaded")
-        || contains_status_code(msg, "529")
-        || contains_status_code(msg, "503")
-    {
-        return (
-            CompletionErrorKind::Overloaded,
-            "Turn failed: provider overloaded.".into(),
-        );
-    }
-
-    // ServerError
-    if contains_status_code(msg, "500")
-        || msg_lower.contains("api_error")
-        || contains_status_code(msg, "504")
-        || msg_lower.contains("timeout_error")
-    {
-        return (
-            CompletionErrorKind::ServerError,
-            "Turn failed: provider server error.".into(),
-        );
-    }
-
-    // Network — includes stream decode errors (retryable)
-    if msg_lower.contains("error sending request")
-        || msg_lower.contains("connection reset")
-        || msg_lower.contains("connection refused")
-        || msg_lower.contains("network error")
-        || msg_lower.contains("decode error")
-        || msg_lower.contains("invalid utf-8")
-        || msg_lower.contains("unexpected eof")
-    {
-        return (
-            CompletionErrorKind::Network,
-            "Turn failed: network error.".into(),
-        );
-    }
-
-    // EndpointNotFound
-    if contains_status_code(msg, "404")
-        || msg_lower.contains("not_found_error")
-        || msg_lower.contains("endpoint not found")
-    {
-        return (
-            CompletionErrorKind::EndpointNotFound,
-            "Turn failed: API endpoint not found. Check your provider configuration.".into(),
-        );
-    }
-
-    // Auth
-    if contains_status_code(msg, "401")
-        || msg_lower.contains("authentication_error")
-        || contains_status_code(msg, "403")
-        || msg_lower.contains("permission_error")
-    {
-        return (
-            CompletionErrorKind::Auth,
-            "Turn failed: authentication failed. Check your API key.".into(),
-        );
-    }
-
-    (CompletionErrorKind::Unknown, format!("Turn failed: {msg}"))
 }
 
 /// Build the final response `Value` from turn data. Called by the delegate after

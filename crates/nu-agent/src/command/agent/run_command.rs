@@ -12,7 +12,10 @@ use super::{
 
 use nu_agent_core::{
     config::PluginConfig,
-    conversation::runtime::AgentConversationRuntime,
+    conversation::{
+        builder::{BrokerInput, BuildInput},
+        runtime::AgentConversationRuntime,
+    },
     policy::UiPolicy,
     session::resolver::{DefaultSessionResolver, SessionResolutionInput, SessionResolver},
     tools::handler::McpToolRegistry,
@@ -254,28 +257,38 @@ pub(super) fn run_command(
         cwd: cwd.clone(),
     })?;
 
-    let super::setup::SetupResult {
+    let broker_input = broker_flags.map(|f| BrokerInput {
+        socket_path: f.socket_path,
+        token: f.token,
+        parent_name: f.parent_name,
+    });
+
+    let nu_agent_core::conversation::builder::BuildArtifacts {
         mailbox_rx,
         parent_name,
         merged_compaction,
         compaction_strategy,
-    } = super::setup::register_tools(super::setup::RegisterToolsInput {
-        runtime: &runtime,
-        tool_server_handle: &tool_server_handle,
-        closure_registry: &closure_registry,
-        cwd: &cwd,
-        engine,
+    } = super::setup::register_tools(
         call,
-        plugin_config_value: plugin_config_value.as_ref(),
-        available_agents: &available_agents,
-        messaging_identity: messaging_identity.clone(),
-        broker_flags,
-        is_orchestrator,
-        has_messaging,
-        tool_timeout,
-        session: session_resolution.session.as_mut(),
-        max_tool_result_bytes: config.max_tool_result_bytes.unwrap_or(20_000),
-    })?;
+        plugin_config_value.as_ref(),
+        BuildInput {
+            runtime: &runtime,
+            tool_server_handle: &tool_server_handle,
+            closure_registry: &closure_registry,
+            cwd: cwd.clone(),
+            engine,
+            span: call.head,
+            available_agents: &available_agents,
+            messaging_identity: messaging_identity.clone(),
+            broker_flags: broker_input,
+            is_orchestrator,
+            has_messaging,
+            tool_timeout,
+            session: session_resolution.session.as_mut(),
+            max_tool_result_bytes: config.max_tool_result_bytes.unwrap_or(20_000),
+            merged_compaction: nu_agent_core::config::CompactionConfig::default(),
+        },
+    )?;
 
     let mcp_caller_cwd = cwd.clone();
 
@@ -323,9 +336,9 @@ pub(super) fn run_command(
         });
     log::debug!(
         "runtime: agent_persona_body_len={:?}, agent_identity={:?}, agent_description={:?}",
-        runtime_impl.persona_state.persona_body_len(),
-        runtime_impl.persona_state.agent_identity(),
-        runtime_impl.persona_state.agent_description()
+        runtime_impl.persona_body_len(),
+        runtime_impl.agent_identity(),
+        runtime_impl.agent_description()
     );
     match mode {
         AgentMode::Tui => run_tui_mode(

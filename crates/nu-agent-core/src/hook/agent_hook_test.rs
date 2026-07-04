@@ -1,5 +1,6 @@
 use super::*;
 use crate::hook::agent_hook::{DoomLoopState, HookState};
+use crate::hook::chain::HookChain;
 use crate::protocol::event::UiEvent;
 use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
 use crate::types::{Text, UserContent};
@@ -94,14 +95,14 @@ impl AsyncPermissionResolver for MockResolver {
 
 fn make_hook_with_resolver(
     resolver: MockResolver,
-) -> (AgentHook<MockResolver>, mpsc::UnboundedReceiver<UiEvent>) {
+) -> (HookChain<MockResolver>, mpsc::UnboundedReceiver<UiEvent>) {
     let (tx, rx) = mpsc::unbounded_channel();
     let token = CancellationToken::new();
     let closure_registry = Arc::new(crate::tools::closure::ClosureRegistry::new());
     let mcp_registry = Arc::new(crate::tools::handler::McpToolRegistry::from_names(
         std::iter::empty::<String>(),
     ));
-    let hook = AgentHook::new(
+    let hook = HookChain::new(
         token,
         tx,
         resolver,
@@ -119,7 +120,7 @@ fn make_hook_with_resolver(
 fn make_hook_with_token(
     resolver: MockResolver,
 ) -> (
-    AgentHook<MockResolver>,
+    HookChain<MockResolver>,
     mpsc::UnboundedReceiver<UiEvent>,
     CancellationToken,
 ) {
@@ -129,7 +130,7 @@ fn make_hook_with_token(
     let mcp_registry = Arc::new(crate::tools::handler::McpToolRegistry::from_names(
         std::iter::empty::<String>(),
     ));
-    let hook = AgentHook::new(
+    let hook = HookChain::new(
         token.clone(),
         tx,
         resolver,
@@ -479,14 +480,14 @@ async fn on_completion_call_stores_history_in_shared_arc() {
 fn make_hook_with_limit(
     resolver: MockResolver,
     limit: usize,
-) -> (AgentHook<MockResolver>, mpsc::UnboundedReceiver<UiEvent>) {
+) -> (HookChain<MockResolver>, mpsc::UnboundedReceiver<UiEvent>) {
     let (tx, rx) = mpsc::unbounded_channel();
     let token = CancellationToken::new();
     let closure_registry = Arc::new(crate::tools::closure::ClosureRegistry::new());
     let mcp_registry = Arc::new(crate::tools::handler::McpToolRegistry::from_names(
         std::iter::empty::<String>(),
     ));
-    let hook = AgentHook::new(
+    let hook = HookChain::new(
         token,
         tx,
         resolver,
@@ -623,14 +624,14 @@ fn is_tool_failure_detects_tool_call_limit() {
 fn make_hook_with_doom_state(
     resolver: MockResolver,
     doom_state: Arc<Mutex<DoomLoopState>>,
-) -> (AgentHook<MockResolver>, mpsc::UnboundedReceiver<UiEvent>) {
+) -> (HookChain<MockResolver>, mpsc::UnboundedReceiver<UiEvent>) {
     let (tx, rx) = mpsc::unbounded_channel();
     let token = CancellationToken::new();
     let closure_registry = Arc::new(crate::tools::closure::ClosureRegistry::new());
     let mcp_registry = Arc::new(crate::tools::handler::McpToolRegistry::from_names(
         std::iter::empty::<String>(),
     ));
-    let hook = AgentHook::new(
+    let hook = HookChain::new(
         token,
         tx,
         resolver,

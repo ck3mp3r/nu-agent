@@ -331,9 +331,6 @@ mod args_test;
 mod permissions_test;
 
 #[cfg(test)]
-mod runtime_build_test;
-
-#[cfg(test)]
 mod tool_defs_test;
 
 #[cfg(test)]

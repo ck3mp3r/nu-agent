@@ -94,21 +94,6 @@ pub struct ToolFailureOutcome {
     pub details: Option<JsonValue>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AuthorizationDiagnostic {
-    pub code: String,
-    pub message: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AuthorizationDeniedDetails {
-    pub rule_identity: String,
-    pub scope: String,
-    pub target_field: Option<String>,
-    pub pattern: String,
-    pub diagnostics: Vec<AuthorizationDiagnostic>,
-}
-
 #[derive(Debug, Clone)]
 pub struct EditPreviewDisplayPayload {
     pub path: String,

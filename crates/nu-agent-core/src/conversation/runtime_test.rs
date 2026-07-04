@@ -192,7 +192,7 @@ fn runtime_struct_has_memory_field() {
     // We can't easily construct a runtime in tests, but we can verify
     // the type signature compiles
     let _type_check: fn(&AgentConversationRuntime) = |r| {
-        _assert_field_exists(r.memory_state.memory());
+        _assert_field_exists(r.session.memory());
     };
 }
 
@@ -205,7 +205,7 @@ fn runtime_struct_has_conversation_store_field() {
     fn _assert_field_exists(_store: &JsonlConversationStore) {}
 
     let _type_check: fn(&AgentConversationRuntime) = |r| {
-        _assert_field_exists(r.memory_state.conversation_store());
+        _assert_field_exists(r.session.conversation_store());
     };
 }
 
@@ -289,7 +289,7 @@ fn runtime_struct_has_compacting_field() {
     fn _assert_field_exists(_flag: &Arc<AtomicBool>) {}
 
     let _type_check: fn(&AgentConversationRuntime) = |r| {
-        _assert_field_exists(r.compaction_state.compacting());
+        _assert_field_exists(r.compaction.compacting());
     };
 }
 
@@ -297,7 +297,7 @@ fn runtime_struct_has_compacting_field() {
 fn runtime_struct_has_memory_state_field() {
     // Compile-time check that the memory_state field exposes memory() and last_total_tokens().
     let _type_check: fn(&AgentConversationRuntime) = |r| {
-        let _tokens: Option<u64> = r.memory_state.last_total_tokens();
+        let _tokens: Option<u64> = r.session.last_total_tokens();
     };
 }
 
@@ -505,9 +505,9 @@ fn memory_state_hydrated_flag_starts_false() {
         "last_total_tokens must be None in a fresh MemoryState"
     );
 
-    // Compile-time proof that memory_state.memory() returns JournalConversationMemory.
+    // Compile-time proof that session.memory() returns JournalConversationMemory.
     let _type_check: fn(&AgentConversationRuntime) = |r| {
-        let _: Option<u64> = r.memory_state.last_total_tokens();
+        let _: Option<u64> = r.session.last_total_tokens();
     };
 }
 
