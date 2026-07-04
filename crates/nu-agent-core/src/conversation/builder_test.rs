@@ -176,26 +176,22 @@ fn builtin_edit_definition_uses_mode_and_operation_contract_with_legacy_compat_f
         .iter()
         .filter_map(|v| v.as_str())
         .collect::<Vec<_>>();
-    assert_eq!(required, vec!["path", "expected_version"]);
+    assert_eq!(required, vec!["path", "operation"]);
 
     assert_eq!(edit.parameters["properties"]["mode"]["enum"][0], "preview");
     assert_eq!(edit.parameters["properties"]["mode"]["enum"][1], "apply");
-    assert_eq!(
-        edit.parameters["properties"]["operation"]["required"],
-        serde_json::json!(["search", "replacement"])
-    );
 
+    // Operation types include both search_replace and create
+    let op_types = &edit.parameters["properties"]["operation"]["properties"]["type"]["enum"];
+    assert_eq!(op_types[0], "search_replace");
+    assert_eq!(op_types[1], "create");
+
+    // Content field exists for create operations
     assert!(
-        edit.parameters["properties"]["search"]["description"]
+        edit.parameters["properties"]["operation"]["properties"]["content"]["description"]
             .as_str()
             .unwrap_or_default()
-            .contains("legacy")
-    );
-    assert!(
-        edit.parameters["properties"]["replacement"]["description"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("legacy")
+            .contains("create")
     );
 }
 

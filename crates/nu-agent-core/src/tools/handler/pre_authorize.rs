@@ -30,12 +30,22 @@ pub fn pre_authorize_fs_tool(
 
     let operation = super::fs::resolve_edit_operation(&args).ok()?;
     let resolved_path = super::fs::resolve_fs_path_for_cwd(&args.path, cwd);
-    let plan = crate::tools::fs::core::plan_search_replace_edit(
-        &resolved_path,
-        args.expected_version.as_deref(),
-        &operation,
-    )
-    .ok()?;
+    let plan = match &operation {
+        super::fs::ResolvedEditOperation::SearchReplace(sr_op) => {
+            crate::tools::fs::core::plan_search_replace_edit(
+                &resolved_path,
+                args.expected_version.as_deref(),
+                sr_op,
+            )
+            .ok()?
+        }
+        super::fs::ResolvedEditOperation::Create { content } => {
+            if !resolved_path.parent().is_some_and(|p| p.exists()) {
+                return None;
+            }
+            crate::tools::fs::core::plan_create_file(&resolved_path, content).ok()?
+        }
+    };
 
     let preview_display = super::result::build_edit_preview_display(
         super::fs::build_edit_preview_display_payload(&args.path, &plan),

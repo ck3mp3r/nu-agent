@@ -78,30 +78,27 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "edit".to_string(),
-            description: "Canonical edit contract with explicit mode (preview/apply), CAS guard, and legacy compatibility".to_string(),
+            description: "Edit or create files with explicit mode (preview/apply), CAS guard for existing files, and search_replace/create operations".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "path": { "type": "string" },
                     "mode": { "type": "string", "enum": ["preview", "apply"], "default": "apply" },
-                    "expected_version": { "type": "string" },
+                    "expected_version": { "type": "string", "description": "CAS version from prior read (required for search_replace on existing files)" },
                     "operation": {
                         "type": "object",
                         "properties": {
-                            "type": { "type": "string", "enum": ["search_replace"], "default": "search_replace" },
-                            "search": { "type": "string" },
-                            "replacement": { "type": "string" },
+                            "type": { "type": "string", "enum": ["search_replace", "create"], "default": "search_replace" },
+                            "search": { "type": "string", "description": "Required when type is 'search_replace'" },
+                            "replacement": { "type": "string", "description": "Required when type is 'search_replace'" },
                             "match_mode": { "type": "string", "enum": ["literal", "regex"], "default": "literal" },
-                            "occurrence": { "type": "string", "enum": ["first", "all"], "default": "first" }
+                            "occurrence": { "type": "string", "enum": ["first", "all"], "default": "first" },
+                            "content": { "type": "string", "description": "Full file content (required when type is 'create')" }
                         },
-                        "required": ["search", "replacement"]
-                    },
-                    "search": { "type": "string", "description": "legacy compatibility field; prefer operation.search" },
-                    "replacement": { "type": "string", "description": "legacy compatibility field; prefer operation.replacement" },
-                    "match_mode": { "type": "string", "enum": ["literal", "regex"], "description": "legacy compatibility field; prefer operation.match_mode" },
-                    "occurrence": { "type": "string", "enum": ["first", "all"], "description": "legacy compatibility field; prefer operation.occurrence" }
+                        "required": ["type"]
+                    }
                 },
-                "required": ["path", "expected_version"]
+                "required": ["path", "operation"]
             }),
         },
         ToolDefinition {

@@ -1,6 +1,6 @@
 use super::core::{
-    EditMatchMode, EditOccurrence, EditOperation, MutateError, apply_search_replace_edit,
-    version_token,
+    EditMatchMode, EditOccurrence, EditOperation, MutateError, apply_create_file,
+    apply_search_replace_edit, plan_create_file, version_token,
 };
 use std::fs;
 use tempfile::tempdir;
@@ -56,6 +56,78 @@ fn apply_search_replace_edit_conflict_on_stale_version_without_write() {
     assert_eq!(summary.previous_version, current);
     assert_eq!(summary.new_version, current);
     assert_eq!(fs::read_to_string(&file).expect("read"), content);
+}
+
+#[test]
+fn plan_create_file_returns_plan_for_nonexistent_file() {
+    let dir = tempdir().expect("temp dir");
+    let file = dir.path().join("new-create.txt");
+    let content = "hello world\n";
+
+    let plan = plan_create_file(&file, content).expect("plan");
+
+    assert!(!plan.conflict);
+    assert!(plan.would_change);
+    assert!(!plan.noop);
+    assert_eq!(plan.replacements, 0);
+    assert_eq!(plan.previous_content, "");
+    assert_eq!(plan.new_content, content);
+    assert_eq!(plan.previous_bytes, 0);
+    assert_eq!(plan.new_bytes, content.len());
+    assert_eq!(plan.previous_lines, 0);
+    assert_eq!(plan.new_lines, 1);
+    assert_eq!(plan.previous_version, version_token(""));
+}
+
+#[test]
+fn plan_create_file_conflicts_when_file_already_exists() {
+    let dir = tempdir().expect("temp dir");
+    let file = dir.path().join("exists.txt");
+    fs::write(&file, "existing\n").expect("seed");
+
+    let plan = plan_create_file(&file, "new content\n").expect("plan");
+
+    assert!(plan.conflict);
+    assert!(!plan.would_change);
+    assert!(!plan.noop);
+    assert_eq!(plan.previous_version, version_token("existing\n"));
+}
+
+#[test]
+fn apply_create_file_creates_new_file_atomically() {
+    let dir = tempdir().expect("temp dir");
+    let file = dir.path().join("created-by-apply.txt");
+    let content = "brand new file\nline two\n";
+
+    let summary = apply_create_file(&file, content).expect("apply");
+
+    assert!(summary.wrote);
+    assert!(summary.changed);
+    assert!(!summary.noop);
+    assert!(!summary.conflict);
+    assert_eq!(summary.replacements, 0);
+    assert_eq!(fs::read_to_string(&file).expect("read"), content);
+    assert_eq!(summary.previous_version, version_token(""));
+    assert_eq!(summary.new_version, version_token(content));
+}
+
+#[test]
+fn apply_create_file_conflicts_when_file_appears_between_plan_and_apply() {
+    let dir = tempdir().expect("temp dir");
+    let file = dir.path().join("race-condition.txt");
+    let content = "intended content\n";
+
+    fs::write(&file, "someone else created it\n").expect("seed");
+
+    let summary = apply_create_file(&file, content).expect("summary");
+
+    assert!(!summary.wrote);
+    assert!(!summary.changed);
+    assert!(summary.conflict);
+    assert_eq!(
+        fs::read_to_string(&file).expect("read"),
+        "someone else created it\n"
+    );
 }
 
 #[test]

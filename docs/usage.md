@@ -332,11 +332,11 @@ Typical response fields:
 
 ### `edit` canonical contract (preview/apply)
 
-`edit` now uses a single stable contract with explicit mode:
+`edit` uses a single stable contract with explicit mode:
 
 - `mode: "preview"` computes validation + planning + diff without writing.
 - `mode: "apply"` uses the exact same validation + planning semantics, then writes if allowed.
-- Legacy top-level `search`/`replacement`/`match_mode`/`occurrence` are still accepted for compatibility.
+- The `operation` block is required and supports types `search_replace` or `create`.
 
 Canonical request shape:
 
@@ -383,27 +383,28 @@ Deterministic diagnostic classes used by the edit contract:
 - `conflict`
 - `internal`
 
-### `edit` legacy-compatible example (search/replace)
+### `edit` with `operation.type: "create"` (new file creation)
+
+To create a new file, use `operation.type: "create"` with a `content` field:
 
 ```json
 {
   "tool": "edit",
   "arguments": {
-    "path": "src/lib.rs",
-    "search": "old_name",
-    "replacement": "new_name",
-    "expected_version": "<version-from-read>",
-    "match_mode": "literal",
-    "occurrence": "first"
+    "path": "src/new_module.rs",
+    "operation": {
+      "type": "create",
+      "content": "// New module\npub fn hello() {\n    println!(\"hello\");\n}\n"
+    }
   }
 }
 ```
 
 Notes:
 
-- `match_mode`: `literal` (default) or `regex`
-- `occurrence`: `first` (default) or `all`
-- If `mode` is omitted, behavior defaults to `apply` for backward compatibility.
+- `expected_version` is not needed for create operations.
+- If the file already exists, returns a conflict diagnostic. Use `search_replace` instead.
+- Parent directory must exist. The tool does not create intermediate directories.
 
 ### `patch` example (line-range batch)
 

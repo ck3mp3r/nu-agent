@@ -20,19 +20,10 @@ pub struct ReadArgs {
 pub struct EditArgs {
     pub path: String,
     #[serde(default)]
-    pub search: Option<String>,
-    #[serde(default)]
-    pub replacement: Option<String>,
-    #[serde(default)]
     pub expected_version: Option<String>,
     #[serde(default)]
-    pub match_mode: Option<String>,
-    #[serde(default)]
-    pub occurrence: Option<String>,
-    #[serde(default)]
     pub mode: Option<String>,
-    #[serde(default)]
-    pub operation: Option<EditOperationArgs>,
+    pub operation: EditOperationArgs,
 }
 
 #[derive(Debug, serde::Deserialize, Clone)]
@@ -40,12 +31,22 @@ pub struct EditOperationArgs {
     #[serde(default)]
     #[serde(rename = "type")]
     operation_type: Option<String>,
-    search: String,
-    replacement: String,
+    #[serde(default)]
+    search: Option<String>,
+    #[serde(default)]
+    replacement: Option<String>,
     #[serde(default)]
     match_mode: Option<String>,
     #[serde(default)]
     occurrence: Option<String>,
+    #[serde(default)]
+    content: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub enum ResolvedEditOperation {
+    SearchReplace(crate::tools::fs::core::EditOperation),
+    Create { content: String },
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -159,51 +160,54 @@ pub fn build_edit_preview_display_payload(
     }
 }
 
-pub fn resolve_edit_operation(
-    args: &EditArgs,
-) -> Result<crate::tools::fs::core::EditOperation, ToolHandlerError> {
-    if let Some(operation) = &args.operation {
-        if let Some(operation_type) = operation.operation_type.as_deref()
-            && operation_type != "search_replace"
-        {
-            return Err(ToolHandlerError {
+pub fn resolve_edit_operation(args: &EditArgs) -> Result<ResolvedEditOperation, ToolHandlerError> {
+    let operation = &args.operation;
+    let op_type = operation
+        .operation_type
+        .as_deref()
+        .unwrap_or("search_replace");
+
+    match op_type {
+        "create" => {
+            let content = operation.content.clone().ok_or(ToolHandlerError {
                 kind: ToolErrorKind::Validation,
-                message: format!(
-                    "Invalid edit.operation.type '{operation_type}': expected 'search_replace'"
-                ),
+                message:
+                    "Invalid edit arguments: missing field `operation.content` for create operation"
+                        .to_string(),
                 details: None,
-            });
+            })?;
+            Ok(ResolvedEditOperation::Create { content })
         }
-
-        let match_mode = parse_edit_match_mode(operation.match_mode.as_deref())?;
-        let occurrence = parse_edit_occurrence(operation.occurrence.as_deref())?;
-        return Ok(crate::tools::fs::core::EditOperation {
-            search: operation.search.clone(),
-            replacement: operation.replacement.clone(),
-            match_mode,
-            occurrence,
-        });
+        "search_replace" => {
+            let search = operation.search.clone().ok_or(ToolHandlerError {
+                kind: ToolErrorKind::Validation,
+                message: "Invalid edit arguments: missing field `operation.search` for search_replace operation".to_string(),
+                details: None,
+            })?;
+            let replacement = operation.replacement.clone().ok_or(ToolHandlerError {
+                kind: ToolErrorKind::Validation,
+                message: "Invalid edit arguments: missing field `operation.replacement` for search_replace operation".to_string(),
+                details: None,
+            })?;
+            let match_mode = parse_edit_match_mode(operation.match_mode.as_deref())?;
+            let occurrence = parse_edit_occurrence(operation.occurrence.as_deref())?;
+            Ok(ResolvedEditOperation::SearchReplace(
+                crate::tools::fs::core::EditOperation {
+                    search,
+                    replacement,
+                    match_mode,
+                    occurrence,
+                },
+            ))
+        }
+        other => Err(ToolHandlerError {
+            kind: ToolErrorKind::Validation,
+            message: format!(
+                "Invalid edit.operation.type '{other}': expected 'search_replace' or 'create'"
+            ),
+            details: None,
+        }),
     }
-
-    let search = args.search.clone().ok_or(ToolHandlerError {
-        kind: ToolErrorKind::Validation,
-        message: "Invalid edit arguments: missing field `search`".to_string(),
-        details: None,
-    })?;
-    let replacement = args.replacement.clone().ok_or(ToolHandlerError {
-        kind: ToolErrorKind::Validation,
-        message: "Invalid edit arguments: missing field `replacement`".to_string(),
-        details: None,
-    })?;
-    let match_mode = parse_edit_match_mode(args.match_mode.as_deref())?;
-    let occurrence = parse_edit_occurrence(args.occurrence.as_deref())?;
-
-    Ok(crate::tools::fs::core::EditOperation {
-        search,
-        replacement,
-        match_mode,
-        occurrence,
-    })
 }
 
 pub fn map_edit_contract_error(error: &ToolHandlerError) -> &'static str {
@@ -235,6 +239,7 @@ fn build_edit_contract_response(
     mode: EditToolMode,
     plan: crate::tools::fs::core::EditPlan,
     applied: bool,
+    summary: Option<&crate::tools::fs::core::EditSummary>,
 ) -> JsonValue {
     let diff = crate::tools::fs::diff::compute_edit_unified_diff(
         std::path::Path::new("file"),
@@ -242,13 +247,35 @@ fn build_edit_contract_response(
         &plan.new_content,
     );
 
+    let (wrote, changed, noop, conflict, expected_version, previous_version, new_version) =
+        match summary {
+            Some(s) => (
+                s.wrote,
+                s.changed,
+                s.noop,
+                s.conflict,
+                s.expected_version.clone(),
+                s.previous_version.clone(),
+                s.new_version.clone(),
+            ),
+            None => (
+                applied && plan.would_change,
+                plan.would_change,
+                plan.noop,
+                plan.conflict,
+                plan.expected_version,
+                plan.previous_version,
+                plan.new_version,
+            ),
+        };
+
     let mut diagnostics = Vec::new();
-    if plan.conflict {
+    if conflict {
         diagnostics.push(make_edit_diagnostic(
             "stale",
             format!(
                 "stale expected_version '{}' (current '{}')",
-                plan.expected_version, plan.previous_version
+                expected_version, previous_version
             ),
         ));
     }
@@ -258,7 +285,7 @@ fn build_edit_contract_response(
         "mode": mode.as_str(),
         "proposal_id": serde_json::Value::Null,
         "applied": applied,
-        "would_change": plan.would_change,
+        "would_change": changed,
         "diff": diff.text,
         "stats": {
             "replacements": plan.replacements,
@@ -274,14 +301,14 @@ fn build_edit_contract_response(
             "omitted_hunks": diff.omitted_hunks
         },
         "diagnostics": diagnostics,
-        "changed": plan.would_change,
+        "changed": changed,
         "replacements": plan.replacements,
-        "wrote": applied && plan.would_change,
-        "noop": plan.noop,
-        "conflict": plan.conflict,
-        "expected_version": plan.expected_version,
-        "previous_version": plan.previous_version,
-        "new_version": plan.new_version,
+        "wrote": wrote,
+        "noop": noop,
+        "conflict": conflict,
+        "expected_version": expected_version,
+        "previous_version": previous_version,
+        "new_version": new_version,
     })
 }
 
@@ -444,30 +471,33 @@ pub fn dispatch_fs_tool(
                 }
             };
 
-            let plan = match crate::tools::fs::core::plan_search_replace_edit(
-                &resolved_path,
-                args.expected_version.as_deref(),
-                &operation,
-            ) {
-                Ok(plan) => plan,
-                Err(err) => {
-                    let mapped = map_mutate_error(err);
-                    return Ok(Some(build_edit_contract_error_response(
-                        &args.path,
-                        mode,
-                        map_edit_contract_error(&mapped),
-                        mapped.message,
-                    )));
-                }
-            };
+            match operation {
+                ResolvedEditOperation::SearchReplace(sr_op) => {
+                    let plan = match crate::tools::fs::core::plan_search_replace_edit(
+                        &resolved_path,
+                        args.expected_version.as_deref(),
+                        &sr_op,
+                    ) {
+                        Ok(plan) => plan,
+                        Err(err) => {
+                            let mapped = map_mutate_error(err);
+                            return Ok(Some(build_edit_contract_error_response(
+                                &args.path,
+                                mode,
+                                map_edit_contract_error(&mapped),
+                                mapped.message,
+                            )));
+                        }
+                    };
 
-            match mode {
-                EditToolMode::Preview => Ok(Some(build_edit_contract_response(
-                    &args.path, mode, plan, false,
-                ))),
-                EditToolMode::Apply => {
-                    let preview_display =
-                        super::pre_authorize::pre_authorize_fs_tool(tool_name, arguments, cwd)
+                    match mode {
+                        EditToolMode::Preview => Ok(Some(build_edit_contract_response(
+                            &args.path, mode, plan, false, None,
+                        ))),
+                        EditToolMode::Apply => {
+                            let preview_display = super::pre_authorize::pre_authorize_fs_tool(
+                                tool_name, arguments, cwd,
+                            )
                             .and_then(|output| output.display)
                             .unwrap_or_else(|| {
                                 build_edit_preview_display(build_edit_preview_display_payload(
@@ -475,25 +505,179 @@ pub fn dispatch_fs_tool(
                                 ))
                             });
 
-                    if plan.conflict || !plan.would_change {
-                        let mut response =
-                            build_edit_contract_response(&args.path, mode, plan, false);
-                        attach_display_payload(&mut response, &preview_display);
-                        return Ok(Some(response));
+                            if plan.conflict || !plan.would_change {
+                                let mut response = build_edit_contract_response(
+                                    &args.path, mode, plan, false, None,
+                                );
+                                attach_display_payload(&mut response, &preview_display);
+                                return Ok(Some(response));
+                            }
+
+                            let summary = match apply_search_replace_edit(
+                                &resolved_path,
+                                args.expected_version.as_deref(),
+                                &sr_op,
+                            ) {
+                                Ok(summary) => summary,
+                                Err(crate::tools::fs::core::MutateError::Conflict(_)) => {
+                                    let refreshed_plan =
+                                        match crate::tools::fs::core::plan_search_replace_edit(
+                                            &resolved_path,
+                                            args.expected_version.as_deref(),
+                                            &sr_op,
+                                        ) {
+                                            Ok(refreshed_plan) => refreshed_plan,
+                                            Err(err) => {
+                                                let mapped = map_mutate_error(err);
+                                                let mut response =
+                                                    build_edit_contract_error_response(
+                                                        &args.path,
+                                                        mode,
+                                                        map_edit_contract_error(&mapped),
+                                                        mapped.message,
+                                                    );
+                                                attach_display_payload(
+                                                    &mut response,
+                                                    &preview_display,
+                                                );
+                                                return Ok(Some(response));
+                                            }
+                                        };
+                                    let mut response = build_edit_contract_response(
+                                        &args.path,
+                                        mode,
+                                        refreshed_plan,
+                                        false,
+                                        None,
+                                    );
+                                    attach_display_payload(&mut response, &preview_display);
+                                    return Ok(Some(response));
+                                }
+                                Err(err) => {
+                                    let mapped = map_mutate_error(err);
+                                    let mut response = build_edit_contract_error_response(
+                                        &args.path,
+                                        mode,
+                                        map_edit_contract_error(&mapped),
+                                        mapped.message,
+                                    );
+                                    attach_display_payload(&mut response, &preview_display);
+                                    return Ok(Some(response));
+                                }
+                            };
+
+                            if summary.conflict {
+                                let refreshed_plan =
+                                    match crate::tools::fs::core::plan_search_replace_edit(
+                                        &resolved_path,
+                                        args.expected_version.as_deref(),
+                                        &sr_op,
+                                    ) {
+                                        Ok(refreshed_plan) => refreshed_plan,
+                                        Err(err) => {
+                                            let mapped = map_mutate_error(err);
+                                            let mut response = build_edit_contract_error_response(
+                                                &args.path,
+                                                mode,
+                                                map_edit_contract_error(&mapped),
+                                                mapped.message,
+                                            );
+                                            attach_display_payload(&mut response, &preview_display);
+                                            return Ok(Some(response));
+                                        }
+                                    };
+                                let mut response = build_edit_contract_response(
+                                    &args.path,
+                                    mode,
+                                    refreshed_plan,
+                                    false,
+                                    None,
+                                );
+                                attach_display_payload(&mut response, &preview_display);
+                                return Ok(Some(response));
+                            }
+
+                            let mut response = build_edit_contract_response(
+                                &args.path,
+                                mode,
+                                plan,
+                                true,
+                                Some(&summary),
+                            );
+                            attach_display_payload(&mut response, &preview_display);
+                            Ok(Some(response))
+                        }
+                    }
+                }
+                ResolvedEditOperation::Create { content } => {
+                    if resolved_path.parent().is_some_and(|p| !p.exists()) {
+                        return Ok(Some(build_edit_contract_error_response(
+                            &args.path,
+                            mode,
+                            "internal",
+                            format!("Parent directory does not exist for '{}'", args.path),
+                        )));
                     }
 
-                    let summary = match apply_search_replace_edit(
-                        &resolved_path,
-                        args.expected_version.as_deref(),
-                        &operation,
-                    ) {
-                        Ok(summary) => summary,
-                        Err(crate::tools::fs::core::MutateError::Conflict(_)) => {
-                            let refreshed_plan =
-                                match crate::tools::fs::core::plan_search_replace_edit(
+                    let plan =
+                        match crate::tools::fs::core::plan_create_file(&resolved_path, &content) {
+                            Ok(plan) => plan,
+                            Err(err) => {
+                                let mapped = map_mutate_error(err);
+                                return Ok(Some(build_edit_contract_error_response(
+                                    &args.path,
+                                    mode,
+                                    map_edit_contract_error(&mapped),
+                                    mapped.message,
+                                )));
+                            }
+                        };
+
+                    match mode {
+                        EditToolMode::Preview => Ok(Some(build_edit_contract_response(
+                            &args.path, mode, plan, false, None,
+                        ))),
+                        EditToolMode::Apply => {
+                            let preview_display = super::pre_authorize::pre_authorize_fs_tool(
+                                tool_name, arguments, cwd,
+                            )
+                            .and_then(|output| output.display)
+                            .unwrap_or_else(|| {
+                                build_edit_preview_display(build_edit_preview_display_payload(
+                                    &args.path, &plan,
+                                ))
+                            });
+
+                            if plan.conflict {
+                                let mut response = build_edit_contract_response(
+                                    &args.path, mode, plan, false, None,
+                                );
+                                attach_display_payload(&mut response, &preview_display);
+                                return Ok(Some(response));
+                            }
+
+                            let summary = match crate::tools::fs::core::apply_create_file(
+                                &resolved_path,
+                                &content,
+                            ) {
+                                Ok(summary) => summary,
+                                Err(err) => {
+                                    let mapped = map_mutate_error(err);
+                                    let mut response = build_edit_contract_error_response(
+                                        &args.path,
+                                        mode,
+                                        map_edit_contract_error(&mapped),
+                                        mapped.message,
+                                    );
+                                    attach_display_payload(&mut response, &preview_display);
+                                    return Ok(Some(response));
+                                }
+                            };
+
+                            if summary.conflict {
+                                let refreshed_plan = match crate::tools::fs::core::plan_create_file(
                                     &resolved_path,
-                                    args.expected_version.as_deref(),
-                                    &operation,
+                                    &content,
                                 ) {
                                     Ok(refreshed_plan) => refreshed_plan,
                                     Err(err) => {
@@ -508,75 +692,28 @@ pub fn dispatch_fs_tool(
                                         return Ok(Some(response));
                                     }
                                 };
-                            let mut response = build_edit_contract_response(
-                                &args.path,
-                                mode,
-                                refreshed_plan,
-                                false,
-                            );
-                            attach_display_payload(&mut response, &preview_display);
-                            return Ok(Some(response));
-                        }
-                        Err(err) => {
-                            let mapped = map_mutate_error(err);
-                            let mut response = build_edit_contract_error_response(
-                                &args.path,
-                                mode,
-                                map_edit_contract_error(&mapped),
-                                mapped.message,
-                            );
-                            attach_display_payload(&mut response, &preview_display);
-                            return Ok(Some(response));
-                        }
-                    };
-
-                    if summary.conflict {
-                        let refreshed_plan = match crate::tools::fs::core::plan_search_replace_edit(
-                            &resolved_path,
-                            args.expected_version.as_deref(),
-                            &operation,
-                        ) {
-                            Ok(refreshed_plan) => refreshed_plan,
-                            Err(err) => {
-                                let mapped = map_mutate_error(err);
-                                let mut response = build_edit_contract_error_response(
+                                let mut response = build_edit_contract_response(
                                     &args.path,
                                     mode,
-                                    map_edit_contract_error(&mapped),
-                                    mapped.message,
+                                    refreshed_plan,
+                                    false,
+                                    None,
                                 );
                                 attach_display_payload(&mut response, &preview_display);
                                 return Ok(Some(response));
                             }
-                        };
-                        let mut response =
-                            build_edit_contract_response(&args.path, mode, refreshed_plan, false);
-                        attach_display_payload(&mut response, &preview_display);
-                        return Ok(Some(response));
-                    }
 
-                    let mut response =
-                        build_edit_contract_response(&args.path, mode, plan, summary.wrote);
-                    if let Some(obj) = response.as_object_mut() {
-                        obj.insert("wrote".to_string(), JsonValue::Bool(summary.wrote));
-                        obj.insert("changed".to_string(), JsonValue::Bool(summary.changed));
-                        obj.insert("noop".to_string(), JsonValue::Bool(summary.noop));
-                        obj.insert("conflict".to_string(), JsonValue::Bool(summary.conflict));
-                        obj.insert(
-                            "expected_version".to_string(),
-                            JsonValue::String(summary.expected_version),
-                        );
-                        obj.insert(
-                            "previous_version".to_string(),
-                            JsonValue::String(summary.previous_version),
-                        );
-                        obj.insert(
-                            "new_version".to_string(),
-                            JsonValue::String(summary.new_version),
-                        );
+                            let mut response = build_edit_contract_response(
+                                &args.path,
+                                mode,
+                                plan,
+                                true,
+                                Some(&summary),
+                            );
+                            attach_display_payload(&mut response, &preview_display);
+                            Ok(Some(response))
+                        }
                     }
-                    attach_display_payload(&mut response, &preview_display);
-                    Ok(Some(response))
                 }
             }
         }

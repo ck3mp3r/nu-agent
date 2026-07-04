@@ -394,6 +394,83 @@ pub fn plan_search_replace_edit(
     })
 }
 
+pub fn plan_create_file(path: &Path, content: &str) -> Result<EditPlan, MutateError> {
+    if path.exists() {
+        let current_content = fs::read_to_string(path)?;
+        let current_version = version_token(&current_content);
+        return Ok(EditPlan {
+            replacements: 0,
+            would_change: false,
+            noop: false,
+            conflict: true,
+            expected_version: String::new(),
+            previous_version: current_version.clone(),
+            new_version: current_version,
+            previous_bytes: current_content.len(),
+            new_bytes: current_content.len(),
+            previous_lines: split_lines_preserving_terminators(&current_content).len(),
+            new_lines: split_lines_preserving_terminators(&current_content).len(),
+            previous_content: current_content.clone(),
+            new_content: current_content,
+        });
+    }
+
+    let empty = "";
+    let empty_version = version_token(empty);
+    let new_version = version_token(content);
+    let new_lines = split_lines_preserving_terminators(content).len();
+    let new_bytes = content.len();
+
+    Ok(EditPlan {
+        replacements: 0,
+        would_change: true,
+        noop: false,
+        conflict: false,
+        expected_version: String::new(),
+        previous_version: empty_version.clone(),
+        new_version,
+        previous_bytes: 0,
+        new_bytes,
+        previous_lines: 0,
+        new_lines,
+        previous_content: empty.to_string(),
+        new_content: content.to_string(),
+    })
+}
+
+pub fn apply_create_file(path: &Path, content: &str) -> Result<EditSummary, MutateError> {
+    if path.exists() {
+        let current_content = fs::read_to_string(path)?;
+        let current_version = version_token(&current_content);
+        return Ok(EditSummary {
+            replacements: 0,
+            wrote: false,
+            changed: false,
+            noop: false,
+            conflict: true,
+            expected_version: String::new(),
+            previous_version: current_version.clone(),
+            new_version: current_version,
+        });
+    }
+
+    atomic_overwrite(path, content.as_bytes())?;
+
+    let empty_version = version_token("");
+    let new_version = version_token(content);
+
+    Ok(EditSummary {
+        replacements: 0,
+        wrote: true,
+        changed: true,
+        noop: false,
+        conflict: false,
+        expected_version: String::new(),
+        previous_version: empty_version,
+        new_version,
+    })
+}
+
 fn validate_patch_operations(
     operations: &[PatchOp],
     total_lines: usize,
