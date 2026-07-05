@@ -98,8 +98,15 @@ impl ToolDyn for BuiltinToolAdapter {
                     )))
                 })?;
 
-                let mut state = orchestrator.lock().unwrap();
-                crate::tools::handler::spawn_agent::dispatch_spawn_agent(&args_json, &mut state)
+                // Lock, run the sync phase, then drop the guard before awaiting.
+                // MutexGuard is !Send and cannot be held across .await on a multi-threaded runtime.
+                let prepared = {
+                    let mut state = orchestrator.lock().unwrap();
+                    crate::tools::handler::spawn_agent::prepare_spawn_agent(
+                        &args_json,
+                        &mut state,
+                        &crate::tools::handler::spawn_agent::RealTmuxRunner,
+                    )
                     .map_err(|e| {
                         ToolError::ToolCallError(Box::new(BuiltinExecError::Execution(format!(
                             "{}: {}",
@@ -109,6 +116,23 @@ impl ToolDyn for BuiltinToolAdapter {
                                 .unwrap_or_else(|| "no details".to_string())
                         ))))
                     })?
+                };
+                // Guard dropped — safe to .await
+                crate::tools::handler::spawn_agent::finish_spawn_agent(
+                    prepared,
+                    &crate::tools::handler::spawn_agent::RealTmuxRunner,
+                )
+                .await
+                .map(Some)
+                .map_err(|e| {
+                    ToolError::ToolCallError(Box::new(BuiltinExecError::Execution(format!(
+                        "{}: {}",
+                        e.message,
+                        e.details
+                            .map(|d| d.to_string())
+                            .unwrap_or_else(|| "no details".to_string())
+                    ))))
+                })?
             } else if self.tool_def.name == "terminate_agent" {
                 // terminate_agent requires orchestrator state
                 let orchestrator = self.orchestrator.as_ref().ok_or_else(|| {
@@ -153,18 +177,70 @@ impl ToolDyn for BuiltinToolAdapter {
                 // Lists all .sock files in socket_dir — intentionally includes
                 // the caller's own socket so the LLM has full visibility of all
                 // agents in this workspace, including itself.
-                let agents: Vec<serde_json::Value> = std::fs::read_dir(&self.socket_dir)
+                use crate::tools::handler::spawn_agent::is_pane_alive;
+
+                let socket_names: Vec<String> = std::fs::read_dir(&self.socket_dir)
                     .map(|entries| {
                         entries
                             .flatten()
                             .filter_map(|e| {
                                 let name = e.file_name().to_string_lossy().to_string();
-                                name.strip_suffix(".sock")
-                                    .map(|n| serde_json::json!({"name": n}))
+                                name.strip_suffix(".sock").map(String::from)
                             })
                             .collect()
                     })
                     .unwrap_or_default();
+
+                // Snapshot agent_panes from OrchestratorState if available
+                let agent_panes_snapshot: std::collections::HashMap<String, String> = self
+                    .orchestrator
+                    .as_ref()
+                    .map(|o| {
+                        let state = o.lock().unwrap();
+                        state.agent_panes.clone()
+                    })
+                    .unwrap_or_default();
+
+                let tmux = crate::tools::handler::spawn_agent::RealTmuxRunner;
+                let agents: Vec<serde_json::Value> = socket_names
+                    .into_iter()
+                    .map(|name| {
+                        let pane_id = agent_panes_snapshot.get(&name).cloned();
+                        let pane_alive = pane_id
+                            .as_deref()
+                            .map(|pid| is_pane_alive(&tmux, pid))
+                            .unwrap_or(false);
+                        serde_json::json!({
+                            "name": name,
+                            "pane_id": pane_id,
+                            "pane_alive": pane_alive,
+                        })
+                    })
+                    .collect();
+
+                // Auto-cleanup: remove dead pane entries from OrchestratorState.
+                // Agents with pane_id known but pane gone are cleaned up so they
+                // don't accumulate indefinitely. Agents without pane_id (not spawned
+                // by this orchestrator) are never removed.
+                let dead_names: Vec<String> = agents
+                    .iter()
+                    .filter(|a| {
+                        a["pane_id"] != serde_json::Value::Null
+                            && !a["pane_alive"].as_bool().unwrap_or(true)
+                    })
+                    .filter_map(|a| a["name"].as_str().map(String::from))
+                    .collect();
+
+                if !dead_names.is_empty()
+                    && let Some(ref orchestrator) = self.orchestrator
+                {
+                    let mut state = orchestrator.lock().unwrap();
+                    for name in &dead_names {
+                        state.agent_panes.remove(name);
+                        log::info!("Auto-cleaned dead agent '{}' (pane no longer alive)", name);
+                    }
+                }
+
                 Some(serde_json::json!(agents))
             } else if self.tool_def.name == "http" {
                 crate::tools::handler::http::dispatch_http_tool(&args_json)

@@ -263,3 +263,152 @@ fn adapter_truncates_large_output() {
         result_str.len()
     );
 }
+
+fn list_agents_tool_def() -> ToolDefinition {
+    ToolDefinition {
+        name: "list_agents".to_string(),
+        description: "List agents".to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {}
+        }),
+    }
+}
+
+#[tokio::test]
+async fn list_agents_returns_pane_id_null_when_no_orchestrator() {
+    use tempfile::TempDir;
+
+    let dir = TempDir::new().unwrap();
+    std::fs::File::create(dir.path().join("researcher-1.sock")).unwrap();
+
+    let adapter = BuiltinToolAdapter::new(
+        list_agents_tool_def(),
+        dir.path().to_path_buf(),
+        None, // no orchestrator
+        dir.path().to_path_buf(),
+        None,
+        20_000,
+    );
+
+    let result = adapter.call("{}".to_string()).await.unwrap();
+    let agents: Vec<serde_json::Value> = serde_json::from_str(&result).unwrap();
+
+    assert_eq!(agents.len(), 1);
+    assert_eq!(agents[0]["name"], "researcher-1");
+    assert_eq!(agents[0]["pane_id"], serde_json::Value::Null);
+    assert_eq!(agents[0]["pane_alive"], false);
+}
+
+#[tokio::test]
+async fn list_agents_returns_pane_id_when_orchestrator_tracks_it() {
+    use crate::tools::handler::spawn_agent::OrchestratorState;
+    use std::sync::{Arc, Mutex};
+    use tempfile::TempDir;
+
+    let dir = TempDir::new().unwrap();
+    std::fs::File::create(dir.path().join("researcher-1.sock")).unwrap();
+
+    let mut state = OrchestratorState::new(dir.path().to_path_buf());
+    state
+        .agent_panes
+        .insert("researcher-1".to_string(), "%99".to_string());
+
+    let orchestrator = Arc::new(Mutex::new(state));
+
+    let adapter = BuiltinToolAdapter::new(
+        list_agents_tool_def(),
+        dir.path().to_path_buf(),
+        Some(orchestrator),
+        dir.path().to_path_buf(),
+        None,
+        20_000,
+    );
+
+    let result = adapter.call("{}".to_string()).await.unwrap();
+    let agents: Vec<serde_json::Value> = serde_json::from_str(&result).unwrap();
+
+    assert_eq!(agents.len(), 1);
+    assert_eq!(agents[0]["name"], "researcher-1");
+    assert_eq!(agents[0]["pane_id"], "%99");
+    // pane_alive: false — RealTmuxRunner won't find this pane in tests
+    assert_eq!(agents[0]["pane_alive"], false);
+}
+
+#[tokio::test]
+async fn list_agents_cleans_up_dead_pane_entries() {
+    use crate::tools::handler::spawn_agent::OrchestratorState;
+    use std::sync::{Arc, Mutex};
+    use tempfile::TempDir;
+
+    let dir = TempDir::new().unwrap();
+    std::fs::File::create(dir.path().join("crashed.sock")).unwrap();
+
+    let mut state = OrchestratorState::new(dir.path().to_path_buf());
+    state
+        .agent_panes
+        .insert("crashed".to_string(), "%dead".to_string());
+
+    let orchestrator = Arc::new(Mutex::new(state));
+
+    let adapter = BuiltinToolAdapter::new(
+        list_agents_tool_def(),
+        dir.path().to_path_buf(),
+        Some(Arc::clone(&orchestrator)),
+        dir.path().to_path_buf(),
+        None,
+        20_000,
+    );
+
+    // First call: crashed agent appears with pane_alive: false
+    let result = adapter.call("{}".to_string()).await.unwrap();
+    let agents: Vec<serde_json::Value> = serde_json::from_str(&result).unwrap();
+    assert_eq!(agents[0]["name"], "crashed");
+    assert_eq!(agents[0]["pane_alive"], false);
+
+    // After the call, agent_panes should no longer contain "crashed"
+    let state_after = orchestrator.lock().unwrap();
+    assert!(
+        !state_after.agent_panes.contains_key("crashed"),
+        "Dead pane entry should have been auto-cleaned"
+    );
+}
+
+#[tokio::test]
+async fn list_agents_does_not_clean_agents_without_pane_id() {
+    use crate::tools::handler::spawn_agent::OrchestratorState;
+    use std::sync::{Arc, Mutex};
+    use tempfile::TempDir;
+
+    let dir = TempDir::new().unwrap();
+    // Socket exists but NOT tracked in agent_panes
+    std::fs::File::create(dir.path().join("self-started.sock")).unwrap();
+
+    let state = OrchestratorState::new(dir.path().to_path_buf());
+    // agent_panes is empty — agent started its own socket
+    let orchestrator = Arc::new(Mutex::new(state));
+
+    let adapter = BuiltinToolAdapter::new(
+        list_agents_tool_def(),
+        dir.path().to_path_buf(),
+        Some(Arc::clone(&orchestrator)),
+        dir.path().to_path_buf(),
+        None,
+        20_000,
+    );
+
+    let result = adapter.call("{}".to_string()).await.unwrap();
+    let agents: Vec<serde_json::Value> = serde_json::from_str(&result).unwrap();
+
+    assert_eq!(agents.len(), 1);
+    assert_eq!(agents[0]["name"], "self-started");
+    assert_eq!(agents[0]["pane_id"], serde_json::Value::Null);
+    assert_eq!(agents[0]["pane_alive"], false);
+
+    // agent_panes should remain empty — no cleanup of untracked agents
+    let state_after = orchestrator.lock().unwrap();
+    assert!(
+        state_after.agent_panes.is_empty(),
+        "agent_panes should remain empty — untracked agents must not be cleaned"
+    );
+}

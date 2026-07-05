@@ -3,7 +3,8 @@ use tempfile::TempDir;
 
 use super::ToolHandlerError;
 use super::spawn_agent::{
-    OrchestratorState, TmuxRunner, handle_spawn_agent, handle_terminate_agent,
+    OrchestratorState, TmuxRunner, handle_spawn_agent, handle_terminate_agent, is_pane_alive,
+    prepare_spawn_agent,
 };
 
 /// Mock TmuxRunner for testing.
@@ -99,7 +100,7 @@ async fn handle_spawn_agent_increments_spawn_count() {
     let mut state = OrchestratorState::new(_state_dir.path().to_path_buf());
 
     let args = serde_json::json!({ "agent": "researcher" });
-    let result = handle_spawn_agent(&args, &mut state, &tmux);
+    let result = handle_spawn_agent(&args, &mut state, &tmux).await;
     assert!(result.is_ok(), "First spawn should succeed");
     assert_eq!(state.spawn_count, 1, "Spawn count should be incremented");
 }
@@ -111,11 +112,15 @@ async fn handle_spawn_agent_auto_names() {
     let mut state = OrchestratorState::new(_state_dir.path().to_path_buf());
 
     let args1 = serde_json::json!({ "agent": "researcher" });
-    let result1 = handle_spawn_agent(&args1, &mut state, &tmux).expect("First spawn failed");
+    let result1 = handle_spawn_agent(&args1, &mut state, &tmux)
+        .await
+        .expect("First spawn failed");
     assert_eq!(result1["name"].as_str().unwrap(), "researcher-1");
 
     let args2 = serde_json::json!({ "agent": "researcher" });
-    let result2 = handle_spawn_agent(&args2, &mut state, &tmux).expect("Second spawn failed");
+    let result2 = handle_spawn_agent(&args2, &mut state, &tmux)
+        .await
+        .expect("Second spawn failed");
     assert_eq!(result2["name"].as_str().unwrap(), "researcher-2");
 }
 
@@ -126,8 +131,52 @@ async fn handle_spawn_agent_explicit_name() {
     let mut state = OrchestratorState::new(_state_dir.path().to_path_buf());
 
     let args = serde_json::json!({ "agent": "researcher", "name": "my-researcher" });
-    let result = handle_spawn_agent(&args, &mut state, &tmux).expect("Spawn failed");
+    let result = handle_spawn_agent(&args, &mut state, &tmux)
+        .await
+        .expect("Spawn failed");
     assert_eq!(result["name"].as_str().unwrap(), "my-researcher");
+}
+
+#[tokio::test]
+async fn prepare_spawn_agent_rejects_duplicate_explicit_name() {
+    let _state_dir = TempDir::new().unwrap();
+    let tmux = MockTmuxRunner::new("%5");
+    let mut state = OrchestratorState::new(_state_dir.path().to_path_buf());
+    state
+        .agent_panes
+        .insert("my-agent".to_string(), "%1".to_string());
+
+    let args = serde_json::json!({ "agent": "researcher", "name": "my-agent" });
+    let result = prepare_spawn_agent(&args, &mut state, &tmux);
+
+    assert!(result.is_err());
+    assert!(
+        result.unwrap_err().message.contains("already exists"),
+        "error must mention 'already exists'"
+    );
+    assert!(
+        tmux.get_calls().is_empty(),
+        "no tmux calls must be made on duplicate name"
+    );
+}
+
+#[tokio::test]
+async fn prepare_spawn_agent_does_not_increment_count_on_duplicate() {
+    let _state_dir = TempDir::new().unwrap();
+    let tmux = MockTmuxRunner::new("%5");
+    let mut state = OrchestratorState::new(_state_dir.path().to_path_buf());
+    state
+        .agent_panes
+        .insert("my-agent".to_string(), "%1".to_string());
+    let count_before = state.spawn_count;
+
+    let args = serde_json::json!({ "agent": "researcher", "name": "my-agent" });
+    let _ = prepare_spawn_agent(&args, &mut state, &tmux);
+
+    assert_eq!(
+        state.spawn_count, count_before,
+        "spawn_count must be unchanged on error"
+    );
 }
 
 #[tokio::test]
@@ -137,7 +186,9 @@ async fn handle_spawn_agent_creates_tmux_window() {
     let mut state = OrchestratorState::new(_state_dir.path().to_path_buf());
 
     let args = serde_json::json!({ "agent": "researcher" });
-    handle_spawn_agent(&args, &mut state, &tmux).expect("Spawn failed");
+    handle_spawn_agent(&args, &mut state, &tmux)
+        .await
+        .expect("Spawn failed");
 
     let calls = tmux.get_calls();
     assert!(!calls.is_empty(), "Tmux should have been called");
@@ -168,8 +219,10 @@ async fn handle_spawn_agent_splits_pane_on_second_spawn() {
         &mut state,
         &tmux,
     )
+    .await
     .expect("First spawn failed");
     handle_spawn_agent(&serde_json::json!({ "agent": "coder" }), &mut state, &tmux)
+        .await
         .expect("Second spawn failed");
 
     let calls = tmux.get_calls();
@@ -204,7 +257,9 @@ async fn handle_spawn_agent_sends_command() {
     let mut state = OrchestratorState::new(_state_dir.path().to_path_buf());
 
     let args = serde_json::json!({ "agent": "researcher", "name": "test-agent" });
-    handle_spawn_agent(&args, &mut state, &tmux).expect("Spawn failed");
+    handle_spawn_agent(&args, &mut state, &tmux)
+        .await
+        .expect("Spawn failed");
 
     let calls = tmux.get_calls();
     let send_keys: Vec<_> = calls
@@ -234,7 +289,9 @@ async fn handle_spawn_agent_includes_parent_name_from_identity() {
     state.agent_identity = Some("my-orchestrator".to_string());
 
     let args = serde_json::json!({ "agent": "researcher", "name": "test-agent" });
-    handle_spawn_agent(&args, &mut state, &tmux).expect("Spawn failed");
+    handle_spawn_agent(&args, &mut state, &tmux)
+        .await
+        .expect("Spawn failed");
 
     let calls = tmux.get_calls();
     let send_keys: Vec<_> = calls
@@ -255,7 +312,9 @@ async fn handle_spawn_agent_defaults_parent_name_to_orchestrator() {
     let mut state = OrchestratorState::new(_state_dir.path().to_path_buf());
 
     let args = serde_json::json!({ "agent": "researcher" });
-    handle_spawn_agent(&args, &mut state, &tmux).expect("Spawn failed");
+    handle_spawn_agent(&args, &mut state, &tmux)
+        .await
+        .expect("Spawn failed");
 
     let calls = tmux.get_calls();
     let send_keys: Vec<_> = calls
@@ -315,7 +374,7 @@ async fn handle_spawn_agent_recovers_from_stale_tmux_window() {
     state.tmux_window = Some("@dead".to_string());
 
     let args = serde_json::json!({ "agent": "researcher" });
-    let result = handle_spawn_agent(&args, &mut state, &tmux);
+    let result = handle_spawn_agent(&args, &mut state, &tmux).await;
     assert!(
         result.is_ok(),
         "Spawn should recover from stale window: {result:?}"
@@ -348,7 +407,8 @@ async fn shell_ready_immediately() {
         &serde_json::json!({ "agent": "researcher" }),
         &mut state,
         &tmux,
-    );
+    )
+    .await;
     assert!(
         result.is_ok(),
         "Should succeed when shell ready immediately"
@@ -373,7 +433,8 @@ async fn shell_ready_after_delay() {
         &serde_json::json!({ "agent": "researcher" }),
         &mut state,
         &tmux,
-    );
+    )
+    .await;
     assert!(result.is_ok(), "Should succeed after delayed readiness");
 
     let calls = tmux.get_calls();
@@ -412,7 +473,8 @@ async fn shell_never_ready_timeout() {
         &tmux,
         "%3",
         std::time::Duration::from_millis(100),
-    );
+    )
+    .await;
     assert!(result.is_err(), "Should timeout when shell never ready");
     assert!(result.unwrap_err().message.contains("Shell not ready"));
 
@@ -435,6 +497,7 @@ async fn pane_id_captured_and_used() {
         &mut state,
         &tmux,
     )
+    .await
     .expect("Spawn failed");
 
     let calls = tmux.get_calls();
@@ -467,8 +530,10 @@ async fn split_window_captures_pane_id() {
         &mut state,
         &tmux,
     )
+    .await
     .expect("First spawn failed");
     handle_spawn_agent(&serde_json::json!({ "agent": "coder" }), &mut state, &tmux)
+        .await
         .expect("Second spawn failed");
 
     let calls = tmux.get_calls();
@@ -489,7 +554,7 @@ async fn terminate_agent_kills_pane() {
     let _state_dir = TempDir::new().unwrap();
     let tmux = MockTmuxRunner::new("%5")
         .with_window("@5")
-        .with_list_panes_response("%99\n");
+        .with_list_panes_response("%5\n%99\n");
     let mut state = OrchestratorState::new(_state_dir.path().to_path_buf());
 
     handle_spawn_agent(
@@ -497,6 +562,7 @@ async fn terminate_agent_kills_pane() {
         &mut state,
         &tmux,
     )
+    .await
     .expect("spawn failed");
 
     let result = handle_terminate_agent(&serde_json::json!({ "name": "r1" }), &mut state, &tmux)
@@ -540,6 +606,7 @@ async fn terminate_agent_clears_window_when_empty() {
         &mut state,
         &tmux,
     )
+    .await
     .expect("spawn failed");
     handle_terminate_agent(&serde_json::json!({ "name": "c1" }), &mut state, &tmux)
         .expect("terminate failed");
@@ -563,6 +630,7 @@ async fn terminate_agent_removes_from_panes_map() {
         &mut state,
         &tmux,
     )
+    .await
     .expect("spawn failed");
     assert!(state.agent_panes.contains_key("r2"));
 
@@ -589,7 +657,8 @@ async fn handle_spawn_agent_discovers_existing_agents_window() {
         &serde_json::json!({ "agent": "researcher" }),
         &mut state,
         &tmux,
-    );
+    )
+    .await;
     assert!(
         result.is_ok(),
         "Should succeed by discovering existing agents window"
@@ -622,7 +691,8 @@ async fn handle_spawn_agent_ignores_non_agents_windows() {
         &serde_json::json!({ "agent": "researcher" }),
         &mut state,
         &tmux,
-    );
+    )
+    .await;
     assert!(result.is_ok(), "Should succeed by creating new window");
 
     let calls = tmux.get_calls();
@@ -676,7 +746,8 @@ async fn handle_spawn_agent_fallsthrough_when_discovered_split_fails() {
         &serde_json::json!({ "agent": "researcher" }),
         &mut state,
         &tmux,
-    );
+    )
+    .await;
     assert!(result.is_ok(), "Should fallback to new-window: {result:?}");
 
     let calls = tmux.get_calls();
@@ -701,7 +772,8 @@ async fn handle_spawn_agent_skips_discovery_when_tmux_window_set() {
         &serde_json::json!({ "agent": "researcher" }),
         &mut state,
         &tmux,
-    );
+    )
+    .await;
     assert!(result.is_ok(), "Should succeed using existing window");
 
     let calls = tmux.get_calls();
@@ -717,4 +789,43 @@ async fn handle_spawn_agent_skips_discovery_when_tmux_window_set() {
 
     let split_calls: Vec<_> = calls.iter().filter(|c| c[0] == "split-window").collect();
     assert!(split_calls[0].contains(&"@existing".to_string()));
+}
+
+// ============================================================================
+// is_pane_alive tests
+// ============================================================================
+
+#[test]
+fn is_pane_alive_returns_true_when_pane_present() {
+    let tmux = MockTmuxRunner::new("%5").with_list_panes_response("%3\n%5\n%7\n");
+    assert!(is_pane_alive(&tmux, "%5"), "pane %5 should be alive");
+}
+
+#[test]
+fn is_pane_alive_returns_false_when_pane_absent() {
+    let tmux = MockTmuxRunner::new("%5").with_list_panes_response("%3\n%7\n");
+    assert!(!is_pane_alive(&tmux, "%5"), "pane %5 should not be alive");
+}
+
+#[test]
+fn is_pane_alive_returns_false_on_empty_list() {
+    let tmux = MockTmuxRunner::new("%5").with_list_panes_response("");
+    assert!(
+        !is_pane_alive(&tmux, "%5"),
+        "no panes means pane is not alive"
+    );
+}
+
+#[test]
+fn is_pane_alive_returns_false_when_tmux_errors() {
+    struct ErrorTmuxRunner;
+    impl TmuxRunner for ErrorTmuxRunner {
+        fn run(&self, _args: &[&str]) -> Result<String, ToolHandlerError> {
+            Err(ToolHandlerError::runtime("tmux not available"))
+        }
+    }
+    assert!(
+        !is_pane_alive(&ErrorTmuxRunner, "%5"),
+        "tmux error must yield false"
+    );
 }
