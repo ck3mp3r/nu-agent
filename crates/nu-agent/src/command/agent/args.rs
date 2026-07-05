@@ -1,48 +1,25 @@
+use nu_agent_core::conversation::builder::MailboxInput;
 use nu_plugin::EvaluatedCall;
 use nu_protocol::{LabeledError, Value};
-use std::path::PathBuf;
 
-/// Broker connection flags
-#[derive(Debug)]
-pub(crate) struct BrokerFlags {
-    pub socket_path: PathBuf,
-    pub token: String,
-    pub parent_name: Option<String>,
-}
-
-/// Extract --broker-socket and --broker-token flags.
+/// Extract --name and --parent-name flags as MailboxInput.
 ///
-/// Returns Some(BrokerFlags) if both flags are present, None if neither, Error if only one.
+/// Returns Some(MailboxInput) if --name is present, None otherwise.
 ///
 /// # Arguments
-/// * `call` - The EvaluatedCall containing the --broker-socket and --broker-token flags
+/// * `call` - The EvaluatedCall containing the --name and --parent-name flags
 ///
 /// # Returns
-/// Option<BrokerFlags> - both present, None - neither present
-///
-/// # Errors
-/// Returns LabeledError if only one flag is provided (both or neither required)
-pub(crate) fn extract_broker_flags(
+/// Option<MailboxInput> - Some if name present, None otherwise
+pub(crate) fn extract_mailbox_input(
     call: &EvaluatedCall,
-) -> Result<Option<BrokerFlags>, LabeledError> {
-    let socket: Option<String> = call.get_flag("broker-socket").ok().flatten();
-    let token: Option<String> = call.get_flag("broker-token").ok().flatten();
+) -> Result<Option<MailboxInput>, LabeledError> {
+    let name: Option<String> = call.get_flag("name").ok().flatten();
     let parent_name: Option<String> = call.get_flag("parent-name").ok().flatten();
-
-    match (socket, token) {
-        (Some(s), Some(t)) => Ok(Some(BrokerFlags {
-            socket_path: PathBuf::from(s),
-            token: t,
-            parent_name,
-        })),
-        (None, None) => Ok(None),
-        (Some(_), None) => Err(LabeledError::new(
-            "--broker-socket and --broker-token must be used together",
-        )),
-        (None, Some(_)) => Err(LabeledError::new(
-            "--broker-socket and --broker-token must be used together",
-        )),
-    }
+    Ok(name.map(|n| MailboxInput {
+        name: n,
+        parent_name,
+    }))
 }
 
 /// Extracts and validates session flags from the evaluated call.

@@ -1,257 +1,150 @@
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::AsyncBufReadExt;
 use tokio::net::UnixListener;
-use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
-use super::protocol::{ClientFrame, ServerFrame};
-use super::registry::AgentRegistry;
+use super::protocol::{IncomingMessage, MessageFrame};
 
-pub struct Broker {
-    socket_dir: PathBuf,
-    socket_path: PathBuf,
-    shutdown: CancellationToken,
+pub(crate) fn socket_dir_for_path(cwd: &Path) -> PathBuf {
+    use sha2::{Digest, Sha256};
+    // XDG_RUNTIME_DIR is preferred (systemd sets it to /run/user/<uid> which is short).
+    // Fall back to /tmp — NOT std::env::temp_dir() which on macOS expands to
+    // /var/folders/…/T/ (>40 chars), easily pushing socket paths over the
+    // 104-byte SUN_LEN limit.
+    let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/tmp"));
+    let hash = Sha256::digest(cwd.as_os_str().as_encoded_bytes());
+    let hash_prefix = hash[..8]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    runtime_dir.join("nu-agent").join(hash_prefix)
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum BrokerError {
-    #[error("XDG_RUNTIME_DIR environment variable not set")]
-    XdgRuntimeDirNotSet,
-    #[error("Failed to create socket: {0}")]
-    SocketCreationFailed(#[from] std::io::Error),
-    #[error("Failed to create directory: {0}")]
+pub enum MailboxError {
+    #[error("Failed to create socket directory: {0}")]
     DirectoryCreationFailed(std::io::Error),
+    #[error("Failed to bind socket: {0}")]
+    SocketBindFailed(std::io::Error),
 }
 
-impl Broker {
-    pub fn start(registry: Arc<RwLock<AgentRegistry>>) -> Result<Self, BrokerError> {
-        let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
-            .or_else(|_| std::env::var("TMPDIR"))
-            .or_else(|_| Ok::<String, std::env::VarError>("/tmp".to_string()))
-            .map_err(|_| BrokerError::XdgRuntimeDirNotSet)?;
+/// Prepared but not yet started mailbox. Created outside the Tokio runtime
+/// (filesystem work only). Call `start()` from within the runtime.
+pub(crate) struct MailboxHandle {
+    socket_path: PathBuf,
+    std_listener: std::os::unix::net::UnixListener,
+}
 
-        // Generate random directory name using hash of timestamp + process ID + thread ID
-        // Keep it short to avoid SUN_LEN limit on Unix domain sockets (typically 108 bytes)
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = DefaultHasher::new();
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-            .hash(&mut hasher);
-        std::process::id().hash(&mut hasher);
-        format!("{:?}", std::thread::current().id()).hash(&mut hasher);
-        let random_suffix = format!("{:x}", hasher.finish());
-
-        let socket_dir = PathBuf::from(runtime_dir).join(format!("nu-agent-{}", random_suffix));
-
-        // Create directory with 0700 permissions
-        std::fs::create_dir_all(&socket_dir).map_err(BrokerError::DirectoryCreationFailed)?;
-
+impl MailboxHandle {
+    /// Bind the socket synchronously. Safe to call outside a Tokio runtime.
+    pub(crate) fn prepare(socket_dir: &Path, name: &str) -> Result<Self, MailboxError> {
+        std::fs::create_dir_all(socket_dir).map_err(MailboxError::DirectoryCreationFailed)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let perms = std::fs::Permissions::from_mode(0o700);
-            std::fs::set_permissions(&socket_dir, perms)
-                .map_err(BrokerError::DirectoryCreationFailed)?;
+            std::fs::set_permissions(socket_dir, std::fs::Permissions::from_mode(0o700))
+                .map_err(MailboxError::DirectoryCreationFailed)?;
         }
+        let socket_path = socket_dir.join(format!("{}.sock", name));
+        if socket_path.exists() {
+            let _ = std::fs::remove_file(&socket_path);
+        }
+        let std_listener = std::os::unix::net::UnixListener::bind(&socket_path)
+            .map_err(MailboxError::SocketBindFailed)?;
+        std_listener
+            .set_nonblocking(true)
+            .map_err(MailboxError::SocketBindFailed)?;
+        Ok(Self {
+            socket_path,
+            std_listener,
+        })
+    }
 
-        let socket_path = socket_dir.join("broker.sock");
-        let listener = UnixListener::bind(&socket_path)?;
+    /// Returns the socket path this handle is bound to.
+    pub(crate) fn socket_path(&self) -> &Path {
+        &self.socket_path
+    }
 
+    /// Start the async accept loop. MUST be called from within a Tokio runtime.
+    pub(crate) fn start(
+        self,
+    ) -> Result<(AgentMailbox, std::sync::mpsc::Receiver<IncomingMessage>), MailboxError> {
+        // Use ManuallyDrop to move fields out of self without triggering our
+        // Drop impl (which would remove the socket file prematurely).
+        let mut this = std::mem::ManuallyDrop::new(self);
+        // SAFETY: we own `this` exclusively and will not access it again.
+        let socket_path = unsafe { std::ptr::read(&raw const this.socket_path) };
+        let std_listener = unsafe { std::ptr::read(&raw const this.std_listener) };
+        // Suppress the unused-mut warning — ManuallyDrop requires &mut for ptr::read.
+        let _ = &mut this;
+
+        let listener =
+            UnixListener::from_std(std_listener).map_err(MailboxError::SocketBindFailed)?;
+        let (std_tx, std_rx) = std::sync::mpsc::channel::<IncomingMessage>();
         let shutdown = CancellationToken::new();
         let accept_shutdown = shutdown.clone();
-        let accept_registry = registry.clone();
-        let accept_socket_path = socket_path.clone();
-
         tokio::spawn(async move {
-            log::debug!("Broker accept loop started on {:?}", accept_socket_path);
             loop {
                 tokio::select! {
-                    _ = accept_shutdown.cancelled() => {
-                        log::debug!("Broker accept loop shutting down");
-                        break;
-                    }
+                    _ = accept_shutdown.cancelled() => break,
                     result = listener.accept() => {
                         match result {
-                            Ok((stream, _addr)) => {
-                                let conn_shutdown = accept_shutdown.child_token();
-                                let conn_registry = accept_registry.clone();
+                            Ok((stream, _)) => {
+                                let tx = std_tx.clone();
                                 tokio::spawn(async move {
-                                    if let Err(e) = Self::handle_connection(stream, conn_registry, conn_shutdown).await {
-                                        log::debug!("Connection handler error: {}", e);
+                                    let mut lines =
+                                        tokio::io::BufReader::new(stream).lines();
+                                    while let Ok(Some(line)) = lines.next_line().await {
+                                        if let Ok(frame) =
+                                            serde_json::from_str::<MessageFrame>(&line)
+                                        {
+                                            let _ = tx.send(IncomingMessage {
+                                                from: frame.from,
+                                                message: frame.message,
+                                                kind: frame.kind,
+                                            });
+                                        }
                                     }
                                 });
                             }
-                            Err(e) => {
-                                log::debug!("Accept error: {}", e);
-                            }
+                            Err(e) => log::debug!("AgentMailbox accept error: {e}"),
                         }
                     }
                 }
             }
         });
-
-        Ok(Self {
-            socket_dir,
-            socket_path,
-            shutdown,
-        })
+        Ok((
+            AgentMailbox {
+                socket_path,
+                shutdown,
+            },
+            std_rx,
+        ))
     }
+}
 
-    async fn handle_connection(
-        stream: tokio::net::UnixStream,
-        registry: Arc<RwLock<AgentRegistry>>,
-        shutdown: CancellationToken,
-    ) -> Result<(), String> {
-        let (read_half, mut write_half) = stream.into_split();
-        let mut reader = BufReader::new(read_half);
-        let mut line_buffer = String::new();
-
-        // Read and parse auth frame
-        line_buffer.clear();
-        tokio::select! {
-            _ = shutdown.cancelled() => {
-                return Ok(());
-            }
-            result = reader.read_line(&mut line_buffer) => {
-                result.map_err(|e| format!("Failed to read auth frame: {}", e))?;
-            }
-        }
-
-        let auth_frame: ClientFrame = serde_json::from_str(line_buffer.trim())
-            .map_err(|e| format!("Failed to parse auth frame: {}", e))?;
-
-        let agent_name = match auth_frame {
-            ClientFrame::Auth { token } => {
-                // Authenticate
-                let mut reg = registry.write().await;
-                match reg.authenticate(&token) {
-                    Some(name) => {
-                        // Create message channel
-                        let (tx, mut rx) = tokio::sync::mpsc::channel::<ServerFrame>(100);
-                        reg.add_connected(name.clone(), tx);
-                        drop(reg); // Release lock before sending
-
-                        // Send auth success
-                        let auth_ok = ServerFrame::AuthOk { name: name.clone() };
-                        let frame_line = serde_json::to_string(&auth_ok)
-                            .map_err(|e| format!("Failed to serialize AuthOk: {}", e))?;
-                        write_half
-                            .write_all(format!("{}\n", frame_line).as_bytes())
-                            .await
-                            .map_err(|e| format!("Failed to write AuthOk: {}", e))?;
-
-                        // Spawn writer task
-                        let writer_shutdown = shutdown.child_token();
-                        let mut write_half_clone = write_half;
-                        tokio::spawn(async move {
-                            loop {
-                                tokio::select! {
-                                    _ = writer_shutdown.cancelled() => {
-                                        break;
-                                    }
-                                    frame = rx.recv() => {
-                                        match frame {
-                                            Some(frame) => {
-                                                if let Ok(frame_line) = serde_json::to_string(&frame) {
-                                                    let _ = write_half_clone
-                                                        .write_all(format!("{}\n", frame_line).as_bytes())
-                                                        .await;
-                                                }
-                                            }
-                                            None => break,
-                                        }
-                                    }
-                                }
-                            }
-                        });
-
-                        name
-                    }
-                    None => {
-                        // Send auth rejection
-                        let auth_reject = ServerFrame::AuthRejected {
-                            reason: "Invalid token".to_string(),
-                        };
-                        let frame_line = serde_json::to_string(&auth_reject)
-                            .map_err(|e| format!("Failed to serialize AuthRejected: {}", e))?;
-                        write_half
-                            .write_all(format!("{}\n", frame_line).as_bytes())
-                            .await
-                            .map_err(|e| format!("Failed to write AuthRejected: {}", e))?;
-                        return Err("Authentication failed".to_string());
-                    }
-                }
-            }
-            _ => {
-                return Err("Expected Auth frame".to_string());
-            }
-        };
-
-        // Message routing loop
-        loop {
-            line_buffer.clear();
-            let bytes_read = tokio::select! {
-                _ = shutdown.cancelled() => {
-                    log::debug!("Connection shutdown signal received");
-                    break;
-                }
-                result = reader.read_line(&mut line_buffer) => {
-                    result.map_err(|e| format!("Failed to read message: {}", e))?
-                }
-            };
-
-            if bytes_read == 0 {
-                break;
-            }
-
-            let frame: ClientFrame = match serde_json::from_str(line_buffer.trim()) {
-                Ok(f) => f,
-                Err(e) => {
-                    log::debug!("Failed to parse frame: {}", e);
-                    continue;
-                }
-            };
-
-            match frame {
-                ClientFrame::Message { to, message, kind } => {
-                    let reg = registry.read().await;
-                    let server_frame = ServerFrame::Message {
-                        from: agent_name.clone(),
-                        message,
-                        kind,
-                    };
-                    if let Err(e) = reg.route_message(&to, server_frame) {
-                        log::debug!("Failed to route message: {}", e);
-                    }
-                }
-                ClientFrame::Auth { .. } => {
-                    log::debug!("Unexpected Auth frame after authentication");
-                }
-            }
-        }
-
-        // Clean up on disconnect
-        let mut reg = registry.write().await;
-        reg.remove_connected(&agent_name);
-        log::debug!("Agent '{}' disconnected", agent_name);
-
-        Ok(())
+impl Drop for MailboxHandle {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.socket_path);
     }
+}
 
+pub struct AgentMailbox {
+    socket_path: PathBuf,
+    shutdown: CancellationToken,
+}
+
+impl AgentMailbox {
     pub fn socket_path(&self) -> &Path {
         &self.socket_path
     }
 }
 
-impl Drop for Broker {
+impl Drop for AgentMailbox {
     fn drop(&mut self) {
         self.shutdown.cancel();
         let _ = std::fs::remove_file(&self.socket_path);
-        let _ = std::fs::remove_dir(&self.socket_dir);
     }
 }

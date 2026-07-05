@@ -261,18 +261,6 @@ Compaction flags:
                 None,
             )
             .named(
-                "broker-socket",
-                nu_protocol::SyntaxShape::String,
-                "Broker socket path (internal)",
-                None,
-            )
-            .named(
-                "broker-token",
-                nu_protocol::SyntaxShape::String,
-                "Broker auth token (internal)",
-                None,
-            )
-            .named(
                 "parent-name",
                 nu_protocol::SyntaxShape::String,
                 "Parent agent name for sub-agent reporting (internal)",

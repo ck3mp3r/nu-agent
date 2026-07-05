@@ -1484,9 +1484,9 @@ fn skill_via_builtin_adapter(max_tool_result_bytes: usize, cwd: std::path::PathB
     };
     let adapter = BuiltinToolAdapter::new(
         tool_def.clone(),
+        cwd.clone(),
+        None,
         cwd,
-        None,
-        None,
         None,
         max_tool_result_bytes,
     );

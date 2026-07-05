@@ -148,23 +148,17 @@ fn builtin_edit_definition_uses_mode_and_operation_contract_with_legacy_compat_f
     assert_eq!(op_types[1], "create");
 }
 
-// --- Tool assembly tests for list_agents / send_message visibility ---
+// --- Tool assembly tests: all agents always have all tools ---
 
 #[test]
-fn sub_agent_with_broker_has_send_message_but_not_list_agents() {
-    // Sub-agents have has_broker=true, so is_orchestrator=false.
-    // They must get send_message but NOT list_agents (which always fails for sub-agents).
+fn all_agents_have_spawn_agent_send_message_and_list_agents() {
+    // All tool groups are always registered unconditionally.
+    // The permission system (allow/ask/deny) gates actual use at call time.
     let closure_registry = nu_agent_core::tools::closure::ClosureRegistry::default();
     let agents_config = nu_agent_core::config::AgentsConfig::default();
     let cwd = std::path::Path::new("/tmp");
 
-    let assembly = assemble_tool_definitions(
-        &closure_registry,
-        /*has_broker=*/ true,
-        &agents_config,
-        &[],
-        cwd,
-    );
+    let assembly = assemble_tool_definitions(&closure_registry, &agents_config, &[], cwd);
 
     let names: Vec<&str> = assembly
         .tool_definitions
@@ -174,42 +168,18 @@ fn sub_agent_with_broker_has_send_message_but_not_list_agents() {
 
     assert!(
         names.contains(&"send_message"),
-        "Sub-agent must have send_message, got: {names:?}"
-    );
-    assert!(
-        !names.contains(&"list_agents"),
-        "Sub-agent must NOT have list_agents, got: {names:?}"
-    );
-}
-
-#[test]
-fn orchestrator_has_both_send_message_and_list_agents() {
-    // Orchestrators have has_broker=false, so is_orchestrator=true.
-    // They must get both send_message and list_agents.
-    let closure_registry = nu_agent_core::tools::closure::ClosureRegistry::default();
-    let agents_config = nu_agent_core::config::AgentsConfig::default();
-    let cwd = std::path::Path::new("/tmp");
-
-    let assembly = assemble_tool_definitions(
-        &closure_registry,
-        /*has_broker=*/ false,
-        &agents_config,
-        &[],
-        cwd,
-    );
-
-    let names: Vec<&str> = assembly
-        .tool_definitions
-        .iter()
-        .map(|t| t.name.as_str())
-        .collect();
-
-    assert!(
-        names.contains(&"send_message"),
-        "Orchestrator must have send_message, got: {names:?}"
+        "All agents must have send_message, got: {names:?}"
     );
     assert!(
         names.contains(&"list_agents"),
-        "Orchestrator must have list_agents, got: {names:?}"
+        "All agents must have list_agents, got: {names:?}"
+    );
+    assert!(
+        names.contains(&"spawn_agent"),
+        "All agents must have spawn_agent, got: {names:?}"
+    );
+    assert!(
+        names.contains(&"terminate_agent"),
+        "All agents must have terminate_agent, got: {names:?}"
     );
 }

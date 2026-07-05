@@ -33,7 +33,7 @@ pub struct BuiltinToolAdapter {
     cwd: PathBuf,
     orchestrator:
         Option<Arc<std::sync::Mutex<crate::tools::handler::spawn_agent::OrchestratorState>>>,
-    broker_sender: Option<Arc<tokio::sync::Mutex<crate::mailbox::BrokerSender>>>,
+    socket_dir: PathBuf,
     agent_name: Option<String>,
     max_tool_result_bytes: usize,
 }
@@ -45,18 +45,17 @@ impl BuiltinToolAdapter {
     ///
     /// * `tool_def` - The tool definition (name, description, parameters schema)
     /// * `cwd` - The current working directory for resolving relative paths
-    /// * `orchestrator` - Optional orchestrator state for spawn_agent, send_message (parent), and list_agents
-    /// * `broker_sender` - Optional broker sender for send_message (children)
+    /// * `orchestrator` - Optional orchestrator state for spawn_agent and list_agents
+    /// * `socket_dir` - Socket directory for send_message delivery
     /// * `agent_name` - Optional agent identity for send_message `from` field
     /// * `max_tool_result_bytes` - Maximum bytes before truncation (0 = disabled)
-    #[allow(private_interfaces)]
     pub fn new(
         tool_def: ToolDefinition,
         cwd: PathBuf,
         orchestrator: Option<
             Arc<std::sync::Mutex<crate::tools::handler::spawn_agent::OrchestratorState>>,
         >,
-        broker_sender: Option<Arc<tokio::sync::Mutex<crate::mailbox::BrokerSender>>>,
+        socket_dir: PathBuf,
         agent_name: Option<String>,
         max_tool_result_bytes: usize,
     ) -> Self {
@@ -64,7 +63,7 @@ impl BuiltinToolAdapter {
             tool_def,
             cwd,
             orchestrator,
-            broker_sender,
+            socket_dir,
             agent_name,
             max_tool_result_bytes,
         }
@@ -130,68 +129,43 @@ impl ToolDyn for BuiltinToolAdapter {
                         ))))
                     })?
             } else if self.tool_def.name == "send_message" {
-                // send_message: prefer broker_sender (child), fallback to orchestrator registry (parent)
-                if let Some(sender) = &self.broker_sender {
-                    let mut sender_guard = sender.lock().await;
-                    crate::tools::handler::messaging::dispatch_send_message(
-                        &args_json,
-                        &mut sender_guard,
-                    )
+                let from = self.agent_name.as_deref().unwrap_or("unknown");
+                let to = args_json["to"].as_str().ok_or_else(|| {
+                    ToolError::ToolCallError(Box::new(BuiltinExecError::Execution(
+                        "send_message: missing 'to'".to_string(),
+                    )))
+                })?;
+                let message = args_json["message"].as_str().ok_or_else(|| {
+                    ToolError::ToolCallError(Box::new(BuiltinExecError::Execution(
+                        "send_message: missing 'message'".to_string(),
+                    )))
+                })?;
+                let kind = args_json["kind"].as_str().unwrap_or("message");
+                crate::mailbox::send_to(&self.socket_dir, to, from, message, kind)
                     .await
                     .map_err(|e| {
                         ToolError::ToolCallError(Box::new(BuiltinExecError::Execution(format!(
-                            "{}: {}",
-                            e.message,
-                            e.details
-                                .map(|d| d.to_string())
-                                .unwrap_or_else(|| "no details".to_string())
+                            "{e}"
                         ))))
-                    })?
-                } else if let Some(orchestrator) = &self.orchestrator {
-                    let state = orchestrator.lock().unwrap();
-                    let from = self.agent_name.as_deref().unwrap_or("orchestrator");
-                    crate::tools::handler::messaging::dispatch_send_message_via_registry(
-                        &args_json,
-                        &state.registry,
-                        from,
-                    )
-                    .map_err(|e| {
-                        ToolError::ToolCallError(Box::new(BuiltinExecError::Execution(format!(
-                            "{}: {}",
-                            e.message,
-                            e.details
-                                .map(|d| d.to_string())
-                                .unwrap_or_else(|| "no details".to_string())
-                        ))))
-                    })?
-                } else {
-                    return Err(ToolError::ToolCallError(Box::new(
-                        BuiltinExecError::Execution(
-                            "send_message requires either broker_sender or orchestrator state"
-                                .to_string(),
-                        ),
-                    )));
-                }
+                    })?;
+                Some(serde_json::json!({ "sent": true }))
             } else if self.tool_def.name == "list_agents" {
-                // list_agents requires orchestrator state (parent only)
-                let orchestrator = self.orchestrator.as_ref().ok_or_else(|| {
-                    ToolError::ToolCallError(Box::new(BuiltinExecError::Execution(
-                        "list_agents requires orchestrator state".to_string(),
-                    )))
-                })?;
-
-                let state = orchestrator.lock().unwrap();
-                crate::tools::handler::messaging::dispatch_list_agents(&state.registry).map_err(
-                    |e| {
-                        ToolError::ToolCallError(Box::new(BuiltinExecError::Execution(format!(
-                            "{}: {}",
-                            e.message,
-                            e.details
-                                .map(|d| d.to_string())
-                                .unwrap_or_else(|| "no details".to_string())
-                        ))))
-                    },
-                )?
+                // Lists all .sock files in socket_dir — intentionally includes
+                // the caller's own socket so the LLM has full visibility of all
+                // agents in this workspace, including itself.
+                let agents: Vec<serde_json::Value> = std::fs::read_dir(&self.socket_dir)
+                    .map(|entries| {
+                        entries
+                            .flatten()
+                            .filter_map(|e| {
+                                let name = e.file_name().to_string_lossy().to_string();
+                                name.strip_suffix(".sock")
+                                    .map(|n| serde_json::json!({"name": n}))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                Some(serde_json::json!(agents))
             } else if self.tool_def.name == "http" {
                 crate::tools::handler::http::dispatch_http_tool(&args_json)
                     .await
@@ -245,8 +219,8 @@ impl ToolDyn for BuiltinToolAdapter {
 ///
 /// * `tool_definitions` - Vector of tool definitions for builtin tools
 /// * `cwd` - The current working directory for resolving relative paths
-/// * `orchestrator` - Optional orchestrator state for spawn_agent, send_message (parent), and list_agents
-/// * `broker_sender` - Optional broker sender for send_message (children)
+/// * `orchestrator` - Optional orchestrator state for spawn_agent and list_agents
+/// * `socket_dir` - Socket directory for send_message and list_agents
 /// * `agent_name` - Optional agent identity for send_message `from` field
 /// * `max_tool_result_bytes` - Maximum bytes before truncation (0 = disabled)
 ///
@@ -254,14 +228,13 @@ impl ToolDyn for BuiltinToolAdapter {
 ///
 /// A vector of BuiltinToolAdapter instances, one for each tool definition.
 /// These can be passed directly to ToolServerHandle::add_tool() since they implement ToolDyn.
-#[allow(private_interfaces)]
 pub fn adapt_builtins(
     tool_definitions: Vec<ToolDefinition>,
     cwd: PathBuf,
     orchestrator: Option<
         Arc<std::sync::Mutex<crate::tools::handler::spawn_agent::OrchestratorState>>,
     >,
-    broker_sender: Option<Arc<tokio::sync::Mutex<crate::mailbox::BrokerSender>>>,
+    socket_dir: PathBuf,
     agent_name: Option<String>,
     max_tool_result_bytes: usize,
 ) -> Vec<BuiltinToolAdapter> {
@@ -272,7 +245,7 @@ pub fn adapt_builtins(
                 tool_def,
                 cwd.clone(),
                 orchestrator.clone(),
-                broker_sender.clone(),
+                socket_dir.clone(),
                 agent_name.clone(),
                 max_tool_result_bytes,
             )

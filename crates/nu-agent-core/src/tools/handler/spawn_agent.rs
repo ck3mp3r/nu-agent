@@ -1,18 +1,11 @@
-#![allow(private_interfaces)]
-
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 
-use crate::mailbox::{AgentRegistry, Broker};
 use crate::tools::handler::ToolHandlerError;
 
 /// Orchestrator state for multi-agent spawning
 pub struct OrchestratorState {
-    pub broker: Option<Broker>,
-    pub registry: Arc<RwLock<AgentRegistry>>,
-    pub socket_path: Option<PathBuf>,
+    pub socket_dir: PathBuf,
     pub spawn_count: usize,
     pub tmux_window: Option<String>,
     pub cwd: PathBuf,
@@ -21,11 +14,10 @@ pub struct OrchestratorState {
 }
 
 impl OrchestratorState {
-    pub fn new(registry: Arc<RwLock<AgentRegistry>>, cwd: PathBuf) -> Self {
+    pub fn new(cwd: PathBuf) -> Self {
+        let socket_dir = crate::mailbox::socket_dir_for_path(&cwd);
         Self {
-            broker: None,
-            registry,
-            socket_path: None,
+            socket_dir,
             spawn_count: 0,
             tmux_window: None,
             cwd,
@@ -62,19 +54,8 @@ impl TmuxRunner for RealTmuxRunner {
     }
 }
 
-/// Generate a random hex token
-pub fn generate_hex_token(bytes: usize) -> String {
-    let mut random_bytes = vec![0u8; bytes];
-    rand::fill(&mut random_bytes[..]);
-    random_bytes
-        .iter()
-        .map(|b| format!("{:02x}", b))
-        .collect::<String>()
-}
-
 /// Shell escape a string for safe command construction
 fn shell_escape(s: &str) -> String {
-    // Simple shell escaping: wrap in single quotes and escape single quotes
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
@@ -131,16 +112,7 @@ pub fn handle_spawn_agent<T: TmuxRunner>(
         .ok_or_else(|| ToolHandlerError::validation("Missing required 'agent' parameter"))?;
     let name = args.get("name").and_then(|v| v.as_str());
 
-    // 2. Lazy broker initialization
-    if state.broker.is_none() {
-        log::debug!("Initializing broker for first spawn");
-        let broker = Broker::start(Arc::clone(&state.registry))
-            .map_err(|e| ToolHandlerError::runtime(format!("Failed to start broker: {}", e)))?;
-        state.socket_path = Some(broker.socket_path().to_path_buf());
-        state.broker = Some(broker);
-    }
-
-    // 3. Assign name (auto-generate if not provided)
+    // 2. Assign name (auto-generate if not provided)
     state.spawn_count += 1;
     let assigned_name = name
         .map(String::from)
@@ -148,16 +120,7 @@ pub fn handle_spawn_agent<T: TmuxRunner>(
 
     log::debug!("Spawning agent: {} (persona: {})", assigned_name, agent);
 
-    // 4. Generate token and register
-    let token = generate_hex_token(32);
-    state
-        .registry
-        .try_write()
-        .map_err(|_| ToolHandlerError::runtime("Failed to acquire registry lock"))?
-        .register_pending(token.clone(), assigned_name.clone());
-
-    // 5. Tmux pane management — with stale window recovery
-    let socket_path = state.socket_path.as_ref().unwrap();
+    // 3. Tmux pane management — with stale window recovery
     let cwd_str = state.cwd.display().to_string();
 
     // Try splitting existing window; on failure, clear stale reference
@@ -244,34 +207,36 @@ pub fn handle_spawn_agent<T: TmuxRunner>(
         pane_id = Some(pid);
     }
 
-    let pane_id = pane_id.unwrap();
+    let pane_id =
+        pane_id.ok_or_else(|| ToolHandlerError::runtime("Failed to obtain tmux pane ID"))?;
 
-    // 5a. Track agent pane for terminate_agent
+    // 4a. Track agent pane for terminate_agent
     state
         .agent_panes
         .insert(assigned_name.clone(), pane_id.clone());
 
-    // 5b. Re-tile panes evenly
-    let window_ref = state.tmux_window.as_ref().unwrap();
+    // 4b. Re-tile panes evenly
+    let window_ref = state
+        .tmux_window
+        .as_ref()
+        .ok_or_else(|| ToolHandlerError::runtime("tmux window not initialized"))?;
     tmux.run(&["select-layout", "-t", window_ref, "even-horizontal"])?;
 
-    // 5c. Wait for the shell to be ready in the new pane
+    // 4c. Wait for the shell to be ready in the new pane
     wait_for_shell_ready(tmux, &pane_id, std::time::Duration::from_secs(30))?;
 
-    // 6. Send command to pane
+    // 5. Send command to pane
     let parent_name = state.agent_identity.as_deref().unwrap_or("orchestrator");
     let cmd = format!(
-        "agent --agent {} --name {} --broker-socket {} --broker-token {} --parent-name {}",
+        "agent --agent {} --name {} --parent-name {}",
         shell_escape(agent),
         shell_escape(&assigned_name),
-        shell_escape(&socket_path.display().to_string()),
-        &token,
         shell_escape(parent_name)
     );
     log::debug!("Sending command to tmux pane: {}", cmd);
     tmux.run(&["send-keys", "-t", &pane_id, &cmd, "Enter"])?;
 
-    // 7. Return result
+    // 6. Return result
     Ok(serde_json::json!({
         "name": assigned_name
     }))

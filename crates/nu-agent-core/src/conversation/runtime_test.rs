@@ -740,7 +740,7 @@ fn multi_agent_state_available_summaries_empty_by_default() {
     use crate::config::AgentsConfig;
     use crate::conversation::state::multi_agent::MultiAgentState;
 
-    let state = MultiAgentState::new(None, vec![], AgentsConfig::default());
+    let state = MultiAgentState::new(None, None, vec![], AgentsConfig::default());
 
     assert!(
         state.available_agent_summaries().is_empty(),
@@ -969,7 +969,7 @@ fn accessor_available_agent_summaries_delegates_to_multi_agent_state() {
     use crate::config::AgentsConfig;
     use crate::conversation::state::multi_agent::MultiAgentState;
 
-    let state = MultiAgentState::new(None, vec![], AgentsConfig::default());
+    let state = MultiAgentState::new(None, None, vec![], AgentsConfig::default());
     assert!(state.available_agent_summaries().is_empty());
 }
 
@@ -978,7 +978,7 @@ fn accessor_take_mailbox_rx_returns_none_when_default() {
     use crate::config::AgentsConfig;
     use crate::conversation::state::multi_agent::MultiAgentState;
 
-    let mut state = MultiAgentState::new(None, vec![], AgentsConfig::default());
+    let mut state = MultiAgentState::new(None, None, vec![], AgentsConfig::default());
     assert!(state.take_mailbox_rx().is_none());
 }
 
@@ -988,7 +988,7 @@ fn accessor_take_mailbox_rx_returns_some_and_drains() {
     use crate::conversation::state::multi_agent::MultiAgentState;
 
     let (_tx, rx) = std::sync::mpsc::channel();
-    let mut state = MultiAgentState::new(Some(rx), vec![], AgentsConfig::default());
+    let mut state = MultiAgentState::new(None, Some(rx), vec![], AgentsConfig::default());
     assert!(
         state.take_mailbox_rx().is_some(),
         "first take must return Some"

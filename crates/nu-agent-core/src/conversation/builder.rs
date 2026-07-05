@@ -5,7 +5,7 @@ use nu_protocol::{LabeledError, Span};
 
 use crate::compaction::{CompactionParams, CompactionStrategy};
 use crate::config::CompactionConfig;
-use crate::mailbox::{AgentRegistry, BrokerSender, IncomingMessage, ServerFrame};
+use crate::mailbox::{AgentMailbox, IncomingMessage, MailboxHandle, socket_dir_for_path};
 use crate::protocol::persona::PersonaSummary;
 use crate::tools::audit::AuditLogger;
 use crate::tools::closure::ClosureRegistry;
@@ -15,7 +15,6 @@ use crate::types::ToolDefinition;
 use nu_plugin::EngineInterface;
 use rig::tool::server::ToolServerHandle;
 use serde_json::json;
-use tokio::sync::RwLock;
 
 // ── Compaction helpers (moved from binary runtime_build.rs) ─────────────────
 
@@ -262,9 +261,7 @@ pub struct BuildInput<'a> {
     pub span: Span,
     pub available_agents: &'a [PersonaSummary],
     pub messaging_identity: Option<String>,
-    pub broker_flags: Option<BrokerInput>,
-    pub is_orchestrator: bool,
-    pub has_messaging: bool,
+    pub mailbox_input: Option<MailboxInput>,
     pub tool_timeout: std::time::Duration,
     pub session: Option<&'a mut crate::session::Session>,
     pub max_tool_result_bytes: usize,
@@ -272,10 +269,9 @@ pub struct BuildInput<'a> {
     pub merged_compaction: CompactionConfig,
 }
 
-/// Broker connection parameters (binary-extracted from CLI flags).
-pub struct BrokerInput {
-    pub socket_path: std::path::PathBuf,
-    pub token: String,
+/// Mailbox parameters for child agents (binary-extracted from CLI flags).
+pub struct MailboxInput {
+    pub name: String,
     pub parent_name: Option<String>,
 }
 
@@ -285,6 +281,9 @@ pub struct BuildArtifacts {
     pub parent_name: Option<String>,
     pub merged_compaction: CompactionConfig,
     pub compaction_strategy: CompactionStrategy,
+    /// Started agent mailbox (socket bound and accept loop spawned).
+    /// Dropping it cancels the accept loop and removes the socket file.
+    pub mailbox: Option<AgentMailbox>,
 }
 
 /// Builder that registers all agent tools and wires multi-agent infrastructure.
@@ -319,9 +318,7 @@ impl<'a> AgentRuntimeBuilder<'a> {
             span,
             available_agents,
             messaging_identity,
-            broker_flags,
-            is_orchestrator,
-            has_messaging,
+            mailbox_input,
             tool_timeout,
             session,
             max_tool_result_bytes,
@@ -357,64 +354,41 @@ impl<'a> AgentRuntimeBuilder<'a> {
                 })?;
         }
 
-        // Assemble builtin tool definitions
+        // All tool groups are always registered. The permission system gates actual use.
         let mut builtin_defs = builtin_tool_definitions();
-        if has_messaging {
-            builtin_defs.extend(messaging_tool_definitions());
-        }
+        builtin_defs.extend(messaging_tool_definitions());
+        builtin_defs.extend(orchestrator_tool_definitions(available_agents));
 
-        // Create orchestrator state for parent agents
-        let (orchestrator_state, orchestrator_mailbox_rx) =
-            if is_orchestrator {
-                builtin_defs.extend(orchestrator_tool_definitions(available_agents));
-                let registry = Arc::new(RwLock::new(AgentRegistry::new()));
+        // Bind the orchestrator mailbox for top-level agents (no parent).
+        // An agent with --name but no --parent-name is a top-level orchestrator.
+        let is_top_level = mailbox_input
+            .as_ref()
+            .map(|m| m.parent_name.is_none())
+            .unwrap_or(true);
 
-                let orchestrator_name = messaging_identity
-                    .clone()
-                    .unwrap_or_else(|| "orchestrator".to_string());
-                let (tokio_tx, mut tokio_rx) = tokio::sync::mpsc::channel::<ServerFrame>(64);
-                runtime.block_on(async {
-                    registry
-                        .write()
-                        .await
-                        .add_connected(orchestrator_name.clone(), tokio_tx);
-                });
-                log::debug!(
-                    "Registered orchestrator '{}' in agent registry",
-                    orchestrator_name
-                );
+        // Prepare orchestrator socket (sync — no Tokio needed yet).
+        // start() is deferred until after all block_on() calls below.
+        let (orchestrator_state, orch_handle) = if is_top_level {
+            let name = messaging_identity
+                .clone()
+                .unwrap_or_else(|| "orchestrator".to_string());
+            let socket_dir = socket_dir_for_path(&cwd);
+            let handle = MailboxHandle::prepare(&socket_dir, &name).map_err(|e| {
+                LabeledError::new(format!("Failed to prepare orchestrator mailbox: {e}"))
+            })?;
+            log::debug!(
+                "Orchestrator mailbox prepared: {}",
+                handle.socket_path().display()
+            );
 
-                let (std_tx, std_rx) = std::sync::mpsc::channel::<IncomingMessage>();
-                runtime.spawn(async move {
-                while let Some(frame) = tokio_rx.recv().await {
-                    if let ServerFrame::Message {
-                        from,
-                        message,
-                        kind,
-                    } = frame
-                    {
-                        log::trace!("Orchestrator received message from '{}': {}", from, message);
-                        if std_tx
-                            .send(IncomingMessage { from, message, kind })
-                            .is_err()
-                        {
-                            log::debug!(
-                                "Orchestrator mailbox receiver dropped, stopping forwarding task"
-                            );
-                            break;
-                        }
-                    }
-                }
-            });
-
-                let state = Some(Arc::new(std::sync::Mutex::new(OrchestratorState {
-                    agent_identity: messaging_identity.clone(),
-                    ..OrchestratorState::new(registry, cwd.clone())
-                })));
-                (state, Some(std_rx))
-            } else {
-                (None, None)
-            };
+            let state = Some(Arc::new(std::sync::Mutex::new(OrchestratorState {
+                agent_identity: messaging_identity.clone(),
+                ..OrchestratorState::new(cwd.clone())
+            })));
+            (state, Some(handle))
+        } else {
+            (None, None)
+        };
 
         // Build CompactionParams from merged compaction config
         merged_compaction.validate().map_err(|msg| {
@@ -428,64 +402,32 @@ impl<'a> AgentRuntimeBuilder<'a> {
             session.set_compaction_config(compaction_params);
         }
 
-        // Connect to broker if flags provided
-        let (broker_sender, mailbox_rx, parent_name) = if let Some(flags) = broker_flags {
-            log::debug!("Connecting to broker at {:?}", flags.socket_path);
-            let client = runtime
-                .block_on(async {
-                    crate::mailbox::BrokerClient::connect(&flags.socket_path, &flags.token).await
-                })
-                .map_err(|e| LabeledError::new(format!("Failed to connect to broker: {}", e)))?;
-
-            log::debug!("Connected to broker as '{}'", client.name);
-
-            let (sender, mut receiver) = client.split();
-
-            let (tx, rx) = std::sync::mpsc::channel();
-            runtime.spawn(async move {
-                loop {
-                    match receiver.recv().await {
-                        Ok(ServerFrame::Message {
-                            from,
-                            message,
-                            kind,
-                        }) => {
-                            log::trace!("Received message from '{}': {}", from, message);
-                            if tx
-                                .send(IncomingMessage {
-                                    from,
-                                    message,
-                                    kind,
-                                })
-                                .is_err()
-                            {
-                                log::debug!("Mailbox receiver dropped, stopping forwarding task");
-                                break;
-                            }
-                        }
-                        Ok(_frame) => {
-                            log::trace!("Ignoring non-message frame");
-                        }
-                        Err(e) => {
-                            log::debug!("Broker receiver error: {}", e);
-                            break;
-                        }
-                    }
-                }
-            });
-
-            (Some(sender), Some(rx), flags.parent_name)
+        // Prepare child socket only when this agent was spawned by another agent
+        // (has a parent-name). Top-level agents use the orchestrator socket above.
+        let (child_handle, parent_name) = if let Some(ref input) = mailbox_input {
+            if input.parent_name.is_some() {
+                let socket_dir = socket_dir_for_path(&cwd);
+                let handle = MailboxHandle::prepare(&socket_dir, &input.name).map_err(|e| {
+                    LabeledError::new(format!("Failed to prepare agent mailbox: {e}"))
+                })?;
+                log::debug!(
+                    "Agent '{}' mailbox prepared: {}",
+                    input.name,
+                    handle.socket_path().display()
+                );
+                (Some(handle), input.parent_name.clone())
+            } else {
+                (None, None)
+            }
         } else {
-            (None, orchestrator_mailbox_rx, None)
+            (None, None)
         };
 
-        let broker_sender_arc =
-            broker_sender.map(|s: BrokerSender| Arc::new(tokio::sync::Mutex::new(s)));
         let builtin_tools = adapt_builtins(
             builtin_defs,
-            cwd,
+            cwd.clone(),
             orchestrator_state,
-            broker_sender_arc,
+            socket_dir_for_path(&cwd),
             messaging_identity,
             max_tool_result_bytes,
         );
@@ -499,11 +441,41 @@ impl<'a> AgentRuntimeBuilder<'a> {
                 })?;
         }
 
+        // All block_on() calls are done. Now enter the runtime context so that
+        // MailboxHandle::start() can call tokio::spawn. The enter guard lives
+        // until the end of build() — long enough to cover both start() calls.
+        // block_on() panics if called while an enter guard is active, which is
+        // why this guard is placed after all block_on() calls above.
+        let _enter = runtime.enter();
+
+        // Start orchestrator mailbox (spawns the accept loop).
+        let (orch_mailbox, orch_rx) = match orch_handle {
+            Some(handle) => {
+                let (mailbox, rx) = handle.start().map_err(|e| {
+                    LabeledError::new(format!("Failed to start orchestrator mailbox: {e}"))
+                })?;
+                (Some(mailbox), Some(rx))
+            }
+            None => (None, None),
+        };
+
+        // Start child mailbox (spawns the accept loop) and pick the right rx.
+        let (child_mailbox, mailbox_rx) = match child_handle {
+            Some(handle) => {
+                let (mailbox, rx) = handle.start().map_err(|e| {
+                    LabeledError::new(format!("Failed to start agent mailbox: {e}"))
+                })?;
+                (Some(mailbox), Some(rx))
+            }
+            None => (None, orch_rx),
+        };
+
         Ok(BuildArtifacts {
             mailbox_rx,
             parent_name,
             merged_compaction,
             compaction_strategy,
+            mailbox: child_mailbox.or(orch_mailbox),
         })
     }
 }

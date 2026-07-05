@@ -24,16 +24,17 @@ pub(crate) struct ToolAssembly {
     pub(crate) tool_definitions: Vec<nu_agent_core::types::ToolDefinition>,
     pub(crate) baseline_tool_definitions: Vec<nu_agent_core::types::ToolDefinition>,
     pub(crate) available_agents: Vec<nu_agent_core::protocol::persona::PersonaSummary>,
-    pub(crate) is_orchestrator: bool,
-    pub(crate) has_messaging: bool,
 }
 
 /// Assemble the complete set of tool definitions from all sources.
 ///
-/// Order: closures → builtins → messaging (if applicable) → orchestrator (if applicable) → MCP
+/// All tool groups are always registered unconditionally. The permission system
+/// (allow/ask/deny) gates actual use at call time — there is no reason to
+/// suppress tool registration based on agent topology.
+///
+/// Order: closures → builtins → messaging → orchestrator-messaging → orchestrator → MCP
 pub(crate) fn assemble_tool_definitions(
     closure_registry: &nu_agent_core::tools::closure::ClosureRegistry,
-    has_broker: bool,
     agents_config: &nu_agent_core::config::AgentsConfig,
     discovered_mcp_tools: &[nu_agent_core::tools::mcp::client::McpToolDefinition],
     cwd: &std::path::Path,
@@ -51,20 +52,10 @@ pub(crate) fn assemble_tool_definitions(
         .collect();
 
     tool_definitions.extend(builtin_tool_definitions());
+    tool_definitions.extend(messaging_tool_definitions());
+    tool_definitions.extend(orchestrator_messaging_tool_definitions());
 
-    // Only add orchestrator tools (spawn_agent) for parent agents (no broker_flags)
-    let is_orchestrator = !has_broker;
-
-    // Add messaging tools when agent has broker access (child) or is orchestrator (parent)
-    let has_messaging = has_broker || is_orchestrator;
-    if has_messaging {
-        tool_definitions.extend(messaging_tool_definitions());
-    }
-    // list_agents requires orchestrator state — only register it for orchestrators
-    if is_orchestrator {
-        tool_definitions.extend(orchestrator_messaging_tool_definitions());
-    }
-    let available_agents = if is_orchestrator {
+    let available_agents = {
         use nu_agent_core::protocol::persona::{FsPersonaResolver, PersonaLister};
         let cwd = cwd.to_path_buf();
         let config_dir = nu_agent_core::utils::xdg::config_dir()
@@ -72,12 +63,8 @@ pub(crate) fn assemble_tool_definitions(
             .unwrap_or_default();
         let resolver = FsPersonaResolver::new(cwd, config_dir, agents_config.clone());
         resolver.list_available()
-    } else {
-        Vec::new()
     };
-    if is_orchestrator {
-        tool_definitions.extend(orchestrator_tool_definitions(&available_agents));
-    }
+    tool_definitions.extend(orchestrator_tool_definitions(&available_agents));
 
     tool_definitions.extend(discovered_mcp_tools.iter().map(|tool| {
         nu_agent_core::types::ToolDefinition {
@@ -108,7 +95,5 @@ pub(crate) fn assemble_tool_definitions(
         tool_definitions,
         baseline_tool_definitions,
         available_agents,
-        is_orchestrator,
-        has_messaging,
     }
 }

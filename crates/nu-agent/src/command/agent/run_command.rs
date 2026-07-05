@@ -13,7 +13,7 @@ use super::{
 use nu_agent_core::{
     config::PluginConfig,
     conversation::{
-        builder::{BrokerInput, BuildInput},
+        builder::{BuildInput, MailboxInput},
         runtime::AgentConversationRuntime,
     },
     policy::UiPolicy,
@@ -161,8 +161,8 @@ pub(super) fn run_command(
     // Load agent persona and resolve identity
     let (agent_name, cli_name) = super::args::extract_agent_flags(call);
     log::debug!("agent flags: agent_name={agent_name:?}, cli_name={cli_name:?}");
-    let broker_flags = super::args::extract_broker_flags(call)?;
-    log::debug!("broker flags: present={}", broker_flags.is_some());
+    let mailbox_flags = super::args::extract_mailbox_input(call)?;
+    log::debug!("mailbox flags: present={}", mailbox_flags.is_some());
 
     let call_has_model_flag = call.get_flag::<Value>("model").ok().flatten().is_some();
     let persona_resolution = super::persona::resolve_persona(
@@ -240,11 +240,8 @@ pub(super) fn run_command(
         tool_definitions,
         baseline_tool_definitions,
         available_agents,
-        is_orchestrator,
-        has_messaging,
     } = assemble_tool_definitions(
         &closure_registry,
-        broker_flags.is_some(),
         &agents_config,
         &discovered_mcp_tools,
         &cwd,
@@ -257,9 +254,13 @@ pub(super) fn run_command(
         cwd: cwd.clone(),
     })?;
 
-    let broker_input = broker_flags.map(|f| BrokerInput {
-        socket_path: f.socket_path,
-        token: f.token,
+    let mailbox_input = mailbox_flags.map(|f| MailboxInput {
+        // Use the instance name (--name flag) so the socket is addressable by
+        // the name the orchestrator uses when calling send_message. Fall back
+        // to agent_identity (persona name) if no explicit --name was given.
+        name: messaging_identity
+            .clone()
+            .unwrap_or_else(|| "agent".to_string()),
         parent_name: f.parent_name,
     });
 
@@ -268,6 +269,7 @@ pub(super) fn run_command(
         parent_name,
         merged_compaction,
         compaction_strategy,
+        mailbox,
     } = super::setup::register_tools(
         call,
         plugin_config_value.as_ref(),
@@ -280,9 +282,7 @@ pub(super) fn run_command(
             span: call.head,
             available_agents: &available_agents,
             messaging_identity: messaging_identity.clone(),
-            broker_flags: broker_input,
-            is_orchestrator,
-            has_messaging,
+            mailbox_input,
             tool_timeout,
             session: session_resolution.session.as_mut(),
             max_tool_result_bytes: config.max_tool_result_bytes.unwrap_or(20_000),
@@ -330,6 +330,7 @@ pub(super) fn run_command(
             cached_available_skills,
             cached_sub_agent_instruction,
             mailbox_rx,
+            mailbox,
             available_agents,
             agents_config,
             cwd: cwd.clone(),

@@ -1,4 +1,4 @@
-use super::args::{extract_agent_flags, extract_broker_flags};
+use super::args::{extract_agent_flags, extract_mailbox_input};
 use nu_plugin::EvaluatedCall;
 use nu_protocol::{Span, Spanned, Value};
 
@@ -35,47 +35,27 @@ fn mock_call_with_flags(agent: Option<&str>, name: Option<&str>) -> EvaluatedCal
     }
 }
 
-// Helper to create an EvaluatedCall with broker flags
-fn mock_call_with_broker_flags(socket: Option<&str>, token: Option<&str>) -> EvaluatedCall {
-    mock_call_with_broker_flags_and_parent(socket, token, None)
-}
-
-fn mock_call_with_broker_flags_and_parent(
-    socket: Option<&str>,
-    token: Option<&str>,
-    parent_name: Option<&str>,
-) -> EvaluatedCall {
+// Helper to create an EvaluatedCall with mailbox flags (name + parent-name)
+fn mock_call_with_mailbox_flags(name: Option<&str>, parent_name: Option<&str>) -> EvaluatedCall {
     let span = Span::test_data();
-
     let mut named: Vec<(Spanned<String>, Option<Value>)> = Vec::new();
 
-    if let Some(socket_val) = socket {
+    if let Some(n) = name {
         named.push((
             Spanned {
-                item: "broker-socket".to_string(),
+                item: "name".to_string(),
                 span,
             },
-            Some(Value::string(socket_val, span)),
+            Some(Value::string(n, span)),
         ));
     }
-
-    if let Some(token_val) = token {
-        named.push((
-            Spanned {
-                item: "broker-token".to_string(),
-                span,
-            },
-            Some(Value::string(token_val, span)),
-        ));
-    }
-
-    if let Some(parent_val) = parent_name {
+    if let Some(p) = parent_name {
         named.push((
             Spanned {
                 item: "parent-name".to_string(),
                 span,
             },
-            Some(Value::string(parent_val, span)),
+            Some(Value::string(p, span)),
         ));
     }
 
@@ -124,67 +104,40 @@ fn extract_agent_flags_neither() {
 }
 
 #[test]
-fn extract_broker_flags_both_present() {
-    let call = mock_call_with_broker_flags(Some("/tmp/test.sock"), Some("secret-token"));
-    let result = extract_broker_flags(&call).unwrap();
+fn extract_mailbox_input_with_name() {
+    let call = mock_call_with_mailbox_flags(Some("my-agent"), None);
+    let result = extract_mailbox_input(&call).unwrap();
 
     assert!(result.is_some());
-    let flags = result.unwrap();
-    assert_eq!(flags.socket_path.to_str().unwrap(), "/tmp/test.sock");
-    assert_eq!(flags.token, "secret-token");
+    let input = result.unwrap();
+    assert_eq!(input.name, "my-agent");
+    assert_eq!(input.parent_name, None);
 }
 
 #[test]
-fn extract_broker_flags_neither() {
-    let call = mock_call_with_broker_flags(None, None);
-    let result = extract_broker_flags(&call).unwrap();
-
+fn extract_mailbox_input_without_name() {
+    let call = mock_call_with_mailbox_flags(None, None);
+    let result = extract_mailbox_input(&call).unwrap();
     assert!(result.is_none());
 }
 
 #[test]
-fn extract_broker_flags_only_socket_errors() {
-    let call = mock_call_with_broker_flags(Some("/tmp/test.sock"), None);
-    let result = extract_broker_flags(&call);
-
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(err.to_string().contains("must be used together"));
-}
-
-#[test]
-fn extract_broker_flags_only_token_errors() {
-    let call = mock_call_with_broker_flags(None, Some("secret-token"));
-    let result = extract_broker_flags(&call);
-
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(err.to_string().contains("must be used together"));
-}
-
-#[test]
-fn extract_broker_flags_with_parent_name() {
-    let call = mock_call_with_broker_flags_and_parent(
-        Some("/tmp/test.sock"),
-        Some("secret-token"),
-        Some("my-parent"),
-    );
-    let result = extract_broker_flags(&call).unwrap();
+fn extract_mailbox_input_with_parent_name() {
+    let call = mock_call_with_mailbox_flags(Some("child"), Some("orchestrator"));
+    let result = extract_mailbox_input(&call).unwrap();
 
     assert!(result.is_some());
-    let flags = result.unwrap();
-    assert_eq!(flags.socket_path.to_str().unwrap(), "/tmp/test.sock");
-    assert_eq!(flags.token, "secret-token");
-    assert_eq!(flags.parent_name, Some("my-parent".to_string()));
+    let input = result.unwrap();
+    assert_eq!(input.name, "child");
+    assert_eq!(input.parent_name, Some("orchestrator".to_string()));
 }
 
 #[test]
-fn extract_broker_flags_without_parent_name() {
-    let call = mock_call_with_broker_flags(Some("/tmp/test.sock"), Some("secret-token"));
-    let result = extract_broker_flags(&call).unwrap();
-
-    let flags = result.unwrap();
-    assert_eq!(flags.parent_name, None);
+fn extract_mailbox_input_without_parent_name() {
+    let call = mock_call_with_mailbox_flags(Some("agent-1"), None);
+    let result = extract_mailbox_input(&call).unwrap();
+    let input = result.unwrap();
+    assert_eq!(input.parent_name, None);
 }
 
 // --- parse_strategy_from_str ---

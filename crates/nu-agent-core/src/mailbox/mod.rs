@@ -1,16 +1,12 @@
 mod broker;
 mod client;
 mod protocol;
-mod registry;
 
-#[allow(unused_imports)]
-pub use broker::{Broker, BrokerError};
-#[allow(unused_imports)]
-pub use client::{BrokerClient, BrokerClientError, BrokerReceiver, BrokerSender};
-#[allow(unused_imports)]
-pub use protocol::{ClientFrame, IncomingMessage, ServerFrame};
-#[allow(unused_imports)]
-pub use registry::AgentRegistry;
+pub(crate) use broker::MailboxHandle;
+pub(crate) use broker::socket_dir_for_path;
+pub use broker::{AgentMailbox, MailboxError};
+pub use client::{SendError, send_to};
+pub use protocol::{IncomingMessage, MessageFrame};
 
 #[cfg(test)]
 mod broker_test;
@@ -18,5 +14,3 @@ mod broker_test;
 mod client_test;
 #[cfg(test)]
 mod protocol_test;
-#[cfg(test)]
-mod registry_test;

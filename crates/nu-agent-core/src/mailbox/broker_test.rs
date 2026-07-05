@@ -1,250 +1,134 @@
-use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::UnixStream;
-use tokio::sync::RwLock;
-
-use super::broker::Broker;
-use super::protocol::{ClientFrame, ServerFrame};
-use super::registry::AgentRegistry;
+use super::broker::{MailboxHandle, socket_dir_for_path};
+use super::client::send_to;
+use std::time::Duration;
+use tempfile::TempDir;
 
 #[tokio::test]
-async fn broker_starts_and_accepts_auth() {
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        let registry = Arc::new(RwLock::new(AgentRegistry::new()));
+async fn mailbox_binds_socket_file() {
+    let dir = TempDir::new().unwrap();
+    let handle = MailboxHandle::prepare(dir.path(), "alpha").unwrap();
+    let (_mailbox, _rx) = handle.start().unwrap();
+    assert!(dir.path().join("alpha.sock").exists());
+}
 
-        // Register pending token
-        {
-            let mut reg = registry.write().await;
-            reg.register_pending("test-token".to_string(), "agent1".to_string());
-        }
-
-        let broker = Broker::start(registry.clone()).unwrap();
-        let socket_path = broker.socket_path().to_path_buf();
-
-        // Connect and authenticate
-        let stream = UnixStream::connect(&socket_path).await.unwrap();
-        let (read_half, mut write_half) = stream.into_split();
-        let mut reader = BufReader::new(read_half);
-
-        // Send auth frame
-        let auth_frame = ClientFrame::Auth {
-            token: "test-token".to_string(),
-        };
-        let auth_json = serde_json::to_string(&auth_frame).unwrap();
-        write_half
-            .write_all(format!("{}\n", auth_json).as_bytes())
-            .await
-            .unwrap();
-
-        // Read response
-        let mut line = String::new();
-        reader.read_line(&mut line).await.unwrap();
-
-        let response: ServerFrame = serde_json::from_str(line.trim()).unwrap();
-        match response {
-            ServerFrame::AuthOk { name } => {
-                assert_eq!(name, "agent1");
-            }
-            _ => panic!("Expected AuthOk"),
-        }
-
-        // Verify agent is connected
-        let reg = registry.read().await;
-        assert!(reg.is_connected("agent1"));
-    })
-    .await
-    .expect("test timed out");
+#[tokio::test(flavor = "multi_thread")]
+async fn mailbox_receives_message() {
+    let dir = TempDir::new().unwrap();
+    let handle = MailboxHandle::prepare(dir.path(), "alpha").unwrap();
+    let (_mailbox, rx) = handle.start().unwrap();
+    send_to(dir.path(), "alpha", "beta", "hello", "message")
+        .await
+        .unwrap();
+    let msg = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert_eq!(msg.from, "beta");
+    assert_eq!(msg.message, "hello");
+    assert_eq!(msg.kind, "message");
 }
 
 #[tokio::test]
-async fn broker_rejects_invalid_token() {
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        let registry = Arc::new(RwLock::new(AgentRegistry::new()));
-        let broker = Broker::start(registry.clone()).unwrap();
-        let socket_path = broker.socket_path().to_path_buf();
+async fn mailbox_drop_removes_socket() {
+    let dir = TempDir::new().unwrap();
+    let socket_path = dir.path().join("alpha.sock");
+    let handle = MailboxHandle::prepare(dir.path(), "alpha").unwrap();
+    let (mailbox, _rx) = handle.start().unwrap();
+    assert!(socket_path.exists());
+    drop(mailbox);
+    assert!(!socket_path.exists());
+}
 
-        // Connect with invalid token
-        let stream = UnixStream::connect(&socket_path).await.unwrap();
-        let (read_half, mut write_half) = stream.into_split();
-        let mut reader = BufReader::new(read_half);
-
-        // Send auth frame with wrong token
-        let auth_frame = ClientFrame::Auth {
-            token: "wrong-token".to_string(),
-        };
-        let auth_json = serde_json::to_string(&auth_frame).unwrap();
-        write_half
-            .write_all(format!("{}\n", auth_json).as_bytes())
+#[tokio::test(flavor = "multi_thread")]
+async fn mailbox_multiple_messages_delivered() {
+    let dir = TempDir::new().unwrap();
+    let handle = MailboxHandle::prepare(dir.path(), "alpha").unwrap();
+    let (_mailbox, rx) = handle.start().unwrap();
+    for i in 0..3u32 {
+        send_to(dir.path(), "alpha", "sender", &format!("msg{i}"), "message")
             .await
             .unwrap();
-
-        // Read response
-        let mut line = String::new();
-        reader.read_line(&mut line).await.unwrap();
-
-        let response: ServerFrame = serde_json::from_str(line.trim()).unwrap();
-        match response {
-            ServerFrame::AuthRejected { reason } => {
-                assert!(reason.contains("Invalid token"));
-            }
-            _ => panic!("Expected AuthRejected"),
-        }
-    })
-    .await
-    .expect("test timed out");
+    }
+    let mut received = Vec::new();
+    for _ in 0..3 {
+        received.push(rx.recv_timeout(Duration::from_secs(2)).unwrap().message);
+    }
+    assert_eq!(received.len(), 3);
 }
 
 #[tokio::test]
-async fn broker_routes_message_between_agents() {
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        let registry = Arc::new(RwLock::new(AgentRegistry::new()));
-
-        // Register two agents
-        {
-            let mut reg = registry.write().await;
-            reg.register_pending("token1".to_string(), "agent1".to_string());
-            reg.register_pending("token2".to_string(), "agent2".to_string());
-        }
-
-        let broker = Broker::start(registry.clone()).unwrap();
-        let socket_path = broker.socket_path().to_path_buf();
-
-        // Connect agent1
-        let stream1 = UnixStream::connect(&socket_path).await.unwrap();
-        let (read_half1, mut write_half1) = stream1.into_split();
-        let mut reader1 = BufReader::new(read_half1);
-
-        let auth1 = ClientFrame::Auth {
-            token: "token1".to_string(),
-        };
-        write_half1
-            .write_all(format!("{}\n", serde_json::to_string(&auth1).unwrap()).as_bytes())
-            .await
-            .unwrap();
-
-        // Read auth response for agent1
-        let mut line = String::new();
-        reader1.read_line(&mut line).await.unwrap();
-
-        // Connect agent2
-        let stream2 = UnixStream::connect(&socket_path).await.unwrap();
-        let (read_half2, mut write_half2) = stream2.into_split();
-        let mut reader2 = BufReader::new(read_half2);
-
-        let auth2 = ClientFrame::Auth {
-            token: "token2".to_string(),
-        };
-        write_half2
-            .write_all(format!("{}\n", serde_json::to_string(&auth2).unwrap()).as_bytes())
-            .await
-            .unwrap();
-
-        // Read auth response for agent2
-        let mut line2 = String::new();
-        reader2.read_line(&mut line2).await.unwrap();
-
-        // Agent1 sends message to agent2
-        let message = ClientFrame::Message {
-            to: "agent2".to_string(),
-            message: "hello from agent1".to_string(),
-            kind: "message".to_string(),
-        };
-        write_half1
-            .write_all(format!("{}\n", serde_json::to_string(&message).unwrap()).as_bytes())
-            .await
-            .unwrap();
-
-        // Agent2 should receive the message
-        let mut msg_line = String::new();
-        reader2.read_line(&mut msg_line).await.unwrap();
-
-        let received: ServerFrame = serde_json::from_str(msg_line.trim()).unwrap();
-        match received {
-            ServerFrame::Message {
-                from,
-                message,
-                kind,
-            } => {
-                assert_eq!(from, "agent1");
-                assert_eq!(message, "hello from agent1");
-                assert_eq!(kind, "message");
-            }
-            _ => panic!("Expected Message frame"),
-        }
-    })
-    .await
-    .expect("test timed out");
+async fn mailbox_rebind_after_drop_succeeds() {
+    let dir = TempDir::new().unwrap();
+    let handle = MailboxHandle::prepare(dir.path(), "alpha").unwrap();
+    let (mailbox, _rx) = handle.start().unwrap();
+    drop(mailbox);
+    let handle2 = MailboxHandle::prepare(dir.path(), "alpha").unwrap();
+    let (_mailbox2, _rx2) = handle2.start().unwrap();
+    assert!(dir.path().join("alpha.sock").exists());
 }
 
+// Regression: a top-level named agent (--name dave, no --parent-name) must
+// keep its socket alive for the entire session. Before the fix, builder.rs
+// prepared TWO handles for the same name — one via the orchestrator path,
+// one via the child path. Dropping the unstarted orchestrator handle deleted
+// the socket the started child mailbox was bound to. Net result: no socket.
+//
+// This test documents the failure mode: an unstarted handle's Drop removes
+// the socket even if another started handle is listening on it.
+// The fix in builder.rs (child handle only when parent_name.is_some())
+// ensures only ONE handle is ever prepared for a given agent name.
 #[tokio::test]
-async fn broker_handles_disconnect() {
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        let registry = Arc::new(RwLock::new(AgentRegistry::new()));
+async fn unstarted_handle_drop_removes_socket_from_started_mailbox() {
+    let dir = TempDir::new().unwrap();
+    let socket_path = dir.path().join("dave.sock");
 
-        {
-            let mut reg = registry.write().await;
-            reg.register_pending("token1".to_string(), "agent1".to_string());
-        }
+    // First handle: prepared but not started (simulates orch_handle in old code)
+    let orch_handle = MailboxHandle::prepare(dir.path(), "dave").unwrap();
+    assert!(socket_path.exists());
 
-        let broker = Broker::start(registry.clone()).unwrap();
-        let socket_path = broker.socket_path().to_path_buf();
+    // Second handle: steals the socket path (simulates child_handle in old code)
+    let child_handle = MailboxHandle::prepare(dir.path(), "dave").unwrap();
+    let (child_mailbox, _rx) = child_handle.start().unwrap();
+    assert!(socket_path.exists());
 
-        // Connect agent
-        let stream = UnixStream::connect(&socket_path).await.unwrap();
-        let (read_half, mut write_half) = stream.into_split();
-        let mut reader = BufReader::new(read_half);
+    // Dropping the unstarted handle deletes the socket — this is the bug
+    drop(orch_handle);
+    assert!(
+        !socket_path.exists(),
+        "unstarted handle Drop removes the socket, breaking the started mailbox — \
+         builder.rs must never create two handles for the same agent name"
+    );
 
-        // Authenticate
-        let auth = ClientFrame::Auth {
-            token: "token1".to_string(),
-        };
-        write_half
-            .write_all(format!("{}\n", serde_json::to_string(&auth).unwrap()).as_bytes())
-            .await
-            .unwrap();
-
-        let mut line = String::new();
-        reader.read_line(&mut line).await.unwrap();
-
-        // Verify connected
-        assert!(registry.read().await.is_connected("agent1"));
-
-        // Drop connection
-        drop(write_half);
-        drop(reader);
-
-        // Wait a bit for cleanup
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-        // Verify agent removed
-        assert!(!registry.read().await.is_connected("agent1"));
-    })
-    .await
-    .expect("test timed out");
+    drop(child_mailbox);
 }
 
+// Correct pattern: one prepare + one start = socket lives until AgentMailbox drop.
 #[tokio::test]
-async fn broker_cleanup_on_drop() {
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        let registry = Arc::new(RwLock::new(AgentRegistry::new()));
-        let broker = Broker::start(registry.clone()).unwrap();
-        let socket_path = broker.socket_path().to_path_buf();
-        let socket_dir = socket_path.parent().unwrap().to_path_buf();
+async fn single_prepare_and_start_socket_lives_for_mailbox_lifetime() {
+    let dir = TempDir::new().unwrap();
+    let socket_path = dir.path().join("dave.sock");
 
-        // Verify socket exists
-        assert!(socket_path.exists());
-        assert!(socket_dir.exists());
+    let handle = MailboxHandle::prepare(dir.path(), "dave").unwrap();
+    assert!(socket_path.exists(), "prepare must create the socket file");
 
-        // Drop broker
-        drop(broker);
+    let (mailbox, _rx) = handle.start().unwrap();
+    assert!(socket_path.exists(), "socket must remain after start()");
 
-        // Wait a bit for cleanup
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    drop(mailbox);
+    assert!(
+        !socket_path.exists(),
+        "socket must be removed when AgentMailbox is dropped"
+    );
+}
 
-        // Verify cleaned up
-        assert!(!socket_path.exists());
-        assert!(!socket_dir.exists());
-    })
-    .await
-    .expect("test timed out");
+#[test]
+fn socket_dir_for_path_is_deterministic() {
+    use std::path::PathBuf;
+    let cwd = PathBuf::from("/some/project");
+    assert_eq!(socket_dir_for_path(&cwd), socket_dir_for_path(&cwd));
+}
+
+#[test]
+fn socket_dir_for_path_differs_for_different_cwds() {
+    use std::path::PathBuf;
+    let a = socket_dir_for_path(&PathBuf::from("/project/a"));
+    let b = socket_dir_for_path(&PathBuf::from("/project/b"));
+    assert_ne!(a, b);
 }
