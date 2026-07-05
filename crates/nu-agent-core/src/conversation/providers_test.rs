@@ -57,6 +57,7 @@ fn build_copilot_client_no_auth_returns_ok() {
         max_retries: None,
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     let result = build_copilot_client(&config);
@@ -121,6 +122,7 @@ fn build_copilot_client_oauth_path_succeeds_at_build_time() {
         max_retries: None,
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     let result = build_copilot_client(&config);
@@ -354,6 +356,7 @@ fn plugin_config_read_timeout_secs_propagates_to_resolved_config() {
         agents: AgentsConfig::default(),
         read_timeout_secs: Some(60),
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     let resolved = plugin_config
@@ -394,6 +397,7 @@ fn plugin_config_without_read_timeout_secs_resolves_to_none() {
         agents: AgentsConfig::default(),
         read_timeout_secs: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     let resolved = plugin_config

@@ -83,6 +83,12 @@ pub struct PluginConfig {
     /// many tool calls in one response, causing oversized follow-up requests.
     /// None = use default (10). Some(0) = unlimited.
     pub max_tool_calls_per_subturn: Option<usize>,
+
+    /// Additional provider-specific parameters forwarded verbatim to the
+    /// completion request. Merged as a JSON object into the request body.
+    /// Example: `{ thinking: { type: "disabled" } }` disables Anthropic extended thinking.
+    /// None = no additional parameters.
+    pub additional_params: Option<serde_json::Value>,
 }
 
 /// Configuration for conversation compaction behavior.
@@ -269,6 +275,16 @@ impl PluginConfig {
                 .and_then(|i| if i >= 0 { Some(i as usize) } else { None })
         });
 
+        // Extract optional 'additional_params' field
+        let additional_params = record
+            .get("additional_params")
+            .map(nu_value_to_json)
+            .transpose()
+            .map_err(|e| {
+                nu_protocol::LabeledError::new(format!("Invalid additional_params: {e}"))
+                    .with_label("expected a record", span)
+            })?;
+
         Ok(Self {
             model,
             small_model,
@@ -277,6 +293,7 @@ impl PluginConfig {
             agents,
             read_timeout_secs,
             max_tool_calls_per_subturn,
+            additional_params,
         })
     }
 
@@ -657,6 +674,9 @@ impl PluginConfig {
         // Populate max_tool_calls_per_subturn from plugin config
         config.max_tool_calls_per_subturn = self.max_tool_calls_per_subturn;
 
+        // Populate additional_params from plugin config
+        config.additional_params = self.additional_params.clone();
+
         Ok(config)
     }
 }
@@ -729,6 +749,42 @@ pub struct Config {
     /// many tool calls in one response, causing oversized follow-up requests.
     /// None = use default (10). Some(0) = unlimited.
     pub max_tool_calls_per_subturn: Option<usize>,
+
+    /// Additional provider-specific parameters forwarded verbatim to the
+    /// completion request. Merged as a JSON object into the request body.
+    /// Example: `{ thinking: { type: "disabled" } }` disables Anthropic extended thinking.
+    /// None = no additional parameters.
+    pub additional_params: Option<serde_json::Value>,
+}
+
+/// Convert a `nu_protocol::Value` to a `serde_json::Value` without including
+/// span metadata. `serde_json::to_value(&nu_value)` would include internal span
+/// fields, so we convert manually.
+fn nu_value_to_json(value: &nu_protocol::Value) -> Result<serde_json::Value, String> {
+    match value {
+        nu_protocol::Value::Int { val, .. } => Ok(serde_json::Value::Number((*val).into())),
+        nu_protocol::Value::Float { val, .. } => serde_json::Number::from_f64(*val)
+            .map(serde_json::Value::Number)
+            .ok_or_else(|| format!("non-finite float: {val}")),
+        nu_protocol::Value::String { val, .. } => Ok(serde_json::Value::String(val.clone())),
+        nu_protocol::Value::Bool { val, .. } => Ok(serde_json::Value::Bool(*val)),
+        nu_protocol::Value::Nothing { .. } => Ok(serde_json::Value::Null),
+        nu_protocol::Value::List { vals, .. } => {
+            let arr = vals
+                .iter()
+                .map(nu_value_to_json)
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(serde_json::Value::Array(arr))
+        }
+        nu_protocol::Value::Record { val, .. } => {
+            let obj = val
+                .iter()
+                .map(|(k, v)| nu_value_to_json(v).map(|j| (k.clone(), j)))
+                .collect::<Result<serde_json::Map<_, _>, _>>()?;
+            Ok(serde_json::Value::Object(obj))
+        }
+        other => Err(format!("unsupported nu value type: {:?}", other.get_type())),
+    }
 }
 
 impl Config {
@@ -805,6 +861,7 @@ impl Config {
             max_retries: None,
             retry_base_delay_ms: None,
             max_tool_calls_per_subturn,
+            additional_params: None,
         }
     }
 
@@ -910,6 +967,14 @@ impl Config {
                 Some(trimmed)
             }
         });
+        let additional_params = record
+            .get("additional_params")
+            .map(nu_value_to_json)
+            .transpose()
+            .map_err(|e| {
+                nu_protocol::LabeledError::new(format!("Invalid additional_params: {e}"))
+                    .with_label("expected a record", span)
+            })?;
 
         Ok(Self {
             provider,
@@ -930,6 +995,7 @@ impl Config {
             max_retries: None,
             retry_base_delay_ms: None,
             max_tool_calls_per_subturn,
+            additional_params,
         })
     }
 
@@ -972,6 +1038,7 @@ impl Config {
             max_tool_calls_per_subturn: other
                 .max_tool_calls_per_subturn
                 .or(self.max_tool_calls_per_subturn),
+            additional_params: other.additional_params.or(self.additional_params),
         }
     }
 

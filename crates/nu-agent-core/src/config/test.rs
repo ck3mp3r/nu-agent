@@ -49,6 +49,7 @@ fn test_config_required_fields() {
         max_retries: None,
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     assert_eq!(config.provider, "openai");
@@ -78,6 +79,7 @@ fn test_config_all_fields() {
         max_retries: None,
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     assert_eq!(config.provider, "anthropic");
@@ -384,6 +386,7 @@ fn test_merge_full_configs() {
         max_retries: None,
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     let override_config = Config {
@@ -405,6 +408,7 @@ fn test_merge_full_configs() {
         max_retries: None,
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     let merged = base.merge(override_config);
@@ -443,6 +447,7 @@ fn test_merge_with_partial_override() {
         max_retries: None,
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     let override_config = Config {
@@ -464,6 +469,7 @@ fn test_merge_with_partial_override() {
         max_retries: None,
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     let merged = base.merge(override_config);
@@ -502,6 +508,7 @@ fn test_merge_with_empty_override() {
         max_retries: None,
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     let empty_override = Config {
@@ -523,6 +530,7 @@ fn test_merge_with_empty_override() {
         max_retries: None,
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     let merged = base.clone().merge(empty_override);
@@ -553,6 +561,7 @@ fn test_merge_chain() {
         max_retries: None,
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     let override1 = Config {
@@ -574,6 +583,7 @@ fn test_merge_chain() {
         max_retries: None,
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     let override2 = Config {
@@ -595,6 +605,7 @@ fn test_merge_chain() {
         max_retries: None,
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     let merged = base.merge(override1).merge(override2);
@@ -630,6 +641,7 @@ fn test_merge_required_fields() {
         max_retries: None,
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     let override_config = Config {
@@ -651,6 +663,7 @@ fn test_merge_required_fields() {
         max_retries: None,
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     let merged = base.merge(override_config);
@@ -682,6 +695,7 @@ fn test_validate_valid_config() {
         max_retries: None,
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     assert!(config.validate().is_ok());
@@ -709,6 +723,7 @@ fn test_validate_minimal_config() {
         max_retries: None,
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     assert!(config.validate().is_ok());
@@ -736,6 +751,7 @@ fn test_validate_empty_provider() {
         max_retries: None,
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     let result = config.validate();
@@ -766,6 +782,7 @@ fn test_validate_empty_model() {
         max_retries: None,
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     let result = config.validate();
@@ -796,6 +813,7 @@ fn test_validate_max_output_exceeds_context() {
         max_retries: None,
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     let result = config.validate();
@@ -827,6 +845,7 @@ fn test_validate_max_output_equals_context() {
         max_retries: None,
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     assert!(config.validate().is_ok());
@@ -854,6 +873,7 @@ fn test_validate_zero_max_tool_turns() {
         max_retries: None,
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     let result = config.validate();
@@ -884,6 +904,7 @@ fn test_validate_only_context_tokens_set() {
         max_retries: None,
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     assert!(config.validate().is_ok());
@@ -911,6 +932,7 @@ fn test_validate_only_output_tokens_set() {
         max_retries: None,
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     assert!(config.validate().is_ok());
@@ -1332,6 +1354,7 @@ fn test_resolve_model_basic() {
         agents: AgentsConfig::default(),
         read_timeout_secs: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     let config = plugin_config
@@ -1371,6 +1394,7 @@ fn test_resolve_model_with_env_fallback() {
         agents: AgentsConfig::default(),
         read_timeout_secs: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     let config = plugin_config
@@ -1394,6 +1418,7 @@ fn test_resolve_model_invalid_format() {
         agents: AgentsConfig::default(),
         read_timeout_secs: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     // No slash separator
@@ -1421,6 +1446,7 @@ fn test_resolve_model_provider_not_found() {
         agents: AgentsConfig::default(),
         read_timeout_secs: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     let result = plugin_config.resolve_model("unknown/model");
@@ -1454,6 +1480,7 @@ fn test_resolve_model_model_not_in_config() {
         agents: AgentsConfig::default(),
         read_timeout_secs: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     let config = plugin_config
@@ -1492,6 +1519,7 @@ fn test_resolve_model_with_provider_field() {
         agents: AgentsConfig::default(),
         read_timeout_secs: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     let config = plugin_config
@@ -1549,6 +1577,7 @@ fn test_resolve_model_merges_limits() {
         agents: AgentsConfig::default(),
         read_timeout_secs: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     let config = plugin_config
@@ -1588,6 +1617,7 @@ fn resolve_model_handles_two_part_format() {
         agents: AgentsConfig::default(),
         read_timeout_secs: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     let config = plugin_config
@@ -1610,6 +1640,7 @@ fn resolve_model_validates_empty_parts() {
         agents: AgentsConfig::default(),
         read_timeout_secs: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     // Empty provider
@@ -1655,6 +1686,7 @@ fn resolve_model_uses_split_once_for_multi_part_models() {
         agents: AgentsConfig::default(),
         read_timeout_secs: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     let config = plugin_config
@@ -1695,6 +1727,7 @@ fn resolve_model_works_with_simple_two_part() {
         agents: AgentsConfig::default(),
         read_timeout_secs: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     let config = plugin_config
@@ -1735,6 +1768,7 @@ fn integration_github_copilot_with_backend_in_model() {
         agents: AgentsConfig::default(),
         read_timeout_secs: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     // Test default model
@@ -1790,6 +1824,7 @@ fn test_validate_none_max_tool_turns_is_valid() {
         max_retries: None,
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     assert!(config.validate().is_ok());
@@ -1817,6 +1852,7 @@ fn test_validate_zero_max_tool_turns_still_invalid() {
         max_retries: None,
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     };
 
     let result = config.validate();
@@ -2167,4 +2203,67 @@ fn merge_preserves_custom_max_tool_result_bytes_when_other_is_default() {
     };
     let merged = base.merge(Config::default());
     assert_eq!(merged.max_tool_result_bytes, Some(5_000));
+}
+
+// ---------------------------------------------------------------------------
+// additional_params tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn parse_additional_params_from_record() {
+    let value = Value::test_record(record! {
+        "model" => Value::test_string("openai/gpt-4"),
+        "providers" => Value::test_record(record! {
+            "openai" => Value::test_record(record! {
+                "models" => Value::test_record(record! {
+                    "gpt-4" => Value::test_record(record! {}),
+                }),
+            }),
+        }),
+        "additional_params" => Value::test_record(record! {
+            "thinking" => Value::test_record(record! {
+                "type" => Value::test_string("disabled"),
+            })
+        })
+    });
+    let config = PluginConfig::from_plugin_config(&value)
+        .expect("parse")
+        .resolve_model("openai/gpt-4")
+        .expect("resolve");
+    let params = config.additional_params.expect("should have params");
+    assert_eq!(params["thinking"]["type"], "disabled");
+}
+
+#[test]
+fn additional_params_defaults_to_none() {
+    let config = Config::default();
+    assert!(config.additional_params.is_none());
+}
+
+#[test]
+fn additional_params_merge_other_wins() {
+    let base = Config {
+        additional_params: Some(serde_json::json!({"a": 1})),
+        ..Default::default()
+    };
+    let other = Config {
+        additional_params: Some(serde_json::json!({"b": 2})),
+        ..Default::default()
+    };
+    let merged = base.merge(other);
+    assert_eq!(merged.additional_params, Some(serde_json::json!({"b": 2})));
+}
+
+#[test]
+fn additional_params_merge_falls_back_to_base() {
+    let base = Config {
+        additional_params: Some(serde_json::json!({"a": 1})),
+        ..Default::default()
+    };
+    let other = Config {
+        additional_params: None,
+        ..Default::default()
+    };
+    let merged = base.merge(other);
+    assert_eq!(merged.additional_params, Some(serde_json::json!({"a": 1})));
 }

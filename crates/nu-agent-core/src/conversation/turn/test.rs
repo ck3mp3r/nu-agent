@@ -202,6 +202,29 @@ fn execute_turn_cancel_returns_cancelled_true() {
     assert!(result.cancelled, "Turn should be marked as cancelled");
 }
 
+/// Verify that `additional_params` set in `Config` is forwarded through `AgentPromptConfig`
+/// to `AgentBuilder` without panicking. The mock model ignores extra params; this test
+/// confirms the forwarding path compiles and the turn completes normally.
+#[test]
+fn execute_turn_with_additional_params_succeeds() {
+    let rt = Runtime::new().expect("failed to create tokio runtime");
+    let model = MockCompletionModel::from_stream_turns([[
+        MockStreamEvent::Text("OK".to_string()),
+        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+    ]]);
+
+    let config = Config {
+        additional_params: Some(serde_json::json!({"thinking": {"type": "disabled"}})),
+        ..Config::default()
+    };
+    let ctx = make_turn_context(rt.handle(), model, &config);
+    let mut ui = MockUi::new();
+    let resolver = MockResolver(PermissionDecision::Allow);
+
+    let result = execute_turn(ctx, &mut ui, resolver).expect("execute_turn should succeed");
+    assert!(!result.cancelled, "Turn should not be cancelled");
+}
+
 // ---------------------------------------------------------------------------
 // Unit tests: TurnResult / TurnError construction and field access
 // ---------------------------------------------------------------------------

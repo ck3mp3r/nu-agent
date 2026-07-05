@@ -134,6 +134,7 @@ pub fn extract_flag_config(call: &EvaluatedCall) -> Config {
         max_retries: None,
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
+        additional_params: None,
     }
 }
 

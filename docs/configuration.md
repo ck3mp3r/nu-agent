@@ -30,6 +30,7 @@ Optional top-level fields:
 - `mcp`
 - `compaction`
 - `read_timeout_secs` — HTTP read timeout in seconds (default: 30, set to 0 to disable)
+- `additional_params` — provider-specific parameters forwarded verbatim to the completion request body (see [Additional Parameters](#additional-parameters))
 
 ## Model Format
 
@@ -194,3 +195,45 @@ All fields are optional — defaults are used when omitted.
 ### Precedence
 
 CLI flags override plugin config, which overrides built-in defaults.
+
+## Additional Parameters
+
+`additional_params` forwards a record of provider-specific keys verbatim into the top-level HTTP request body. The record is flattened — each key becomes a top-level field alongside `model`, `messages`, etc.
+
+```nu
+$env.config.plugins.agent = {
+  model: "anthropic/claude-sonnet-4-6"
+  additional_params: {
+    thinking: { type: "disabled" }
+  }
+  providers: { ... }
+}
+```
+
+This works with all providers (Anthropic, OpenAI, Copilot, Ollama, OpenAI-compatible).
+
+### Gotchas
+
+- **Must be a record** — arrays, strings, and scalars are rejected at parse time.
+- **Do not shadow typed fields** — keys like `model`, `max_tokens`, or `temperature` already have typed fields. Duplicating them via `additional_params` produces duplicate JSON keys with undefined behavior.
+- **Anthropic: `max_tokens` is required** — always set it explicitly or Anthropic will reject the request.
+- **Applied to every turn** — the value is included in every completion request for the agent's lifetime.
+
+### Disabling Anthropic extended thinking
+
+```nu
+$env.config.plugins.agent = {
+  model: "anthropic/claude-sonnet-4-6"
+  additional_params: {
+    thinking: { type: "disabled" }
+  }
+  providers: {
+    anthropic: {
+      api_key: $env.ANTHROPIC_API_KEY
+      models: {
+        "claude-sonnet-4-6": {}
+      }
+    }
+  }
+}
+```

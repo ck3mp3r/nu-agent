@@ -288,6 +288,7 @@ where
         visible_tool_definitions: ctx.tool_infra.visible_tool_definitions,
         max_turns: ctx.input.max_turns,
         cancel_token: cancel_token.clone(),
+        additional_params: ctx.config.additional_params.clone(),
     };
 
     let model = ctx.model.clone();
@@ -383,6 +384,7 @@ struct AgentPromptConfig<P: AsyncPermissionResolver> {
     visible_tool_definitions: Vec<ToolDefinition>,
     max_turns: Option<u32>,
     cancel_token: CancellationToken,
+    additional_params: Option<serde_json::Value>,
 }
 
 /// Result from streaming agent execution
@@ -461,6 +463,7 @@ where
         visible_tool_definitions,
         max_turns,
         cancel_token,
+        additional_params,
     } = config;
     // Create proxy tools that expose only the filtered definitions to the LLM
     // while delegating execution to the original shared tool server handle.
@@ -500,6 +503,9 @@ where
     }
     let effective_max_turns = max_turns.unwrap_or(DEFAULT_MAX_TURNS);
     builder = builder.default_max_turns(effective_max_turns as usize);
+    if let Some(params) = additional_params {
+        builder = builder.additional_params(params);
+    }
     let agent = builder.build();
 
     let stream = agent
