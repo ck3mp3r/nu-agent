@@ -12,9 +12,9 @@ fn ask_decision_fixture() -> PermissionDecision {
     PermissionDecision {
         action: PermissionAction::Ask,
         matched_rule: PermissionRuleMatch {
-            identity: "nested:nu__run.command:*".to_string(),
+            identity: "nested:shell.command:*".to_string(),
             scope: "nested",
-            target_field: Some("command"),
+            target_field: Some("command".to_string()),
             pattern: "*".to_string(),
             action: PermissionAction::Ask,
         },
@@ -49,7 +49,7 @@ fn permissions_value() -> nu_protocol::Value {
             "*" => Value::test_string("ask"),
             "read" => Value::test_string("allow"),
             "c5t_get*" => Value::test_string("allow"),
-            "nu__run" => Value::test_record(record! {
+            "shell" => Value::test_record(record! {
                 "command" => Value::test_record(record! {
                     "kubectl delete *" => Value::test_string("deny"),
                     "*" => Value::test_string("ask"),
@@ -63,12 +63,12 @@ fn permissions_value() -> nu_protocol::Value {
 fn parser_accepts_canonical_permissions_shape() {
     let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()), true);
     let deny = parsed.evaluate(
-        "nu__run",
+        "shell",
         &serde_json::json!({"command": "kubectl delete pod x"}),
     );
     assert_eq!(deny.action, PermissionAction::Deny);
     assert_eq!(deny.matched_rule.scope, "nested");
-    assert_eq!(deny.matched_rule.target_field, Some("command"));
+    assert_eq!(deny.matched_rule.target_field, Some("command".to_string()));
 }
 
 #[test]
@@ -84,7 +84,7 @@ fn precedence_is_global_then_tool_then_nested_command() {
     assert_eq!(tool.matched_rule.scope, "tool");
 
     let nested = parsed.evaluate(
-        "nu__run",
+        "shell",
         &serde_json::json!({"command": "kubectl delete ns prod"}),
     );
     assert_eq!(nested.action, PermissionAction::Deny);
@@ -92,10 +92,10 @@ fn precedence_is_global_then_tool_then_nested_command() {
 }
 
 #[test]
-fn nu_run_command_matching_normalizes_whitespace() {
+fn command_matching_normalizes_whitespace() {
     let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()), true);
     let decision = parsed.evaluate(
-        "nu__run",
+        "shell",
         &serde_json::json!({"command": "   kubectl    delete   pod   foo   "}),
     );
     assert_eq!(decision.action, PermissionAction::Deny);
@@ -104,35 +104,13 @@ fn nu_run_command_matching_normalizes_whitespace() {
 #[test]
 fn missing_command_uses_deterministic_safe_fallback_with_diagnostics() {
     let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()), true);
-    let decision = parsed.evaluate("nu__run", &serde_json::json!({}));
+    let decision = parsed.evaluate("shell", &serde_json::json!({}));
     assert_eq!(decision.action, PermissionAction::Ask);
     assert!(
         decision
             .diagnostics
             .iter()
-            .any(|diag| diag.code == "permissions.nu_run.command.missing")
-    );
-}
-
-#[test]
-fn unknown_nu_run_nested_field_is_rejected_with_diagnostic() {
-    let value = Value::test_record(record! {
-        "permissions" => Value::test_record(record! {
-            "*" => Value::test_string("ask"),
-            "nu__run" => Value::test_record(record! {
-                "args" => Value::test_record(record! {
-                    "*" => Value::test_string("deny")
-                })
-            })
-        })
-    });
-
-    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
-    assert!(
-        parsed
-            .diagnostics
-            .iter()
-            .any(|diag| diag.code == "permissions.invalid.nu_run_field")
+            .any(|diag| diag.code == "permissions.nested_field.missing")
     );
 }
 
@@ -141,7 +119,7 @@ fn redundant_nested_star_equal_to_inherited_is_valid_noop_with_diagnostic() {
     let value = Value::test_record(record! {
         "permissions" => Value::test_record(record! {
             "*" => Value::test_string("ask"),
-            "nu__run" => Value::test_record(record! {
+            "shell" => Value::test_record(record! {
                 "command" => Value::test_record(record! {
                     "*" => Value::test_string("ask")
                 })
@@ -150,14 +128,14 @@ fn redundant_nested_star_equal_to_inherited_is_valid_noop_with_diagnostic() {
     });
 
     let parsed = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
-    let decision = parsed.evaluate("nu__run", &serde_json::json!({"command": "echo hi"}));
+    let decision = parsed.evaluate("shell", &serde_json::json!({"command": "echo hi"}));
 
     assert_eq!(decision.action, PermissionAction::Ask);
     assert!(
         decision
             .diagnostics
             .iter()
-            .any(|diag| diag.code == "permissions.noop.nu_run.command.star")
+            .any(|diag| diag.code == "permissions.noop.nested_field.star")
     );
 }
 
@@ -167,31 +145,31 @@ fn ask_choices_apply_once_always_and_deny() {
     let mut cache = SessionGrantCache::default();
     let args = serde_json::json!({"command": "echo hi"});
 
-    let base = parsed.evaluate("nu__run", &args);
+    let base = parsed.evaluate("shell", &args);
     assert_eq!(base.action, PermissionAction::Ask);
 
     let once = apply_ask_choice(
         base.clone(),
         AskChoice::AllowOnce,
         &mut cache,
-        "nu__run",
+        "shell",
         "closure",
         &args,
     );
     assert_eq!(once.action, PermissionAction::Allow);
-    assert!(cache.get(&base, "nu__run", "closure", &args).is_none());
+    assert!(cache.get(&base, "shell", "closure", &args).is_none());
 
     let always = apply_ask_choice(
         base.clone(),
         AskChoice::AllowAlways,
         &mut cache,
-        "nu__run",
+        "shell",
         "closure",
         &args,
     );
     assert_eq!(always.action, PermissionAction::Allow);
     assert_eq!(
-        cache.get(&base, "nu__run", "closure", &args),
+        cache.get(&base, "shell", "closure", &args),
         Some(PermissionAction::Allow)
     );
 
@@ -199,7 +177,7 @@ fn ask_choices_apply_once_always_and_deny() {
         base.clone(),
         AskChoice::Deny,
         &mut cache,
-        "nu__run",
+        "shell",
         "closure",
         &args,
     );
@@ -213,26 +191,25 @@ fn session_grants_are_keyed_by_scoped_request_context_not_call_arguments() {
     let first_args = serde_json::json!({"command": "echo one"});
     let second_args = serde_json::json!({"command": "echo two"});
 
-    let first = parsed.evaluate("nu__run", &first_args);
-    let second = parsed.evaluate("nu__run", &second_args);
+    let first = parsed.evaluate("shell", &first_args);
+    let second = parsed.evaluate("shell", &second_args);
     assert_eq!(first.matched_rule.identity, second.matched_rule.identity);
 
     let _ = apply_ask_choice(
         first.clone(),
         AskChoice::AllowAlways,
         &mut cache,
-        "nu__run",
+        "shell",
         "closure",
         &first_args,
     );
 
-    let overridden =
-        apply_session_grant_override(second, &cache, "nu__run", "closure", &second_args);
+    let overridden = apply_session_grant_override(second, &cache, "shell", "closure", &second_args);
     assert_eq!(overridden.action, PermissionAction::Allow);
 }
 
 #[test]
-fn allow_always_for_nu_run_does_not_leak_to_read_under_global_ask() {
+fn allow_always_for_shell_does_not_leak_to_read_under_global_ask() {
     let value = Value::test_record(record! {
         "permissions" => Value::test_record(record! {
             "*" => Value::test_string("ask")
@@ -241,15 +218,15 @@ fn allow_always_for_nu_run_does_not_leak_to_read_under_global_ask() {
     let parsed = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
     let mut cache = SessionGrantCache::default();
 
-    let nu_run_args = serde_json::json!({"command": "echo one"});
-    let nu_run = parsed.evaluate("nu__run", &nu_run_args);
+    let shell_args = serde_json::json!({"command": "echo one"});
+    let shell_decision = parsed.evaluate("shell", &shell_args);
     let _ = apply_ask_choice(
-        nu_run,
+        shell_decision,
         AskChoice::AllowAlways,
         &mut cache,
-        "nu__run",
+        "shell",
         "closure",
-        &nu_run_args,
+        &shell_args,
     );
 
     let read_args = serde_json::json!({"filePath": "README.md"});
@@ -356,7 +333,7 @@ fn same_tool_source_mode_different_rule_identity_does_not_share_session_grant() 
     let value = Value::test_record(record! {
         "permissions" => Value::test_record(record! {
             "*" => Value::test_string("ask"),
-            "nu__run" => Value::test_record(record! {
+            "shell" => Value::test_record(record! {
                 "command" => Value::test_record(record! {
                     "echo *" => Value::test_string("ask"),
                     "ls *" => Value::test_string("ask")
@@ -368,28 +345,28 @@ fn same_tool_source_mode_different_rule_identity_does_not_share_session_grant() 
     let mut cache = SessionGrantCache::default();
 
     let echo_args = serde_json::json!({"command": "echo one"});
-    let echo_decision = parsed.evaluate("nu__run", &echo_args);
+    let echo_decision = parsed.evaluate("shell", &echo_args);
     assert_eq!(
         echo_decision.matched_rule.identity,
-        "nested:nu__run.command:echo *"
+        "nested:shell.command:echo *"
     );
     let _ = apply_ask_choice(
         echo_decision,
         AskChoice::AllowAlways,
         &mut cache,
-        "nu__run",
+        "shell",
         "closure",
         &echo_args,
     );
 
     let ls_args = serde_json::json!({"command": "ls -la"});
-    let ls_decision = parsed.evaluate("nu__run", &ls_args);
+    let ls_decision = parsed.evaluate("shell", &ls_args);
     assert_eq!(
         ls_decision.matched_rule.identity,
-        "nested:nu__run.command:ls *"
+        "nested:shell.command:ls *"
     );
     let overridden =
-        apply_session_grant_override(ls_decision, &cache, "nu__run", "closure", &ls_args);
+        apply_session_grant_override(ls_decision, &cache, "shell", "closure", &ls_args);
     assert_eq!(overridden.action, PermissionAction::Ask);
 }
 
@@ -402,10 +379,7 @@ fn defaults_apply_when_permissions_block_is_missing() {
     );
     assert_eq!(
         parsed
-            .evaluate(
-                "nu__run",
-                &serde_json::json!({"command": "kubectl get pods"})
-            )
+            .evaluate("shell", &serde_json::json!({"command": "kubectl get pods"}))
             .action,
         PermissionAction::Ask
     );
@@ -430,7 +404,7 @@ fn async_ask_waits_for_matching_decision_before_resolving() {
         let mut sink = ChannelPermissionSink { tx: event_tx };
         let choice = hook.choose_with_sink(
             &decision,
-            "nu__run",
+            "shell",
             "closure",
             &args,
             &AskContext::default(),
@@ -447,7 +421,7 @@ fn async_ask_waits_for_matching_decision_before_resolving() {
             request_id,
             context,
         } => {
-            assert_eq!(context.tool, "nu__run(command=echo hi)");
+            assert_eq!(context.tool, "shell(command=echo hi)");
             assert!(context.pre_authorize_display.is_none());
             (request_id, context.matched_rule_identity)
         }
@@ -582,7 +556,7 @@ fn async_ask_timeout_is_deterministic_deny() {
 
     let choice = hook.choose_with_sink(
         &decision,
-        "nu__run",
+        "shell",
         "closure",
         &args,
         &AskContext::default(),
@@ -610,7 +584,7 @@ fn non_interactive_ask_defaults_to_deny() {
 
     let choice = hook.choose_with_sink(
         &decision,
-        "nu__run",
+        "shell",
         "closure",
         &serde_json::json!({"command": "echo denied"}),
         &AskContext::default(),
@@ -634,7 +608,7 @@ fn non_interactive_ask_allow_override_returns_allow_once() {
 
     let choice = hook.choose_with_sink(
         &decision,
-        "nu__run",
+        "shell",
         "closure",
         &serde_json::json!({"command": "echo allowed"}),
         &AskContext::default(),
@@ -650,19 +624,19 @@ fn allow_always_grant_is_session_only_and_resets_with_new_cache() {
 
     let mut first_session_cache = SessionGrantCache::default();
     let first_args = serde_json::json!({"command": "echo one"});
-    let first = parsed.evaluate("nu__run", &first_args);
+    let first = parsed.evaluate("shell", &first_args);
     let _ = apply_ask_choice(
         first.clone(),
         AskChoice::AllowAlways,
         &mut first_session_cache,
-        "nu__run",
+        "shell",
         "closure",
         &first_args,
     );
     let first_overridden = apply_session_grant_override(
         first.clone(),
         &first_session_cache,
-        "nu__run",
+        "shell",
         "closure",
         &first_args,
     );
@@ -670,11 +644,11 @@ fn allow_always_grant_is_session_only_and_resets_with_new_cache() {
 
     let fresh_session_cache = SessionGrantCache::default();
     let second_args = serde_json::json!({"command": "echo two"});
-    let second = parsed.evaluate("nu__run", &second_args);
+    let second = parsed.evaluate("shell", &second_args);
     let second_overridden = apply_session_grant_override(
         second,
         &fresh_session_cache,
-        "nu__run",
+        "shell",
         "closure",
         &second_args,
     );
@@ -687,20 +661,6 @@ fn cli_permissions_overlay_rejects_non_record_with_explicit_path() {
         .expect_err("non-record --permissions must fail");
     assert!(err.contains("permissions"));
     assert!(err.contains("record"));
-}
-
-#[test]
-fn cli_permissions_overlay_rejects_unknown_nested_field_with_path() {
-    let err = PermissionsOverlay::parse_from_cli_value(&Value::test_record(record! {
-        "nu__run" => Value::test_record(record! {
-            "argv" => Value::test_record(record! {
-                "*" => Value::test_string("deny")
-            })
-        })
-    }))
-    .expect_err("unknown nested field must fail");
-
-    assert!(err.contains("permissions.nu__run.argv"));
 }
 
 #[test]
@@ -724,7 +684,7 @@ fn async_ask_waits_for_matching_decision_before_resolving_via_trait() {
         let choice = AskApprovalHook::choose(
             &mut hook,
             &decision,
-            "nu__run",
+            "shell",
             "closure",
             &args,
             &AskContext::default(),
@@ -741,7 +701,7 @@ fn async_ask_waits_for_matching_decision_before_resolving_via_trait() {
             request_id,
             context,
         } => {
-            assert_eq!(context.tool, "nu__run(command=echo hi)");
+            assert_eq!(context.tool, "shell(command=echo hi)");
             assert!(context.pre_authorize_display.is_none());
             (request_id, context.matched_rule_identity)
         }
@@ -833,12 +793,12 @@ fn additive_overlay_cli_wins_on_overlap_and_retains_non_overlapping() {
 }
 
 #[test]
-fn additive_overlay_merges_nested_nu_run_command_deterministically() {
+fn additive_overlay_merges_nested_command_deterministically() {
     let base = PermissionsConfig::parse_from_plugin_config(
         Some(&Value::test_record(record! {
             "permissions" => Value::test_record(record! {
                 "*" => Value::test_string("ask"),
-                "nu__run" => Value::test_record(record! {
+                "shell" => Value::test_record(record! {
                     "command" => Value::test_record(record! {
                         "kubectl get *" => Value::test_string("allow"),
                         "*" => Value::test_string("ask")
@@ -850,7 +810,7 @@ fn additive_overlay_merges_nested_nu_run_command_deterministically() {
     );
 
     let overlay = PermissionsOverlay::parse_from_cli_value(&Value::test_record(record! {
-        "nu__run" => Value::test_record(record! {
+        "shell" => Value::test_record(record! {
             "command" => Value::test_record(record! {
                 "kubectl delete *" => Value::test_string("deny"),
                 "*" => Value::test_string("deny")
@@ -863,17 +823,14 @@ fn additive_overlay_merges_nested_nu_run_command_deterministically() {
 
     assert_eq!(
         merged
-            .evaluate(
-                "nu__run",
-                &serde_json::json!({"command": "kubectl get pods"})
-            )
+            .evaluate("shell", &serde_json::json!({"command": "kubectl get pods"}))
             .action,
         PermissionAction::Allow
     );
     assert_eq!(
         merged
             .evaluate(
-                "nu__run",
+                "shell",
                 &serde_json::json!({"command": "kubectl delete pod x"})
             )
             .action,
@@ -881,7 +838,7 @@ fn additive_overlay_merges_nested_nu_run_command_deterministically() {
     );
     assert_eq!(
         merged
-            .evaluate("nu__run", &serde_json::json!({"command": "echo hi"}))
+            .evaluate("shell", &serde_json::json!({"command": "echo hi"}))
             .action,
         PermissionAction::Deny
     );
@@ -889,7 +846,7 @@ fn additive_overlay_merges_nested_nu_run_command_deterministically() {
     let merged_again = base.with_overlay(&overlay);
     assert_eq!(
         merged_again
-            .evaluate("nu__run", &serde_json::json!({"command": "echo hi"}))
+            .evaluate("shell", &serde_json::json!({"command": "echo hi"}))
             .action,
         PermissionAction::Deny
     );
@@ -902,7 +859,7 @@ fn submit_active_permission_decision_without_active_sender_is_ignored() {
     let outcome = crate::protocol::permission::submit_active_permission_decision(
         "unknown".to_string(),
         UiPermissionDecision::Deny,
-        "nested:nu__run.command:*".to_string(),
+        "nested:shell.command:*".to_string(),
     );
     assert_eq!(
         outcome,
@@ -918,10 +875,10 @@ fn permission_request_token_rejects_mismatched_rule_identity() {
     let request = crate::protocol::permission::PermissionRequest {
         request_id: "ask-0000000000000001".to_string(),
         context: crate::protocol::event::PermissionRequestContext {
-            tool: "nu__run".to_string(),
+            tool: "shell".to_string(),
             source: "closure".to_string(),
             mode: None,
-            matched_rule_identity: "nested:nu__run.command:*".to_string(),
+            matched_rule_identity: "nested:shell.command:*".to_string(),
             scope: "nested".to_string(),
             target_field: Some("command".to_string()),
             pattern: "*".to_string(),
@@ -1090,7 +1047,6 @@ fn parse_from_yaml_global_allow() {
     let overlay = PermissionsOverlay::parse_from_yaml(&yaml).expect("parse");
     assert_eq!(overlay.global, Some(PermissionAction::Allow));
     assert!(overlay.tool_rules.is_empty());
-    assert!(overlay.nu_run_command_rules.is_empty());
 }
 
 #[test]
@@ -1098,7 +1054,7 @@ fn parse_from_yaml_tool_rules() {
     let yaml = noyalib::from_str::<noyalib::Mapping>(
         r#"
         read: "allow"
-        nu__run: "deny"
+        shell: "deny"
         "#,
     )
     .expect("valid YAML");
@@ -1111,34 +1067,7 @@ fn parse_from_yaml_tool_rules() {
         Some(&PermissionAction::Allow)
     );
     assert_eq!(
-        overlay.tool_rules.get("nu__run"),
-        Some(&PermissionAction::Deny)
-    );
-    assert!(overlay.nu_run_command_rules.is_empty());
-}
-
-#[test]
-fn parse_from_yaml_nu_run_commands() {
-    let yaml = noyalib::from_str::<noyalib::Mapping>(
-        r#"
-        nu__run:
-          command:
-            "cargo*": "allow"
-            "rm*": "deny"
-        "#,
-    )
-    .expect("valid YAML");
-
-    let overlay = PermissionsOverlay::parse_from_yaml(&yaml).expect("parse");
-    assert_eq!(overlay.global, None);
-    assert!(overlay.tool_rules.is_empty());
-    assert_eq!(overlay.nu_run_command_rules.len(), 2);
-    assert_eq!(
-        overlay.nu_run_command_rules.get("cargo*"),
-        Some(&PermissionAction::Allow)
-    );
-    assert_eq!(
-        overlay.nu_run_command_rules.get("rm*"),
+        overlay.tool_rules.get("shell"),
         Some(&PermissionAction::Deny)
     );
 }
@@ -1161,14 +1090,14 @@ fn parse_from_yaml_invalid_action() {
 fn parse_from_yaml_invalid_structure() {
     let yaml = noyalib::from_str::<noyalib::Mapping>(
         r#"
-        nu__run: 42
+        shell: 42
         "#,
     )
     .expect("valid YAML");
 
     let err =
         PermissionsOverlay::parse_from_yaml(&yaml).expect_err("invalid structure should fail");
-    assert!(err.contains("permissions.nu__run"));
+    assert!(err.contains("permissions.shell"));
 }
 
 #[test]
@@ -1178,7 +1107,6 @@ fn parse_from_yaml_empty_mapping() {
     let overlay = PermissionsOverlay::parse_from_yaml(&yaml).expect("parse");
     assert_eq!(overlay.global, None);
     assert!(overlay.tool_rules.is_empty());
-    assert!(overlay.nu_run_command_rules.is_empty());
 }
 
 #[test]
@@ -1188,7 +1116,7 @@ fn parse_from_yaml_mixed() {
         "*": "ask"
         read: "allow"
         write: "deny"
-        nu__run:
+        shell:
           command:
             "kubectl*": "deny"
             "*": "ask"
@@ -1207,15 +1135,11 @@ fn parse_from_yaml_mixed() {
         overlay.tool_rules.get("write"),
         Some(&PermissionAction::Deny)
     );
-    assert_eq!(overlay.nu_run_command_rules.len(), 2);
-    assert_eq!(
-        overlay.nu_run_command_rules.get("kubectl*"),
-        Some(&PermissionAction::Deny)
-    );
-    assert_eq!(
-        overlay.nu_run_command_rules.get("*"),
-        Some(&PermissionAction::Ask)
-    );
+    assert_eq!(overlay.nested_field_rules.len(), 1);
+    let cmd_rules = overlay.nested_field_rules.get("shell").unwrap();
+    assert_eq!(cmd_rules.len(), 1);
+    let patterns = cmd_rules.get("command").unwrap();
+    assert_eq!(patterns.len(), 2);
 }
 
 // ── is_tool_visible tests ──────────────────────────────────────────────
@@ -1228,7 +1152,7 @@ fn is_tool_visible_returns_true_for_global_ask() {
         })
     });
     let config = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
-    assert!(config.is_tool_visible("nu__run"));
+    assert!(config.is_tool_visible("shell"));
     assert!(config.is_tool_visible("read"));
 }
 
@@ -1240,7 +1164,7 @@ fn is_tool_visible_returns_true_for_global_allow() {
         })
     });
     let config = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
-    assert!(config.is_tool_visible("nu__run"));
+    assert!(config.is_tool_visible("shell"));
 }
 
 #[test]
@@ -1251,7 +1175,7 @@ fn is_tool_visible_returns_false_for_global_deny() {
         })
     });
     let config = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
-    assert!(!config.is_tool_visible("nu__run"));
+    assert!(!config.is_tool_visible("shell"));
     assert!(!config.is_tool_visible("read"));
 }
 
@@ -1260,11 +1184,11 @@ fn is_tool_visible_returns_false_for_tool_level_deny() {
     let value = Value::test_record(record! {
         "permissions" => Value::test_record(record! {
             "*" => Value::test_string("ask"),
-            "nu__run" => Value::test_string("deny"),
+            "shell" => Value::test_string("deny"),
         })
     });
     let config = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
-    assert!(!config.is_tool_visible("nu__run"));
+    assert!(!config.is_tool_visible("shell"));
     assert!(config.is_tool_visible("read"));
 }
 
@@ -1273,7 +1197,7 @@ fn is_tool_visible_returns_true_for_granular_deny_with_tool_level_ask() {
     let value = Value::test_record(record! {
         "permissions" => Value::test_record(record! {
             "*" => Value::test_string("ask"),
-            "nu__run" => Value::test_record(record! {
+            "shell" => Value::test_record(record! {
                 "command" => Value::test_record(record! {
                     "kubectl delete *" => Value::test_string("deny"),
                     "*" => Value::test_string("ask"),
@@ -1282,7 +1206,7 @@ fn is_tool_visible_returns_true_for_granular_deny_with_tool_level_ask() {
         })
     });
     let config = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
-    assert!(config.is_tool_visible("nu__run"));
+    assert!(config.is_tool_visible("shell"));
 }
 
 #[test]
@@ -1295,7 +1219,7 @@ fn is_tool_visible_respects_specificity_over_global() {
     });
     let config = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
     assert!(config.is_tool_visible("read"));
-    assert!(!config.is_tool_visible("nu__run"));
+    assert!(!config.is_tool_visible("shell"));
     assert!(!config.is_tool_visible("edit"));
 }
 
@@ -1326,7 +1250,7 @@ fn safe_defaults_tty_mode_still_allows_read_tools() {
 #[test]
 fn safe_defaults_tty_mode_hides_unknown_tools() {
     let config = PermissionsConfig::safe_defaults(false);
-    assert!(!config.is_tool_visible("nu__run"));
+    assert!(!config.is_tool_visible("shell"));
     assert!(!config.is_tool_visible("nu__shell"));
     assert!(!config.is_tool_visible("edit"));
 }

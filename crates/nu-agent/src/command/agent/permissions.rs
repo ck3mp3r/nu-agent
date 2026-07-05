@@ -62,7 +62,7 @@ pub(super) fn resolve_effective_permissions_config(
         overlay_active,
         summary.global.as_str(),
         summary.tool_rule_count,
-        summary.nu_run_command_rule_count,
+        summary.nested_field_rule_count,
     );
 
     Ok((effective, startup_message))

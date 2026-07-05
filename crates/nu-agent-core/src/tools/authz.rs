@@ -136,7 +136,7 @@ impl AsyncAskHook {
                 .map(ToString::to_string),
             matched_rule_identity: decision.matched_rule.identity.clone(),
             scope: decision.matched_rule.scope.to_string(),
-            target_field: decision.matched_rule.target_field.map(ToString::to_string),
+            target_field: decision.matched_rule.target_field.clone(),
             pattern: decision.matched_rule.pattern.clone(),
             summary: summarize_ask_payload(tool_name, args),
             pre_authorize_display: ask_context.pre_authorize_display.clone(),
@@ -323,7 +323,7 @@ pub struct PermissionDiagnostic {
 pub struct PermissionRuleMatch {
     pub identity: String,
     pub scope: &'static str,
-    pub target_field: Option<&'static str>,
+    pub target_field: Option<String>,
     pub pattern: String,
     pub action: PermissionAction,
 }
@@ -339,32 +339,28 @@ pub struct PermissionDecision {
 pub struct PermissionsConfig {
     global: PermissionAction,
     tool_rules: Vec<(String, PermissionAction)>,
-    nu_run_command_rules: Vec<(String, PermissionAction)>,
+    nested_field_rules: HashMap<String, HashMap<String, Vec<(String, PermissionAction)>>>,
     diagnostics: Vec<PermissionDiagnostic>,
 }
 
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code)] // used in subsequent subtasks of 77f9b887
 pub struct PermissionsOverlay {
     global: Option<PermissionAction>,
     tool_rules: BTreeMap<String, PermissionAction>,
-    nu_run_command_rules: BTreeMap<String, PermissionAction>,
+    nested_field_rules: HashMap<String, HashMap<String, Vec<(String, PermissionAction)>>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PermissionsSummary {
     pub global: PermissionAction,
     pub tool_rule_count: usize,
-    pub nu_run_command_rule_count: usize,
+    pub nested_field_rule_count: usize,
 }
 
 impl PermissionsConfig {
     pub fn safe_defaults(interactive: bool) -> Self {
         let global = if interactive {
-            PermissionAction::Ask
-        } else {
-            PermissionAction::Deny
-        };
-        let nu_run_default = if interactive {
             PermissionAction::Ask
         } else {
             PermissionAction::Deny
@@ -378,7 +374,7 @@ impl PermissionsConfig {
                 ("c5t_get*".to_string(), PermissionAction::Allow),
                 ("c5t_list*".to_string(), PermissionAction::Allow),
             ],
-            nu_run_command_rules: vec![("*".to_string(), nu_run_default)],
+            nested_field_rules: HashMap::new(),
             diagnostics: vec![PermissionDiagnostic {
                 code: "permissions.defaults.applied",
                 message: "permissions block missing; using conservative defaults".to_string(),
@@ -408,7 +404,10 @@ impl PermissionsConfig {
         let mut diagnostics = Vec::new();
         let mut global = PermissionAction::Ask;
         let mut tool_rules_map = BTreeMap::<String, PermissionAction>::new();
-        let mut nu_run_command_map = BTreeMap::<String, PermissionAction>::new();
+        let mut nested_field_rules_map: HashMap<
+            String,
+            HashMap<String, Vec<(String, PermissionAction)>>,
+        > = HashMap::new();
 
         let Ok(permissions_record) = permissions_value.as_record() else {
             return Self::safe_defaults(interactive);
@@ -426,78 +425,58 @@ impl PermissionsConfig {
                 continue;
             }
 
-            if tool_key == "nu__run"
-                && let Ok(nu_run_record) = tool_value.as_record()
-            {
-                for (field_name, nested_value) in nu_run_record.iter() {
-                    if field_name != "command" {
+            let resolved_key = tool_key.as_str();
+
+            // If value is a record, treat as nested field → pattern → action rules
+            if let Ok(field_record) = tool_value.as_record() {
+                for (field_name, field_value) in field_record.iter() {
+                    let Ok(pattern_record) = field_value.as_record() else {
                         diagnostics.push(PermissionDiagnostic {
-                            code: "permissions.invalid.nu_run_field",
+                            code: "permissions.invalid.nested_field_map",
                             message: format!(
-                                "permissions.nu__run field '{}' is unsupported; only 'command' is allowed",
-                                field_name
+                                "permissions.{resolved_key}.{field_name} must be a map of pattern -> action"
                             ),
                         });
                         continue;
-                    }
-
-                    let Ok(command_record) = nested_value.as_record() else {
-                        diagnostics.push(PermissionDiagnostic {
-                            code: "permissions.invalid.nu_run_command_map",
-                            message:
-                                "permissions.nu__run.command must be a map of pattern -> action"
-                                    .to_string(),
-                        });
-                        continue;
                     };
-
-                    for (pattern, action_value) in command_record.iter() {
+                    for (pattern, action_value) in pattern_record.iter() {
                         match value_to_action(action_value) {
                             Ok(action) => {
-                                nu_run_command_map.insert(pattern.to_string(), action);
+                                nested_field_rules_map
+                                    .entry(resolved_key.to_string())
+                                    .or_default()
+                                    .entry(field_name.to_string())
+                                    .or_default()
+                                    .push((pattern.to_string(), action));
                             }
                             Err(message) => diagnostics.push(PermissionDiagnostic {
-                                code: "permissions.invalid.nu_run_command_action",
-                                message: format!("{message} for pattern '{}'", pattern),
+                                code: "permissions.invalid.nested_field_action",
+                                message: format!("{message} for pattern '{pattern}'"),
                             }),
                         }
                     }
                 }
-
                 continue;
             }
 
             match value_to_action(tool_value) {
                 Ok(action) => {
-                    tool_rules_map.insert(tool_key.to_string(), action);
+                    tool_rules_map.insert(resolved_key.to_string(), action);
                 }
                 Err(message) => diagnostics.push(PermissionDiagnostic {
                     code: "permissions.invalid.tool_action",
-                    message: format!("{message} for key '{}'", tool_key),
+                    message: format!("{message} for key '{resolved_key}'"),
                 }),
             }
-        }
-
-        if let Some(nested_star) = nu_run_command_map.get("*").copied()
-            && nested_star == global
-            && !tool_rules_map.contains_key("nu__run")
-        {
-            diagnostics.push(PermissionDiagnostic {
-                code: "permissions.noop.nu_run.command.star",
-                message:
-                    "permissions.nu__run.command['*'] equals inherited decision and is a no-op"
-                        .to_string(),
-            });
         }
 
         Self {
             global,
             tool_rules: tool_rules_map.into_iter().collect(),
-            nu_run_command_rules: nu_run_command_map.into_iter().collect(),
+            nested_field_rules: nested_field_rules_map,
             diagnostics,
         }
     }
-
     pub fn evaluate(&self, tool_name: &str, args: &JsonValue) -> PermissionDecision {
         let mut diagnostics = self.diagnostics.clone();
 
@@ -519,28 +498,37 @@ impl PermissionsConfig {
             };
         }
 
-        if tool_name == "nu__run" {
+        if let Some(field_rules) = self.nested_field_rules.get(tool_name) {
             let inherited = matched_rule.action;
-            let normalized = normalize_nu_run_command(args, &mut diagnostics);
-            if let Some(command) = normalized
-                && let Some((pattern, action)) =
-                    match_pattern(command.as_str(), &self.nu_run_command_rules)
-            {
-                if pattern == "*" && action == inherited {
+            for (field_name, rules) in field_rules {
+                let Some(raw_value) = args.get(field_name.as_str()).and_then(|v| v.as_str()) else {
                     diagnostics.push(PermissionDiagnostic {
-                        code: "permissions.noop.nu_run.command.star",
-                        message: "nu__run.command '*' matched but inherited decision is unchanged"
-                            .to_string(),
+                        code: "permissions.nested_field.missing",
+                        message: format!(
+                            "nested field '{field_name}' for tool '{tool_name}' missing or unreadable; \
+                             using inherited decision"
+                        ),
                     });
-                }
-
-                matched_rule = PermissionRuleMatch {
-                    identity: format!("nested:nu__run.command:{pattern}"),
-                    scope: "nested",
-                    target_field: Some("command"),
-                    pattern: pattern.to_string(),
-                    action,
+                    continue;
                 };
+                let normalized = raw_value.split_whitespace().collect::<Vec<_>>().join(" ");
+                if let Some((pattern, action)) = match_pattern(normalized.as_str(), rules) {
+                    if pattern == "*" && action == inherited {
+                        diagnostics.push(PermissionDiagnostic {
+                            code: "permissions.noop.nested_field.star",
+                            message: format!(
+                                "{tool_name}.{field_name} '*' matched but inherited decision is unchanged"
+                            ),
+                        });
+                    }
+                    matched_rule = PermissionRuleMatch {
+                        identity: format!("nested:{tool_name}.{field_name}:{pattern}"),
+                        scope: "nested",
+                        target_field: Some(field_name.clone()),
+                        pattern: pattern.to_string(),
+                        action,
+                    };
+                }
             }
         }
 
@@ -550,24 +538,34 @@ impl PermissionsConfig {
             diagnostics,
         }
     }
-
     pub fn with_overlay(&self, overlay: &PermissionsOverlay) -> Self {
         let mut merged_tool_rules: BTreeMap<String, PermissionAction> =
             self.tool_rules.iter().cloned().collect();
-        let mut merged_nu_run_command_rules: BTreeMap<String, PermissionAction> =
-            self.nu_run_command_rules.iter().cloned().collect();
 
         for (pattern, action) in &overlay.tool_rules {
             merged_tool_rules.insert(pattern.clone(), *action);
         }
-        for (pattern, action) in &overlay.nu_run_command_rules {
-            merged_nu_run_command_rules.insert(pattern.clone(), *action);
+
+        // Two-level merge: overlay wins on pattern overlap per (tool, field)
+        let mut merged_nested = self.nested_field_rules.clone();
+        for (tool_name, field_rules) in &overlay.nested_field_rules {
+            let tool_entry = merged_nested.entry(tool_name.clone()).or_default();
+            for (field_name, overlay_rules) in field_rules {
+                let mut merged_rules: BTreeMap<String, PermissionAction> = tool_entry
+                    .get(field_name)
+                    .map(|base| base.iter().cloned().collect())
+                    .unwrap_or_default();
+                for (pattern, action) in overlay_rules {
+                    merged_rules.insert(pattern.clone(), *action);
+                }
+                tool_entry.insert(field_name.clone(), merged_rules.into_iter().collect());
+            }
         }
 
         Self {
             global: overlay.global.unwrap_or(self.global),
             tool_rules: merged_tool_rules.into_iter().collect(),
-            nu_run_command_rules: merged_nu_run_command_rules.into_iter().collect(),
+            nested_field_rules: merged_nested,
             diagnostics: self.diagnostics.clone(),
         }
     }
@@ -576,7 +574,12 @@ impl PermissionsConfig {
         PermissionsSummary {
             global: self.global,
             tool_rule_count: self.tool_rules.len(),
-            nu_run_command_rule_count: self.nu_run_command_rules.len(),
+            nested_field_rule_count: self
+                .nested_field_rules
+                .values()
+                .flat_map(|f| f.values())
+                .map(|r| r.len())
+                .sum(),
         }
     }
 }
@@ -597,38 +600,36 @@ impl PermissionsOverlay {
                 continue;
             }
 
-            if tool_key == "nu__run" {
-                let nu_run_record = tool_value.as_record().map_err(|_| {
-                    "permissions.nu__run must be a record/object (path: permissions.nu__run)"
-                        .to_string()
-                })?;
-
-                for (field_name, nested_value) in nu_run_record.iter() {
-                    if field_name != "command" {
+            // If value is a record, treat as nested field \u{2192} pattern \u{2192} action rules
+            if let Ok(field_record) = tool_value.as_record() {
+                for (field_name, field_value) in field_record.iter() {
+                    let Ok(pattern_record) = field_value.as_record() else {
                         return Err(format!(
-                            "unsupported field under permissions.nu__run: '{}' (path: permissions.nu__run.{field_name})",
+                            "permissions.{}.{} value must be a map of pattern -> action (path: permissions.{}.{})",
+                            path_segment(tool_key),
+                            field_name,
+                            path_segment(tool_key),
                             field_name
                         ));
-                    }
-
-                    let command_record = nested_value.as_record().map_err(|_| {
-                        "permissions.nu__run.command must be a map of pattern -> action (path: permissions.nu__run.command)"
-                            .to_string()
-                    })?;
-
-                    for (pattern, action_value) in command_record.iter() {
+                    };
+                    for (pattern, action_value) in pattern_record.iter() {
                         let action = value_to_action(action_value).map_err(|msg| {
                             format!(
-                                "{msg} (path: permissions.nu__run.command.{})",
-                                path_segment(pattern)
+                                "{msg} (path: permissions.{}.{}.{})",
+                                path_segment(tool_key),
+                                field_name,
+                                pattern
                             )
                         })?;
                         overlay
-                            .nu_run_command_rules
-                            .insert(pattern.to_string(), action);
+                            .nested_field_rules
+                            .entry(tool_key.to_string())
+                            .or_default()
+                            .entry(field_name.to_string())
+                            .or_default()
+                            .push((pattern.to_string(), action));
                     }
                 }
-
                 continue;
             }
 
@@ -660,61 +661,40 @@ impl PermissionsOverlay {
                 continue;
             }
 
-            if key_str == "nu__run" {
-                // Check if value is a mapping (nested command rules) or string (tool rule)
-                if let Some(nu_run_mapping) = yaml_value.as_mapping() {
-                    for (field_key, field_value) in nu_run_mapping.iter() {
-                        let field_name = field_key.as_str();
-
-                        if field_name != "command" {
-                            return Err(format!(
-                                "unsupported field under permissions.nu__run: '{}' (path: permissions.nu__run.{field_name})",
-                                field_name
-                            ));
-                        }
-
-                        let command_mapping = field_value.as_mapping().ok_or_else(|| {
-                            "permissions.nu__run.command must be a mapping of pattern -> action (path: permissions.nu__run.command)"
-                                .to_string()
+            // If value is a mapping, treat as nested field \u{2192} pattern \u{2192} action rules
+            if let Some(field_mapping) = yaml_value.as_mapping() {
+                for (field_key, field_value) in field_mapping.iter() {
+                    let field_name = field_key.as_str();
+                    let Some(pattern_mapping) = field_value.as_mapping() else {
+                        return Err(format!(
+                            "permissions.{}.{} value must be a map of pattern -> action (path: permissions.{}.{})",
+                            key_str, field_name, key_str, field_name
+                        ));
+                    };
+                    for (pattern_key, action_value) in pattern_mapping.iter() {
+                        let pattern = pattern_key.as_str();
+                        let action_str = action_value.as_str().ok_or_else(|| {
+                            format!(
+                                "permissions.{}.{} value must be a string (path: permissions.{}.{}.{})",
+                                key_str, field_name, key_str, field_name, pattern
+                            )
                         })?;
-
-                        for (pattern_key, action_value) in command_mapping.iter() {
-                            let pattern = pattern_key.as_str();
-
-                            let action_str = action_value.as_str().ok_or_else(|| {
-                                format!("permissions.nu__run.command['{}'] value must be a string (path: permissions.nu__run.command.{})", pattern, path_segment(pattern))
-                            })?;
-
-                            let action = PermissionAction::from_str(action_str).ok_or_else(|| {
-                                format!(
-                                    "invalid permission action '{}' (path: permissions.nu__run.command.{})",
-                                    action_str,
-                                    path_segment(pattern)
-                                )
-                            })?;
-                            overlay
-                                .nu_run_command_rules
-                                .insert(pattern.to_string(), action);
-                        }
+                        let action = PermissionAction::from_str(action_str).ok_or_else(|| {
+                            format!(
+                                "invalid permission action '{}' (path: permissions.{}.{}.{})",
+                                action_str, key_str, field_name, pattern
+                            )
+                        })?;
+                        overlay
+                            .nested_field_rules
+                            .entry(key_str.to_string())
+                            .or_default()
+                            .entry(field_name.to_string())
+                            .or_default()
+                            .push((pattern.to_string(), action));
                     }
-
-                    continue;
-                } else {
-                    // nu__run is a string, treat it as a tool rule
-                    let action_str = yaml_value.as_str().ok_or_else(|| {
-                        "permissions.nu__run must be either a string or a mapping (path: permissions.nu__run)"
-                            .to_string()
-                    })?;
-
-                    let action = PermissionAction::from_str(action_str).ok_or_else(|| {
-                        format!(
-                            "invalid permission action '{}' (path: permissions.nu__run)",
-                            action_str
-                        )
-                    })?;
-                    overlay.tool_rules.insert(key_str.to_string(), action);
-                    continue;
                 }
+                continue;
             }
 
             let action_str = yaml_value.as_str().ok_or_else(|| {
@@ -772,7 +752,7 @@ impl SessionGrantScopedKey {
                 .get("mode")
                 .and_then(JsonValue::as_str)
                 .map(ToString::to_string),
-            target_field: decision.matched_rule.target_field.map(ToString::to_string),
+            target_field: decision.matched_rule.target_field.clone(),
         }
     }
 }
@@ -847,23 +827,6 @@ fn value_to_action(value: &nu_protocol::Value) -> Result<PermissionAction, Strin
         .map_err(|_| "permission action must be a string".to_string())?;
     PermissionAction::from_str(action_str)
         .ok_or_else(|| format!("invalid permission action '{}'", action_str))
-}
-
-fn normalize_nu_run_command(
-    args: &JsonValue,
-    diagnostics: &mut Vec<PermissionDiagnostic>,
-) -> Option<String> {
-    let Some(command_raw) = args.get("command").and_then(JsonValue::as_str) else {
-        diagnostics.push(PermissionDiagnostic {
-            code: "permissions.nu_run.command.missing",
-            message: "nu__run.command missing or unreadable; using inherited tool/global decision"
-                .to_string(),
-        });
-        return None;
-    };
-
-    let normalized = command_raw.split_whitespace().collect::<Vec<_>>().join(" ");
-    Some(normalized)
 }
 
 fn pattern_specificity(pattern: &str) -> usize {

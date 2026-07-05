@@ -232,7 +232,7 @@ impl AskApprovalHook for AskContextCapture {
                 .map(ToString::to_string),
             matched_rule_identity: decision.matched_rule.identity.clone(),
             scope: decision.matched_rule.scope.to_string(),
-            target_field: decision.matched_rule.target_field.map(ToString::to_string),
+            target_field: decision.matched_rule.target_field.clone(),
             pattern: decision.matched_rule.pattern.clone(),
             summary: summarize_ask_payload(tool_name, args),
             pre_authorize_display: ask_context.pre_authorize_display.clone(),

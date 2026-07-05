@@ -55,22 +55,3 @@ fn resolve_effective_permissions_merges_cli_overlay_additively() {
     );
     assert!(summary.contains("overlay_active=true"));
 }
-
-#[test]
-fn resolve_effective_permissions_rejects_malformed_cli_with_path_diagnostic() {
-    let call = create_test_call(vec![(
-        "permissions",
-        Value::test_record(record! {
-            "nu__run" => Value::test_record(record! {
-                "argv" => Value::test_record(record! {
-                    "*" => Value::test_string("deny")
-                })
-            })
-        }),
-    )]);
-
-    let err = super::permissions::resolve_effective_permissions_config(&call, None, None, true)
-        .expect_err("malformed cli permissions must fail fast");
-
-    assert!(err.msg.contains("Invalid --permissions value"));
-}

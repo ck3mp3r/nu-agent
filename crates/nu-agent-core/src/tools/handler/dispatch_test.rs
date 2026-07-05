@@ -19,12 +19,12 @@ fn empty_mcp_registry() -> McpToolRegistry {
 
 #[test]
 fn ui_display_hides_denied_tools() {
-    let tools = vec![tool_def("read"), tool_def("nu__run"), tool_def("edit")];
+    let tools = vec![tool_def("read"), tool_def("shell"), tool_def("edit")];
     let registry = empty_mcp_registry();
     let value = Value::test_record(record! {
         "permissions" => Value::test_record(record! {
             "*" => Value::test_string("ask"),
-            "nu__run" => Value::test_string("deny"),
+            "shell" => Value::test_string("deny"),
         })
     });
     let permissions = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
@@ -34,15 +34,12 @@ fn ui_display_hides_denied_tools() {
     let names: Vec<&str> = visible.iter().map(|t| t.name.as_str()).collect();
     assert!(names.contains(&"read"), "expected 'read' to be visible");
     assert!(names.contains(&"edit"), "expected 'edit' to be visible");
-    assert!(
-        !names.contains(&"nu__run"),
-        "expected 'nu__run' to be hidden"
-    );
+    assert!(!names.contains(&"shell"), "expected 'shell' to be hidden");
 }
 
 #[test]
 fn ui_display_shows_ask_tools() {
-    let tools = vec![tool_def("read"), tool_def("nu__run")];
+    let tools = vec![tool_def("read"), tool_def("shell")];
     let registry = empty_mcp_registry();
     let value = Value::test_record(record! {
         "permissions" => Value::test_record(record! {
@@ -62,7 +59,7 @@ fn ui_display_shows_ask_tools() {
 
 #[test]
 fn ui_display_global_deny_hides_all_except_allowed() {
-    let tools = vec![tool_def("read"), tool_def("nu__run"), tool_def("edit")];
+    let tools = vec![tool_def("read"), tool_def("shell"), tool_def("edit")];
     let registry = empty_mcp_registry();
     let value = Value::test_record(record! {
         "permissions" => Value::test_record(record! {
