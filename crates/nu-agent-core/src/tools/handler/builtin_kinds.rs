@@ -13,6 +13,8 @@ pub enum BuiltinKind {
     SendMessage,
     ListAgents,
     Http,
+    Grep,
+    Glob,
 }
 
 impl BuiltinKind {
@@ -28,6 +30,8 @@ impl BuiltinKind {
             Self::SendMessage => "send_message",
             Self::ListAgents => "list_agents",
             Self::Http => "http",
+            Self::Grep => "grep",
+            Self::Glob => "glob",
         }
     }
 
@@ -52,6 +56,8 @@ impl FromStr for BuiltinKind {
             "send_message" => Ok(Self::SendMessage),
             "list_agents" => Ok(Self::ListAgents),
             "http" => Ok(Self::Http),
+            "grep" => Ok(Self::Grep),
+            "glob" => Ok(Self::Glob),
             _ => Err(()),
         }
     }

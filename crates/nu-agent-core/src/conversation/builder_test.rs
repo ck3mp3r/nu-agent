@@ -149,7 +149,10 @@ fn builtin_tool_registration_contains_exact_unprefixed_names() {
         .map(|tool| tool.name)
         .collect::<Vec<_>>();
 
-    assert_eq!(names, vec!["read", "edit", "patch", "skill", "http"]);
+    assert_eq!(
+        names,
+        vec!["read", "edit", "patch", "skill", "http", "grep", "glob"]
+    );
 }
 
 #[test]

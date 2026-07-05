@@ -21,6 +21,7 @@ tempfile = { workspace = true }
 log = { workspace = true }
 sha2 = { workspace = true }
 regex = { workspace = true }
+ignore = { workspace = true }
 similar = { workspace = true }
 http = { workspace = true }
 noyalib = { workspace = true }

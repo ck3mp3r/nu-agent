@@ -166,10 +166,56 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
                 },
                 "required": ["url"]
             }),
+        },        ToolDefinition {
+            name: "grep".to_string(),
+            description: "Search file contents recursively using a regex pattern. Respects .gitignore. Returns structured matches with file path, line number, and line content.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Regex pattern to search for"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Directory or file to search. Defaults to current working directory."
+                    },
+                    "glob": {
+                        "type": "string",
+                        "description": "Optional file glob filter, e.g. '*.rs' or '*.{ts,tsx}'"
+                    },
+                    "case_insensitive": {
+                        "type": "boolean",
+                        "description": "If true, match case-insensitively. Default false."
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum number of matches to return. Default 200."
+                    }
+                },
+                "required": ["pattern"]
+            }),
+        },
+        ToolDefinition {
+            name: "glob".to_string(),
+            description: "Find files matching a glob pattern. Respects .gitignore. Returns matching file paths relative to the search root. Use patterns like '**/*.rs' or 'src/**/*.{ts,tsx}'.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Glob pattern, e.g. '**/*.rs' or 'src/**/*.{ts,tsx}'"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Directory to search. Defaults to current working directory."
+                    }
+                },
+                "required": ["pattern"]
+            }),
         },
     ]
 }
-
 /// Tool definitions available to any agent that can send messages.
 pub fn messaging_tool_definitions() -> Vec<ToolDefinition> {
     vec![ToolDefinition {
