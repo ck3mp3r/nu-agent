@@ -3948,6 +3948,21 @@ impl TranscriptUi for ContextWindowUi {
 }
 
 #[test]
+fn context_window_max_tokens_set_on_ui_at_startup() {
+    let mut runtime = ContextWindowRuntime::default(); // max_context_tokens = Some(128_000)
+    let mut ui = ContextWindowUi::new(&[]);
+
+    run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+        .expect("interactive loop");
+
+    assert_eq!(
+        ui.context_window_max_tokens,
+        Some(Some(128_000)),
+        "expected context_window_max_tokens to be set to Some(128_000) at startup"
+    );
+}
+
+#[test]
 fn model_switch_updates_context_window_max_tokens_in_ui() {
     let mut runtime = ContextWindowRuntime::default(); // max_context_tokens = Some(128_000)
     let mut ui = ContextWindowUi::new(&["openai/gpt-4o-mini"]);

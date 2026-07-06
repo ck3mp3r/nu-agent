@@ -137,6 +137,7 @@ where
 {
     let initial_visible_count = runtime.llm_visible_mcp_tool_count();
     ui.set_active_model_identity(runtime.active_model_identity().as_str());
+    ui.set_context_window_max_tokens(runtime.max_context_tokens());
     for (server_name, names) in runtime.llm_visible_mcp_tool_names_by_server() {
         ui.set_mcp_visible_tool_count_by_server_name(&server_name, names.len());
         ui.set_mcp_visible_tool_names_by_server_name(&server_name, names);
