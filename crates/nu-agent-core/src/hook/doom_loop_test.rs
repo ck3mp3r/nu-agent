@@ -72,3 +72,29 @@ fn different_args_does_not_trip_doom_loop() {
         );
     }
 }
+
+#[test]
+fn cross_turn_reset_prevents_false_positive() {
+    let mut state = DoomLoopState::default();
+
+    // Simulate 4 identical calls in a failed turn
+    for _ in 0..4 {
+        assert!(
+            state
+                .check_and_record("read_file", "{\"path\": \"same\"}")
+                .is_none()
+        );
+    }
+    assert_eq!(state.recent_signatures.len(), 4);
+
+    // Turn resets at start of next turn
+    state.reset();
+    assert_eq!(state.recent_signatures.len(), 0);
+
+    // Only 1 more identical call on the new turn — should NOT trip
+    let result = state.check_and_record("read_file", "{\"path\": \"same\"}");
+    assert!(
+        result.is_none(),
+        "single call after reset must not trip doom loop"
+    );
+}

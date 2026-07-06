@@ -15,12 +15,12 @@ pub struct McpCircuitBreaker {
 }
 
 /// Default number of consecutive transport failures before tripping.
-const DEFAULT_THRESHOLD: usize = 3;
+const DEFAULT_THRESHOLD: usize = 10;
 
 impl McpCircuitBreaker {
     /// Create a new circuit breaker with the given threshold.
     ///
-    /// A threshold of 0 is treated as the default (3).
+    /// A threshold of 0 is treated as the default (10).
     pub fn new(threshold: usize) -> Self {
         Self {
             failure_counts: HashMap::new(),
@@ -69,11 +69,19 @@ impl Default for McpCircuitBreaker {
 /// - "Transport closed"
 /// - "transport error"
 /// - "connection refused"
+/// - "broken pipe"
+/// - "connection reset"
+/// - "unexpected eof"
+/// - "early eof"
 pub fn is_transport_error(text: &str) -> bool {
     let lower = text.to_lowercase();
     lower.contains("transport closed")
         || lower.contains("transport error")
         || lower.contains("connection refused")
+        || lower.contains("broken pipe")
+        || lower.contains("connection reset")
+        || lower.contains("unexpected eof")
+        || lower.contains("early eof")
 }
 
 #[cfg(test)]

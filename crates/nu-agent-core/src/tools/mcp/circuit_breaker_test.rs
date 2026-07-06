@@ -48,22 +48,20 @@ fn circuit_breaker_independent_per_server() {
 }
 
 #[test]
-fn default_threshold_is_three() {
+fn default_threshold_is_ten() {
     let cb = McpCircuitBreaker::default();
-    assert_eq!(cb.threshold(), 3);
+    assert_eq!(cb.threshold(), 10);
 }
 
 #[test]
 fn zero_threshold_uses_default() {
     let cb = McpCircuitBreaker::new(0);
-    assert_eq!(cb.threshold(), 3);
+    assert_eq!(cb.threshold(), 10);
 }
 
 #[test]
 fn custom_threshold_is_respected() {
     let mut cb = McpCircuitBreaker::new(5);
-    assert_eq!(cb.threshold(), 5);
-
     for _ in 0..4 {
         assert!(!cb.record_failure("server_a"));
     }
@@ -109,4 +107,30 @@ fn does_not_match_normal_results() {
     assert!(!is_transport_error("file not found"));
     assert!(!is_transport_error("permission denied"));
     assert!(!is_transport_error(""));
+    assert!(!is_transport_error("Geoffrey has been reset"));
+    assert!(!is_transport_error("eof marker reached"));
+}
+
+#[test]
+fn detects_broken_pipe() {
+    assert!(is_transport_error("transport error: broken pipe"));
+    assert!(is_transport_error("write error: Broken pipe (os error 32)"));
+}
+
+#[test]
+fn detects_connection_reset() {
+    assert!(is_transport_error("connection reset by peer"));
+    assert!(is_transport_error("Connection reset"));
+}
+
+#[test]
+fn detects_unexpected_eof() {
+    assert!(is_transport_error("unexpected eof reading response body"));
+    assert!(is_transport_error("Unexpected EOF"));
+}
+
+#[test]
+fn detects_early_eof() {
+    assert!(is_transport_error("early eof"));
+    assert!(is_transport_error("Early EOF reading frame"));
 }

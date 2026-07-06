@@ -146,6 +146,13 @@ impl<'a, S: SessionManager> TurnExecutor<'a, S> {
                 self.tool_infra.visible_tool_definitions = saved_tool_definitions.clone();
             }
 
+            // Reset doom loop state at the start of every turn attempt
+            self.tool_infra
+                .doom_state
+                .lock()
+                .expect("doom loop mutex poisoned")
+                .reset();
+
             let result = cached_client.with_model(
                 &model_name,
                 TurnVisitor {
