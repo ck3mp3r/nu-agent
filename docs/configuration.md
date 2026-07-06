@@ -219,13 +219,17 @@ This works with all providers (Anthropic, OpenAI, Copilot, Ollama, OpenAI-compat
 - **Anthropic: `max_tokens` is required** — always set it explicitly or Anthropic will reject the request.
 - **Applied to every turn** — the value is included in every completion request for the agent's lifetime.
 
-### Disabling Anthropic extended thinking
+### Controlling thinking depth on Anthropic Sonnet 4.6
+
+Sonnet 4.6 uses **adaptive thinking** — the model decides when to think based on the request. The correct way to control thinking depth is the `effort` parameter inside `output_config`, not `thinking: {type: "disabled"}` (which has no effect on this model).
+
+Anthropic recommends `medium` effort as the default for agentic workloads — it gives a good balance of speed, cost, and quality. Use `low` for latency-sensitive tasks or `high`/`max` when quality is the priority.
 
 ```nu
 $env.config.plugins.agent = {
   model: "anthropic/claude-sonnet-4-6"
   additional_params: {
-    thinking: { type: "disabled" }
+    output_config: { effort: "medium" }
   }
   providers: {
     anthropic: {
@@ -237,3 +241,5 @@ $env.config.plugins.agent = {
   }
 }
 ```
+
+Effort levels: `low` (fastest, fewest tokens) · `medium` (recommended for agents) · `high` (default if omitted) · `max` (highest capability)
