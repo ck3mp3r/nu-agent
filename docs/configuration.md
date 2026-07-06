@@ -183,14 +183,15 @@ All fields are optional — defaults are used when omitted.
 
 ### Strategies
 
-- `sliding_summary` (default) — LLM summarizes old messages, keeps recent verbatim window.
-- `sliding_window` — drops old messages, keeps only the last N. No LLM call.
-- `token_truncate` — keeps newest messages within a token budget (chars/4 estimate). No LLM call.
+- `sliding_summary` (default) — LLM summarizes **all** messages into a single system message. Nothing is kept verbatim. `keep_recent` acts only as a minimum-message guard: compaction is skipped if total messages ≤ `keep_recent`.
+- `sliding_window` — drops old messages, keeps only the last `keep_recent` verbatim. No LLM call.
+- `token_truncate` — keeps newest messages within a token budget (chars/4 estimate). Requires `token_budget`. No LLM call.
 
 ### Validation rules
 
 - `proactive_threshold_pct` must be between 0.0 and 1.0.
 - `keep_recent` must be greater than 0.
+- `token_budget` is required when using `token_truncate`.
 
 ### Precedence
 
