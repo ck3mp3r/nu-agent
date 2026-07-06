@@ -597,10 +597,10 @@ $env.config.plugins.agent = {
 - `--quiet` / `-q`
 - `--verbose` / `-v` (progressive: `-v`, `-vv`, `-vvv+`)
 - `--compaction-strategy <string>` — `sliding_summary`, `sliding_window`, `token_truncate`
-- `--compaction-threshold <int>` — message count threshold for auto-compaction (default: 100)
 - `--keep-recent <int>` — recent messages to keep during compaction (default: 10)
 - `--token-budget <int>` — token budget for `token_truncate` strategy
 - `--proactive-threshold-pct <number>` — proactive compaction threshold 0.0–1.0 (default: 0.80)
+- `--log-level <string>` — log level for file-based logging (`error|warn|info|debug|trace`); writes to `$XDG_STATE_HOME/nu-agent/logs/agent.log`
 
 ## Output contract
 

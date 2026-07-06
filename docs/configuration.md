@@ -70,6 +70,10 @@ Highest to lowest:
 - `AGENT_MAX_CONTEXT_TOKENS`
 - `AGENT_MAX_OUTPUT_TOKENS`
 - `AGENT_MAX_TOOL_TURNS`
+- `AGENT_MAX_TOOL_RESULT_BYTES` — max bytes returned per tool call before truncation; LLM is told to use `read` with offset/limit for the rest (default: 20000; `0` = unlimited)
+- `AGENT_MAX_TOOL_CALLS_PER_SUBTURN` — max tool calls allowed in a single LLM response; guards against models ignoring `parallel_tool_calls: false` (default: 10; `0` = unlimited)
+- `AGENT_MODEL_CONTEXT_TOKENS` — approximate context window size in tokens for the configured model; enables context-usage warnings (default: none; no warning emitted until set)
+- `AGENT_CONTEXT_WARNING_THRESHOLD` — fraction of `AGENT_MODEL_CONTEXT_TOKENS` at which to emit a context-usage warning, `0.0`–`1.0` (default: `0.6`)
 - `{PROVIDER}_API_KEY` (for providers with direct env naming, e.g. `OPENAI_API_KEY`)
 
 There is no `AGENT_MODEL`. Set the default model in plugin config.
