@@ -1,6 +1,6 @@
 use super::tool_defs::{
-    assemble_tool_definitions, builtin_tool_definitions, messaging_tool_definitions,
-    orchestrator_messaging_tool_definitions, orchestrator_tool_definitions,
+    assemble_tool_definitions, builtin_tool_definitions, list_agents_tool_definitions,
+    messaging_tool_definitions, orchestrator_tool_definitions,
 };
 
 #[test]
@@ -79,8 +79,8 @@ fn messaging_tool_registration_contains_only_send_message() {
 }
 
 #[test]
-fn orchestrator_messaging_tool_registration_contains_only_list_agents() {
-    let names = orchestrator_messaging_tool_definitions()
+fn list_agents_tool_registration_contains_only_list_agents() {
+    let names = list_agents_tool_definitions()
         .into_iter()
         .map(|tool| tool.name)
         .collect::<Vec<_>>();

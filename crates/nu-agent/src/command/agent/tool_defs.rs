@@ -1,23 +1,9 @@
 // Re-export the tool definition functions that moved to core, so existing
 // callers in the binary (assemble_tool_definitions, tests) don't break.
 pub(crate) use nu_agent_core::conversation::builder::{
-    builtin_tool_definitions, messaging_tool_definitions, orchestrator_tool_definitions,
+    builtin_tool_definitions, list_agents_tool_definitions, messaging_tool_definitions,
+    orchestrator_tool_definitions,
 };
-
-use nu_agent_core::types::ToolDefinition;
-use serde_json::json;
-
-/// Tool definitions available only to orchestrator agents.
-pub(crate) fn orchestrator_messaging_tool_definitions() -> Vec<ToolDefinition> {
-    vec![ToolDefinition {
-        name: "list_agents".to_string(),
-        description: "List all connected agents and their names".to_string(),
-        parameters: json!({
-            "type": "object",
-            "properties": {},
-        }),
-    }]
-}
 
 /// Result of assembling the full tool definition set.
 pub(crate) struct ToolAssembly {
@@ -32,7 +18,7 @@ pub(crate) struct ToolAssembly {
 /// (allow/ask/deny) gates actual use at call time — there is no reason to
 /// suppress tool registration based on agent topology.
 ///
-/// Order: closures → builtins → messaging → orchestrator-messaging → orchestrator → MCP
+/// Order: closures → builtins → messaging → orchestrator → MCP
 pub(crate) fn assemble_tool_definitions(
     closure_registry: &nu_agent_core::tools::closure::ClosureRegistry,
     agents_config: &nu_agent_core::config::AgentsConfig,
@@ -53,7 +39,7 @@ pub(crate) fn assemble_tool_definitions(
 
     tool_definitions.extend(builtin_tool_definitions());
     tool_definitions.extend(messaging_tool_definitions());
-    tool_definitions.extend(orchestrator_messaging_tool_definitions());
+    tool_definitions.extend(list_agents_tool_definitions());
 
     let available_agents = {
         use nu_agent_core::protocol::persona::{FsPersonaResolver, PersonaLister};

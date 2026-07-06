@@ -290,6 +290,18 @@ pub fn orchestrator_tool_definitions(available_agents: &[PersonaSummary]) -> Vec
     ]
 }
 
+/// Tool definitions available only to orchestrator agents that can list peers.
+pub fn list_agents_tool_definitions() -> Vec<ToolDefinition> {
+    vec![ToolDefinition {
+        name: "list_agents".to_string(),
+        description: "List all connected agents and their names".to_string(),
+        parameters: json!({
+            "type": "object",
+            "properties": {},
+        }),
+    }]
+}
+
 // ── Builder ──────────────────────────────────────────────────────────────────
 
 /// Input required to build and register agent tools.
@@ -403,6 +415,7 @@ impl<'a> AgentRuntimeBuilder<'a> {
         // All tool groups are always registered. The permission system gates actual use.
         let mut builtin_defs = builtin_tool_definitions();
         builtin_defs.extend(messaging_tool_definitions());
+        builtin_defs.extend(list_agents_tool_definitions());
         builtin_defs.extend(orchestrator_tool_definitions(available_agents));
 
         // Bind the orchestrator mailbox for top-level agents (no parent).

@@ -316,10 +316,16 @@ pub fn handle_terminate_agent<T: TmuxRunner>(
         let _ = tmux.run(&["kill-pane", "-t", &pane_id]);
     }
 
-    // 4. Remove from agent_panes
+    // 4. Delete the agent's .sock file from disk
+    let socket_path = state.socket_dir.join(format!("{}.sock", name));
+    if let Err(e) = std::fs::remove_file(&socket_path) {
+        log::debug!("Failed to remove socket {}: {}", socket_path.display(), e);
+    }
+
+    // 5. Remove from agent_panes
     state.agent_panes.remove(name);
 
-    // 5. Check if tmux window still has panes
+    // 6. Check if tmux window still has panes
     if let Some(ref window_id) = state.tmux_window {
         let remaining = tmux
             .run(&["list-panes", "-t", window_id, "-F", "#{pane_id}"])
@@ -329,7 +335,7 @@ pub fn handle_terminate_agent<T: TmuxRunner>(
         }
     }
 
-    // 6. Return result
+    // 7. Return result
     Ok(serde_json::json!({ "terminated": name }))
 }
 
