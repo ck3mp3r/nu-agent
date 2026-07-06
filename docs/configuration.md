@@ -26,11 +26,23 @@ Required top-level fields:
 
 Optional top-level fields:
 
-- `small_model`
-- `mcp`
-- `compaction`
-- `read_timeout_secs` — HTTP read timeout in seconds (default: 30, set to 0 to disable)
+- `small_model` — model used for lightweight tasks (e.g. compaction summarization)
+- `mcp` — MCP server configuration
+- `compaction` — conversation compaction settings
 - `additional_params` — provider-specific parameters forwarded verbatim to the completion request body (see [Additional Parameters](#additional-parameters))
+- `temperature` — response randomness (0.0–2.0)
+- `max_tokens` — maximum tokens to generate
+- `max_context_tokens` — context window size in tokens (default: 128_000 — set this to match your model)
+- `max_output_tokens` — maximum output tokens
+- `max_tool_turns` — maximum tool execution turns per conversation turn
+- `max_tool_calls_per_subturn` — maximum tool calls in a single LLM response (default: 10)
+- `max_tool_result_bytes` — truncation limit for tool results in bytes (default: 20_000, 0 = disable)
+- `read_timeout_secs` — HTTP read timeout in seconds (default: 30, set to 0 to disable)
+- `max_retries` — retry attempts for transient errors (default: 3)
+- `retry_base_delay_ms` — base backoff in ms, doubles each attempt, capped at 30s (default: 1000)
+- `model_context_tokens` — approximate context window for in-session token warnings (no auto-detection)
+- `context_warning_threshold` — fraction of `model_context_tokens` at which to warn (default: 0.6)
+- `preamble` — system preamble prepended before prompt/context
 
 ## Model Format
 
@@ -38,8 +50,8 @@ All models use `provider/model` format:
 
 - `ollama/gemma4:31b`
 - `openai/gpt-4o`
-- `anthropic/claude-sonnet-4-20250514`
-- `github-copilot/claude-opus-4.6`
+- `anthropic/claude-sonnet-4-6`
+- `github-copilot/claude-sonnet-4.6`
 
 ## Precedence
 
@@ -80,12 +92,12 @@ $env.config.plugins.agent = {
 
 ```nu
 $env.config.plugins.agent = {
-  model: "anthropic/claude-3-5-sonnet-20241022"
+  model: "anthropic/claude-sonnet-4-6"
   providers: {
     anthropic: {
       api_key: $env.ANTHROPIC_API_KEY
       models: {
-        "claude-3-5-sonnet-20241022": {}
+        "claude-sonnet-4-6": {}
       }
     }
   }
@@ -170,16 +182,17 @@ Configure conversation compaction via the optional `compaction` block:
 ```nu
 $env.config.plugins.agent = {
   # ...existing config...
+  max_context_tokens: 200000               # MUST match your model's actual context window
   compaction: {
     strategy: "sliding_summary"              # or sliding_window, token_truncate
-    keep_recent: 10                          # messages to keep (default: 10)
+    keep_recent: 10                          # minimum-message guard for sliding_summary; last N kept for sliding_window
     token_budget: 4000                       # for token_truncate only
-    proactive_threshold_pct: 0.80            # 0.0-1.0, proactive trigger (default: 0.80)
+    proactive_threshold_pct: 0.80            # 0.0-1.0, fraction of max_context_tokens before compaction fires (default: 0.80)
   }
 }
 ```
 
-All fields are optional — defaults are used when omitted.
+All compaction fields are optional — defaults are used when omitted. **`max_context_tokens` is not part of the `compaction` block** — it is a top-level `Config` field, but it directly controls when compaction fires. The default is `128_000`. If your model has a larger context window (e.g. 200k), set this explicitly or compaction will trigger too early.
 
 ### Strategies
 
@@ -205,7 +218,7 @@ CLI flags override plugin config, which overrides built-in defaults.
 $env.config.plugins.agent = {
   model: "anthropic/claude-sonnet-4-6"
   additional_params: {
-    thinking: { type: "disabled" }
+    output_config: { effort: "medium" }
   }
   providers: { ... }
 }
@@ -217,7 +230,6 @@ This works with all providers (Anthropic, OpenAI, Copilot, Ollama, OpenAI-compat
 
 - **Must be a record** — arrays, strings, and scalars are rejected at parse time.
 - **Do not shadow typed fields** — keys like `model`, `max_tokens`, or `temperature` already have typed fields. Duplicating them via `additional_params` produces duplicate JSON keys with undefined behavior.
-- **Anthropic: `max_tokens` is required** — always set it explicitly or Anthropic will reject the request.
 - **Applied to every turn** — the value is included in every completion request for the agent's lifetime.
 
 ### Controlling thinking depth on Anthropic Sonnet 4.6
