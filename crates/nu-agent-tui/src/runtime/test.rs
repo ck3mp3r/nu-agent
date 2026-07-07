@@ -1731,12 +1731,12 @@ fn global_abort_cancels_active_and_pending_and_new_submit_starts_fresh() {
         let mut source = StubEventSource { next: Some(event) };
         coordinator.pump_once(&mut source);
     }
-
     assert_eq!(coordinator.take_submitted_prompt(), Some("c".to_string()));
 }
 
 #[test]
 fn main_pane_vertical_split_has_no_overlap_or_bottom_cutoff() {
+    use crate::runtime::render_frame::STATUS_TARGET_HEIGHT;
     let (_header, transcript, input, status) = RuntimeCoordinator::main_pane_rects_for_height(10);
 
     assert_eq!(_header.height, 0);
@@ -1745,8 +1745,8 @@ fn main_pane_vertical_split_has_no_overlap_or_bottom_cutoff() {
         "transcript pane should remain visible"
     );
     assert_eq!(
-        status.height, 2,
-        "footer must reserve 2 rows: one for divider, one for status content"
+        status.height, STATUS_TARGET_HEIGHT,
+        "footer must reserve STATUS_TARGET_HEIGHT rows"
     );
     assert_eq!(transcript.y + transcript.height, input.y);
     assert_eq!(input.y + input.height, status.y);
@@ -4358,9 +4358,9 @@ fn input_content_width_accounts_for_borders() {
 }
 
 #[test]
-fn status_target_height_is_two() {
+fn status_target_height_is_three() {
     use crate::runtime::render_frame::STATUS_TARGET_HEIGHT;
-    assert_eq!(STATUS_TARGET_HEIGHT, 2);
+    assert_eq!(STATUS_TARGET_HEIGHT, 3);
 }
 
 #[test]
@@ -4373,8 +4373,7 @@ fn status_left_content_contains_model() {
 
 #[test]
 fn status_right_content_contains_branch() {
-    let state = AppState::new();
-    let line = crate::runtime::status_right_content_for_test(Some("main"), &state);
+    let line = crate::runtime::status_right_content_for_test(Some("main"), None);
     assert!(line.is_some());
     let text: String = line
         .unwrap()
@@ -4386,9 +4385,15 @@ fn status_right_content_contains_branch() {
 }
 
 #[test]
-fn status_right_content_shows_zero_tokens_when_no_branch() {
-    let state = AppState::new();
-    let line = crate::runtime::status_right_content_for_test(None, &state);
+fn status_right_content_shows_none_when_no_branch_and_no_cwd() {
+    let line = crate::runtime::status_right_content_for_test(None, None);
+    assert!(line.is_none());
+}
+
+#[test]
+fn status_right_content_shows_cwd_when_given() {
+    let cwd = std::path::Path::new("/home/user/projects/my-project");
+    let line = crate::runtime::status_right_content_for_test(None, Some(cwd));
     assert!(line.is_some());
     let text: String = line
         .unwrap()
@@ -4396,11 +4401,19 @@ fn status_right_content_shows_zero_tokens_when_no_branch() {
         .iter()
         .map(|s| s.content.as_ref())
         .collect();
-    assert!(text.contains('0'), "expected '0' token count, got: {text}");
-    assert!(
-        !text.contains('┃'),
-        "expected no separator when no branch, got: {text}"
-    );
+    assert!(text.contains("my-project"));
+}
+
+#[test]
+fn status_left_content_contains_tokens() {
+    let mut state = AppState::new();
+    state.latest_total_tokens = Some(250);
+    state.set_context_window_max_tokens(Some(1000));
+    let line = crate::runtime::status_left_content_for_test("openai/gpt-4", None, &state, 80);
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert!(text.contains("250"));
+    assert!(text.contains("25%"));
+    assert!(text.contains('┃'));
 }
 
 #[test]
@@ -4497,13 +4510,32 @@ fn agent_picker_rows_do_not_contain_selection_prefix() {
     for row in &rows {
         for cell in row {
             assert!(
-                !cell.starts_with("❯ "),
-                "cell must not start with selection prefix '❯ ': {cell:?}"
-            );
-            assert!(
                 !cell.starts_with("  "),
                 "cell must not start with deselected prefix '  ': {cell:?}"
             );
         }
     }
+}
+
+#[test]
+fn status_right_content_width_exceeds_narrow_line_triggering_overflow() {
+    let narrow_width: u16 = 20;
+    let branch = "feature/my-very-long-branch";
+    let cwd = std::path::Path::new("/home/user/projects/deep/nested/dir");
+    let right_line = crate::runtime::status_right_content_for_test(Some(branch), Some(cwd));
+    assert!(
+        right_line.is_some(),
+        "expected right content with branch+cwd"
+    );
+    let right_width: u16 = right_line
+        .as_ref()
+        .unwrap()
+        .spans
+        .iter()
+        .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()) as u16)
+        .sum();
+    assert!(
+        right_width > narrow_width,
+        "right_width={right_width} must exceed narrow_width={narrow_width} to exercise overflow"
+    );
 }

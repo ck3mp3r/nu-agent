@@ -9,7 +9,8 @@ use ratatui::layout::Rect;
 #[cfg(test)]
 use crate::rendering::layout::INPUT_MIN_HEIGHT;
 
-pub(super) const STATUS_TARGET_HEIGHT: u16 = 2;
+#[cfg(test)]
+pub(super) const STATUS_TARGET_HEIGHT: u16 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ModalPanelKind {

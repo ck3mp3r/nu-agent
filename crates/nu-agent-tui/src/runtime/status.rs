@@ -149,6 +149,10 @@ impl RepoBranchTracker {
         self.branch.as_deref()
     }
 
+    pub(super) fn caller_cwd(&self) -> Option<&Path> {
+        self.caller_cwd.as_deref()
+    }
+
     pub(super) fn tick(&mut self) {
         let now = Instant::now();
         let watch_due = now.duration_since(self.last_watch_check) >= self.watch_check_interval;
@@ -419,7 +423,6 @@ pub(super) fn status_left_content(
         theme.status_done
     };
 
-    // Prefix: indicator(1) + " "(1) = 2 chars
     let prefix_width = 2usize;
     let budget = available_width.saturating_sub(prefix_width);
 
@@ -429,19 +432,23 @@ pub(super) fn status_left_content(
         format!("{emoji} {agent}")
     });
 
+    let token_str = token_string_for_state(state).unwrap_or_default();
+    let token_segment_width = SEP_WIDTH + token_str.chars().count();
+
     let agent_width = agent_str.as_ref().map(|s| SEP_WIDTH + s.chars().count());
 
-    // Model gets remaining budget after agent
-    let model_budget = if let Some(aw) = agent_width {
-        // only show agent if model_len + agent fits; keep at least 1 char for model
-        let min_model = 1usize;
-        if budget.saturating_sub(aw) >= min_model {
-            budget.saturating_sub(aw)
+    let model_budget = {
+        let after_tokens = budget.saturating_sub(token_segment_width);
+        if let Some(aw) = agent_width {
+            let min_model = 1usize;
+            if after_tokens.saturating_sub(aw) >= min_model {
+                after_tokens.saturating_sub(aw)
+            } else {
+                after_tokens
+            }
         } else {
-            budget
+            after_tokens
         }
-    } else {
-        budget
     };
     let model_display = tail_ellipsize(model, model_budget);
     let model_len_used = model_display.chars().count();
@@ -451,29 +458,31 @@ pub(super) fn status_left_content(
     spans.push(Span::raw(" "));
     spans.push(Span::styled(model_display, theme.subtle_meta));
 
-    // Agent: only if present AND fits
     if let Some(agent_display) = agent_str {
         let needed = prefix_width + model_len_used + SEP_WIDTH + agent_display.chars().count();
-        if needed <= available_width {
+        if needed + token_segment_width <= available_width {
             spans.push(Span::styled(SEP.to_string(), theme.role_separator));
             spans.push(Span::styled(agent_display, theme.role_assistant));
         }
     }
+
+    spans.push(Span::styled(SEP.to_string(), theme.role_separator));
+    spans.push(Span::styled(token_str, theme.subtle_meta));
 
     Line::from(spans)
 }
 
 pub(super) fn status_right_content(
     repo_branch: Option<&str>,
-    state: &AppState,
+    cwd: Option<&Path>,
     theme: &TuiTheme,
 ) -> Option<Line<'static>> {
     const SEP: &str = " ┃ ";
 
     let branch_opt = repo_branch.filter(|b| !b.is_empty());
-    let token_opt = token_string_for_state(state);
+    let cwd_opt = cwd.map(format_pwd).filter(|s| !s.is_empty());
 
-    if branch_opt.is_none() && token_opt.is_none() {
+    if branch_opt.is_none() && cwd_opt.is_none() {
         return None;
     }
 
@@ -484,14 +493,29 @@ pub(super) fn status_right_content(
         spans.push(Span::styled(branch_str, theme.focus));
     }
 
-    if let Some(token_str) = token_opt {
+    if let Some(cwd_str) = cwd_opt {
         if branch_opt.is_some() {
             spans.push(Span::styled(SEP.to_string(), theme.role_separator));
         }
-        spans.push(Span::styled(token_str, theme.subtle_meta));
+        spans.push(Span::styled(cwd_str, theme.subtle_meta));
     }
 
     Some(Line::from(spans))
+}
+
+fn format_pwd(cwd: &Path) -> String {
+    let home = std::env::var("HOME").ok();
+    let path_str = cwd.to_string_lossy();
+    let shortened = if let Some(home) = &home {
+        if let Some(rest) = path_str.strip_prefix(home.as_str()) {
+            format!("~{rest}")
+        } else {
+            path_str.into_owned()
+        }
+    } else {
+        path_str.into_owned()
+    };
+    tail_ellipsize(&shortened, 40)
 }
 
 #[cfg(test)]

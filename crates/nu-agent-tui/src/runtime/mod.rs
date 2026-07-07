@@ -31,9 +31,7 @@ use panels::*;
 pub use renderer::TuiRuntimeRenderer;
 use status_help::*;
 
-use render_frame::{
-    ModalPanelKind, STATUS_TARGET_HEIGHT, current_time_millis, modal_rect_for_panel,
-};
+use render_frame::{ModalPanelKind, current_time_millis, modal_rect_for_panel};
 use status::{
     availability_label, build_status_lines, model_activity_label, status_left_content,
     status_right_content,
@@ -785,6 +783,44 @@ impl RuntimeCoordinator {
                 let input_h = self.layout.input.height;
                 let queue_count = self.state.pending_prompt_count() as u16;
                 let queue_h = queue_count + if queue_count > 0 { 1 } else { 0 };
+                let available_inner_w = content_main.width.saturating_sub(4) as usize;
+                let pre_right_width = {
+                    let rc = status_right_content(
+                        self.repo_branch_tracker.as_ref().and_then(|t| t.branch()),
+                        self.repo_branch_tracker
+                            .as_ref()
+                            .and_then(|t| t.caller_cwd()),
+                        &self.theme,
+                    );
+                    rc.map(|line| {
+                        line.spans
+                            .iter()
+                            .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
+                            .sum::<usize>()
+                    })
+                    .unwrap_or(0)
+                };
+                let pre_left_width = {
+                    let probe = status_left_content(
+                        &self.active_model_identity,
+                        None,
+                        &self.state,
+                        &self.theme,
+                        available_inner_w,
+                    );
+                    probe
+                        .spans
+                        .iter()
+                        .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
+                        .sum::<usize>()
+                };
+                let status_h: u16 = if pre_right_width == 0
+                    || pre_left_width + pre_right_width <= available_inner_w
+                {
+                    2
+                } else {
+                    3
+                };
                 let vertical = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
@@ -792,7 +828,7 @@ impl RuntimeCoordinator {
                         Constraint::Min(1),
                         Constraint::Length(queue_h),
                         Constraint::Length(input_h),
-                        Constraint::Length(STATUS_TARGET_HEIGHT),
+                        Constraint::Length(status_h),
                     ])
                     .split(content_main);
                 // vertical[0]=unused [1]=transcript [2]=queue [3]=input [4]=status
@@ -1029,7 +1065,9 @@ impl RuntimeCoordinator {
                 };
                 let right_content = status_right_content(
                     self.repo_branch_tracker.as_ref().and_then(|t| t.branch()),
-                    &self.state,
+                    self.repo_branch_tracker
+                        .as_ref()
+                        .and_then(|t| t.caller_cwd()),
                     &self.theme,
                 );
                 let right_width = right_content
@@ -1048,28 +1086,61 @@ impl RuntimeCoordinator {
                     width: inner.width.saturating_sub(2),
                     height: 1,
                 };
+                let status_inner_2 = Rect {
+                    y: status_inner.y.saturating_add(1),
+                    ..status_inner
+                };
 
-                let left_content = status_left_content(
-                    &self.active_model_identity,
-                    busy_millis,
-                    &self.state,
-                    &self.theme,
-                    status_inner.width.saturating_sub(right_width) as usize,
-                );
+                let left_width_needed = {
+                    let probe = status_left_content(
+                        &self.active_model_identity,
+                        busy_millis,
+                        &self.state,
+                        &self.theme,
+                        status_inner.width as usize,
+                    );
+                    probe
+                        .spans
+                        .iter()
+                        .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
+                        .sum::<usize>() as u16
+                };
 
-                if right_width > 0 && right_width < status_inner.width {
-                    let [left_area, right_area] =
-                        Layout::horizontal([Constraint::Fill(1), Constraint::Length(right_width)])
-                            .areas(status_inner);
-                    frame.render_widget(Paragraph::new(left_content), left_area);
-                    if let Some(right_line) = right_content {
+                let fits_on_one_line =
+                    right_width > 0 && left_width_needed + right_width <= status_inner.width;
+
+                let left_content = if fits_on_one_line {
+                    status_left_content(
+                        &self.active_model_identity,
+                        busy_millis,
+                        &self.state,
+                        &self.theme,
+                        status_inner.width.saturating_sub(right_width) as usize,
+                    )
+                } else {
+                    status_left_content(
+                        &self.active_model_identity,
+                        busy_millis,
+                        &self.state,
+                        &self.theme,
+                        status_inner.width as usize,
+                    )
+                };
+
+                frame.render_widget(Paragraph::new(left_content), status_inner);
+
+                if let Some(right_line) = right_content {
+                    if fits_on_one_line {
                         frame.render_widget(
                             Paragraph::new(right_line).alignment(Alignment::Right),
-                            right_area,
+                            status_inner,
+                        );
+                    } else {
+                        frame.render_widget(
+                            Paragraph::new(right_line).alignment(Alignment::Right),
+                            status_inner_2,
                         );
                     }
-                } else {
-                    frame.render_widget(Paragraph::new(left_content), status_inner);
                 }
 
                 if has_side {

@@ -258,11 +258,11 @@ pub(super) fn status_left_content_for_test(
 #[cfg(test)]
 pub(super) fn status_right_content_for_test(
     repo_branch: Option<&str>,
-    state: &AppState,
+    cwd: Option<&std::path::Path>,
 ) -> Option<Line<'static>> {
     status::status_right_content(
         repo_branch,
-        state,
+        cwd,
         &crate::rendering::theme::TuiTheme::default(),
     )
 }
