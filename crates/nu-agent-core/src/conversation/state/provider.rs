@@ -32,6 +32,7 @@ impl ProviderState {
             self.config.provider.clone(),
             self.config.api_key.clone(),
             self.config.base_url.clone(),
+            self.config.read_timeout_secs,
         )
     }
 

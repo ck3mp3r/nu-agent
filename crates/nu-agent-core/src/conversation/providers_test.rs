@@ -197,11 +197,12 @@ fn build_ollama_client_with_base_url_succeeds() {
 // ========================================================================
 
 #[test]
-fn client_cache_key_type_is_three_tuple() {
-    let key: ClientCacheKey = ("copilot".to_string(), None, None);
+fn client_cache_key_type_is_four_tuple() {
+    let key: ClientCacheKey = ("copilot".to_string(), None, None, None);
     assert_eq!(key.0, "copilot");
     assert_eq!(key.1, None);
     assert_eq!(key.2, None);
+    assert_eq!(key.3, None);
 }
 
 #[test]

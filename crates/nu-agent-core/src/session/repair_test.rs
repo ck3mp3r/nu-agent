@@ -1042,3 +1042,74 @@ fn repair_messages_heals_null_args_end_to_end() {
         "must emit null-args diagnostic; issues: {issues:?}"
     );
 }
+
+// ================================================================
+// inject_missing_tool_results — call_id propagation
+// ================================================================
+
+/// Test: synthetic `ToolResult` produced for an unpaired `ToolCall` with
+/// `call_id: Some("call_abc123")` must carry that `call_id` through.
+#[test]
+fn inject_missing_tool_results_preserves_call_id() {
+    let tc = AssistantContent::ToolCall(ToolCall {
+        id: "id_x".to_string(),
+        call_id: Some("call_abc123".to_string()),
+        signature: None,
+        additional_params: None,
+        function: ToolFunction::new("do_thing".to_string(), serde_json::json!({})),
+    });
+    let msgs = vec![Message::user("go"), assistant_with_content(vec![tc])];
+    let result = inject_missing_tool_results(msgs);
+
+    assert_eq!(result.len(), 3, "synthetic ToolResult must be injected");
+    match &result[2] {
+        Message::User { content } => {
+            let tr = content
+                .iter()
+                .find_map(|item| match item {
+                    UserContent::ToolResult(tr) => Some(tr),
+                    _ => None,
+                })
+                .expect("injected User message must contain a ToolResult");
+            assert_eq!(
+                tr.call_id,
+                Some("call_abc123".to_string()),
+                "synthetic ToolResult must carry call_id from its ToolCall"
+            );
+        }
+        _ => panic!("message[2] must be a User message"),
+    }
+}
+
+/// Test: synthetic `ToolResult` produced for an unpaired `ToolCall` with
+/// `call_id: None` must also have `call_id: None`.
+#[test]
+fn inject_missing_tool_results_preserves_none_call_id() {
+    let tc = AssistantContent::ToolCall(ToolCall {
+        id: "id_y".to_string(),
+        call_id: None,
+        signature: None,
+        additional_params: None,
+        function: ToolFunction::new("do_other".to_string(), serde_json::json!({})),
+    });
+    let msgs = vec![Message::user("go"), assistant_with_content(vec![tc])];
+    let result = inject_missing_tool_results(msgs);
+
+    assert_eq!(result.len(), 3, "synthetic ToolResult must be injected");
+    match &result[2] {
+        Message::User { content } => {
+            let tr = content
+                .iter()
+                .find_map(|item| match item {
+                    UserContent::ToolResult(tr) => Some(tr),
+                    _ => None,
+                })
+                .expect("injected User message must contain a ToolResult");
+            assert_eq!(
+                tr.call_id, None,
+                "synthetic ToolResult must have call_id: None when ToolCall has call_id: None"
+            );
+        }
+        _ => panic!("message[2] must be a User message"),
+    }
+}

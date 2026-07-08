@@ -113,6 +113,41 @@ fn connect_server_states_marks_connected_when_runtime_session_exists_for_server(
 }
 
 #[test]
+fn mark_disconnected_removes_from_connected_servers() {
+    let servers = vec![McpServerConfig {
+        name: "my-server".to_string(),
+        transport: McpTransportType::Sse,
+        url: Some("https://example.com/mcp/sse".to_string()),
+        headers: Default::default(),
+        command: None,
+        cwd: None,
+        args: vec![],
+        env: Default::default(),
+        enabled: true,
+    }];
+
+    let mut runtime = McpRuntime {
+        sessions: vec![],
+        connected_servers: std::collections::BTreeSet::from(["my-server".to_string()]),
+        discovered_tools: vec![],
+    };
+
+    assert!(
+        runtime.has_server("my-server"),
+        "should be connected before mark_disconnected"
+    );
+    assert!(runtime.lifecycle_projection(&servers)[0].connected);
+
+    runtime.mark_disconnected("my-server");
+
+    assert!(
+        !runtime.has_server("my-server"),
+        "should not be connected after mark_disconnected"
+    );
+    assert!(!runtime.lifecycle_projection(&servers)[0].connected);
+}
+
+#[test]
 fn activation_gating_selects_only_enabled_servers() {
     let servers = vec![
         McpServerConfig {

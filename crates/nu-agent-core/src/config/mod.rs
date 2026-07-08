@@ -746,13 +746,19 @@ impl PluginConfig {
         }
 
         // Populate read_timeout_secs from plugin config
-        config.read_timeout_secs = self.read_timeout_secs;
+        if config.read_timeout_secs.is_none() {
+            config.read_timeout_secs = self.read_timeout_secs;
+        }
 
         // Populate max_tool_calls_per_subturn from plugin config
-        config.max_tool_calls_per_subturn = self.max_tool_calls_per_subturn;
+        if config.max_tool_calls_per_subturn.is_none() {
+            config.max_tool_calls_per_subturn = self.max_tool_calls_per_subturn;
+        }
 
         // Populate additional_params from plugin config
-        config.additional_params = self.additional_params.clone();
+        if config.additional_params.is_none() {
+            config.additional_params = self.additional_params.clone();
+        }
 
         // Forward top-level PluginConfig fields as fallbacks.
         // Only applied when not already set by env vars or model-level config.
@@ -948,6 +954,7 @@ impl Config {
         let max_tool_calls_per_subturn = parse_env_var("AGENT_MAX_TOOL_CALLS_PER_SUBTURN");
         let max_retries: Option<u8> = parse_env_var("AGENT_MAX_RETRIES");
         let retry_base_delay_ms: Option<u64> = parse_env_var("AGENT_RETRY_BASE_DELAY_MS");
+        let read_timeout_secs: Option<u64> = parse_env_var("AGENT_READ_TIMEOUT_SECS");
 
         log::debug!(
             "Config.from_env: provider={provider} model={model} api_key={} base_url={base_url:?}",
@@ -966,7 +973,7 @@ impl Config {
             max_output_tokens,
             max_tool_turns,
             preamble: None,
-            read_timeout_secs: None,
+            read_timeout_secs,
             max_tool_result_bytes,
             model_context_tokens,
             context_warning_threshold,

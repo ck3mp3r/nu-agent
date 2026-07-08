@@ -9,18 +9,18 @@ use crate::config::Config;
 /// This fires only when no bytes are received for this duration —
 /// it resets on each successful read, so active long-running responses
 /// are not affected.
-const DEFAULT_READ_TIMEOUT_SECS: u64 = 30;
+const DEFAULT_READ_TIMEOUT_SECS: u64 = 120;
 
 /// Build a shared HTTP client with a connect timeout and optional read timeout.
 ///
-/// Read timeout: defaults to 30s — fires only when no bytes received for the duration.
+/// Read timeout: defaults to 120s — fires only when no bytes received for the duration.
 ///   Pass `Some(0)` to disable. This is safe for long active LLM responses.
 /// Uses system certificate store via rustls-native-certs (supports corporate CAs).
 fn build_http_client(read_timeout_secs: Option<u64>) -> reqwest::Client {
     let read_timeout = read_timeout_secs.unwrap_or(DEFAULT_READ_TIMEOUT_SECS);
     let mut builder = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
-        .pool_idle_timeout(None) // keep connections alive for the lifetime of the client
+        .pool_idle_timeout(Some(Duration::from_secs(55))) // evict before server-side idle timeout (~60-90s)
         .pool_max_idle_per_host(5);
     if read_timeout > 0 {
         builder = builder.read_timeout(Duration::from_secs(read_timeout));
@@ -281,7 +281,7 @@ impl CachedProviderClient {
     }
 }
 
-pub type ClientCacheKey = (String, Option<String>, Option<String>);
+pub type ClientCacheKey = (String, Option<String>, Option<String>, Option<u64>);
 
 #[cfg(test)]
 #[path = "providers_test.rs"]

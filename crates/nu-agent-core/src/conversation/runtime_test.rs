@@ -335,11 +335,17 @@ fn client_cache_key_contains_provider_and_model() {
         config.provider.clone(),
         config.api_key.clone(),
         config.base_url.clone(),
+        config.read_timeout_secs,
     );
 
     assert_eq!(
         key,
-        ("copilot".to_string(), Some("test-key".to_string()), None,)
+        (
+            "copilot".to_string(),
+            Some("test-key".to_string()),
+            None,
+            None,
+        )
     );
 }
 
@@ -374,6 +380,7 @@ fn client_cache_key_includes_base_url_when_set() {
         config.provider.clone(),
         config.api_key.clone(),
         config.base_url.clone(),
+        config.read_timeout_secs,
     );
 
     assert_eq!(
@@ -382,6 +389,7 @@ fn client_cache_key_includes_base_url_when_set() {
             "copilot".to_string(),
             Some("test-key".to_string()),
             Some("https://custom.example.com".to_string()),
+            None,
         )
     );
 }
@@ -679,11 +687,13 @@ fn provider_state_client_cache_key_contains_provider_and_api_key() {
         config.provider.clone(),
         config.api_key.clone(),
         config.base_url.clone(),
+        config.read_timeout_secs,
     );
 
     assert_eq!(key.0, "copilot");
     assert_eq!(key.1, Some("fake-key".to_string()));
     assert_eq!(key.2, None);
+    assert_eq!(key.3, None);
 }
 
 // ========================================================================

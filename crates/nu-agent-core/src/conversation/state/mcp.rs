@@ -63,6 +63,10 @@ impl McpState {
             // McpToolRegistry.contains() gates LLM visibility, so tools are hidden
             // without any disconnection or remove_tool calls.
             self.mcp_registry.set_server_enabled(server_name, false)?;
+            // Mark disconnected so lifecycle projection shows connected: false
+            if let Some(rt) = self.mcp_runtime.as_mut() {
+                rt.mark_disconnected(server_name);
+            }
             self.mcp_lifecycle_projection = rebuild_mcp_lifecycle_projection(
                 self.mcp_runtime.as_ref(),
                 &self.mcp_server_configs,

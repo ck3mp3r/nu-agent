@@ -176,7 +176,10 @@ fn classify_from_display(msg: &str) -> CompletionErrorKind {
 
     // ToolStructure — most specific (400 + tool keyword)
     if (lower.contains("invalid_request_body") || lower.contains("invalid_request_error"))
-        && (lower.contains("tool_use") || lower.contains("tool_result"))
+        && (lower.contains("tool_use")
+            || lower.contains("tool_result")
+            || lower.contains("call_id")
+            || lower.contains("function_call"))
     {
         return CompletionErrorKind::ToolStructure;
     }

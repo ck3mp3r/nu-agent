@@ -247,6 +247,15 @@ fn test_from_env_max_retries_and_delay() {
 }
 
 #[test]
+#[serial]
+fn test_from_env_read_timeout_secs() {
+    with_env_vars(vec![("AGENT_READ_TIMEOUT_SECS", "60")], || {
+        let config = Config::from_env("openai", "gpt-4");
+        assert_eq!(config.read_timeout_secs, Some(60u64));
+    });
+}
+
+#[test]
 fn test_merge_full_configs() {
     // Test merging two full configs - other should completely override self
     let base = Config {

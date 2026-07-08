@@ -49,7 +49,7 @@ Optional top-level fields:
 - `max_tool_turns` — maximum tool execution turns per conversation turn
 - `max_tool_calls_per_subturn` — maximum tool calls in a single LLM response (default: 10)
 - `max_tool_result_bytes` — truncation limit for tool results in bytes (default: 20_000, 0 = disable)
-- `read_timeout_secs` — HTTP read timeout in seconds (default: 30, set to 0 to disable)
+- `read_timeout_secs` — HTTP read timeout in seconds for inference API and MCP HTTP connections (default: 120). Set to 0 to disable.
 - `max_retries` — retry attempts for transient errors (default: 3)
 - `retry_base_delay_ms` — base backoff in ms, doubles each attempt, capped at 30s (default: 1000)
 - `model_context_tokens` — approximate context window for in-session token warnings (no auto-detection)
@@ -89,6 +89,7 @@ Highest to lowest:
 - `AGENT_CONTEXT_WARNING_THRESHOLD` — fraction of `AGENT_MODEL_CONTEXT_TOKENS` at which to emit a context-usage warning, `0.0`–`1.0` (default: `0.6`)
 - `AGENT_MAX_RETRIES` — retry attempts for transient errors (default: 3)
 - `AGENT_RETRY_BASE_DELAY_MS` — base backoff in ms, doubles each attempt, capped at 30s (default: 1000)
+- `AGENT_READ_TIMEOUT_SECS` — HTTP read timeout in seconds for inference API and MCP connections (default: 120). Set to 0 to disable.
 - `{PROVIDER}_API_KEY` (for providers with direct env naming, e.g. `OPENAI_API_KEY`)
 
 There is no `AGENT_MODEL`. Set the default model in plugin config.

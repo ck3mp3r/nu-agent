@@ -7,6 +7,10 @@ use crate::tools::mcp::{
     namespaced::NamespacedClientHandler,
 };
 
+/// Default read timeout for MCP HTTP/SSE transport connections in seconds.
+/// Fires only when no bytes are received for this duration — resets on each received chunk.
+const MCP_DEFAULT_READ_TIMEOUT_SECS: u64 = 120;
+
 pub struct McpRuntime {
     sessions: Vec<McpSessionHandle>,
     connected_servers: std::collections::BTreeSet<String>,
@@ -221,6 +225,17 @@ fn build_http_transport_config(
     Ok(config)
 }
 
+fn build_mcp_http_client(read_timeout_secs: u64) -> reqwest::Client {
+    let mut builder = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .pool_max_idle_per_host(0) // match rmcp's default_http_client() — avoids Delayed ACK stall
+        .pool_idle_timeout(Some(std::time::Duration::from_secs(55))); // evict before server closes
+    if read_timeout_secs > 0 {
+        builder = builder.read_timeout(std::time::Duration::from_secs(read_timeout_secs));
+    }
+    builder.build().expect("failed to build MCP HTTP client")
+}
+
 impl McpRuntime {
     pub fn has_sessions(&self) -> bool {
         !self.sessions.is_empty()
@@ -251,6 +266,14 @@ impl McpRuntime {
         self.sessions.extend(other.sessions);
         self.connected_servers.extend(other.connected_servers);
         self.discovered_tools.extend(other.discovered_tools);
+    }
+
+    /// Mark a server as disconnected — removes it from `connected_servers`.
+    /// Called when a transport error is detected and the server is being disabled.
+    /// The `McpSessionHandle` stays in `sessions` (sessions are one-shot; full
+    /// reconnect requires an agent restart). Tool calls will fail until reconnected.
+    pub fn mark_disconnected(&mut self, server_name: &str) {
+        self.connected_servers.remove(server_name);
     }
 }
 
@@ -366,7 +389,10 @@ pub(crate) async fn connect_server(
         }
         McpTransportType::Sse | McpTransportType::Http => {
             let config = build_http_transport_config(server)?;
-            let transport = rmcp::transport::StreamableHttpClientTransport::from_config(config);
+            let transport = rmcp::transport::StreamableHttpClientTransport::with_client(
+                build_mcp_http_client(MCP_DEFAULT_READ_TIMEOUT_SECS),
+                config,
+            );
             let (service, raw_tools) = handler
                 .connect(transport)
                 .await

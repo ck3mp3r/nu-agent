@@ -29,13 +29,13 @@ pub fn inject_missing_tool_results(messages: Vec<Message>) -> Vec<Message> {
     for msg in messages {
         match &msg {
             Message::Assistant { content, .. } => {
-                // Collect unpaired ToolCall IDs from this Assistant message.
-                let unpaired_ids: Vec<String> = content
+                // Collect unpaired ToolCall (id, call_id) pairs from this Assistant message.
+                let unpaired_calls: Vec<(String, Option<String>)> = content
                     .iter()
                     .filter_map(|item| match item {
                         AssistantContent::ToolCall(tc) => {
                             if !existing_result_ids.contains(&tc.id) {
-                                Some(tc.id.clone())
+                                Some((tc.id.clone(), tc.call_id.clone()))
                             } else {
                                 None
                             }
@@ -46,15 +46,15 @@ pub fn inject_missing_tool_results(messages: Vec<Message>) -> Vec<Message> {
 
                 result.push(msg);
 
-                if !unpaired_ids.is_empty() {
+                if !unpaired_calls.is_empty() {
                     // Build a single User message with one ToolResult per unpaired call.
-                    let tool_results: Vec<UserContent> = unpaired_ids
+                    let tool_results: Vec<UserContent> = unpaired_calls
                         .into_iter()
-                        .map(|id| {
+                        .map(|(id, call_id)| {
                             patch_count += 1;
                             UserContent::ToolResult(ToolResult {
                                 id,
-                                call_id: None,
+                                call_id,
                                 content: rig::one_or_many::OneOrMany::one(ToolResultContent::text(
                                     "[interrupted]",
                                 )),
