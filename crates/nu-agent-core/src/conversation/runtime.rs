@@ -375,6 +375,30 @@ where
             let _ = self.provider.switch_model(model);
         }
 
+        // Apply persona config overrides for in-session switch.
+        // On an explicit switch, persona values REPLACE the previous config values (not guarded by is_none()).
+        // Fields absent from the new persona (None) leave the current config unchanged.
+        if let Some(t) = result.temperature {
+            self.provider.provider_config_mut().temperature = Some(t);
+        }
+        if let Some(m) = result.max_tokens {
+            self.provider.provider_config_mut().max_tokens = Some(m);
+        }
+        if let Some(t) = result.max_tool_turns {
+            self.provider.provider_config_mut().max_tool_turns = Some(t);
+        }
+        if let Some(c) = result.max_tool_calls_per_subturn {
+            self.provider
+                .provider_config_mut()
+                .max_tool_calls_per_subturn = Some(c);
+        }
+        if let Some(b) = result.max_tool_result_bytes {
+            self.provider.provider_config_mut().max_tool_result_bytes = Some(b);
+        }
+        if let Some(p) = result.additional_params {
+            self.provider.provider_config_mut().additional_params = Some(p);
+        }
+
         // Reset tool definitions to baseline on agent switch
         self.tools.reset_to_baseline();
 

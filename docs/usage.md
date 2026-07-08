@@ -62,6 +62,13 @@ Persona file resolution (first match wins):
 name: coder
 description: Development agent focused on implementing features
 model: anthropic/claude-sonnet-4-20250514
+temperature: 0.2
+max_tokens: 8192
+max_tool_turns: 20
+max_tool_calls_per_subturn: 3
+max_tool_result_bytes: 50000
+additional_params:
+  thinking: disabled
 permissions:
   "*": "ask"
   "read": "allow"
@@ -72,10 +79,16 @@ permissions:
 ```
 
 All front matter keys are optional:
-- `name` - Agent identity (overridden by `--name` flag)
-- `description` - Persona summary
-- `model` - Default model (overridden by `--model` flag)
-- `permissions` - Authorization overlay (overridden by `--permissions` flag)
+- `name` — agent identity (overridden by `--name` flag)
+- `description` — persona summary shown in `agent list`
+- `model` — default model in `provider/model` format (overridden by `--model` flag)
+- `temperature` — response creativity, 0.0–2.0 (overridden by `--temperature` flag)
+- `max_tokens` — maximum tokens to generate
+- `max_tool_turns` — maximum tool execution turns per conversation turn
+- `max_tool_calls_per_subturn` — maximum tool calls per LLM sub-turn
+- `max_tool_result_bytes` — maximum bytes per tool result before truncation; 0 = unlimited
+- `additional_params` — provider-specific parameters (e.g. `thinking: disabled` for Anthropic)
+- `permissions` — authorization overlay (overridden by `--permissions` flag)
 
 **Precedence:** CLI flags > front matter > plugin config
 

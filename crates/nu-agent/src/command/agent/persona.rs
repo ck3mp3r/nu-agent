@@ -1,5 +1,5 @@
 use nu_plugin::EvaluatedCall;
-use nu_protocol::LabeledError;
+use nu_protocol::{LabeledError, Value};
 
 use nu_agent_core::config::{AgentsConfig, Config};
 use nu_agent_core::tools::authz::PermissionsOverlay;
@@ -118,6 +118,18 @@ pub(crate) fn resolve_persona(
         "effective model after persona merge: provider={}, model={}",
         config.provider,
         config.model
+    );
+
+    // Apply per-persona config overrides (CLI already wins via is_none() guard, except max_tool_turns)
+    let cli_max_turns_provided = call.get_flag::<Value>("max-turns").ok().flatten().is_some();
+    if let Some(ref p) = persona {
+        super::runtime_build::apply_persona_config(config, p, cli_max_turns_provided);
+    }
+    log::debug!(
+        "effective config after persona config merge: temperature={:?}, max_tokens={:?}, max_tool_turns={:?}",
+        config.temperature,
+        config.max_tokens,
+        config.max_tool_turns
     );
 
     Ok(PersonaResolution {

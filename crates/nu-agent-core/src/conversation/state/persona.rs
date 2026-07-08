@@ -14,6 +14,12 @@ pub struct PersonaState {
 pub struct SwitchAgentResult {
     pub identity: String,
     pub model: Option<String>,
+    pub temperature: Option<f64>,
+    pub max_tokens: Option<u32>,
+    pub max_tool_turns: Option<u32>,
+    pub max_tool_calls_per_subturn: Option<usize>,
+    pub max_tool_result_bytes: Option<usize>,
+    pub additional_params: Option<serde_json::Value>,
 }
 
 impl PersonaState {
@@ -102,6 +108,12 @@ impl PersonaState {
         Ok(SwitchAgentResult {
             identity,
             model: parsed.model,
+            temperature: parsed.temperature,
+            max_tokens: parsed.max_tokens,
+            max_tool_turns: parsed.max_tool_turns,
+            max_tool_calls_per_subturn: parsed.max_tool_calls_per_subturn,
+            max_tool_result_bytes: parsed.max_tool_result_bytes,
+            additional_params: parsed.additional_params,
         })
     }
 

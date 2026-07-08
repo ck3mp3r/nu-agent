@@ -58,6 +58,9 @@ Cargo.lock.msrv
 # c5t tool database
 .c5t/
 
+# local scratch / tool artefacts
+tmp/
+
 
 # Added by cargo
 

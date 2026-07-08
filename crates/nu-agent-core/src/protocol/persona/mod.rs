@@ -4,6 +4,8 @@ use pulldown_cmark::{Event, MetadataBlockKind, Options, Parser, Tag, TagEnd};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use serde_json::Value as JsonValue;
+
 /// Error type for persona file resolution
 #[derive(Debug)]
 pub enum PersonaError {
@@ -105,6 +107,12 @@ pub struct ParsedPersona {
     pub description: Option<String>,
     pub model: Option<String>,
     pub permissions: Option<noyalib::Mapping>,
+    pub temperature: Option<f64>,
+    pub max_tokens: Option<u32>,
+    pub max_tool_turns: Option<u32>,
+    pub max_tool_calls_per_subturn: Option<usize>,
+    pub max_tool_result_bytes: Option<usize>,
+    pub additional_params: Option<JsonValue>,
     pub body: String,
 }
 
@@ -123,6 +131,12 @@ pub fn interpret_front_matter(
             description: None,
             model: None,
             permissions: None,
+            temperature: None,
+            max_tokens: None,
+            max_tool_turns: None,
+            max_tool_calls_per_subturn: None,
+            max_tool_result_bytes: None,
+            additional_params: None,
             body,
         });
     };
@@ -131,6 +145,12 @@ pub fn interpret_front_matter(
     let mut description = None;
     let mut model = None;
     let mut permissions = None;
+    let mut temperature = None;
+    let mut max_tokens = None;
+    let mut max_tool_turns = None;
+    let mut max_tool_calls_per_subturn = None;
+    let mut max_tool_result_bytes = None;
+    let mut additional_params = None;
 
     for (key, value) in mapping.iter() {
         match key.as_str() {
@@ -186,6 +206,111 @@ pub fn interpret_front_matter(
                 );
                 log::trace!("interpret_front_matter: has_permissions=true");
             }
+            "temperature" => {
+                temperature = Some(match value {
+                    noyalib::Value::Number(n) => Ok(n.as_f64()),
+                    _ => Err(FrontMatterError::InvalidField {
+                        key: "temperature".to_string(),
+                        expected: "number".to_string(),
+                        got: value_type_name(value),
+                    }),
+                }?);
+                log::trace!("interpret_front_matter: temperature={temperature:?}");
+            }
+            "max_tokens" => {
+                let n = match value {
+                    noyalib::Value::Number(n) => {
+                        n.as_u64().ok_or_else(|| FrontMatterError::InvalidField {
+                            key: "max_tokens".to_string(),
+                            expected: "unsigned integer".to_string(),
+                            got: value_type_name(value),
+                        })
+                    }
+                    _ => Err(FrontMatterError::InvalidField {
+                        key: "max_tokens".to_string(),
+                        expected: "unsigned integer".to_string(),
+                        got: value_type_name(value),
+                    }),
+                }?;
+                max_tokens = Some(n as u32);
+                log::trace!("interpret_front_matter: max_tokens={max_tokens:?}");
+            }
+            "max_tool_turns" => {
+                let n = match value {
+                    noyalib::Value::Number(n) => {
+                        n.as_u64().ok_or_else(|| FrontMatterError::InvalidField {
+                            key: "max_tool_turns".to_string(),
+                            expected: "unsigned integer".to_string(),
+                            got: value_type_name(value),
+                        })
+                    }
+                    _ => Err(FrontMatterError::InvalidField {
+                        key: "max_tool_turns".to_string(),
+                        expected: "unsigned integer".to_string(),
+                        got: value_type_name(value),
+                    }),
+                }?;
+                max_tool_turns = Some(n as u32);
+                log::trace!("interpret_front_matter: max_tool_turns={max_tool_turns:?}");
+            }
+            "max_tool_calls_per_subturn" => {
+                let n = match value {
+                    noyalib::Value::Number(n) => {
+                        n.as_u64().ok_or_else(|| FrontMatterError::InvalidField {
+                            key: "max_tool_calls_per_subturn".to_string(),
+                            expected: "unsigned integer".to_string(),
+                            got: value_type_name(value),
+                        })
+                    }
+                    _ => Err(FrontMatterError::InvalidField {
+                        key: "max_tool_calls_per_subturn".to_string(),
+                        expected: "unsigned integer".to_string(),
+                        got: value_type_name(value),
+                    }),
+                }?;
+                max_tool_calls_per_subturn = Some(n as usize);
+                log::trace!(
+                    "interpret_front_matter: max_tool_calls_per_subturn={max_tool_calls_per_subturn:?}"
+                );
+            }
+            "max_tool_result_bytes" => {
+                let n = match value {
+                    noyalib::Value::Number(n) => {
+                        n.as_u64().ok_or_else(|| FrontMatterError::InvalidField {
+                            key: "max_tool_result_bytes".to_string(),
+                            expected: "unsigned integer".to_string(),
+                            got: value_type_name(value),
+                        })
+                    }
+                    _ => Err(FrontMatterError::InvalidField {
+                        key: "max_tool_result_bytes".to_string(),
+                        expected: "unsigned integer".to_string(),
+                        got: value_type_name(value),
+                    }),
+                }?;
+                max_tool_result_bytes = Some(n as usize);
+                log::trace!(
+                    "interpret_front_matter: max_tool_result_bytes={max_tool_result_bytes:?}"
+                );
+            }
+            "additional_params" => {
+                let m = value
+                    .as_mapping()
+                    .ok_or_else(|| FrontMatterError::InvalidField {
+                        key: "additional_params".to_string(),
+                        expected: "mapping".to_string(),
+                        got: value_type_name(value),
+                    })?;
+                additional_params =
+                    Some(
+                        serde_json::to_value(m).map_err(|e| FrontMatterError::InvalidField {
+                            key: "additional_params".to_string(),
+                            expected: "JSON-serialisable mapping".to_string(),
+                            got: e.to_string(),
+                        })?,
+                    );
+                log::trace!("interpret_front_matter: has_additional_params=true");
+            }
             _ => {
                 // Unknown keys are silently ignored
                 log::trace!("interpret_front_matter: ignoring unknown key={key:?}");
@@ -198,6 +323,12 @@ pub fn interpret_front_matter(
         description,
         model,
         permissions,
+        temperature,
+        max_tokens,
+        max_tool_turns,
+        max_tool_calls_per_subturn,
+        max_tool_result_bytes,
+        additional_params,
         body,
     })
 }

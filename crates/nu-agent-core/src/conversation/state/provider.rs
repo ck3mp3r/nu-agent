@@ -99,6 +99,10 @@ impl ProviderManager for ProviderState {
         &self.config
     }
 
+    fn provider_config_mut(&mut self) -> &mut Config {
+        &mut self.config
+    }
+
     fn ensure_client_cached(&mut self) -> Result<(), LabeledError> {
         self.ensure_client_cached()
     }

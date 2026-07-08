@@ -23,6 +23,9 @@ pub trait ProviderManager {
     /// Return the current runtime config.
     fn provider_config(&self) -> &Config;
 
+    /// Return a mutable reference to the current runtime config.
+    fn provider_config_mut(&mut self) -> &mut Config;
+
     /// Ensure the cached client is up to date for the current config.
     /// Idempotent when the key is unchanged.
     fn ensure_client_cached(&mut self) -> Result<(), LabeledError>;

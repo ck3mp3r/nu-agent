@@ -1,10 +1,7 @@
 use super::test_helpers::{
     MockEngineInterface, create_test_agent, create_test_call, parse_agent_invocation_with_signature,
 };
-use super::{
-    EngineConfigInterface, extract_flag_config, extract_tool_timeout, extract_tools_from_call,
-    runtime_build,
-};
+use super::{EngineConfigInterface, extract_tool_timeout, extract_tools_from_call, runtime_build};
 use nu_agent_core::config::Config;
 use nu_plugin::{EvaluatedCall, SimplePluginCommand};
 use nu_protocol::{ParseError, Span, Spanned, SyntaxShape, Value, record};
@@ -526,113 +523,6 @@ fn agent_command_signature_quiet_and_verbose_help_text_describes_stderr_ux_behav
     );
 }
 
-#[test]
-fn extract_flag_config_with_no_flags() {
-    let call = create_test_call(vec![]);
-    let config = extract_flag_config(&call);
-
-    // With no flags, all optional fields should be None
-    // Required fields (provider, model) will be empty strings
-    assert_eq!(config.provider, "");
-    assert_eq!(config.model, "");
-    assert_eq!(config.api_key, None);
-    assert_eq!(config.base_url, None);
-    assert_eq!(config.temperature, None);
-    assert_eq!(config.max_tokens, None);
-    assert_eq!(config.max_context_tokens, None);
-    assert_eq!(config.max_output_tokens, None);
-    assert_eq!(config.max_tool_turns, None);
-}
-
-#[test]
-fn extract_flag_config_with_provider_and_model() {
-    let call = create_test_call(vec![("model", Value::test_string("openai/gpt-4"))]);
-
-    let config = extract_flag_config(&call);
-
-    assert_eq!(config.provider, "");
-    assert_eq!(config.model, "openai/gpt-4");
-    assert_eq!(config.api_key, None);
-    assert_eq!(config.temperature, None);
-}
-
-#[test]
-fn extract_flag_config_with_all_string_flags() {
-    let call = create_test_call(vec![
-        ("model", Value::test_string("anthropic/claude-3-opus")),
-        ("api-key", Value::test_string("test-key-123")),
-        ("base-url", Value::test_string("https://custom.api.com")),
-    ]);
-
-    let config = extract_flag_config(&call);
-
-    assert_eq!(config.provider, "");
-    assert_eq!(config.model, "anthropic/claude-3-opus");
-    assert_eq!(config.api_key, Some("test-key-123".to_string()));
-    assert_eq!(config.base_url, Some("https://custom.api.com".to_string()));
-}
-
-#[test]
-fn extract_flag_config_with_temperature() {
-    let call = create_test_call(vec![
-        ("model", Value::test_string("openai/gpt-4")),
-        ("temperature", Value::test_float(0.7)),
-    ]);
-
-    let config = extract_flag_config(&call);
-
-    assert_eq!(config.temperature, Some(0.7));
-}
-
-#[test]
-fn extract_flag_config_with_all_int_flags() {
-    let call = create_test_call(vec![
-        ("model", Value::test_string("openai/gpt-4")),
-        ("max-context-tokens", Value::test_int(8000)),
-        ("max-output-tokens", Value::test_int(2000)),
-        ("max-turns", Value::test_int(10)),
-    ]);
-
-    let config = extract_flag_config(&call);
-
-    assert_eq!(config.max_tokens, None);
-    assert_eq!(config.max_context_tokens, Some(8000));
-    assert_eq!(config.max_output_tokens, Some(2000));
-    assert_eq!(config.max_tool_turns, Some(10));
-}
-
-#[test]
-fn extract_flag_config_with_mixed_flags() {
-    let call = create_test_call(vec![
-        ("model", Value::test_string("anthropic/claude-3")),
-        ("temperature", Value::test_float(1.0)),
-        ("base-url", Value::test_string("https://api.example.com")),
-    ]);
-
-    let config = extract_flag_config(&call);
-
-    assert_eq!(config.provider, "");
-    assert_eq!(config.model, "anthropic/claude-3");
-    assert_eq!(config.temperature, Some(1.0));
-    assert_eq!(config.max_tokens, None);
-    assert_eq!(config.base_url, Some("https://api.example.com".to_string()));
-    assert_eq!(config.api_key, None);
-    assert_eq!(config.max_context_tokens, None);
-}
-
-#[test]
-fn extract_flag_config_handles_negative_ints_as_none() {
-    let call = create_test_call(vec![
-        ("model", Value::test_string("openai/gpt-4")),
-        ("max-output-tokens", Value::test_int(-100)),
-    ]);
-
-    let config = extract_flag_config(&call);
-
-    // Negative integers should be treated as None
-    assert_eq!(config.max_output_tokens, None);
-}
-
 // ============================================================================
 // Config Resolution Tests - Verify precedence and merging
 // ============================================================================
@@ -814,24 +704,25 @@ mod config_resolution_integration {
             std::env::set_var("AGENT_TEMPERATURE", "0.5");
         }
 
-        let plugin_config = Value::test_record(
-            vec![
-                ("provider".to_string(), Value::test_string("openai")),
-                ("model".to_string(), Value::test_string("gpt-4")),
-                ("temperature".to_string(), Value::test_float(0.9)),
-            ]
-            .into_iter()
-            .collect(),
-        );
+        // New-format config: providers block required for resolve_config() to succeed
+        let plugin_config = Value::test_record(record! {
+            "model" => Value::test_string("openai/gpt-4"),
+            "providers" => Value::test_record(record! {
+                "openai" => Value::test_record(record! {
+                    "models" => Value::test_record(record! {
+                        "gpt-4" => Value::test_record(record! {
+                            "temperature" => Value::test_float(0.9),
+                        }),
+                    }),
+                }),
+            }),
+        });
 
         let mock = MockEngineInterface::with_config(plugin_config);
         let call = create_test_call(vec![]);
 
         let result = resolve_config(&mock, &call);
-        if let Err(ref e) = result {
-            eprintln!("Error: {:?}", e);
-        }
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "resolve_config failed: {:?}", result);
 
         let config = result.unwrap();
         assert_eq!(config.temperature, Some(0.9)); // Plugin wins over env
@@ -847,22 +738,38 @@ mod config_resolution_integration {
     #[test]
     #[serial] // Prevent parallel execution due to env vars
     fn resolve_config_flags_override_everything() {
-        // Set env vars
+        // Set env vars for the resolved provider (openai, after --model override)
         unsafe {
-            std::env::set_var("ANTHROPIC_API_KEY", "env_key");
+            std::env::set_var("OPENAI_API_KEY", "env_key");
             std::env::set_var("AGENT_TEMPERATURE", "0.5");
         }
 
-        let plugin_config = Value::test_record(
-            vec![
-                ("provider".to_string(), Value::test_string("anthropic")),
-                ("model".to_string(), Value::test_string("claude-3")),
-                ("temperature".to_string(), Value::test_float(0.8)),
-                ("max_output_tokens".to_string(), Value::test_int(1000)),
-            ]
-            .into_iter()
-            .collect(),
-        );
+        // New-format config: both providers present so --model openai/gpt-4 can override
+        let plugin_config = Value::test_record(record! {
+            "model" => Value::test_string("anthropic/claude-3"),
+            "providers" => Value::test_record(record! {
+                "anthropic" => Value::test_record(record! {
+                    "models" => Value::test_record(record! {
+                        "claude-3" => Value::test_record(record! {
+                            "temperature" => Value::test_float(0.8),
+                            "limit" => Value::test_record(record! {
+                                "output" => Value::test_int(1000),
+                            }),
+                        }),
+                    }),
+                }),
+                "openai" => Value::test_record(record! {
+                    "models" => Value::test_record(record! {
+                        "gpt-4" => Value::test_record(record! {
+                            "temperature" => Value::test_float(0.8),
+                            "limit" => Value::test_record(record! {
+                                "output" => Value::test_int(1000),
+                            }),
+                        }),
+                    }),
+                }),
+            }),
+        });
 
         let mock = MockEngineInterface::with_config(plugin_config);
         let call = create_test_call(vec![
@@ -871,18 +778,18 @@ mod config_resolution_integration {
         ]);
 
         let result = resolve_config(&mock, &call);
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "resolve_config failed: {:?}", result);
 
         let config = result.unwrap();
         assert_eq!(config.provider, "openai"); // Flag wins
         assert_eq!(config.model, "gpt-4"); // Flag wins
         assert_eq!(config.temperature, Some(1.2)); // Flag wins
         assert_eq!(config.max_output_tokens, Some(1000)); // Plugin value (no flag override)
-        assert_eq!(config.api_key, Some("env_key".to_string())); // Env provides
+        assert_eq!(config.api_key, Some("env_key".to_string())); // Env provides for resolved provider
 
         // Cleanup
         unsafe {
-            std::env::remove_var("ANTHROPIC_API_KEY");
+            std::env::remove_var("OPENAI_API_KEY");
             std::env::remove_var("AGENT_TEMPERATURE");
         }
     }
@@ -926,6 +833,31 @@ mod config_resolution_integration {
         // Just verify we got an error - the exact error message structure may vary
         let _err = result.unwrap_err();
         // Error should be about invalid config format
+    }
+
+    #[test]
+    fn resolve_config_errors_on_missing_providers() {
+        // A plugin config that has a model key but no providers block must error,
+        // not silently fall through to the legacy path.
+        let plugin_config = Value::test_record(record! {
+            "model" => Value::test_string("openai/gpt-4"),
+        });
+
+        let mock = MockEngineInterface::with_config(plugin_config);
+        let call = create_test_call(vec![]);
+
+        let result = resolve_config(&mock, &call);
+        assert!(
+            result.is_err(),
+            "expected Err for config without providers, got: {result:?}"
+        );
+
+        let err = result.unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("providers"),
+            "error message should mention 'providers', got: {msg}"
+        );
     }
 }
 
@@ -1372,23 +1304,6 @@ mod new_plugin_config_tests {
     }
 
     #[test]
-    fn resolve_config_old_flow_parses_and_trims_preamble() {
-        let plugin_config = Value::test_record(record! {
-            "provider" => Value::test_string("openai"),
-            "model" => Value::test_string("gpt-4"),
-            "preamble" => Value::test_string("  legacy preamble  "),
-        });
-
-        let config = resolve_config(
-            &MockEngineInterface::with_config(plugin_config),
-            &create_test_call(vec![]),
-        )
-        .expect("resolve config");
-
-        assert_eq!(config.preamble.as_deref(), Some("legacy preamble"));
-    }
-
-    #[test]
     #[serial]
     fn resolve_config_model_flag_overrides_small_flag() {
         use std::collections::HashMap;
@@ -1454,7 +1369,7 @@ mod new_plugin_config_tests {
 
     #[test]
     #[serial]
-    fn resolve_config_old_flow_accepts_model_provider_format_without_provider_flag() {
+    fn resolve_config_no_plugin_config_requires_model_flag() {
         let mock = MockEngineInterface::new();
 
         let call = create_test_call(vec![("model", Value::test_string("openai/gpt-4"))]);

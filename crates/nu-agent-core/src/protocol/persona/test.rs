@@ -399,6 +399,154 @@ fn interpret_unknown_keys_ignored() {
 }
 
 #[test]
+fn interpret_all_new_fields_parsed() {
+    let mut mapping = noyalib::Mapping::new();
+    mapping.insert(
+        "temperature",
+        noyalib::Value::Number(noyalib::Number::Float(0.7)),
+    );
+    mapping.insert(
+        "max_tokens",
+        noyalib::Value::Number(noyalib::Number::Integer(2048)),
+    );
+    mapping.insert(
+        "max_tool_turns",
+        noyalib::Value::Number(noyalib::Number::Integer(10)),
+    );
+    mapping.insert(
+        "max_tool_calls_per_subturn",
+        noyalib::Value::Number(noyalib::Number::Integer(5)),
+    );
+    mapping.insert(
+        "max_tool_result_bytes",
+        noyalib::Value::Number(noyalib::Number::Integer(10000)),
+    );
+    let mut params = noyalib::Mapping::new();
+    params.insert("thinking", noyalib::Value::String("enabled".to_string()));
+    mapping.insert("additional_params", noyalib::Value::Mapping(params));
+
+    let persona = interpret_front_matter(Some(&mapping), "body".to_string())
+        .expect("should parse all new fields");
+
+    assert_eq!(persona.temperature, Some(0.7));
+    assert_eq!(persona.max_tokens, Some(2048));
+    assert_eq!(persona.max_tool_turns, Some(10));
+    assert_eq!(persona.max_tool_calls_per_subturn, Some(5));
+    assert_eq!(persona.max_tool_result_bytes, Some(10000));
+    assert!(persona.additional_params.is_some());
+    assert_eq!(
+        persona.additional_params.as_ref().unwrap()["thinking"],
+        "enabled"
+    );
+}
+
+#[test]
+fn interpret_new_fields_wrong_type_errors() {
+    let bad_cases: &[(&str, noyalib::Value)] = &[
+        ("temperature", noyalib::Value::String("hot".to_string())),
+        ("max_tokens", noyalib::Value::String("many".to_string())),
+        ("max_tool_turns", noyalib::Value::String("lots".to_string())),
+        (
+            "max_tool_calls_per_subturn",
+            noyalib::Value::String("several".to_string()),
+        ),
+        (
+            "max_tool_result_bytes",
+            noyalib::Value::String("big".to_string()),
+        ),
+        (
+            "additional_params",
+            noyalib::Value::String("not-a-map".to_string()),
+        ),
+    ];
+
+    for (key, bad_value) in bad_cases {
+        let mut mapping = noyalib::Mapping::new();
+        mapping.insert(*key, bad_value.clone());
+        let result = interpret_front_matter(Some(&mapping), "body".to_string());
+        assert!(result.is_err(), "expected error for key={key}, got ok");
+        if let Err(FrontMatterError::InvalidField { key: k, .. }) = result {
+            assert_eq!(&k, key, "wrong key in error for {key}");
+        } else {
+            panic!("expected InvalidField error for key={key}, got different error type");
+        }
+    }
+}
+
+#[test]
+fn interpret_integer_fields_reject_negatives() {
+    let integer_fields = [
+        "max_tokens",
+        "max_tool_turns",
+        "max_tool_calls_per_subturn",
+        "max_tool_result_bytes",
+    ];
+    for field in &integer_fields {
+        let mut mapping = noyalib::Mapping::new();
+        mapping.insert(*field, noyalib::Value::Number(noyalib::Number::Integer(-1)));
+        let result = interpret_front_matter(Some(&mapping), "body".to_string());
+        assert!(
+            result.is_err(),
+            "expected error for negative {field}, got ok"
+        );
+    }
+}
+
+#[test]
+fn interpret_no_front_matter_new_fields_none() {
+    let persona = interpret_front_matter(None, "body".to_string())
+        .expect("no-front-matter path should succeed");
+    assert_eq!(persona.temperature, None);
+    assert_eq!(persona.max_tokens, None);
+    assert_eq!(persona.max_tool_turns, None);
+    assert_eq!(persona.max_tool_calls_per_subturn, None);
+    assert_eq!(persona.max_tool_result_bytes, None);
+    assert_eq!(persona.additional_params, None);
+}
+
+#[test]
+fn parse_full_front_matter_with_config_fields() {
+    // End-to-end: parse a persona Markdown string through
+    // PulldownCmarkFrontMatterParser + interpret_front_matter.
+    // Tests the flat numeric fields; additional_params (nested YAML) is
+    // covered by interpret_all_new_fields_parsed which constructs the
+    // noyalib Mapping directly.
+    let input = "---\n\
+name: coder\n\
+description: A focused coding agent\n\
+model: openai/gpt-4o\n\
+temperature: 0.2\n\
+max_tokens: 8192\n\
+max_tool_turns: 20\n\
+max_tool_calls_per_subturn: 3\n\
+max_tool_result_bytes: 50000\n\
+---\n\
+\n\
+You are a focused coding agent.\n";
+
+    let parser = PulldownCmarkFrontMatterParser;
+    let raw = parser.parse(input).expect("parse should succeed");
+    let persona = interpret_front_matter(raw.front_matter.as_ref(), raw.body)
+        .expect("interpret should succeed");
+
+    assert_eq!(persona.name, Some("coder".to_string()));
+    assert_eq!(persona.model, Some("openai/gpt-4o".to_string()));
+    assert!(
+        (persona.temperature.expect("temperature should be Some") - 0.2).abs() < 1e-9,
+        "temperature should be approximately 0.2"
+    );
+    assert_eq!(persona.max_tokens, Some(8192));
+    assert_eq!(persona.max_tool_turns, Some(20));
+    assert_eq!(persona.max_tool_calls_per_subturn, Some(3));
+    assert_eq!(persona.max_tool_result_bytes, Some(50000));
+    assert_eq!(persona.additional_params, None);
+    assert!(
+        persona.body.contains("focused coding agent"),
+        "body should contain 'focused coding agent'"
+    );
+}
+
+#[test]
 fn interpret_all_fields_together() {
     let mut mapping = noyalib::Mapping::new();
     mapping.insert("name", noyalib::Value::String("full-agent".to_string()));

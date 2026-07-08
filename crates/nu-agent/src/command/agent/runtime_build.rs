@@ -28,7 +28,7 @@ impl EngineConfigInterface for EngineInterface {
 
 /// Resolve configuration from all sources with proper precedence.
 ///
-/// NEW Resolution pipeline:
+/// Resolution pipeline:
 /// 1. Parse PluginConfig from $env.config.plugins.agent (if present)
 /// 2. Determine active model:
 ///    - If --model flag provided: use it (provider/model format)
@@ -38,10 +38,8 @@ impl EngineConfigInterface for EngineInterface {
 /// 4. Merge with flag overrides (temperature, max-context/output-tokens, etc.)
 /// 5. Validate and return
 ///
-/// FALLBACK for backward compatibility:
-/// - If plugin config doesn't have new structure (no "providers" field)
-/// - Fall back to OLD Config::from_plugin_config() behavior
-/// - Model override remains authoritative via --model (provider/model format)
+/// When no plugin config is present, --model is required. Config is built
+/// directly from env vars and CLI flags without going through PluginConfig.
 ///
 /// # Arguments
 /// * `engine` - Engine interface for accessing plugin config
@@ -53,89 +51,98 @@ pub fn resolve_config<E: EngineConfigInterface>(
     engine: &E,
     call: &EvaluatedCall,
 ) -> Result<Config, LabeledError> {
-    // Step 1: Get plugin config value (if present)
     let plugin_config_opt = engine.get_plugin_config()?;
 
-    // Step 2: Try NEW plugin config structure first
     if let Some(ref plugin_value) = plugin_config_opt {
-        // Try to parse as NEW PluginConfig structure
-        if let Ok(plugin_config) = PluginConfig::from_plugin_config(plugin_value) {
-            // NEW FLOW: Use PluginConfig
-            return resolve_with_new_config(plugin_config, call);
-        }
-        // If parsing failed, fall through to OLD flow
+        let plugin_config = PluginConfig::from_plugin_config(plugin_value)?;
+        return resolve_with_new_config(plugin_config, call);
     }
 
-    // Step 3: FALLBACK to OLD flow for backward compatibility
-    resolve_with_old_config(plugin_config_opt, call)
-}
+    // No plugin config — require --model flag; build Config from env + flags
+    let model_str = call
+        .get_flag::<Value>("model")
+        .ok()
+        .flatten()
+        .and_then(|v| v.as_str().ok().map(|s| s.to_string()))
+        .ok_or_else(|| {
+            LabeledError::new("No configuration found").with_label(
+                "Provide $env.config.plugins.agent or --model flag",
+                call.head,
+            )
+        })?;
 
-/// Extract configuration from command-line flags.
-///
-/// Reads flags from the EvaluatedCall and returns a Config with values for
-/// provided flags and None for unprovided flags.
-///
-/// # Arguments
-/// * `call` - The EvaluatedCall containing command flags
-///
-/// # Returns
-/// Config with values from flags or Config::default() fields for unprovided flags
-pub fn extract_flag_config(call: &EvaluatedCall) -> Config {
-    // Helper to safely extract string flag
-    fn get_string_flag(call: &EvaluatedCall, name: &str) -> Option<String> {
-        call.get_flag(name)
-            .ok()
-            .flatten()
-            .and_then(|v: Value| v.as_str().map(|s| s.to_string()).ok())
+    let (provider, model) = model_str.split_once('/').ok_or_else(|| {
+        LabeledError::new("Invalid --model format")
+            .with_label("Expected provider/model (e.g. openai/gpt-4)", call.head)
+    })?;
+
+    if provider.is_empty() || model.is_empty() {
+        return Err(LabeledError::new("Invalid --model format")
+            .with_label("Provider and model must both be non-empty", call.head));
     }
 
-    // Helper to safely extract float flag
-    fn get_float_flag(call: &EvaluatedCall, name: &str) -> Option<f64> {
-        call.get_flag(name)
-            .ok()
-            .flatten()
-            .and_then(|v: Value| v.as_float().ok())
+    let mut config = Config::from_env(provider, model);
+    config.provider = provider.to_string();
+    config.model = model.to_string();
+
+    // Apply CLI flag overrides (same fields as resolve_with_new_config)
+    if let Some(api_key) = call
+        .get_flag::<Value>("api-key")
+        .ok()
+        .flatten()
+        .and_then(|v| v.as_str().ok().map(|s| s.to_string()))
+    {
+        config.api_key = Some(api_key);
+    }
+    if let Some(base_url) = call
+        .get_flag::<Value>("base-url")
+        .ok()
+        .flatten()
+        .and_then(|v| v.as_str().ok().map(|s| s.to_string()))
+    {
+        config.base_url = Some(base_url);
+    }
+    if let Some(temperature) = call
+        .get_flag::<Value>("temperature")
+        .ok()
+        .flatten()
+        .and_then(|v| v.as_float().ok())
+    {
+        config.temperature = Some(temperature);
+    }
+    if let Some(max_context) = call
+        .get_flag::<Value>("max-context-tokens")
+        .ok()
+        .flatten()
+        .and_then(|v| v.as_int().ok())
+        .and_then(|i| if i >= 0 { Some(i as u32) } else { None })
+    {
+        config.max_context_tokens = Some(max_context);
+    }
+    if let Some(max_output) = call
+        .get_flag::<Value>("max-output-tokens")
+        .ok()
+        .flatten()
+        .and_then(|v| v.as_int().ok())
+        .and_then(|i| if i >= 0 { Some(i as u32) } else { None })
+    {
+        config.max_output_tokens = Some(max_output);
+    }
+    if let Some(max_turns) = call
+        .get_flag::<Value>("max-turns")
+        .ok()
+        .flatten()
+        .and_then(|v| v.as_int().ok())
+        .and_then(|i| if i >= 0 { Some(i as u32) } else { None })
+    {
+        config.max_tool_turns = Some(max_turns);
     }
 
-    // Helper to safely extract u32 flag (from i64, rejecting negatives)
-    fn get_u32_flag(call: &EvaluatedCall, name: &str) -> Option<u32> {
-        call.get_flag(name)
-            .ok()
-            .flatten()
-            .and_then(|v: Value| v.as_int().ok())
-            .and_then(|i| if i >= 0 { Some(i as u32) } else { None })
-    }
+    config
+        .validate()
+        .map_err(|msg| LabeledError::new("Config validation failed").with_label(msg, call.head))?;
 
-    // Extract all flags
-    let model = get_string_flag(call, "model").unwrap_or_default();
-    let api_key = get_string_flag(call, "api-key");
-    let base_url = get_string_flag(call, "base-url");
-    let temperature = get_float_flag(call, "temperature");
-    let max_context_tokens = get_u32_flag(call, "max-context-tokens");
-    let max_output_tokens = get_u32_flag(call, "max-output-tokens");
-    let max_tool_turns = get_u32_flag(call, "max-turns");
-
-    Config {
-        provider: String::new(),
-        provider_impl: None,
-        model,
-        api_key,
-        base_url,
-        temperature,
-        max_tokens: None,
-        max_context_tokens,
-        max_output_tokens,
-        max_tool_turns,
-        preamble: None,
-        read_timeout_secs: None,
-        max_tool_result_bytes: None,
-        model_context_tokens: None,
-        context_warning_threshold: None,
-        max_retries: None,
-        retry_base_delay_ms: None,
-        max_tool_calls_per_subturn: None,
-        additional_params: None,
-    }
+    Ok(config)
 }
 
 /// NEW resolution flow using PluginConfig structure
@@ -247,74 +254,6 @@ pub fn resolve_with_new_config(
     Ok(config)
 }
 
-/// OLD resolution flow for backward compatibility
-pub fn resolve_with_old_config(
-    plugin_config_opt: Option<Value>,
-    call: &EvaluatedCall,
-) -> Result<Config, LabeledError> {
-    // Step 1: Extract flag config first
-    let flag_config = extract_flag_config(call);
-    let model_override = if flag_config.model.is_empty() {
-        None
-    } else {
-        let (provider, model) = flag_config.model.split_once('/').ok_or_else(|| {
-            LabeledError::new("Invalid --model format")
-                .with_label("Expected provider/model (e.g. openai/gpt-4)", call.head)
-        })?;
-
-        if provider.is_empty() || model.is_empty() {
-            return Err(LabeledError::new("Invalid --model format")
-                .with_label("Provider and model must both be non-empty", call.head));
-        }
-
-        Some((provider.to_string(), model.to_string()))
-    };
-
-    // Step 2: Determine provider/model for env lookup
-    // Use plugin config if available, then flags, then default
-    let (provider_hint, model_hint) = if let Some(ref plugin_value) = plugin_config_opt {
-        // Try to extract provider/model from plugin config for env lookup
-        let plugin_parsed = Config::from_plugin_config(plugin_value)?;
-        (plugin_parsed.provider.clone(), plugin_parsed.model.clone())
-    } else if let Some((provider, model)) = model_override.as_ref() {
-        (provider.clone(), model.clone())
-    } else {
-        ("openai".to_string(), "gpt-4".to_string())
-    };
-
-    // Step 3: Start with defaults and merge environment config
-    let env_config = Config::from_env(&provider_hint, &model_hint);
-    let mut config = Config::default().merge(env_config);
-
-    // Step 4: Merge plugin config if present
-    if let Some(plugin_value) = plugin_config_opt {
-        let plugin_config = Config::from_plugin_config(&plugin_value)?;
-        config = config.merge(plugin_config);
-    }
-
-    // Step 5: Merge flag config (highest precedence) - only if values are non-empty
-    // For required fields, only override if non-empty
-    if let Some((provider, model)) = model_override {
-        config.provider = provider;
-        config.model = model;
-    }
-    // For optional fields, use standard merge
-    config.api_key = flag_config.api_key.or(config.api_key);
-    config.base_url = flag_config.base_url.or(config.base_url);
-    config.temperature = flag_config.temperature.or(config.temperature);
-    config.max_tokens = flag_config.max_tokens.or(config.max_tokens);
-    config.max_context_tokens = flag_config.max_context_tokens.or(config.max_context_tokens);
-    config.max_output_tokens = flag_config.max_output_tokens.or(config.max_output_tokens);
-    config.max_tool_turns = flag_config.max_tool_turns.or(config.max_tool_turns);
-
-    // Step 6: Validate final config
-    config
-        .validate()
-        .map_err(|msg| LabeledError::new("Config validation failed").with_label(msg, call.head))?;
-
-    Ok(config)
-}
-
 /// Apply persona model override if CLI --model was not provided.
 /// Returns true if persona model was applied.
 pub(crate) fn apply_persona_model(
@@ -336,6 +275,41 @@ pub(crate) fn apply_persona_model(
     config.provider_impl = None;
     log::debug!("apply_persona_model: overriding to provider={provider}, model={model}");
     true
+}
+
+/// Apply per-persona config overrides to runtime Config.
+///
+/// Persona front matter sits between CLI flags and plugin/env/defaults in the precedence chain:
+///   CLI flags > persona front matter > plugin config / env / built-in defaults
+///
+/// `cli_max_turns_provided`: true when the user explicitly passed the max-turns CLI flag.
+/// This is needed because `max_tool_turns` may already be `Some(20)` from the pipeline-mode
+/// default (not a CLI flag) — persona must override that default.
+pub(crate) fn apply_persona_config(
+    config: &mut Config,
+    persona: &nu_agent_core::protocol::persona::ParsedPersona,
+    cli_max_turns_provided: bool,
+) {
+    if config.temperature.is_none() {
+        config.temperature = persona.temperature;
+    }
+    if config.max_tokens.is_none() {
+        config.max_tokens = persona.max_tokens;
+    }
+    // max_tool_turns: only skip if the CLI explicitly provided the flag.
+    // The pipeline-mode default (Some(20)) must be overridable by persona.
+    if !cli_max_turns_provided && let Some(t) = persona.max_tool_turns {
+        config.max_tool_turns = Some(t);
+    }
+    if config.max_tool_calls_per_subturn.is_none() {
+        config.max_tool_calls_per_subturn = persona.max_tool_calls_per_subturn;
+    }
+    if config.max_tool_result_bytes.is_none() {
+        config.max_tool_result_bytes = persona.max_tool_result_bytes;
+    }
+    if config.additional_params.is_none() {
+        config.additional_params = persona.additional_params.clone();
+    }
 }
 
 /// Cache preamble components once at startup — loaded once, reused every turn.
@@ -480,3 +454,7 @@ pub(crate) fn build_runtime(params: RuntimeBuildParams) -> AgentConversationRunt
         doom_state: Arc::new(Mutex::new(nu_agent_core::hook::DoomLoopState::default())),
     }
 }
+
+#[cfg(test)]
+#[path = "runtime_build_test.rs"]
+mod runtime_build_test;
