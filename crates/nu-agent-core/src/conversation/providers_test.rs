@@ -357,6 +357,16 @@ fn plugin_config_read_timeout_secs_propagates_to_resolved_config() {
         read_timeout_secs: Some(60),
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        temperature: None,
+        max_tokens: None,
+        max_context_tokens: None,
+        max_output_tokens: None,
+        max_tool_turns: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     let resolved = plugin_config
@@ -398,6 +408,16 @@ fn plugin_config_without_read_timeout_secs_resolves_to_none() {
         read_timeout_secs: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        temperature: None,
+        max_tokens: None,
+        max_context_tokens: None,
+        max_output_tokens: None,
+        max_tool_turns: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     let resolved = plugin_config

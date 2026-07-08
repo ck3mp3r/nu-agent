@@ -231,6 +231,22 @@ fn test_from_env_case_sensitivity() {
 }
 
 #[test]
+#[serial]
+fn test_from_env_max_retries_and_delay() {
+    with_env_vars(
+        vec![
+            ("AGENT_MAX_RETRIES", "7"),
+            ("AGENT_RETRY_BASE_DELAY_MS", "500"),
+        ],
+        || {
+            let config = Config::from_env("openai", "gpt-4");
+            assert_eq!(config.max_retries, Some(7u8));
+            assert_eq!(config.retry_base_delay_ms, Some(500u64));
+        },
+    );
+}
+
+#[test]
 fn test_from_plugin_config_full() {
     // Test parsing full plugin config
     let span = Span::test_data();
@@ -1120,6 +1136,43 @@ fn test_plugin_config_full_structure() {
 }
 
 #[test]
+fn test_plugin_config_parses_top_level_numeric_fields() {
+    let value = Value::test_record(record! {
+        "model" => Value::test_string("openai/gpt-4"),
+        "providers" => Value::test_record(record! {
+            "openai" => Value::test_record(record! {
+                "models" => Value::test_record(record! {
+                    "gpt-4" => Value::test_record(record! {}),
+                }),
+            }),
+        }),
+        "temperature"               => Value::test_float(0.5),
+        "max_tokens"                => Value::test_int(2048),
+        "max_context_tokens"        => Value::test_int(32000),
+        "max_output_tokens"         => Value::test_int(1024),
+        "max_tool_turns"            => Value::test_int(5),
+        "max_tool_result_bytes"     => Value::test_int(10000),
+        "model_context_tokens"      => Value::test_int(128000),
+        "context_warning_threshold" => Value::test_float(0.75),
+        "max_retries"               => Value::test_int(5),
+        "retry_base_delay_ms"       => Value::test_int(2000),
+    });
+
+    let cfg = PluginConfig::from_plugin_config(&value).expect("should parse");
+
+    assert_eq!(cfg.temperature, Some(0.5));
+    assert_eq!(cfg.max_tokens, Some(2048));
+    assert_eq!(cfg.max_context_tokens, Some(32000));
+    assert_eq!(cfg.max_output_tokens, Some(1024));
+    assert_eq!(cfg.max_tool_turns, Some(5));
+    assert_eq!(cfg.max_tool_result_bytes, Some(10000));
+    assert_eq!(cfg.model_context_tokens, Some(128000));
+    assert_eq!(cfg.context_warning_threshold, Some(0.75f32));
+    assert_eq!(cfg.max_retries, Some(5));
+    assert_eq!(cfg.retry_base_delay_ms, Some(2000));
+}
+
+#[test]
 fn test_plugin_config_minimal() {
     // Test parsing minimal PluginConfig (only required fields)
     let value = Value::test_record(record! {
@@ -1355,6 +1408,16 @@ fn test_resolve_model_basic() {
         read_timeout_secs: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        temperature: None,
+        max_tokens: None,
+        max_context_tokens: None,
+        max_output_tokens: None,
+        max_tool_turns: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     let config = plugin_config
@@ -1395,6 +1458,16 @@ fn test_resolve_model_with_env_fallback() {
         read_timeout_secs: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        temperature: None,
+        max_tokens: None,
+        max_context_tokens: None,
+        max_output_tokens: None,
+        max_tool_turns: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     let config = plugin_config
@@ -1419,6 +1492,16 @@ fn test_resolve_model_invalid_format() {
         read_timeout_secs: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        temperature: None,
+        max_tokens: None,
+        max_context_tokens: None,
+        max_output_tokens: None,
+        max_tool_turns: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     // No slash separator
@@ -1447,6 +1530,16 @@ fn test_resolve_model_provider_not_found() {
         read_timeout_secs: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        temperature: None,
+        max_tokens: None,
+        max_context_tokens: None,
+        max_output_tokens: None,
+        max_tool_turns: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     let result = plugin_config.resolve_model("unknown/model");
@@ -1481,6 +1574,16 @@ fn test_resolve_model_model_not_in_config() {
         read_timeout_secs: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        temperature: None,
+        max_tokens: None,
+        max_context_tokens: None,
+        max_output_tokens: None,
+        max_tool_turns: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     let config = plugin_config
@@ -1520,6 +1623,16 @@ fn test_resolve_model_with_provider_field() {
         read_timeout_secs: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        temperature: None,
+        max_tokens: None,
+        max_context_tokens: None,
+        max_output_tokens: None,
+        max_tool_turns: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     let config = plugin_config
@@ -1578,6 +1691,16 @@ fn test_resolve_model_merges_limits() {
         read_timeout_secs: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        temperature: None,
+        max_tokens: None,
+        max_context_tokens: None,
+        max_output_tokens: None,
+        max_tool_turns: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     let config = plugin_config
@@ -1586,6 +1709,76 @@ fn test_resolve_model_merges_limits() {
 
     assert_eq!(config.max_context_tokens, Some(128000));
     assert_eq!(config.max_output_tokens, Some(8192));
+}
+
+#[test]
+fn test_plugin_config_resolve_model_top_level_fallbacks() {
+    let make_config = |model_temperature: Option<f64>| -> PluginConfig {
+        let mut models = HashMap::new();
+        models.insert(
+            "gpt-4".to_string(),
+            ModelConfig {
+                name: None,
+                temperature: model_temperature,
+                preamble: None,
+                tool_call: None,
+                limit: None,
+            },
+        );
+        let mut providers = HashMap::new();
+        providers.insert(
+            "openai".to_string(),
+            ProviderConfig {
+                name: None,
+                api_key: None,
+                base_url: None,
+                provider: None,
+                preamble: None,
+                models,
+            },
+        );
+        PluginConfig {
+            model: "openai/gpt-4".to_string(),
+            small_model: None,
+            providers,
+            compaction: None,
+            agents: AgentsConfig::default(),
+            read_timeout_secs: None,
+            max_tool_calls_per_subturn: None,
+            additional_params: None,
+            temperature: Some(0.5),
+            max_tokens: Some(2048),
+            max_context_tokens: Some(32000),
+            max_output_tokens: Some(1024),
+            max_tool_turns: Some(5),
+            max_tool_result_bytes: Some(10000),
+            model_context_tokens: Some(128000),
+            context_warning_threshold: Some(0.8f32),
+            max_retries: Some(5),
+            retry_base_delay_ms: Some(2000),
+        }
+    };
+
+    // Case 1: no model-level temperature — top-level 0.5 must survive
+    let cfg = make_config(None)
+        .resolve_model("openai/gpt-4")
+        .expect("resolve");
+    assert_eq!(cfg.temperature, Some(0.5));
+    assert_eq!(cfg.max_tokens, Some(2048));
+    assert_eq!(cfg.max_context_tokens, Some(32000));
+    assert_eq!(cfg.max_output_tokens, Some(1024));
+    assert_eq!(cfg.max_tool_turns, Some(5));
+    assert_eq!(cfg.max_tool_result_bytes, Some(10000));
+    assert_eq!(cfg.model_context_tokens, Some(128000));
+    assert_eq!(cfg.context_warning_threshold, Some(0.8f32));
+    assert_eq!(cfg.max_retries, Some(5));
+    assert_eq!(cfg.retry_base_delay_ms, Some(2000));
+
+    // Case 2: model-level temperature 0.9 must beat top-level 0.5
+    let cfg = make_config(Some(0.9))
+        .resolve_model("openai/gpt-4")
+        .expect("resolve");
+    assert_eq!(cfg.temperature, Some(0.9));
 }
 
 // ============================================================================
@@ -1618,6 +1811,16 @@ fn resolve_model_handles_two_part_format() {
         read_timeout_secs: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        temperature: None,
+        max_tokens: None,
+        max_context_tokens: None,
+        max_output_tokens: None,
+        max_tool_turns: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     let config = plugin_config
@@ -1641,6 +1844,16 @@ fn resolve_model_validates_empty_parts() {
         read_timeout_secs: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        temperature: None,
+        max_tokens: None,
+        max_context_tokens: None,
+        max_output_tokens: None,
+        max_tool_turns: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     // Empty provider
@@ -1687,6 +1900,16 @@ fn resolve_model_uses_split_once_for_multi_part_models() {
         read_timeout_secs: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        temperature: None,
+        max_tokens: None,
+        max_context_tokens: None,
+        max_output_tokens: None,
+        max_tool_turns: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     let config = plugin_config
@@ -1728,6 +1951,16 @@ fn resolve_model_works_with_simple_two_part() {
         read_timeout_secs: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        temperature: None,
+        max_tokens: None,
+        max_context_tokens: None,
+        max_output_tokens: None,
+        max_tool_turns: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     let config = plugin_config
@@ -1769,6 +2002,16 @@ fn integration_github_copilot_with_backend_in_model() {
         read_timeout_secs: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        temperature: None,
+        max_tokens: None,
+        max_context_tokens: None,
+        max_output_tokens: None,
+        max_tool_turns: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     // Test default model

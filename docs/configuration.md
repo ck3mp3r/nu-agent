@@ -5,12 +5,24 @@
 ```nu
 $env.config.plugins.agent = {
   model: "provider/model"
-  small_model: "provider/model" # optional
+  small_model: "provider/model"           # optional
+  temperature: 0.7                        # optional, 0.0–2.0
+  max_tokens: 4096                        # optional
+  max_context_tokens: 128000              # optional
+  max_output_tokens: 4096                 # optional
+  max_tool_turns: 20                      # optional
+  max_tool_result_bytes: 20000            # optional, 0 = unlimited
+  model_context_tokens: 200000            # optional, enables context warnings
+  context_warning_threshold: 0.8         # optional, 0.0–1.0
+  max_retries: 3                          # optional
+  retry_base_delay_ms: 1000              # optional
+  read_timeout_secs: 30                   # optional
+  max_tool_calls_per_subturn: 10          # optional
   providers: {
     provider_name: {
-      api_key: "..."            # optional
-      base_url: "https://..."   # optional
-      provider: "openai"   # optional
+      api_key: "..."                      # optional
+      base_url: "https://..."            # optional
+      provider: "openai"                 # optional
       models: {
         "model-name": {}
       }
@@ -58,9 +70,10 @@ All models use `provider/model` format:
 Highest to lowest:
 
 1. CLI flags
-2. `$env.config.plugins.agent`
-3. environment variables
-4. built-in defaults
+2. Model-level config (`providers.<name>.models.<name>` fields)
+3. Environment variables
+4. Top-level `$env.config.plugins.agent` fields
+5. Built-in defaults
 
 ## Environment Variables
 
@@ -74,6 +87,8 @@ Highest to lowest:
 - `AGENT_MAX_TOOL_CALLS_PER_SUBTURN` — max tool calls allowed in a single LLM response; guards against models ignoring `parallel_tool_calls: false` (default: 10; `0` = unlimited)
 - `AGENT_MODEL_CONTEXT_TOKENS` — approximate context window size in tokens for the configured model; enables context-usage warnings (default: none; no warning emitted until set)
 - `AGENT_CONTEXT_WARNING_THRESHOLD` — fraction of `AGENT_MODEL_CONTEXT_TOKENS` at which to emit a context-usage warning, `0.0`–`1.0` (default: `0.6`)
+- `AGENT_MAX_RETRIES` — retry attempts for transient errors (default: 3)
+- `AGENT_RETRY_BASE_DELAY_MS` — base backoff in ms, doubles each attempt, capped at 30s (default: 1000)
 - `{PROVIDER}_API_KEY` (for providers with direct env naming, e.g. `OPENAI_API_KEY`)
 
 There is no `AGENT_MODEL`. Set the default model in plugin config.
@@ -213,6 +228,26 @@ All compaction fields are optional — defaults are used when omitted. **`max_co
 ### Precedence
 
 CLI flags override plugin config, which overrides built-in defaults.
+
+## Agents
+
+Configure built-in persona availability via the optional `agents` block:
+
+```nu
+$env.config.plugins.agent = {
+  # ...existing config...
+  agents: {
+    planner: "disabled"   # set to "disabled" to disable; omit or any other value = enabled
+    maker: "disabled"     # same
+    default: "planner"    # default persona at startup (default: "planner")
+    fallback: "coder"     # optional: .agents/<name>.md persona when default built-in is disabled
+  }
+}
+```
+
+All `agents` fields are optional. Defaults: `planner` enabled, `maker` enabled, `default` = `"planner"`, no `fallback`.
+
+`fallback` is only used when `default` names a disabled built-in persona. It must be the name of a file under `.agents/` or `$XDG_CONFIG_HOME/nu-agent/agents/`.
 
 ## Additional Parameters
 

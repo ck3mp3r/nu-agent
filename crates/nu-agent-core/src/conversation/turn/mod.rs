@@ -289,6 +289,8 @@ where
         max_turns: ctx.input.max_turns,
         cancel_token: cancel_token.clone(),
         additional_params: ctx.config.additional_params.clone(),
+        temperature: ctx.config.temperature,
+        max_tokens: ctx.config.max_tokens.map(|t| t as u64),
     };
 
     let model = ctx.model.clone();
@@ -385,6 +387,8 @@ struct AgentPromptConfig<P: AsyncPermissionResolver> {
     max_turns: Option<u32>,
     cancel_token: CancellationToken,
     additional_params: Option<serde_json::Value>,
+    temperature: Option<f64>,
+    max_tokens: Option<u64>,
 }
 
 /// Result from streaming agent execution
@@ -464,6 +468,8 @@ where
         max_turns,
         cancel_token,
         additional_params,
+        temperature,
+        max_tokens,
     } = config;
     // Create proxy tools that expose only the filtered definitions to the LLM
     // while delegating execution to the original shared tool server handle.
@@ -505,6 +511,12 @@ where
     builder = builder.default_max_turns(effective_max_turns as usize);
     if let Some(params) = additional_params {
         builder = builder.additional_params(params);
+    }
+    if let Some(t) = temperature {
+        builder = builder.temperature(t);
+    }
+    if let Some(m) = max_tokens {
+        builder = builder.max_tokens(m);
     }
     let agent = builder.build();
 

@@ -171,6 +171,39 @@ When working with LLM streaming responses:
 - ❌ Never use `timeout()` — kills the entire request after a fixed deadline,
   breaking long but active streaming responses
 
+## Configuration System
+
+See `docs/configuration.md` for the full field reference and provider examples.
+
+### Two-path parsing
+
+`PluginConfig::from_plugin_config()` (`crates/nu-agent-core/src/config/mod.rs`) is tried first. The legacy flat `Config::from_plugin_config()` is the fallback for configs without a `providers` key. **All new features go in the new path only** — never add fields to the legacy parser.
+
+### Precedence chain (highest → lowest)
+
+1. CLI flags — applied in `resolve_with_new_config()` (`crates/nu-agent/src/command/agent/runtime_build.rs`)
+2. Model-level config — `providers.<name>.models.<name>` fields, applied in `PluginConfig::resolve_model()`
+3. Environment variables — `Config::from_env()` in `config/mod.rs`
+4. Top-level `PluginConfig` fields — fallback block at end of `resolve_model()`
+5. Built-in defaults — `unwrap_or(N)` at usage sites in executor/runtime
+
+### The `None` rule
+
+Every `Option` field on the runtime `Config` struct must have at least one real input path (env var, plugin config key, or CLI flag). **Hardcoding `None` in a parsing function is a bug.** Intentional exceptions — fields resolved separately at runtime and not user-configurable:
+- `preamble` — resolved via `resolve_preamble()` from provider/model preamble config
+- `provider_impl` — resolved from the `provider` key inside the provider config block
+
+### Adding a new config field
+
+```
+1. Add field to `PluginConfig` struct + parse in `from_plugin_config()`
+2. Forward in `resolve_model()` fallback block (`if config.field.is_none()`)
+3. Add env var `AGENT_<FIELD_UPPER>` to `Config::from_env()`
+4. Add CLI flag in `crates/nu-agent/src/command/agent/mod.rs` + apply in `resolve_with_new_config()`
+5. Add tests in the sibling `test.rs` / `*_test.rs` file — NO inline tests
+6. Update `docs/configuration.md`
+```
+
 ## Examples
 
 ### Good Test Structure

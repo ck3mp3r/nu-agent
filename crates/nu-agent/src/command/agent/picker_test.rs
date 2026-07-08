@@ -73,6 +73,16 @@ fn model_picker_catalog_projection_from_plugin_config_is_sorted_and_marks_active
         read_timeout_secs: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        temperature: None,
+        max_tokens: None,
+        max_context_tokens: None,
+        max_output_tokens: None,
+        max_tool_turns: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
     let projected =
         build_model_picker_catalog_from_plugin_config(&plugin_config, "a-provider/a-model");
@@ -122,6 +132,16 @@ fn tui_startup_hydrates_model_picker_catalog_from_cached_plugin_config() {
         read_timeout_secs: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        temperature: None,
+        max_tokens: None,
+        max_context_tokens: None,
+        max_output_tokens: None,
+        max_tool_turns: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
     };
 
     let catalog = model_picker_catalog_from_cached_startup_plugin_config(

@@ -89,6 +89,27 @@ pub struct PluginConfig {
     /// Example: `{ thinking: { type: "disabled" } }` disables Anthropic extended thinking.
     /// None = no additional parameters.
     pub additional_params: Option<serde_json::Value>,
+
+    /// Temperature for response generation (0.0 to 2.0). Fallback when not set at model level.
+    pub temperature: Option<f64>,
+    /// Maximum tokens to generate.
+    pub max_tokens: Option<u32>,
+    /// Maximum context tokens (input + output). Drives compaction threshold.
+    pub max_context_tokens: Option<u32>,
+    /// Maximum output tokens.
+    pub max_output_tokens: Option<u32>,
+    /// Maximum tool execution turns.
+    pub max_tool_turns: Option<u32>,
+    /// Maximum bytes of a single tool result before truncation. None = 20_000. Some(0) = unlimited.
+    pub max_tool_result_bytes: Option<usize>,
+    /// Approximate context window in tokens for the configured model. None = no warning.
+    pub model_context_tokens: Option<usize>,
+    /// Fraction of model_context_tokens at which to warn (0.0–1.0). None = 0.6.
+    pub context_warning_threshold: Option<f32>,
+    /// Max retry attempts for transient errors. None = 3.
+    pub max_retries: Option<u8>,
+    /// Base backoff in ms, doubles each attempt, capped at 30_000ms. None = 1000.
+    pub retry_base_delay_ms: Option<u64>,
 }
 
 /// Configuration for conversation compaction behavior.
@@ -285,6 +306,52 @@ impl PluginConfig {
                     .with_label("expected a record", span)
             })?;
 
+        let temperature = record.get("temperature").and_then(|v| v.as_float().ok());
+        let max_tokens = record.get("max_tokens").and_then(|v| {
+            v.as_int()
+                .ok()
+                .and_then(|i| if i >= 0 { Some(i as u32) } else { None })
+        });
+        let max_context_tokens = record.get("max_context_tokens").and_then(|v| {
+            v.as_int()
+                .ok()
+                .and_then(|i| if i >= 0 { Some(i as u32) } else { None })
+        });
+        let max_output_tokens = record.get("max_output_tokens").and_then(|v| {
+            v.as_int()
+                .ok()
+                .and_then(|i| if i >= 0 { Some(i as u32) } else { None })
+        });
+        let max_tool_turns = record.get("max_tool_turns").and_then(|v| {
+            v.as_int()
+                .ok()
+                .and_then(|i| if i >= 0 { Some(i as u32) } else { None })
+        });
+        let max_tool_result_bytes = record.get("max_tool_result_bytes").and_then(|v| {
+            v.as_int()
+                .ok()
+                .and_then(|i| if i >= 0 { Some(i as usize) } else { None })
+        });
+        let model_context_tokens = record.get("model_context_tokens").and_then(|v| {
+            v.as_int()
+                .ok()
+                .and_then(|i| if i >= 0 { Some(i as usize) } else { None })
+        });
+        let context_warning_threshold = record
+            .get("context_warning_threshold")
+            .and_then(|v| v.as_float().ok())
+            .map(|f| f as f32);
+        let max_retries = record.get("max_retries").and_then(|v| {
+            v.as_int()
+                .ok()
+                .and_then(|i| if i >= 0 { Some(i as u8) } else { None })
+        });
+        let retry_base_delay_ms = record.get("retry_base_delay_ms").and_then(|v| {
+            v.as_int()
+                .ok()
+                .and_then(|i| if i >= 0 { Some(i as u64) } else { None })
+        });
+
         Ok(Self {
             model,
             small_model,
@@ -294,6 +361,16 @@ impl PluginConfig {
             read_timeout_secs,
             max_tool_calls_per_subturn,
             additional_params,
+            temperature,
+            max_tokens,
+            max_context_tokens,
+            max_output_tokens,
+            max_tool_turns,
+            max_tool_result_bytes,
+            model_context_tokens,
+            context_warning_threshold,
+            max_retries,
+            retry_base_delay_ms,
         })
     }
 
@@ -677,6 +754,39 @@ impl PluginConfig {
         // Populate additional_params from plugin config
         config.additional_params = self.additional_params.clone();
 
+        // Forward top-level PluginConfig fields as fallbacks.
+        // Only applied when not already set by env vars or model-level config.
+        if config.temperature.is_none() {
+            config.temperature = self.temperature;
+        }
+        if config.max_tokens.is_none() {
+            config.max_tokens = self.max_tokens;
+        }
+        if config.max_context_tokens.is_none() {
+            config.max_context_tokens = self.max_context_tokens;
+        }
+        if config.max_output_tokens.is_none() {
+            config.max_output_tokens = self.max_output_tokens;
+        }
+        if config.max_tool_turns.is_none() {
+            config.max_tool_turns = self.max_tool_turns;
+        }
+        if config.max_tool_result_bytes.is_none() {
+            config.max_tool_result_bytes = self.max_tool_result_bytes;
+        }
+        if config.model_context_tokens.is_none() {
+            config.model_context_tokens = self.model_context_tokens;
+        }
+        if config.context_warning_threshold.is_none() {
+            config.context_warning_threshold = self.context_warning_threshold;
+        }
+        if config.max_retries.is_none() {
+            config.max_retries = self.max_retries;
+        }
+        if config.retry_base_delay_ms.is_none() {
+            config.retry_base_delay_ms = self.retry_base_delay_ms;
+        }
+
         Ok(config)
     }
 }
@@ -836,6 +946,8 @@ impl Config {
         let model_context_tokens = parse_env_var("AGENT_MODEL_CONTEXT_TOKENS");
         let context_warning_threshold = parse_env_var("AGENT_CONTEXT_WARNING_THRESHOLD");
         let max_tool_calls_per_subturn = parse_env_var("AGENT_MAX_TOOL_CALLS_PER_SUBTURN");
+        let max_retries: Option<u8> = parse_env_var("AGENT_MAX_RETRIES");
+        let retry_base_delay_ms: Option<u64> = parse_env_var("AGENT_RETRY_BASE_DELAY_MS");
 
         log::debug!(
             "Config.from_env: provider={provider} model={model} api_key={} base_url={base_url:?}",
@@ -858,8 +970,8 @@ impl Config {
             max_tool_result_bytes,
             model_context_tokens,
             context_warning_threshold,
-            max_retries: None,
-            retry_base_delay_ms: None,
+            max_retries,
+            retry_base_delay_ms,
             max_tool_calls_per_subturn,
             additional_params: None,
         }
