@@ -52,7 +52,8 @@ pub struct DoomLoopDetector {
 impl DoomLoopDetector {
     /// Check for a doom loop and record the tool call signature.
     ///
-    /// Returns `Some(Terminate)` if a doom loop is detected, `None` otherwise.
+    /// Returns `Some(Skip)` with a detection message if a doom loop is detected, `None` otherwise.
+    /// Using `Skip` feeds the message to the LLM as a tool result so it can change course.
     pub fn check_and_record(
         &self,
         tool_name: &str,
@@ -69,7 +70,7 @@ impl DoomLoopDetector {
             let _ = ui_tx.send(UiEvent::Warning {
                 message: message.clone(),
             });
-            Some(ToolCallHookAction::Terminate { reason: message })
+            Some(ToolCallHookAction::Skip { reason: message })
         } else {
             None
         }

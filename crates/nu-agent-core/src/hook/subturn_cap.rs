@@ -45,8 +45,12 @@ impl SubTurnCap {
                 self.max
             );
             return Some(ToolCallHookAction::Skip {
-                reason: "Tool call limit exceeded for this sub-turn. Remaining calls skipped."
-                    .to_string(),
+                reason: format!(
+                    "Sub-turn tool call limit reached ({max}). No further tools will be called in this \
+                     response. Please summarise what you have accomplished so far and continue in the \
+                     next turn if needed.",
+                    max = self.max
+                ),
             });
         }
         *count += 1;

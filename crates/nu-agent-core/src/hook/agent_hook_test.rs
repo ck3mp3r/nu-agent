@@ -400,8 +400,8 @@ async fn doom_loop_returns_terminate() {
             );
         } else {
             assert!(
-                matches!(result, ToolCallHookAction::Terminate { .. }),
-                "iteration {i} should Terminate the turn"
+                matches!(result, ToolCallHookAction::Skip { .. }),
+                "iteration {i} should Skip with detection message"
             );
         }
     }
@@ -533,7 +533,7 @@ async fn tool_call_cap_skips_after_limit() {
             match result {
                 ToolCallHookAction::Skip { reason } => {
                     assert!(
-                        reason.contains("Tool call limit exceeded"),
+                        reason.contains("Sub-turn tool call limit reached"),
                         "expected limit-exceeded reason, got: {reason}"
                     );
                 }
@@ -613,7 +613,7 @@ async fn tool_call_cap_zero_means_unlimited() {
 #[test]
 fn is_tool_failure_detects_tool_call_limit() {
     assert!(is_tool_failure(
-        "Tool call limit exceeded for this sub-turn. Remaining calls skipped."
+        "Sub-turn tool call limit reached (5). No further tools will be called in this response. Please summarise what you have accomplished so far and continue in the next turn if needed."
     ));
 }
 
@@ -699,8 +699,8 @@ async fn doom_state_persists_across_hooks() {
     )
     .await;
     assert!(
-        matches!(result, ToolCallHookAction::Terminate { .. }),
-        "hook2 call 5 should Terminate (doom loop)"
+        matches!(result, ToolCallHookAction::Skip { .. }),
+        "hook2 call 5 should Skip with detection message (doom loop)"
     );
 }
 

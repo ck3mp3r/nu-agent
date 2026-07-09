@@ -251,20 +251,12 @@ impl<'a, S: SessionManager> TurnExecutor<'a, S> {
                         ..
                     },
                     ref ctx,
-                ))
-                | Err((
-                    crate::conversation::turn::TurnError::UnknownTool {
-                        ref msg,
-                        ref messages,
-                        ..
-                    },
-                    ref ctx,
                 )) => {
-                    // Path A (non-cancelled): MaxTurnsError / UnknownToolCall carry full chat_history.
+                    // Path A (non-cancelled): MaxTurnsError carries full chat_history.
                     // Persist only the delta (new messages from this turn) so the session remembers
                     // the failed turn without re-appending messages already in persistent storage.
                     if let Some(session_id) = final_session_id {
-                        // messages for MaxTurnsError/UnknownToolCall is rig's full accumulated
+                        // messages for MaxTurnsError is rig's full accumulated
                         // chat_history (from AgentRun::full_history()), which DOES include the
                         // current-turn user prompt and any tool call exchanges from this turn.
                         // This is unlike last_known_history (from on_completion_call's `history`
@@ -295,6 +287,44 @@ impl<'a, S: SessionManager> TurnExecutor<'a, S> {
                     let msg_preview = &msg[..msg.len().min(200)];
                     log::error!("Turn error (path A non-cancelled): {msg_preview}");
                     let user_msg = msg.clone();
+                    return Err(LabeledError::new(user_msg.clone()).with_label(user_msg, span));
+                }
+                Err((
+                    crate::conversation::turn::TurnError::UnknownTool {
+                        ref msg,
+                        ref messages,
+                        ..
+                    },
+                    ref ctx,
+                )) => {
+                    if let Some(session_id) = final_session_id {
+                        let delta: Vec<Message> = messages
+                            .iter()
+                            .skip(ctx.pre_turn_message_count)
+                            .cloned()
+                            .collect();
+                        log::debug!(
+                            "Path A non-cancelled (unknown tool): delta_count={} pre_turn={}",
+                            delta.len(),
+                            ctx.pre_turn_message_count
+                        );
+                        if !delta.is_empty() {
+                            let patched = inject_missing_tool_results(delta);
+                            if let Err(mem_err) = self.runtime.block_on(
+                                self.memory_state.memory_mut().append(session_id, patched),
+                            ) {
+                                log::warn!(
+                                    "Failed to update context for unknown tool turn: {}",
+                                    mem_err
+                                );
+                            }
+                        }
+                    }
+                    log::warn!("Unknown tool call (retries exhausted): {msg}");
+                    let user_msg =
+                        "The model attempted to call an unknown tool and could not recover. \
+                         The session has been saved — try rephrasing your request."
+                            .to_string();
                     return Err(LabeledError::new(user_msg.clone()).with_label(user_msg, span));
                 }
                 Err((

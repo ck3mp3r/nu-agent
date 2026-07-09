@@ -524,6 +524,7 @@ where
         .stream_prompt(prompt)
         .conversation(&conversation_id)
         .multi_turn(effective_max_turns as usize)
+        .max_invalid_tool_call_retries(3)
         .await;
 
     tokio::pin!(stream);

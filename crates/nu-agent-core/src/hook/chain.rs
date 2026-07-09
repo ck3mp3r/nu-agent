@@ -56,7 +56,7 @@ fn resolve_tool_source(
 }
 
 /// Default cap on tool calls per sub-turn when not configured.
-const DEFAULT_MAX_TOOL_CALLS_PER_SUBTURN: usize = 10;
+const DEFAULT_MAX_TOOL_CALLS_PER_SUBTURN: usize = 25;
 
 /// Composable hook that delegates to named concern structs in explicit order.
 ///

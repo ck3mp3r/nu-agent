@@ -38,8 +38,8 @@ fn doom_loop_fires_at_threshold() {
             assert!(result.is_none(), "call {i} should not trip doom loop");
         } else {
             assert!(
-                matches!(result, Some(ToolCallHookAction::Terminate { .. })),
-                "call {i} should terminate"
+                matches!(result, Some(ToolCallHookAction::Skip { .. })),
+                "call {i} should skip with detection message"
             );
         }
     }

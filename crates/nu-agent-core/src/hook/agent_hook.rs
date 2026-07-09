@@ -22,13 +22,13 @@ pub use rig::agent::{HookAction, ToolCallHookAction};
 /// - `"Permission denied"` — permission denial from `on_tool_call`
 /// - `"Doom loop detected: "` — doom loop guard in `on_tool_call`
 /// - `"Tool '"` — invalid/unavailable tool skip from `on_invalid_tool_call`
-/// - `"Tool call limit exceeded"` — per-sub-turn cap from `on_tool_call`
+/// - `"Sub-turn tool call limit reached"` — per-sub-turn cap from `on_tool_call`
 pub(crate) fn is_tool_failure(result_text: &str) -> bool {
     result_text.starts_with("Toolset error: ")
         || result_text == "Permission denied"
         || result_text.starts_with("Doom loop detected: ")
         || result_text.starts_with("Tool '")
-        || result_text.starts_with("Tool call limit exceeded")
+        || result_text.starts_with("Sub-turn tool call limit reached")
 }
 
 /// Session-scoped state shared across turns via the hook.
