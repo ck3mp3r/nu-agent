@@ -17,19 +17,4 @@ pub mod slash;
 pub mod tool_args;
 
 #[cfg(test)]
-mod agents_test;
-
-#[cfg(test)]
-mod compaction_test;
-
-#[cfg(test)]
-mod event_contract_test;
-
-#[cfg(test)]
-mod permission_test;
-
-#[cfg(test)]
-mod slash_test;
-
-#[cfg(test)]
-mod skills_test;
+mod test;

@@ -142,7 +142,9 @@ pub fn resolve_session_request(use_tui: bool, session_id: Option<String>) -> Ses
 ///
 /// # Returns
 /// Iterator of UiMessageSnapshot ready for transcript hydration
-fn hydrate_transcript_from_store_entries(entries: &[StoreEntry]) -> Vec<UiMessageSnapshot> {
+pub(crate) fn hydrate_transcript_from_store_entries(
+    entries: &[StoreEntry],
+) -> Vec<UiMessageSnapshot> {
     // Pass 1: collect call_id → tool_name from all ToolCalls and
     //         call_id → success from all ToolResults (failure = is_tool_failure())
     let mut tool_names: HashMap<String, String> = HashMap::new();
@@ -228,7 +230,7 @@ fn format_compaction_content(marker: &crate::session::CompactionMarker) -> Strin
 /// - `Message::Assistant { content }` with `AssistantContent::Text` → assistant text
 /// - `Message::Assistant { content }` with `AssistantContent::ToolCall` → tool call display
 /// - `Message::System { content }` → system/compaction summary display
-fn hydrate_single_message(
+pub(crate) fn hydrate_single_message(
     msg: &Message,
     tool_names: &HashMap<String, String>,
     tool_success_map: &HashMap<String, bool>,
@@ -323,7 +325,3 @@ fn load_or_create_tui_session(
         ))),
     }
 }
-
-#[cfg(test)]
-#[path = "resolver_test.rs"]
-mod resolver_test;

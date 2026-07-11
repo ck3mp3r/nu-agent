@@ -165,7 +165,7 @@ pub(super) const MODEL_PICKER_EMPTY_STATE_MESSAGE: &str =
 pub(super) const AGENT_PICKER_EMPTY_STATE_MESSAGE: &str =
     "No agent personas found. Create .agents/<name>.md files.";
 
-pub(super) fn skills_panel_lines(state: &AppState) -> (&'static str, Vec<Line<'static>>) {
+pub(crate) fn skills_panel_lines(state: &AppState) -> (&'static str, Vec<Line<'static>>) {
     if state.skills_discovery_failed() {
         return (
             "Skills",
@@ -218,7 +218,7 @@ pub(super) struct McpSelectedDetails {
     pub(super) compact_single_line: String,
 }
 
-pub(super) const MCP_STATUS_COLUMN_WIDTH: u16 = 6;
+pub(crate) const MCP_STATUS_COLUMN_WIDTH: u16 = 6;
 
 pub(super) fn mcp_selected_details(state: &AppState) -> Option<McpSelectedDetails> {
     let server = state.mcp_servers.get(state.mcp_panel_selection)?;
@@ -391,7 +391,7 @@ pub(super) fn mcp_selected_details_lines(
     }
 }
 
-pub(super) fn mcp_details_height_for_inner_height(inner_height: u16) -> u16 {
+pub(crate) fn mcp_details_height_for_inner_height(inner_height: u16) -> u16 {
     match inner_height {
         0..=4 => 0,
         5 => 1,
@@ -403,7 +403,7 @@ pub(super) fn mcp_details_height_for_inner_height(inner_height: u16) -> u16 {
     }
 }
 
-pub(super) fn mcp_panel_controls_line() -> &'static str {
+pub(crate) fn mcp_panel_controls_line() -> &'static str {
     "Session-only toggles | Enter/Space toggle | Esc close"
 }
 

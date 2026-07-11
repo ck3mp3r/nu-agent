@@ -13,7 +13,7 @@ pub(super) fn extract_tool_name(line: &str) -> &str {
     "unknown"
 }
 
-pub(super) fn parse_persisted_tool_status_line(line: &str) -> Option<(&str, &str, bool)> {
+pub(crate) fn parse_persisted_tool_status_line(line: &str) -> Option<(&str, &str, bool)> {
     let remainder = line.strip_prefix(TOOL_PREFIX)?;
     let (name, after_name) = remainder.split_once(TOOL_ARGS_MARKER)?;
     if let Some(arguments) = after_name.strip_suffix(TOOL_DONE_SUFFIX) {

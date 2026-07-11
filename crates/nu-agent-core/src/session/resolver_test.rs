@@ -14,7 +14,7 @@ fn convert_rig_messages_to_snapshots(messages: &[Message]) -> Vec<UiMessageSnaps
     let tool_success_map = std::collections::HashMap::new();
     messages
         .iter()
-        .flat_map(|m| super::hydrate_single_message(m, &tool_names, &tool_success_map))
+        .flat_map(|m| super::resolver::hydrate_single_message(m, &tool_names, &tool_success_map))
         .collect()
 }
 
@@ -283,7 +283,7 @@ fn hydrate_store_entries_includes_messages() {
         }),
     ];
 
-    let snapshots = super::hydrate_transcript_from_store_entries(&entries);
+    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
 
     assert_eq!(snapshots.len(), 2);
     assert_eq!(snapshots[0].role(), "user");
@@ -316,7 +316,7 @@ fn hydrate_store_entries_includes_markers() {
         }),
     ];
 
-    let snapshots = super::hydrate_transcript_from_store_entries(&entries);
+    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
 
     assert_eq!(snapshots.len(), 3);
     assert_eq!(snapshots[0].role(), "user");
@@ -333,7 +333,7 @@ fn hydrate_store_entries_marker_format() {
         "SummarizeOldest",
     ))];
 
-    let snapshots = super::hydrate_transcript_from_store_entries(&entries);
+    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
 
     assert_eq!(snapshots.len(), 1);
     assert_eq!(snapshots[0].role(), "compaction");
@@ -385,7 +385,7 @@ fn hydrate_store_entries_preserves_order() {
         }),
     ];
 
-    let snapshots = super::hydrate_transcript_from_store_entries(&entries);
+    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
 
     assert_eq!(snapshots.len(), 4);
     assert_eq!(snapshots[0].role(), "user");
@@ -406,7 +406,7 @@ fn hydrate_store_entries_empty_summary_marker() {
         "SlidingWindow",
     ))];
 
-    let snapshots = super::hydrate_transcript_from_store_entries(&entries);
+    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
 
     assert_eq!(snapshots.len(), 1);
     assert_eq!(snapshots[0].role(), "compaction");
@@ -465,12 +465,12 @@ fn test_tool_result_edit_creates_display_snapshot() {
         }),
     ];
 
-    let snapshots = super::hydrate_transcript_from_store_entries(&entries);
+    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
 
     assert_eq!(snapshots.len(), 2);
     assert_eq!(snapshots[0].role(), "tool");
 
-    let display = snapshots[1].tool_display_ref();
+    let display = snapshots[1].tool_display();
     assert!(
         display.is_some(),
         "Expected tool_display on second snapshot"
@@ -509,7 +509,7 @@ fn test_tool_result_non_json_gracefully_skipped() {
         }),
     ];
 
-    let snapshots = super::hydrate_transcript_from_store_entries(&entries);
+    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
 
     // Only tool invocation snapshot, no display for non-JSON result
     assert_eq!(snapshots.len(), 1);
@@ -554,11 +554,11 @@ fn test_tool_result_with_explicit_display_key() {
         }),
     ];
 
-    let snapshots = super::hydrate_transcript_from_store_entries(&entries);
+    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
 
     assert_eq!(snapshots.len(), 2);
 
-    let display = snapshots[1].tool_display_ref();
+    let display = snapshots[1].tool_display();
     assert!(
         display.is_some(),
         "Expected tool_display on second snapshot"
@@ -612,7 +612,7 @@ fn hydrate_store_entries_marker_shows_strategy_and_counts() {
         }),
     ];
 
-    let snapshots = super::hydrate_transcript_from_store_entries(&entries);
+    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
 
     // There are 5 entries: 2 pre-compaction messages, 1 marker, 2 post-compaction messages
     assert_eq!(
@@ -689,7 +689,7 @@ fn hydrate_tool_call_failure_rehydrates_as_false() {
         }),
     ];
 
-    let snapshots = super::hydrate_transcript_from_store_entries(&entries);
+    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
 
     // Should produce 1 snapshot: the tool call (tool result is skipped in TUI)
     assert_eq!(snapshots.len(), 1);
@@ -731,7 +731,7 @@ fn hydrate_tool_call_success_rehydrates_as_true() {
         }),
     ];
 
-    let snapshots = super::hydrate_transcript_from_store_entries(&entries);
+    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
 
     assert_eq!(snapshots.len(), 1);
     assert_eq!(snapshots[0].role(), "tool");
@@ -754,7 +754,7 @@ fn hydrate_store_entries_marker_truncates_long_summary() {
         "sliding_summary",
     ))];
 
-    let snapshots = super::hydrate_transcript_from_store_entries(&entries);
+    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
 
     assert_eq!(snapshots.len(), 1);
     let content = snapshots[0].content();
@@ -810,7 +810,7 @@ fn hydrate_permission_denied_rehydrates_as_false() {
         }),
     ];
 
-    let snapshots = super::hydrate_transcript_from_store_entries(&entries);
+    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
 
     // Should produce 1 snapshot: the tool call (tool result is skipped in TUI)
     assert_eq!(snapshots.len(), 1);
@@ -852,7 +852,7 @@ fn hydrate_doom_loop_rehydrates_as_false() {
         }),
     ];
 
-    let snapshots = super::hydrate_transcript_from_store_entries(&entries);
+    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
 
     // Should produce 1 snapshot: the tool call (tool result is skipped in TUI)
     assert_eq!(snapshots.len(), 1);

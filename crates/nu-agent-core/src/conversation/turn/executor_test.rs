@@ -10,22 +10,13 @@ use std::sync::Arc;
 
 use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
+use super::super::test::{default_circuit_breaker, default_doom_state};
 use super::test_utils::{MockResolver, MockUi, test_config};
 use super::*;
 use crate::conversation::providers::CachedProviderClient;
-use crate::hook::agent_hook::DoomLoopState;
 use crate::session::ConversationStore;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
-use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
-
-fn default_circuit_breaker() -> Arc<std::sync::Mutex<McpCircuitBreaker>> {
-    Arc::new(std::sync::Mutex::new(McpCircuitBreaker::default()))
-}
-
-fn default_doom_state() -> Arc<std::sync::Mutex<DoomLoopState>> {
-    Arc::new(std::sync::Mutex::new(DoomLoopState::default()))
-}
 
 #[test]
 fn turn_executor_new_constructs_without_panic() {
@@ -1131,14 +1122,13 @@ fn turn_error_from_response_error(msg: &str) -> CompletionErrorKind {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 1.2: New structural classification tests
+// Structural HTTP status → error kind classification tests
 // ---------------------------------------------------------------------------
 
-/// TDD (task step 7): `InvalidStatusCodeWithMessage(429, ...)` must classify as `RateLimit`.
-/// This is the primary bug-fix test: RateLimit is now derived from the HTTP status code
-/// structurally, not from string matching on the display message.
+/// HTTP 429 with a message body must classify as `RateLimit`.
+/// Uses `InvalidStatusCodeWithMessage` (status + body) path.
 #[test]
-fn from_streaming_http_429_with_message_is_rate_limit() {
+fn http_429_with_message_is_rate_limit() {
     let kind = turn_error_from_http_status_with_msg(429, "rate_limit_error");
     assert_eq!(
         kind,
@@ -1148,95 +1138,30 @@ fn from_streaming_http_429_with_message_is_rate_limit() {
     assert!(kind.is_retryable(), "RateLimit must be retryable");
 }
 
-/// TDD (task step 7): `InvalidStatusCode(429)` (no body) must also classify as `RateLimit`.
+/// Every HTTP status code maps to the correct error kind and retryable flag.
 #[test]
-fn from_streaming_http_429_no_body_is_rate_limit() {
-    let kind = turn_error_from_http_status(429);
-    assert_eq!(
-        kind,
-        CompletionErrorKind::RateLimit,
-        "HTTP 429 no body must classify as RateLimit"
-    );
-}
-
-/// `InvalidStatusCode(500)` must classify as `ServerError`.
-#[test]
-fn from_streaming_http_500_is_server_error() {
-    let kind = turn_error_from_http_status(500);
-    assert_eq!(kind, CompletionErrorKind::ServerError);
-    assert!(kind.is_retryable());
-}
-
-/// `InvalidStatusCode(503)` must classify as `Overloaded`.
-#[test]
-fn from_streaming_http_503_is_overloaded() {
-    let kind = turn_error_from_http_status(503);
-    assert_eq!(kind, CompletionErrorKind::Overloaded);
-    assert!(kind.is_retryable());
-}
-
-/// `InvalidStatusCode(529)` must classify as `Overloaded`.
-#[test]
-fn from_streaming_http_529_is_overloaded() {
-    let kind = turn_error_from_http_status(529);
-    assert_eq!(kind, CompletionErrorKind::Overloaded);
-    assert!(kind.is_retryable());
-}
-
-/// `InvalidStatusCode(504)` must classify as `ServerError`.
-#[test]
-fn from_streaming_http_504_is_server_error() {
-    let kind = turn_error_from_http_status(504);
-    assert_eq!(kind, CompletionErrorKind::ServerError);
-    assert!(kind.is_retryable());
-}
-
-/// `InvalidStatusCode(413)` must classify as `RequestTooLarge`.
-#[test]
-fn from_streaming_http_413_is_request_too_large() {
-    let kind = turn_error_from_http_status(413);
-    assert_eq!(kind, CompletionErrorKind::RequestTooLarge);
-    assert!(!kind.is_retryable());
-}
-
-/// `InvalidStatusCode(401)` must classify as `Auth`.
-#[test]
-fn from_streaming_http_401_is_auth() {
-    let kind = turn_error_from_http_status(401);
-    assert_eq!(kind, CompletionErrorKind::Auth);
-    assert!(!kind.is_retryable());
-}
-
-/// `InvalidStatusCode(403)` must classify as `Auth`.
-#[test]
-fn from_streaming_http_403_is_auth() {
-    let kind = turn_error_from_http_status(403);
-    assert_eq!(kind, CompletionErrorKind::Auth);
-    assert!(!kind.is_retryable());
-}
-
-/// `InvalidStatusCode(402)` must classify as `Quota`.
-#[test]
-fn from_streaming_http_402_is_quota() {
-    let kind = turn_error_from_http_status(402);
-    assert_eq!(kind, CompletionErrorKind::Quota);
-    assert!(!kind.is_retryable());
-}
-
-/// `InvalidStatusCode(404)` must classify as `EndpointNotFound`.
-#[test]
-fn from_streaming_http_404_is_endpoint_not_found() {
-    let kind = turn_error_from_http_status(404);
-    assert_eq!(kind, CompletionErrorKind::EndpointNotFound);
-    assert!(!kind.is_retryable());
-}
-
-/// `InvalidStatusCode(502)` — unrecognised → `Unknown`.
-#[test]
-fn from_streaming_http_502_is_unknown() {
-    let kind = turn_error_from_http_status(502);
-    assert_eq!(kind, CompletionErrorKind::Unknown);
-    assert!(!kind.is_retryable());
+fn http_status_to_error_kind() {
+    let cases: &[(u16, CompletionErrorKind, bool)] = &[
+        (429, CompletionErrorKind::RateLimit, true),
+        (500, CompletionErrorKind::ServerError, true),
+        (503, CompletionErrorKind::Overloaded, true),
+        (529, CompletionErrorKind::Overloaded, true),
+        (504, CompletionErrorKind::ServerError, true),
+        (413, CompletionErrorKind::RequestTooLarge, false),
+        (401, CompletionErrorKind::Auth, false),
+        (403, CompletionErrorKind::Auth, false),
+        (402, CompletionErrorKind::Quota, false),
+        (404, CompletionErrorKind::EndpointNotFound, false),
+        (502, CompletionErrorKind::Unknown, false),
+    ];
+    for (status, expected_kind, retryable) in cases {
+        let kind = turn_error_from_http_status(*status);
+        assert_eq!(
+            kind, *expected_kind,
+            "status={status}: expected {expected_kind:?}, got {kind:?}"
+        );
+        assert_eq!(kind.is_retryable(), *retryable, "retryable status={status}");
+    }
 }
 
 /// `StreamEnded` must classify as `Network` (retryable).

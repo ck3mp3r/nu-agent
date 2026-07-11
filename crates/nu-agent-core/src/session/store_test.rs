@@ -2,6 +2,7 @@ use super::store::{
     CompactionMarker, ConversationStore, JsonlConversationStore, StoreEntry, extract_llm_context,
     validate_tool_call_adjacency,
 };
+use crate::session::SessionStore;
 use crate::types::Message;
 use tempfile::TempDir;
 
@@ -11,14 +12,14 @@ use tempfile::TempDir;
 /// A round-trip through serde turns `None` into `Some(Object {})`,
 /// which breaks `PartialEq` even though the two forms are semantically
 /// identical. Serializing first normalizes both sides.
-fn assert_msg_eq(left: &Message, right: &Message) {
+pub(crate) fn assert_msg_eq(left: &Message, right: &Message) {
     assert_eq!(
         serde_json::to_value(left).unwrap(),
         serde_json::to_value(right).unwrap(),
     );
 }
 
-fn assert_msgs_eq(left: &[Message], right: &[Message]) {
+pub(crate) fn assert_msgs_eq(left: &[Message], right: &[Message]) {
     assert_eq!(left.len(), right.len(), "message count mismatch");
     for (i, (l, r)) in left.iter().zip(right.iter()).enumerate() {
         assert_eq!(
@@ -27,84 +28,6 @@ fn assert_msgs_eq(left: &[Message], right: &[Message]) {
             "message {i} mismatch",
         );
     }
-}
-
-/// Mock implementation for testing the trait interface
-struct MockStore {
-    _temp_dir: TempDir,
-}
-
-impl MockStore {
-    fn new() -> Self {
-        Self {
-            _temp_dir: TempDir::new().unwrap(),
-        }
-    }
-}
-
-impl ConversationStore for MockStore {
-    type Error = std::io::Error;
-
-    fn load(&self, _session_id: &str) -> Result<Vec<Message>, std::io::Error> {
-        Ok(vec![])
-    }
-
-    fn append(
-        &self,
-        _session_id: &str,
-        _messages: &[Message],
-        _last_total_tokens: Option<u64>,
-    ) -> Result<(), std::io::Error> {
-        Ok(())
-    }
-
-    fn clear(&self, _session_id: &str) -> Result<(), std::io::Error> {
-        Ok(())
-    }
-
-    fn append_marker(
-        &self,
-        _session_id: &str,
-        _marker: &CompactionMarker,
-        _last_total_tokens: Option<u64>,
-    ) -> Result<(), std::io::Error> {
-        Ok(())
-    }
-
-    fn load_all(
-        &self,
-        _session_id: &str,
-    ) -> Result<(Vec<StoreEntry>, Option<u64>), std::io::Error> {
-        Ok((vec![], None))
-    }
-}
-
-#[test]
-fn trait_can_be_implemented() {
-    // This test verifies that the trait compiles and can be implemented
-    let store = MockStore::new();
-
-    // Test load
-    let messages = store.load("test-session").unwrap();
-    assert_eq!(messages.len(), 0);
-
-    // Test append
-    let msg = Message::user("test");
-    store.append("test-session", &[msg], None).unwrap();
-
-    // Test clear
-    store.clear("test-session").unwrap();
-}
-
-#[test]
-fn trait_works_with_generic_bounds() {
-    // This test verifies static dispatch works
-    fn generic_store_fn<T: ConversationStore>(store: &T, session_id: &str) {
-        let _ = store.load(session_id);
-    }
-
-    let store = MockStore::new();
-    generic_store_fn(&store, "test-session");
 }
 
 // JsonlConversationStore tests
@@ -861,4 +784,110 @@ fn validate_tool_call_adjacency_passes_multiple_valid_pairs() {
     let expected = msgs.clone();
     let result = validate_tool_call_adjacency(msgs);
     assert_msgs_eq(&result, &expected);
+}
+
+// ================================================================
+// SessionStore tests (migrated from deprecated test.rs)
+// ================================================================
+
+#[test]
+fn test_get_or_create_auto_generates_id() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+
+    let session = store.get_or_create(None).expect("Failed to create session");
+
+    // Verify ID format: YYYYMMDD-HHMMSS-micros
+    assert!(
+        session
+            .id()
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_digit()),
+        "Session ID should start with a digit (timestamp), got: {}",
+        session.id()
+    );
+
+    // Verify ID contains only digits and dashes
+    assert!(
+        session.id().chars().all(|c| c.is_ascii_digit() || c == '-'),
+        "Session ID should contain only digits and dashes, got: {}",
+        session.id()
+    );
+}
+
+#[test]
+fn test_get_or_create_loads_existing_session() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+
+    let session_id = "test-session-123".to_string();
+
+    // First call creates the session
+    let session1 = store
+        .get_or_create(Some(session_id.clone()))
+        .expect("Failed to create session");
+
+    assert_eq!(session1.id(), &session_id);
+
+    // Second call should load the same session
+    let session2 = store
+        .get_or_create(Some(session_id.clone()))
+        .expect("Failed to load session");
+
+    assert_eq!(session2.id(), &session_id);
+    assert_eq!(session1.id(), session2.id());
+}
+
+#[test]
+fn test_auto_generated_ids_are_unique() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+
+    let session1 = store
+        .get_or_create(None)
+        .expect("Failed to create session1");
+    let session2 = store
+        .get_or_create(None)
+        .expect("Failed to create session2");
+
+    assert_ne!(
+        session1.id(),
+        session2.id(),
+        "Auto-generated session IDs should be unique"
+    );
+}
+
+#[test]
+fn test_list_sessions_empty_directory() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+
+    // List sessions in empty directory
+    let sessions = store
+        .list_sessions(None)
+        .expect("Failed to list sessions in empty directory");
+
+    assert_eq!(
+        sessions.len(),
+        0,
+        "Should return empty list for empty directory"
+    );
+}
+
+#[test]
+fn test_list_sessions_with_prefix_filter() {
+    let temp_dir = TempDir::new().unwrap();
+    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+
+    store.get_or_create(Some("abc1234-foo".into())).unwrap();
+    store.get_or_create(Some("abc1234-bar".into())).unwrap();
+    store.get_or_create(Some("def5678-baz".into())).unwrap();
+
+    let filtered = store.list_sessions(Some("abc1234")).unwrap();
+    assert_eq!(filtered.len(), 2);
+    assert!(filtered.iter().all(|s| s.id.starts_with("abc1234-")));
+
+    let all = store.list_sessions(None).unwrap();
+    assert_eq!(all.len(), 3);
 }

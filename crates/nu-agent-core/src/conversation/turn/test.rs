@@ -23,11 +23,11 @@ use crate::types::{
     AssistantContent, Message, Text, ToolCall, ToolFunction, ToolResultContent, UserContent,
 };
 
-fn default_circuit_breaker() -> Arc<std::sync::Mutex<McpCircuitBreaker>> {
+pub(crate) fn default_circuit_breaker() -> Arc<std::sync::Mutex<McpCircuitBreaker>> {
     Arc::new(std::sync::Mutex::new(McpCircuitBreaker::default()))
 }
 
-fn default_doom_state() -> Arc<std::sync::Mutex<DoomLoopState>> {
+pub(crate) fn default_doom_state() -> Arc<std::sync::Mutex<DoomLoopState>> {
     Arc::new(std::sync::Mutex::new(DoomLoopState::default()))
 }
 

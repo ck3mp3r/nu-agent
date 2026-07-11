@@ -5,6 +5,10 @@ pub mod resolver;
 mod store;
 
 #[cfg(test)]
+#[path = "prefix_test.rs"]
+mod prefix_test;
+
+#[cfg(test)]
 #[path = "store_test.rs"]
 mod store_test;
 
@@ -15,6 +19,10 @@ mod journal_test;
 #[cfg(test)]
 #[path = "repair_test.rs"]
 mod repair_test;
+
+#[cfg(test)]
+#[path = "resolver_test.rs"]
+mod resolver_test;
 
 pub use journal::JournalConversationMemory;
 pub use store::{
@@ -364,9 +372,6 @@ impl Default for SessionStore {
         Self::new()
     }
 }
-
-#[cfg(test)]
-mod test;
 
 #[cfg(test)]
 mod tool_session_test;

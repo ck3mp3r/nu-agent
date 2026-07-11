@@ -98,8 +98,7 @@ impl UiMessageSnapshot {
         self.tool_display.take()
     }
 
-    #[cfg(test)]
-    pub fn tool_display_ref(&self) -> Option<&ToolDisplay> {
+    pub fn tool_display(&self) -> Option<&ToolDisplay> {
         self.tool_display.as_ref()
     }
 

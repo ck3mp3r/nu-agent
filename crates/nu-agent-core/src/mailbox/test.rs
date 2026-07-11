@@ -1,7 +1,12 @@
+// === Imports ===
+
 use super::broker::{MailboxHandle, socket_dir_for_path};
-use super::client::send_to;
+use super::client::{SendError, send_to};
+use super::protocol::MessageFrame;
 use std::time::Duration;
 use tempfile::TempDir;
+
+// === Tests: broker ===
 
 #[tokio::test]
 async fn mailbox_binds_socket_file() {
@@ -131,4 +136,81 @@ fn socket_dir_for_path_differs_for_different_cwds() {
     let a = socket_dir_for_path(&PathBuf::from("/project/a"));
     let b = socket_dir_for_path(&PathBuf::from("/project/b"));
     assert_ne!(a, b);
+}
+
+// === Tests: client ===
+
+#[tokio::test(flavor = "multi_thread")]
+async fn send_to_delivers_message() {
+    let dir = TempDir::new().unwrap();
+    let handle = MailboxHandle::prepare(dir.path(), "target").unwrap();
+    let (_mailbox, rx) = handle.start().unwrap();
+    send_to(dir.path(), "target", "origin", "payload", "ping")
+        .await
+        .unwrap();
+    let msg = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert_eq!(msg.from, "origin");
+    assert_eq!(msg.message, "payload");
+    assert_eq!(msg.kind, "ping");
+}
+
+#[tokio::test]
+async fn send_to_returns_socket_not_found_when_target_absent() {
+    let dir = TempDir::new().unwrap();
+    let err = send_to(dir.path(), "nobody", "me", "hi", "message")
+        .await
+        .unwrap_err();
+    assert!(matches!(err, SendError::SocketNotFound(_)));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn send_to_custom_kind() {
+    let dir = TempDir::new().unwrap();
+    let handle = MailboxHandle::prepare(dir.path(), "t").unwrap();
+    let (_mailbox, rx) = handle.start().unwrap();
+    send_to(dir.path(), "t", "s", "body", "ping").await.unwrap();
+    let msg = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert_eq!(msg.kind, "ping");
+}
+
+// === Tests: protocol ===
+
+#[test]
+fn message_frame_serializes() {
+    let frame = MessageFrame {
+        from: "alice".to_string(),
+        message: "hello".to_string(),
+        kind: "message".to_string(),
+    };
+    let json = serde_json::to_string(&frame).unwrap();
+    assert!(json.contains("\"from\":\"alice\""));
+    assert!(json.contains("\"message\":\"hello\""));
+}
+
+#[test]
+fn message_frame_deserializes() {
+    let json = r#"{"from":"bob","message":"hi","kind":"ping"}"#;
+    let frame: MessageFrame = serde_json::from_str(json).unwrap();
+    assert_eq!(frame.from, "bob");
+    assert_eq!(frame.kind, "ping");
+}
+
+#[test]
+fn kind_defaults_to_message_when_missing() {
+    let json = r#"{"from":"bob","message":"hi"}"#;
+    let frame: MessageFrame = serde_json::from_str(json).unwrap();
+    assert_eq!(frame.kind, "message");
+}
+
+#[test]
+fn roundtrip_preserves_all_fields() {
+    let frame = MessageFrame {
+        from: "x".to_string(),
+        message: "y".to_string(),
+        kind: "z".to_string(),
+    };
+    let rt: MessageFrame = serde_json::from_str(&serde_json::to_string(&frame).unwrap()).unwrap();
+    assert_eq!(rt.from, frame.from);
+    assert_eq!(rt.message, frame.message);
+    assert_eq!(rt.kind, frame.kind);
 }

@@ -5,11 +5,15 @@ use crate::protocol::{
 
 /// Runtime capability for context compaction.
 pub trait HasCompaction {
-    fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision>;
+    fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
+        None
+    }
 
     fn execute_compaction_trigger<U: ProgressUi>(
         &mut self,
-        ui: &mut U,
-        source: CompactionTriggerSource,
-    ) -> Result<(), String>;
+        _ui: &mut U,
+        _source: CompactionTriggerSource,
+    ) -> Result<(), String> {
+        Ok(())
+    }
 }

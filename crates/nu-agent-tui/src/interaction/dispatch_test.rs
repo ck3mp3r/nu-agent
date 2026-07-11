@@ -27,11 +27,9 @@ fn open_permission_prompt(state: &mut AppState) {
     });
 }
 
-#[test]
-fn first_escape_in_busy_normal_sets_abort_pending_with_exact_status_text() {
+fn busy_state_with_controller() -> (AppState, CancelController) {
     let mut state = AppState::new();
     let cancel_controller = CancelController::new();
-
     dispatch_terminal_event(
         &mut state,
         &TerminalEvent::Key(TerminalKey::Char('w')),
@@ -42,6 +40,23 @@ fn first_escape_in_busy_normal_sets_abort_pending_with_exact_status_text() {
         &TerminalEvent::Key(TerminalKey::Enter),
         Some(&cancel_controller),
     );
+    (state, cancel_controller)
+}
+
+fn busy_state() -> AppState {
+    let mut state = AppState::new();
+    dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('w')),
+        None,
+    );
+    dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+    state
+}
+
+#[test]
+fn first_escape_in_busy_normal_sets_abort_pending_with_exact_status_text() {
+    let (mut state, cancel_controller) = busy_state_with_controller();
     state.enter_normal_mode();
 
     let changed = dispatch_terminal_event(
@@ -59,19 +74,7 @@ fn first_escape_in_busy_normal_sets_abort_pending_with_exact_status_text() {
 
 #[test]
 fn second_escape_in_abort_pending_after_busy_normal_toggles_cancel_requested() {
-    let mut state = AppState::new();
-    let cancel_controller = CancelController::new();
-
-    dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('w')),
-        Some(&cancel_controller),
-    );
-    dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Enter),
-        Some(&cancel_controller),
-    );
+    let (mut state, cancel_controller) = busy_state_with_controller();
     state.enter_normal_mode();
     dispatch_terminal_event(
         &mut state,
@@ -197,19 +200,7 @@ fn esc_in_idle_insert_mode_switches_to_normal_mode() {
 
 #[test]
 fn esc_in_busy_insert_mode_switches_to_normal_without_abort_side_effect() {
-    let mut state = AppState::new();
-    let cancel_controller = CancelController::new();
-
-    dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('w')),
-        Some(&cancel_controller),
-    );
-    dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Enter),
-        Some(&cancel_controller),
-    );
+    let (mut state, cancel_controller) = busy_state_with_controller();
 
     assert_eq!(state.phase, UiPhase::Busy);
     assert_eq!(state.input_mode, InputMode::Insert);
@@ -229,14 +220,7 @@ fn esc_in_busy_insert_mode_switches_to_normal_without_abort_side_effect() {
 
 #[test]
 fn jj_chord_in_busy_insert_mode_switches_to_normal_mode() {
-    let mut state = AppState::new();
-
-    dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('w')),
-        None,
-    );
-    dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+    let mut state = busy_state();
 
     assert_eq!(state.phase, UiPhase::Busy);
     assert_eq!(state.input_mode, InputMode::Insert);
@@ -261,14 +245,7 @@ fn jj_chord_in_busy_insert_mode_switches_to_normal_mode() {
 
 #[test]
 fn jk_chord_in_busy_insert_mode_switches_to_normal_mode() {
-    let mut state = AppState::new();
-
-    dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('w')),
-        None,
-    );
-    dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+    let mut state = busy_state();
 
     assert_eq!(state.phase, UiPhase::Busy);
     assert_eq!(state.input_mode, InputMode::Insert);
@@ -293,14 +270,7 @@ fn jk_chord_in_busy_insert_mode_switches_to_normal_mode() {
 
 #[test]
 fn busy_normal_mode_blocks_plain_typing_until_explicit_i() {
-    let mut state = AppState::new();
-
-    dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('w')),
-        None,
-    );
-    dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+    let mut state = busy_state();
     assert_eq!(state.phase, UiPhase::Busy);
     assert_eq!(state.input_mode, InputMode::Insert);
 
@@ -337,14 +307,7 @@ fn busy_normal_mode_blocks_plain_typing_until_explicit_i() {
 
 #[test]
 fn busy_normal_mode_after_jk_chord_requires_i_before_typing() {
-    let mut state = AppState::new();
-
-    dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('w')),
-        None,
-    );
-    dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+    let mut state = busy_state();
     assert_eq!(state.phase, UiPhase::Busy);
     assert_eq!(state.input_mode, InputMode::Insert);
 

@@ -1,5 +1,6 @@
 use super::journal::JournalConversationMemory;
 use super::store::{CompactionMarker, ConversationStore, JsonlConversationStore};
+use super::store_test::{assert_msg_eq, assert_msgs_eq};
 use crate::types::Message;
 use rig::memory::ConversationMemory;
 use tempfile::TempDir;
@@ -86,30 +87,6 @@ async fn append_preserves_last_total_tokens_when_none() {
          got: {}",
         value["last_total_tokens"]
     );
-}
-
-/// Compare two messages via their serialized JSON form.
-///
-/// rig uses `#[serde(flatten)]` on `Text::additional_params`.
-/// A round-trip through serde turns `None` into `Some(Object {})`,
-/// which breaks `PartialEq` even though the two forms are semantically
-/// identical. Serializing first normalizes both sides.
-fn assert_msg_eq(left: &Message, right: &Message) {
-    assert_eq!(
-        serde_json::to_value(left).unwrap(),
-        serde_json::to_value(right).unwrap(),
-    );
-}
-
-fn assert_msgs_eq(left: &[Message], right: &[Message]) {
-    assert_eq!(left.len(), right.len(), "message count mismatch");
-    for (i, (l, r)) in left.iter().zip(right.iter()).enumerate() {
-        assert_eq!(
-            serde_json::to_value(l).unwrap(),
-            serde_json::to_value(r).unwrap(),
-            "message {i} mismatch",
-        );
-    }
 }
 
 #[tokio::test]

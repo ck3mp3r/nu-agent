@@ -11,24 +11,29 @@ use nu_protocol::LabeledError;
 use rig::memory::ConversationMemory;
 use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
+use super::super::test::{default_circuit_breaker, default_doom_state};
 use super::test_utils::{MockResolver, MockUi, test_config};
 use super::*;
 use crate::conversation::providers::CachedProviderClient;
 use crate::conversation::state::memory::MemoryState;
-use crate::hook::agent_hook::DoomLoopState;
 use crate::protocol::event::UiEvent;
 use crate::session::ConversationStore;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
-use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
 use crate::types::Message;
 
-fn default_circuit_breaker() -> Arc<std::sync::Mutex<McpCircuitBreaker>> {
-    Arc::new(std::sync::Mutex::new(McpCircuitBreaker::default()))
-}
-
-fn default_doom_state() -> Arc<std::sync::Mutex<DoomLoopState>> {
-    Arc::new(std::sync::Mutex::new(DoomLoopState::default()))
+fn default_tool_infra(
+    handle: rig::tool::server::ToolServerHandle,
+    definitions: Vec<rig::completion::ToolDefinition>,
+) -> ToolInfra {
+    ToolInfra {
+        closure_registry: Arc::new(ClosureRegistry::new()),
+        mcp_registry: Arc::new(McpToolRegistry::from_names(Vec::<String>::new())),
+        tool_server_handle: handle,
+        visible_tool_definitions: definitions,
+        circuit_breaker: default_circuit_breaker(),
+        doom_state: default_doom_state(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -221,14 +226,8 @@ impl JourneyHarness {
 
 /// No tools — for pure text turns.
 fn no_tools() -> ToolInfra {
-    ToolInfra {
-        closure_registry: Arc::new(ClosureRegistry::new()),
-        mcp_registry: Arc::new(McpToolRegistry::from_names(Vec::<String>::new())),
-        tool_server_handle: rig::tool::server::ToolServer::new().run(),
-        visible_tool_definitions: vec![],
-        circuit_breaker: default_circuit_breaker(),
-        doom_state: default_doom_state(),
-    }
+    let handle = rig::tool::server::ToolServer::new().run();
+    default_tool_infra(handle, vec![])
 }
 
 // ---------------------------------------------------------------------------
@@ -263,18 +262,14 @@ fn nu_shell_tool(response: &'static str) -> ToolInfra {
     let handle = rig::tool::server::ToolServer::new()
         .tool(TestNuShellTool { response })
         .run();
-    ToolInfra {
-        closure_registry: Arc::new(ClosureRegistry::new()),
-        mcp_registry: Arc::new(McpToolRegistry::from_names(Vec::<String>::new())),
-        tool_server_handle: handle,
-        visible_tool_definitions: vec![rig::completion::ToolDefinition {
+    default_tool_infra(
+        handle,
+        vec![rig::completion::ToolDefinition {
             name: "nu__shell".to_string(),
             description: "Execute a Nushell command".to_string(),
             parameters: serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}),
         }],
-        circuit_breaker: default_circuit_breaker(),
-        doom_state: default_doom_state(),
-    }
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -334,18 +329,14 @@ fn nu_shell_tool_truncating(response: &'static str, max_tool_result_bytes: usize
             .await
             .expect("add_tool must succeed")
     });
-    ToolInfra {
-        closure_registry: Arc::new(ClosureRegistry::new()),
-        mcp_registry: Arc::new(McpToolRegistry::from_names(Vec::<String>::new())),
-        tool_server_handle: handle,
-        visible_tool_definitions: vec![rig::completion::ToolDefinition {
+    default_tool_infra(
+        handle,
+        vec![rig::completion::ToolDefinition {
             name: "nu__shell".to_string(),
             description: "Execute a Nushell command".to_string(),
             parameters: serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}),
         }],
-        circuit_breaker: default_circuit_breaker(),
-        doom_state: default_doom_state(),
-    }
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -408,18 +399,14 @@ fn echo_tool(response: &'static str) -> ToolInfra {
     let handle = rig::tool::server::ToolServer::new()
         .tool(TestEchoTool { response })
         .run();
-    ToolInfra {
-        closure_registry: Arc::new(ClosureRegistry::new()),
-        mcp_registry: Arc::new(McpToolRegistry::from_names(Vec::<String>::new())),
-        tool_server_handle: handle,
-        visible_tool_definitions: vec![rig::completion::ToolDefinition {
+    default_tool_infra(
+        handle,
+        vec![rig::completion::ToolDefinition {
             name: "test_echo".to_string(),
             description: "Test echo tool".to_string(),
             parameters: serde_json::json!({"type": "object", "properties": {}}),
         }],
-        circuit_breaker: default_circuit_breaker(),
-        doom_state: default_doom_state(),
-    }
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -482,18 +469,14 @@ fn nu_shell_cancelling_tool(
             fired: Arc::new(AtomicBool::new(false)),
         })
         .run();
-    ToolInfra {
-        closure_registry: Arc::new(ClosureRegistry::new()),
-        mcp_registry: Arc::new(McpToolRegistry::from_names(Vec::<String>::new())),
-        tool_server_handle: handle,
-        visible_tool_definitions: vec![rig::completion::ToolDefinition {
+    default_tool_infra(
+        handle,
+        vec![rig::completion::ToolDefinition {
             name: "nu__shell".to_string(),
             description: "Execute a Nushell command".to_string(),
             parameters: serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}),
         }],
-        circuit_breaker: default_circuit_breaker(),
-        doom_state: default_doom_state(),
-    }
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1499,11 +1482,9 @@ fn skill_via_builtin_adapter(max_tool_result_bytes: usize, cwd: std::path::PathB
             .await
             .expect("add_tool must succeed")
     });
-    ToolInfra {
-        closure_registry: Arc::new(ClosureRegistry::new()),
-        mcp_registry: Arc::new(McpToolRegistry::from_names(Vec::<String>::new())),
-        tool_server_handle: handle,
-        visible_tool_definitions: vec![rig::completion::ToolDefinition {
+    default_tool_infra(
+        handle,
+        vec![rig::completion::ToolDefinition {
             name: "skill".to_string(),
             description: "Load skill content".to_string(),
             parameters: serde_json::json!({
@@ -1514,9 +1495,7 @@ fn skill_via_builtin_adapter(max_tool_result_bytes: usize, cwd: std::path::PathB
                 "required": ["name"]
             }),
         }],
-        circuit_breaker: default_circuit_breaker(),
-        doom_state: default_doom_state(),
-    }
+    )
 }
 
 /// Prove `Config::max_tool_result_bytes → BuiltinToolAdapter::max_tool_result_bytes →

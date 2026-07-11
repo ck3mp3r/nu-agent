@@ -28,96 +28,6 @@ where
 }
 
 #[test]
-fn test_config_required_fields() {
-    // Test that Config can be created with only required fields
-    let config = Config {
-        provider: "openai".to_string(),
-        provider_impl: None,
-        model: "gpt-4".to_string(),
-        api_key: None,
-        base_url: None,
-        temperature: None,
-        max_tokens: None,
-        max_context_tokens: None,
-        max_output_tokens: None,
-        max_tool_turns: None,
-        preamble: None,
-        read_timeout_secs: None,
-        max_tool_result_bytes: None,
-        model_context_tokens: None,
-        context_warning_threshold: None,
-        max_retries: None,
-        retry_base_delay_ms: None,
-        max_tool_calls_per_subturn: None,
-        additional_params: None,
-    };
-
-    assert_eq!(config.provider, "openai");
-    assert_eq!(config.model, "gpt-4");
-    assert!(config.api_key.is_none());
-}
-
-#[test]
-fn test_config_all_fields() {
-    // Test that Config can be created with all fields
-    let config = Config {
-        provider: "anthropic".to_string(),
-        provider_impl: None,
-        model: "claude-3-opus".to_string(),
-        api_key: Some("test-key".to_string()),
-        base_url: Some("https://api.example.com".to_string()),
-        temperature: Some(0.7),
-        max_tokens: Some(1000),
-        max_context_tokens: Some(4096),
-        max_output_tokens: Some(2048),
-        max_tool_turns: Some(10),
-        preamble: None,
-        read_timeout_secs: None,
-        max_tool_result_bytes: None,
-        model_context_tokens: None,
-        context_warning_threshold: None,
-        max_retries: None,
-        retry_base_delay_ms: None,
-        max_tool_calls_per_subturn: None,
-        additional_params: None,
-    };
-
-    assert_eq!(config.provider, "anthropic");
-    assert_eq!(config.model, "claude-3-opus");
-    assert_eq!(config.api_key, Some("test-key".to_string()));
-    assert_eq!(config.base_url, Some("https://api.example.com".to_string()));
-    assert_eq!(config.temperature, Some(0.7));
-    assert_eq!(config.max_tokens, Some(1000));
-    assert_eq!(config.max_context_tokens, Some(4096));
-    assert_eq!(config.max_output_tokens, Some(2048));
-    assert_eq!(config.max_tool_turns, Some(10));
-}
-
-#[test]
-fn test_config_default_trait() {
-    // Test that Default trait provides minimal defaults
-    let config = Config::default();
-
-    // Required fields should have sensible defaults
-    assert_eq!(config.provider, "");
-    assert_eq!(config.model, "");
-
-    // Optional fields should all be None now (including max_tool_turns)
-    assert!(config.api_key.is_none());
-    assert!(config.base_url.is_none());
-    assert!(config.temperature.is_none());
-    assert!(config.max_tokens.is_none());
-    assert!(config.max_context_tokens.is_none());
-    assert!(config.max_output_tokens.is_none());
-
-    // max_tool_turns should now default to None (runtime decides based on mode)
-    assert!(config.max_tool_turns.is_none());
-
-    // max_tool_result_bytes defaults to None (resolved to 20_000 at point of use)
-    assert!(config.max_tool_result_bytes.is_none());
-}
-
-#[test]
 #[serial]
 fn test_from_env_with_provider_api_key() {
     // Test reading provider-specific API key from environment
@@ -2224,6 +2134,22 @@ fn non_copilot_provider_sets_api_key_from_env() {
 // AgentsConfig Parsing Tests
 // ============================================================================
 
+/// Build a base PluginConfig Value with standard model/provider setup.
+/// The `agents` block is injected as a parameter for per-test customization.
+fn base_config_record(agents_record: Value) -> Value {
+    Value::test_record(record! {
+        "model" => Value::test_string("openai/gpt-4"),
+        "providers" => Value::test_record(record! {
+            "openai" => Value::test_record(record! {
+                "models" => Value::test_record(record! {
+                    "gpt-4" => Value::test_record(record! {}),
+                }),
+            }),
+        }),
+        "agents" => agents_record,
+    })
+}
+
 #[test]
 fn test_parse_agents_config_defaults() {
     // Missing "agents" section → AgentsConfig::default()
@@ -2249,19 +2175,9 @@ fn test_parse_agents_config_defaults() {
 
 #[test]
 fn test_parse_agents_config_planner_disabled() {
-    let value = Value::test_record(record! {
-        "model" => Value::test_string("openai/gpt-4"),
-        "providers" => Value::test_record(record! {
-            "openai" => Value::test_record(record! {
-                "models" => Value::test_record(record! {
-                    "gpt-4" => Value::test_record(record! {}),
-                }),
-            }),
-        }),
-        "agents" => Value::test_record(record! {
-            "planner" => Value::test_string("disabled"),
-        }),
-    });
+    let value = base_config_record(Value::test_record(record! {
+        "planner" => Value::test_string("disabled"),
+    }));
 
     let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
     assert!(!plugin_config.agents.planner_enabled);
@@ -2271,19 +2187,9 @@ fn test_parse_agents_config_planner_disabled() {
 
 #[test]
 fn test_parse_agents_config_custom_default() {
-    let value = Value::test_record(record! {
-        "model" => Value::test_string("openai/gpt-4"),
-        "providers" => Value::test_record(record! {
-            "openai" => Value::test_record(record! {
-                "models" => Value::test_record(record! {
-                    "gpt-4" => Value::test_record(record! {}),
-                }),
-            }),
-        }),
-        "agents" => Value::test_record(record! {
-            "default" => Value::test_string("maker"),
-        }),
-    });
+    let value = base_config_record(Value::test_record(record! {
+        "default" => Value::test_string("maker"),
+    }));
 
     let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
     assert_eq!(plugin_config.agents.default, "maker");
@@ -2291,19 +2197,9 @@ fn test_parse_agents_config_custom_default() {
 
 #[test]
 fn test_parse_agents_config_with_fallback() {
-    let value = Value::test_record(record! {
-        "model" => Value::test_string("openai/gpt-4"),
-        "providers" => Value::test_record(record! {
-            "openai" => Value::test_record(record! {
-                "models" => Value::test_record(record! {
-                    "gpt-4" => Value::test_record(record! {}),
-                }),
-            }),
-        }),
-        "agents" => Value::test_record(record! {
-            "fallback" => Value::test_string("my-agent"),
-        }),
-    });
+    let value = base_config_record(Value::test_record(record! {
+        "fallback" => Value::test_string("my-agent"),
+    }));
 
     let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
     assert_eq!(plugin_config.agents.fallback, Some("my-agent".to_string()));

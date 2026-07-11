@@ -9,8 +9,4 @@ pub use client::{SendError, send_to};
 pub use protocol::{IncomingMessage, MessageFrame};
 
 #[cfg(test)]
-mod broker_test;
-#[cfg(test)]
-mod client_test;
-#[cfg(test)]
-mod protocol_test;
+mod test;

@@ -42,7 +42,3 @@ impl PendingOps {
         self.queued_agent_switch.take()
     }
 }
-
-#[cfg(test)]
-#[path = "pending_test.rs"]
-mod pending_test;

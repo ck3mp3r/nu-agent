@@ -19,13 +19,12 @@ use crate::{
     runtime::{
         InputSourceDiagnostics, RuntimeCoordinator, RuntimeRunError, ScriptedTerminalEvents,
         TerminalEventSource, TuiRuntimeRenderer, command_palette_table_model_for_test,
-        cursor_style_for_test, help_panel_lines_for_test, help_panel_max_scroll_for_test,
+        cursor_style_for_test, help_panel_lines, help_panel_max_scroll_for_test,
         help_panel_overflow_cue_for_test, help_panel_visible_window_for_test,
         inline_slash_lines_for_test, input_line_for_test, input_line_for_test_at_millis,
         input_pane_content_width_for_test, input_rows_with_prompt_for_test,
-        mcp_table_model_for_test, parse_persisted_tool_status_line_for_test,
-        run_with_terminal_restore, status_panel_lines_for_test,
-        transition_spacer_for_roles_for_test,
+        mcp_table_model_for_test, parse_persisted_tool_status_line, run_with_terminal_restore,
+        status_panel_lines, transition_spacer_for_roles_for_test,
     },
     state::{
         AppState, InputMode, McpServerUsabilityState, PromptStatus, ToolCallStatus,
@@ -702,171 +701,130 @@ fn compact_status_line_matches_lane_1_contract() {
     assert!(!status_line.contains('|'));
 }
 
-#[test]
-fn lane_1_wide_no_truncation() {
-    let line = crate::runtime::status::compact_status_line_with_branch_for_test(
+const LANE_1_CASES: &[(&str, Option<&str>, usize, &str)] = &[
+    (
         "abcdefghijklmnop",
         Some("branchname"),
-        None,
         40,
-    );
-    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-
-    assert_eq!(text, "○ abcdefghijklmnop          \u{e725} branchname");
-    assert!(!text.contains('|'));
-}
-
-#[test]
-fn lane_1_medium_one_side_truncation() {
-    let line = crate::runtime::status::compact_status_line_with_branch_for_test(
+        "○ abcdefghijklmnop          \u{e725} branchname",
+    ),
+    (
         "abcdefghijklmnop",
         Some("branchname"),
-        None,
         23,
-    );
-    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-
-    assert_eq!(text, "○ ...lmnop \u{e725} branchname");
-    assert!(!text.contains('|'));
-}
-
-#[test]
-fn lane_1_narrow_both_side_truncation() {
-    let line = crate::runtime::status::compact_status_line_with_branch_for_test(
+        "○ ...lmnop \u{e725} branchname",
+    ),
+    (
         "abcdefghijklmnop",
         Some("branchname"),
-        None,
         20,
-    );
-    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-
-    assert_eq!(text, "○ ...op \u{e725} branchname");
-    assert!(!text.contains('|'));
-}
+        "○ ...op \u{e725} branchname",
+    ),
+    ("openai/gpt-4o-mini", None, 80, "○ openai/gpt-4o-mini"),
+];
 
 #[test]
-fn lane_1_branch_segment_is_right_aligned_when_present() {
-    let width = 40usize;
-    let line = crate::runtime::status::compact_status_line_with_branch_for_test(
-        "abcdefghijklmnop",
-        Some("branchname"),
-        None,
-        width,
-    );
-    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+fn lane_1_scroll() {
+    for &(model, branch, width, expected) in LANE_1_CASES {
+        let line = crate::runtime::status::compact_status_line_with_branch_for_test(
+            model, branch, None, width,
+        );
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
 
-    assert_eq!(text.chars().count(), width);
-    assert!(text.starts_with("○ abcdefghijklmnop"));
-    assert!(text.ends_with("\u{e725} branchname"));
-    assert!(!text.contains('|'));
-}
+        assert_eq!(
+            text, expected,
+            "model={model}, branch={branch:?}, width={width}"
+        );
+        assert!(
+            !text.contains('|'),
+            "pipe should not appear: model={model}, branch={branch:?}, width={width}"
+        );
 
-#[test]
-fn lane_1_narrow_truncation_keeps_branch_right_anchored() {
-    let width = 20usize;
-    let line = crate::runtime::status::compact_status_line_with_branch_for_test(
-        "abcdefghijklmnop",
-        Some("branchname"),
-        None,
-        width,
-    );
-    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        // Extra structural assertions carried over from overlapping
+        // lane_1_branch_segment_is_right_aligned_when_present.
+        if model == "abcdefghijklmnop" && branch == Some("branchname") && width == 40 {
+            assert_eq!(text.chars().count(), 40);
+            assert!(text.starts_with("○ abcdefghijklmnop"));
+            assert!(text.ends_with("\u{e725} branchname"));
+        }
 
-    assert_eq!(text.chars().count(), width);
-    assert!(text.ends_with("\u{e725} branchname"));
-    assert!(text.contains("...op"));
-    assert!(!text.contains('|'));
-}
+        // Extra structural assertions carried over from
+        // lane_1_narrow_truncation_keeps_branch_right_anchored.
+        if model == "abcdefghijklmnop" && branch == Some("branchname") && width == 20 {
+            assert_eq!(text.chars().count(), 20);
+            assert!(text.ends_with("\u{e725} branchname"));
+            assert!(text.contains("...op"));
+        }
+    }
 
-#[test]
-fn lane_1_omits_branch_when_unavailable() {
-    let line = crate::runtime::status::compact_status_line_with_branch_for_test(
-        "openai/gpt-4o-mini",
-        None,
-        None,
-        80,
-    );
-    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    // Structural-only: lane_1_with_branch_appends_branch_icon
+    {
+        let line = crate::runtime::status::compact_status_line_with_branch_for_test(
+            "m",
+            Some("main"),
+            None,
+            40,
+        );
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
 
-    assert_eq!(text, "○ openai/gpt-4o-mini");
-    assert!(!text.contains('|'));
-}
+        assert!(
+            text.ends_with("\u{e725} main"),
+            "expected branch icon prefix, got: {text:?}"
+        );
+    }
 
-#[test]
-fn lane_1_with_branch_appends_branch_icon() {
-    let line = crate::runtime::status::compact_status_line_with_branch_for_test(
-        "m",
-        Some("main"),
-        None,
-        40,
-    );
-    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    // Structural-only: lane_1_with_branch_ellipsizes_label_while_preserving_icon
+    {
+        let line = crate::runtime::status::compact_status_line_with_branch_for_test(
+            "the-quick-brown-fox-jumps-over",
+            Some("feature/super-long-branch-name"),
+            None,
+            32,
+        );
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
 
-    assert!(
-        text.ends_with("\u{e725} main"),
-        "expected branch icon prefix, got: {text:?}"
-    );
-}
+        assert!(
+            text.contains('\u{e725}'),
+            "icon must survive ellipsization, got: {text:?}",
+        );
+        assert!(
+            text.contains("..."),
+            "branch label should have been ellipsized, got: {text:?}",
+        );
+    }
 
-#[test]
-fn lane_1_with_branch_ellipsizes_label_while_preserving_icon() {
-    // 30-char model + 30-char branch into a tight 32-cell viewport forces
-    // both segments to be truncated. The branch must still start with the icon.
-    let line = crate::runtime::status::compact_status_line_with_branch_for_test(
-        "the-quick-brown-fox-jumps-over",
-        Some("feature/super-long-branch-name"),
-        None,
-        32,
-    );
-    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    // Structural-only: lane_1_with_branch_drops_icon_when_budget_below_three_cells
+    {
+        let line = crate::runtime::status::compact_status_line_with_branch_for_test(
+            "abc",
+            Some("main"),
+            None,
+            4,
+        );
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
 
-    assert!(
-        text.contains('\u{e725}'),
-        "icon must survive ellipsization, got: {text:?}"
-    );
-    assert!(
-        text.contains("..."),
-        "branch label should have been ellipsized, got: {text:?}"
-    );
-}
+        assert!(
+            !text.contains('\u{e725}'),
+            "icon must be dropped under extreme narrow budgets, got: {text:?}",
+        );
+        assert!(text.starts_with("○ "));
+    }
 
-#[test]
-fn lane_1_with_branch_drops_icon_when_budget_below_three_cells() {
-    // Total width 4 → inner_width 2 → fields_budget 1 (gap_min 1).
-    // 1 cell cannot fit the 2-cell icon, so it falls back to raw label.
-    // The output stays stable (no panics, no partial icon).
-    let line = crate::runtime::status::compact_status_line_with_branch_for_test(
-        "abc",
-        Some("main"),
-        None,
-        4,
-    );
-    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    // Structural-only: lane_1_with_detached_head_short_sha_also_gets_icon
+    {
+        let line = crate::runtime::status::compact_status_line_with_branch_for_test(
+            "m",
+            Some("a1b2c3d"),
+            None,
+            40,
+        );
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
 
-    assert!(
-        !text.contains('\u{e725}'),
-        "icon must be dropped under extreme narrow budgets, got: {text:?}"
-    );
-    assert!(text.starts_with("○ "));
-}
-
-#[test]
-fn lane_1_with_detached_head_short_sha_also_gets_icon() {
-    // The tracker yields a 7-char SHA string when HEAD is detached; the
-    // formatter doesn't distinguish that from a branch name, so the icon
-    // appears in both cases. Locking that behaviour in.
-    let line = crate::runtime::status::compact_status_line_with_branch_for_test(
-        "m",
-        Some("a1b2c3d"),
-        None,
-        40,
-    );
-    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-
-    assert!(
-        text.ends_with("\u{e725} a1b2c3d"),
-        "expected detached-HEAD short SHA to also carry icon, got: {text:?}"
-    );
+        assert!(
+            text.ends_with("\u{e725} a1b2c3d"),
+            "expected detached-HEAD short SHA to also carry icon, got: {text:?}",
+        );
+    }
 }
 
 #[test]
@@ -1310,7 +1268,7 @@ fn hydrated_tool_history_matches_live_tool_row_shape() {
 
 #[test]
 fn parse_persisted_tool_status_line_supports_done_and_failed_shapes() {
-    let done = parse_persisted_tool_status_line_for_test(
+    let done = parse_persisted_tool_status_line(
         "tool[k8s__list_pods] args={\"namespace\":\"prod\"} · done",
     );
     assert_eq!(
@@ -1318,11 +1276,11 @@ fn parse_persisted_tool_status_line_supports_done_and_failed_shapes() {
         Some(("k8s__list_pods", "{\"namespace\":\"prod\"}", true))
     );
 
-    let failed = parse_persisted_tool_status_line_for_test("tool[gh__run] args={} · failed");
+    let failed = parse_persisted_tool_status_line("tool[gh__run] args={} · failed");
     assert_eq!(failed, Some(("gh__run", "{}", false)));
 
     assert_eq!(
-        parse_persisted_tool_status_line_for_test("tool[gh__run] args={}"),
+        parse_persisted_tool_status_line("tool[gh__run] args={}"),
         None
     );
 }
@@ -2029,7 +1987,7 @@ fn status_lines_include_stable_active_model_identity_line() {
 
 #[test]
 fn help_panel_renders_required_sections_in_contract_order() {
-    let (title, lines) = help_panel_lines_for_test();
+    let (title, lines) = help_panel_lines();
     assert_eq!(title, "Help");
     let rendered_lines = lines
         .iter()
@@ -2062,7 +2020,7 @@ fn help_panel_renders_required_sections_in_contract_order() {
 
 #[test]
 fn help_panel_copy_is_plain_language_and_includes_ctrl_p_and_mcp_basics() {
-    let (_title, lines) = help_panel_lines_for_test();
+    let (_title, lines) = help_panel_lines();
     let rendered = lines
         .iter()
         .map(|line| line.to_string())
@@ -2094,7 +2052,7 @@ fn help_panel_copy_is_plain_language_and_includes_ctrl_p_and_mcp_basics() {
 
 #[test]
 fn help_panel_markdown_projection_preserves_supported_formatting() {
-    let (_title, lines) = help_panel_lines_for_test();
+    let (_title, lines) = help_panel_lines();
     let rendered = lines
         .iter()
         .map(|line| line.to_string())
@@ -2118,7 +2076,7 @@ fn help_panel_markdown_projection_preserves_supported_formatting() {
 
 #[test]
 fn help_panel_scroll_can_reach_final_content_line_with_keyboard_scroll_model() {
-    let (_title, lines) = help_panel_lines_for_test();
+    let (_title, lines) = help_panel_lines();
     let viewport_inner_height = 8u16;
     let max_scroll = help_panel_max_scroll_for_test(&lines, viewport_inner_height);
     let window = help_panel_visible_window_for_test(&lines, viewport_inner_height, max_scroll);
@@ -2136,7 +2094,7 @@ fn help_panel_scroll_can_reach_final_content_line_with_keyboard_scroll_model() {
 
 #[test]
 fn help_panel_shows_overflow_position_cue_when_content_exceeds_viewport() {
-    let (_title, lines) = help_panel_lines_for_test();
+    let (_title, lines) = help_panel_lines();
     let viewport_inner_height = 8u16;
     let cue = help_panel_overflow_cue_for_test(&lines, viewport_inner_height, 3)
         .expect("overflow cue should appear when help exceeds viewport");
@@ -2182,7 +2140,7 @@ fn status_panel_exposes_model_and_mcp_backend_status_lines() {
         },
     ]);
 
-    let (title, lines) = status_panel_lines_for_test(&state, "openai/gpt-4o-mini");
+    let (title, lines) = status_panel_lines(&state, "openai/gpt-4o-mini");
     assert_eq!(title, "Status");
     let rendered = lines
         .iter()
@@ -2280,7 +2238,7 @@ fn mcp_table_emoji_status_rows_use_safe_status_column_width_contract() {
     ]);
 
     let model = mcp_table_model_for_test(&state, 80, 10);
-    assert_eq!(super::mcp_status_column_width_for_test(), 6);
+    assert_eq!(super::MCP_STATUS_COLUMN_WIDTH, 6);
     assert_eq!(model.rows[0][2], "🟢");
     assert_eq!(model.rows[1][2], "⚪");
     assert_eq!(model.rows[2][2], "🔴");
@@ -2288,13 +2246,13 @@ fn mcp_table_emoji_status_rows_use_safe_status_column_width_contract() {
 
 #[test]
 fn mcp_details_height_allocation_prefers_multiple_tool_lines_in_normal_popup_heights() {
-    assert_eq!(super::mcp_details_height_for_inner_height_for_test(4), 0);
-    assert_eq!(super::mcp_details_height_for_inner_height_for_test(5), 1);
-    assert_eq!(super::mcp_details_height_for_inner_height_for_test(6), 2);
-    assert_eq!(super::mcp_details_height_for_inner_height_for_test(8), 3);
-    assert_eq!(super::mcp_details_height_for_inner_height_for_test(10), 4);
-    assert_eq!(super::mcp_details_height_for_inner_height_for_test(12), 5);
-    assert_eq!(super::mcp_details_height_for_inner_height_for_test(14), 6);
+    assert_eq!(super::mcp_details_height_for_inner_height(4), 0);
+    assert_eq!(super::mcp_details_height_for_inner_height(5), 1);
+    assert_eq!(super::mcp_details_height_for_inner_height(6), 2);
+    assert_eq!(super::mcp_details_height_for_inner_height(8), 3);
+    assert_eq!(super::mcp_details_height_for_inner_height(10), 4);
+    assert_eq!(super::mcp_details_height_for_inner_height(12), 5);
+    assert_eq!(super::mcp_details_height_for_inner_height(14), 6);
 }
 
 #[test]
@@ -2327,7 +2285,7 @@ fn mcp_details_height_formula_matches_step_table() {
     ];
     for (h, want) in expected {
         assert_eq!(
-            super::mcp_details_height_for_inner_height_for_test(h),
+            super::mcp_details_height_for_inner_height(h),
             want,
             "inner_height={h}"
         );
@@ -2351,7 +2309,7 @@ fn mcp_panel_layout_keeps_table_primary_with_multiple_visible_rows_in_common_hei
     );
 
     let inner_height = 8u16;
-    let details_height = super::mcp_details_height_for_inner_height_for_test(inner_height);
+    let details_height = super::mcp_details_height_for_inner_height(inner_height);
     let table_height = inner_height
         .saturating_sub(1)
         .saturating_sub(details_height);
@@ -2365,7 +2323,7 @@ fn mcp_panel_layout_keeps_table_primary_with_multiple_visible_rows_in_common_hei
 
 #[test]
 fn mcp_panel_controls_line_removes_status_legend_and_keeps_toggle_hint_compact() {
-    let line = super::mcp_panel_controls_line_for_test();
+    let line = super::mcp_panel_controls_line();
     assert_eq!(
         line,
         "Session-only toggles | Enter/Space toggle | Esc close"
@@ -2797,7 +2755,7 @@ fn command_palette_table_renders_skills_action_row() {
 #[test]
 fn skills_panel_renders_empty_state_when_no_skills_available() {
     let state = AppState::new();
-    let (title, lines) = crate::runtime::skills_panel_lines_for_test(&state);
+    let (title, lines) = crate::runtime::skills_panel_lines(&state);
 
     assert_eq!(title, "Skills");
     let rendered = lines
@@ -2829,7 +2787,7 @@ fn skills_panel_lists_skills_in_deterministic_order() {
         },
     ]);
 
-    let (_title, lines) = crate::runtime::skills_panel_lines_for_test(&state);
+    let (_title, lines) = crate::runtime::skills_panel_lines(&state);
     let rendered = lines
         .iter()
         .map(|line| line.to_string())
@@ -2859,10 +2817,8 @@ fn help_panel_scroll_offset_applied() {
 
     let huge_scroll =
         super::help_panel_scroll_offset_for_test(viewport_height, viewport_width, usize::MAX);
-    let max_scroll = super::help_panel_max_scroll_for_test(
-        &super::help_panel_lines_for_test().1,
-        viewport_height,
-    );
+    let max_scroll =
+        super::help_panel_max_scroll_for_test(&super::help_panel_lines().1, viewport_height);
     assert_eq!(
         huge_scroll, max_scroll,
         "scroll offset above max must be clamped to max"
@@ -2894,7 +2850,7 @@ fn status_panel_scroll_offset_applied() {
     );
     // 1 is within content so it should pass through (or be clamped if content
     // is ≤ 3 lines — either outcome is correct as long as it's ≤ max).
-    let (_title, lines) = super::status_panel_lines_for_test(&state, model);
+    let (_title, lines) = super::status_panel_lines(&state, model);
     let max = super::help_panel_max_scroll_for_test(&lines, viewport_height);
     assert!(
         small_scroll <= max,
@@ -2933,7 +2889,7 @@ fn skills_panel_scroll_offset_applied() {
     let viewport_height = 2u16; // smaller than content (header + 2 skill lines)
     let viewport_width = 80u16;
 
-    let (_title, lines) = super::skills_panel_lines_for_test(&state);
+    let (_title, lines) = super::skills_panel_lines(&state);
     let max = super::help_panel_max_scroll_for_test(&lines, viewport_height);
 
     let huge_scroll = super::skills_panel_scroll_offset_for_test(

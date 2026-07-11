@@ -1,4 +1,4 @@
-use super::PendingOps;
+use super::pending::PendingOps;
 
 #[test]
 fn pending_ops_has_no_pending_when_new() {

@@ -39,7 +39,3 @@ impl EventPump {
         count
     }
 }
-
-#[cfg(test)]
-#[path = "pump_test.rs"]
-mod pump_test;

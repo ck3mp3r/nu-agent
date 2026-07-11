@@ -3,26 +3,9 @@ use super::repair::{
     inject_assistant_after_dangling_tool_results, inject_missing_tool_results,
     merge_consecutive_same_role, remove_empty_messages, repair_messages, trim_trailing_user,
 };
+use super::store_test::assert_msgs_eq;
 use crate::types::{AssistantContent, Message, ToolCall, ToolFunction, ToolResult, UserContent};
 use rig::one_or_many::OneOrMany;
-
-// ================================================================
-// Helpers
-// ================================================================
-
-/// Compare two message slices via their serialized JSON form.
-/// `Text::additional_params` is flattened by serde; a round-trip may turn `None`
-/// into `Some(Object {})`, so we normalize through JSON before comparing.
-fn assert_msgs_eq(left: &[Message], right: &[Message]) {
-    assert_eq!(left.len(), right.len(), "message count mismatch");
-    for (i, (l, r)) in left.iter().zip(right.iter()).enumerate() {
-        assert_eq!(
-            serde_json::to_value(l).expect("serialize left"),
-            serde_json::to_value(r).expect("serialize right"),
-            "message {i} mismatch",
-        );
-    }
-}
 
 fn make_tool_call(id: &str, name: &str) -> AssistantContent {
     AssistantContent::ToolCall(ToolCall::new(

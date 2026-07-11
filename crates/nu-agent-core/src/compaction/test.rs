@@ -1,3 +1,4 @@
+use super::helpers::*;
 use super::*;
 use crate::session::{JournalConversationMemory, StoreEntry, extract_llm_context};
 use crate::types::{
@@ -57,6 +58,178 @@ fn make_tool_result_message(call_id: &str, result_text: &str) -> Message {
         })),
     }
 }
+
+// ============================================================
+// Strategy tests
+// ============================================================
+
+#[test]
+fn compaction_strategy_defaults_to_sliding_summary_only() {
+    let cfg = CompactionParams::default();
+    assert_eq!(cfg.compaction_strategy, CompactionStrategy::SlidingSummary);
+    assert_eq!(cfg.compaction_strategy.as_str(), "sliding_summary");
+}
+
+#[test]
+fn sliding_window_deserializes_from_canonical_name() {
+    let strategy: CompactionStrategy =
+        serde_json::from_str("\"sliding_window\"").expect("sliding_window canonical");
+    assert_eq!(strategy, CompactionStrategy::SlidingWindow);
+    assert_eq!(strategy.as_str(), "sliding_window");
+}
+
+#[test]
+fn sliding_window_roundtrip_preserves_name() {
+    let strategy = CompactionStrategy::SlidingWindow;
+    let json = serde_json::to_string(&strategy).expect("serialize");
+    assert_eq!(json, "\"sliding_window\"");
+    let decoded: CompactionStrategy = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(decoded, CompactionStrategy::SlidingWindow);
+}
+
+#[test]
+fn compaction_params_roundtrip_preserves_sliding_window_mode() {
+    let cfg = CompactionParams {
+        compaction_strategy: CompactionStrategy::SlidingWindow,
+        keep_recent: 5,
+        token_budget: None,
+    };
+    let json = serde_json::to_string(&cfg).expect("serialize");
+    assert!(json.contains("sliding_window"));
+
+    let decoded: CompactionParams = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(
+        decoded.compaction_strategy,
+        CompactionStrategy::SlidingWindow
+    );
+}
+
+#[test]
+fn legacy_strategy_values_normalize_to_sliding_summary() {
+    let truncate: CompactionStrategy =
+        serde_json::from_str("\"truncate\"").expect("truncate alias");
+    let sliding: CompactionStrategy = serde_json::from_str("\"sliding\"").expect("sliding alias");
+    let summarize: CompactionStrategy =
+        serde_json::from_str("\"summarize\"").expect("summarize alias");
+    let canonical: CompactionStrategy =
+        serde_json::from_str("\"sliding_summary\"").expect("canonical");
+
+    assert_eq!(truncate, CompactionStrategy::SlidingSummary);
+    assert_eq!(sliding, CompactionStrategy::SlidingSummary);
+    assert_eq!(summarize, CompactionStrategy::SlidingSummary);
+    assert_eq!(canonical, CompactionStrategy::SlidingSummary);
+}
+
+#[test]
+fn compaction_params_roundtrip_preserves_sliding_summary_mode() {
+    let cfg = CompactionParams {
+        compaction_strategy: CompactionStrategy::SlidingSummary,
+        keep_recent: 3,
+        token_budget: None,
+    };
+    let json = serde_json::to_string(&cfg).expect("serialize");
+    assert!(json.contains("sliding_summary"));
+
+    let decoded: CompactionParams = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(
+        decoded.compaction_strategy,
+        CompactionStrategy::SlidingSummary
+    );
+}
+
+// ============================================================
+// Helpers tests
+// ============================================================
+
+#[test]
+fn find_safe_split_index_adjusts_for_tool_result_at_boundary() {
+    // [user, user, TC_A, TR_A, user, user]
+    // target=3 (TR_A is at index 3) → should move back to 2
+    let messages = vec![
+        Message::user("u0"),
+        Message::user("u1"),
+        make_tool_call_message("A", "read"),
+        make_tool_result_message("A", "ok"),
+        Message::user("u2"),
+        Message::user("u3"),
+    ];
+    assert_eq!(find_safe_split_index(&messages, 3), 2);
+}
+
+#[test]
+fn find_safe_split_index_adjusts_for_consecutive_pairs() {
+    // [user, TC_A, TR_A, TC_B, TR_B, user]
+    // target=4 (TR_B at index 4) → walks back to 3 (between TR_A and TC_B is safe)
+    let messages = vec![
+        Message::user("u0"),
+        make_tool_call_message("A", "read"),
+        make_tool_result_message("A", "ok"),
+        make_tool_call_message("B", "write"),
+        make_tool_result_message("B", "ok"),
+        Message::user("u1"),
+    ];
+    assert_eq!(find_safe_split_index(&messages, 4), 3);
+}
+
+#[test]
+fn find_safe_split_index_no_adjustment_when_clean() {
+    // [user, user, user, user]
+    // target=2 → no tool pairs, stays at 2
+    let messages = vec![
+        Message::user("u0"),
+        Message::user("u1"),
+        Message::user("u2"),
+        Message::user("u3"),
+    ];
+    assert_eq!(find_safe_split_index(&messages, 2), 2);
+}
+
+#[test]
+fn find_safe_split_index_all_tool_pairs() {
+    // [TC_A, TR_A, TC_B, TR_B]
+    // target=2 → boundary between TR_A and TC_B is safe, stays at 2
+    let messages = vec![
+        make_tool_call_message("A", "read"),
+        make_tool_result_message("A", "ok"),
+        make_tool_call_message("B", "write"),
+        make_tool_result_message("B", "ok"),
+    ];
+    assert_eq!(find_safe_split_index(&messages, 2), 2);
+}
+
+#[test]
+fn estimate_tokens_approximation() {
+    // "hello world" = 11 chars → serialized in a Message::user has overhead,
+    // but raw "hello world" text = 11 chars → 2 tokens (11/4 = 2 truncated).
+    // We test via Message::user which adds JSON overhead, so we test the
+    // function's proportionality instead.
+    let msg_small = Message::user("hello world");
+    let tokens_small = estimate_tokens(&msg_small);
+    // "hello world" is 11 chars but serialized JSON is larger; verify > 0
+    assert!(
+        tokens_small > 0,
+        "Expected non-zero tokens for 'hello world'"
+    );
+
+    let msg_large = Message::user("x".repeat(400));
+    let tokens_large = estimate_tokens(&msg_large);
+    // 400 chars of content → ~100 tokens of content + JSON overhead
+    assert!(
+        tokens_large >= 100,
+        "Expected >= 100 tokens for 400 chars, got {}",
+        tokens_large
+    );
+
+    // Large message should have significantly more tokens
+    assert!(
+        tokens_large > tokens_small,
+        "Larger message should have more tokens"
+    );
+}
+
+// ============================================================
+// Algorithm tests
+// ============================================================
 
 #[test]
 fn compact_summarizes_all_messages() {

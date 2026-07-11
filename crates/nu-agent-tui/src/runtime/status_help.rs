@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn help_panel_lines() -> (&'static str, Vec<Line<'static>>) {
+pub(crate) fn help_panel_lines() -> (&'static str, Vec<Line<'static>>) {
     (
         "Help",
         crate::markdown::project_markdown_to_lines(help_panel_markdown_source(), None),
@@ -11,7 +11,7 @@ pub(super) fn help_panel_markdown_source() -> &'static str {
     include_str!("help/help.md")
 }
 
-pub(super) fn status_panel_lines(
+pub(crate) fn status_panel_lines(
     state: &AppState,
     active_model_identity: &str,
 ) -> (&'static str, Vec<Line<'static>>) {
@@ -20,11 +20,6 @@ pub(super) fn status_panel_lines(
         .map(Line::from)
         .collect();
     ("Status", lines)
-}
-
-#[cfg(test)]
-pub(super) fn help_panel_lines_for_test() -> (&'static str, Vec<Line<'static>>) {
-    help_panel_lines()
 }
 
 #[cfg(test)]
@@ -48,19 +43,6 @@ pub(super) fn help_panel_visible_window_for_test(
     scroll: usize,
 ) -> Vec<Line<'static>> {
     help_panel_visible_window(lines, 80, scroll, viewport_height.max(1) as usize)
-}
-
-#[cfg(test)]
-pub(super) fn status_panel_lines_for_test(
-    state: &AppState,
-    active_model_identity: &str,
-) -> (&'static str, Vec<Line<'static>>) {
-    status_panel_lines(state, active_model_identity)
-}
-
-#[cfg(test)]
-pub(super) fn skills_panel_lines_for_test(state: &AppState) -> (&'static str, Vec<Line<'static>>) {
-    skills_panel_lines(state)
 }
 
 /// Returns the effective (clamped) scroll offset that would be passed to
@@ -153,21 +135,6 @@ pub(super) fn mcp_selected_details_lines_for_test(
         .into_iter()
         .map(|line| line.to_string())
         .collect()
-}
-
-#[cfg(test)]
-pub(super) fn mcp_details_height_for_inner_height_for_test(inner_height: u16) -> u16 {
-    mcp_details_height_for_inner_height(inner_height)
-}
-
-#[cfg(test)]
-pub(super) fn mcp_panel_controls_line_for_test() -> String {
-    mcp_panel_controls_line().to_string()
-}
-
-#[cfg(test)]
-pub(super) fn mcp_status_column_width_for_test() -> u16 {
-    MCP_STATUS_COLUMN_WIDTH
 }
 
 #[cfg(test)]
@@ -282,11 +249,6 @@ pub(super) fn cursor_style_for_test(
 #[cfg(test)]
 pub(super) fn status_indicator_for_test(now_millis: Option<u128>) -> &'static str {
     status::status_indicator_for_test(now_millis)
-}
-
-#[cfg(test)]
-pub(super) fn parse_persisted_tool_status_line_for_test(line: &str) -> Option<(&str, &str, bool)> {
-    parse_persisted_tool_status_line(line)
 }
 
 #[cfg(test)]
