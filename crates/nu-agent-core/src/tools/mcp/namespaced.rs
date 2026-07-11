@@ -1,5 +1,4 @@
 use crate::tools::limits::truncate_tool_output;
-use crate::types::ToolDefinition;
 use rig::tool::{ToolDyn, ToolError};
 use rig::wasm_compat::WasmBoxedFuture;
 use rmcp::handler::client::ClientHandler;
@@ -49,16 +48,12 @@ impl ToolDyn for NamespacedTool {
         self.namespaced_name.clone()
     }
 
-    fn definition<'a>(&'a self, prompt: String) -> WasmBoxedFuture<'a, ToolDefinition> {
-        // Get the definition from the inner tool, then override its name
-        let inner_def_future = self.inner.definition(prompt);
-        let namespaced_name = self.namespaced_name.clone();
+    fn description(&self) -> String {
+        self.inner.description()
+    }
 
-        Box::pin(async move {
-            let mut def = inner_def_future.await;
-            def.name = namespaced_name;
-            def
-        })
+    fn parameters(&self) -> serde_json::Value {
+        self.inner.parameters()
     }
 
     fn call<'a>(&'a self, args: String) -> WasmBoxedFuture<'a, Result<String, ToolError>> {

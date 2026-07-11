@@ -244,12 +244,12 @@ impl rig::tool::Tool for TestNuShellTool {
     type Args = serde_json::Value;
     type Output = String;
 
-    async fn definition(&self, _prompt: String) -> rig::completion::ToolDefinition {
-        rig::completion::ToolDefinition {
-            name: Self::NAME.to_string(),
-            description: "Execute a Nushell command".to_string(),
-            parameters: serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}),
-        }
+    fn description(&self) -> String {
+        "Execute a Nushell command".to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]})
     }
 
     async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
@@ -288,17 +288,12 @@ impl rig::tool::ToolDyn for TestTruncatingNuShellTool {
         "nu__shell".to_string()
     }
 
-    fn definition<'a>(
-        &'a self,
-        _prompt: String,
-    ) -> rig::wasm_compat::WasmBoxedFuture<'a, crate::types::ToolDefinition> {
-        Box::pin(async {
-            crate::types::ToolDefinition {
-                name: "nu__shell".to_string(),
-                description: "Execute a Nushell command".to_string(),
-                parameters: serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}),
-            }
-        })
+    fn description(&self) -> String {
+        "Execute a Nushell command".to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]})
     }
 
     fn call<'a>(
@@ -362,12 +357,12 @@ impl rig::tool::Tool for TestEchoTool {
     type Args = serde_json::Value;
     type Output = String;
 
-    async fn definition(&self, _prompt: String) -> rig::completion::ToolDefinition {
-        rig::completion::ToolDefinition {
-            name: Self::NAME.to_string(),
-            description: "Test echo tool".to_string(),
-            parameters: serde_json::json!({"type": "object", "properties": {}}),
-        }
+    fn description(&self) -> String {
+        "Test echo tool".to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object", "properties": {}})
     }
 
     async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
@@ -381,12 +376,12 @@ impl rig::tool::Tool for TestEchoTool2 {
     type Args = serde_json::Value;
     type Output = String;
 
-    async fn definition(&self, _prompt: String) -> rig::completion::ToolDefinition {
-        rig::completion::ToolDefinition {
-            name: Self::NAME.to_string(),
-            description: "Test echo tool 2".to_string(),
-            parameters: serde_json::json!({"type": "object", "properties": {}}),
-        }
+    fn description(&self) -> String {
+        "Test echo tool 2".to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object", "properties": {}})
     }
 
     async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
@@ -433,12 +428,12 @@ impl rig::tool::Tool for TestNuShellCancellingTool {
     type Args = serde_json::Value;
     type Output = String;
 
-    async fn definition(&self, _prompt: String) -> rig::completion::ToolDefinition {
-        rig::completion::ToolDefinition {
-            name: Self::NAME.to_string(),
-            description: "Execute a Nushell command".to_string(),
-            parameters: serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}),
-        }
+    fn description(&self) -> String {
+        "Execute a Nushell command".to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]})
     }
 
     async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {

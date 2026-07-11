@@ -1,6 +1,5 @@
 use super::*;
 use crate::tools::limits::MAX_TOOL_OUTPUT_BYTES;
-use crate::types::ToolDefinition;
 use rig::tool::{ToolDyn, ToolError};
 use rig::wasm_compat::WasmBoxedFuture;
 
@@ -24,16 +23,12 @@ impl ToolDyn for MockTool {
         self.name.clone()
     }
 
-    fn definition<'a>(&'a self, _prompt: String) -> WasmBoxedFuture<'a, ToolDefinition> {
-        let name = self.name.clone();
-        let description = self.description.clone();
-        Box::pin(async move {
-            ToolDefinition {
-                name,
-                description,
-                parameters: serde_json::json!({}),
-            }
-        })
+    fn description(&self) -> String {
+        self.description.clone()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({})
     }
 
     fn call<'a>(&'a self, _args: String) -> WasmBoxedFuture<'a, Result<String, ToolError>> {
@@ -51,14 +46,14 @@ async fn namespaced_tool_returns_prefixed_name() {
 }
 
 #[tokio::test]
-async fn namespaced_tool_definition_has_prefixed_name() {
-    // RED: Test that definition returns namespaced name
+async fn namespaced_tool_returns_prefixed_description() {
+    // RED: Test that description and parameters delegate to inner tool
     let inner = MockTool::new("exec", "Execute something");
     let tool = NamespacedTool::new(Box::new(inner), "mcp", "__", MAX_TOOL_OUTPUT_BYTES);
 
-    let definition = tool.definition("test prompt".to_string()).await;
-    assert_eq!(definition.name, "mcp__exec");
-    assert_eq!(definition.description, "Execute something");
+    assert_eq!(tool.name(), "mcp__exec");
+    assert_eq!(tool.description(), "Execute something");
+    assert!(tool.parameters().is_object());
 }
 
 #[tokio::test]
@@ -79,9 +74,8 @@ async fn namespaced_tool_uses_custom_delimiter() {
     let tool = NamespacedTool::new(Box::new(inner), "server", "::", MAX_TOOL_OUTPUT_BYTES);
 
     assert_eq!(tool.name(), "server::info");
-
-    let definition = tool.definition("prompt".to_string()).await;
-    assert_eq!(definition.name, "server::info");
+    assert_eq!(tool.description(), "Get info");
+    assert!(tool.parameters().is_object());
 }
 
 /// Mock tool that returns a large result exceeding MAX_TOOL_OUTPUT_BYTES.
@@ -92,14 +86,12 @@ impl ToolDyn for LargeMockTool {
         "big_tool".to_string()
     }
 
-    fn definition<'a>(&'a self, _prompt: String) -> WasmBoxedFuture<'a, ToolDefinition> {
-        Box::pin(async {
-            ToolDefinition {
-                name: "big_tool".to_string(),
-                description: "Returns lots of data".to_string(),
-                parameters: serde_json::json!({}),
-            }
-        })
+    fn description(&self) -> String {
+        "Returns lots of data".to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({})
     }
 
     fn call<'a>(&'a self, _args: String) -> WasmBoxedFuture<'a, Result<String, ToolError>> {

@@ -1955,12 +1955,12 @@ impl rig::tool::Tool for SimpleEchoTool {
     type Args = serde_json::Value;
     type Output = String;
 
-    async fn definition(&self, _prompt: String) -> rig::completion::ToolDefinition {
-        rig::completion::ToolDefinition {
-            name: Self::NAME.to_string(),
-            description: "Simple echo tool for testing".to_string(),
-            parameters: serde_json::json!({"type": "object", "properties": {"x": {"type": "number"}}}),
-        }
+    fn description(&self) -> String {
+        "Simple echo tool for testing".to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object", "properties": {"x": {"type": "number"}}})
     }
 
     async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
@@ -2667,12 +2667,12 @@ fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
         type Args = serde_json::Value;
         type Output = String;
 
-        async fn definition(&self, _prompt: String) -> rig::completion::ToolDefinition {
-            rig::completion::ToolDefinition {
-                name: Self::NAME.to_string(),
-                description: "Tool that cancels after first call".to_string(),
-                parameters: serde_json::json!({"type": "object", "properties": {}}),
-            }
+        fn description(&self) -> String {
+            "Tool that cancels after first call".to_string()
+        }
+
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object", "properties": {}})
         }
 
         async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {

@@ -47,9 +47,7 @@ fn adapter_returns_correct_name() {
 }
 
 #[test]
-fn adapter_returns_correct_definition() {
-    use rig::tool::ToolDyn;
-
+fn adapter_returns_correct_description_and_parameters() {
     let tool_def = ToolDefinition {
         name: "read".to_string(),
         description: "Read a file".to_string(),
@@ -65,12 +63,9 @@ fn adapter_returns_correct_definition() {
 
     let adapter = BuiltinToolAdapter::new(tool_def.clone(), cwd.clone(), None, cwd, None, 20_000);
 
-    // Since definition() is async, we need to use a runtime
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let result = runtime.block_on(adapter.definition("".to_string()));
-
-    assert_eq!(result.name, "read");
-    assert_eq!(result.description, "Read a file");
+    assert_eq!(adapter.name(), "read");
+    assert_eq!(adapter.description(), "Read a file");
+    assert_eq!(adapter.parameters(), tool_def.parameters);
 }
 
 #[test]

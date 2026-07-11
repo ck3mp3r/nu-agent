@@ -384,6 +384,10 @@ impl From<rig::agent::StreamingError> for TurnError {
                         kind: classify_from_display(s),
                         msg: completion_err.to_string(),
                     },
+                    CompletionError::RequestError(ref s) => Self::CompletionFailed {
+                        kind: classify_from_display(&s.to_string()),
+                        msg: completion_err.to_string(),
+                    },
                     _ => Self::CompletionFailed {
                         msg: completion_err.to_string(),
                         kind: CompletionErrorKind::Unknown,

@@ -3,13 +3,13 @@
 //! Each concern (cancellation, sub-turn cap, doom loop, circuit breaker, history
 //! snapshot) lives in its own module and has its own unit tests. `HookChain` owns
 //! them as named fields and delegates to them in an explicit, readable order inside
-//! the `PromptHook<M>` impl.
+//! the `AgentHook<M>` impl.
 //!
 //! ## Adding a new concern
 //!
 //! 1. Create `new_concern.rs` + `new_concern_test.rs` under `hook/`.
 //! 2. Add a named field on `HookChain`.
-//! 3. Call the concern's method inside whichever hook method needs it.
+//! 3. Call the concern's method inside whichever event arm needs it.
 //! 4. Nothing else changes.
 
 use std::sync::Arc;
@@ -17,9 +17,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use rig::agent::{
-    HookAction, InvalidToolCallContext, InvalidToolCallHookAction, PromptHook, ToolCallHookAction,
-};
+use rig::agent::{AgentHook, Flow, HookContext, StepEvent};
 use rig::completion::GetTokenUsage;
 use rig::completion::request::CompletionModel;
 use rig::message::Message;
@@ -114,215 +112,228 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
     }
 }
 
-impl<M, P> PromptHook<M> for HookChain<P>
+impl<M, P> AgentHook<M> for HookChain<P>
 where
     M: CompletionModel,
     P: AsyncPermissionResolver,
 {
-    async fn on_completion_call(&self, prompt: &Message, history: &[Message]) -> HookAction {
-        // 1. History snapshot — store history + prompt before the LLM call
-        self.history.update(history, prompt);
+    async fn on_event(&self, _ctx: &HookContext, event: StepEvent<'_, M>) -> Flow {
+        match event {
+            StepEvent::CompletionCall {
+                prompt, history, ..
+            } => {
+                // 1. History snapshot — store history + prompt before the LLM call
+                self.history.update(history, prompt);
 
-        // 2. Reset sub-turn cap — new LLM request, fresh counter
-        self.subturn.reset();
+                // 2. Reset sub-turn cap — new LLM request, fresh counter
+                self.subturn.reset();
 
-        // Trace-level payload logging for debugging LLM request contents.
-        if log::log_enabled!(log::Level::Trace) {
-            log::trace!(
-                "on_completion_call: history_len={} prompt={}",
-                history.len(),
-                serde_json::to_string(prompt).unwrap_or_else(|_| "<serialize error>".into()),
-            );
-            for (i, msg) in history.iter().enumerate() {
-                log::trace!(
-                    "  history[{}]: {}",
-                    i,
-                    serde_json::to_string(msg).unwrap_or_else(|_| "<serialize error>".into()),
-                );
+                // Trace-level payload logging for debugging LLM request contents.
+                if log::log_enabled!(log::Level::Trace) {
+                    log::trace!(
+                        "on_completion_call: history_len={} prompt={}",
+                        history.len(),
+                        serde_json::to_string(prompt)
+                            .unwrap_or_else(|_| "<serialize error>".into()),
+                    );
+                    for (i, msg) in history.iter().enumerate() {
+                        log::trace!(
+                            "  history[{}]: {}",
+                            i,
+                            serde_json::to_string(msg)
+                                .unwrap_or_else(|_| "<serialize error>".into()),
+                        );
+                    }
+                } else if log::log_enabled!(log::Level::Debug) {
+                    log::trace!("on_completion_call: history_len={}", history.len());
+                }
+
+                if let Some(action) = self.cancel.check_hook() {
+                    return action;
+                }
+
+                // 3. Send LlmStart
+                let _ = self.ui_tx.send(UiEvent::LlmStart);
+                Flow::cont()
             }
-        } else if log::log_enabled!(log::Level::Debug) {
-            log::trace!("on_completion_call: history_len={}", history.len());
-        }
 
-        if let Some(action) = self.cancel.check_hook() {
-            return action;
-        }
+            StepEvent::TextDelta {
+                delta: _,
+                aggregated,
+            } => {
+                if let Some(action) = self.cancel.check_hook() {
+                    return action;
+                }
+                let _ = self.ui_tx.send(UiEvent::AssistantMessage {
+                    text: aggregated.to_string(),
+                });
+                Flow::cont()
+            }
 
-        // 3. Send LlmStart
-        let _ = self.ui_tx.send(UiEvent::LlmStart);
-        HookAction::Continue
-    }
+            StepEvent::ToolCall {
+                tool_name,
+                tool_call_id,
+                args,
+                ..
+            } => {
+                log::trace!("on_tool_call: tool={tool_name}");
 
-    async fn on_text_delta(&self, _delta: &str, aggregated: &str) -> HookAction {
-        if let Some(action) = self.cancel.check_hook() {
-            return action;
-        }
-        let _ = self.ui_tx.send(UiEvent::AssistantMessage {
-            text: aggregated.to_string(),
-        });
-        HookAction::Continue
-    }
+                // 1. Check cancellation
+                if let Some(action) = self.cancel.check_tool_call() {
+                    return action;
+                }
 
-    async fn on_tool_call(
-        &self,
-        tool_name: &str,
-        tool_call_id: Option<String>,
-        _internal_call_id: &str,
-        args: &str,
-    ) -> ToolCallHookAction {
-        log::trace!("on_tool_call: tool={tool_name}");
+                // 2. Check per-sub-turn tool call cap
+                if let Some(action) = self.subturn.check_and_increment(tool_name) {
+                    return action;
+                }
 
-        // 1. Check cancellation
-        if let Some(action) = self.cancel.check_tool_call() {
-            return action;
-        }
+                // 3. Check doom loop
+                if let Some(action) = self.doom.check_and_record(tool_name, args, &self.ui_tx) {
+                    return action;
+                }
 
-        // 2. Check per-sub-turn tool call cap
-        if let Some(action) = self.subturn.check_and_increment(tool_name) {
-            return action;
-        }
+                // 4. Check circuit breaker (MCP server disabled)
+                if let Some(action) = self
+                    .circuit
+                    .check_server_enabled(tool_name, &self.mcp_registry)
+                {
+                    return action;
+                }
 
-        // 3. Check doom loop
-        if let Some(action) = self.doom.check_and_record(tool_name, args, &self.ui_tx) {
-            return action;
-        }
+                // 5. Resolve tool source
+                let source =
+                    resolve_tool_source(tool_name, &self.closure_registry, &self.mcp_registry)
+                        .as_str()
+                        .to_string();
 
-        // 4. Check circuit breaker (MCP server disabled)
-        if let Some(action) = self
-            .circuit
-            .check_server_enabled(tool_name, &self.mcp_registry)
-        {
-            return action;
-        }
+                // 6. Announce tool call
+                let _ = self.ui_tx.send(UiEvent::ToolStart {
+                    name: tool_name.to_string(),
+                    source: source.clone(),
+                    arguments: args.to_string(),
+                });
 
-        // 5. Resolve tool source
-        let source = resolve_tool_source(tool_name, &self.closure_registry, &self.mcp_registry)
-            .as_str()
-            .to_string();
+                // 7. Ask permission
+                let decision = self
+                    .permission
+                    .resolve(
+                        tool_name,
+                        args,
+                        tool_call_id.map(|s| s.to_string()),
+                        Some(self.ui_tx.clone()),
+                    )
+                    .await;
 
-        // 6. Announce tool call
-        let _ = self.ui_tx.send(UiEvent::ToolStart {
-            name: tool_name.to_string(),
-            source: source.clone(),
-            arguments: args.to_string(),
-        });
+                // 8. Act on decision
+                match decision {
+                    PermissionDecision::Allow => Flow::cont(),
+                    PermissionDecision::Deny => {
+                        let _ = self.ui_tx.send(UiEvent::ToolEnd {
+                            name: tool_name.to_string(),
+                            source,
+                            arguments: args.to_string(),
+                            success: false,
+                            result: String::new(),
+                            display: None,
+                            error_kind: None,
+                            message: Some("Permission denied".to_string()),
+                        });
+                        Flow::skip("Permission denied")
+                    }
+                }
+            }
 
-        // 7. Ask permission
-        let decision = self
-            .permission
-            .resolve(tool_name, args, tool_call_id, Some(self.ui_tx.clone()))
-            .await;
+            StepEvent::ToolResult {
+                tool_name,
+                args,
+                result,
+                ..
+            } => {
+                log::trace!(
+                    "on_tool_result: tool={tool_name} success={} result_len={}",
+                    !super::agent_hook::is_tool_failure(result),
+                    result.len(),
+                );
+                if log::log_enabled!(log::Level::Trace) {
+                    let preview = if result.len() > 2000 {
+                        format!("{}...<truncated {} bytes>", &result[..2000], result.len())
+                    } else {
+                        result.to_string()
+                    };
+                    log::trace!("  result_body: {preview}");
+                }
 
-        // 8. Act on decision
-        match decision {
-            PermissionDecision::Allow => ToolCallHookAction::Continue,
-            PermissionDecision::Deny => {
+                // 1. Parse result JSON and extract display
+                let display = serde_json::from_str::<serde_json::Value>(result)
+                    .ok()
+                    .and_then(|json| {
+                        crate::tools::handler::build_direct_tool_display(tool_name, &json)
+                    });
+
+                // 2. Resolve source
+                let source =
+                    resolve_tool_source(tool_name, &self.closure_registry, &self.mcp_registry)
+                        .as_str()
+                        .to_string();
+
+                // 3. Emit ToolEnd
+                let success = !super::agent_hook::is_tool_failure(result);
+
                 let _ = self.ui_tx.send(UiEvent::ToolEnd {
                     name: tool_name.to_string(),
                     source,
                     arguments: args.to_string(),
-                    success: false,
-                    result: String::new(),
-                    display: None,
+                    success,
+                    result: result.to_string(),
+                    display,
                     error_kind: None,
-                    message: Some("Permission denied".to_string()),
+                    message: None,
                 });
-                ToolCallHookAction::Skip {
-                    reason: "Permission denied".to_string(),
-                }
+
+                // 4. Circuit breaker — track transport failures per server
+                self.circuit.record_result(
+                    tool_name,
+                    result,
+                    success,
+                    &self.mcp_registry,
+                    &self.ui_tx,
+                );
+
+                Flow::cont()
             }
-        }
-    }
 
-    async fn on_tool_result(
-        &self,
-        tool_name: &str,
-        _tool_call_id: Option<String>,
-        _internal_call_id: &str,
-        args: &str,
-        result: &str,
-    ) -> HookAction {
-        log::trace!(
-            "on_tool_result: tool={tool_name} success={} result_len={}",
-            !super::agent_hook::is_tool_failure(result),
-            result.len(),
-        );
-        if log::log_enabled!(log::Level::Trace) {
-            let preview = if result.len() > 2000 {
-                format!("{}...<truncated {} bytes>", &result[..2000], result.len())
-            } else {
-                result.to_string()
-            };
-            log::trace!("  result_body: {preview}");
-        }
+            StepEvent::StreamResponseFinish {
+                prompt: _,
+                response,
+            } => {
+                let usage = response.token_usage();
+                if usage.total_tokens > 0 {
+                    let _ = self.ui_tx.send(UiEvent::LlmEnd {
+                        response_chars: 0,
+                        tool_calls: 0,
+                        input_tokens: usage.input_tokens,
+                        output_tokens: usage.output_tokens,
+                        total_tokens: usage.total_tokens,
+                    });
+                }
+                Flow::cont()
+            }
 
-        // 1. Parse result JSON and extract display
-        let display = serde_json::from_str::<serde_json::Value>(result)
-            .ok()
-            .and_then(|json| crate::tools::handler::build_direct_tool_display(tool_name, &json));
+            StepEvent::InvalidToolCall(ctx) => {
+                log::warn!("Invalid tool call: tool={}", ctx.tool_name);
+                let feedback = format!(
+                    "Tool '{}' is not available. Available tools: [{}]",
+                    ctx.tool_name,
+                    ctx.available_tools.join(", ")
+                );
+                let _ = self.ui_tx.send(UiEvent::Warning {
+                    message: feedback.clone(),
+                });
+                Flow::retry(feedback)
+            }
 
-        // 2. Resolve source
-        let source = resolve_tool_source(tool_name, &self.closure_registry, &self.mcp_registry)
-            .as_str()
-            .to_string();
-
-        // 3. Emit ToolEnd
-        let success = !super::agent_hook::is_tool_failure(result);
-
-        let _ = self.ui_tx.send(UiEvent::ToolEnd {
-            name: tool_name.to_string(),
-            source,
-            arguments: args.to_string(),
-            success,
-            result: result.to_string(),
-            display,
-            error_kind: None,
-            message: None,
-        });
-
-        // 4. Circuit breaker — track transport failures per server
-        self.circuit
-            .record_result(tool_name, result, success, &self.mcp_registry, &self.ui_tx);
-
-        HookAction::Continue
-    }
-
-    async fn on_stream_completion_response_finish(
-        &self,
-        _prompt: &Message,
-        response: &M::StreamingResponse,
-    ) -> HookAction {
-        let usage = response.token_usage();
-        if usage.total_tokens > 0 {
-            let _ = self.ui_tx.send(UiEvent::LlmEnd {
-                response_chars: 0,
-                tool_calls: 0,
-                input_tokens: usage.input_tokens,
-                output_tokens: usage.output_tokens,
-                total_tokens: usage.total_tokens,
-            });
-        }
-        HookAction::Continue
-    }
-
-    // on_tool_call_delta: use default impl
-
-    fn on_invalid_tool_call(
-        &self,
-        context: &InvalidToolCallContext,
-    ) -> impl std::future::Future<Output = InvalidToolCallHookAction> + Send {
-        log::warn!("Invalid tool call: tool={}", context.tool_name);
-        let feedback = format!(
-            "Tool '{}' is not available. Available tools: [{}]",
-            context.tool_name,
-            context.available_tools.join(", ")
-        );
-        let ui_tx = self.ui_tx.clone();
-        async move {
-            let _ = ui_tx.send(UiEvent::Warning {
-                message: feedback.clone(),
-            });
-            InvalidToolCallHookAction::Retry { feedback }
+            _ => Flow::cont(),
         }
     }
 }

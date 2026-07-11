@@ -424,9 +424,12 @@ impl ToolDyn for FilteredToolProxy {
         self.tool_name.clone()
     }
 
-    fn definition<'a>(&'a self, _prompt: String) -> WasmBoxedFuture<'a, ToolDefinition> {
-        let def = self.tool_definition.clone();
-        Box::pin(async move { def })
+    fn description(&self) -> String {
+        self.tool_definition.description.clone()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        self.tool_definition.parameters.clone()
     }
 
     fn call<'a>(&'a self, args: String) -> WasmBoxedFuture<'a, Result<String, ToolError>> {
@@ -496,12 +499,12 @@ where
     // one-shot invocation.
     let mut builder = if has_session {
         rig::agent::AgentBuilder::new(model)
-            .hook(hook)
+            .add_hook(hook)
             .memory(memory)
             .tools(proxy_tools)
     } else {
         rig::agent::AgentBuilder::new(model)
-            .hook(hook)
+            .add_hook(hook)
             .tools(proxy_tools)
     };
     if let Some(ref p) = preamble {
@@ -523,7 +526,7 @@ where
     let stream = agent
         .stream_prompt(prompt)
         .conversation(&conversation_id)
-        .multi_turn(effective_max_turns as usize)
+        .max_turns(effective_max_turns as usize)
         .max_invalid_tool_call_retries(3)
         .await;
 
@@ -572,6 +575,8 @@ where
                         rig::streaming::StreamedAssistantContent::ReasoningDelta { .. } => {}
                         // Raw provider final response object — not needed here
                         rig::streaming::StreamedAssistantContent::Final(_) => {}
+                        // Unknown provider-specific content — ignore
+                        rig::streaming::StreamedAssistantContent::Unknown(_) => {}
                     }
                 }
 
@@ -588,9 +593,9 @@ where
 
                 // --- FINAL RESPONSE ---
                 rig::agent::MultiTurnStreamItem::FinalResponse(fin) => {
-                    text = fin.response().to_string();
+                    text = fin.output().to_string();
                     usage = fin.usage();
-                    messages = fin.history().map(|h| h.to_vec());
+                    messages = fin.messages().map(|h| h.to_vec());
                 }
 
                 // MultiTurnStreamItem is #[non_exhaustive] — required wildcard arm.

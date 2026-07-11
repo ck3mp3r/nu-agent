@@ -1,6 +1,6 @@
 //! Cancellation concern — checks whether the agent turn has been cancelled.
 
-use rig::agent::{HookAction, ToolCallHookAction};
+use rig::agent::Flow;
 use tokio_util::sync::CancellationToken;
 
 /// Checks a [`CancellationToken`] and returns the appropriate hook actions.
@@ -10,23 +10,19 @@ pub struct CancelChecker {
 }
 
 impl CancelChecker {
-    /// Returns `Some(Terminate)` if cancelled, `None` if still running.
-    pub fn check_hook(&self) -> Option<HookAction> {
+    /// Returns `Some(Flow::terminate(...))` if cancelled, `None` if still running.
+    pub fn check_hook(&self) -> Option<Flow> {
         if self.token.is_cancelled() {
-            Some(HookAction::Terminate {
-                reason: "Cancelled by user".into(),
-            })
+            Some(Flow::terminate("Cancelled by user"))
         } else {
             None
         }
     }
 
-    /// Returns `Some(Terminate)` if cancelled, `None` if still running.
-    pub fn check_tool_call(&self) -> Option<ToolCallHookAction> {
+    /// Returns `Some(Flow::terminate(...))` if cancelled, `None` if still running.
+    pub fn check_tool_call(&self) -> Option<Flow> {
         if self.token.is_cancelled() {
-            Some(ToolCallHookAction::Terminate {
-                reason: "Cancelled by user".into(),
-            })
+            Some(Flow::terminate("Cancelled by user"))
         } else {
             None
         }

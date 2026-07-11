@@ -11,9 +11,6 @@ pub use crate::hook::chain::HookChain;
 pub use crate::hook::doom_loop::{DOOM_LOOP_THRESHOLD, DoomLoopState};
 pub use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
 
-// Re-export rig hook action types used in tests via `super::*`
-pub use rig::agent::{HookAction, ToolCallHookAction};
-
 /// Returns `true` if a tool result string represents a failure injected by any
 /// code path in the agent hook.
 ///

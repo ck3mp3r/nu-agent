@@ -31,5 +31,5 @@ htmd = { workspace = true }
 
 [dev-dependencies]
 serial_test = { workspace = true }
-rig = { package = "rig-core", version = "0.39.0", default-features = false, features = ["derive", "rmcp", "test-utils"] }
+rig = { workspace = true, features = ["test-utils"] }
 wiremock = "0.6"

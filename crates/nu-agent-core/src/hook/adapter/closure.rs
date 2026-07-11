@@ -74,9 +74,12 @@ impl ToolDyn for ClosureToolAdapter {
         self.name.clone()
     }
 
-    fn definition<'a>(&'a self, _prompt: String) -> WasmBoxedFuture<'a, ToolDefinition> {
-        let def = self.definition.clone();
-        Box::pin(async move { def })
+    fn description(&self) -> String {
+        self.definition.description.clone()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        self.definition.parameters.clone()
     }
 
     fn call<'a>(&'a self, args: String) -> WasmBoxedFuture<'a, Result<String, ToolError>> {

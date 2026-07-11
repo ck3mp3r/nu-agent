@@ -5,7 +5,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use rig::agent::ToolCallHookAction;
+use rig::agent::Flow;
 use tokio::sync::mpsc;
 
 use crate::protocol::event::UiEvent;
@@ -26,20 +26,18 @@ impl CircuitBreakerGuard {
         &self,
         tool_name: &str,
         mcp_registry: &McpToolRegistry,
-    ) -> Option<ToolCallHookAction> {
+    ) -> Option<Flow> {
         if let Some(server_name) = mcp_registry.server_name_for(tool_name)
             && !mcp_registry.is_server_enabled(server_name)
         {
             log::trace!(
                 "circuit_breaker: MCP server '{server_name}' disabled, skipping {tool_name}"
             );
-            return Some(ToolCallHookAction::Skip {
-                reason: format!(
-                    "MCP server '{}' is disabled (circuit breaker tripped). \
+            return Some(Flow::skip(format!(
+                "MCP server '{}' is disabled (circuit breaker tripped). \
                      Re-enable via MCP panel.",
-                    server_name
-                ),
-            });
+                server_name
+            )));
         }
         None
     }

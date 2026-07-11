@@ -75,9 +75,12 @@ impl ToolDyn for BuiltinToolAdapter {
         self.tool_def.name.clone()
     }
 
-    fn definition<'a>(&'a self, _prompt: String) -> WasmBoxedFuture<'a, ToolDefinition> {
-        let def = self.tool_def.clone();
-        Box::pin(async move { def })
+    fn description(&self) -> String {
+        self.tool_def.description.clone()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        self.tool_def.parameters.clone()
     }
 
     fn call<'a>(&'a self, args: String) -> WasmBoxedFuture<'a, Result<String, ToolError>> {

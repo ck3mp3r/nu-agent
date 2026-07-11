@@ -1,5 +1,5 @@
 use super::*;
-use rig::agent::{HookAction, ToolCallHookAction};
+use rig::agent::Flow;
 use tokio_util::sync::CancellationToken;
 
 #[test]
@@ -15,10 +15,7 @@ fn check_hook_cancelled_returns_terminate() {
     let token = CancellationToken::new();
     token.cancel();
     let checker = CancelChecker { token };
-    assert!(matches!(
-        checker.check_hook(),
-        Some(HookAction::Terminate { .. })
-    ));
+    assert!(matches!(checker.check_hook(), Some(Flow::Terminate { .. })));
 }
 
 #[test]
@@ -36,6 +33,6 @@ fn check_tool_call_cancelled_returns_terminate() {
     let checker = CancelChecker { token };
     assert!(matches!(
         checker.check_tool_call(),
-        Some(ToolCallHookAction::Terminate { .. })
+        Some(Flow::Terminate { .. })
     ));
 }
