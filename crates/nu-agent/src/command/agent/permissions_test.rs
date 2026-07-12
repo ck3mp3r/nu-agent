@@ -27,7 +27,7 @@ fn resolve_effective_permissions_merges_cli_overlay_additively() {
         }),
     )]);
 
-    let (effective, summary) =
+    let (_base, effective, _cli_overlay, summary) =
         super::permissions::resolve_effective_permissions_config(&call, Some(&plugin), None, true)
             .expect("merge");
 

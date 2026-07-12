@@ -180,13 +180,17 @@ pub(super) fn run_command(
     let messaging_identity = persona_resolution.messaging_identity;
     let agent_permissions_overlay = persona_resolution.agent_permissions_overlay;
 
-    let (effective_permissions, permissions_startup_summary) =
-        resolve_effective_permissions_config(
-            call,
-            plugin_config_value.as_ref(),
-            agent_permissions_overlay.as_ref(),
-            mode.is_tui(),
-        )?;
+    let (
+        base_permissions,
+        effective_permissions,
+        cli_permissions_overlay,
+        permissions_startup_summary,
+    ) = resolve_effective_permissions_config(
+        call,
+        plugin_config_value.as_ref(),
+        agent_permissions_overlay.as_ref(),
+        mode.is_tui(),
+    )?;
 
     // Create async runtime for LLM and MCP tool execution
     let runtime = tokio::runtime::Runtime::new()
@@ -343,7 +347,9 @@ pub(super) fn run_command(
             context_window_max_tokens,
             compaction_threshold_pct: merged_compaction.proactive_threshold_pct.unwrap_or(0.80),
             compaction_strategy,
+            base_permissions,
             effective_permissions,
+            cli_permissions_overlay,
             permissions_startup_summary,
             persona_body: persona.as_ref().map(|p| p.body.clone()),
             agent_identity,

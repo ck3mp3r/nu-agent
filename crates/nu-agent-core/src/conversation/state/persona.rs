@@ -1,5 +1,6 @@
 use super::super::managers::PersonaManager;
 use crate::config::Config;
+use crate::tools::authz::PermissionsOverlay;
 
 pub struct PersonaState {
     agent_persona_body: Option<String>,
@@ -20,6 +21,7 @@ pub struct SwitchAgentResult {
     pub max_tool_calls_per_subturn: Option<usize>,
     pub max_tool_result_bytes: Option<usize>,
     pub additional_params: Option<serde_json::Value>,
+    pub permissions_overlay: Option<PermissionsOverlay>,
 }
 
 impl PersonaState {
@@ -99,10 +101,22 @@ impl PersonaState {
         self.agent_identity = Some(identity.clone());
         self.agent_description = parsed.description;
 
+        // Convert frontmatter permissions to PermissionsOverlay
+        let permissions_overlay = match parsed.permissions.as_ref() {
+            Some(mapping) => match PermissionsOverlay::parse_from_yaml(mapping) {
+                Ok(overlay) => Some(overlay),
+                Err(e) => {
+                    return Err(format!("agent switch failed: invalid permissions: {e}"));
+                }
+            },
+            None => None,
+        };
+
         log::debug!(
-            "switch_agent: switched to identity={identity:?}, model={:?}, body_len={}",
+            "switch_agent: switched to identity={identity:?}, model={:?}, body_len={}, has_permissions={}",
             parsed.model,
-            self.agent_persona_body.as_ref().map_or(0, |b| b.len())
+            self.agent_persona_body.as_ref().map_or(0, |b| b.len()),
+            permissions_overlay.is_some()
         );
 
         Ok(SwitchAgentResult {
@@ -114,6 +128,7 @@ impl PersonaState {
             max_tool_calls_per_subturn: parsed.max_tool_calls_per_subturn,
             max_tool_result_bytes: parsed.max_tool_result_bytes,
             additional_params: parsed.additional_params,
+            permissions_overlay,
         })
     }
 

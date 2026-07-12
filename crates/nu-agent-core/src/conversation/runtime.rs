@@ -399,6 +399,18 @@ where
             self.provider.provider_config_mut().additional_params = Some(p);
         }
 
+        // Apply permission overlay from agent frontmatter.
+        // When the new persona has no `permissions:` block, the overlay is
+        // empty, effectively resetting to the base config + CLI flags.
+        // This ensures that switching from a restrictive persona to one
+        // without explicit permissions restores the default access.
+        let overlay = result
+            .permissions_overlay
+            .as_ref()
+            .cloned()
+            .unwrap_or_default();
+        self.permission_state.with_agent_overlay(&overlay);
+
         // Reset tool definitions to baseline on agent switch
         self.tools.reset_to_baseline();
 

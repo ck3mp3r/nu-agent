@@ -36,27 +36,42 @@ pub(super) fn resolve_effective_permissions_config(
     plugin_config: Option<&Value>,
     agent_overlay: Option<&PermissionsOverlay>,
     interactive: bool,
-) -> Result<(PermissionsConfig, String), LabeledError> {
+) -> Result<
+    (
+        PermissionsConfig,          // base — raw plugin config, no overlays
+        PermissionsConfig,          // effective — base + agent_overlay + CLI
+        Option<PermissionsOverlay>, // cli_overlay — parsed --permissions flag
+        String,                     // startup summary message
+    ),
+    LabeledError,
+> {
     let base = PermissionsConfig::parse_from_plugin_config(plugin_config, interactive);
     let cli_permissions: Option<Value> = call.get_flag("permissions").ok().flatten();
 
+    // Parse CLI overlay separately so it can be re-applied during persona switches
+    let cli_overlay: Option<PermissionsOverlay> = cli_permissions
+        .as_ref()
+        .map(|value| {
+            PermissionsOverlay::parse_from_cli_value(value).map_err(|msg| {
+                LabeledError::new("Invalid --permissions value").with_label(msg, value.span())
+            })
+        })
+        .transpose()?;
+
     // Build permission chain: base → agent_overlay → CLI
     // CLI always wins (highest precedence)
-    let mut effective = base;
+    let mut effective = base.clone();
 
     if let Some(overlay) = agent_overlay {
         effective = effective.with_overlay(overlay);
     }
 
-    if let Some(value) = cli_permissions.as_ref() {
-        let overlay = PermissionsOverlay::parse_from_cli_value(value).map_err(|msg| {
-            LabeledError::new("Invalid --permissions value").with_label(msg, value.span())
-        })?;
-        effective = effective.with_overlay(&overlay);
+    if let Some(ref overlay) = cli_overlay {
+        effective = effective.with_overlay(overlay);
     }
 
     let summary = effective.summary();
-    let overlay_active = agent_overlay.is_some() || cli_permissions.is_some();
+    let overlay_active = agent_overlay.is_some() || cli_overlay.is_some();
     let startup_message = format!(
         "permissions policy: overlay_active={} global={} tool_rules={} nu__run.command_rules={}",
         overlay_active,
@@ -65,5 +80,5 @@ pub(super) fn resolve_effective_permissions_config(
         summary.nested_field_rule_count,
     );
 
-    Ok((effective, startup_message))
+    Ok((base, effective, cli_overlay, startup_message))
 }

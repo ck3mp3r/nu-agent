@@ -32,6 +32,8 @@ fn permissions_startup_summary_emits_once_before_first_turn() {
 
     let mut state = super::super::state::permission::PermissionState::new(
         PermissionsConfig::safe_defaults(true),
+        PermissionsConfig::safe_defaults(true),
+        None,
         SessionGrantCache::default(),
         summary.to_string(),
     );
@@ -588,6 +590,8 @@ fn permission_state_startup_not_emitted_on_construction() {
     let mut ui = TestProgressUi::default();
     let mut state = super::super::state::permission::PermissionState::new(
         PermissionsConfig::safe_defaults(true),
+        PermissionsConfig::safe_defaults(true),
+        None,
         SessionGrantCache::default(),
         "non-empty summary".to_string(),
     );
@@ -616,6 +620,8 @@ fn permission_state_emit_startup_summary_emits_once() {
 
     let mut state = super::super::state::permission::PermissionState::new(
         PermissionsConfig::safe_defaults(true),
+        PermissionsConfig::safe_defaults(true),
+        None,
         SessionGrantCache::default(),
         summary.to_string(),
     );
@@ -1082,4 +1088,57 @@ fn mcp_state_lifecycle_projection_empty_by_default() {
     // Value-level proof: default Vec is empty
     let projection: Vec<McpServerLifecycle> = vec![];
     assert!(projection.is_empty());
+}
+
+#[test]
+fn set_permissions_replaces_config_and_resets_startup() {
+    use crate::tools::authz::{PermissionAction, PermissionsConfig, SessionGrantCache};
+
+    let initial = PermissionsConfig::safe_defaults(true);
+    let summary = format!(
+        "permissions policy: overlay_active=false global={} tool_rules={}",
+        initial.summary().global.as_str(),
+        initial.summary().tool_rule_count
+    );
+
+    let mut state = super::super::state::permission::PermissionState::new(
+        initial.clone(),
+        initial,
+        None,
+        SessionGrantCache::default(),
+        "initial".to_string(),
+    );
+
+    // Verify initial state before set_permissions
+    assert_eq!(state.permissions().summary().global, PermissionAction::Ask);
+
+    // Create a new config with different global action via overlay
+    use crate::tools::authz::PermissionsOverlay;
+    let mut deny_mapping = noyalib::Mapping::new();
+    deny_mapping.insert("*", noyalib::Value::String("deny".to_string()));
+    let deny_overlay = PermissionsOverlay::parse_from_yaml(&deny_mapping).expect("valid overlay");
+    let new_permissions = state.permissions().with_overlay(&deny_overlay);
+
+    state.set_permissions(new_permissions, summary.clone());
+
+    // Config is replaced
+    assert_eq!(state.permissions().summary().global, PermissionAction::Deny);
+
+    // startup_emitted is reset to false so the next execute_turn naturally
+    // emits the summary via emit_startup_summary_once.
+    let mut ui = TestProgressUi::default();
+    state.emit_startup_summary_once(&mut ui);
+    // SHOULD emit because set_permissions sets startup_emitted = false
+    assert_eq!(
+        ui.events.len(),
+        1,
+        "set_permissions sets startup_emitted=false, so emit should fire"
+    );
+
+    // Verify the summary content matches what was passed to set_permissions
+    let warning = ui.events.iter().find_map(|event| match event {
+        UiEvent::Warning { message } => Some(message.clone()),
+        _ => None,
+    });
+    assert_eq!(warning, Some(summary));
 }
