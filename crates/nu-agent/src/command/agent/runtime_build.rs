@@ -375,9 +375,6 @@ pub(crate) struct RuntimeBuildParams {
     pub(crate) cached_agents_chain: Option<String>,
     pub(crate) cached_available_skills: Option<String>,
     pub(crate) cached_sub_agent_instruction: Option<String>,
-    pub(crate) mailbox_rx:
-        Option<std::sync::mpsc::Receiver<nu_agent_core::mailbox::IncomingMessage>>,
-    pub(crate) mailbox: Option<nu_agent_core::mailbox::AgentMailbox>,
     pub(crate) available_agents: Vec<nu_agent_core::protocol::persona::PersonaSummary>,
     pub(crate) agents_config: nu_agent_core::config::AgentsConfig,
     pub(crate) cwd: std::path::PathBuf,
@@ -442,12 +439,7 @@ pub(crate) fn build_runtime(params: RuntimeBuildParams) -> AgentConversationRunt
             params.cached_available_skills,
             params.cached_sub_agent_instruction,
         ),
-        multi_agent: MultiAgentState::new(
-            params.mailbox,
-            params.mailbox_rx,
-            params.available_agents,
-            params.agents_config,
-        ),
+        multi_agent: MultiAgentState::new(params.available_agents, params.agents_config),
         cwd: params.cwd,
         interactive_pending: None,
         circuit_breaker: Arc::new(Mutex::new(McpCircuitBreaker::default())),

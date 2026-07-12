@@ -10,12 +10,10 @@ use super::{
     resolve_agent_mode, resolve_config, should_enter_foreground,
 };
 
+use nu_agent_a2a::AgentHandle;
 use nu_agent_core::{
     config::PluginConfig,
-    conversation::{
-        builder::{BuildInput, MailboxInput},
-        runtime::AgentConversationRuntime,
-    },
+    conversation::{builder::BuildInput, runtime::AgentConversationRuntime},
     policy::UiPolicy,
     session::resolver::{DefaultSessionResolver, SessionResolutionInput, SessionResolver},
     tools::handler::McpToolRegistry,
@@ -122,6 +120,11 @@ pub(super) fn run_command(
     // default < env < plugin < flags
     let mut config = resolve_config(engine, call)?;
 
+    // --a2a CLI flag overrides env var / config file
+    if call.has_flag("a2a")? {
+        config.a2a_enabled = true;
+    }
+
     // Apply mode-specific defaults for max_tool_turns if not explicitly configured
     // User-specified value (via --max-turns or config file) always wins
     if config.max_tool_turns.is_none() && !mode.is_tui() {
@@ -161,8 +164,6 @@ pub(super) fn run_command(
     // Load agent persona and resolve identity
     let (agent_name, cli_name) = super::args::extract_agent_flags(call);
     log::debug!("agent flags: agent_name={agent_name:?}, cli_name={cli_name:?}");
-    let mailbox_flags = super::args::extract_mailbox_input(call)?;
-    log::debug!("mailbox flags: present={}", mailbox_flags.is_some());
 
     let call_has_model_flag = call.get_flag::<Value>("model").ok().flatten().is_some();
     let persona_resolution = super::persona::resolve_persona(
@@ -190,6 +191,25 @@ pub(super) fn run_command(
     // Create async runtime for LLM and MCP tool execution
     let runtime = tokio::runtime::Runtime::new()
         .map_err(|e| LabeledError::new(format!("Failed to create async runtime: {}", e)))?;
+
+    // ── A2A agent startup (optional, experimental) ───────────────────────
+    let mut a2a_handle: Option<AgentHandle> = if config.a2a_enabled {
+        let agent_name = agent_identity.as_deref().unwrap_or("agent");
+        let description = persona.as_ref().and_then(|p| p.description.as_deref());
+        match runtime.block_on(async { AgentHandle::start(agent_name, description, vec![]).await })
+        {
+            Ok(handle) => {
+                log::info!("A2A agent '{agent_name}' started on {}", handle.card.url);
+                Some(handle)
+            }
+            Err(e) => {
+                log::warn!("A2A startup failed (non-fatal): {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     // Create the tool server handle ONCE — both builtins and MCP servers register into it
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
@@ -254,22 +274,10 @@ pub(super) fn run_command(
         cwd: cwd.clone(),
     })?;
 
-    let mailbox_input = mailbox_flags.map(|f| MailboxInput {
-        // Use the instance name (--name flag) so the socket is addressable by
-        // the name the orchestrator uses when calling send_message. Fall back
-        // to agent_identity (persona name) if no explicit --name was given.
-        name: messaging_identity
-            .clone()
-            .unwrap_or_else(|| "agent".to_string()),
-        parent_name: f.parent_name,
-    });
-
     let nu_agent_core::conversation::builder::BuildArtifacts {
-        mailbox_rx,
-        parent_name,
+        parent_name: _,
         merged_compaction,
         compaction_strategy,
-        mailbox,
     } = super::setup::register_tools(
         call,
         plugin_config_value.as_ref(),
@@ -282,7 +290,6 @@ pub(super) fn run_command(
             span: call.head,
             available_agents: &available_agents,
             messaging_identity: messaging_identity.clone(),
-            mailbox_input,
             tool_timeout,
             session: session_resolution.session.as_mut(),
             max_tool_result_bytes: config.max_tool_result_bytes.unwrap_or(20_000),
@@ -290,11 +297,26 @@ pub(super) fn run_command(
         },
     )?;
 
+    // ── A2A tool registration ──────────────────────────────────────────────
+    // Must run BEFORE build_runtime() so tools are available when the agent
+    // context snapshots its tool set.
+    if let Some(ref handle) = a2a_handle {
+        let ctx = nu_agent_a2a::A2aToolContext {
+            client: handle.client.clone(),
+            cache: handle.cache.clone(),
+            own_card: handle.card.clone(),
+            task_store: Some(handle.task_store()),
+        };
+        if let Err(e) = nu_agent_a2a::register_a2a_tools(&tool_server_handle, ctx, &runtime) {
+            log::warn!("A2A tool registration failed (non-fatal): {e}");
+        }
+    }
+
     let mcp_caller_cwd = cwd.clone();
 
     // ── Phase 8: Preamble cache ───────────────────────────────────────────
     let (cached_agents_chain, cached_available_skills, cached_sub_agent_instruction) =
-        super::runtime_build::build_preamble_cache(&cwd, parent_name.as_deref());
+        super::runtime_build::build_preamble_cache(&cwd, None);
 
     // ── Phase 9: Runtime construction ────────────────────────────────────
     let context_window_max_tokens = u64::from(config.resolved_max_context_tokens());
@@ -329,8 +351,6 @@ pub(super) fn run_command(
             cached_agents_chain,
             cached_available_skills,
             cached_sub_agent_instruction,
-            mailbox_rx,
-            mailbox,
             available_agents,
             agents_config,
             cwd: cwd.clone(),
@@ -341,7 +361,15 @@ pub(super) fn run_command(
         runtime_impl.agent_identity(),
         runtime_impl.agent_description()
     );
-    match mode {
+
+    // Extract the A2A incoming task receiver (if A2A is enabled).
+    // The receiver is moved into the mode function where it will be polled
+    // before each interactive turn to inject A2A tasks as user prompts.
+    let a2a_task_rx = a2a_handle
+        .as_mut()
+        .and_then(|h| h.server.take_incoming_task_receiver());
+
+    let result = match mode {
         AgentMode::Tui => run_tui_mode(
             &mut runtime_impl,
             input,
@@ -353,6 +381,7 @@ pub(super) fn run_command(
                 initial_messages: session_resolution.initial_messages,
                 last_total_tokens: session_resolution.last_total_tokens,
             },
+            a2a_task_rx,
         ),
         AgentMode::Stderr => run_stderr_mode(
             &mut runtime_impl,
@@ -360,8 +389,19 @@ pub(super) fn run_command(
             call.head,
             ui_policy,
             stderr_is_tty,
+            a2a_task_rx,
         ),
+    };
+
+    // Shutdown A2A agent before returning (catch panics, never crash agent)
+    if let Some(handle) = a2a_handle {
+        log::info!("Shutting down A2A agent...");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            runtime_impl.runtime.block_on(handle.shutdown());
+        }));
     }
+
+    result
 }
 
 fn run_tui_mode(
@@ -371,6 +411,7 @@ fn run_tui_mode(
     span: nu_protocol::Span,
     ui_policy: UiPolicy,
     hydration: super::mode_execute::TuiHydrationInput,
+    a2a_task_rx: Option<tokio::sync::mpsc::Receiver<nu_agent_a2a::IncomingTask>>,
 ) -> Result<Value, LabeledError> {
     super::mode_execute::run_tui_mode(
         runtime_impl,
@@ -379,6 +420,7 @@ fn run_tui_mode(
         span,
         ui_policy,
         hydration,
+        a2a_task_rx,
     )
 }
 
@@ -388,8 +430,16 @@ fn run_stderr_mode(
     span: nu_protocol::Span,
     ui_policy: UiPolicy,
     stderr_is_tty: bool,
+    a2a_task_rx: Option<tokio::sync::mpsc::Receiver<nu_agent_a2a::IncomingTask>>,
 ) -> Result<Value, LabeledError> {
-    super::mode_execute::run_stderr_mode(runtime_impl, input, span, ui_policy, stderr_is_tty)
+    super::mode_execute::run_stderr_mode(
+        runtime_impl,
+        input,
+        span,
+        ui_policy,
+        stderr_is_tty,
+        a2a_task_rx,
+    )
 }
 
 pub(super) fn map_tui_run_result(

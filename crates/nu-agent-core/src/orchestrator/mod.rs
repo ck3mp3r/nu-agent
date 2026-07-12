@@ -12,8 +12,6 @@ mod formatting_test;
 #[cfg(test)]
 mod lifecycle_test;
 #[cfg(test)]
-mod mailbox_test;
-#[cfg(test)]
 mod mcp_toggle_test;
 #[cfg(test)]
 mod model_switch_test;
@@ -137,12 +135,12 @@ pub(crate) fn poll_option_channel<T>(
     }
 }
 
-pub fn run_interactive_loop<R, U>(
+fn run_interactive_loop_impl<R, U>(
     runtime: &mut R,
     ui: &mut U,
-    mailbox_rx: Option<std::sync::mpsc::Receiver<crate::mailbox::IncomingMessage>>,
     span: Span,
     interactive_pending: Option<PendingPermissions>,
+    external_prompt_rx: Option<mpsc::Receiver<String>>,
 ) -> Result<Value, LabeledError>
 where
     R: CoreRuntime
@@ -184,7 +182,6 @@ where
 
         let mut event_pump = EventPump::new(worker_event_rx);
         let mut stages = OrchestratorStages::new(initial_visible_count, worker_result_rx);
-        let mut mailbox_rx = mailbox_rx;
         let mut worker_active = false;
         let mut should_evaluate_compaction = true; // evaluate once on startup (session resume)
 
@@ -198,9 +195,39 @@ where
                 cancel_requested.store(true, Ordering::SeqCst);
             }
             event_pump.drain_batch(ui);
+
+            // Check for external prompts (e.g., A2A tasks) when worker is idle.
+            // This runs BEFORE the stage pipeline so external inputs take priority
+            // over regular user input.
+            if !worker_active
+                && let Some(ref ext_rx) = external_prompt_rx
+                && let Ok(prompt) = ext_rx.try_recv()
+            {
+                log::info!(
+                    "orchestrator: dispatching external prompt (len={})",
+                    prompt.len()
+                );
+
+                // Display the prompt as a user message in the TUI transcript
+                // so the user can see what was sent to the receiving agent.
+                ui.display_incoming_message(&prompt);
+
+                match worker_cmd_tx.send(WorkerCommand::ExecuteTurn { prompt, span }) {
+                    Ok(()) => {
+                        worker_active = true;
+                        continue;
+                    }
+                    Err(_) => {
+                        let _ = worker_cmd_tx.send(WorkerCommand::Shutdown);
+                        return Err(LabeledError::new(
+                            "Worker channel closed while dispatching external prompt",
+                        ));
+                    }
+                }
+            }
+
             let mut ctx = OrchestrationContext {
                 worker_tx: &worker_cmd_tx,
-                mailbox_rx: &mut mailbox_rx,
                 pending: &interactive_pending,
                 worker_active: &mut worker_active,
                 should_evaluate_compaction: &mut should_evaluate_compaction,
@@ -235,12 +262,9 @@ where
     })
 }
 
-pub fn run_hydrated_interactive_loop<R, U>(
+pub fn run_interactive_loop<R, U>(
     runtime: &mut R,
     ui: &mut U,
-    messages: impl IntoIterator<Item = UiMessageSnapshot>,
-    last_total_tokens: Option<u64>,
-    mailbox_rx: Option<std::sync::mpsc::Receiver<crate::mailbox::IncomingMessage>>,
     span: Span,
     interactive_pending: Option<PendingPermissions>,
 ) -> Result<Value, LabeledError>
@@ -253,9 +277,113 @@ where
         + Send,
     U: ProgressUi + UserInputUi + DisplayStateUi + LifecycleUi + TranscriptUi,
 {
+    run_interactive_loop_impl(runtime, ui, span, interactive_pending, None)
+}
+
+/// Like [`run_interactive_loop`] but also checks an external channel for
+/// pre-formatted prompt strings (e.g., injected A2A tasks) before each
+/// iteration. These prompts are dispatched with higher priority than
+/// regular user input.
+pub fn run_interactive_loop_with_external_prompts<R, U>(
+    runtime: &mut R,
+    ui: &mut U,
+    span: Span,
+    interactive_pending: Option<PendingPermissions>,
+    external_prompt_rx: Option<mpsc::Receiver<String>>,
+) -> Result<Value, LabeledError>
+where
+    R: CoreRuntime
+        + HasMcpManagement
+        + HasModelSwitching
+        + HasSessionManagement
+        + HasCompaction
+        + Send,
+    U: ProgressUi + UserInputUi + DisplayStateUi + LifecycleUi + TranscriptUi,
+{
+    run_interactive_loop_impl(runtime, ui, span, interactive_pending, external_prompt_rx)
+}
+
+pub fn run_hydrated_interactive_loop<R, U>(
+    runtime: &mut R,
+    ui: &mut U,
+    messages: impl IntoIterator<Item = UiMessageSnapshot>,
+    last_total_tokens: Option<u64>,
+    span: Span,
+    interactive_pending: Option<PendingPermissions>,
+) -> Result<Value, LabeledError>
+where
+    R: CoreRuntime
+        + HasMcpManagement
+        + HasModelSwitching
+        + HasSessionManagement
+        + HasCompaction
+        + Send,
+    U: ProgressUi + UserInputUi + DisplayStateUi + LifecycleUi + TranscriptUi,
+{
+    run_hydrated_interactive_loop_impl(
+        runtime,
+        ui,
+        messages,
+        last_total_tokens,
+        span,
+        interactive_pending,
+        None,
+    )
+}
+
+fn run_hydrated_interactive_loop_impl<R, U>(
+    runtime: &mut R,
+    ui: &mut U,
+    messages: impl IntoIterator<Item = UiMessageSnapshot>,
+    last_total_tokens: Option<u64>,
+    span: Span,
+    interactive_pending: Option<PendingPermissions>,
+    external_prompt_rx: Option<mpsc::Receiver<String>>,
+) -> Result<Value, LabeledError>
+where
+    R: CoreRuntime
+        + HasMcpManagement
+        + HasModelSwitching
+        + HasSessionManagement
+        + HasCompaction
+        + Send,
+    U: ProgressUi + UserInputUi + DisplayStateUi + LifecycleUi + TranscriptUi,
+{
     ui.hydrate_transcript_from_messages(messages, last_total_tokens);
     runtime.seed_last_total_tokens(last_total_tokens);
-    run_interactive_loop(runtime, ui, mailbox_rx, span, interactive_pending)
+    run_interactive_loop_impl(runtime, ui, span, interactive_pending, external_prompt_rx)
+}
+
+/// Like [`run_hydrated_interactive_loop`] but also checks an external channel
+/// for pre-formatted prompt strings (e.g., injected A2A tasks) before each
+/// iteration.
+pub fn run_hydrated_interactive_loop_with_external_prompts<R, U>(
+    runtime: &mut R,
+    ui: &mut U,
+    messages: impl IntoIterator<Item = UiMessageSnapshot>,
+    last_total_tokens: Option<u64>,
+    span: Span,
+    interactive_pending: Option<PendingPermissions>,
+    external_prompt_rx: Option<mpsc::Receiver<String>>,
+) -> Result<Value, LabeledError>
+where
+    R: CoreRuntime
+        + HasMcpManagement
+        + HasModelSwitching
+        + HasSessionManagement
+        + HasCompaction
+        + Send,
+    U: ProgressUi + UserInputUi + DisplayStateUi + LifecycleUi + TranscriptUi,
+{
+    run_hydrated_interactive_loop_impl(
+        runtime,
+        ui,
+        messages,
+        last_total_tokens,
+        span,
+        interactive_pending,
+        external_prompt_rx,
+    )
 }
 
 pub fn run_single_turn<R, U>(

@@ -1,9 +1,8 @@
 // Re-export the tool definition functions that moved to core, so existing
 // callers in the binary (assemble_tool_definitions, tests) don't break.
-pub(crate) use nu_agent_core::conversation::builder::{
-    builtin_tool_definitions, list_agents_tool_definitions, messaging_tool_definitions,
-    orchestrator_tool_definitions,
-};
+pub(crate) use nu_agent_core::conversation::builder::builtin_tool_definitions;
+
+use nu_agent_a2a::a2a_tool_defs;
 
 /// Result of assembling the full tool definition set.
 pub(crate) struct ToolAssembly {
@@ -38,8 +37,16 @@ pub(crate) fn assemble_tool_definitions(
         .collect();
 
     tool_definitions.extend(builtin_tool_definitions());
-    tool_definitions.extend(messaging_tool_definitions());
-    tool_definitions.extend(list_agents_tool_definitions());
+    // Old mailbox tools removed in favour of A2A:
+    // tool_definitions.extend(messaging_tool_definitions());    // send_message
+    // tool_definitions.extend(list_agents_tool_definitions());  // list_agents
+    tool_definitions.extend(a2a_tool_defs().into_iter().map(|def| {
+        nu_agent_core::types::ToolDefinition {
+            name: def.name,
+            description: def.description,
+            parameters: def.parameters,
+        }
+    }));
 
     let available_agents = {
         use nu_agent_core::protocol::persona::{FsPersonaResolver, PersonaLister};
@@ -50,7 +57,8 @@ pub(crate) fn assemble_tool_definitions(
         let resolver = FsPersonaResolver::new(cwd, config_dir, agents_config.clone());
         resolver.list_available()
     };
-    tool_definitions.extend(orchestrator_tool_definitions(&available_agents));
+    // Old orchestrator tools removed in favour of A2A:
+    // tool_definitions.extend(orchestrator_tool_definitions(&available_agents));  // spawn_agent, terminate_agent
 
     tool_definitions.extend(discovered_mcp_tools.iter().map(|tool| {
         nu_agent_core::types::ToolDefinition {

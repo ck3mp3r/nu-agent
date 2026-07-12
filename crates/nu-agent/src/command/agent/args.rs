@@ -1,26 +1,5 @@
-use nu_agent_core::conversation::builder::MailboxInput;
 use nu_plugin::EvaluatedCall;
 use nu_protocol::{LabeledError, Value};
-
-/// Extract --name and --parent-name flags as MailboxInput.
-///
-/// Returns Some(MailboxInput) if --name is present, None otherwise.
-///
-/// # Arguments
-/// * `call` - The EvaluatedCall containing the --name and --parent-name flags
-///
-/// # Returns
-/// Option<MailboxInput> - Some if name present, None otherwise
-pub(crate) fn extract_mailbox_input(
-    call: &EvaluatedCall,
-) -> Result<Option<MailboxInput>, LabeledError> {
-    let name: Option<String> = call.get_flag("name").ok().flatten();
-    let parent_name: Option<String> = call.get_flag("parent-name").ok().flatten();
-    Ok(name.map(|n| MailboxInput {
-        name: n,
-        parent_name,
-    }))
-}
 
 /// Extracts and validates session flags from the evaluated call.
 ///

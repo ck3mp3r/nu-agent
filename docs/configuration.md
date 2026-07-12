@@ -55,6 +55,7 @@ Optional top-level fields:
 - `model_context_tokens` — approximate context window for in-session token warnings (no auto-detection)
 - `context_warning_threshold` — fraction of `model_context_tokens` at which to warn (default: 0.6)
 - `preamble` — system preamble prepended before prompt/context
+- `a2a_enabled` — enable A2A (agent-to-agent) communication via JSON-RPC 2.0 over HTTP (default: `false`)
 
 ## Model Format
 
@@ -90,6 +91,7 @@ Highest to lowest:
 - `AGENT_MAX_RETRIES` — retry attempts for transient errors (default: 3)
 - `AGENT_RETRY_BASE_DELAY_MS` — base backoff in ms, doubles each attempt, capped at 30s (default: 1000)
 - `AGENT_READ_TIMEOUT_SECS` — HTTP read timeout in seconds for inference API and MCP connections (default: 120). Set to 0 to disable.
+- `AGENT_A2A_ENABLED` — enable A2A agent-to-agent communication (default: `false`)
 - `{PROVIDER}_API_KEY` (for providers with direct env naming, e.g. `OPENAI_API_KEY`)
 
 There is no `AGENT_MODEL`. Set the default model in plugin config.

@@ -1,6 +1,6 @@
-use super::tool_defs::{
-    assemble_tool_definitions, builtin_tool_definitions, list_agents_tool_definitions,
-    messaging_tool_definitions, orchestrator_tool_definitions,
+use super::tool_defs::{assemble_tool_definitions, builtin_tool_definitions};
+use nu_agent_core::conversation::builder::{
+    list_agents_tool_definitions, messaging_tool_definitions, orchestrator_tool_definitions,
 };
 
 #[test]
@@ -154,7 +154,7 @@ fn builtin_edit_definition_uses_mode_and_operation_contract_with_legacy_compat_f
 // --- Tool assembly tests: all agents always have all tools ---
 
 #[test]
-fn all_agents_have_spawn_agent_send_message_and_list_agents() {
+fn all_agents_have_a2a_tools() {
     // All tool groups are always registered unconditionally.
     // The permission system (allow/ask/deny) gates actual use at call time.
     let closure_registry = nu_agent_core::tools::closure::ClosureRegistry::default();
@@ -170,19 +170,27 @@ fn all_agents_have_spawn_agent_send_message_and_list_agents() {
         .collect();
 
     assert!(
-        names.contains(&"send_message"),
-        "All agents must have send_message, got: {names:?}"
+        names.contains(&"agent.list"),
+        "All agents must have agent.list, got: {names:?}"
     );
     assert!(
-        names.contains(&"list_agents"),
-        "All agents must have list_agents, got: {names:?}"
+        names.contains(&"agent.getCard"),
+        "All agents must have agent.getCard, got: {names:?}"
     );
     assert!(
-        names.contains(&"spawn_agent"),
-        "All agents must have spawn_agent, got: {names:?}"
+        names.contains(&"tasks.send"),
+        "All agents must have tasks.send, got: {names:?}"
     );
     assert!(
-        names.contains(&"terminate_agent"),
-        "All agents must have terminate_agent, got: {names:?}"
+        names.contains(&"tasks.get"),
+        "All agents must have tasks.get, got: {names:?}"
+    );
+    assert!(
+        names.contains(&"tasks.cancel"),
+        "All agents must have tasks.cancel, got: {names:?}"
+    );
+    assert!(
+        names.contains(&"tasks.list"),
+        "All agents must have tasks.list, got: {names:?}"
     );
 }

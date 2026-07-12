@@ -188,6 +188,7 @@ fn test_merge_full_configs() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        a2a_enabled: false,
     };
 
     let override_config = Config {
@@ -210,6 +211,7 @@ fn test_merge_full_configs() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        a2a_enabled: false,
     };
 
     let merged = base.merge(override_config);
@@ -249,6 +251,7 @@ fn test_merge_with_partial_override() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        a2a_enabled: false,
     };
 
     let override_config = Config {
@@ -271,6 +274,7 @@ fn test_merge_with_partial_override() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        a2a_enabled: false,
     };
 
     let merged = base.merge(override_config);
@@ -310,6 +314,7 @@ fn test_merge_with_empty_override() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        a2a_enabled: false,
     };
 
     let empty_override = Config {
@@ -332,6 +337,7 @@ fn test_merge_with_empty_override() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        a2a_enabled: false,
     };
 
     let merged = base.clone().merge(empty_override);
@@ -363,6 +369,7 @@ fn test_merge_chain() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        a2a_enabled: false,
     };
 
     let override1 = Config {
@@ -385,6 +392,7 @@ fn test_merge_chain() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        a2a_enabled: false,
     };
 
     let override2 = Config {
@@ -407,6 +415,7 @@ fn test_merge_chain() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        a2a_enabled: false,
     };
 
     let merged = base.merge(override1).merge(override2);
@@ -443,6 +452,7 @@ fn test_merge_required_fields() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        a2a_enabled: false,
     };
 
     let override_config = Config {
@@ -465,6 +475,7 @@ fn test_merge_required_fields() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        a2a_enabled: false,
     };
 
     let merged = base.merge(override_config);
@@ -497,6 +508,7 @@ fn test_validate_valid_config() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        a2a_enabled: false,
     };
 
     assert!(config.validate().is_ok());
@@ -525,6 +537,7 @@ fn test_validate_minimal_config() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        a2a_enabled: false,
     };
 
     assert!(config.validate().is_ok());
@@ -553,6 +566,7 @@ fn test_validate_empty_provider() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        a2a_enabled: false,
     };
 
     let result = config.validate();
@@ -584,6 +598,7 @@ fn test_validate_empty_model() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        a2a_enabled: false,
     };
 
     let result = config.validate();
@@ -615,6 +630,7 @@ fn test_validate_max_output_exceeds_context() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        a2a_enabled: false,
     };
 
     let result = config.validate();
@@ -647,6 +663,7 @@ fn test_validate_max_output_equals_context() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        a2a_enabled: false,
     };
 
     assert!(config.validate().is_ok());
@@ -675,6 +692,7 @@ fn test_validate_zero_max_tool_turns() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        a2a_enabled: false,
     };
 
     let result = config.validate();
@@ -706,6 +724,7 @@ fn test_validate_only_context_tokens_set() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        a2a_enabled: false,
     };
 
     assert!(config.validate().is_ok());
@@ -734,6 +753,7 @@ fn test_validate_only_output_tokens_set() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        a2a_enabled: false,
     };
 
     assert!(config.validate().is_ok());
@@ -1203,6 +1223,7 @@ fn test_resolve_model_basic() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        a2a_enabled: false,
     };
 
     let config = plugin_config
@@ -1253,6 +1274,7 @@ fn test_resolve_model_with_env_fallback() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        a2a_enabled: false,
     };
 
     let config = plugin_config
@@ -1287,6 +1309,7 @@ fn test_resolve_model_invalid_format() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        a2a_enabled: false,
     };
 
     // No slash separator
@@ -1325,6 +1348,7 @@ fn test_resolve_model_provider_not_found() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        a2a_enabled: false,
     };
 
     let result = plugin_config.resolve_model("unknown/model");
@@ -1369,6 +1393,7 @@ fn test_resolve_model_model_not_in_config() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        a2a_enabled: false,
     };
 
     let config = plugin_config
@@ -1418,6 +1443,7 @@ fn test_resolve_model_with_provider_field() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        a2a_enabled: false,
     };
 
     let config = plugin_config
@@ -1486,6 +1512,7 @@ fn test_resolve_model_merges_limits() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        a2a_enabled: false,
     };
 
     let config = plugin_config
@@ -1541,6 +1568,7 @@ fn test_plugin_config_resolve_model_top_level_fallbacks() {
             context_warning_threshold: Some(0.8f32),
             max_retries: Some(5),
             retry_base_delay_ms: Some(2000),
+            a2a_enabled: false,
         }
     };
 
@@ -1606,6 +1634,7 @@ fn resolve_model_handles_two_part_format() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        a2a_enabled: false,
     };
 
     let config = plugin_config
@@ -1639,6 +1668,7 @@ fn resolve_model_validates_empty_parts() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        a2a_enabled: false,
     };
 
     // Empty provider
@@ -1695,6 +1725,7 @@ fn resolve_model_uses_split_once_for_multi_part_models() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        a2a_enabled: false,
     };
 
     let config = plugin_config
@@ -1746,6 +1777,7 @@ fn resolve_model_works_with_simple_two_part() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        a2a_enabled: false,
     };
 
     let config = plugin_config
@@ -1797,6 +1829,7 @@ fn integration_github_copilot_with_backend_in_model() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        a2a_enabled: false,
     };
 
     // Test default model
@@ -1853,6 +1886,7 @@ fn test_validate_none_max_tool_turns_is_valid() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        a2a_enabled: false,
     };
 
     assert!(config.validate().is_ok());
@@ -1881,6 +1915,7 @@ fn test_validate_zero_max_tool_turns_still_invalid() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        a2a_enabled: false,
     };
 
     let result = config.validate();

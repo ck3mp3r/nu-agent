@@ -210,13 +210,13 @@ Compaction flags:
             )
             .named(
                 "tools",
-                nu_protocol::SyntaxShape::Record(vec![]),
+                 nu_protocol::SyntaxShape::Record(vec![].into()),
                 "Record of tool closures: {name: closure, ...}",
                 None,
             )
             .named(
                 "permissions",
-                nu_protocol::SyntaxShape::Record(vec![]),
+                nu_protocol::SyntaxShape::Record(vec![].into()),
                 "Structured permissions overlay record for this run",
                 None,
             )
@@ -230,6 +230,11 @@ Compaction flags:
                 "session",
                 nu_protocol::SyntaxShape::String,
                 "Session ID to use (auto-creates if doesn't exist)",
+                None,
+            )
+            .switch(
+                "a2a",
+                "Enable A2A agent-to-agent communication (experimental)",
                 None,
             )
             .switch(

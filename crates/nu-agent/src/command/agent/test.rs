@@ -96,6 +96,7 @@ mod max_tool_turns_mode_defaults {
             retry_base_delay_ms: None,
             max_tool_calls_per_subturn: None,
             additional_params: None,
+            a2a_enabled: false,
         };
 
         // Simulate the mode-specific default logic from mod.rs
@@ -131,6 +132,7 @@ mod max_tool_turns_mode_defaults {
             retry_base_delay_ms: None,
             max_tool_calls_per_subturn: None,
             additional_params: None,
+            a2a_enabled: false,
         };
 
         // Simulate the mode-specific default logic from mod.rs
@@ -166,6 +168,7 @@ mod max_tool_turns_mode_defaults {
                 retry_base_delay_ms: None,
                 max_tool_calls_per_subturn: None,
                 additional_params: None,
+                a2a_enabled: false,
             };
 
             // Simulate the mode-specific default logic from mod.rs
@@ -387,7 +390,7 @@ fn agent_command_signature_has_tools_flag() {
     assert!(flag.is_some(), "Missing --tools flag");
     assert_eq!(
         flag.unwrap().arg,
-        Some(SyntaxShape::Record(vec![])),
+        Some(SyntaxShape::Record(vec![].into())),
         "Wrong type for --tools (should be Record)"
     );
 }
@@ -401,7 +404,7 @@ fn agent_command_signature_has_permissions_flag_as_record() {
     assert!(flag.is_some(), "Missing --permissions flag");
     assert_eq!(
         flag.expect("permissions flag").arg,
-        Some(SyntaxShape::Record(vec![])),
+        Some(SyntaxShape::Record(vec![].into())),
         "--permissions must accept record/object input"
     );
 }
@@ -605,6 +608,7 @@ fn create_minimal_flag_config() -> Config {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        a2a_enabled: false,
     }
 }
 

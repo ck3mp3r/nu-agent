@@ -401,7 +401,7 @@ fn interactive_loop_processes_mcp_toggle_requests_and_updates_ui_state() {
         enable: false,
     });
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop");
 
     assert!(value.is_nothing());
@@ -434,7 +434,7 @@ fn interactive_loop_marks_enable_failure_as_failed_state() {
         enable: true,
     });
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop");
 
     assert!(value.is_nothing());
@@ -467,7 +467,7 @@ fn interactive_loop_marks_enable_success_as_enabled_state() {
         enable: true,
     });
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop");
 
     assert!(value.is_nothing());
@@ -498,7 +498,7 @@ fn interactive_loop_propagates_failure_reason_and_visible_tool_count_on_toggle_e
         enable: true,
     });
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop");
 
     assert!(value.is_nothing());
@@ -536,7 +536,7 @@ fn interactive_toggle_enable_disable_cycle_refreshes_per_server_visible_counts()
     };
     let mut ui = StagedToggleUi::new();
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop");
 
     assert!(value.is_nothing());
@@ -567,7 +567,7 @@ fn interactive_loop_disconnected_toggle_worker_preserves_authoritative_visible_t
     });
 
     let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _ = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None);
+        let _ = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None);
     }));
 
     assert!(panic.is_err(), "expected panic from toggle worker thread");
@@ -588,7 +588,7 @@ fn interactive_loop_worker_channel_closed_preserves_authoritative_visible_tool_c
     let mut ui = StagedToggleUi::new();
 
     let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _ = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None);
+        let _ = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None);
     }));
 
     assert!(panic.is_err(), "expected panic from toggle worker thread");

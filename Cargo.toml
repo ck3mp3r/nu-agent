@@ -8,14 +8,15 @@ version = "0.1.0"
 
 [workspace.dependencies]
 # Internal crates
+nu-agent-a2a = { path = "crates/nu-agent-a2a" }
 nu-agent-core = { path = "crates/nu-agent-core" }
 nu-agent-tui = { path = "crates/nu-agent-tui" }
 nu-agent-tty = { path = "crates/nu-agent-tty" }
 
 # Nu ecosystem
-nu-plugin = "0.113.1"
-nu-protocol = "0.113.1"
-nu-parser = "0.113.1"
+nu-plugin = "0.114.1"
+nu-protocol = "0.114.1"
+nu-parser = "0.114.1"
 
 # LLM / AI
 rig = { package = "rig-core", version = "0.40.0", default-features = false, features = ["derive", "rmcp", "test-utils"] }

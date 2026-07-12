@@ -1460,14 +1460,7 @@ fn skill_via_builtin_adapter(max_tool_result_bytes: usize, cwd: std::path::PathB
             "required": ["name"]
         }),
     };
-    let adapter = BuiltinToolAdapter::new(
-        tool_def.clone(),
-        cwd.clone(),
-        None,
-        cwd,
-        None,
-        max_tool_result_bytes,
-    );
+    let adapter = BuiltinToolAdapter::new(tool_def.clone(), cwd.clone(), max_tool_result_bytes);
 
     let handle = rig::tool::server::ToolServer::new().run();
     let rt = tokio::runtime::Runtime::new().expect("tmp runtime for skill adapter");

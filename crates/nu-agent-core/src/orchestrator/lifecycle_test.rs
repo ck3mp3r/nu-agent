@@ -744,7 +744,7 @@ fn run_interactive_loop_uses_interactive_ui_trait_boundary() {
     let mut runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["a", "b"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop");
 
     assert!(value.is_nothing());
@@ -756,7 +756,7 @@ fn interactive_loop_does_not_return_per_turn_values_to_stdout() {
     let mut runtime = FakeValueRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["hello"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop");
 
     assert!(value.is_nothing());
@@ -768,7 +768,7 @@ fn interactive_loop_treats_llm_cancellation_as_non_fatal_and_continues() {
     let mut runtime = CancelFirstRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["first", "second"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop should continue after cancellation");
 
     assert!(value.is_nothing());
@@ -783,7 +783,7 @@ fn interactive_loop_treats_errors_as_non_fatal_and_displays_inline() {
     let mut runtime = ErrorFirstRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["first", "second"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop should continue after error");
 
     assert!(value.is_nothing());
@@ -813,7 +813,6 @@ fn run_hydrated_interactive_loop_hydrates_before_first_pump() {
         &mut runtime,
         &mut ui,
         messages,
-        None,
         None,
         Span::test_data(),
         None,
@@ -847,7 +846,6 @@ fn run_hydrated_interactive_loop_hydrates_exactly_once() {
         &mut ui,
         messages.clone(),
         None,
-        None,
         Span::test_data(),
         None,
     )
@@ -871,7 +869,7 @@ fn interactive_loop_processes_input_while_first_turn_is_running() {
         Arc::clone(&active_pump_count),
     );
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop should stay responsive");
 
     assert!(value.is_nothing());
@@ -900,7 +898,7 @@ fn interactive_loop_preserves_fifo_for_prompts_queued_while_active() {
         Arc::clone(&active_pump_count),
     );
 
-    let _ = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let _ = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop should complete queued prompts");
 
     assert_eq!(
@@ -922,7 +920,7 @@ fn permission_requested_emits_before_execution_and_waits_for_decision_before_sid
         Arc::clone(&runtime.side_effects),
     );
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop");
 
     assert!(value.is_nothing());
@@ -965,7 +963,7 @@ fn deny_decision_resumes_deterministically_without_pre_decision_handler_side_eff
         Arc::clone(&runtime.side_effects),
     );
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop");
 
     assert!(value.is_nothing());
@@ -1005,7 +1003,7 @@ fn models_launcher_opens_picker_while_worker_active() {
         Arc::clone(&block_first_turn),
     );
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop should process model launcher while active");
 
     assert!(value.is_nothing());
@@ -1028,7 +1026,7 @@ fn models_slash_opens_picker_while_worker_active() {
         Arc::clone(&block_first_turn),
     );
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop should process /models while active");
 
     assert!(value.is_nothing());
@@ -1046,7 +1044,7 @@ fn interactive_loop_global_abort_cancels_active_and_does_not_run_queued_prompt()
     let mut runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn));
     let mut ui = AbortDuringActiveUi::new(Arc::clone(&runtime.active));
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop should treat cancellation as non-fatal");
 
     assert!(value.is_nothing());
@@ -1069,7 +1067,7 @@ fn interactive_loop_startup_hydration_initializes_per_server_visible_counts_befo
     };
     let mut ui = FakeInteractiveUi::with_prompts(&[]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop");
 
     assert!(value.is_nothing());

@@ -1,0 +1,26 @@
+[package]
+name = "nu-agent-a2a"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+axum = "0.8"
+chrono = { workspace = true }
+log = { workspace = true }
+reqwest = { workspace = true }
+rustls = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { version = "0.1", features = ["sync"] }
+zeroconf = "0.18"
+rig = { workspace = true }
+tower-http = { version = "0.6", features = ["cors"] }
+url = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[dev-dependencies]
+anyhow = "1"
+serde_test = "1"
+tower = { version = "0.5", features = ["util"] }

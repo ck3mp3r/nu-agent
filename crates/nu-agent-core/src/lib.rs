@@ -3,7 +3,6 @@ pub mod config;
 pub mod conversation;
 pub mod hook;
 pub mod llm;
-pub mod mailbox;
 pub mod orchestrator;
 pub mod policy;
 pub mod protocol;

@@ -265,6 +265,7 @@ fn provider_dispatch_unsupported_provider_returns_error() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        a2a_enabled: false,
     };
 
     // This test will compile once we add the dispatch logic
@@ -328,6 +329,7 @@ fn client_cache_key_contains_provider_and_model() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        a2a_enabled: false,
     };
 
     // client_cache_key clones (provider, api_key, base_url) from config.
@@ -374,6 +376,7 @@ fn client_cache_key_includes_base_url_when_set() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        a2a_enabled: false,
     };
 
     let key: ClientCacheKey = (
@@ -548,6 +551,7 @@ fn active_model_identity_returns_provider_slash_model() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        a2a_enabled: false,
     };
 
     // Replicate the method body exactly
@@ -680,6 +684,7 @@ fn provider_state_client_cache_key_contains_provider_and_api_key() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        a2a_enabled: false,
     };
 
     // Replicate client_cache_key body
@@ -755,7 +760,7 @@ fn multi_agent_state_available_summaries_empty_by_default() {
     use crate::config::AgentsConfig;
     use crate::conversation::state::multi_agent::MultiAgentState;
 
-    let state = MultiAgentState::new(None, None, vec![], AgentsConfig::default());
+    let state = MultiAgentState::new(vec![], AgentsConfig::default());
 
     assert!(
         state.available_agent_summaries().is_empty(),
@@ -814,6 +819,7 @@ fn accessor_provider_returns_provider_string() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        a2a_enabled: false,
     };
 
     // Verify the accessor delegation chain: provider() -> provider_state.config().provider
@@ -846,6 +852,7 @@ fn accessor_model_returns_model_string() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        a2a_enabled: false,
     };
 
     let provider_state = super::super::state::provider::ProviderState::new(config, None);
@@ -876,6 +883,7 @@ fn accessor_max_context_tokens_returns_none_when_unset() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        a2a_enabled: false,
     };
 
     let provider_state = super::super::state::provider::ProviderState::new(config, None);
@@ -909,6 +917,7 @@ fn accessor_max_context_tokens_returns_value_when_set() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        a2a_enabled: false,
     };
 
     let provider_state = super::super::state::provider::ProviderState::new(config, None);
@@ -942,6 +951,7 @@ fn accessor_startup_plugin_config_returns_none_when_default() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
+        a2a_enabled: false,
     };
 
     let provider_state = super::super::state::provider::ProviderState::new(config, None);
@@ -989,34 +999,8 @@ fn accessor_available_agent_summaries_delegates_to_multi_agent_state() {
     use crate::config::AgentsConfig;
     use crate::conversation::state::multi_agent::MultiAgentState;
 
-    let state = MultiAgentState::new(None, None, vec![], AgentsConfig::default());
+    let state = MultiAgentState::new(vec![], AgentsConfig::default());
     assert!(state.available_agent_summaries().is_empty());
-}
-
-#[test]
-fn accessor_take_mailbox_rx_returns_none_when_default() {
-    use crate::config::AgentsConfig;
-    use crate::conversation::state::multi_agent::MultiAgentState;
-
-    let mut state = MultiAgentState::new(None, None, vec![], AgentsConfig::default());
-    assert!(state.take_mailbox_rx().is_none());
-}
-
-#[test]
-fn accessor_take_mailbox_rx_returns_some_and_drains() {
-    use crate::config::AgentsConfig;
-    use crate::conversation::state::multi_agent::MultiAgentState;
-
-    let (_tx, rx) = std::sync::mpsc::channel();
-    let mut state = MultiAgentState::new(None, Some(rx), vec![], AgentsConfig::default());
-    assert!(
-        state.take_mailbox_rx().is_some(),
-        "first take must return Some"
-    );
-    assert!(
-        state.take_mailbox_rx().is_none(),
-        "second take must return None (drained)"
-    );
 }
 
 // ========================================================================

@@ -8,6 +8,7 @@ name = "nu_plugin_agent"
 path = "src/main.rs"
 
 [dependencies]
+nu-agent-a2a = { workspace = true }
 nu-agent-core = { workspace = true }
 nu-agent-tui = { workspace = true }
 nu-agent-tty = { workspace = true }

@@ -1,4 +1,4 @@
-use super::args::{extract_agent_flags, extract_mailbox_input};
+use super::args::extract_agent_flags;
 use nu_plugin::EvaluatedCall;
 use nu_protocol::{Span, Spanned, Value};
 
@@ -25,37 +25,6 @@ fn mock_call_with_flags(agent: Option<&str>, name: Option<&str>) -> EvaluatedCal
                 span,
             },
             Some(Value::string(name_val, span)),
-        ));
-    }
-
-    EvaluatedCall {
-        head: span,
-        positional: vec![],
-        named,
-    }
-}
-
-// Helper to create an EvaluatedCall with mailbox flags (name + parent-name)
-fn mock_call_with_mailbox_flags(name: Option<&str>, parent_name: Option<&str>) -> EvaluatedCall {
-    let span = Span::test_data();
-    let mut named: Vec<(Spanned<String>, Option<Value>)> = Vec::new();
-
-    if let Some(n) = name {
-        named.push((
-            Spanned {
-                item: "name".to_string(),
-                span,
-            },
-            Some(Value::string(n, span)),
-        ));
-    }
-    if let Some(p) = parent_name {
-        named.push((
-            Spanned {
-                item: "parent-name".to_string(),
-                span,
-            },
-            Some(Value::string(p, span)),
         ));
     }
 
@@ -101,43 +70,6 @@ fn extract_agent_flags_neither() {
 
     assert_eq!(agent, None);
     assert_eq!(name, None);
-}
-
-#[test]
-fn extract_mailbox_input_with_name() {
-    let call = mock_call_with_mailbox_flags(Some("my-agent"), None);
-    let result = extract_mailbox_input(&call).unwrap();
-
-    assert!(result.is_some());
-    let input = result.unwrap();
-    assert_eq!(input.name, "my-agent");
-    assert_eq!(input.parent_name, None);
-}
-
-#[test]
-fn extract_mailbox_input_without_name() {
-    let call = mock_call_with_mailbox_flags(None, None);
-    let result = extract_mailbox_input(&call).unwrap();
-    assert!(result.is_none());
-}
-
-#[test]
-fn extract_mailbox_input_with_parent_name() {
-    let call = mock_call_with_mailbox_flags(Some("child"), Some("orchestrator"));
-    let result = extract_mailbox_input(&call).unwrap();
-
-    assert!(result.is_some());
-    let input = result.unwrap();
-    assert_eq!(input.name, "child");
-    assert_eq!(input.parent_name, Some("orchestrator".to_string()));
-}
-
-#[test]
-fn extract_mailbox_input_without_parent_name() {
-    let call = mock_call_with_mailbox_flags(Some("agent-1"), None);
-    let result = extract_mailbox_input(&call).unwrap();
-    let input = result.unwrap();
-    assert_eq!(input.parent_name, None);
 }
 
 // --- parse_strategy_from_str ---

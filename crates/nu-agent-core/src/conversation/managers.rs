@@ -140,16 +140,11 @@ pub trait PersonaManager {
 
 // ── MultiAgentManager ────────────────────────────────────────────────────────
 
-/// Manages multi-agent coordination: mailbox, agent registry.
+/// Manages multi-agent coordination: agent registry.
 pub trait MultiAgentManager {
     /// Return the available agent summaries for preamble injection.
     fn available_agent_summaries(&self) -> &[crate::protocol::persona::PersonaSummary];
 
     /// Return the agents configuration.
     fn agents_config(&self) -> &crate::config::AgentsConfig;
-
-    /// Take ownership of the mailbox receiver (drains it from `self`).
-    fn take_mailbox_rx(
-        &mut self,
-    ) -> Option<std::sync::mpsc::Receiver<crate::mailbox::IncomingMessage>>;
 }

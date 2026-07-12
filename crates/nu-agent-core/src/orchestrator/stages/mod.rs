@@ -3,7 +3,6 @@ use std::sync::mpsc;
 use nu_protocol::{LabeledError, Span};
 
 use crate::conversation::runtime::PendingPermissions;
-use crate::mailbox::IncomingMessage;
 use crate::orchestrator::WorkerCommand;
 use crate::orchestrator::turn_outcome::TurnOutcome;
 use crate::protocol::contracts::{
@@ -11,14 +10,12 @@ use crate::protocol::contracts::{
 };
 
 pub mod compaction;
-pub mod mailbox;
 pub mod model;
 pub mod permission;
 pub mod session;
 pub mod slash;
 
 use compaction::CompactionStage;
-use mailbox::MailboxStage;
 use model::ModelSwitchStage;
 use permission::PermissionStage;
 use session::SessionStage;
@@ -43,8 +40,6 @@ pub(crate) enum StageOutcome {
 pub(crate) struct OrchestrationContext<'a, U> {
     /// Channel to send commands to the worker thread.
     pub worker_tx: &'a mpsc::Sender<WorkerCommand>,
-    /// Optional mailbox receiver from the agent broker.
-    pub mailbox_rx: &'a mut Option<mpsc::Receiver<IncomingMessage>>,
     /// Pending permission map for the interactive permission resolver.
     pub pending: &'a Option<PendingPermissions>,
     /// Whether the worker thread is currently executing a turn.
@@ -57,12 +52,11 @@ pub(crate) struct OrchestrationContext<'a, U> {
     pub ui: &'a mut U,
 }
 
-/// All six orchestration stages, bundled as a single composable unit.
+/// All orchestration stages, bundled as a single composable unit.
 ///
 /// This struct has **no** type parameters. `U` appears only on `poll_all`
 /// as a method-level generic and is inferred at every call site.
 pub(crate) struct OrchestratorStages {
-    mailbox: MailboxStage,
     permission: PermissionStage,
     compaction: CompactionStage,
     model: ModelSwitchStage,
@@ -81,7 +75,6 @@ impl OrchestratorStages {
         worker_result_rx: mpsc::Receiver<TurnOutcome>,
     ) -> Self {
         Self {
-            mailbox: MailboxStage::new(),
             permission: PermissionStage::new(),
             compaction: CompactionStage::new(),
             model: ModelSwitchStage::new(initial_visible_count),
@@ -98,7 +91,7 @@ impl OrchestratorStages {
     /// Stage execution order preserves the original loop semantics:
     /// - `session` first: updates `worker_active` so downstream stages see the current flag
     /// - `model` second: drains queued switches now that `worker_active` is updated
-    /// - `compaction`, `permission`, `slash`, `mailbox` in original order
+    /// - `compaction`, `permission`, `slash` in original order
     ///
     /// `slash` is gated on `!model.has_pending_model_switch()` to match the original
     /// guard `if !worker_active && pending_model_switch.is_none()`.
@@ -133,11 +126,6 @@ impl OrchestratorStages {
         if let StageOutcome::Fatal(_) = slash {
             return slash;
         }
-        // mailbox: last, so user prompts take precedence
-        let mailbox = self.mailbox.poll(ctx);
-        if let StageOutcome::Fatal(_) = mailbox {
-            return mailbox;
-        }
 
         // Cross-stage handoff: if slash dispatched a /compact, give the trigger
         // receiver to CompactionStage so it can poll the result next iteration.
@@ -145,7 +133,7 @@ impl OrchestratorStages {
             self.compaction.set_pending_compaction_trigger(rx);
         }
 
-        [session, model, compaction, permission, slash, mailbox]
+        [session, model, compaction, permission, slash]
             .into_iter()
             .find(|o| matches!(o, StageOutcome::Handled))
             .unwrap_or(StageOutcome::Idle)

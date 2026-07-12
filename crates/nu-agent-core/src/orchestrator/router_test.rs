@@ -474,7 +474,7 @@ fn agent_switch_sends_command_and_updates_ui_identity() {
     let mut runtime = AgentSwitchRuntime::default();
     let mut ui = AgentSwitchUi::new(&["research-agent"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop");
 
     assert!(value.is_nothing());
@@ -494,7 +494,7 @@ fn agent_switch_failure_warns_and_keeps_previous_agent() {
     };
     let mut ui = AgentSwitchUi::new(&["nonexistent-agent"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop");
 
     assert!(value.is_nothing());
@@ -516,7 +516,7 @@ fn agent_switch_while_worker_active_is_queued_for_next_turn() {
         Arc::clone(&active_pump_count),
     );
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop");
 
     assert!(value.is_nothing());
@@ -550,7 +550,7 @@ fn queued_agent_switch_last_write_wins() {
         Arc::clone(&active_pump_count),
     );
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop");
 
     assert!(value.is_nothing());

@@ -5,9 +5,13 @@ use std::time::Duration;
 
 use nu_protocol::{LabeledError, Value};
 
+use nu_agent_a2a::{IncomingTask, Part};
 use nu_agent_core::{
     conversation::runtime::AgentConversationRuntime,
-    orchestrator::{run_hydrated_interactive_loop, run_interactive_loop, run_single_turn},
+    orchestrator::{
+        run_hydrated_interactive_loop_with_external_prompts,
+        run_interactive_loop_with_external_prompts, run_single_turn,
+    },
     policy::UiPolicy,
     protocol::{
         contracts::UiMessageSnapshot, event::PermissionDecision, mcp_management::HasMcpManagement,
@@ -67,6 +71,7 @@ pub(crate) fn run_tui_mode(
     span: nu_protocol::Span,
     ui_policy: UiPolicy,
     hydration: TuiHydrationInput,
+    a2a_task_rx: Option<tokio::sync::mpsc::Receiver<IncomingTask>>,
 ) -> Result<Value, LabeledError> {
     // Set up the interactive permission pending map for TUI mode.
     // This Arc is shared between the worker thread (via InteractivePermissionResolver)
@@ -130,29 +135,59 @@ pub(crate) fn run_tui_mode(
     tui_ui.set_llm_visible_mcp_tool_count(runtime_impl.llm_visible_mcp_tool_count());
     tui_ui.set_context_window_max_tokens(runtime_impl.max_context_tokens());
 
+    // Bridge the tokio A2A IncomingTask channel to a std channel of formatted
+    // prompt strings that the orchestrator can poll without A2A knowledge.
+    let external_prompt_rx: Option<std::sync::mpsc::Receiver<String>> =
+        a2a_task_rx.map(|mut rx| {
+            let (tx, std_rx) = std::sync::mpsc::channel::<String>();
+            std::thread::spawn(move || {
+                while let Some(incoming) = rx.blocking_recv() {
+                    let text: String = incoming
+                        .message
+                        .parts
+                        .iter()
+                        .filter_map(|p| match p {
+                            Part::Text { text } => Some(text.as_str()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    let prompt = format!(
+                        "[A2A Task {} from {}]: {}\n\nWhen you have processed this request, call `tasks.complete` with taskId `{}` and your response as the result.",
+                        incoming.task_id, incoming.sender_url, text, incoming.task_id
+                    );
+                    if tx.send(prompt).is_err() {
+                        break; // std receiver dropped, no more forwarding needed
+                    }
+                }
+            });
+            std_rx
+        });
+
     let result = run_with_terminal_restore(&mut terminal_lifecycle, || {
         if input_is_nothing {
-            let mailbox_rx = runtime_impl.take_mailbox_rx();
             if hydration.should_hydrate {
-                run_hydrated_interactive_loop(
+                run_hydrated_interactive_loop_with_external_prompts(
                     runtime_impl,
                     &mut tui_ui,
                     hydration.initial_messages,
                     hydration.last_total_tokens,
-                    mailbox_rx,
                     span,
                     Some(Arc::clone(&pending)),
+                    external_prompt_rx,
                 )
             } else {
-                run_interactive_loop(
+                run_interactive_loop_with_external_prompts(
                     runtime_impl,
                     &mut tui_ui,
-                    mailbox_rx,
                     span,
                     Some(Arc::clone(&pending)),
+                    external_prompt_rx,
                 )
             }
         } else {
+            // Non-interactive: run a single turn with the provided input.
+            // A2A tasks are not processed in this mode (single-turn).
             let (prompt, context) = super::input::extract_prompt_and_context(input)?;
             run_single_turn(runtime_impl, &mut tui_ui, prompt, context, span)
         }
@@ -167,6 +202,7 @@ pub(crate) fn run_stderr_mode(
     span: nu_protocol::Span,
     ui_policy: UiPolicy,
     stderr_is_tty: bool,
+    mut a2a_task_rx: Option<tokio::sync::mpsc::Receiver<IncomingTask>>,
 ) -> Result<Value, LabeledError> {
     let cancel_flag = Arc::new(AtomicBool::new(false));
 
@@ -184,6 +220,29 @@ pub(crate) fn run_stderr_mode(
         StderrUiFactory::new(std::io::stderr(), stderr_is_tty).create(ui_policy),
         cancel_flag,
     );
+
+    // Check for pending A2A task before processing user input.
+    // A2A tasks take priority over pipeline input.
+    if let Some(ref mut rx) = a2a_task_rx
+        && let Ok(incoming) = rx.try_recv()
+    {
+        let text: String = incoming
+            .message
+            .parts
+            .iter()
+            .filter_map(|p| match p {
+                Part::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let prompt = format!(
+            "[A2A Task {} from {}]: {}\n\nWhen you have processed this request, call `tasks.complete` with taskId `{}` and your response as the result.",
+            incoming.task_id, incoming.sender_url, text, incoming.task_id
+        );
+        return run_single_turn(runtime_impl, &mut stderr_ui, prompt, None, span);
+    }
+
     let (prompt, context) = super::input::extract_prompt_and_context(input)?;
     run_single_turn(runtime_impl, &mut stderr_ui, prompt, context, span)
 }

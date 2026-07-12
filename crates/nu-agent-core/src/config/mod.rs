@@ -110,6 +110,9 @@ pub struct PluginConfig {
     pub max_retries: Option<u8>,
     /// Base backoff in ms, doubles each attempt, capped at 30_000ms. None = 1000.
     pub retry_base_delay_ms: Option<u64>,
+
+    /// Enable A2A agent-to-agent protocol support (experimental, default: false).
+    pub a2a_enabled: bool,
 }
 
 /// Configuration for conversation compaction behavior.
@@ -352,6 +355,11 @@ impl PluginConfig {
                 .and_then(|i| if i >= 0 { Some(i as u64) } else { None })
         });
 
+        let a2a_enabled = record
+            .get("a2a_enabled")
+            .and_then(|v| v.as_bool().ok())
+            .unwrap_or(false);
+
         Ok(Self {
             model,
             small_model,
@@ -371,6 +379,7 @@ impl PluginConfig {
             context_warning_threshold,
             max_retries,
             retry_base_delay_ms,
+            a2a_enabled,
         })
     }
 
@@ -793,6 +802,15 @@ impl PluginConfig {
             config.retry_base_delay_ms = self.retry_base_delay_ms;
         }
 
+        // Forward global plugin config fields (not model-specific).
+        // a2a_enabled is a bool, not Option<T> — this means "if env var didn't
+        // set it to true, use the plugin config value". The edge case where an
+        // env var is explicitly set to `false` (overridden by plugin's `true`)
+        // is accepted for simplicity. Most users set this via plugin config.
+        if !config.a2a_enabled {
+            config.a2a_enabled = self.a2a_enabled;
+        }
+
         Ok(config)
     }
 }
@@ -871,6 +889,9 @@ pub struct Config {
     /// Example: `{ thinking: { type: "disabled" } }` disables Anthropic extended thinking.
     /// None = no additional parameters.
     pub additional_params: Option<serde_json::Value>,
+
+    /// Enable A2A agent-to-agent protocol support (experimental, default: false).
+    pub a2a_enabled: bool,
 }
 
 /// Convert a `nu_protocol::Value` to a `serde_json::Value` without including
@@ -955,6 +976,10 @@ impl Config {
         let max_retries: Option<u8> = parse_env_var("AGENT_MAX_RETRIES");
         let retry_base_delay_ms: Option<u64> = parse_env_var("AGENT_RETRY_BASE_DELAY_MS");
         let read_timeout_secs: Option<u64> = parse_env_var("AGENT_READ_TIMEOUT_SECS");
+        let a2a_enabled: bool = env::var("AGENT_A2A_ENABLED")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(false);
 
         log::debug!(
             "Config.from_env: provider={provider} model={model} api_key={} base_url={base_url:?}",
@@ -981,6 +1006,7 @@ impl Config {
             retry_base_delay_ms,
             max_tool_calls_per_subturn,
             additional_params: None,
+            a2a_enabled,
         }
     }
 
@@ -1024,6 +1050,7 @@ impl Config {
                 .max_tool_calls_per_subturn
                 .or(self.max_tool_calls_per_subturn),
             additional_params: other.additional_params.or(self.additional_params),
+            a2a_enabled: other.a2a_enabled || self.a2a_enabled,
         }
     }
 

@@ -4,15 +4,9 @@ mod conversion;
 mod dispatch;
 pub mod fs;
 pub mod http;
-pub mod messaging;
 pub mod pre_authorize;
 mod result;
-pub mod spawn_agent;
 mod types;
-
-#[cfg(test)]
-#[path = "spawn_agent_test.rs"]
-mod spawn_agent_test;
 
 #[cfg(test)]
 mod http_test;

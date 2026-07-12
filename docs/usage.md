@@ -605,6 +605,7 @@ $env.config.plugins.agent = {
 - `--max-turns <int>`
 - `--tools <record>`
 - `--permissions <record>`
+- `--a2a` — enable A2A agent-to-agent communication
 - `--tool-timeout <duration>`
 - `--session <id>`
 - `--quiet` / `-q`

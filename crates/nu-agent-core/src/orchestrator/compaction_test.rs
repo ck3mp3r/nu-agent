@@ -14,7 +14,7 @@ fn interactive_loop_emits_auto_compaction_when_policy_fires() {
     };
     let mut ui = FakeInteractiveUi::with_prompts(&[]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop");
 
     assert!(value.is_nothing());
@@ -36,7 +36,7 @@ fn interactive_loop_skips_auto_compaction_when_policy_no_fire() {
     };
     let mut ui = FakeInteractiveUi::with_prompts(&[]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop");
 
     assert!(value.is_nothing());
@@ -57,7 +57,7 @@ fn interactive_loop_does_not_duplicate_auto_compaction_while_disarmed() {
     };
     let mut ui = FakeInteractiveUi::with_prompts(&[]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop");
 
     assert!(value.is_nothing());
@@ -90,7 +90,7 @@ fn auto_compaction_rearms_after_turn_completion() {
     // 10 pumps: startup eval → dispatch prompt → collect result → re-arm → second eval
     let mut ui = FakeInteractiveUi::with_prompts(&["hello"]).with_min_pump_count(10);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop");
 
     assert!(value.is_nothing());
@@ -127,7 +127,7 @@ fn interactive_loop_continues_turn_processing_with_auto_compaction_enabled() {
     };
     let mut ui = FakeInteractiveUi::with_prompts(&["hello"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop");
 
     assert!(value.is_nothing());
@@ -145,7 +145,7 @@ fn recognized_slash_commands_never_sent_to_llm() {
         "/help", "/status", "/mcp", "/models", "/agent", "/compact",
     ]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop");
 
     assert!(value.is_nothing());
@@ -161,7 +161,7 @@ fn models_slash_command_not_sent_to_llm() {
     let mut runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["/models"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop");
 
     assert!(value.is_nothing());
@@ -173,7 +173,7 @@ fn models_slash_command_routes_to_shared_models_action() {
     let mut runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["/models"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop");
 
     assert!(value.is_nothing());
@@ -185,7 +185,7 @@ fn interactive_loop_routes_compact_slash_to_compaction_executor() {
     let mut runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["/compact", "hello"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop");
 
     assert!(value.is_nothing());
@@ -201,7 +201,7 @@ fn typed_compact_submit_triggers_compaction_path() {
     let mut runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["/compact"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop");
 
     assert!(value.is_nothing());
@@ -217,7 +217,7 @@ fn interactive_loop_unknown_slash_emits_warning_and_continues() {
     let mut runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["/compact now", "real prompt"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop");
 
     assert!(value.is_nothing());
@@ -234,7 +234,7 @@ fn recognized_slash_commands_not_persisted_as_session_turn_messages() {
     let mut runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["/help", "/status", "/mcp", "/compact"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop");
 
     assert!(value.is_nothing());
@@ -260,7 +260,7 @@ fn manual_and_auto_compaction_failure_surface_is_consistent() {
     };
     let mut ui = FakeInteractiveUi::with_prompts(&["/compact"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop");
 
     assert!(value.is_nothing());
@@ -280,7 +280,7 @@ fn slash_commands_reuse_command_palette_action_handlers() {
     let mut ui =
         FakeInteractiveUi::with_prompts(&["/help", "/status", "/mcp", "/models", "/agent"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop");
 
     assert!(value.is_nothing());
@@ -302,7 +302,7 @@ fn command_palette_models_action_opens_inline_model_picker() {
     let mut runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["/models"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop");
 
     assert!(value.is_nothing());
@@ -323,7 +323,7 @@ fn manual_and_auto_compaction_share_single_execution_path() {
     };
     let mut ui = FakeInteractiveUi::with_prompts(&["/compact"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, None, Span::test_data(), None)
+    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
         .expect("interactive loop");
 
     assert!(value.is_nothing());

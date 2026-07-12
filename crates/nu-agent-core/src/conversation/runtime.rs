@@ -544,12 +544,6 @@ where
         self.multi_agent.available_agent_summaries()
     }
 
-    pub fn take_mailbox_rx(
-        &mut self,
-    ) -> Option<std::sync::mpsc::Receiver<crate::mailbox::IncomingMessage>> {
-        self.multi_agent.take_mailbox_rx()
-    }
-
     // ── End Phase I accessor methods ────────────────────────────────
 
     fn execute_compaction_event<U: ProgressUi>(
