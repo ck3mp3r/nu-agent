@@ -231,17 +231,16 @@ fn locked_input_prevents_typing_and_submission() {
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
 
     assert!(state.input.buffer.is_empty());
-    // Activate first prompt — transcript entry for "first" is deferred to activation
-    let _ = state.take_next_prompt_for_execution();
+    // Activate both prompts coalesced
+    let result = state.take_next_prompt_for_execution();
+    assert_eq!(result, Some("first\n\nsecond".to_string()));
     assert_eq!(state.transcript_preview.len(), 1);
     assert_eq!(state.transcript_preview[0].role(), Role::User);
-    assert_eq!(state.transcript_preview[0].text(), "first");
-    // Complete first and activate second
+    assert_eq!(state.transcript_preview[0].text(), "first\n\nsecond");
+    // Complete first (active) prompt — other prompt is already Done
     state.complete_active_prompt();
-    let _ = state.take_next_prompt_for_execution();
-    assert_eq!(state.transcript_preview.len(), 2);
-    assert_eq!(state.transcript_preview[1].role(), Role::User);
-    assert_eq!(state.transcript_preview[1].text(), "second");
+    let result = state.take_next_prompt_for_execution();
+    assert_eq!(result, None);
 }
 
 #[test]
@@ -2715,5 +2714,63 @@ mod task_4a_tests {
                 .iter()
                 .any(|(t, h)| t == "italic" && matches!(h, StyleHint::MdItalic))
         }));
+    }
+
+    #[test]
+    fn esc_esc_with_pending_restores_texts_to_input_buffer() {
+        let mut state = AppState::new();
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::InsertChar('f')),
+            None,
+        );
+        for ch in "irst".chars() {
+            reduce_with_cancel_controller(
+                &mut state,
+                ReducerInput::User(UserAction::InsertChar(ch)),
+                None,
+            );
+        }
+        reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
+        let _ = state.activate_next_prompt();
+        state.enqueue_prompt("second".to_string());
+        state.enqueue_prompt("third".to_string());
+
+        reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Esc), None);
+        assert_eq!(state.phase, UiPhase::AbortPending);
+
+        reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::EscConfirm), None);
+
+        assert_eq!(state.phase, UiPhase::Idle);
+        assert_eq!(state.input.buffer, "second\n\nthird");
+        assert!(state.pending_prompt_ids().is_empty());
+        assert_eq!(state.active_prompt_id(), None);
+    }
+
+    #[test]
+    fn esc_esc_with_no_pending_clears_state_but_not_buffer() {
+        let mut state = AppState::new();
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::InsertChar('d')),
+            None,
+        );
+        for ch in "o work".chars() {
+            reduce_with_cancel_controller(
+                &mut state,
+                ReducerInput::User(UserAction::InsertChar(ch)),
+                None,
+            );
+        }
+        reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
+        let _ = state.activate_next_prompt();
+
+        reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Esc), None);
+        reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::EscConfirm), None);
+
+        assert_eq!(state.phase, UiPhase::Idle);
+        assert_eq!(state.input.buffer, "");
+        assert!(state.pending_prompt_ids().is_empty());
+        assert_eq!(state.active_prompt_id(), None);
     }
 }

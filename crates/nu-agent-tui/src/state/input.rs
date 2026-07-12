@@ -2,6 +2,7 @@ use super::*;
 
 impl AppState {
     pub fn append_input_char(&mut self, ch: char) {
+        self.reset_history_navigation();
         if self.input.locked {
             self.ensure_invariants();
             return;
@@ -67,6 +68,7 @@ impl AppState {
     }
 
     pub fn backspace_input_char(&mut self) {
+        self.reset_history_navigation();
         if self.input.locked {
             self.ensure_invariants();
             return;

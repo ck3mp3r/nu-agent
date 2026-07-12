@@ -124,11 +124,9 @@ fn reduce_user_action(
         UserAction::InlineSlashMoveDown => state.inline_slash_move_down(),
         UserAction::InlineSlashAccept => handle_inline_slash_accept(state),
         UserAction::InlineSlashClose => state.close_inline_slash_suggestions(),
-        UserAction::HistoryUp
-        | UserAction::HistoryDown
-        | UserAction::QueryNext
-        | UserAction::CompleteForward
-        | UserAction::CompleteBackward => {}
+        UserAction::HistoryUp => state.history_up(),
+        UserAction::HistoryDown => state.history_down(),
+        UserAction::QueryNext | UserAction::CompleteForward | UserAction::CompleteBackward => {}
         UserAction::ScrollPageUp => handle_scroll_page_up(state),
         UserAction::ScrollPageDown => handle_scroll_page_down(state),
         UserAction::Quit => handle_quit(state, cancel_controller),
@@ -355,7 +353,7 @@ fn handle_escape_confirm(state: &mut AppState, cancel_controller: Option<&Cancel
         if let Some(controller) = cancel_controller {
             controller.request_cancel();
         }
-        state.cancel_active_and_pending_prompts();
+        state.cancel_and_restore_pending_to_input();
         state.status_line = ABORT_REQUESTED_STATUS.to_string();
     }
 }

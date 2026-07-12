@@ -91,6 +91,46 @@ impl<'a> PromptQueueLifecycle<'a> {
         }
     }
 
+    pub(super) fn cancel_and_drain_to_texts(&mut self) -> Vec<String> {
+        if let Some(active_id) = self.active_prompt_id.take()
+            && let Some(prompt) = self.prompt_items.iter_mut().find(|p| p.id == active_id)
+        {
+            prompt.status = PromptStatus::Cancelled;
+        }
+
+        self.pending_prompt_ids
+            .drain(..)
+            .filter_map(|id| {
+                self.prompt_items.iter_mut().find(|p| p.id == id).map(|p| {
+                    p.status = PromptStatus::Cancelled;
+                    p.prompt_text.clone()
+                })
+            })
+            .collect()
+    }
+
+    pub(super) fn coalesce_pending_prompts(&mut self) -> Vec<String> {
+        if self.pending_prompt_ids.is_empty() {
+            return vec![];
+        }
+
+        let ids: Vec<u64> = self.pending_prompt_ids.drain(..).collect();
+        *self.active_prompt_id = ids.first().copied();
+
+        let mut texts = Vec::with_capacity(ids.len());
+        for (i, &id) in ids.iter().enumerate() {
+            if let Some(p) = self.prompt_items.iter_mut().find(|p| p.id == id) {
+                if i == 0 {
+                    p.status = PromptStatus::InProgress;
+                } else {
+                    p.status = PromptStatus::Done;
+                }
+                texts.push(p.prompt_text.clone());
+            }
+        }
+        texts
+    }
+
     pub(super) fn enforce_single_active_invariant(&mut self) {
         let in_progress_count = self
             .prompt_items

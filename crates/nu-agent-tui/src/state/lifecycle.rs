@@ -217,11 +217,33 @@ impl AppState {
             return Some(immediate);
         }
 
-        let active_id = self.activate_next_prompt()?;
-        self.prompt_items
-            .iter()
-            .find(|prompt| prompt.id == active_id)
-            .map(|prompt| prompt.prompt_text.clone())
+        let texts = prompt_queue::PromptQueueLifecycle::new(
+            &mut self.prompt_items,
+            &mut self.pending_prompt_ids,
+            &mut self.active_prompt_id,
+            &mut self.next_prompt_id,
+        )
+        .coalesce_pending_prompts();
+
+        if texts.is_empty() {
+            self.ensure_invariants();
+            return None;
+        }
+
+        let combined = texts.join("\n\n");
+        self.push_transcript_line(TranscriptRole::User, combined.clone());
+        let real_index = self.transcript_preview.len().saturating_sub(1);
+        if let Some(active_id) = self.active_prompt_id
+            && let Some(prompt) = self.prompt_items.iter_mut().find(|p| p.id == active_id)
+        {
+            prompt.transcript_line_index = real_index;
+        }
+
+        self.phase = UiPhase::Busy;
+        self.active_cycle = true;
+        self.abort.pending = false;
+        self.ensure_invariants();
+        Some(combined)
     }
 
     pub fn complete_active_prompt(&mut self) {
@@ -272,6 +294,26 @@ impl AppState {
 
     pub fn finalize_cycle(&mut self) {
         self.complete_active_prompt();
+    }
+
+    pub fn cancel_and_restore_pending_to_input(&mut self) {
+        let texts = prompt_queue::PromptQueueLifecycle::new(
+            &mut self.prompt_items,
+            &mut self.pending_prompt_ids,
+            &mut self.active_prompt_id,
+            &mut self.next_prompt_id,
+        )
+        .cancel_and_drain_to_texts();
+
+        if !texts.is_empty() {
+            self.input.buffer = texts.join("\n\n");
+            self.input.cursor = self.input.buffer.len();
+        }
+
+        self.phase = UiPhase::Idle;
+        self.active_cycle = false;
+        self.abort.pending = false;
+        self.ensure_invariants();
     }
 
     pub fn request_quit_if_idle(&mut self) {

@@ -1582,10 +1582,182 @@ fn activated_prompt_has_real_transcript_line_index() {
     state.enqueue_prompt("second".to_string());
     state.complete_active_prompt();
     state.activate_next_prompt();
-    let active = state
-        .prompt_items()
+    let items = state.prompt_items().to_vec();
+    let active = items
         .iter()
         .find(|p| p.status == PromptStatus::InProgress)
         .unwrap();
     assert_ne!(active.transcript_line_index, usize::MAX);
+}
+
+#[test]
+fn cancel_and_restore_drains_pending_texts_into_input_buffer() {
+    let mut state = AppState::new();
+    state.enqueue_prompt("alpha".to_string());
+    let _ = state.activate_next_prompt();
+    state.enqueue_prompt("beta".to_string());
+    state.enqueue_prompt("gamma".to_string());
+
+    state.cancel_and_restore_pending_to_input();
+
+    assert_eq!(state.input.buffer, "beta\n\ngamma");
+    assert_eq!(state.input.cursor, state.input.buffer.len());
+    assert!(state.pending_prompt_ids().is_empty());
+    assert_eq!(state.active_prompt_id(), None);
+    assert_eq!(state.phase, UiPhase::Idle);
+}
+
+#[test]
+fn cancel_and_restore_with_no_pending_leaves_buffer_empty() {
+    let mut state = AppState::new();
+    state.enqueue_prompt("only".to_string());
+    let _ = state.activate_next_prompt();
+
+    state.cancel_and_restore_pending_to_input();
+
+    assert_eq!(state.input.buffer, "");
+    assert_eq!(state.phase, UiPhase::Idle);
+}
+
+#[test]
+fn cancel_and_restore_on_idle_is_noop() {
+    let mut state = AppState::new();
+    state.cancel_and_restore_pending_to_input();
+    assert_eq!(state.input.buffer, "");
+}
+
+#[test]
+fn coalesced_dispatch_joins_all_pending_into_one_string() {
+    let mut state = AppState::new();
+    state.enqueue_prompt("first".to_string());
+    state.enqueue_prompt("second".to_string());
+    state.enqueue_prompt("third".to_string());
+    // Reset so take_next can activate (enqueue_prompt sets busy)
+    state.phase = UiPhase::Idle;
+    state.active_cycle = false;
+
+    let result = state.take_next_prompt_for_execution();
+
+    assert_eq!(result, Some("first\n\nsecond\n\nthird".to_string()));
+    assert!(state.pending_prompt_ids().is_empty());
+    assert_eq!(state.phase, UiPhase::Busy);
+}
+
+#[test]
+fn coalesced_dispatch_single_pending_returns_text_unchanged() {
+    let mut state = AppState::new();
+    state.enqueue_prompt("only".to_string());
+    state.phase = UiPhase::Idle;
+    state.active_cycle = false;
+
+    let result = state.take_next_prompt_for_execution();
+
+    assert_eq!(result, Some("only".to_string()));
+    assert!(state.pending_prompt_ids().is_empty());
+}
+
+#[test]
+fn coalesced_dispatch_empty_queue_returns_none() {
+    let mut state = AppState::new();
+    let result = state.take_next_prompt_for_execution();
+    assert_eq!(result, None);
+}
+
+#[test]
+fn history_up_on_first_use_loads_last_submitted() {
+    let mut state = AppState::new();
+    state.enqueue_prompt("p1".to_string());
+    let _ = state.activate_next_prompt();
+    state.complete_active_prompt();
+    state.history_up();
+    assert_eq!(state.input.buffer, "p1");
+    assert_eq!(state.input.cursor, 2);
+}
+
+#[test]
+fn history_up_cycles_newest_first_and_clamps_at_oldest() {
+    let mut state = AppState::new();
+    for t in ["a", "b", "c"] {
+        state.enqueue_prompt(t.to_string());
+        let _ = state.activate_next_prompt();
+        state.complete_active_prompt();
+    }
+    state.history_up();
+    assert_eq!(state.input.buffer, "c");
+    state.history_up();
+    assert_eq!(state.input.buffer, "b");
+    state.history_up();
+    assert_eq!(state.input.buffer, "a");
+    state.history_up();
+    assert_eq!(state.input.buffer, "a"); // clamp
+}
+
+#[test]
+fn history_down_past_newest_restores_draft() {
+    let mut state = AppState::new();
+    state.enqueue_prompt("p1".to_string());
+    let _ = state.activate_next_prompt();
+    state.complete_active_prompt();
+    state.input.buffer = "draft".to_string();
+    state.input.cursor = 5;
+    state.history_up();
+    assert_eq!(state.input.buffer, "p1");
+    state.history_down();
+    assert_eq!(state.input.buffer, "draft");
+}
+
+#[test]
+fn history_up_moves_cursor_up_in_multiline_buffer() {
+    let mut state = AppState::new();
+    state.input.buffer = "abcde\nxy".to_string();
+    state.input.cursor = 8;
+    state.history_up();
+    assert_eq!(state.input.cursor, 2);
+}
+
+#[test]
+fn history_up_clamps_column_to_shorter_prev_line() {
+    let mut state = AppState::new();
+    state.input.buffer = "ab\nxyz".to_string();
+    state.input.cursor = 6;
+    state.history_up();
+    assert_eq!(state.input.cursor, 2);
+}
+
+#[test]
+fn history_up_on_first_line_of_multiline_enters_history() {
+    let mut state = AppState::new();
+    state.enqueue_prompt("prev".to_string());
+    let _ = state.activate_next_prompt();
+    state.complete_active_prompt();
+    state.input.buffer = "line1\nline2".to_string();
+    state.input.cursor = 3;
+    state.history_up();
+    assert_eq!(state.input.buffer, "prev");
+}
+
+#[test]
+fn history_down_moves_cursor_down_in_multiline() {
+    let mut state = AppState::new();
+    state.input.buffer = "line1\nline2".to_string();
+    state.input.cursor = 0;
+    state.history_down();
+    assert_eq!(state.input.cursor, 6);
+}
+
+#[test]
+fn typing_resets_history_navigation() {
+    let mut state = AppState::new();
+    state.enqueue_prompt("p1".to_string());
+    let _ = state.activate_next_prompt();
+    state.complete_active_prompt();
+    state.history_up();
+    assert_eq!(state.input.buffer, "p1");
+    state.append_input_char('x');
+    assert_eq!(state.input.buffer, "p1x");
+    // After typing, down should move cursor (not restore draft)
+    state.input.buffer = "a\nb".to_string();
+    state.input.cursor = 1;
+    state.history_down();
+    assert_eq!(state.input.cursor, 3);
 }

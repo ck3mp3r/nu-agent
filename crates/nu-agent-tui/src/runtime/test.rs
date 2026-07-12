@@ -1689,7 +1689,10 @@ fn global_abort_cancels_active_and_pending_and_new_submit_starts_fresh() {
         let mut source = StubEventSource { next: Some(event) };
         coordinator.pump_once(&mut source);
     }
-    assert_eq!(coordinator.take_submitted_prompt(), Some("c".to_string()));
+    assert_eq!(
+        coordinator.take_submitted_prompt(),
+        Some("a\n\nbc".to_string())
+    );
 }
 
 #[test]

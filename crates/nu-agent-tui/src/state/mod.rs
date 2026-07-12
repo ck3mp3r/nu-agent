@@ -1,4 +1,5 @@
 mod input;
+mod input_history;
 mod lifecycle;
 mod mcp;
 mod permissions;
@@ -315,6 +316,8 @@ pub struct AppState {
     active_cycle: bool,
     insert_exit_pending_j: bool,
     normal_pending_key: Option<char>,
+    input_history_index: Option<usize>,
+    input_history_saved: String,
     inline_slash_commands: Vec<SlashCommand>,
     clipboard_request: Option<String>,
     pub pre_displayed_tool_keys: std::collections::HashSet<String>,
@@ -387,6 +390,8 @@ impl Default for AppState {
             active_cycle: false,
             insert_exit_pending_j: false,
             normal_pending_key: None,
+            input_history_index: None,
+            input_history_saved: String::new(),
             inline_slash_commands: Vec::new(),
             clipboard_request: None,
             pre_displayed_tool_keys: std::collections::HashSet::new(),
