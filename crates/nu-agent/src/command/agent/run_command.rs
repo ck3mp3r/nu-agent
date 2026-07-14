@@ -120,9 +120,15 @@ pub(super) fn run_command(
     // default < env < plugin < flags
     let mut config = resolve_config(engine, call)?;
 
-    // --a2a CLI flag overrides env var / config file
-    if call.has_flag("a2a")? {
+    // --a2a-port enables A2A and optionally sets the port
+    if let Some(port_val) = call.get_flag::<i64>("a2a-port")? {
+        if !(0..=65535).contains(&port_val) {
+            return Err(LabeledError::new(format!(
+                "Invalid --a2a-port value {port_val}. Must be between 0 and 65535."
+            )));
+        }
         config.a2a_enabled = true;
+        config.a2a_port = Some(port_val as u16);
     }
 
     // Apply mode-specific defaults for max_tool_turns if not explicitly configured
@@ -200,7 +206,11 @@ pub(super) fn run_command(
     let mut a2a_handle: Option<AgentHandle> = if config.a2a_enabled {
         let agent_name = agent_identity.as_deref().unwrap_or("agent");
         let description = persona.as_ref().and_then(|p| p.description.as_deref());
-        match runtime.block_on(async { AgentHandle::start(agent_name, description, vec![]).await })
+        let a2a_port = config.a2a_port.unwrap_or(0);
+        let explicit_mesh_key = call.get_flag::<String>("mesh-key")?;
+        let mesh_key = nu_agent_a2a::mesh_key::resolve_mesh_key(explicit_mesh_key, &cwd);
+        match runtime
+            .block_on(async { AgentHandle::start(agent_name, description, vec![], a2a_port, mesh_key).await })
         {
             Ok(handle) => {
                 log::info!("A2A agent '{agent_name}' started on {}", handle.card.url);
@@ -310,6 +320,8 @@ pub(super) fn run_command(
             cache: handle.cache.clone(),
             own_card: handle.card.clone(),
             task_store: Some(handle.task_store()),
+            completion_tx: Some(handle.completion_tx.clone().unwrap()),
+            runtime_handle: Some(runtime.handle().clone()),
         };
         if let Err(e) = nu_agent_a2a::register_a2a_tools(&tool_server_handle, ctx, &runtime) {
             log::warn!("A2A tool registration failed (non-fatal): {e}");
@@ -375,6 +387,13 @@ pub(super) fn run_command(
         .as_mut()
         .and_then(|h| h.server.take_incoming_task_receiver());
 
+    // Extract the A2A completion event receiver (if A2A is enabled).
+    // This receives events when remote agents finish processing tasks
+    // that were sent via tasks.send.
+    let a2a_completion_rx = a2a_handle
+        .as_mut()
+        .and_then(|h| h.take_completion_receiver());
+
     let result = match mode {
         AgentMode::Tui => run_tui_mode(
             &mut runtime_impl,
@@ -388,6 +407,7 @@ pub(super) fn run_command(
                 last_total_tokens: session_resolution.last_total_tokens,
             },
             a2a_task_rx,
+            a2a_completion_rx,
         ),
         AgentMode::Stderr => run_stderr_mode(
             &mut runtime_impl,
@@ -396,6 +416,7 @@ pub(super) fn run_command(
             ui_policy,
             stderr_is_tty,
             a2a_task_rx,
+            a2a_completion_rx,
         ),
     };
 
@@ -410,6 +431,7 @@ pub(super) fn run_command(
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_tui_mode(
     runtime_impl: &mut AgentConversationRuntime,
     input: &Value,
@@ -418,6 +440,7 @@ fn run_tui_mode(
     ui_policy: UiPolicy,
     hydration: super::mode_execute::TuiHydrationInput,
     a2a_task_rx: Option<tokio::sync::mpsc::Receiver<nu_agent_a2a::IncomingTask>>,
+    a2a_completion_rx: Option<tokio::sync::mpsc::Receiver<nu_agent_a2a::A2aCompletionEvent>>,
 ) -> Result<Value, LabeledError> {
     super::mode_execute::run_tui_mode(
         runtime_impl,
@@ -427,6 +450,7 @@ fn run_tui_mode(
         ui_policy,
         hydration,
         a2a_task_rx,
+        a2a_completion_rx,
     )
 }
 
@@ -437,6 +461,7 @@ fn run_stderr_mode(
     ui_policy: UiPolicy,
     stderr_is_tty: bool,
     a2a_task_rx: Option<tokio::sync::mpsc::Receiver<nu_agent_a2a::IncomingTask>>,
+    a2a_completion_rx: Option<tokio::sync::mpsc::Receiver<nu_agent_a2a::A2aCompletionEvent>>,
 ) -> Result<Value, LabeledError> {
     super::mode_execute::run_stderr_mode(
         runtime_impl,
@@ -445,6 +470,7 @@ fn run_stderr_mode(
         ui_policy,
         stderr_is_tty,
         a2a_task_rx,
+        a2a_completion_rx,
     )
 }
 

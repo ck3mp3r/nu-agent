@@ -6,15 +6,17 @@ version.workspace = true
 [dependencies]
 axum = "0.8"
 chrono = { workspace = true }
+hex = "0.4"
 log = { workspace = true }
 reqwest = { workspace = true }
 rustls = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { version = "0.1", features = ["sync"] }
-zeroconf = "0.18"
+mdns-sd = "0.20"
 rig = { workspace = true }
 tower-http = { version = "0.6", features = ["cors"] }
 url = "2"

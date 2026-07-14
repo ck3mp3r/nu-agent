@@ -169,6 +169,7 @@ fn test_from_env_read_timeout_secs() {
 fn test_merge_full_configs() {
     // Test merging two full configs - other should completely override self
     let base = Config {
+        a2a_port: None,
         provider: "openai".to_string(),
         provider_impl: None,
         model: "gpt-3.5-turbo".to_string(),
@@ -192,6 +193,7 @@ fn test_merge_full_configs() {
     };
 
     let override_config = Config {
+        a2a_port: None,
         provider: "anthropic".to_string(),
         provider_impl: None,
         model: "claude-3-opus".to_string(),
@@ -232,6 +234,7 @@ fn test_merge_full_configs() {
 fn test_merge_with_partial_override() {
     // Test merging where override only has some fields
     let base = Config {
+        a2a_port: None,
         provider: "openai".to_string(),
         provider_impl: None,
         model: "gpt-4".to_string(),
@@ -255,6 +258,7 @@ fn test_merge_with_partial_override() {
     };
 
     let override_config = Config {
+        a2a_port: None,
         provider: "openai".to_string(), // Required, but same
         provider_impl: None,
         model: "gpt-4".to_string(), // Required, but same
@@ -295,6 +299,7 @@ fn test_merge_with_partial_override() {
 fn test_merge_with_empty_override() {
     // Test merging with default/empty override - base should remain unchanged
     let base = Config {
+        a2a_port: None,
         provider: "openai".to_string(),
         provider_impl: None,
         model: "gpt-4".to_string(),
@@ -318,6 +323,7 @@ fn test_merge_with_empty_override() {
     };
 
     let empty_override = Config {
+        a2a_port: None,
         provider: "openai".to_string(),
         provider_impl: None,
         model: "gpt-4".to_string(),
@@ -350,6 +356,7 @@ fn test_merge_with_empty_override() {
 fn test_merge_chain() {
     // Test chaining multiple merges
     let base = Config {
+        a2a_port: None,
         provider: "openai".to_string(),
         provider_impl: None,
         model: "gpt-3.5-turbo".to_string(),
@@ -373,6 +380,7 @@ fn test_merge_chain() {
     };
 
     let override1 = Config {
+        a2a_port: None,
         provider: "openai".to_string(),
         provider_impl: None,
         model: "gpt-4".to_string(), // Override model
@@ -396,6 +404,7 @@ fn test_merge_chain() {
     };
 
     let override2 = Config {
+        a2a_port: None,
         provider: "openai".to_string(),
         provider_impl: None,
         model: "gpt-4".to_string(),
@@ -433,6 +442,7 @@ fn test_merge_chain() {
 fn test_merge_required_fields() {
     // Test that required fields are always taken from override
     let base = Config {
+        a2a_port: None,
         provider: "openai".to_string(),
         provider_impl: None,
         model: "gpt-3.5-turbo".to_string(),
@@ -456,6 +466,7 @@ fn test_merge_required_fields() {
     };
 
     let override_config = Config {
+        a2a_port: None,
         provider: "anthropic".to_string(),
         provider_impl: None,
         model: "claude-3-opus".to_string(),
@@ -489,6 +500,7 @@ fn test_merge_required_fields() {
 fn test_validate_valid_config() {
     // Test that a valid config passes validation
     let config = Config {
+        a2a_port: None,
         provider: "openai".to_string(),
         provider_impl: None,
         model: "gpt-4".to_string(),
@@ -518,6 +530,7 @@ fn test_validate_valid_config() {
 fn test_validate_minimal_config() {
     // Test that minimal config with only required fields passes
     let config = Config {
+        a2a_port: None,
         provider: "anthropic".to_string(),
         provider_impl: None,
         model: "claude-3-opus".to_string(),
@@ -547,6 +560,7 @@ fn test_validate_minimal_config() {
 fn test_validate_empty_provider() {
     // Test that empty provider fails validation
     let config = Config {
+        a2a_port: None,
         provider: String::new(),
         provider_impl: None,
         model: "gpt-4".to_string(),
@@ -579,6 +593,7 @@ fn test_validate_empty_provider() {
 fn test_validate_empty_model() {
     // Test that empty model fails validation
     let config = Config {
+        a2a_port: None,
         provider: "openai".to_string(),
         provider_impl: None,
         model: String::new(),
@@ -611,6 +626,7 @@ fn test_validate_empty_model() {
 fn test_validate_max_output_exceeds_context() {
     // Test that max_output_tokens > max_context_tokens fails
     let config = Config {
+        a2a_port: None,
         provider: "openai".to_string(),
         provider_impl: None,
         model: "gpt-4".to_string(),
@@ -644,6 +660,7 @@ fn test_validate_max_output_exceeds_context() {
 fn test_validate_max_output_equals_context() {
     // Test that max_output_tokens == max_context_tokens is valid
     let config = Config {
+        a2a_port: None,
         provider: "openai".to_string(),
         provider_impl: None,
         model: "gpt-4".to_string(),
@@ -673,6 +690,7 @@ fn test_validate_max_output_equals_context() {
 fn test_validate_zero_max_tool_turns() {
     // Test that max_tool_turns = 0 fails
     let config = Config {
+        a2a_port: None,
         provider: "openai".to_string(),
         provider_impl: None,
         model: "gpt-4".to_string(),
@@ -705,6 +723,7 @@ fn test_validate_zero_max_tool_turns() {
 fn test_validate_only_context_tokens_set() {
     // Test that only max_context_tokens set (no max_output_tokens) is valid
     let config = Config {
+        a2a_port: None,
         provider: "openai".to_string(),
         provider_impl: None,
         model: "gpt-4".to_string(),
@@ -734,6 +753,7 @@ fn test_validate_only_context_tokens_set() {
 fn test_validate_only_output_tokens_set() {
     // Test that only max_output_tokens set (no max_context_tokens) is valid
     let config = Config {
+        a2a_port: None,
         provider: "openai".to_string(),
         provider_impl: None,
         model: "gpt-4".to_string(),
@@ -762,6 +782,7 @@ fn test_validate_only_output_tokens_set() {
 #[test]
 fn test_validate_context_warning_threshold_zero_is_err() {
     let config = Config {
+        a2a_port: None,
         provider: "openai".to_string(),
         model: "gpt-4".to_string(),
         context_warning_threshold: Some(0.0),
@@ -775,6 +796,7 @@ fn test_validate_context_warning_threshold_zero_is_err() {
 #[test]
 fn test_validate_context_warning_threshold_above_one_is_err() {
     let config = Config {
+        a2a_port: None,
         provider: "openai".to_string(),
         model: "gpt-4".to_string(),
         context_warning_threshold: Some(1.1),
@@ -789,6 +811,7 @@ fn test_validate_context_warning_threshold_above_one_is_err() {
 fn test_validate_context_warning_threshold_one_is_ok() {
     // Boundary: 1.0 is valid
     let config = Config {
+        a2a_port: None,
         provider: "openai".to_string(),
         model: "gpt-4".to_string(),
         context_warning_threshold: Some(1.0),
@@ -800,6 +823,7 @@ fn test_validate_context_warning_threshold_one_is_ok() {
 #[test]
 fn test_validate_context_warning_threshold_typical_is_ok() {
     let config = Config {
+        a2a_port: None,
         provider: "openai".to_string(),
         model: "gpt-4".to_string(),
         context_warning_threshold: Some(0.6),
@@ -811,6 +835,7 @@ fn test_validate_context_warning_threshold_typical_is_ok() {
 #[test]
 fn test_validate_model_context_tokens_zero_is_err() {
     let config = Config {
+        a2a_port: None,
         provider: "openai".to_string(),
         model: "gpt-4".to_string(),
         model_context_tokens: Some(0),
@@ -824,6 +849,7 @@ fn test_validate_model_context_tokens_zero_is_err() {
 #[test]
 fn test_validate_model_context_tokens_one_is_ok() {
     let config = Config {
+        a2a_port: None,
         provider: "openai".to_string(),
         model: "gpt-4".to_string(),
         model_context_tokens: Some(1),
@@ -1867,6 +1893,7 @@ fn test_from_env_max_tool_turns_defaults_to_none() {
 #[test]
 fn test_validate_none_max_tool_turns_is_valid() {
     let config = Config {
+        a2a_port: None,
         provider: "openai".to_string(),
         provider_impl: None,
         model: "gpt-4".to_string(),
@@ -1896,6 +1923,7 @@ fn test_validate_none_max_tool_turns_is_valid() {
 #[test]
 fn test_validate_zero_max_tool_turns_still_invalid() {
     let config = Config {
+        a2a_port: None,
         provider: "openai".to_string(),
         provider_impl: None,
         model: "gpt-4".to_string(),

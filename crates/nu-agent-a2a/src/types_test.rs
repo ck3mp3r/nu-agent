@@ -21,13 +21,15 @@ fn task_state_all_variants_serde() {
     use serde_test::{Token, assert_tokens};
 
     let cases: &[(TaskState, &str)] = &[
-        (TaskState::Submitted, "submitted"),
-        (TaskState::Working, "working"),
-        (TaskState::InputRequired, "inputRequired"),
-        (TaskState::Completed, "completed"),
-        (TaskState::Failed, "failed"),
-        (TaskState::Canceled, "canceled"),
-        (TaskState::Rejected, "rejected"),
+        (TaskState::Unspecified, "UNSPECIFIED"),
+        (TaskState::Submitted, "SUBMITTED"),
+        (TaskState::Working, "WORKING"),
+        (TaskState::InputRequired, "INPUT_REQUIRED"),
+        (TaskState::Completed, "COMPLETED"),
+        (TaskState::Failed, "FAILED"),
+        (TaskState::Canceled, "CANCELED"),
+        (TaskState::Rejected, "REJECTED"),
+        (TaskState::AuthRequired, "AUTH_REQUIRED"),
     ];
 
     for (variant, expected) in cases {
@@ -49,13 +51,13 @@ fn task_state_unknown_string_fails_deserialize() {
 
 #[test]
 fn task_state_display_output() {
-    assert_eq!(TaskState::Submitted.to_string(), "submitted");
-    assert_eq!(TaskState::Working.to_string(), "working");
-    assert_eq!(TaskState::InputRequired.to_string(), "inputRequired");
-    assert_eq!(TaskState::Completed.to_string(), "completed");
-    assert_eq!(TaskState::Failed.to_string(), "failed");
-    assert_eq!(TaskState::Canceled.to_string(), "canceled");
-    assert_eq!(TaskState::Rejected.to_string(), "rejected");
+    assert_eq!(TaskState::Submitted.to_string(), "TASK_STATE_SUBMITTED");
+    assert_eq!(TaskState::Working.to_string(), "TASK_STATE_WORKING");
+    assert_eq!(TaskState::InputRequired.to_string(), "TASK_STATE_INPUT_REQUIRED");
+    assert_eq!(TaskState::Completed.to_string(), "TASK_STATE_COMPLETED");
+    assert_eq!(TaskState::Failed.to_string(), "TASK_STATE_FAILED");
+    assert_eq!(TaskState::Canceled.to_string(), "TASK_STATE_CANCELED");
+    assert_eq!(TaskState::Rejected.to_string(), "TASK_STATE_REJECTED");
 }
 
 #[test]
@@ -99,12 +101,19 @@ fn task_status_roundtrip_with_message() {
     let status = TaskStatus {
         state: TaskState::Completed,
         timestamp: fixed_time(),
-        message: Some("Task completed successfully".to_string()),
+        message: Some(Message {
+            role: Role::Agent,
+            parts: vec![Part::Text {
+                text: "Task completed successfully".to_string(),
+            }],
+            message_id: uuid::Uuid::new_v4().to_string(),
+            extensions: None,
+            metadata: None,
+        }),
     };
 
     let json = serde_json::to_value(&status).expect("serialize");
-    assert_eq!(json["state"], "completed");
-    assert_eq!(json["message"], "Task completed successfully");
+    assert_eq!(json["state"], "COMPLETED");
     assert!(json.get("timestamp").is_some());
 
     let back: TaskStatus = serde_json::from_value(json).expect("deserialize");
@@ -141,14 +150,14 @@ fn role_roundtrip() {
         &Role::User,
         &[Token::UnitVariant {
             name: "Role",
-            variant: "user",
+            variant: "USER",
         }],
     );
     assert_tokens(
         &Role::Agent,
         &[Token::UnitVariant {
             name: "Role",
-            variant: "agent",
+            variant: "AGENT",
         }],
     );
 }
@@ -164,8 +173,8 @@ fn part_text_roundtrip() {
     };
 
     let json = serde_json::to_value(&part).expect("serialize");
-    assert_eq!(json["type"], "text");
     assert_eq!(json["text"], "hello world");
+    assert!(json.get("type").is_none(), "untagged Part should not have a type key");
 
     let back: Part = serde_json::from_value(json).expect("deserialize");
     assert_eq!(back, part);
@@ -186,14 +195,17 @@ fn part_text_exact_json() {
 #[test]
 fn part_file_roundtrip_with_mime_type() {
     let part = Part::File {
-        url: "https://example.com/doc.pdf".to_string(),
-        mime_type: Some("application/pdf".to_string()),
+        file: FileContent {
+            url: "https://example.com/doc.pdf".to_string(),
+            filename: "doc.pdf".to_string(),
+            media_type: "application/pdf".to_string(),
+        },
     };
 
     let json = serde_json::to_value(&part).expect("serialize");
-    assert_eq!(json["type"], "file");
-    assert_eq!(json["url"], "https://example.com/doc.pdf");
-    assert_eq!(json["mimeType"], "application/pdf");
+    assert!(json.get("type").is_none(), "untagged Part should not have a type key");
+    assert_eq!(json["file"]["url"], "https://example.com/doc.pdf");
+    assert_eq!(json["file"]["mediaType"], "application/pdf");
 
     let back: Part = serde_json::from_value(json).expect("deserialize");
     assert_eq!(back, part);
@@ -202,18 +214,17 @@ fn part_file_roundtrip_with_mime_type() {
 #[test]
 fn part_file_roundtrip_without_mime_type() {
     let part = Part::File {
-        url: "https://example.com/doc.pdf".to_string(),
-        mime_type: None,
+        file: FileContent {
+            url: "https://example.com/doc.pdf".to_string(),
+            filename: "doc.pdf".to_string(),
+            media_type: "application/pdf".to_string(),
+        },
     };
 
     let json = serde_json::to_value(&part).expect("serialize");
-    assert_eq!(json["type"], "file");
-    assert_eq!(json["url"], "https://example.com/doc.pdf");
-    // mimeType is Option with skip_serializing_if — it should be absent
-    assert!(
-        json.get("mimeType").is_none(),
-        "mimeType should be absent when None"
-    );
+    assert!(json.get("type").is_none(), "untagged Part should not have a type key");
+    assert_eq!(json["file"]["url"], "https://example.com/doc.pdf");
+    assert_eq!(json["file"]["mediaType"], "application/pdf");
 
     let back: Part = serde_json::from_value(json).expect("deserialize");
     assert_eq!(back, part);
@@ -221,12 +232,15 @@ fn part_file_roundtrip_without_mime_type() {
 
 #[test]
 fn part_data_roundtrip() {
-    let data = json!({"key": "value", "count": 42, "nested": {"a": [1, 2, 3]}});
+    let data = DataContent {
+        media_type: "application/json".to_string(),
+        schema: json!({"key": "value", "count": 42, "nested": {"a": [1, 2, 3]}}),
+    };
     let part = Part::Data { data: data.clone() };
 
     let json = serde_json::to_value(&part).expect("serialize");
-    assert_eq!(json["type"], "data");
-    assert_eq!(json["data"], data);
+    assert!(json.get("type").is_none(), "untagged Part should not have a type key");
+    assert_eq!(json["data"]["mediaType"], "application/json");
 
     let back: Part = serde_json::from_value(json).expect("deserialize");
     assert_eq!(back, part);
@@ -254,15 +268,22 @@ fn message_roundtrip() {
                 text: "Hello".to_string(),
             },
             Part::Data {
-                data: json!({"key": 1}),
+                data: DataContent {
+                    media_type: "application/json".to_string(),
+                    schema: json!({"key": 1}),
+                },
             },
         ],
+        message_id: uuid::Uuid::new_v4().to_string(),
+        extensions: None,
+        metadata: None,
     };
 
     let json = serde_json::to_value(&msg).expect("serialize");
-    assert_eq!(json["role"], "user");
-    assert_eq!(json["parts"][0]["type"], "text");
-    assert_eq!(json["parts"][1]["type"], "data");
+    assert_eq!(json["role"], "USER");
+    assert_eq!(json["parts"][0]["text"], "Hello");
+    assert!(json["parts"][0].get("type").is_none(), "untagged Part should not have a type key");
+    assert_eq!(json["parts"][1]["data"]["mediaType"], "application/json");
 
     let back: Message = serde_json::from_value(json).expect("deserialize");
     assert_eq!(back, msg);
@@ -270,10 +291,11 @@ fn message_roundtrip() {
 
 #[test]
 fn message_exact_json() {
-    let json_str = r#"{"role":"agent","parts":[{"type":"text","text":"Sure!"}]}"#;
+    let json_str = r#"{"role":"AGENT","parts":[{"type":"text","text":"Sure!"}],"messageId":"msg-1"}"#;
     let msg: Message = serde_json::from_str(json_str).expect("deserialize");
     assert_eq!(msg.role, Role::Agent);
     assert_eq!(msg.parts.len(), 1);
+    assert_eq!(msg.message_id, "msg-1");
     assert_eq!(
         msg.parts[0],
         Part::Text {
@@ -289,7 +311,7 @@ fn message_exact_json() {
 #[test]
 fn artifact_full_roundtrip() {
     let artifact = Artifact {
-        id: "art-1".to_string(),
+        artifact_id: "art-1".to_string(),
         name: Some("Report".to_string()),
         parts: vec![Part::Text {
             text: "content".to_string(),
@@ -301,7 +323,7 @@ fn artifact_full_roundtrip() {
     };
 
     let json = serde_json::to_value(&artifact).expect("serialize");
-    assert_eq!(json["id"], "art-1");
+    assert_eq!(json["artifactId"], "art-1");
     assert_eq!(json["name"], "Report");
     assert!(json.get("metadata").is_some());
 
@@ -312,14 +334,14 @@ fn artifact_full_roundtrip() {
 #[test]
 fn artifact_minimal() {
     let artifact = Artifact {
-        id: "art-2".to_string(),
+        artifact_id: "art-2".to_string(),
         name: None,
         parts: vec![],
         metadata: None,
     };
 
     let json = serde_json::to_value(&artifact).expect("serialize");
-    assert_eq!(json["id"], "art-2");
+    assert_eq!(json["artifactId"], "art-2");
     assert!(
         json.get("name").is_none(),
         "name should be absent when None"
@@ -348,16 +370,27 @@ fn task_full_roundtrip() {
         status: TaskStatus {
             state: TaskState::Completed,
             timestamp: fixed_time(),
-            message: Some("Done".to_string()),
+            message: Some(Message {
+                role: Role::Agent,
+                parts: vec![Part::Text {
+                    text: "Done".to_string(),
+                }],
+                message_id: uuid::Uuid::new_v4().to_string(),
+                extensions: None,
+                metadata: None,
+            }),
         },
         history: Some(vec![Message {
             role: Role::User,
             parts: vec![Part::Text {
                 text: "Hi".to_string(),
             }],
+            message_id: uuid::Uuid::new_v4().to_string(),
+            extensions: None,
+            metadata: None,
         }]),
         artifacts: vec![Artifact {
-            id: "art-1".to_string(),
+            artifact_id: "art-1".to_string(),
             name: None,
             parts: vec![],
             metadata: None,
@@ -371,9 +404,9 @@ fn task_full_roundtrip() {
     assert_eq!(json["sessionId"], "session-1");
     assert_eq!(json["contextId"], "ctx-1");
     assert_eq!(json["parentTaskId"], "parent-1");
-    assert_eq!(json["status"]["state"], "completed");
+    assert_eq!(json["status"]["state"], "COMPLETED");
     assert!(json.get("history").is_some());
-    assert_eq!(json["artifacts"][0]["id"], "art-1");
+    assert_eq!(json["artifacts"][0]["artifactId"], "art-1");
     assert!(json.get("metadata").is_some());
 
     let back: Task = serde_json::from_value(json).expect("deserialize");
@@ -430,21 +463,21 @@ fn json_rpc_error_constants() {
 
     // A2A-specific spec codes (§9.5)
     assert_eq!(crate::TASK_NOT_FOUND, -32_001);
-    assert_eq!(crate::TASK_NOT_SUPPORTED, -32_000);
-    assert_eq!(crate::CONTENT_TYPE_NOT_SUPPORTED, -32_002);
-    assert_eq!(crate::UNSUPPORTED_OPERATION, -32_003);
-    assert_eq!(crate::PUSH_NOTIFICATION_NOT_SUPPORTED, -32_004);
+    assert_eq!(crate::UNSUPPORTED_OPERATION, -32_002);
+    assert_eq!(crate::CONTENT_TYPE_NOT_SUPPORTED, -32_003);
+    assert_eq!(crate::TASK_ALREADY_EXISTS, -32_004);
+    assert_eq!(crate::INVALID_TASK_STATE, -32_005);
 }
 
 #[test]
 fn json_rpc_error_new_constructors() {
     let err = JsonRpcError::content_type_not_supported("video/mp4");
-    assert_eq!(err.code, -32_002);
+    assert_eq!(err.code, -32_003);
     assert_eq!(err.message, "Content type not supported");
     assert_eq!(err.data, Some(serde_json::json!({"details": "video/mp4"})));
 
     let err = JsonRpcError::unsupported_operation("push notifs disabled");
-    assert_eq!(err.code, -32_003);
+    assert_eq!(err.code, -32_002);
     assert_eq!(err.message, "Unsupported operation");
     assert_eq!(
         err.data,
@@ -506,7 +539,7 @@ fn json_rpc_error_task_not_found_constructor() {
 #[test]
 fn json_rpc_error_invalid_state_transition_constructor() {
     let err = JsonRpcError::invalid_state_transition("completed", "working");
-    assert_eq!(err.code, -32_000);
+    assert_eq!(err.code, -32_005);
     assert_eq!(err.message, "Invalid state transition: completed → working");
     assert!(err.data.is_none());
 }

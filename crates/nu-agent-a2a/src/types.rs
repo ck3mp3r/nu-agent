@@ -15,13 +15,15 @@ use serde_json::Value;
 pub const A2A_VERSION: &str = "1.0";
 
 // ---------------------------------------------------------------------------
-// TaskState
+// TaskState (A2A spec §9.6)
 // ---------------------------------------------------------------------------
 
 /// The state of an A2A task.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum TaskState {
+    #[default]
+    Unspecified,
     Submitted,
     Working,
     InputRequired,
@@ -29,18 +31,21 @@ pub enum TaskState {
     Failed,
     Canceled,
     Rejected,
+    AuthRequired,
 }
 
 impl fmt::Display for TaskState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
-            TaskState::Submitted => "submitted",
-            TaskState::Working => "working",
-            TaskState::InputRequired => "inputRequired",
-            TaskState::Completed => "completed",
-            TaskState::Failed => "failed",
-            TaskState::Canceled => "canceled",
-            TaskState::Rejected => "rejected",
+            TaskState::Unspecified => "TASK_STATE_UNSPECIFIED",
+            TaskState::Submitted => "TASK_STATE_SUBMITTED",
+            TaskState::Working => "TASK_STATE_WORKING",
+            TaskState::InputRequired => "TASK_STATE_INPUT_REQUIRED",
+            TaskState::Completed => "TASK_STATE_COMPLETED",
+            TaskState::Failed => "TASK_STATE_FAILED",
+            TaskState::Canceled => "TASK_STATE_CANCELED",
+            TaskState::Rejected => "TASK_STATE_REJECTED",
+            TaskState::AuthRequired => "TASK_STATE_AUTH_REQUIRED",
         };
         f.write_str(s)
     }
@@ -51,6 +56,17 @@ impl TryFrom<&str> for TaskState {
 
     fn try_from(s: &str) -> Result<Self, Self::Error> {
         match s {
+            // SCREAMING_SNAKE_CASE (spec format)
+            "TASK_STATE_UNSPECIFIED" => Ok(TaskState::Unspecified),
+            "TASK_STATE_SUBMITTED" => Ok(TaskState::Submitted),
+            "TASK_STATE_WORKING" => Ok(TaskState::Working),
+            "TASK_STATE_INPUT_REQUIRED" => Ok(TaskState::InputRequired),
+            "TASK_STATE_COMPLETED" => Ok(TaskState::Completed),
+            "TASK_STATE_FAILED" => Ok(TaskState::Failed),
+            "TASK_STATE_CANCELED" => Ok(TaskState::Canceled),
+            "TASK_STATE_REJECTED" => Ok(TaskState::Rejected),
+            "TASK_STATE_AUTH_REQUIRED" => Ok(TaskState::AuthRequired),
+            // Legacy lowercase strings (backward compat)
             "submitted" => Ok(TaskState::Submitted),
             "working" => Ok(TaskState::Working),
             "inputRequired" => Ok(TaskState::InputRequired),
@@ -64,7 +80,7 @@ impl TryFrom<&str> for TaskState {
 }
 
 // ---------------------------------------------------------------------------
-// TaskStatus
+// TaskStatus (A2A spec §9.3)
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -72,48 +88,73 @@ pub struct TaskStatus {
     pub state: TaskState,
     pub timestamp: DateTime<Utc>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
+    pub message: Option<Message>,
 }
 
 // ---------------------------------------------------------------------------
-// Role
+// Role (A2A spec §4.6)
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum Role {
     User,
     Agent,
 }
 
 // ---------------------------------------------------------------------------
-// Part
+// Part content types — wrapper structs for the untagged file/data variants
+// ---------------------------------------------------------------------------
+
+/// Content of a file part (A2A spec §6.7).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FileContent {
+    pub url: String,
+    pub filename: String,
+    #[serde(rename = "mediaType")]
+    pub media_type: String,
+}
+
+/// Content of a data part (A2A spec §6.7).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DataContent {
+    #[serde(rename = "mediaType")]
+    pub media_type: String,
+    pub schema: Value,
+}
+
+// ---------------------------------------------------------------------------
+// Part (A2A spec §6.7)
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
+#[serde(untagged)]
 pub enum Part {
     Text {
         text: String,
     },
     File {
-        url: String,
-        #[serde(rename = "mimeType", skip_serializing_if = "Option::is_none")]
-        mime_type: Option<String>,
+        file: FileContent,
     },
     Data {
-        data: Value,
+        data: DataContent,
     },
 }
 
 // ---------------------------------------------------------------------------
-// Message
+// Message (A2A spec §4.6)
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Message {
     pub role: Role,
     pub parts: Vec<Part>,
+    #[serde(rename = "messageId")]
+    pub message_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extensions: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<HashMap<String, Value>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -141,12 +182,33 @@ pub struct IncomingTask {
 }
 
 // ---------------------------------------------------------------------------
-// Artifact
+// A2aCompletionEvent
+// ---------------------------------------------------------------------------
+
+/// A completion event delivered when a remote agent finishes processing
+/// a task that was sent via `tasks.send`.
+///
+/// This is produced by a background SSE watcher and delivered to the agent
+/// runtime via a shared channel, so the LLM sees a completion message on
+/// the next turn without having to poll.
+#[derive(Clone, Debug)]
+pub struct A2aCompletionEvent {
+    pub task_id: String,
+    pub agent_name: String,
+    /// Concatenated text parts from the final task result text (from
+    /// artifacts or status message).
+    pub result: String,
+    pub status: TaskState,
+}
+
+// ---------------------------------------------------------------------------
+// Artifact (A2A spec §9.3)
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Artifact {
-    pub id: String,
+    #[serde(rename = "artifactId")]
+    pub artifact_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     pub parts: Vec<Part>,
@@ -209,7 +271,7 @@ pub enum PushAuthScheme {
 }
 
 // ---------------------------------------------------------------------------
-// Task
+// Task (A2A spec §9.3)
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -375,7 +437,11 @@ pub struct JsonRpcError {
     pub data: Option<Value>,
 }
 
-// JSON-RPC 2.0 standard error codes (spec §9.5)
+// ---------------------------------------------------------------------------
+// Error codes (A2A spec §9.5)
+// ---------------------------------------------------------------------------
+
+// Standard JSON-RPC error codes (RFC 4627)
 pub const PARSE_ERROR: i32 = -32_700;
 pub const INVALID_REQUEST: i32 = -32_600;
 pub const METHOD_NOT_FOUND: i32 = -32_601;
@@ -384,10 +450,55 @@ pub const INTERNAL_ERROR: i32 = -32_603;
 
 // A2A-specific error codes (spec §9.5)
 pub const TASK_NOT_FOUND: i32 = -32_001;
-pub const TASK_NOT_SUPPORTED: i32 = -32_000;
-pub const CONTENT_TYPE_NOT_SUPPORTED: i32 = -32_002;
-pub const UNSUPPORTED_OPERATION: i32 = -32_003;
-pub const PUSH_NOTIFICATION_NOT_SUPPORTED: i32 = -32_004;
+pub const UNSUPPORTED_OPERATION: i32 = -32_002;
+pub const CONTENT_TYPE_NOT_SUPPORTED: i32 = -32_003;
+pub const TASK_ALREADY_EXISTS: i32 = -32_004;
+pub const INVALID_TASK_STATE: i32 = -32_005;
+pub const UNKNOWN_ERROR: i32 = -32_099;
+
+// Error status strings (A2A spec §9.5)
+pub const STATUS_TASK_NOT_FOUND: &str = "TASK_NOT_FOUND";
+pub const STATUS_UNSUPPORTED_OPERATION: &str = "UNSUPPORTED_OPERATION";
+pub const STATUS_CONTENT_TYPE_NOT_SUPPORTED: &str = "CONTENT_TYPE_NOT_SUPPORTED";
+pub const STATUS_TASK_ALREADY_EXISTS: &str = "TASK_ALREADY_EXISTS";
+pub const STATUS_INVALID_TASK_STATE: &str = "INVALID_TASK_STATE";
+pub const STATUS_INTERNAL_ERROR: &str = "INTERNAL_ERROR";
+pub const STATUS_UNKNOWN_ERROR: &str = "UNKNOWN_ERROR";
+
+// ---------------------------------------------------------------------------
+// A2aErrorResponse — error response body (A2A spec §9.5)
+// ---------------------------------------------------------------------------
+
+/// Top-level error response body.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct A2aErrorResponse {
+    pub error: A2aErrorBody,
+}
+
+/// Error body with code, status, message, and optional details.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct A2aErrorBody {
+    pub code: u16,
+    pub status: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub details: Vec<ErrorDetail>,
+}
+
+/// A single error detail entry following the Google RPC error-info model.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorDetail {
+    #[serde(rename = "@type")]
+    pub at_type: String,
+    pub reason: String,
+    pub domain: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<HashMap<String, String>>,
+}
+
+// ---------------------------------------------------------------------------
+// JsonRpcError constructors
+// ---------------------------------------------------------------------------
 
 impl JsonRpcError {
     /// Create an `Invalid params` error with details.
@@ -411,7 +522,7 @@ impl JsonRpcError {
     /// Create an `Invalid state transition` error.
     pub fn invalid_state_transition(from: &str, to: &str) -> Self {
         JsonRpcError {
-            code: TASK_NOT_SUPPORTED,
+            code: INVALID_TASK_STATE,
             message: format!("Invalid state transition: {from} → {to}"),
             data: None,
         }

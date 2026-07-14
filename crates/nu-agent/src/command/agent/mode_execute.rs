@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use nu_protocol::{LabeledError, Value};
 
-use nu_agent_a2a::{IncomingTask, Part};
+use nu_agent_a2a::{A2aCompletionEvent, IncomingTask, Part};
 use nu_agent_core::{
     conversation::runtime::AgentConversationRuntime,
     orchestrator::{
@@ -64,6 +64,7 @@ pub(crate) struct TuiHydrationInput {
     pub last_total_tokens: Option<u64>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_tui_mode(
     runtime_impl: &mut AgentConversationRuntime,
     input: &Value,
@@ -72,6 +73,7 @@ pub(crate) fn run_tui_mode(
     ui_policy: UiPolicy,
     hydration: TuiHydrationInput,
     a2a_task_rx: Option<tokio::sync::mpsc::Receiver<IncomingTask>>,
+    a2a_completion_rx: Option<tokio::sync::mpsc::Receiver<A2aCompletionEvent>>,
 ) -> Result<Value, LabeledError> {
     // Set up the interactive permission pending map for TUI mode.
     // This Arc is shared between the worker thread (via InteractivePermissionResolver)
@@ -135,11 +137,17 @@ pub(crate) fn run_tui_mode(
     tui_ui.set_llm_visible_mcp_tool_count(runtime_impl.llm_visible_mcp_tool_count());
     tui_ui.set_context_window_max_tokens(runtime_impl.max_context_tokens());
 
-    // Bridge the tokio A2A IncomingTask channel to a std channel of formatted
-    // prompt strings that the orchestrator can poll without A2A knowledge.
-    let external_prompt_rx: Option<std::sync::mpsc::Receiver<String>> =
-        a2a_task_rx.map(|mut rx| {
-            let (tx, std_rx) = std::sync::mpsc::channel::<String>();
+    // Bridge A2A channels (incoming tasks + completion events) into a single
+    // std channel of formatted prompt strings that the orchestrator can poll
+    // without A2A knowledge.
+    let external_prompt_rx: Option<std::sync::mpsc::Receiver<String>> = {
+        let (tx, std_rx) = std::sync::mpsc::channel::<String>();
+        let mut has_sources = false;
+
+        // Forward incoming A2A tasks
+        if let Some(mut rx) = a2a_task_rx {
+            has_sources = true;
+            let tx = tx.clone();
             std::thread::spawn(move || {
                 while let Some(incoming) = rx.blocking_recv() {
                     let text: String = incoming
@@ -161,8 +169,27 @@ pub(crate) fn run_tui_mode(
                     }
                 }
             });
-            std_rx
-        });
+        }
+
+        // Forward A2A completion events
+        if let Some(mut rx) = a2a_completion_rx {
+            has_sources = true;
+            let tx = tx.clone();
+            std::thread::spawn(move || {
+                while let Some(event) = rx.blocking_recv() {
+                    let prompt = format!(
+                        "[A2A Task {} completed by {}]: {}\n\nStatus: {}. Use tasks.get to inspect the full task details.",
+                        event.task_id, event.agent_name, event.result, event.status
+                    );
+                    if tx.send(prompt).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+
+        if has_sources { Some(std_rx) } else { None }
+    };
 
     let result = run_with_terminal_restore(&mut terminal_lifecycle, || {
         if input_is_nothing {
@@ -203,6 +230,7 @@ pub(crate) fn run_stderr_mode(
     ui_policy: UiPolicy,
     stderr_is_tty: bool,
     mut a2a_task_rx: Option<tokio::sync::mpsc::Receiver<IncomingTask>>,
+    mut a2a_completion_rx: Option<tokio::sync::mpsc::Receiver<A2aCompletionEvent>>,
 ) -> Result<Value, LabeledError> {
     let cancel_flag = Arc::new(AtomicBool::new(false));
 
@@ -221,8 +249,18 @@ pub(crate) fn run_stderr_mode(
         cancel_flag,
     );
 
-    // Check for pending A2A task before processing user input.
-    // A2A tasks take priority over pipeline input.
+    // Check for A2A completion events first (highest priority).
+    if let Some(ref mut rx) = a2a_completion_rx
+        && let Ok(event) = rx.try_recv()
+    {
+        let prompt = format!(
+            "[A2A Task {} completed by {}]: {}\n\nStatus: {}. Use tasks.get to inspect the full task details.",
+            event.task_id, event.agent_name, event.result, event.status
+        );
+        return run_single_turn(runtime_impl, &mut stderr_ui, prompt, None, span);
+    }
+
+    // Then check for pending A2A incoming tasks.
     if let Some(ref mut rx) = a2a_task_rx
         && let Ok(incoming) = rx.try_recv()
     {

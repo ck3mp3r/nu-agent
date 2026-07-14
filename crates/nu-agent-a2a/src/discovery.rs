@@ -1,14 +1,10 @@
-use std::sync::Arc;
 use std::sync::Once;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
 use reqwest::Client;
 use tokio::sync::mpsc;
-use zeroconf::browser::{BrowserEvent, ServiceDiscovery};
-use zeroconf::prelude::*;
-use zeroconf::{MdnsBrowser, MdnsService, ServiceType, TxtRecord};
 
 use crate::{A2aError, AgentCard, peer::Peer};
 
@@ -22,7 +18,7 @@ fn ensure_crypto_provider() {
 }
 
 /// Shared state for best-effort card fetching, populated lazily inside the
-/// poll thread (a `std::thread`, not a tokio context) so that dropping the
+/// browse thread (a `std::thread`, not a tokio context) so that dropping the
 /// inner `tokio::runtime::Runtime` never triggers the "Cannot drop a runtime
 /// in a blocking context" panic.
 struct CardFetcher {
@@ -58,16 +54,17 @@ impl CardFetcher {
 
 static CARD_FETCHER: std::sync::OnceLock<CardFetcher> = std::sync::OnceLock::new();
 
-/// Build a [`TxtRecord`] from agent metadata for mDNS advertisement.
-fn build_txt_properties(agent_name: &str, port: u16, card: &AgentCard) -> TxtRecord {
-    let mut txt = TxtRecord::new();
-    let _ = txt.insert("name", agent_name);
-    let _ = txt.insert("version", env!("CARGO_PKG_VERSION"));
-    let _ = txt.insert("url", &format!("http://127.0.0.1:{port}"));
+/// Build TXT properties as key-value pairs for mDNS advertisement.
+fn build_txt_properties(agent_name: &str, port: u16, card: &AgentCard, mesh_key: &str) -> Vec<(String, String)> {
+    let mut properties = Vec::new();
+    properties.push(("name".to_string(), agent_name.to_string()));
+    properties.push(("version".to_string(), env!("CARGO_PKG_VERSION").to_string()));
+    properties.push(("url".to_string(), format!("http://127.0.0.1:{port}")));
+    properties.push(("mesh_key".to_string(), mesh_key.to_string()));
 
     if let Some(desc) = &card.description {
         let truncated: String = desc.chars().take(255).collect();
-        let _ = txt.insert("description", &truncated);
+        properties.push(("description".to_string(), truncated));
     }
     if !card.skills.is_empty() {
         let skill_ids: String = card
@@ -79,9 +76,28 @@ fn build_txt_properties(agent_name: &str, port: u16, card: &AgentCard) -> TxtRec
             .chars()
             .take(255)
             .collect();
-        let _ = txt.insert("skills", &skill_ids);
+        properties.push(("skills".to_string(), skill_ids));
     }
-    txt
+    properties
+}
+
+/// Extract the instance name from a full mDNS service name.
+///
+/// The fullname has the form `<instance>.<service_type>.<domain>`.  We split
+/// at the first unescaped `.` and return the instance part.  This mirrors
+/// `zeroconf`'s `ServiceDiscovery::name()` which returned just the instance.
+fn peer_name_from_fullname(fullname: &str) -> String {
+    // Simple split at first '.' — agent names rarely contain dots.  An
+    // escaped dot (`\.`) in the instance portion is not handled here, but
+    // mdns-sd handles it during registration.
+    fullname.split('.').next().unwrap_or(fullname).to_string()
+}
+
+/// Extract the address portion of an mdns-sd [`ScopedIp`].
+fn format_scoped_ip(addr: &mdns_sd::ScopedIp) -> String {
+    // ScopedIp implements Display, producing either an IPv4 or IPv6 string
+    // (with IPv6 scope suffix when applicable).
+    addr.to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -90,58 +106,56 @@ fn build_txt_properties(agent_name: &str, port: u16, card: &AgentCard) -> TxtRec
 
 /// Registers this agent as an mDNS service on `_nu-agent-a2a._tcp.local.`.
 ///
-/// The [`EventLoop`](zeroconf::EventLoop) returned by
-/// [`MdnsService::register()`](zeroconf::service::TMdnsService::register)
-/// references internal Bonjour/Avahi state owned by the [`MdnsService`]
-/// handle.  Both must live together and the handle must outlive the event
-/// loop.  To enforce this the handle lives on this struct rather than inside
-/// the polling thread, and Rust's field-drop order guarantees it is dropped
-/// *after* the thread has been joined.
+/// Uses the pure-Rust [`ServiceDaemon`] from the `mdns-sd` crate — no C FFI
+/// dependency (fixes SIGBUS on aarch64 Nix builds).
 pub struct DiscoveryService {
-    /// Bonjour/Avahi service handle — dropped *after* the polling thread has
-    /// exited (see field declaration order and the manual [`Drop`] impl).
-    _service: MdnsService,
-    stop_flag: Arc<AtomicBool>,
-    poll_thread: Option<JoinHandle<()>>,
+    _daemon: Option<ServiceDaemon>,
 }
 
 impl DiscoveryService {
-    /// Register a new A2A agent as an mDNS service.
+    /// Register a new A2A agent as an mDNS service, using a shared daemon.
     ///
-    /// The service is automatically deregistered when the returned handle is
-    /// dropped (see [`Drop`]).
-    pub fn register(agent_name: &str, port: u16, card: &AgentCard) -> Result<Self, A2aError> {
-        let service_type = ServiceType::new("nu-agent-a2a", "tcp")
-            .map_err(|e| A2aError::Internal(format!("service type: {e}")))?;
+    /// The daemon is shared with the [`DiscoveryBrowser`] so that both
+    /// registration and browsing go through a single mDNS responder.
+    pub fn register(
+        daemon: ServiceDaemon,
+        agent_name: &str,
+        port: u16,
+        card: &AgentCard,
+        mesh_key: &str,
+    ) -> Result<Self, A2aError> {
+        let properties = build_txt_properties(agent_name, port, card, mesh_key);
 
-        let mut service = MdnsService::new(service_type, port);
-        service.set_name(agent_name);
+        // Convert Vec<(String, String)> to a slice of (&str, &str) refs.
+        let prop_refs: Vec<(&str, &str)> = properties
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
 
-        let txt = build_txt_properties(agent_name, port, card);
-        service.set_txt_record(txt);
+        // The hostname is mandatory for the mDNS SRV record (RFC 6763)
+        // but is never resolved — enable_addr_auto populates A records
+        // with all host IPs (127.0.0.1 + external interfaces).
+        let hostname = "a2a.local."; // static dummy, DNS-safe, no agent name dependency
 
-        let event_loop = service
-            .register()
-            .map_err(|e| A2aError::Internal(format!("zeroconf register: {e}")))?;
+        let info = ServiceInfo::new(
+            "_nu-agent-a2a._tcp.local.",
+            agent_name,
+            hostname,
+            "", // ip — empty at creation, daemon fills in via addr_auto
+            port,
+            // Pass the slice explicitly — `&[(K, V)]` implements
+            // `IntoTxtProperties` when K, V: ToString.
+            &prop_refs[..],
+        )
+        .map_err(|e| A2aError::Internal(format!("mdns-sd service info: {e}")))?
+        .enable_addr_auto(); // daemon populates host IPs from all interfaces
 
-        let stop_flag = Arc::new(AtomicBool::new(false));
-        let flag = stop_flag.clone();
-
-        let handle = std::thread::spawn(move || {
-            loop {
-                if flag.load(Ordering::Relaxed) {
-                    break;
-                }
-                if let Err(e) = event_loop.poll(Duration::from_millis(100)) {
-                    log::error!("zeroconf poll error: {e}");
-                }
-            }
-        });
+        daemon
+            .register(info)
+            .map_err(|e| A2aError::Internal(format!("mdns-sd register: {e}")))?;
 
         Ok(Self {
-            _service: service,
-            stop_flag,
-            poll_thread: Some(handle),
+            _daemon: Some(daemon),
         })
     }
 
@@ -150,47 +164,31 @@ impl DiscoveryService {
     /// Use when registration fails and the caller wants to continue running
     /// without mDNS discoverability.
     pub fn noop() -> Self {
-        let dummy_type = ServiceType::new("dummy", "tcp")
-            .unwrap_or_else(|_| ServiceType::new("_dummy", "_tcp").ok().unwrap());
-        Self {
-            _service: MdnsService::new(dummy_type, 0),
-            stop_flag: Arc::new(AtomicBool::new(false)),
-            poll_thread: None,
-        }
+        Self { _daemon: None }
     }
 }
 
-impl Drop for DiscoveryService {
-    fn drop(&mut self) {
-        self.stop_flag.store(true, Ordering::Relaxed);
-        if let Some(handle) = self.poll_thread.take() {
-            // The 100ms poll interval means the thread sees stop_flag and
-            // exits within ~100ms.  Bound the join as a safety net.
-            let deadline = std::time::Instant::now() + Duration::from_secs(1);
-            while std::time::Instant::now() < deadline {
-                if handle.is_finished() {
-                    let _ = handle.join();
-                    return;
-                }
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            log::warn!("DiscoveryService poll thread did not exit within 1s");
-        }
-        // `service` drops here (field declaration order), *after* the polling
-        // thread has exited and the EventLoop inside it has been dropped.
-    }
-}
-
-/// Convert a zeroconf [`ServiceDiscovery`] into a [`Peer`].
+/// Convert an mdns-sd [`ResolvedService`](mdns_sd::ResolvedService) into a [`Peer`].
 ///
-/// This is the shared factory used by both production callbacks and tests
-/// to ensure consistent [`Peer`] construction.
-pub(crate) fn peer_from_service(service: &ServiceDiscovery) -> Peer {
+/// This extracts the fields and produces a [`Peer`] with no agent card (the
+/// card is fetched separately in the browse loop).
+pub(crate) fn peer_from_service(service: &mdns_sd::ResolvedService) -> Peer {
+    let name = peer_name_from_fullname(service.get_fullname());
+    // Prefer IPv4 over IPv6 — IPv6 link-local scoped addresses
+    // (fe80::...) break reqwest HTTP connections.
+    let address = service
+        .get_addresses()
+        .iter()
+        .find(|a| a.is_ipv4())
+        .or_else(|| service.get_addresses().iter().next())
+        .map(format_scoped_ip)
+        .unwrap_or_else(|| "0.0.0.0".to_string());
+
     Peer {
-        name: service.name().clone(),
-        url: format!("http://{}:{}", service.address(), service.port()),
-        host: service.host_name().clone(),
-        port: *service.port(),
+        name,
+        url: format!("http://{address}:{}", service.get_port()),
+        host: service.get_hostname().to_string(),
+        port: service.get_port(),
         card: None,
         discovered_at: std::time::Instant::now(),
     }
@@ -212,93 +210,106 @@ pub enum PeerEvent {
 /// Browses the local network for A2A agents registered on
 /// `_nu-agent-a2a._tcp.local.`.
 ///
-/// The [`MdnsBrowser`] handle is owned by this struct to keep the underlying
-/// Bonjour/Avahi browser alive for the [`EventLoop`](zeroconf::EventLoop) in
-/// the polling thread (same reasoning as [`DiscoveryService`]).
+/// Uses the pure-Rust [`ServiceDaemon`] from the `mdns-sd` crate — no C FFI
+/// dependency.
 pub struct DiscoveryBrowser {
-    /// Bonjour/Avahi browser handle — dropped *after* the polling thread has
-    /// exited (see field declaration order and the manual [`Drop`] impl).
-    _browser: MdnsBrowser,
-    stop_flag: Arc<AtomicBool>,
+    // NOTE: field order matters for Drop.  When the manual Drop impl runs,
+    // it drops the daemon first (disconnecting the flume channel), then
+    // joins the poll thread.  The daemon field is *last* so that if Rust's
+    // auto-drop runs after the manual Drop, the daemon outlives the thread.
     poll_thread: Option<JoinHandle<()>>,
+    _daemon: Option<ServiceDaemon>,
 }
 
 impl DiscoveryBrowser {
-    /// Start browsing for A2A agents.
+    /// Start browsing for A2A agents, using a shared daemon.
+    ///
+    /// The daemon is shared with [`DiscoveryService`] so that both
+    /// registration and browsing go through a single mDNS responder.
     ///
     /// Returns a handle that can be dropped to stop browsing, and a
     /// `mpsc::Receiver` that yields [`PeerEvent`]s as peers are discovered
     /// or lost.
-    pub fn browse() -> Result<(Self, mpsc::Receiver<PeerEvent>), A2aError> {
-        let service_type = ServiceType::new("nu-agent-a2a", "tcp")
-            .map_err(|e| A2aError::Internal(format!("service type: {e}")))?;
+    pub fn browse(daemon: ServiceDaemon, mesh_key: &str, own_name: &str) -> Result<(Self, mpsc::Receiver<PeerEvent>), A2aError> {
+        let receiver = daemon
+            .browse("_nu-agent-a2a._tcp.local.")
+            .map_err(|e| A2aError::Internal(format!("mdns-sd browse: {e}")))?;
 
-        let mut browser = MdnsBrowser::new(service_type);
         let (tx, rx) = mpsc::channel::<PeerEvent>(64);
         let cb_tx = tx.clone();
-
-        browser.set_service_callback(Box::new(move |result, _ctx| {
-            let event = match result {
-                Ok(e) => e,
-                Err(e) => {
-                    log::error!("zeroconf browse error: {e}");
-                    return;
-                }
-            };
-
-            let maybe_card = match &event {
-                BrowserEvent::Add(service) => {
-                    let url = format!("http://{}:{}/agent.json", service.address(), service.port());
-                    CARD_FETCHER.get().and_then(|f| f.fetch_card(&url))
-                }
-                _ => None,
-            };
-
-            match &event {
-                BrowserEvent::Add(service) => {
-                    let mut peer = peer_from_service(service);
-                    peer.card = maybe_card;
-                    let _ = cb_tx
-                        .try_send(PeerEvent::PeerDiscovered(Box::new(peer)))
-                        .inspect_err(|_| {
-                            log::warn!("peer event channel full, dropping PeerDiscovered")
-                        });
-                }
-                BrowserEvent::Remove(info) => {
-                    let _ = cb_tx
-                        .try_send(PeerEvent::PeerLost(info.name().clone()))
-                        .inspect_err(|_| log::warn!("peer event channel full, dropping PeerLost"));
-                }
-            }
-        }));
-
-        let event_loop = browser
-            .browse_services()
-            .map_err(|e| A2aError::Internal(format!("zeroconf browse: {e}")))?;
-
-        let stop_flag = Arc::new(AtomicBool::new(false));
-        let flag = stop_flag.clone();
+        let mesh_key = mesh_key.to_string();
+        let own_name = own_name.to_string();
 
         let handle = std::thread::spawn(move || {
-            // Initialise card fetcher inside the poll thread — safe because
+            // Initialise card fetcher inside the browse thread — safe because
             // we are *not* inside a tokio runtime here.
             let _ = CARD_FETCHER.set(CardFetcher::new());
 
-            loop {
-                if flag.load(Ordering::Relaxed) {
-                    break;
-                }
-                if let Err(e) = event_loop.poll(Duration::from_millis(100)) {
-                    log::error!("zeroconf browse poll error: {e}");
+            // recv() blocks until an event arrives.  When the daemon is
+            // shut down (on drop) the channel disconnects and recv()
+            // returns Err.
+            while let Ok(service_event) = receiver.recv() {
+                match service_event {
+                    ServiceEvent::ServiceResolved(resolved) => {
+                        // Skip self — the shared daemon receives its own mDNS responses.
+                        let own_fullname = format!("{}._nu-agent-a2a._tcp.local.", own_name);
+                        if resolved.get_fullname() == own_fullname {
+                            continue;
+                        }
+
+                        // Mesh scoping: skip peers with non-matching key
+                        let props = resolved.get_properties();
+                        let peer_key = props
+                            .get("mesh_key")
+                            .and_then(|v| v.val())
+                            .and_then(|bytes| std::str::from_utf8(bytes).ok());
+                        match peer_key {
+                            Some(k) if k != mesh_key => continue,
+                            Some(_) => {}
+                            None => {
+                                log::warn!(
+                                    "skipping peer {}: no mesh_key in TXT records",
+                                    resolved.get_fullname()
+                                );
+                                continue;
+                            }
+                        }
+
+                        let address = resolved
+                            .get_addresses()
+                            .iter()
+                            .next()
+                            .map(format_scoped_ip)
+                            .unwrap_or_else(|| "0.0.0.0".to_string());
+                        let url = format!("http://{address}:{}/agent.json", resolved.get_port());
+                        let maybe_card = CARD_FETCHER.get().and_then(|f| f.fetch_card(&url));
+
+                        let mut peer = peer_from_service(&resolved);
+                        peer.card = maybe_card;
+
+                        let _ = cb_tx
+                            .try_send(PeerEvent::PeerDiscovered(Box::new(peer)))
+                            .inspect_err(|_| {
+                                log::warn!("peer event channel full, dropping PeerDiscovered")
+                            });
+                    }
+                    ServiceEvent::ServiceRemoved(_service_type, fullname) => {
+                        let name = peer_name_from_fullname(&fullname);
+                        let _ = cb_tx.try_send(PeerEvent::PeerLost(name)).inspect_err(|_| {
+                            log::warn!("peer event channel full, dropping PeerLost")
+                        });
+                    }
+                    _ => {
+                        // ServiceFound, SearchStarted, SearchStopped — ignore.
+                    }
                 }
             }
         });
 
         Ok((
             Self {
-                _browser: browser,
-                stop_flag,
                 poll_thread: Some(handle),
+                _daemon: Some(daemon),
             },
             rx,
         ))
@@ -307,7 +318,10 @@ impl DiscoveryBrowser {
 
 impl Drop for DiscoveryBrowser {
     fn drop(&mut self) {
-        self.stop_flag.store(true, Ordering::Relaxed);
+        // Drop the daemon first (disconnects the flume channel in the browse
+        // thread), then join the thread.
+        drop(self._daemon.take());
+
         if let Some(handle) = self.poll_thread.take() {
             let deadline = std::time::Instant::now() + Duration::from_secs(1);
             while std::time::Instant::now() < deadline {

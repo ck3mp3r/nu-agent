@@ -232,9 +232,16 @@ Compaction flags:
                 "Session ID to use (auto-creates if doesn't exist)",
                 None,
             )
-            .switch(
-                "a2a",
-                "Enable A2A agent-to-agent communication (experimental)",
+            .named(
+                "a2a-port",
+                nu_protocol::SyntaxShape::Int,
+                "A2A agent port. 0=random, >0=fixed. Implies A2A mode.",
+                None,
+            )
+            .named(
+                "mesh-key",
+                nu_protocol::SyntaxShape::String,
+                "Mesh isolation key. Agents only discover peers with the same key. Default: SHA-256 of cwd.",
                 None,
             )
             .switch(

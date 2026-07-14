@@ -20,7 +20,7 @@ fn ensure_crypto_provider() {
 async fn test_agent_start_shutdown() {
     ensure_crypto_provider();
 
-    let handle = AgentHandle::start("test-agent", Some("A test agent"), vec![])
+    let handle = AgentHandle::start("test-agent", Some("A test agent"), vec![], 0, "test-mesh".into())
         .await
         .unwrap();
 
@@ -62,7 +62,7 @@ async fn test_agent_card_reflects_persona() {
         outputs: None,
     }];
 
-    let handle = AgentHandle::start("coder", Some("A coding agent"), skills)
+    let handle = AgentHandle::start("coder", Some("A coding agent"), skills, 0, "test-mesh".into())
         .await
         .unwrap();
 
@@ -88,7 +88,7 @@ async fn test_agent_card_reflects_persona() {
 async fn test_agent_empty_skills() {
     ensure_crypto_provider();
 
-    let handle = AgentHandle::start("no-skills", Some("Has no explicit skills"), vec![])
+    let handle = AgentHandle::start("no-skills", Some("Has no explicit skills"), vec![], 0, "test-mesh".into())
         .await
         .unwrap();
 
@@ -106,7 +106,9 @@ async fn test_agent_empty_skills() {
 async fn test_agent_no_description() {
     ensure_crypto_provider();
 
-    let handle = AgentHandle::start("no-desc", None, vec![]).await.unwrap();
+    let handle = AgentHandle::start("no-desc", None, vec![], 0, "test-mesh".into())
+        .await
+        .unwrap();
 
     let client = A2aClient::new();
     let card = client
@@ -134,7 +136,7 @@ async fn test_agent_start_with_card() {
         ..Default::default()
     };
 
-    let handle = AgentHandle::start_with_card(card).await.unwrap();
+    let handle = AgentHandle::start_with_card(card, 0, "test-mesh".into()).await.unwrap();
     assert_eq!(handle.card.name, "custom-card");
     assert_eq!(handle.card.version, "2.0");
     assert!(
@@ -153,10 +155,10 @@ async fn test_agent_start_with_card() {
 async fn test_two_agents_start_independently() {
     ensure_crypto_provider();
 
-    let agent_a = AgentHandle::start("agent-a", Some("First agent"), vec![])
+    let agent_a = AgentHandle::start("agent-a", Some("First agent"), vec![], 0, "test-mesh".into())
         .await
         .unwrap();
-    let agent_b = AgentHandle::start("agent-b", Some("Second agent"), vec![])
+    let agent_b = AgentHandle::start("agent-b", Some("Second agent"), vec![], 0, "test-mesh".into())
         .await
         .unwrap();
 
@@ -189,12 +191,18 @@ async fn test_two_agents_start_independently() {
         parts: vec![Part::Text {
             text: "hello from a".into(),
         }],
+        message_id: uuid::Uuid::new_v4().to_string(),
+        extensions: None,
+        metadata: None,
     };
     let msg_b = Message {
         role: Role::User,
         parts: vec![Part::Text {
             text: "hello from b".into(),
         }],
+        message_id: uuid::Uuid::new_v4().to_string(),
+        extensions: None,
+        metadata: None,
     };
 
     let task_a = client

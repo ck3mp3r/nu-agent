@@ -42,7 +42,7 @@ async fn test_server_starts_and_returns_port() {
         url: "http://127.0.0.1:0".to_string(),
         ..Default::default()
     };
-    let server = A2aServer::start(card, Arc::new(PeerCache::new()))
+    let server = A2aServer::start(card, Arc::new(PeerCache::new()), 0)
         .await
         .unwrap();
     assert!(server.port > 0, "Port should be > 0");
@@ -86,8 +86,8 @@ async fn test_a2a_version_response_header() {
 
     // A2A API endpoint
     let resp = client
-        .post(format!("{}/tasks/list", server.local_url))
-        .json(&serde_json::json!({"id": "test"}))
+        .post(format!("{}/tasks:list", server.local_url))
+        .json(&serde_json::json!({}))
         .send()
         .await
         .unwrap();
@@ -101,9 +101,9 @@ async fn test_a2a_version_response_header() {
         "A2A API response should include A2A-Version header"
     );
 
-    // agent.json endpoint
+    // /.well-known/agent-card.json endpoint
     let resp = client
-        .get(format!("{}/agent.json", server.local_url))
+        .get(format!("{}/.well-known/agent-card.json", server.local_url))
         .send()
         .await
         .unwrap();
@@ -114,7 +114,7 @@ async fn test_a2a_version_response_header() {
     assert_eq!(
         version,
         Some("1.0"),
-        "agent.json response should include A2A-Version header"
+        "agent card response should include A2A-Version header"
     );
 
     server.shutdown().await;
@@ -129,7 +129,7 @@ async fn test_server_cleanup_frees_port() {
         url: "http://127.0.0.1:0".to_string(),
         ..Default::default()
     };
-    let server = A2aServer::start(card, Arc::new(PeerCache::new()))
+    let server = A2aServer::start(card, Arc::new(PeerCache::new()), 0)
         .await
         .unwrap();
     let port = server.port;
@@ -164,7 +164,7 @@ async fn test_server() -> (A2aServer, reqwest::Client) {
         }],
         ..Default::default()
     };
-    let server = A2aServer::start(card, Arc::new(PeerCache::new()))
+    let server = A2aServer::start(card, Arc::new(PeerCache::new()), 0)
         .await
         .unwrap();
     let client = test_client();
@@ -177,7 +177,7 @@ async fn test_agent_card_endpoint() {
     let (server, client) = test_server().await;
 
     let resp = client
-        .get(format!("{}/agent.json", server.local_url))
+        .get(format!("{}/.well-known/agent-card.json", server.local_url))
         .send()
         .await
         .unwrap();
@@ -197,9 +197,8 @@ async fn test_tasks_send_creates_task() {
     let (server, client) = test_server().await;
 
     let resp = client
-        .post(format!("{}/tasks/send", server.local_url))
+        .post(format!("{}/message:send", server.local_url))
         .json(&json!({
-            "id": "req-1",
             "message": {
                 "role": "user",
                 "parts": [{"type": "text", "text": "hello"}]
@@ -211,14 +210,15 @@ async fn test_tasks_send_creates_task() {
     assert_eq!(resp.status(), 200);
 
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(body["jsonrpc"], "2.0");
-    assert_eq!(body["id"], "req-1");
-    assert!(body.get("result").is_some(), "Should have a result");
     assert!(
-        !body["result"]["id"].as_str().unwrap().is_empty(),
+        body.get("task").is_some(),
+        "Should have a task field"
+    );
+    assert!(
+        !body["task"]["id"].as_str().unwrap().is_empty(),
         "Task should have an ID"
     );
-    assert_eq!(body["result"]["status"]["state"], "working");
+    assert_eq!(body["task"]["status"]["state"], "WORKING");
 
     server.shutdown().await;
 }
@@ -229,18 +229,21 @@ async fn test_tasks_send_missing_message() {
     let (server, client) = test_server().await;
 
     let resp = client
-        .post(format!("{}/tasks/send", server.local_url))
-        .json(&json!({"id": "req-1"}))
+        .post(format!("{}/message:send", server.local_url))
+        .json(&json!({}))
         .send()
         .await
         .unwrap();
+
+    assert_eq!(resp.status(), 400);
 
     let body: serde_json::Value = resp.json().await.unwrap();
     assert!(
         body.get("error").is_some(),
         "Should return error for missing message"
     );
-    assert_eq!(body["error"]["code"], -32602);
+    assert_eq!(body["error"]["code"], 400);
+    assert_eq!(body["error"]["status"], "BAD_REQUEST");
 
     server.shutdown().await;
 }
@@ -252,13 +255,13 @@ async fn test_tasks_get_returns_task() {
 
     // Create a task first
     let send_resp = client
-        .post(format!("{}/tasks/send", server.local_url))
-        .json(&json!({"id": "req-1", "message": {"role": "user", "parts": [{"type": "text", "text": "hi"}]}}))
+        .post(format!("{}/message:send", server.local_url))
+        .json(&json!({"message": {"role": "user", "parts": [{"type": "text", "text": "hi"}]}}))
         .send()
         .await
         .unwrap();
     let send_body: serde_json::Value = send_resp.json().await.unwrap();
-    let task_id = send_body["result"]["id"].as_str().unwrap().to_string();
+    let task_id = send_body["task"]["id"].as_str().unwrap().to_string();
 
     // Get the task
     let resp = client
@@ -267,8 +270,8 @@ async fn test_tasks_get_returns_task() {
         .await
         .unwrap();
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(body["result"]["id"], task_id);
-    assert_eq!(body["result"]["status"]["state"], "working");
+    assert_eq!(body["task"]["id"], task_id);
+    assert_eq!(body["task"]["status"]["state"], "WORKING");
 
     server.shutdown().await;
 }
@@ -283,9 +286,11 @@ async fn test_tasks_get_not_found() {
         .send()
         .await
         .unwrap();
+    assert_eq!(resp.status(), 404);
     let body: serde_json::Value = resp.json().await.unwrap();
     assert!(body.get("error").is_some());
-    assert_eq!(body["error"]["code"], -32001);
+    assert_eq!(body["error"]["code"], 404);
+    assert_eq!(body["error"]["status"], "NOT_FOUND");
 
     server.shutdown().await;
 }
@@ -297,13 +302,13 @@ async fn test_tasks_cancel() {
 
     // Create task
     let send_resp = client
-        .post(format!("{}/tasks/send", server.local_url))
-        .json(&json!({"id": "req-1", "message": {"role": "user", "parts": [{"type": "text", "text": "cancel me"}]}}))
+        .post(format!("{}/message:send", server.local_url))
+        .json(&json!({"message": {"role": "user", "parts": [{"type": "text", "text": "cancel me"}]}}))
         .send()
         .await
         .unwrap();
     let send_body: serde_json::Value = send_resp.json().await.unwrap();
-    let task_id = send_body["result"]["id"].as_str().unwrap().to_string();
+    let task_id = send_body["task"]["id"].as_str().unwrap().to_string();
 
     // Cancel it
     let resp = client
@@ -312,7 +317,7 @@ async fn test_tasks_cancel() {
         .await
         .unwrap();
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(body["result"]["status"]["state"], "canceled");
+    assert_eq!(body["task"]["status"]["state"], "CANCELED");
 
     server.shutdown().await;
 }
@@ -323,13 +328,13 @@ async fn test_cancel_completed_fails() {
     let (server, client) = test_server().await;
 
     let send_resp = client
-        .post(format!("{}/tasks/send", server.local_url))
-        .json(&json!({"id": "req-1", "message": {"role": "user", "parts": [{"type": "text", "text": "done"}]}}))
+        .post(format!("{}/message:send", server.local_url))
+        .json(&json!({"message": {"role": "user", "parts": [{"type": "text", "text": "done"}]}}))
         .send()
         .await
         .unwrap();
     let send_body: serde_json::Value = send_resp.json().await.unwrap();
-    let task_id = send_body["result"]["id"].as_str().unwrap().to_string();
+    let task_id = send_body["task"]["id"].as_str().unwrap().to_string();
 
     // First cancel should succeed
     let _ = client
@@ -344,9 +349,11 @@ async fn test_cancel_completed_fails() {
         .send()
         .await
         .unwrap();
+    assert_eq!(resp.status(), 400);
     let body: serde_json::Value = resp.json().await.unwrap();
     assert!(body.get("error").is_some(), "Second cancel should fail");
-    assert_eq!(body["error"]["code"], -32000);
+    assert_eq!(body["error"]["code"], 400);
+    assert_eq!(body["error"]["status"], "INVALID_REQUEST");
 
     server.shutdown().await;
 }
@@ -358,14 +365,14 @@ async fn test_task_lifecycle_full() {
 
     // Create
     let send_resp = client
-        .post(format!("{}/tasks/send", server.local_url))
-        .json(&json!({"id": "req-1", "message": {"role": "user", "parts": [{"type": "text", "text": "hello"}]}}))
+        .post(format!("{}/message:send", server.local_url))
+        .json(&json!({"message": {"role": "user", "parts": [{"type": "text", "text": "hello"}]}}))
         .send()
         .await
         .unwrap();
     let send_body: serde_json::Value = send_resp.json().await.unwrap();
-    let task_id = send_body["result"]["id"].as_str().unwrap().to_string();
-    assert_eq!(send_body["result"]["status"]["state"], "working");
+    let task_id = send_body["task"]["id"].as_str().unwrap().to_string();
+    assert_eq!(send_body["task"]["status"]["state"], "WORKING");
 
     // Get
     let get_resp = client
@@ -374,7 +381,7 @@ async fn test_task_lifecycle_full() {
         .await
         .unwrap();
     let get_body: serde_json::Value = get_resp.json().await.unwrap();
-    assert_eq!(get_body["result"]["status"]["state"], "working");
+    assert_eq!(get_body["task"]["status"]["state"], "WORKING");
 
     // Cancel
     let cancel_resp = client
@@ -383,7 +390,7 @@ async fn test_task_lifecycle_full() {
         .await
         .unwrap();
     let cancel_body: serde_json::Value = cancel_resp.json().await.unwrap();
-    assert_eq!(cancel_body["result"]["status"]["state"], "canceled");
+    assert_eq!(cancel_body["task"]["status"]["state"], "CANCELED");
 
     // Get after cancel
     let get2_resp = client
@@ -392,7 +399,7 @@ async fn test_task_lifecycle_full() {
         .await
         .unwrap();
     let get2_body: serde_json::Value = get2_resp.json().await.unwrap();
-    assert_eq!(get2_body["result"]["status"]["state"], "canceled");
+    assert_eq!(get2_body["task"]["status"]["state"], "CANCELED");
 
     server.shutdown().await;
 }
@@ -408,8 +415,8 @@ async fn test_concurrent_requests() {
         let c = client.clone();
         let u = url.clone();
         handles.push(tokio::spawn(async move {
-            c.post(format!("{u}/tasks/send"))
-                .json(&json!({"id": format!("req-{i}"), "message": {"role": "user", "parts": [{"type": "text", "text": format!("msg-{i}")}]}}))
+            c.post(format!("{u}/message:send"))
+                .json(&json!({"message": {"role": "user", "parts": [{"type": "text", "text": format!("msg-{i}")}]}}))
                 .send()
                 .await
                 .unwrap()
@@ -430,8 +437,8 @@ async fn test_send_stream_returns_sse() {
     let (server, client) = test_server().await;
 
     let resp = client
-        .post(format!("{}/tasks/sendStream", server.local_url))
-        .json(&json!({"id": "req-1", "message": {"role": "user", "parts": [{"type": "text", "text": "stream"}]}}))
+        .post(format!("{}/message:stream", server.local_url))
+        .json(&json!({"message": {"role": "user", "parts": [{"type": "text", "text": "stream"}]}}))
         .send()
         .await
         .unwrap();
@@ -452,16 +459,16 @@ async fn test_send_stream_returns_sse() {
 
     // Look up the task via list to get its ID
     let list_resp = client
-        .post(format!("{}/tasks/list", server.local_url))
-        .json(&json!({"id": "list-1"}))
+        .post(format!("{}/tasks:list", server.local_url))
+        .json(&json!({}))
         .send()
         .await
         .unwrap();
     let list_body: serde_json::Value = list_resp.json().await.unwrap();
-    let tasks = list_body["result"]["tasks"].as_array().unwrap();
+    let tasks = list_body["tasks"].as_array().unwrap();
     let task_id = tasks
         .iter()
-        .find(|t| t["status"]["state"] == "working")
+        .find(|t| t["status"]["state"] == "WORKING")
         .and_then(|t| t["id"].as_str())
         .expect("should find a working task");
 
@@ -477,22 +484,22 @@ async fn test_send_stream_returns_sse() {
     let body = resp.bytes().await.unwrap();
     let text = String::from_utf8_lossy(&body);
 
-    // Verify we get taskCreated event
+    // Verify we get a task event (StreamResponse format)
     assert!(
-        text.contains("event: taskCreated"),
-        "Should have taskCreated event, got: {text}"
+        text.contains(r#""task""#),
+        "Should have task event with StreamResponse, got: {text}"
     );
 
     // Verify the data contains the task in working state
     assert!(
-        text.contains("working") || text.contains("\"state\":\"working\""),
-        "Task should be in working state"
+        text.contains("WORKING"),
+        "Task should be in working state, got: {text}"
     );
 
-    // Verify we also get a cancel status update
+    // Verify we also get a cancel status update (statusUpdate format)
     assert!(
-        text.contains("event: taskStatusUpdate"),
-        "Should have taskStatusUpdate event for cancel, got: {text}"
+        text.contains("statusUpdate"),
+        "Should have statusUpdate event for cancel, got: {text}"
     );
 
     server.shutdown().await;
@@ -504,17 +511,19 @@ async fn test_send_stream_invalid_body() {
     let (server, client) = test_server().await;
 
     let resp = client
-        .post(format!("{}/tasks/sendStream", server.local_url))
-        .json(&json!({"id": "req-1"})) // missing message
+        .post(format!("{}/message:stream", server.local_url))
+        .json(&json!({})) // missing message
         .send()
         .await
         .unwrap();
+
+    assert_eq!(resp.status(), 400);
 
     // Read the response body and check for error
     let body = resp.bytes().await.unwrap();
     let text = String::from_utf8_lossy(&body);
     assert!(
-        text.contains("-32602") || text.contains("Invalid params"),
+        text.contains("400") || text.contains("BAD_REQUEST"),
         "Should return error for invalid body, got: {text}"
     );
 
@@ -533,7 +542,7 @@ async fn test_incoming_task_channel() {
         url: "http://127.0.0.1:0".into(),
         ..Default::default()
     };
-    let mut server = A2aServer::start(card, Arc::new(PeerCache::new()))
+    let mut server = A2aServer::start(card, Arc::new(PeerCache::new()), 0)
         .await
         .unwrap();
     let mut task_rx = server.take_incoming_task_receiver().unwrap();
@@ -543,14 +552,16 @@ async fn test_incoming_task_channel() {
         parts: vec![Part::Text {
             text: "hello".into(),
         }],
+        message_id: uuid::Uuid::new_v4().to_string(),
+        extensions: None,
+        metadata: None,
     };
     let client = test_client();
 
     // Send a task with senderUrl
     let resp = client
-        .post(format!("{}/tasks/send", server.local_url))
+        .post(format!("{}/message:send", server.local_url))
         .json(&serde_json::json!({
-            "id": "req-1",
             "message": serde_json::to_value(&msg).unwrap(),
             "sessionId": "sess-1",
             "senderUrl": "http://sender.local:12345"
@@ -590,15 +601,14 @@ async fn test_sender_url_populates_peer_cache() {
         url: "http://127.0.0.1:0".into(),
         ..Default::default()
     };
-    let server = A2aServer::start(card, cache.clone()).await.unwrap();
+    let server = A2aServer::start(card, cache.clone(), 0).await.unwrap();
 
     let client = test_client();
 
     // Send a task with senderUrl
     let resp = client
-        .post(format!("{}/tasks/send", server.local_url))
+        .post(format!("{}/message:send", server.local_url))
         .json(&json!({
-            "id": "req-1",
             "message": {
                 "role": "user",
                 "parts": [{"type": "text", "text": "hello"}]
@@ -630,15 +640,14 @@ async fn test_sender_url_empty_does_not_populate_cache() {
         url: "http://127.0.0.1:0".into(),
         ..Default::default()
     };
-    let server = A2aServer::start(card, cache.clone()).await.unwrap();
+    let server = A2aServer::start(card, cache.clone(), 0).await.unwrap();
 
     let client = test_client();
 
     // Send a task without senderUrl
     let resp = client
-        .post(format!("{}/tasks/send", server.local_url))
+        .post(format!("{}/message:send", server.local_url))
         .json(&json!({
-            "id": "req-1",
             "message": {
                 "role": "user",
                 "parts": [{"type": "text", "text": "hello"}]
@@ -671,25 +680,30 @@ async fn test_list_tasks_endpoint() {
 
     // Create a task first via send
     client
-        .post(format!("{}/tasks/send", server.local_url))
-        .json(&json!({"id": "r1", "message": {"role": "user", "parts": [{"type":"text","text":"hi"}]}}))
+        .post(format!("{}/message:send", server.local_url))
+        .json(&json!({"message": {"role": "user", "parts": [{"type":"text","text":"hi"}]}}))
         .send()
         .await
         .unwrap();
 
     // List tasks
     let resp = client
-        .post(format!("{}/tasks/list", server.local_url))
-        .json(&json!({"id": "r2"}))
+        .post(format!("{}/tasks:list", server.local_url))
+        .json(&json!({}))
         .send()
         .await
         .unwrap();
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(
-        body["result"]["tasks"].as_array().unwrap().len(),
+        body["tasks"].as_array().unwrap().len(),
         1,
         "Should have 1 task"
     );
+    assert!(
+        body.get("totalSize").is_some(),
+        "Should have totalSize"
+    );
+    assert!(body.get("pageSize").is_some(), "Should have pageSize");
 
     server.shutdown().await;
 }
@@ -701,13 +715,13 @@ async fn test_list_tasks_endpoint_with_filter() {
 
     // Create a task — it starts in Submitted, then transitions to Working
     let send_resp = client
-        .post(format!("{}/tasks/send", server.local_url))
-        .json(&json!({"id": "r1", "message": {"role": "user", "parts": [{"type":"text","text":"hi"}]}}))
+        .post(format!("{}/message:send", server.local_url))
+        .json(&json!({"message": {"role": "user", "parts": [{"type":"text","text":"hi"}]}}))
         .send()
         .await
         .unwrap();
     let send_body: serde_json::Value = send_resp.json().await.unwrap();
-    let task_id = send_body["result"]["id"].as_str().unwrap().to_string();
+    let task_id = send_body["task"]["id"].as_str().unwrap().to_string();
 
     // Cancel it so it's in 'canceled' state
     client
@@ -718,35 +732,35 @@ async fn test_list_tasks_endpoint_with_filter() {
 
     // Create another task — this one stays in 'working'
     client
-        .post(format!("{}/tasks/send", server.local_url))
-        .json(&json!({"id": "r2", "message": {"role": "user", "parts": [{"type":"text","text":"hello again"}]}}))
+        .post(format!("{}/message:send", server.local_url))
+        .json(&json!({"message": {"role": "user", "parts": [{"type":"text","text":"hello again"}]}}))
         .send()
         .await
         .unwrap();
 
     // List with filter: working
     let resp = client
-        .post(format!("{}/tasks/list", server.local_url))
-        .json(&json!({"id": "r3", "status": "working"}))
+        .post(format!("{}/tasks:list", server.local_url))
+        .json(&json!({"status": "working"}))
         .send()
         .await
         .unwrap();
     let body: serde_json::Value = resp.json().await.unwrap();
-    let working_tasks = body["result"]["tasks"].as_array().unwrap();
+    let working_tasks = body["tasks"].as_array().unwrap();
     assert_eq!(working_tasks.len(), 1, "Should have 1 working task");
-    assert_eq!(working_tasks[0]["status"]["state"], "working");
+    assert_eq!(working_tasks[0]["status"]["state"], "WORKING");
 
     // List with filter: canceled
     let resp = client
-        .post(format!("{}/tasks/list", server.local_url))
-        .json(&json!({"id": "r4", "status": "canceled"}))
+        .post(format!("{}/tasks:list", server.local_url))
+        .json(&json!({"status": "canceled"}))
         .send()
         .await
         .unwrap();
     let body: serde_json::Value = resp.json().await.unwrap();
-    let canceled_tasks = body["result"]["tasks"].as_array().unwrap();
+    let canceled_tasks = body["tasks"].as_array().unwrap();
     assert_eq!(canceled_tasks.len(), 1, "Should have 1 canceled task");
-    assert_eq!(canceled_tasks[0]["status"]["state"], "canceled");
+    assert_eq!(canceled_tasks[0]["status"]["state"], "CANCELED");
 
     server.shutdown().await;
 }
@@ -762,13 +776,13 @@ async fn test_subscribe_stream_receives_events() {
 
     // Create a task
     let resp = client
-        .post(format!("{}/tasks/send", server.local_url))
-        .json(&json!({"id": "r1", "message": {"role": "user", "parts": [{"type":"text","text":"hi"}]}}))
+        .post(format!("{}/message:send", server.local_url))
+        .json(&json!({"message": {"role": "user", "parts": [{"type":"text","text":"hi"}]}}))
         .send()
         .await
         .unwrap();
     let body: serde_json::Value = resp.json().await.unwrap();
-    let task_id = body["result"]["id"].as_str().unwrap().to_string();
+    let task_id = body["task"]["id"].as_str().unwrap().to_string();
 
     // Subscribe (opens SSE stream)
     let sse_resp = client
@@ -796,7 +810,6 @@ async fn test_subscribe_stream_receives_events() {
     // Cancel the task — should trigger a status update SSE event
     client
         .post(format!("{}/tasks/{}/cancel", server.local_url, task_id))
-        .json(&json!({"id": "r2"}))
         .send()
         .await
         .unwrap();
@@ -806,12 +819,13 @@ async fn test_subscribe_stream_receives_events() {
     let body_bytes = sse_resp.bytes().await.unwrap();
     let text = String::from_utf8_lossy(&body_bytes);
 
+    // StreamResponse format has statusUpdate wrapper
     assert!(
-        text.contains("event: taskStatusUpdate"),
-        "Should have taskStatusUpdate event, got: {text}"
+        text.contains("statusUpdate"),
+        "Should have statusUpdate event, got: {text}"
     );
     assert!(
-        text.contains("canceled"),
+        text.contains("CANCELED"),
         "Status should be canceled, got: {text}"
     );
 
@@ -829,12 +843,15 @@ async fn test_subscribe_task_not_found() {
         .await
         .unwrap();
 
+    assert_eq!(resp.status(), 404);
+
     let body: serde_json::Value = resp.json().await.unwrap();
     assert!(
         body.get("error").is_some(),
         "Should return error for nonexistent task"
     );
-    assert_eq!(body["error"]["code"], -32001);
+    assert_eq!(body["error"]["code"], 404);
+    assert_eq!(body["error"]["status"], "NOT_FOUND");
 
     server.shutdown().await;
 }
@@ -850,61 +867,49 @@ async fn test_push_config_crud_endpoints() {
 
     // Create a task first
     let resp = client
-        .post(format!("{}/tasks/send", server.local_url))
-        .json(&json!({"id": "r1", "message": {"role": "user", "parts": [{"type":"text","text":"hi"}]}}))
+        .post(format!("{}/message:send", server.local_url))
+        .json(&json!({"message": {"role": "user", "parts": [{"type":"text","text":"hi"}]}}))
         .send()
         .await
         .unwrap();
     let body: serde_json::Value = resp.json().await.unwrap();
-    let task_id = body["result"]["id"].as_str().unwrap().to_string();
+    let task_id = body["task"]["id"].as_str().unwrap().to_string();
 
     // Create a push config
     let create_resp = client
         .post(format!(
-            "{}/tasks/{}/push-notifications",
+            "{}/tasks/{}/push-notifications/create",
             server.local_url, task_id
         ))
-        .json(&json!({"id": "r2", "url": "https://hook.example.com/notify"}))
+        .json(&json!({"url": "https://hook.example.com/notify"}))
         .send()
         .await
         .unwrap();
     let create_body: serde_json::Value = create_resp.json().await.unwrap();
-    let config_id = create_body["result"]["id"].as_str().unwrap().to_string();
+    let config_id = create_body["id"].as_str().unwrap().to_string();
     assert_eq!(
-        create_body["result"]["url"],
+        create_body["url"],
         "https://hook.example.com/notify"
     );
 
     // List push configs
     let list_resp = client
         .get(format!(
-            "{}/tasks/{}/push-notifications",
+            "{}/tasks/{}/push-notifications/list",
             server.local_url, task_id
         ))
         .send()
         .await
         .unwrap();
     let list_body: serde_json::Value = list_resp.json().await.unwrap();
-    let configs = list_body["result"]["configs"].as_array().unwrap();
+    let configs = list_body["configs"].as_array().unwrap();
     assert_eq!(configs.len(), 1);
     assert_eq!(configs[0]["id"], config_id);
-
-    // Get specific push config
-    let get_resp = client
-        .get(format!(
-            "{}/tasks/{}/push-notifications/{}",
-            server.local_url, task_id, config_id
-        ))
-        .send()
-        .await
-        .unwrap();
-    let get_body: serde_json::Value = get_resp.json().await.unwrap();
-    assert_eq!(get_body["result"]["id"], config_id);
 
     // Delete push config
     let del_resp = client
         .delete(format!(
-            "{}/tasks/{}/push-notifications/{}",
+            "{}/tasks/{}/push-notifications/delete/{}",
             server.local_url, task_id, config_id
         ))
         .send()
@@ -915,14 +920,14 @@ async fn test_push_config_crud_endpoints() {
     // Verify deleted
     let list2_resp = client
         .get(format!(
-            "{}/tasks/{}/push-notifications",
+            "{}/tasks/{}/push-notifications/list",
             server.local_url, task_id
         ))
         .send()
         .await
         .unwrap();
     let list2_body: serde_json::Value = list2_resp.json().await.unwrap();
-    let configs2 = list2_body["result"]["configs"].as_array().unwrap();
+    let configs2 = list2_body["configs"].as_array().unwrap();
     assert!(configs2.is_empty(), "Push config should be deleted");
 
     server.shutdown().await;
@@ -935,26 +940,24 @@ async fn test_push_config_not_found() {
 
     // Create a task
     let resp = client
-        .post(format!("{}/tasks/send", server.local_url))
-        .json(&json!({"id": "r1", "message": {"role": "user", "parts": [{"type":"text","text":"hi"}]}}))
+        .post(format!("{}/message:send", server.local_url))
+        .json(&json!({"message": {"role": "user", "parts": [{"type":"text","text":"hi"}]}}))
         .send()
         .await
         .unwrap();
     let body: serde_json::Value = resp.json().await.unwrap();
-    let task_id = body["result"]["id"].as_str().unwrap().to_string();
+    let task_id = body["task"]["id"].as_str().unwrap().to_string();
 
-    // Get nonexistent config
+    // Get nonexistent config (get config endpoint was removed in spec §11.3, test delete instead)
     let resp = client
-        .get(format!(
-            "{}/tasks/{}/push-notifications/nonexistent",
+        .delete(format!(
+            "{}/tasks/{}/push-notifications/delete/nonexistent",
             server.local_url, task_id
         ))
         .send()
         .await
         .unwrap();
-    let resp_body: serde_json::Value = resp.json().await.unwrap();
-    assert!(resp_body.get("error").is_some());
-    assert_eq!(resp_body["error"]["code"], -32001);
+    assert_eq!(resp.status(), 200); // delete is idempotent, always succeeds
 
     server.shutdown().await;
 }
@@ -966,27 +969,29 @@ async fn test_push_config_missing_url() {
 
     // Create a task
     let resp = client
-        .post(format!("{}/tasks/send", server.local_url))
-        .json(&json!({"id": "r1", "message": {"role": "user", "parts": [{"type":"text","text":"hi"}]}}))
+        .post(format!("{}/message:send", server.local_url))
+        .json(&json!({"message": {"role": "user", "parts": [{"type":"text","text":"hi"}]}}))
         .send()
         .await
         .unwrap();
     let body: serde_json::Value = resp.json().await.unwrap();
-    let task_id = body["result"]["id"].as_str().unwrap().to_string();
+    let task_id = body["task"]["id"].as_str().unwrap().to_string();
 
     // Attempt to create push config without URL
     let resp = client
         .post(format!(
-            "{}/tasks/{}/push-notifications",
+            "{}/tasks/{}/push-notifications/create",
             server.local_url, task_id
         ))
-        .json(&json!({"id": "r2"}))
+        .json(&json!({}))
         .send()
         .await
         .unwrap();
+    assert_eq!(resp.status(), 400);
     let resp_body: serde_json::Value = resp.json().await.unwrap();
     assert!(resp_body.get("error").is_some());
-    assert_eq!(resp_body["error"]["code"], -32602);
+    assert_eq!(resp_body["error"]["code"], 400);
+    assert_eq!(resp_body["error"]["status"], "BAD_REQUEST");
 
     server.shutdown().await;
 }
@@ -1003,7 +1008,7 @@ async fn test_file_upload_and_download_roundtrip() {
     // Upload a file
     let file_content = b"hello, a2a file exchange!";
     let upload_resp = client
-        .post(format!("{}/files/upload", server.local_url))
+        .post(format!("{}/files:upload", server.local_url))
         .body(file_content.to_vec())
         .send()
         .await
@@ -1060,7 +1065,7 @@ async fn test_file_upload_multiple_files() {
 
     // Upload two files
     let resp1 = client
-        .post(format!("{}/files/upload", server.local_url))
+        .post(format!("{}/files:upload", server.local_url))
         .body(b"file one content".to_vec())
         .send()
         .await
@@ -1069,7 +1074,7 @@ async fn test_file_upload_multiple_files() {
     let id1 = body1["id"].as_str().unwrap().to_string();
 
     let resp2 = client
-        .post(format!("{}/files/upload", server.local_url))
+        .post(format!("{}/files:upload", server.local_url))
         .body(b"file two content".to_vec())
         .send()
         .await
@@ -1110,9 +1115,8 @@ async fn test_tasks_send_with_idempotency_key() {
 
     // First request with idempotencyKey
     let resp1 = client
-        .post(format!("{}/tasks/send", server.local_url))
+        .post(format!("{}/message:send", server.local_url))
         .json(&json!({
-            "id": "req-1",
             "message": {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
             "idempotencyKey": "idem-1"
         }))
@@ -1121,13 +1125,12 @@ async fn test_tasks_send_with_idempotency_key() {
         .unwrap();
     assert_eq!(resp1.status(), 200);
     let body1: serde_json::Value = resp1.json().await.unwrap();
-    let task_id1 = body1["result"]["id"].as_str().unwrap().to_string();
+    let task_id1 = body1["task"]["id"].as_str().unwrap().to_string();
 
     // Second request with same idempotencyKey should return same task
     let resp2 = client
-        .post(format!("{}/tasks/send", server.local_url))
+        .post(format!("{}/message:send", server.local_url))
         .json(&json!({
-            "id": "req-2",
             "message": {"role": "user", "parts": [{"type": "text", "text": "hello again"}]},
             "idempotencyKey": "idem-1"
         }))
@@ -1136,7 +1139,7 @@ async fn test_tasks_send_with_idempotency_key() {
         .unwrap();
     assert_eq!(resp2.status(), 200);
     let body2: serde_json::Value = resp2.json().await.unwrap();
-    let task_id2 = body2["result"]["id"].as_str().unwrap().to_string();
+    let task_id2 = body2["task"]["id"].as_str().unwrap().to_string();
 
     assert_eq!(
         task_id1, task_id2,
@@ -1152,9 +1155,8 @@ async fn test_tasks_send_with_different_idempotency_keys() {
     let (server, client) = test_server().await;
 
     let resp1 = client
-        .post(format!("{}/tasks/send", server.local_url))
+        .post(format!("{}/message:send", server.local_url))
         .json(&json!({
-            "id": "req-1",
             "message": {"role": "user", "parts": [{"type": "text", "text": "first"}]},
             "idempotencyKey": "key-a"
         }))
@@ -1162,12 +1164,11 @@ async fn test_tasks_send_with_different_idempotency_keys() {
         .await
         .unwrap();
     let body1: serde_json::Value = resp1.json().await.unwrap();
-    let task_id1 = body1["result"]["id"].as_str().unwrap().to_string();
+    let task_id1 = body1["task"]["id"].as_str().unwrap().to_string();
 
     let resp2 = client
-        .post(format!("{}/tasks/send", server.local_url))
+        .post(format!("{}/message:send", server.local_url))
         .json(&json!({
-            "id": "req-2",
             "message": {"role": "user", "parts": [{"type": "text", "text": "second"}]},
             "idempotencyKey": "key-b"
         }))
@@ -1175,7 +1176,7 @@ async fn test_tasks_send_with_different_idempotency_keys() {
         .await
         .unwrap();
     let body2: serde_json::Value = resp2.json().await.unwrap();
-    let task_id2 = body2["result"]["id"].as_str().unwrap().to_string();
+    let task_id2 = body2["task"]["id"].as_str().unwrap().to_string();
 
     assert_ne!(
         task_id1, task_id2,
@@ -1195,9 +1196,8 @@ async fn test_tasks_send_with_context_id() {
     let (server, client) = test_server().await;
 
     let resp = client
-        .post(format!("{}/tasks/send", server.local_url))
+        .post(format!("{}/message:send", server.local_url))
         .json(&json!({
-            "id": "req-1",
             "message": {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
             "contextId": "ctx-123"
         }))
@@ -1207,7 +1207,7 @@ async fn test_tasks_send_with_context_id() {
 
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(
-        body["result"]["contextId"], "ctx-123",
+        body["task"]["contextId"], "ctx-123",
         "contextId should be stored"
     );
 
@@ -1220,9 +1220,8 @@ async fn test_tasks_send_with_parent_task_id() {
     let (server, client) = test_server().await;
 
     let resp = client
-        .post(format!("{}/tasks/send", server.local_url))
+        .post(format!("{}/message:send", server.local_url))
         .json(&json!({
-            "id": "req-1",
             "message": {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
             "parentTaskId": "parent-456"
         }))
@@ -1232,7 +1231,7 @@ async fn test_tasks_send_with_parent_task_id() {
 
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(
-        body["result"]["parentTaskId"], "parent-456",
+        body["task"]["parentTaskId"], "parent-456",
         "parentTaskId should be stored"
     );
 
@@ -1245,9 +1244,8 @@ async fn test_tasks_send_with_context_and_parent() {
     let (server, client) = test_server().await;
 
     let resp = client
-        .post(format!("{}/tasks/send", server.local_url))
+        .post(format!("{}/message:send", server.local_url))
         .json(&json!({
-            "id": "req-1",
             "message": {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
             "contextId": "ctx-123",
             "parentTaskId": "parent-456",
@@ -1259,15 +1257,15 @@ async fn test_tasks_send_with_context_and_parent() {
 
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(
-        body["result"]["contextId"], "ctx-123",
+        body["task"]["contextId"], "ctx-123",
         "contextId should be stored"
     );
     assert_eq!(
-        body["result"]["parentTaskId"], "parent-456",
+        body["task"]["parentTaskId"], "parent-456",
         "parentTaskId should be stored"
     );
     assert_eq!(
-        body["result"]["sessionId"], "sess-789",
+        body["task"]["sessionId"], "sess-789",
         "sessionId should be stored"
     );
 
@@ -1284,7 +1282,7 @@ async fn test_agent_card_cache_headers() {
     let (server, client) = test_server().await;
 
     let resp = client
-        .get(format!("{}/agent.json", server.local_url))
+        .get(format!("{}/.well-known/agent-card.json", server.local_url))
         .send()
         .await
         .unwrap();
@@ -1297,11 +1295,11 @@ async fn test_agent_card_cache_headers() {
     assert_eq!(
         cache_control,
         Some("max-age=300"),
-        "agent.json should have Cache-Control: max-age=300"
+        "agent card should have Cache-Control: max-age=300"
     );
 
     let etag = resp.headers().get("ETag").and_then(|v| v.to_str().ok());
-    assert!(etag.is_some(), "agent.json should have an ETag header");
+    assert!(etag.is_some(), "agent card should have an ETag header");
     assert!(etag.unwrap().starts_with('"'), "ETag should be quoted");
     // With the test server card, version is "1.0"
     assert_eq!(etag, Some(r#""1.0""#), "ETag should match card version");
@@ -1322,11 +1320,11 @@ async fn test_extended_agent_card() {
         url: "http://127.0.0.1:0".into(),
         ..Default::default()
     };
-    let server = A2aServer::start(card, Arc::new(PeerCache::new()))
+    let server = A2aServer::start(card, Arc::new(PeerCache::new()), 0)
         .await
         .unwrap();
 
-    let resp = reqwest::get(format!("{}/agent.json/extended", server.local_url))
+    let resp = reqwest::get(format!("{}/extendedAgentCard", server.local_url))
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
@@ -1359,9 +1357,8 @@ async fn test_tasks_send_unsupported_content_type() {
     let (server, client) = test_server().await;
 
     let resp = client
-        .post(format!("{}/tasks/send", server.local_url))
+        .post(format!("{}/message:send", server.local_url))
         .json(&json!({
-            "id": "req-1",
             "message": {
                 "role": "user",
                 "parts": [{"type": "unknown_type", "data": "something"}]
@@ -1370,6 +1367,7 @@ async fn test_tasks_send_unsupported_content_type() {
         .send()
         .await
         .unwrap();
+    assert_eq!(resp.status(), 400);
 
     let body: serde_json::Value = resp.json().await.unwrap();
     assert!(
@@ -1377,15 +1375,16 @@ async fn test_tasks_send_unsupported_content_type() {
         "Should return error for unsupported content type"
     );
     assert_eq!(
-        body["error"]["code"], -32002,
-        "Should use CONTENT_TYPE_NOT_SUPPORTED code"
+        body["error"]["code"], 400,
+        "Should return BAD_REQUEST"
     );
     assert!(
         body["error"]["message"]
             .as_str()
             .unwrap_or("")
-            .contains("unknown_type"),
-        "Error message should mention unsupported type"
+            .contains("Content type not supported"),
+        "Error message should mention content type, got: {:?}",
+        body["error"]["message"]
     );
 
     server.shutdown().await;
@@ -1401,9 +1400,8 @@ async fn test_tasks_send_with_metadata() {
     let (server, client) = test_server().await;
 
     let resp = client
-        .post(format!("{}/tasks/send", server.local_url))
+        .post(format!("{}/message:send", server.local_url))
         .json(&json!({
-            "id": "req-1",
             "message": {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
             "metadata": {"source": "test", "priority": 5}
         }))
@@ -1413,11 +1411,11 @@ async fn test_tasks_send_with_metadata() {
 
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(
-        body["result"]["metadata"]["source"], "test",
+        body["task"]["metadata"]["source"], "test",
         "metadata.source should be stored"
     );
     assert_eq!(
-        body["result"]["metadata"]["priority"], 5,
+        body["task"]["metadata"]["priority"], 5,
         "metadata.priority should be stored"
     );
 
@@ -1431,9 +1429,8 @@ async fn test_tasks_get_returns_metadata() {
 
     // Create a task with metadata
     let send_resp = client
-        .post(format!("{}/tasks/send", server.local_url))
+        .post(format!("{}/message:send", server.local_url))
         .json(&json!({
-            "id": "req-1",
             "message": {"role": "user", "parts": [{"type": "text", "text": "hi"}]},
             "metadata": {"source": "test", "key": "value"}
         }))
@@ -1441,7 +1438,7 @@ async fn test_tasks_get_returns_metadata() {
         .await
         .unwrap();
     let send_body: serde_json::Value = send_resp.json().await.unwrap();
-    let task_id = send_body["result"]["id"].as_str().unwrap().to_string();
+    let task_id = send_body["task"]["id"].as_str().unwrap().to_string();
 
     // Get the task and verify metadata is present
     let resp = client
@@ -1451,11 +1448,11 @@ async fn test_tasks_get_returns_metadata() {
         .unwrap();
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(
-        body["result"]["metadata"]["source"], "test",
+        body["task"]["metadata"]["source"], "test",
         "metadata should be preserved when getting task"
     );
     assert_eq!(
-        body["result"]["metadata"]["key"], "value",
+        body["task"]["metadata"]["key"], "value",
         "metadata should be preserved when getting task"
     );
 
@@ -1473,13 +1470,13 @@ async fn test_get_task_with_history_length_full() {
 
     // Create a task via send (adds message to history)
     let send_resp = client
-        .post(format!("{}/tasks/send", server.local_url))
-        .json(&json!({"id": "req-1", "message": {"role": "user", "parts": [{"type":"text","text":"turn 1"}]}}))
+        .post(format!("{}/message:send", server.local_url))
+        .json(&json!({"message": {"role": "user", "parts": [{"type":"text","text":"turn 1"}]}}))
         .send()
         .await
         .unwrap();
     let send_body: serde_json::Value = send_resp.json().await.unwrap();
-    let task_id = send_body["result"]["id"].as_str().unwrap().to_string();
+    let task_id = send_body["task"]["id"].as_str().unwrap().to_string();
 
     // Get the task with no historyLength (should return full history)
     let resp = client
@@ -1488,7 +1485,7 @@ async fn test_get_task_with_history_length_full() {
         .await
         .unwrap();
     let body: serde_json::Value = resp.json().await.unwrap();
-    let history = body["result"]["history"].as_array();
+    let history = body["task"]["history"].as_array();
     assert!(history.is_some(), "history should be present");
     assert_eq!(history.unwrap().len(), 1, "should have 1 history entry");
 
@@ -1503,13 +1500,13 @@ async fn test_get_task_with_history_length_filter() {
 
     // Create a task via send (adds first message to history)
     let send_resp = client
-        .post(format!("{}/tasks/send", server.local_url))
-        .json(&json!({"id": "req-1", "message": {"role": "user", "parts": [{"type":"text","text":"turn 1"}]}}))
+        .post(format!("{}/message:send", server.local_url))
+        .json(&json!({"message": {"role": "user", "parts": [{"type":"text","text":"turn 1"}]}}))
         .send()
         .await
         .unwrap();
     let send_body: serde_json::Value = send_resp.json().await.unwrap();
-    let task_id = send_body["result"]["id"].as_str().unwrap().to_string();
+    let task_id = send_body["task"]["id"].as_str().unwrap().to_string();
 
     // Append more messages to history directly (simulate multi-turn)
     store
@@ -1520,6 +1517,9 @@ async fn test_get_task_with_history_length_filter() {
                 parts: vec![Part::Text {
                     text: "response 1".into(),
                 }],
+                message_id: uuid::Uuid::new_v4().to_string(),
+                extensions: None,
+                metadata: None,
             },
         )
         .unwrap();
@@ -1531,6 +1531,9 @@ async fn test_get_task_with_history_length_filter() {
                 parts: vec![Part::Text {
                     text: "turn 2".into(),
                 }],
+                message_id: uuid::Uuid::new_v4().to_string(),
+                extensions: None,
+                metadata: None,
             },
         )
         .unwrap();
@@ -1545,10 +1548,10 @@ async fn test_get_task_with_history_length_filter() {
         .await
         .unwrap();
     let body: serde_json::Value = resp.json().await.unwrap();
-    let history = body["result"]["history"].as_array().unwrap();
+    let history = body["task"]["history"].as_array().unwrap();
     assert_eq!(history.len(), 1, "historyLength=1 should return 1 entry");
     assert_eq!(
-        history[0]["role"], "user",
+        history[0]["role"], "USER",
         "last entry should be the user turn"
     );
     assert_eq!(history[0]["parts"][0]["text"], "turn 2");
@@ -1563,13 +1566,13 @@ async fn test_get_task_with_history_length_zero() {
 
     // Create a task
     let send_resp = client
-        .post(format!("{}/tasks/send", server.local_url))
-        .json(&json!({"id": "req-1", "message": {"role": "user", "parts": [{"type":"text","text":"hello"}]}}))
+        .post(format!("{}/message:send", server.local_url))
+        .json(&json!({"message": {"role": "user", "parts": [{"type":"text","text":"hello"}]}}))
         .send()
         .await
         .unwrap();
     let send_body: serde_json::Value = send_resp.json().await.unwrap();
-    let task_id = send_body["result"]["id"].as_str().unwrap().to_string();
+    let task_id = send_body["task"]["id"].as_str().unwrap().to_string();
 
     // Get the task with historyLength=0 (should omit history)
     let resp = client
@@ -1582,7 +1585,7 @@ async fn test_get_task_with_history_length_zero() {
         .unwrap();
     let body: serde_json::Value = resp.json().await.unwrap();
     assert!(
-        body["result"].get("history").is_none(),
+        body["task"].get("history").is_none(),
         "history should be absent when historyLength=0"
     );
 
@@ -1597,13 +1600,13 @@ async fn test_get_task_with_history_length_invalid() {
 
     // Create a task
     let send_resp = client
-        .post(format!("{}/tasks/send", server.local_url))
-        .json(&json!({"id": "req-1", "message": {"role": "user", "parts": [{"type":"text","text":"hello"}]}}))
+        .post(format!("{}/message:send", server.local_url))
+        .json(&json!({"message": {"role": "user", "parts": [{"type":"text","text":"hello"}]}}))
         .send()
         .await
         .unwrap();
     let send_body: serde_json::Value = send_resp.json().await.unwrap();
-    let task_id = send_body["result"]["id"].as_str().unwrap().to_string();
+    let task_id = send_body["task"]["id"].as_str().unwrap().to_string();
 
     // Append some history
     store
@@ -1614,6 +1617,9 @@ async fn test_get_task_with_history_length_invalid() {
                 parts: vec![Part::Text {
                     text: "response".into(),
                 }],
+                message_id: uuid::Uuid::new_v4().to_string(),
+                extensions: None,
+                metadata: None,
             },
         )
         .unwrap();
@@ -1628,7 +1634,7 @@ async fn test_get_task_with_history_length_invalid() {
         .await
         .unwrap();
     let body: serde_json::Value = resp.json().await.unwrap();
-    let history = body["result"]["history"].as_array();
+    let history = body["task"]["history"].as_array();
     assert!(
         history.is_some(),
         "history should be present when historyLength is invalid"
@@ -1650,7 +1656,7 @@ async fn test_incoming_task_channel_with_context_and_parent() {
         url: "http://127.0.0.1:0".into(),
         ..Default::default()
     };
-    let mut server = A2aServer::start(card, Arc::new(PeerCache::new()))
+    let mut server = A2aServer::start(card, Arc::new(PeerCache::new()), 0)
         .await
         .unwrap();
     let mut task_rx = server.take_incoming_task_receiver().unwrap();
@@ -1659,9 +1665,8 @@ async fn test_incoming_task_channel_with_context_and_parent() {
 
     // Send a task with contextId and parentTaskId
     let resp = client
-        .post(format!("{}/tasks/send", server.local_url))
+        .post(format!("{}/message:send", server.local_url))
         .json(&json!({
-            "id": "req-1",
             "message": {"role": "user", "parts": [{"type": "text", "text": "multi-turn"}]},
             "contextId": "ctx-999",
             "parentTaskId": "parent-888",
@@ -1693,24 +1698,24 @@ async fn test_a2a_version_missing_rejected() {
         url: "http://127.0.0.1:0".into(),
         ..Default::default()
     };
-    let server = A2aServer::start(card, Arc::new(PeerCache::new()))
+    let server = A2aServer::start(card, Arc::new(PeerCache::new()), 0)
         .await
         .unwrap();
     let client = reqwest::Client::new(); // no A2A-Version header
 
     let resp = client
-        .post(format!("{}/tasks/send", server.local_url))
+        .post(format!("{}/message:send", server.local_url))
         .json(&json!({
-            "id": "r1",
             "message": {"role": "user", "parts": [{"type": "text", "text": "hi"}]}
         }))
         .send()
         .await
         .unwrap();
-    // JSON-RPC errors are returned with HTTP 200
-    assert_eq!(resp.status(), 200);
+    // Version check errors return HTTP 400
+    assert_eq!(resp.status(), 400);
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(body["error"]["code"], crate::UNSUPPORTED_OPERATION);
+    assert_eq!(body["error"]["code"], 400);
+    assert_eq!(body["error"]["status"], "INVALID_REQUEST");
     assert!(
         body["error"]["message"]
             .as_str()
@@ -1729,7 +1734,7 @@ async fn test_a2a_version_unsupported_value_rejected() {
         url: "http://127.0.0.1:0".into(),
         ..Default::default()
     };
-    let server = A2aServer::start(card, Arc::new(PeerCache::new()))
+    let server = A2aServer::start(card, Arc::new(PeerCache::new()), 0)
         .await
         .unwrap();
     let client = reqwest::Client::builder()
@@ -1745,17 +1750,17 @@ async fn test_a2a_version_unsupported_value_rejected() {
         .unwrap();
 
     let resp = client
-        .post(format!("{}/tasks/send", server.local_url))
+        .post(format!("{}/message:send", server.local_url))
         .json(&json!({
-            "id": "r1",
             "message": {"role": "user", "parts": [{"type": "text", "text": "hi"}]}
         }))
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.status(), 400);
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(body["error"]["code"], crate::UNSUPPORTED_OPERATION);
+    assert_eq!(body["error"]["code"], 400);
+    assert_eq!(body["error"]["status"], "INVALID_REQUEST");
 
     server.shutdown().await;
 }
@@ -1768,14 +1773,14 @@ async fn test_agent_json_bypasses_version_check() {
         url: "http://127.0.0.1:0".into(),
         ..Default::default()
     };
-    let server = A2aServer::start(card, Arc::new(PeerCache::new()))
+    let server = A2aServer::start(card, Arc::new(PeerCache::new()), 0)
         .await
         .unwrap();
     let client = reqwest::Client::new(); // no A2A-Version header
 
-    // agent.json should work without A2A-Version
+    // /.well-known/agent-card.json should work without A2A-Version
     let resp = client
-        .get(format!("{}/agent.json", server.local_url))
+        .get(format!("{}/.well-known/agent-card.json", server.local_url))
         .send()
         .await
         .unwrap();
@@ -1794,14 +1799,14 @@ async fn test_extended_agent_card_bypasses_version_check() {
         url: "http://127.0.0.1:0".into(),
         ..Default::default()
     };
-    let server = A2aServer::start(card, Arc::new(PeerCache::new()))
+    let server = A2aServer::start(card, Arc::new(PeerCache::new()), 0)
         .await
         .unwrap();
     let client = reqwest::Client::new(); // no A2A-Version header
 
-    // /agent.json/extended should work without A2A-Version
+    // /extendedAgentCard should work without A2A-Version
     let resp = client
-        .get(format!("{}/agent.json/extended", server.local_url))
+        .get(format!("{}/extendedAgentCard", server.local_url))
         .send()
         .await
         .unwrap();

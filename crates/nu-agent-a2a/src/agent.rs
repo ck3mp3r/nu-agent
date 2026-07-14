@@ -2,6 +2,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use mdns_sd::ServiceDaemon;
+use tokio::sync::mpsc;
+
 use crate::*;
 
 /// Top-level orchestration for running an A2A-compatible agent.
@@ -15,7 +18,11 @@ pub struct AgentHandle {
     pub client: A2aClient,
     pub card: AgentCard,
     pub cache: Arc<PeerCache>,
+    pub completion_tx: Option<mpsc::Sender<A2aCompletionEvent>>,
+    completion_rx: Option<mpsc::Receiver<A2aCompletionEvent>>,
     _browser: Option<DiscoveryBrowser>,
+    /// Root mDNS daemon shared by register and browse.
+    _daemon: Option<ServiceDaemon>,
 }
 
 impl AgentHandle {
@@ -34,8 +41,10 @@ impl AgentHandle {
         name: &str,
         description: Option<&str>,
         skills: Vec<Skill>,
+        port: u16,
+        mesh_key: String,
     ) -> Result<Self, A2aError> {
-        match Self::start_inner(name, description, skills).await {
+        match Self::start_inner(name, description, skills, port, mesh_key).await {
             Ok(handle) => Ok(handle),
             Err((err, Some(server))) => {
                 server.shutdown().await;
@@ -49,6 +58,8 @@ impl AgentHandle {
         name: &str,
         description: Option<&str>,
         skills: Vec<Skill>,
+        port: u16,
+        mesh_key: String,
     ) -> Result<Self, (A2aError, Option<A2aServer>)> {
         let mut card = AgentCard {
             name: name.to_string(),
@@ -60,6 +71,7 @@ impl AgentHandle {
             supported_interfaces: vec![AgentInterface {
                 url: "http://127.0.0.1:0".into(),
                 protocol_version: "1.0".into(),
+                protocol_binding: "HTTP+JSON".into(),
             }],
             version: env!("CARGO_PKG_VERSION").to_string(),
             capabilities: AgentCapabilities::default(),
@@ -67,11 +79,16 @@ impl AgentHandle {
             security_schemes: HashMap::new(),
             extensions: vec![],
             metadata: None,
+            default_input_modes: vec!["text/plain".to_string()],
+            default_output_modes: vec!["text/plain".to_string()],
         };
 
         let cache = Arc::new(PeerCache::new());
 
-        let server = match A2aServer::start(card.clone(), cache.clone()).await {
+        // ── A2A completion event channel ──────────────────────────────────
+        let (completion_tx, completion_rx) = mpsc::channel::<A2aCompletionEvent>(64);
+
+        let server = match A2aServer::start(card.clone(), cache.clone(), port).await {
             Ok(s) => s,
             Err(e) => return Err((e, None)),
         };
@@ -80,19 +97,36 @@ impl AgentHandle {
             iface.url = server.local_url.clone();
         }
 
-        let port = server.port;
-        let discovery_service = match DiscoveryService::register(name, port, &card) {
+        let actual_port = server.port;
+
+        // ── Shared mDNS daemon ────────────────────────────────────────────
+        // One daemon for both register and browse so they share the same
+        // mDNS responder state.  Without this, macOS's mDNSResponder
+        // absorbs browse queries without forwarding them to the register
+        // daemon's thread.
+        let mdns_daemon = match ServiceDaemon::new() {
             Ok(d) => d,
             Err(e) => {
-                log::warn!("mDNS registration failed (non-fatal): {e}");
-                DiscoveryService::noop()
+                return Err((
+                    A2aError::Internal(format!("mdns-sd daemon: {e}")),
+                    Some(server),
+                ));
             }
         };
+
+        let discovery_service =
+            match DiscoveryService::register(mdns_daemon.clone(), name, actual_port, &card, &mesh_key) {
+                Ok(d) => d,
+                Err(e) => {
+                    log::warn!("mDNS registration failed (non-fatal): {e}");
+                    DiscoveryService::noop()
+                }
+            };
 
         // ── mDNS discovery browser ────────────────────────────────────────
         // Also discover agents on the network.  This is best-effort — failure
         // is non-fatal (local discovery still works).
-        let browser = match DiscoveryBrowser::browse() {
+        let browser = match DiscoveryBrowser::browse(mdns_daemon.clone(), &mesh_key, &card.name) {
             Ok((b, mut rx)) => {
                 let cache_clone = cache.clone();
                 tokio::spawn(async move {
@@ -119,7 +153,10 @@ impl AgentHandle {
             client,
             card,
             cache,
+            completion_tx: Some(completion_tx),
+            completion_rx: Some(completion_rx),
             _browser: browser,
+            _daemon: Some(mdns_daemon),
         })
     }
 
@@ -133,8 +170,8 @@ impl AgentHandle {
     ///
     /// Returns [`A2aError`] if the server cannot bind or the mDNS service
     /// cannot be registered.
-    pub async fn start_with_card(card: AgentCard) -> Result<Self, A2aError> {
-        match Self::start_with_card_inner(card).await {
+    pub async fn start_with_card(card: AgentCard, port: u16, mesh_key: String) -> Result<Self, A2aError> {
+        match Self::start_with_card_inner(card, port, mesh_key).await {
             Ok(handle) => Ok(handle),
             Err((err, Some(server))) => {
                 server.shutdown().await;
@@ -146,10 +183,15 @@ impl AgentHandle {
 
     async fn start_with_card_inner(
         mut card: AgentCard,
+        port: u16,
+        mesh_key: String,
     ) -> Result<Self, (A2aError, Option<A2aServer>)> {
         let cache = Arc::new(PeerCache::new());
 
-        let server = match A2aServer::start(card.clone(), cache.clone()).await {
+        // ── A2A completion event channel ──────────────────────────────────
+        let (completion_tx, completion_rx) = mpsc::channel::<A2aCompletionEvent>(64);
+
+        let server = match A2aServer::start(card.clone(), cache.clone(), port).await {
             Ok(s) => s,
             Err(e) => return Err((e, None)),
         };
@@ -158,17 +200,29 @@ impl AgentHandle {
             iface.url = server.local_url.clone();
         }
 
-        let port = server.port;
-        let discovery_service = match DiscoveryService::register(&card.name, port, &card) {
+        let actual_port = server.port;
+
+        let mdns_daemon = match ServiceDaemon::new() {
             Ok(d) => d,
             Err(e) => {
-                log::warn!("mDNS registration failed (non-fatal): {e}");
-                DiscoveryService::noop()
+                return Err((
+                    A2aError::Internal(format!("mdns-sd daemon: {e}")),
+                    Some(server),
+                ));
             }
         };
 
+        let discovery_service =
+            match DiscoveryService::register(mdns_daemon.clone(), &card.name, actual_port, &card, &mesh_key) {
+                Ok(d) => d,
+                Err(e) => {
+                    log::warn!("mDNS registration failed (non-fatal): {e}");
+                    DiscoveryService::noop()
+                }
+            };
+
         // mDNS browser
-        let browser = match DiscoveryBrowser::browse() {
+        let browser = match DiscoveryBrowser::browse(mdns_daemon.clone(), &mesh_key, &card.name) {
             Ok((b, mut rx)) => {
                 let cache_clone = cache.clone();
                 tokio::spawn(async move {
@@ -195,13 +249,25 @@ impl AgentHandle {
             client,
             card,
             cache,
+            completion_tx: Some(completion_tx),
+            completion_rx: Some(completion_rx),
             _browser: browser,
+            _daemon: Some(mdns_daemon),
         })
     }
 
     /// Access the agent's [`TaskStore`].
     pub fn task_store(&self) -> Arc<TaskStore> {
         self.server.task_store()
+    }
+
+    /// Take the A2A completion event receiver.
+    ///
+    /// This receiver delivers [`A2aCompletionEvent`] instances when a remote
+    /// agent finishes processing a task that was sent via `tasks.send`.
+    /// The receiver can only be taken once; subsequent calls return `None`.
+    pub fn take_completion_receiver(&mut self) -> Option<mpsc::Receiver<A2aCompletionEvent>> {
+        self.completion_rx.take()
     }
 
     /// Gracefully shut down the agent, stopping the server.
@@ -215,13 +281,17 @@ impl AgentHandle {
     /// Shut down with a custom timeout for graceful shutdown.
     ///
     /// Consumes `self` so it cannot be called twice.
-    pub async fn shutdown_with_timeout(self, timeout: Duration) {
+    pub async fn shutdown_with_timeout(mut self, timeout: Duration) {
         // Graceful HTTP server shutdown.
         tokio::time::timeout(timeout, self.server.shutdown())
             .await
             .ok();
 
-        // DiscoveryService is dropped when this function returns, which
-        // sends the mDNS goodbye packet automatically.
+        // Shut down the shared mDNS daemon.  DiscoveryService and
+        // DiscoveryBrowser hold clones — we shut down the root so the
+        // daemon thread stops.
+        if let Some(daemon) = self._daemon.take() {
+            let _ = daemon.shutdown();
+        }
     }
 }

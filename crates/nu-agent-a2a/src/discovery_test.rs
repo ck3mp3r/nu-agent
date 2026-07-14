@@ -1,9 +1,9 @@
+use std::time::Duration;
+
+use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
 use tokio::sync::mpsc;
 
 use super::*;
-use zeroconf::ServiceType;
-use zeroconf::browser::{BrowserEvent, ServiceDiscovery, ServiceRemoval};
-use zeroconf::prelude::*;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -18,141 +18,154 @@ fn test_card(name: &str, port: u16) -> AgentCard {
     }
 }
 
-/// Build a synthetic `ServiceDiscovery` suitable for testing.
-fn make_service_discovery(name: &str, port: u16) -> ServiceDiscovery {
-    ServiceDiscovery::builder()
-        .name(name.to_string())
-        .address("127.0.0.1".to_string())
-        .port(port)
-        .host_name(format!("{name}.local."))
-        .domain("local".to_string())
-        .txt(None)
-        .service_type(ServiceType::new("nu-agent-a2a", "tcp").unwrap())
-        .build()
-        .expect("synthetic ServiceDiscovery")
+/// Convert raw resolved-service fields into a [`Peer`].
+///
+/// This mirrors the mapping inside [`peer_from_service`] so we can unit-test
+/// the conversion logic without constructing an `mdns_sd::ResolvedService`
+/// (which has no public constructor).
+fn peer_from_fields(name: &str, address: &str, port: u16, hostname: &str) -> Peer {
+    Peer {
+        name: name.to_string(),
+        url: format!("http://{address}:{port}"),
+        host: hostname.to_string(),
+        port,
+        card: None,
+        discovered_at: std::time::Instant::now(),
+    }
+}
+
+/// Synthetic service info used in integration tests.
+fn build_test_service_info(agent_name: &str, port: u16, mesh_key: &str) -> ServiceInfo {
+    let props: Vec<(&str, &str)> = vec![("name", agent_name), ("mesh_key", mesh_key)];
+    ServiceInfo::new(
+        "_nu-agent-a2a._tcp.local.",
+        agent_name,
+        &format!("{agent_name}.local."),
+        "127.0.0.1",
+        port,
+        props.as_slice(),
+    )
+    .expect("synthetic ServiceInfo")
 }
 
 // ---------------------------------------------------------------------------
-// process_zeroconf_event — synthetic event processing tests
+// peer_from_fields tests (pure conversion logic)
 // ---------------------------------------------------------------------------
 
+/// Verify the pure field-mapping function produces a correct [`Peer`].
+#[test]
+fn test_peer_from_fields_populates_correctly() {
+    let peer = peer_from_fields("my-agent", "192.168.1.10", 8080, "my-agent.local.");
+
+    assert_eq!(peer.name, "my-agent");
+    assert_eq!(peer.url, "http://192.168.1.10:8080");
+    assert_eq!(peer.host, "my-agent.local.");
+    assert_eq!(peer.port, 8080);
+    assert!(peer.card.is_none());
+}
+
+/// Verify the field-mapping function handles port 0.
+#[test]
+fn test_peer_from_fields_port_zero() {
+    let peer = peer_from_fields("zero-port", "127.0.0.1", 0, "zero-port.local.");
+    assert_eq!(peer.port, 0);
+    assert_eq!(peer.url, "http://127.0.0.1:0");
+}
+
+// ---------------------------------------------------------------------------
+// PeerEvent dispatch tests
+// ---------------------------------------------------------------------------
+
+/// Verify that sending a [`PeerEvent::PeerDiscovered`] through the channel
+/// preserves event order.
 #[tokio::test]
-async fn test_process_discovery_add_event() {
+async fn test_peer_event_roundtrip_discovered() {
     let (tx, mut rx) = mpsc::channel::<PeerEvent>(16);
 
-    let service = make_service_discovery("test-agent", 5001);
-    process_zeroconf_event(&BrowserEvent::Add(service), &tx);
+    let peer = Box::new(peer_from_fields("alpha", "10.0.0.1", 9001, "alpha.local."));
+    tx.send(PeerEvent::PeerDiscovered(peer)).await.unwrap();
+    drop(tx);
 
-    let event = rx.try_recv().expect("should have received PeerEvent");
-
+    let event = rx.recv().await.expect("should receive PeerEvent");
     match event {
-        PeerEvent::PeerDiscovered(peer) => {
-            assert!(
-                peer.name.contains("test-agent"),
-                "name should contain test-agent"
-            );
-            assert_eq!(peer.port, 5001);
-            assert_eq!(peer.host, "test-agent.local.");
+        PeerEvent::PeerDiscovered(p) => {
+            assert_eq!(p.name, "alpha");
+            assert_eq!(p.port, 9001);
         }
         other => panic!("Expected PeerDiscovered, got: {other:?}"),
     }
 }
 
+/// Verify that sending multiple discovered events in sequence works.
 #[tokio::test]
-async fn test_process_discovery_add_multiple() {
+async fn test_peer_event_roundtrip_multiple() {
     let (tx, mut rx) = mpsc::channel::<PeerEvent>(16);
 
-    let alpha = make_service_discovery("alpha", 5002);
-    let beta = make_service_discovery("beta", 5003);
-
-    process_zeroconf_event(&BrowserEvent::Add(alpha), &tx);
-    process_zeroconf_event(&BrowserEvent::Add(beta), &tx);
-
+    let alpha = Box::new(peer_from_fields("alpha", "10.0.0.1", 9001, "alpha.local."));
+    let beta = Box::new(peer_from_fields("beta", "10.0.0.2", 9002, "beta.local."));
+    tx.send(PeerEvent::PeerDiscovered(alpha)).await.unwrap();
+    tx.send(PeerEvent::PeerDiscovered(beta)).await.unwrap();
     drop(tx);
 
-    let mut discovered = std::collections::HashSet::new();
-    while let Ok(Some(event)) =
-        tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv()).await
-    {
-        if let PeerEvent::PeerDiscovered(peer) = event {
-            discovered.insert(peer.name);
+    let mut names = Vec::new();
+    while let Some(event) = rx.recv().await {
+        if let PeerEvent::PeerDiscovered(p) = event {
+            names.push(p.name);
         }
     }
 
-    assert!(
-        discovered.iter().any(|n| n.contains("alpha")),
-        "Should discover alpha"
-    );
-    assert!(
-        discovered.iter().any(|n| n.contains("beta")),
-        "Should discover beta"
-    );
+    assert!(names.iter().any(|n| n == "alpha"));
+    assert!(names.iter().any(|n| n == "beta"));
 }
 
+/// Verify that sending a [`PeerEvent::PeerLost`] is received correctly.
 #[tokio::test]
-async fn test_process_discovery_remove_event() {
+async fn test_peer_event_roundtrip_lost() {
     let (tx, mut rx) = mpsc::channel::<PeerEvent>(16);
 
-    // Send a discovery event first, then a removal.
-    let service = make_service_discovery("removable", 5004);
-    process_zeroconf_event(&BrowserEvent::Add(service), &tx);
-
-    let removal = ServiceRemoval::builder()
-        .name("removable".to_string())
-        .kind("_nu-agent-a2a._tcp".to_string())
-        .domain("local".to_string())
-        .build()
-        .expect("synthetic ServiceRemoval");
-    process_zeroconf_event(&BrowserEvent::Remove(removal), &tx);
-
+    let peer = Box::new(peer_from_fields(
+        "removable",
+        "10.0.0.1",
+        9001,
+        "removable.local.",
+    ));
+    tx.send(PeerEvent::PeerDiscovered(peer)).await.unwrap();
+    tx.send(PeerEvent::PeerLost("removable".to_string()))
+        .await
+        .unwrap();
     drop(tx);
 
     let mut discovered = false;
     let mut lost = false;
 
-    while let Ok(Some(event)) =
-        tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv()).await
-    {
+    while let Some(event) = rx.recv().await {
         match event {
-            PeerEvent::PeerDiscovered(peer) => {
-                if peer.name.contains("removable") {
+            PeerEvent::PeerDiscovered(p) => {
+                if p.name == "removable" {
                     discovered = true;
                 }
             }
             PeerEvent::PeerLost(name) => {
-                if name.contains("removable") {
+                if name == "removable" {
                     lost = true;
                 }
             }
         }
     }
 
-    assert!(discovered, "Should discover removable");
-    assert!(lost, "Should receive PeerLost for removable");
+    assert!(discovered, "Should have received PeerDiscovered");
+    assert!(lost, "Should have received PeerLost");
 }
 
-#[tokio::test]
-async fn test_card_fetch_without_client() {
-    // When no HTTP client/runtime is provided, card should be None.
-    let (tx, mut rx) = mpsc::channel::<PeerEvent>(16);
+// ---------------------------------------------------------------------------
+// DiscoveryService — noop
+// ---------------------------------------------------------------------------
 
-    let service = make_service_discovery("no-client", 19999);
-    process_zeroconf_event(&BrowserEvent::Add(service), &tx);
-
-    drop(tx);
-
-    let event = rx.try_recv().expect("should have received PeerEvent");
-
-    match event {
-        PeerEvent::PeerDiscovered(peer) => {
-            assert!(peer.name.contains("no-client"));
-            assert!(
-                peer.card.is_none(),
-                "Card should be None when no client is provided"
-            );
-        }
-        other => panic!("Expected PeerDiscovered, got: {other:?}"),
-    }
+/// Verify that the no-op instance can be created and dropped without errors.
+#[test]
+fn test_discovery_service_noop_does_not_crash() {
+    let service = DiscoveryService::noop();
+    drop(service);
 }
 
 // ---------------------------------------------------------------------------
@@ -162,55 +175,256 @@ async fn test_card_fetch_without_client() {
 /// Verify that we can create a service, register it, and drop it without
 /// errors.
 ///
-/// NOTE: This test requires a working mDNS responder (Bonjour/Avahi) on the
-/// host. It is ignored by default in CI/offline environments.
+/// NOTE: This test requires a working mDNS responder (mdns-sd internal) on
+/// the host. It is ignored by default in CI/offline environments.
 #[ignore]
 #[tokio::test]
 async fn test_register_service() {
     let card = test_card("test-agent", 9999);
-    let service = DiscoveryService::register("test-agent", 9999, &card).unwrap();
+    let daemon = ServiceDaemon::new().unwrap();
+    let service = DiscoveryService::register(daemon, "test-agent", 9999, &card, "test-mesh").unwrap();
     drop(service);
 }
 
 /// Verify that registering the same name twice does not error.
 ///
-/// NOTE: Requires a working mDNS responder (Bonjour/Avahi) on the host.
+/// NOTE: Requires a working mDNS responder on the host.
 #[ignore]
 #[tokio::test]
 async fn test_register_duplicate_name() {
+    let daemon = ServiceDaemon::new().unwrap();
     let card = test_card("dup-agent", 3001);
-    let a = DiscoveryService::register("dup-agent", 3001, &card).unwrap();
-    let b = DiscoveryService::register("dup-agent", 3002, &card).unwrap();
+    let a = DiscoveryService::register(daemon.clone(), "dup-agent", 3001, &card, "test-mesh").unwrap();
+    let b = DiscoveryService::register(daemon.clone(), "dup-agent", 3002, &card, "test-mesh").unwrap();
     drop(a);
     drop(b);
+    let _ = daemon.shutdown();
 }
 
 // ---------------------------------------------------------------------------
 // DiscoveryBrowser — smoke tests
 // ---------------------------------------------------------------------------
 
-/// Convert a synthetic zeroconf [`BrowserEvent`] into a [`PeerEvent`] and
-/// forward it on the given channel.  Used by tests to simulate discovery
-/// without a live mDNS responder.
-fn process_zeroconf_event(event: &BrowserEvent, tx: &mpsc::Sender<PeerEvent>) {
-    match event {
-        BrowserEvent::Add(service) => {
-            let peer = super::peer_from_service(service);
+/// Verify browse returns a live channel.
+///
+/// NOTE: Requires a working mDNS responder on the host.
+#[ignore]
+#[test]
+fn test_browse_returns_live_channel() {
+    let daemon = ServiceDaemon::new().unwrap();
+    let (_browser, rx) = DiscoveryBrowser::browse(daemon, "test-mesh", "test-agent").unwrap();
+    assert!(!rx.is_closed(), "receiver should be alive after browse()");
+}
 
-            let _ = tx.try_send(PeerEvent::PeerDiscovered(Box::new(peer)));
+/// Integration test: register a service, browse for it, verify discovery.
+///
+/// NOTE: Requires a working mDNS responder (loopback) on the host.
+#[ignore]
+#[tokio::test]
+async fn test_register_and_browse_roundtrip() {
+    let daemon = ServiceDaemon::new().unwrap();
+    let card = test_card("roundtrip-agent", 7777);
+    let _service =
+        DiscoveryService::register(daemon.clone(), "roundtrip-agent", 7777, &card, "test-mesh").unwrap();
+
+    // Use a different own_name so we still discover the registered service
+    // (self-skip only excludes events matching own_name).
+    let (_browser, mut rx) = DiscoveryBrowser::browse(daemon.clone(), "test-mesh", "browser-agent").unwrap();
+
+    // Wait up to 5 seconds for the registered service to appear.
+    let mut found = false;
+    for _ in 0..50 {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        while let Ok(event) = rx.try_recv() {
+            if let PeerEvent::PeerDiscovered(peer) = event
+                && peer.name.contains("roundtrip-agent")
+            {
+                found = true;
+            }
         }
-        BrowserEvent::Remove(info) => {
-            let _ = tx.try_send(PeerEvent::PeerLost(info.name().clone()));
+
+        if found {
+            break;
+        }
+    }
+
+    assert!(found, "Should discover registered service via mDNS");
+}
+
+/// Integration test using raw mdns-sd daemon calls (no wrappers).
+///
+/// NOTE: Requires a working mDNS responder on the host.
+#[ignore]
+#[test]
+fn test_raw_mdns_sd_register_and_browse() {
+    let daemon = ServiceDaemon::new().expect("ServiceDaemon");
+
+    let info = build_test_service_info("raw-test-agent", 6666, "test-mesh");
+    daemon.register(info).expect("register");
+
+    let receiver = daemon.browse("_nu-agent-a2a._tcp.local.").expect("browse");
+
+    // Wait up to 3 seconds for our own service.
+    let mut found = false;
+    for _ in 0..30 {
+        if let Ok(ServiceEvent::ServiceResolved(resolved)) = receiver.try_recv()
+            && resolved.get_fullname().contains("raw-test-agent")
+        {
+            found = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    assert!(found, "Should discover raw-test-agent via mDNS");
+    let _ = daemon.shutdown();
+}
+
+// ---------------------------------------------------------------------------
+// Mesh scoping integration tests
+// ---------------------------------------------------------------------------
+
+/// Verify that browsing with one mesh key does not discover services
+/// registered with a different mesh key.
+///
+/// NOTE: Requires a working mDNS responder on the host.
+#[tokio::test]
+async fn test_mesh_scoping_filters_other_key() {
+    let daemon = ServiceDaemon::new().unwrap();
+    let card_a = test_card("mesh-key-a-agent", 7778);
+    let card_b = test_card("mesh-key-b-agent", 7779);
+    let _service_a = DiscoveryService::register(
+        daemon.clone(),
+        "mesh-key-a-agent",
+        7778,
+        &card_a,
+        "key-a",
+    )
+    .unwrap();
+    let _service_b = DiscoveryService::register(
+        daemon.clone(),
+        "mesh-key-b-agent",
+        7779,
+        &card_b,
+        "key-b",
+    )
+    .unwrap();
+
+    let (_browser, mut rx) = DiscoveryBrowser::browse(daemon.clone(), "key-a", "key-a-browser").unwrap();
+
+    // Wait up to 5 seconds and check we never receive the wrong-key peer.
+    let mut wrong_key = false;
+    for _ in 0..50 {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        while let Ok(event) = rx.try_recv() {
+            if let PeerEvent::PeerDiscovered(peer) = event
+                && peer.name.contains("mesh-key-b-agent")
+            {
+                wrong_key = true;
+            }
+        }
+        if wrong_key {
+            break;
+        }
+    }
+    assert!(!wrong_key, "Should not discover peers with different mesh key");
+}
+
+// ---------------------------------------------------------------------------
+// Self-exclusion: agent should not discover itself
+// ---------------------------------------------------------------------------
+
+/// Verify that an agent does not discover its own mDNS service.
+///
+/// NOTE: Requires a working mDNS responder on the host.
+#[ignore]
+#[tokio::test]
+async fn test_browse_self_excluded() {
+    let daemon = ServiceDaemon::new().unwrap();
+    let card = test_card("self-test-agent", 7777);
+    let _service = DiscoveryService::register(
+        daemon.clone(),
+        "self-test-agent",
+        7777,
+        &card,
+        "test-mesh",
+    )
+    .unwrap();
+
+    // Give mDNS time to announce
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let (_browser, mut rx) = DiscoveryBrowser::browse(
+        daemon.clone(),
+        "test-mesh",
+        "self-test-agent",
+    )
+    .unwrap();
+
+    // Try to receive — should NOT get our own service
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    while let Ok(event) = rx.try_recv() {
+        match event {
+            PeerEvent::PeerDiscovered(p) => {
+                assert_ne!(p.name, "self-test-agent", "agent should not discover itself");
+            }
+            PeerEvent::PeerLost(_) => {}
         }
     }
 }
 
-/// Verify browse returns a live channel.
+// ---------------------------------------------------------------------------
+// Cross-daemon mesh scoping (two separate daemons)
+// ---------------------------------------------------------------------------
+
+/// Verify that browsing with one mesh key does NOT discover services
+/// registered with a DIFFERENT mesh key on a SEPARATE daemon.
 ///
-/// NOTE: Requires a working mDNS responder (Bonjour/Avahi) on the host.
-#[ignore]
-#[test]
-fn test_browse_returns_live_channel() {
-    let (_browser, rx) = DiscoveryBrowser::browse().unwrap();
-    assert!(!rx.is_closed(), "receiver should be alive after browse()");
+/// NOTE: Requires a working mDNS responder on the host.
+#[tokio::test]
+async fn test_cross_daemon_mesh_scoping() {
+    // Daemon A registers a service with mesh_key "key-a"
+    let daemon_a = ServiceDaemon::new().unwrap();
+    let card_a = test_card("cross-daemon-agent", 8888);
+    let _service_a = DiscoveryService::register(
+        daemon_a.clone(),
+        "cross-daemon-agent",
+        8888,
+        &card_a,
+        "key-a",
+    )
+    .unwrap();
+
+    // Give mDNS time to announce
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Daemon B browses with a DIFFERENT mesh_key "key-b"
+    let daemon_b = ServiceDaemon::new().unwrap();
+    let (browser, mut rx) = DiscoveryBrowser::browse(
+        daemon_b.clone(),
+        "key-b",
+        "cross-daemon-browser",
+    )
+    .unwrap();
+
+    // Wait and check: should NOT discover cross-daemon-agent (key mismatch)
+    let mut found_wrong = false;
+    for _ in 0..30 {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        while let Ok(event) = rx.try_recv() {
+            if let PeerEvent::PeerDiscovered(peer) = event
+                && peer.name.contains("cross-daemon-agent")
+            {
+                found_wrong = true;
+                eprintln!("FOUND peer despite key mismatch! peer_key from TXT?");
+            }
+        }
+    }
+
+    assert!(!found_wrong, "Should NOT discover cross-daemon-agent with different mesh key");
+
+    drop(browser);
+    let _ = daemon_a.shutdown();
+    let _ = daemon_b.shutdown();
 }

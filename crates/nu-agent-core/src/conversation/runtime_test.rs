@@ -248,6 +248,7 @@ fn provider_dispatch_unsupported_provider_returns_error() {
     use crate::config::Config;
 
     let config = Config {
+        a2a_port: None,
         provider: "unsupported-provider".to_string(),
         provider_impl: None,
         model: "some-model".to_string(),
@@ -312,6 +313,7 @@ fn client_cache_key_contains_provider_and_model() {
     use crate::config::Config;
 
     let config = Config {
+        a2a_port: None,
         provider: "copilot".to_string(),
         provider_impl: None,
         model: "test-model".to_string(),
@@ -359,6 +361,7 @@ fn client_cache_key_includes_base_url_when_set() {
     use crate::config::Config;
 
     let config = Config {
+        a2a_port: None,
         provider: "copilot".to_string(),
         provider_impl: None,
         model: "test-model".to_string(),
@@ -534,6 +537,7 @@ fn active_model_identity_returns_provider_slash_model() {
     use crate::config::Config;
 
     let config = Config {
+        a2a_port: None,
         provider: "copilot".to_string(),
         provider_impl: None,
         model: "claude-sonnet-4".to_string(),
@@ -671,6 +675,7 @@ fn provider_state_client_cache_key_contains_provider_and_api_key() {
     use crate::config::Config;
 
     let config = Config {
+        a2a_port: None,
         provider: "copilot".to_string(),
         provider_impl: None,
         model: "test-model".to_string(),
@@ -806,6 +811,7 @@ fn accessor_provider_returns_provider_string() {
     use crate::config::Config;
 
     let config = Config {
+        a2a_port: None,
         provider: "copilot".to_string(),
         provider_impl: None,
         model: "test-model".to_string(),
@@ -839,6 +845,7 @@ fn accessor_model_returns_model_string() {
     use crate::config::Config;
 
     let config = Config {
+        a2a_port: None,
         provider: "copilot".to_string(),
         provider_impl: None,
         model: "claude-sonnet-4".to_string(),
@@ -870,6 +877,7 @@ fn accessor_max_context_tokens_returns_none_when_unset() {
     use crate::config::Config;
 
     let config = Config {
+        a2a_port: None,
         provider: "copilot".to_string(),
         provider_impl: None,
         model: "test-model".to_string(),
@@ -904,6 +912,7 @@ fn accessor_max_context_tokens_returns_value_when_set() {
     use crate::config::Config;
 
     let config = Config {
+        a2a_port: None,
         provider: "copilot".to_string(),
         provider_impl: None,
         model: "test-model".to_string(),
@@ -938,6 +947,7 @@ fn accessor_startup_plugin_config_returns_none_when_default() {
     use crate::config::Config;
 
     let config = Config {
+        a2a_port: None,
         provider: "copilot".to_string(),
         provider_impl: None,
         model: "test-model".to_string(),

@@ -15,6 +15,8 @@ pub struct AgentCapabilities {
     pub push_notifications: bool,
     #[serde(default = "default_true")]
     pub stateful: bool,
+    #[serde(rename = "extendedAgentCard", default)]
+    pub extended_agent_card: bool,
 }
 
 impl Default for AgentCapabilities {
@@ -23,6 +25,7 @@ impl Default for AgentCapabilities {
             streaming: true,
             push_notifications: false,
             stateful: true,
+            extended_agent_card: false,
         }
     }
 }
@@ -87,6 +90,8 @@ pub struct AgentProvider {
 pub struct AgentInterface {
     pub url: String,
     pub protocol_version: String,
+    #[serde(rename = "protocolBinding")]
+    pub protocol_binding: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -210,10 +215,18 @@ pub struct AgentCard {
     pub extensions: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<HashMap<String, Value>>,
+    #[serde(rename = "defaultInputModes", default = "default_text_plain_vec")]
+    pub default_input_modes: Vec<String>,
+    #[serde(rename = "defaultOutputModes", default = "default_text_plain_vec")]
+    pub default_output_modes: Vec<String>,
 }
 
 fn default_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
+}
+
+fn default_text_plain_vec() -> Vec<String> {
+    vec!["text/plain".to_string()]
 }
 
 impl Default for AgentCard {
@@ -232,6 +245,8 @@ impl Default for AgentCard {
             security_schemes: HashMap::new(),
             extensions: vec![],
             metadata: None,
+            default_input_modes: default_text_plain_vec(),
+            default_output_modes: default_text_plain_vec(),
         }
     }
 }

@@ -97,6 +97,7 @@ mod max_tool_turns_mode_defaults {
             max_tool_calls_per_subturn: None,
             additional_params: None,
             a2a_enabled: false,
+            a2a_port: None,
         };
 
         // Simulate the mode-specific default logic from mod.rs
@@ -133,6 +134,7 @@ mod max_tool_turns_mode_defaults {
             max_tool_calls_per_subturn: None,
             additional_params: None,
             a2a_enabled: false,
+            a2a_port: None,
         };
 
         // Simulate the mode-specific default logic from mod.rs
@@ -169,6 +171,7 @@ mod max_tool_turns_mode_defaults {
                 max_tool_calls_per_subturn: None,
                 additional_params: None,
                 a2a_enabled: false,
+                a2a_port: None,
             };
 
             // Simulate the mode-specific default logic from mod.rs
@@ -609,6 +612,7 @@ fn create_minimal_flag_config() -> Config {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        a2a_port: None,
     }
 }
 

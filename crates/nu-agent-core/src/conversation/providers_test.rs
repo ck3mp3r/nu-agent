@@ -39,6 +39,7 @@ fn build_copilot_client_no_auth_returns_ok() {
     }
 
     let config = Config {
+        a2a_port: None,
         provider: "copilot".to_string(),
         provider_impl: None,
         model: "gpt-4".to_string(),
@@ -105,6 +106,7 @@ fn build_copilot_client_oauth_path_succeeds_at_build_time() {
     }
 
     let config = Config {
+        a2a_port: None,
         provider: "copilot".to_string(),
         provider_impl: None,
         model: "gpt-4".to_string(),
@@ -231,6 +233,7 @@ fn cached_provider_client_copilot_variant_holds_client() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     let config = Config {
+        a2a_port: None,
         provider: "copilot".to_string(),
         model: "gpt-4".to_string(),
         api_key: Some("fake-token".to_string()),
@@ -249,6 +252,7 @@ fn cached_provider_client_openai_variant_holds_client() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     let config = Config {
+        a2a_port: None,
         provider: "openai".to_string(),
         model: "gpt-4".to_string(),
         api_key: Some("sk-fake".to_string()),
@@ -267,6 +271,7 @@ fn cached_provider_client_ollama_variant_holds_client() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     let config = Config {
+        a2a_port: None,
         provider: "ollama".to_string(),
         model: "llama3".to_string(),
         api_key: None,
@@ -291,6 +296,7 @@ fn openai_without_base_url_produces_openai_variant() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     let config = Config {
+        a2a_port: None,
         provider: "openai".to_string(),
         model: "gpt-4o".to_string(),
         api_key: Some("sk-fake".to_string()),
@@ -314,6 +320,7 @@ fn openai_with_base_url_produces_openai_completions_variant() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     let config = Config {
+        a2a_port: None,
         provider: "openai".to_string(),
         model: "mistral-7b".to_string(),
         api_key: Some("sk-fake".to_string()),

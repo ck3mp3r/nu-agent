@@ -54,6 +54,7 @@ result-*
 # Rust
 target/
 Cargo.lock.msrv
+.cargo/
 
 # c5t tool database
 .c5t/

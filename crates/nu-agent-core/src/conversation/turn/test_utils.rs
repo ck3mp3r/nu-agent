@@ -112,6 +112,7 @@ impl AsyncPermissionResolver for MockResolver {
 /// should override this with `max_retries: Some(3)` (or the desired count).
 pub(super) fn test_config() -> Config {
     Config {
+        a2a_port: None,
         provider: "copilot".to_string(),
         provider_impl: None,
         model: "gpt-4o".to_string(),

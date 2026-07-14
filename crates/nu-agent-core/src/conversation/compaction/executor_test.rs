@@ -10,6 +10,7 @@ use crate::session::{JournalConversationMemory, SessionStore};
 /// Helper to build a minimal Config for testing.
 fn test_config() -> Config {
     Config {
+        a2a_port: None,
         provider: "copilot".to_string(),
         provider_impl: None,
         model: "gpt-4o".to_string(),

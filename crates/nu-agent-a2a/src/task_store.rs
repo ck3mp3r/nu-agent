@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::{
     A2aError, Artifact, Message, Part, PushAuthScheme, PushAuthenticationInfo,
-    PushNotificationConfig, Task, TaskEvent, TaskState, TaskStatus,
+    PushNotificationConfig, Role, Task, TaskEvent, TaskState, TaskStatus,
 };
 
 /// A thread-safe in-memory store for A2A tasks.
@@ -279,7 +279,7 @@ impl TaskStore {
         &self,
         id: &str,
         new_state: TaskState,
-        message: Option<String>,
+        message: Option<Message>,
     ) -> Result<Task, A2aError> {
         let mut tasks = self.tasks.write().unwrap();
         let task = tasks
@@ -395,7 +395,7 @@ impl TaskStore {
         }
 
         task.artifacts.push(Artifact {
-            id: Uuid::new_v4().to_string(),
+            artifact_id: Uuid::new_v4().to_string(),
             name: Some("result".to_string()),
             parts: vec![Part::Text {
                 text: result.to_string(),
@@ -406,7 +406,15 @@ impl TaskStore {
         task.status = TaskStatus {
             state: TaskState::Completed,
             timestamp: Utc::now(),
-            message: Some("Task completed successfully".to_string()),
+            message: Some(Message {
+                role: Role::Agent,
+                parts: vec![Part::Text {
+                    text: "Task completed successfully".to_string(),
+                }],
+                message_id: Uuid::new_v4().to_string(),
+                extensions: None,
+                metadata: None,
+            }),
         };
 
         let status = task.status.clone();

@@ -3,6 +3,7 @@ pub mod card;
 pub mod client;
 pub mod discovery;
 pub mod error;
+pub mod mesh_key;
 pub mod peer;
 pub mod server;
 pub mod task_store;
@@ -30,6 +31,8 @@ mod client_test;
 mod discovery_test;
 #[cfg(test)]
 mod error_test;
+#[cfg(test)]
+mod mesh_key_test;
 #[cfg(test)]
 mod peer_test;
 #[cfg(test)]

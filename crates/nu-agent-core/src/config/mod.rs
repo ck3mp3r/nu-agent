@@ -892,6 +892,9 @@ pub struct Config {
 
     /// Enable A2A agent-to-agent protocol support (experimental, default: false).
     pub a2a_enabled: bool,
+
+    /// A2A agent port (CLI-only). Some(0) = random, Some(n>0) = fixed, None = not set.
+    pub a2a_port: Option<u16>,
 }
 
 /// Convert a `nu_protocol::Value` to a `serde_json::Value` without including
@@ -1007,6 +1010,7 @@ impl Config {
             max_tool_calls_per_subturn,
             additional_params: None,
             a2a_enabled,
+            a2a_port: None,
         }
     }
 
@@ -1051,6 +1055,7 @@ impl Config {
                 .or(self.max_tool_calls_per_subturn),
             additional_params: other.additional_params.or(self.additional_params),
             a2a_enabled: other.a2a_enabled || self.a2a_enabled,
+            a2a_port: other.a2a_port.or(self.a2a_port),
         }
     }
 

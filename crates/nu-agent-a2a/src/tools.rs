@@ -3,6 +3,7 @@ use std::sync::Arc;
 use rig::tool::{ToolDyn, ToolError};
 use rig::wasm_compat::WasmBoxedFuture;
 use serde_json::Value;
+use tokio::sync::mpsc;
 
 use crate::*;
 
@@ -121,6 +122,10 @@ pub struct A2aToolContext {
     pub cache: Arc<PeerCache>,
     pub own_card: AgentCard,
     pub task_store: Option<Arc<TaskStore>>,
+    /// Channel to notify the runtime about completed background tasks.
+    pub completion_tx: Option<mpsc::Sender<A2aCompletionEvent>>,
+    /// Handle for spawning background SSE watcher tasks.
+    pub runtime_handle: Option<tokio::runtime::Handle>,
 }
 
 type ToolResult = Result<Value, String>;
@@ -315,6 +320,9 @@ pub async fn handle_tasks_send(ctx: &A2aToolContext, params: Value) -> ToolResul
         parts: vec![Part::Text {
             text: text.to_string(),
         }],
+        message_id: uuid::Uuid::new_v4().to_string(),
+        extensions: None,
+        metadata: None,
     };
 
     let task = ctx
@@ -328,11 +336,60 @@ pub async fn handle_tasks_send(ctx: &A2aToolContext, params: Value) -> ToolResul
         .await
         .map_err(|e| format!("A2A error: {e}"))?;
 
+    // ── Background SSE watcher ──────────────────────────────────────────
+    // If we have a completion channel and a runtime handle, spawn a
+    // background task that subscribes to the remote task's SSE stream and
+    // delivers a completion event back to the runtime when the task reaches
+    // a terminal state.  This lets the LLM see the completion result on its
+    // next turn without having to poll tasks.get.
+    let agent_name = target.to_string();
+    let client = ctx.client.clone();
+    let url = peer.url.clone();
+    let task_id = task.id.clone();
+
+    if let Some(completion_tx) = ctx.completion_tx.clone()
+        && let Some(runtime_handle) = ctx.runtime_handle.clone()
+    {
+        runtime_handle.spawn(async move {
+            match client.subscribe_task(&url, &task_id).await {
+                Ok(final_task) => {
+                    let result = extract_text_from_task(&final_task);
+                    let event = A2aCompletionEvent {
+                        task_id: final_task.id,
+                        agent_name,
+                        result,
+                        status: final_task.status.state,
+                    };
+                    let _ = completion_tx.send(event).await;
+                }
+                Err(e) => {
+                    log::warn!("A2A task watcher failed for {task_id}: {e}");
+                }
+            }
+        });
+    }
+
     Ok(serde_json::json!({
         "taskId": task.id,
-        "status": "working",
-        "message": format!("Task sent to {target}"),
+        "status": "sent",
+        "message": format!("Task sent to {target}. You will be notified when it completes."),
     }))
+}
+
+/// Extract result text from a (presumably completed) task's artifacts.
+///
+/// Collects all [`Part::Text`] parts across all artifacts and joins them
+/// with newlines.
+fn extract_text_from_task(task: &Task) -> String {
+    task.artifacts
+        .iter()
+        .flat_map(|a| a.parts.iter())
+        .filter_map(|p| match p {
+            Part::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub async fn handle_tasks_get(ctx: &A2aToolContext, params: Value) -> ToolResult {

@@ -33,7 +33,7 @@ async fn test_setup() -> (A2aServer, A2aClient, String) {
         skills: vec![],
         ..Default::default()
     };
-    let server = A2aServer::start(card, Arc::new(PeerCache::new()))
+    let server = A2aServer::start(card, Arc::new(PeerCache::new()), 0)
         .await
         .unwrap();
     let client = A2aClient::new();
@@ -55,7 +55,7 @@ async fn test_client_sends_a2a_version_header() {
     let addr = listener.local_addr().unwrap();
 
     let app = axum::Router::new().route(
-        "/tasks/send",
+        "/message:send",
         axum::routing::post(move |headers: axum::http::HeaderMap| async move {
             let version = headers
                 .get("A2A-Version")
@@ -64,12 +64,10 @@ async fn test_client_sends_a2a_version_header() {
                 .to_string();
             let _ = version_tx.send(version).await;
             axum::Json(serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": "test",
-                "result": {
+                "task": {
                     "id": "00000000-0000-0000-0000-000000000000",
                     "status": {
-                        "state": "completed",
+                        "state": "WORKING",
                         "timestamp": "2026-01-01T00:00:00Z"
                     },
                     "artifacts": []
@@ -89,6 +87,9 @@ async fn test_client_sends_a2a_version_header() {
         parts: vec![Part::Text {
             text: "header-test".into(),
         }],
+        message_id: uuid::Uuid::new_v4().to_string(),
+        extensions: None,
+        metadata: None,
     };
 
     let _ = client.send_task(&url, msg, None, None).await;
@@ -113,6 +114,9 @@ async fn test_send_task() {
         parts: vec![Part::Text {
             text: "hello".into(),
         }],
+        message_id: uuid::Uuid::new_v4().to_string(),
+        extensions: None,
+        metadata: None,
     };
 
     let task = client.send_task(&url, msg, None, None).await.unwrap();
@@ -136,6 +140,9 @@ async fn test_send_task_with_session() {
         parts: vec![Part::Text {
             text: "hello".into(),
         }],
+        message_id: uuid::Uuid::new_v4().to_string(),
+        extensions: None,
+        metadata: None,
     };
 
     let task = client
@@ -154,6 +161,9 @@ async fn test_send_task_with_sender_url() {
         parts: vec![Part::Text {
             text: "hello".into(),
         }],
+        message_id: uuid::Uuid::new_v4().to_string(),
+        extensions: None,
+        metadata: None,
     };
 
     let task = client
@@ -173,6 +183,9 @@ async fn test_send_task_connection_refused() {
         parts: vec![Part::Text {
             text: "hello".into(),
         }],
+        message_id: uuid::Uuid::new_v4().to_string(),
+        extensions: None,
+        metadata: None,
     };
 
     let result = client
@@ -197,6 +210,9 @@ async fn test_get_task() {
         parts: vec![Part::Text {
             text: "hello".into(),
         }],
+        message_id: uuid::Uuid::new_v4().to_string(),
+        extensions: None,
+        metadata: None,
     };
     let sent = client.send_task(&url, msg, None, None).await.unwrap();
 
@@ -228,6 +244,9 @@ async fn test_cancel_task() {
         parts: vec![Part::Text {
             text: "cancel me".into(),
         }],
+        message_id: uuid::Uuid::new_v4().to_string(),
+        extensions: None,
+        metadata: None,
     };
     let sent = client.send_task(&url, msg, None, None).await.unwrap();
 
@@ -244,6 +263,9 @@ async fn test_cancel_already_completed() {
         parts: vec![Part::Text {
             text: "cancel me".into(),
         }],
+        message_id: uuid::Uuid::new_v4().to_string(),
+        extensions: None,
+        metadata: None,
     };
     let sent = client.send_task(&url, msg, None, None).await.unwrap();
 
@@ -277,6 +299,92 @@ async fn test_get_agent_card_connection_refused() {
     let client = A2aClient::new();
     let result = client.get_agent_card("http://127.0.0.1:1").await;
     assert!(matches!(result, Err(A2aError::ConnectionRefused(_))));
+}
+
+// ---------------------------------------------------------------------------
+// subscribe_task
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_subscribe_task_immediate_terminal() {
+    let (_server, client, url) = test_setup().await;
+
+    // Send a task, then cancel it so it's in a terminal state
+    let msg = Message {
+        role: Role::User,
+        parts: vec![Part::Text {
+            text: "subscribe-test".into(),
+        }],
+        message_id: uuid::Uuid::new_v4().to_string(),
+        extensions: None,
+        metadata: None,
+    };
+    let sent = client.send_task(&url, msg, None, None).await.unwrap();
+    let canceled = client.cancel_task(&url, &sent.id).await.unwrap();
+    assert_eq!(canceled.status.state, TaskState::Canceled);
+
+    // Now subscribe — should immediately return the terminal state
+    let result = client.subscribe_task(&url, &sent.id).await.unwrap();
+    assert_eq!(result.status.state, TaskState::Canceled);
+    assert_eq!(result.id, sent.id);
+}
+
+#[tokio::test]
+async fn test_subscribe_task_not_found() {
+    let (_server, client, url) = test_setup().await;
+
+    let result = client.subscribe_task(&url, "nonexistent-id").await;
+    assert!(
+        matches!(result, Err(A2aError::TaskNotFound(_))),
+        "Expected TaskNotFound, got: {result:?}"
+    );
+
+    // _server is dropped here (graceful shutdown via Drop)
+}
+
+#[tokio::test]
+async fn test_subscribe_task_connection_refused() {
+    ensure_crypto_provider();
+    let client = A2aClient::new();
+
+    let result = client.subscribe_task("http://127.0.0.1:1", "some-id").await;
+    assert!(
+        matches!(result, Err(A2aError::ConnectionRefused(_))),
+        "Expected ConnectionRefused, got: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_subscribe_task_streams_lifecycle() {
+    let (server, client, url) = test_setup().await;
+
+    // Send a task
+    let msg = Message {
+        role: Role::User,
+        parts: vec![Part::Text {
+            text: "lifecycle-test".into(),
+        }],
+        message_id: uuid::Uuid::new_v4().to_string(),
+        extensions: None,
+        metadata: None,
+    };
+    let sent = client.send_task(&url, msg, None, None).await.unwrap();
+
+    // Complete the task directly via the server's task store (no HTTP needed)
+    server
+        .task_store()
+        .complete_task(&sent.id, "Task completed successfully")
+        .expect("Working → Completed should succeed");
+
+    // Give the SSE notification time to propagate
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Subscribe — should get the terminal Completed state
+    let result = client.subscribe_task(&url, &sent.id).await.unwrap();
+    assert_eq!(result.status.state, TaskState::Completed);
+    assert_eq!(result.id, sent.id);
+
+    server.shutdown().await;
 }
 
 // ---------------------------------------------------------------------------
@@ -316,6 +424,9 @@ async fn test_list_tasks() {
         parts: vec![Part::Text {
             text: "first".into(),
         }],
+        message_id: uuid::Uuid::new_v4().to_string(),
+        extensions: None,
+        metadata: None,
     };
     client.send_task(&url, msg, None, None).await.unwrap();
 
@@ -324,6 +435,9 @@ async fn test_list_tasks() {
         parts: vec![Part::Text {
             text: "second".into(),
         }],
+        message_id: uuid::Uuid::new_v4().to_string(),
+        extensions: None,
+        metadata: None,
     };
     client.send_task(&url, msg2, None, None).await.unwrap();
 
@@ -345,6 +459,9 @@ async fn test_list_tasks_filtered() {
                 parts: vec![Part::Text {
                     text: "to-cancel".into(),
                 }],
+                message_id: uuid::Uuid::new_v4().to_string(),
+                extensions: None,
+                metadata: None,
             },
             None,
             None,
@@ -357,6 +474,9 @@ async fn test_list_tasks_filtered() {
         parts: vec![Part::Text {
             text: "keep".into(),
         }],
+        message_id: uuid::Uuid::new_v4().to_string(),
+        extensions: None,
+        metadata: None,
     };
     client.send_task(&url, msg2, None, None).await.unwrap();
 
@@ -394,6 +514,9 @@ async fn test_full_lifecycle() {
         parts: vec![Part::Text {
             text: "lifecycle".into(),
         }],
+        message_id: uuid::Uuid::new_v4().to_string(),
+        extensions: None,
+        metadata: None,
     };
     let sent = client.send_task(&url, msg, None, None).await.unwrap();
     assert_eq!(sent.status.state, TaskState::Working);

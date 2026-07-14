@@ -125,14 +125,14 @@ fn test_add_artifact() {
     let store = TaskStore::new();
     let task = store.create_task(None, None, None, None);
     let artifact = Artifact {
-        id: "art-1".to_string(),
+        artifact_id: "art-1".to_string(),
         name: Some("result.txt".to_string()),
         parts: vec![],
         metadata: None,
     };
     let updated = store.add_artifact(&task.id, artifact.clone()).unwrap();
     assert_eq!(updated.artifacts.len(), 1);
-    assert_eq!(updated.artifacts[0].id, "art-1");
+    assert_eq!(updated.artifacts[0].artifact_id, "art-1");
 }
 
 #[test]
@@ -436,7 +436,7 @@ fn test_subscribe_receives_artifact_added() {
         let (mut rx, _) = store.subscribe(&task.id);
 
         let artifact = Artifact {
-            id: "art-1".to_string(),
+            artifact_id: "art-1".to_string(),
             name: Some("result".to_string()),
             parts: vec![Part::Text {
                 text: "output".into(),
@@ -449,7 +449,7 @@ fn test_subscribe_receives_artifact_added() {
         assert!(event.is_ok(), "Should receive artifact added event");
         match event.unwrap().unwrap() {
             TaskEvent::ArtifactAdded { artifact: a, .. } => {
-                assert_eq!(a.id, "art-1");
+                assert_eq!(a.artifact_id, "art-1");
                 assert_eq!(a.name, Some("result".to_string()));
             }
             _ => panic!("expected ArtifactAdded"),

@@ -111,6 +111,8 @@ async fn test_handle_agent_list_empty() {
         cache: Arc::new(PeerCache::new()),
         own_card: AgentCard::default(),
         task_store: None,
+        completion_tx: None,
+        runtime_handle: None,
     };
     let result = handle_agent_list(&ctx).await.unwrap();
     assert_eq!(result["agents"].as_array().unwrap().len(), 0);
@@ -124,6 +126,8 @@ async fn test_handle_agent_list_with_peers() {
         client: A2aClient::new(),
         own_card: AgentCard::default(),
         task_store: None,
+        completion_tx: None,
+        runtime_handle: None,
     };
     ctx.cache.add_or_update(Peer {
         name: "alice".into(),
@@ -157,6 +161,8 @@ async fn test_handle_agent_get_card_not_found() {
         client: A2aClient::new(),
         own_card: AgentCard::default(),
         task_store: None,
+        completion_tx: None,
+        runtime_handle: None,
     };
     let params = serde_json::json!({"name": "nonexistent"});
     let result = handle_agent_get_card(&ctx, params).await;
@@ -172,6 +178,8 @@ async fn test_handle_tasks_send_missing_param() {
         client: A2aClient::new(),
         own_card: AgentCard::default(),
         task_store: None,
+        completion_tx: None,
+        runtime_handle: None,
     };
     let params = serde_json::json!({"target": "someone"});
     let result = handle_tasks_send(&ctx, params).await;
@@ -187,7 +195,7 @@ async fn test_handle_tasks_send_to_real_server() {
         url: "http://127.0.0.1:0".into(),
         ..Default::default()
     };
-    let server = A2aServer::start(card, Arc::new(PeerCache::new()))
+    let server = A2aServer::start(card, Arc::new(PeerCache::new()), 0)
         .await
         .unwrap();
 
@@ -196,6 +204,8 @@ async fn test_handle_tasks_send_to_real_server() {
         client: A2aClient::new(),
         own_card: AgentCard::default(),
         task_store: None,
+        completion_tx: None,
+        runtime_handle: None,
     };
     ctx.cache.add_or_update(Peer {
         name: "test-agent".into(),
@@ -209,7 +219,10 @@ async fn test_handle_tasks_send_to_real_server() {
     let params = serde_json::json!({"target": "test-agent", "text": "Hello!"});
     let result = handle_tasks_send(&ctx, params).await.unwrap();
     assert!(result.get("taskId").is_some(), "Should have a taskId");
-    assert_eq!(result["status"], "working");
+    assert_eq!(
+        result["status"], "sent",
+        "tasks.send now returns status 'sent' (fire-and-forget)"
+    );
 
     server.shutdown().await;
 }
@@ -222,7 +235,7 @@ async fn test_handle_tasks_send_with_own_card_url() {
         url: "http://127.0.0.1:0".into(),
         ..Default::default()
     };
-    let server = A2aServer::start(card, Arc::new(PeerCache::new()))
+    let server = A2aServer::start(card, Arc::new(PeerCache::new()), 0)
         .await
         .unwrap();
 
@@ -235,6 +248,8 @@ async fn test_handle_tasks_send_with_own_card_url() {
             ..Default::default()
         },
         task_store: None,
+        completion_tx: None,
+        runtime_handle: None,
     };
     ctx.cache.add_or_update(Peer {
         name: "test-agent".into(),
@@ -260,7 +275,7 @@ async fn test_handle_tasks_get_to_real_server() {
         url: "http://127.0.0.1:0".into(),
         ..Default::default()
     };
-    let server = A2aServer::start(card, Arc::new(PeerCache::new()))
+    let server = A2aServer::start(card, Arc::new(PeerCache::new()), 0)
         .await
         .unwrap();
 
@@ -269,6 +284,8 @@ async fn test_handle_tasks_get_to_real_server() {
         client: A2aClient::new(),
         own_card: AgentCard::default(),
         task_store: None,
+        completion_tx: None,
+        runtime_handle: None,
     };
     ctx.cache.add_or_update(Peer {
         name: "test-agent".into(),
@@ -321,6 +338,8 @@ async fn test_handle_tasks_list_with_local_store() {
         cache: Arc::new(PeerCache::new()),
         own_card: AgentCard::default(),
         task_store: Some(store),
+        completion_tx: None,
+        runtime_handle: None,
     };
 
     let result = handle_tasks_list(&ctx, serde_json::json!({}))
@@ -345,6 +364,8 @@ async fn test_handle_tasks_list_with_local_store_filtered() {
         cache: Arc::new(PeerCache::new()),
         own_card: AgentCard::default(),
         task_store: Some(store),
+        completion_tx: None,
+        runtime_handle: None,
     };
 
     let result = handle_tasks_list(&ctx, serde_json::json!({"status": "working"}))
@@ -352,7 +373,7 @@ async fn test_handle_tasks_list_with_local_store_filtered() {
         .unwrap();
     let tasks = result["tasks"].as_array().unwrap();
     assert_eq!(tasks.len(), 1, "Should list 1 working task");
-    assert_eq!(tasks[0]["status"]["state"], "working");
+    assert_eq!(tasks[0]["status"]["state"], "WORKING");
 }
 
 #[tokio::test]
@@ -363,6 +384,8 @@ async fn test_handle_tasks_list_no_store() {
         cache: Arc::new(PeerCache::new()),
         own_card: AgentCard::default(),
         task_store: None,
+        completion_tx: None,
+        runtime_handle: None,
     };
 
     let result = handle_tasks_list(&ctx, serde_json::json!({}))
