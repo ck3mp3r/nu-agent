@@ -12,18 +12,21 @@ use crate::{
     PushNotificationConfig, Role, Task, TaskEvent, TaskState, TaskStatus,
 };
 
+use super::TaskStoreBackend;
+
 /// A thread-safe in-memory store for A2A tasks.
 ///
 /// All operations are synchronous — `std::sync::RwLock` is used rather than
 /// tokio's async variant because every operation is a simple HashMap lookup.
-pub struct TaskStore {
+#[derive(Debug)]
+pub struct InMemoryTaskStore {
     tasks: RwLock<HashMap<String, Task>>,
     subscriptions: RwLock<HashMap<String, Vec<mpsc::Sender<TaskEvent>>>>,
     push_configs: RwLock<HashMap<String, Vec<PushNotificationConfig>>>,
     idempotency_keys: RwLock<HashMap<String, String>>,
 }
 
-impl TaskStore {
+impl InMemoryTaskStore {
     /// Create an empty task store.
     pub fn new() -> Self {
         Self {
@@ -35,13 +38,165 @@ impl TaskStore {
     }
 }
 
-impl Default for TaskStore {
+impl Default for InMemoryTaskStore {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl TaskStore {
+impl TaskStoreBackend for InMemoryTaskStore {
+    fn create_task(
+        &self,
+        session_id: Option<String>,
+        context_id: Option<String>,
+        parent_task_id: Option<String>,
+        metadata: Option<HashMap<String, Value>>,
+    ) -> Task {
+        InMemoryTaskStore::create_task(self, session_id, context_id, parent_task_id, metadata)
+    }
+
+    fn get_task(&self, id: &str) -> Result<Task, A2aError> {
+        InMemoryTaskStore::get_task(self, id)
+    }
+
+    fn update_status(
+        &self,
+        id: &str,
+        new_state: TaskState,
+        message: Option<Message>,
+    ) -> Result<Task, A2aError> {
+        InMemoryTaskStore::update_status(self, id, new_state, message)
+    }
+
+    fn add_artifact(&self, id: &str, artifact: Artifact) -> Result<Task, A2aError> {
+        InMemoryTaskStore::add_artifact(self, id, artifact)
+    }
+
+    fn list_tasks(
+        &self,
+        filter: Option<Vec<TaskState>>,
+        page_size: Option<usize>,
+        next_page_token: Option<&str>,
+    ) -> (Vec<Task>, usize, Option<String>) {
+        let limit = page_size.unwrap_or(50);
+        let all = InMemoryTaskStore::list_tasks(self, None);
+
+        // Apply state filter if provided (supports multiple states)
+        let filtered: Vec<Task> = if let Some(states) = filter {
+            all.into_iter()
+                .filter(|t| states.contains(&t.status.state))
+                .collect()
+        } else {
+            all
+        };
+        let filtered_total = filtered.len();
+
+        // Sort by creation order
+        let mut sorted = filtered;
+        sorted.sort_by_key(|a| a.created_at);
+
+        // Apply cursor-based pagination
+        if let Some(cursor_id) = next_page_token
+            && let Some(pos) = sorted.iter().position(|t| t.id == cursor_id)
+        {
+            sorted = sorted.split_off(pos + 1);
+        }
+
+        // Apply limit and determine if there are more results
+        let has_more = sorted.len() > limit;
+        sorted.truncate(limit);
+
+        let next_token = if has_more {
+            sorted.last().map(|t| t.id.clone())
+        } else {
+            None
+        };
+
+        (sorted, filtered_total, next_token)
+    }
+
+    fn subscribe(&self, id: &str) -> mpsc::Receiver<TaskEvent> {
+        let (rx, _) = InMemoryTaskStore::subscribe(self, id);
+        rx
+    }
+
+    fn unregister_subscriber(&self, id: &str, rx: mpsc::Receiver<TaskEvent>) {
+        // Dropping the receiver closes the corresponding sender(s).
+        drop(rx);
+        self.prune_subscriptions(id);
+    }
+
+    fn append_history(&self, id: &str, msg: Message) -> Result<(), A2aError> {
+        InMemoryTaskStore::append_history(self, id, msg).map(|_| ())
+    }
+
+    fn create_task_with_idempotency(
+        &self,
+        key: &str,
+        session_id: Option<String>,
+        context_id: Option<String>,
+        parent_task_id: Option<String>,
+        metadata: Option<HashMap<String, Value>>,
+    ) -> Result<Task, Box<(Task, mpsc::Sender<TaskEvent>)>> {
+        let (tx, _rx) = mpsc::channel(64);
+
+        match InMemoryTaskStore::create_task_with_idempotency_impl(
+            self,
+            key,
+            session_id,
+            context_id,
+            parent_task_id,
+            metadata,
+        ) {
+            Ok(task) => {
+                self.subscriptions
+                    .write()
+                    .expect("subscriptions lock")
+                    .entry(task.id.clone())
+                    .or_default()
+                    .push(tx.clone());
+                Ok(task)
+            }
+            Err(existing) => {
+                self.subscriptions
+                    .write()
+                    .expect("subscriptions lock")
+                    .entry(existing.id.clone())
+                    .or_default()
+                    .push(tx.clone());
+                Err(Box::new((*existing, tx)))
+            }
+        }
+    }
+}
+
+// -----------------------------------------------------------------------
+// Internal helper — separates idempotency logic from subscription setup
+// so the trait impl can add subscription wrapping without re-entrancy.
+// -----------------------------------------------------------------------
+impl InMemoryTaskStore {
+    fn create_task_with_idempotency_impl(
+        &self,
+        key: &str,
+        session_id: Option<String>,
+        context_id: Option<String>,
+        parent_task_id: Option<String>,
+        metadata: Option<HashMap<String, Value>>,
+    ) -> Result<Task, Box<Task>> {
+        let mut keys = self.idempotency_keys.write().unwrap();
+        if let Some(existing_id) = keys.get(key)
+            && let Ok(task) = self.get_task(existing_id)
+        {
+            return Err(Box::new(task)); // Found duplicate
+        }
+
+        let task = self.create_task(session_id, context_id, parent_task_id, metadata);
+        keys.insert(key.to_string(), task.id.clone());
+        Ok(task)
+    }
+}
+
+impl InMemoryTaskStore {
     // -----------------------------------------------------------------------
     // Subscriptions
     // -----------------------------------------------------------------------

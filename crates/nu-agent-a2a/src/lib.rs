@@ -26,8 +26,6 @@ mod agent_test;
 #[cfg(test)]
 mod card_test;
 #[cfg(test)]
-mod client_test;
-#[cfg(test)]
 mod discovery_test;
 #[cfg(test)]
 mod error_test;
@@ -38,8 +36,4 @@ mod peer_test;
 #[cfg(test)]
 mod server_test;
 #[cfg(test)]
-mod task_store_test;
-#[cfg(test)]
 mod tools_test;
-#[cfg(test)]
-mod types_test;

@@ -10,7 +10,7 @@ use super::{
     resolve_agent_mode, resolve_config, should_enter_foreground,
 };
 
-use nu_agent_a2a::AgentHandle;
+use nu_agent_a2a::{AgentBuilder, AgentHandle};
 use nu_agent_core::{
     config::PluginConfig,
     conversation::{builder::BuildInput, runtime::AgentConversationRuntime},
@@ -169,6 +169,7 @@ pub(super) fn run_command(
 
     // Load agent persona and resolve identity
     let (agent_name, cli_name) = super::args::extract_agent_flags(call);
+    let has_explicit_name = cli_name.is_some();
     log::debug!("agent flags: agent_name={agent_name:?}, cli_name={cli_name:?}");
 
     let call_has_model_flag = call.get_flag::<Value>("model").ok().flatten().is_some();
@@ -204,20 +205,32 @@ pub(super) fn run_command(
 
     // ── A2A agent startup (optional, experimental) ───────────────────────
     let mut a2a_handle: Option<AgentHandle> = if config.a2a_enabled {
-        let agent_name = agent_identity.as_deref().unwrap_or("agent");
+        let agent_name = messaging_identity.as_deref().unwrap_or("agent");
         let description = persona.as_ref().and_then(|p| p.description.as_deref());
         let a2a_port = config.a2a_port.unwrap_or(0);
         let explicit_mesh_key = call.get_flag::<String>("mesh-key")?;
         let mesh_key = nu_agent_a2a::mesh_key::resolve_mesh_key(explicit_mesh_key, &cwd);
-        match runtime
-            .block_on(async { AgentHandle::start(agent_name, description, vec![], a2a_port, mesh_key).await })
-        {
+        match runtime.block_on(async {
+            let mut builder = AgentBuilder::new(agent_name).has_explicit_name(has_explicit_name);
+            if let Some(desc) = description {
+                builder = builder.description(desc);
+            }
+            builder.port(a2a_port).mesh_key(mesh_key).build().await
+        }) {
             Ok(handle) => {
-                log::info!("A2A agent '{agent_name}' started on {}", handle.card.url);
+                log::info!(
+                    "A2A agent '{agent_name}' started on {}",
+                    handle.server.local_url
+                );
                 Some(handle)
             }
-            Err(e) => {
-                log::warn!("A2A startup failed (non-fatal): {e}");
+            Err((err, Some(server))) => {
+                runtime.block_on(server.shutdown());
+                log::warn!("A2A startup failed (non-fatal): {err}");
+                None
+            }
+            Err((err, None)) => {
+                log::warn!("A2A startup failed (non-fatal): {err}");
                 None
             }
         }
@@ -315,15 +328,8 @@ pub(super) fn run_command(
     // Must run BEFORE build_runtime() so tools are available when the agent
     // context snapshots its tool set.
     if let Some(ref handle) = a2a_handle {
-        let ctx = nu_agent_a2a::A2aToolContext {
-            client: handle.client.clone(),
-            cache: handle.cache.clone(),
-            own_card: handle.card.clone(),
-            task_store: Some(handle.task_store()),
-            completion_tx: Some(handle.completion_tx.clone().unwrap()),
-            runtime_handle: Some(runtime.handle().clone()),
-        };
-        if let Err(e) = nu_agent_a2a::register_a2a_tools(&tool_server_handle, ctx, &runtime) {
+        let ctx = handle.a2a_tool_context(runtime.handle().clone());
+        if let Err(e) = nu_agent_a2a::register_tools_on_server(&tool_server_handle, ctx, &runtime) {
             log::warn!("A2A tool registration failed (non-fatal): {e}");
         }
     }

@@ -8,20 +8,19 @@ use serde_json::Value;
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_tool_defs_returns_six_tools() {
+fn test_tool_defs_returns_seven_tools() {
     let defs = a2a_tool_defs();
     assert_eq!(defs.len(), 7, "Should have 7 tool definitions");
 }
 
 #[test]
-fn test_agent_list_has_no_params() {
+fn test_agent_list_has_no_parameters() {
     let defs = a2a_tool_defs();
     let tool = defs.iter().find(|t| t.name == "agent.list").unwrap();
+    let props = tool.parameters["properties"].as_object().unwrap();
     assert!(
-        tool.parameters["properties"]
-            .as_object()
-            .unwrap()
-            .is_empty()
+        props.is_empty(),
+        "agent.list should have no parameters (no filter) — LLM should get all agents"
     );
 }
 
@@ -114,7 +113,7 @@ async fn test_handle_agent_list_empty() {
         completion_tx: None,
         runtime_handle: None,
     };
-    let result = handle_agent_list(&ctx).await.unwrap();
+    let result = handle_agent_list(ctx, serde_json::json!({})).await.unwrap();
     assert_eq!(result["agents"].as_array().unwrap().len(), 0);
 }
 
@@ -148,7 +147,7 @@ async fn test_handle_agent_list_with_peers() {
         }),
         discovered_at: std::time::Instant::now(),
     });
-    let result = handle_agent_list(&ctx).await.unwrap();
+    let result = handle_agent_list(ctx, serde_json::json!({})).await.unwrap();
     assert_eq!(result["agents"].as_array().unwrap().len(), 1);
     assert_eq!(result["agents"][0]["name"], "alice");
 }
@@ -165,7 +164,7 @@ async fn test_handle_agent_get_card_not_found() {
         runtime_handle: None,
     };
     let params = serde_json::json!({"name": "nonexistent"});
-    let result = handle_agent_get_card(&ctx, params).await;
+    let result = handle_agent_get_card(ctx, params).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("not found"));
 }
@@ -182,7 +181,7 @@ async fn test_handle_tasks_send_missing_param() {
         runtime_handle: None,
     };
     let params = serde_json::json!({"target": "someone"});
-    let result = handle_tasks_send(&ctx, params).await;
+    let result = handle_tasks_send(ctx, params).await;
     assert!(result.is_err());
 }
 
@@ -217,7 +216,7 @@ async fn test_handle_tasks_send_to_real_server() {
     });
 
     let params = serde_json::json!({"target": "test-agent", "text": "Hello!"});
-    let result = handle_tasks_send(&ctx, params).await.unwrap();
+    let result = handle_tasks_send(ctx.clone(), params).await.unwrap();
     assert!(result.get("taskId").is_some(), "Should have a taskId");
     assert_eq!(
         result["status"], "sent",
@@ -261,7 +260,7 @@ async fn test_handle_tasks_send_with_own_card_url() {
     });
 
     let params = serde_json::json!({"target": "test-agent", "text": "Hello!"});
-    let result = handle_tasks_send(&ctx, params).await.unwrap();
+    let result = handle_tasks_send(ctx.clone(), params).await.unwrap();
     assert!(result.get("taskId").is_some(), "Should have a taskId");
 
     server.shutdown().await;
@@ -298,12 +297,12 @@ async fn test_handle_tasks_get_to_real_server() {
 
     // First send a task
     let send_params = serde_json::json!({"target": "test-agent", "text": "Hello!"});
-    let send_result = handle_tasks_send(&ctx, send_params).await.unwrap();
+    let send_result = handle_tasks_send(ctx.clone(), send_params).await.unwrap();
     let task_id = send_result["taskId"].as_str().unwrap().to_string();
 
     // Then get it
     let get_params = serde_json::json!({"target": "test-agent", "taskId": task_id});
-    let get_result = handle_tasks_get(&ctx, get_params).await.unwrap();
+    let get_result = handle_tasks_get(ctx, get_params).await.unwrap();
     assert_eq!(get_result["taskId"], task_id);
 
     server.shutdown().await;
@@ -329,7 +328,7 @@ fn test_tasks_complete_requires_task_id_and_result() {
 #[tokio::test]
 async fn test_handle_tasks_list_with_local_store() {
     ensure_crypto_provider();
-    let store = Arc::new(TaskStore::new());
+    let store = Arc::new(InMemoryTaskStore::new());
     store.create_task(None, None, None, None);
     store.create_task(None, None, None, None);
 
@@ -342,9 +341,7 @@ async fn test_handle_tasks_list_with_local_store() {
         runtime_handle: None,
     };
 
-    let result = handle_tasks_list(&ctx, serde_json::json!({}))
-        .await
-        .unwrap();
+    let result = handle_tasks_list(ctx, serde_json::json!({})).await.unwrap();
     let tasks = result["tasks"].as_array().unwrap();
     assert_eq!(tasks.len(), 2, "Should list 2 tasks from local store");
 }
@@ -352,7 +349,7 @@ async fn test_handle_tasks_list_with_local_store() {
 #[tokio::test]
 async fn test_handle_tasks_list_with_local_store_filtered() {
     ensure_crypto_provider();
-    let store = Arc::new(TaskStore::new());
+    let store = Arc::new(InMemoryTaskStore::new());
     let t1 = store.create_task(None, None, None, None);
     store
         .update_status(&t1.id, TaskState::Working, None)
@@ -368,7 +365,7 @@ async fn test_handle_tasks_list_with_local_store_filtered() {
         runtime_handle: None,
     };
 
-    let result = handle_tasks_list(&ctx, serde_json::json!({"status": "working"}))
+    let result = handle_tasks_list(ctx, serde_json::json!({"status": "working"}))
         .await
         .unwrap();
     let tasks = result["tasks"].as_array().unwrap();
@@ -388,9 +385,7 @@ async fn test_handle_tasks_list_no_store() {
         runtime_handle: None,
     };
 
-    let result = handle_tasks_list(&ctx, serde_json::json!({}))
-        .await
-        .unwrap();
+    let result = handle_tasks_list(ctx, serde_json::json!({})).await.unwrap();
     let tasks = result["tasks"].as_array().unwrap();
     assert!(tasks.is_empty(), "Should return empty list when no store");
 }

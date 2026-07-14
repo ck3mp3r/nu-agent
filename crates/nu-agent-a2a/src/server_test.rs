@@ -210,10 +210,7 @@ async fn test_tasks_send_creates_task() {
     assert_eq!(resp.status(), 200);
 
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert!(
-        body.get("task").is_some(),
-        "Should have a task field"
-    );
+    assert!(body.get("task").is_some(), "Should have a task field");
     assert!(
         !body["task"]["id"].as_str().unwrap().is_empty(),
         "Task should have an ID"
@@ -303,7 +300,9 @@ async fn test_tasks_cancel() {
     // Create task
     let send_resp = client
         .post(format!("{}/message:send", server.local_url))
-        .json(&json!({"message": {"role": "user", "parts": [{"type": "text", "text": "cancel me"}]}}))
+        .json(
+            &json!({"message": {"role": "user", "parts": [{"type": "text", "text": "cancel me"}]}}),
+        )
         .send()
         .await
         .unwrap();
@@ -699,10 +698,7 @@ async fn test_list_tasks_endpoint() {
         1,
         "Should have 1 task"
     );
-    assert!(
-        body.get("totalSize").is_some(),
-        "Should have totalSize"
-    );
+    assert!(body.get("totalSize").is_some(), "Should have totalSize");
     assert!(body.get("pageSize").is_some(), "Should have pageSize");
 
     server.shutdown().await;
@@ -733,7 +729,9 @@ async fn test_list_tasks_endpoint_with_filter() {
     // Create another task — this one stays in 'working'
     client
         .post(format!("{}/message:send", server.local_url))
-        .json(&json!({"message": {"role": "user", "parts": [{"type":"text","text":"hello again"}]}}))
+        .json(
+            &json!({"message": {"role": "user", "parts": [{"type":"text","text":"hello again"}]}}),
+        )
         .send()
         .await
         .unwrap();
@@ -887,10 +885,7 @@ async fn test_push_config_crud_endpoints() {
         .unwrap();
     let create_body: serde_json::Value = create_resp.json().await.unwrap();
     let config_id = create_body["id"].as_str().unwrap().to_string();
-    assert_eq!(
-        create_body["url"],
-        "https://hook.example.com/notify"
-    );
+    assert_eq!(create_body["url"], "https://hook.example.com/notify");
 
     // List push configs
     let list_resp = client
@@ -1374,10 +1369,7 @@ async fn test_tasks_send_unsupported_content_type() {
         body.get("error").is_some(),
         "Should return error for unsupported content type"
     );
-    assert_eq!(
-        body["error"]["code"], 400,
-        "Should return BAD_REQUEST"
-    );
+    assert_eq!(body["error"]["code"], 400, "Should return BAD_REQUEST");
     assert!(
         body["error"]["message"]
             .as_str()

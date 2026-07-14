@@ -5,6 +5,11 @@ use tokio::sync::mpsc;
 
 use super::*;
 
+// Import discovery module items — some are pub(crate) and not re-exported
+// via the pub glob in lib.rs.
+use crate::discovery::static_discovery::StaticPeerDiscovery;
+use crate::discovery::{DiscoveryBrowser, DiscoveryService, PeerDiscoveryImpl, PeerEvent};
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -182,7 +187,8 @@ fn test_discovery_service_noop_does_not_crash() {
 async fn test_register_service() {
     let card = test_card("test-agent", 9999);
     let daemon = ServiceDaemon::new().unwrap();
-    let service = DiscoveryService::register(daemon, "test-agent", 9999, &card, "test-mesh").unwrap();
+    let service =
+        DiscoveryService::register(daemon, "test-agent", 9999, &card, "test-mesh").unwrap();
     drop(service);
 }
 
@@ -194,8 +200,10 @@ async fn test_register_service() {
 async fn test_register_duplicate_name() {
     let daemon = ServiceDaemon::new().unwrap();
     let card = test_card("dup-agent", 3001);
-    let a = DiscoveryService::register(daemon.clone(), "dup-agent", 3001, &card, "test-mesh").unwrap();
-    let b = DiscoveryService::register(daemon.clone(), "dup-agent", 3002, &card, "test-mesh").unwrap();
+    let a =
+        DiscoveryService::register(daemon.clone(), "dup-agent", 3001, &card, "test-mesh").unwrap();
+    let b =
+        DiscoveryService::register(daemon.clone(), "dup-agent", 3002, &card, "test-mesh").unwrap();
     drop(a);
     drop(b);
     let _ = daemon.shutdown();
@@ -212,7 +220,7 @@ async fn test_register_duplicate_name() {
 #[test]
 fn test_browse_returns_live_channel() {
     let daemon = ServiceDaemon::new().unwrap();
-    let (_browser, rx) = DiscoveryBrowser::browse(daemon, "test-mesh", "test-agent").unwrap();
+    let (_browser, rx) = DiscoveryBrowser::browse(daemon, "test-mesh", 52095).unwrap();
     assert!(!rx.is_closed(), "receiver should be alive after browse()");
 }
 
@@ -225,11 +233,12 @@ async fn test_register_and_browse_roundtrip() {
     let daemon = ServiceDaemon::new().unwrap();
     let card = test_card("roundtrip-agent", 7777);
     let _service =
-        DiscoveryService::register(daemon.clone(), "roundtrip-agent", 7777, &card, "test-mesh").unwrap();
+        DiscoveryService::register(daemon.clone(), "roundtrip-agent", 7777, &card, "test-mesh")
+            .unwrap();
 
-    // Use a different own_name so we still discover the registered service
-    // (self-skip only excludes events matching own_name).
-    let (_browser, mut rx) = DiscoveryBrowser::browse(daemon.clone(), "test-mesh", "browser-agent").unwrap();
+    // Use a different port so we still discover the registered service
+    // (self-port filter only excludes matching port+localhost).
+    let (_browser, mut rx) = DiscoveryBrowser::browse(daemon.clone(), "test-mesh", 52095).unwrap();
 
     // Wait up to 5 seconds for the registered service to appear.
     let mut found = false;
@@ -294,24 +303,14 @@ async fn test_mesh_scoping_filters_other_key() {
     let daemon = ServiceDaemon::new().unwrap();
     let card_a = test_card("mesh-key-a-agent", 7778);
     let card_b = test_card("mesh-key-b-agent", 7779);
-    let _service_a = DiscoveryService::register(
-        daemon.clone(),
-        "mesh-key-a-agent",
-        7778,
-        &card_a,
-        "key-a",
-    )
-    .unwrap();
-    let _service_b = DiscoveryService::register(
-        daemon.clone(),
-        "mesh-key-b-agent",
-        7779,
-        &card_b,
-        "key-b",
-    )
-    .unwrap();
+    let _service_a =
+        DiscoveryService::register(daemon.clone(), "mesh-key-a-agent", 7778, &card_a, "key-a")
+            .unwrap();
+    let _service_b =
+        DiscoveryService::register(daemon.clone(), "mesh-key-b-agent", 7779, &card_b, "key-b")
+            .unwrap();
 
-    let (_browser, mut rx) = DiscoveryBrowser::browse(daemon.clone(), "key-a", "key-a-browser").unwrap();
+    let (_browser, mut rx) = DiscoveryBrowser::browse(daemon.clone(), "key-a", 52095).unwrap();
 
     // Wait up to 5 seconds and check we never receive the wrong-key peer.
     let mut wrong_key = false;
@@ -328,7 +327,10 @@ async fn test_mesh_scoping_filters_other_key() {
             break;
         }
     }
-    assert!(!wrong_key, "Should not discover peers with different mesh key");
+    assert!(
+        !wrong_key,
+        "Should not discover peers with different mesh key"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -338,36 +340,28 @@ async fn test_mesh_scoping_filters_other_key() {
 /// Verify that an agent does not discover its own mDNS service.
 ///
 /// NOTE: Requires a working mDNS responder on the host.
-#[ignore]
 #[tokio::test]
 async fn test_browse_self_excluded() {
     let daemon = ServiceDaemon::new().unwrap();
     let card = test_card("self-test-agent", 7777);
-    let _service = DiscoveryService::register(
-        daemon.clone(),
-        "self-test-agent",
-        7777,
-        &card,
-        "test-mesh",
-    )
-    .unwrap();
+    let _service =
+        DiscoveryService::register(daemon.clone(), "self-test-agent", 7777, &card, "test-mesh")
+            .unwrap();
 
     // Give mDNS time to announce
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    let (_browser, mut rx) = DiscoveryBrowser::browse(
-        daemon.clone(),
-        "test-mesh",
-        "self-test-agent",
-    )
-    .unwrap();
+    let (_browser, mut rx) = DiscoveryBrowser::browse(daemon.clone(), "test-mesh", 7777).unwrap();
 
     // Try to receive — should NOT get our own service
     tokio::time::sleep(Duration::from_secs(1)).await;
     while let Ok(event) = rx.try_recv() {
         match event {
             PeerEvent::PeerDiscovered(p) => {
-                assert_ne!(p.name, "self-test-agent", "agent should not discover itself");
+                assert_ne!(
+                    p.name, "self-test-agent",
+                    "agent should not discover itself"
+                );
             }
             PeerEvent::PeerLost(_) => {}
         }
@@ -401,12 +395,7 @@ async fn test_cross_daemon_mesh_scoping() {
 
     // Daemon B browses with a DIFFERENT mesh_key "key-b"
     let daemon_b = ServiceDaemon::new().unwrap();
-    let (browser, mut rx) = DiscoveryBrowser::browse(
-        daemon_b.clone(),
-        "key-b",
-        "cross-daemon-browser",
-    )
-    .unwrap();
+    let (browser, mut rx) = DiscoveryBrowser::browse(daemon_b.clone(), "key-b", 52095).unwrap();
 
     // Wait and check: should NOT discover cross-daemon-agent (key mismatch)
     let mut found_wrong = false;
@@ -422,9 +411,94 @@ async fn test_cross_daemon_mesh_scoping() {
         }
     }
 
-    assert!(!found_wrong, "Should NOT discover cross-daemon-agent with different mesh key");
+    assert!(
+        !found_wrong,
+        "Should NOT discover cross-daemon-agent with different mesh key"
+    );
 
     drop(browser);
     let _ = daemon_a.shutdown();
     let _ = daemon_b.shutdown();
+}
+
+// ---------------------------------------------------------------------------
+// PeerDiscoveryImpl — Noop
+// ---------------------------------------------------------------------------
+
+/// Verify that [`PeerDiscoveryImpl::Noop`] can be created and all methods
+/// are safe no-ops.
+#[test]
+fn test_peer_discovery_impl_noop() {
+    let mut discovery = PeerDiscoveryImpl::Noop;
+    discovery.start("noop", 0, &AgentCard::default(), "mesh");
+    assert!(discovery.take_peer_rx().is_none());
+    discovery.shutdown();
+}
+
+// ---------------------------------------------------------------------------
+// StaticPeerDiscovery
+// ---------------------------------------------------------------------------
+
+/// Verify that [`StaticPeerDiscovery`] emits all configured peers through
+/// the channel on first call to [`take_peer_rx`].
+#[tokio::test]
+async fn test_static_discovery_emits_configured_peers() {
+    let peers = vec![
+        Peer {
+            name: "alpha".into(),
+            url: "http://10.0.0.1:9001".into(),
+            host: "alpha.local.".into(),
+            port: 9001,
+            ..Default::default()
+        },
+        Peer {
+            name: "beta".into(),
+            url: "http://10.0.0.2:9002".into(),
+            host: "beta.local.".into(),
+            port: 9002,
+            ..Default::default()
+        },
+    ];
+
+    let mut discovery = StaticPeerDiscovery::new(peers);
+    let mut rx = discovery.take_peer_rx().expect("should have peer_rx");
+
+    // Collect all events non-blockingly.
+    let mut names: Vec<String> = Vec::new();
+    while let Ok(event) = rx.try_recv() {
+        if let PeerEvent::PeerDiscovered(peer) = event {
+            names.push(peer.name.clone());
+        }
+    }
+
+    assert_eq!(names.len(), 2, "should emit two peers");
+    assert!(names.contains(&"alpha".to_string()));
+    assert!(names.contains(&"beta".to_string()));
+
+    // Second call returns None.
+    assert!(
+        discovery.take_peer_rx().is_none(),
+        "second take should be None"
+    );
+}
+
+/// Verify that [`StaticPeerDiscovery`] with no peers returns a receiver
+/// that is immediately empty (no events).
+#[test]
+fn test_static_discovery_empty_peers() {
+    let mut discovery = StaticPeerDiscovery::new(vec![]);
+    let mut rx = discovery.take_peer_rx().expect("should have peer_rx");
+    assert!(
+        rx.try_recv().is_err(),
+        "no events expected for empty peer list"
+    );
+}
+
+/// Verify that [`StaticPeerDiscovery::start`] and [`shutdown`] are safe
+/// no-ops.
+#[test]
+fn test_static_discovery_start_shutdown_noop() {
+    let mut discovery = StaticPeerDiscovery::new(vec![]);
+    discovery.start("any", 0, &AgentCard::default(), "mesh");
+    discovery.shutdown();
 }

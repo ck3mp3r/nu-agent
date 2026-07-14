@@ -8,6 +8,17 @@ use tokio::sync::mpsc;
 
 use crate::{A2aError, AgentCard, peer::Peer};
 
+pub mod filter;
+pub mod mdns_discovery;
+pub mod static_discovery;
+
+mod impl_enum;
+
+pub use impl_enum::PeerDiscoveryImpl;
+
+#[cfg(test)]
+mod filter_test;
+
 /// Ensure the rustls crypto provider is installed before creating a reqwest
 /// [`Client`] that uses `rustls-no-provider`.  Safe to call multiple times.
 fn ensure_crypto_provider() {
@@ -55,7 +66,12 @@ impl CardFetcher {
 static CARD_FETCHER: std::sync::OnceLock<CardFetcher> = std::sync::OnceLock::new();
 
 /// Build TXT properties as key-value pairs for mDNS advertisement.
-fn build_txt_properties(agent_name: &str, port: u16, card: &AgentCard, mesh_key: &str) -> Vec<(String, String)> {
+fn build_txt_properties(
+    agent_name: &str,
+    port: u16,
+    card: &AgentCard,
+    mesh_key: &str,
+) -> Vec<(String, String)> {
     let mut properties = Vec::new();
     properties.push(("name".to_string(), agent_name.to_string()));
     properties.push(("version".to_string(), env!("CARGO_PKG_VERSION").to_string()));
@@ -108,7 +124,7 @@ fn format_scoped_ip(addr: &mdns_sd::ScopedIp) -> String {
 ///
 /// Uses the pure-Rust [`ServiceDaemon`] from the `mdns-sd` crate — no C FFI
 /// dependency (fixes SIGBUS on aarch64 Nix builds).
-pub struct DiscoveryService {
+pub(crate) struct DiscoveryService {
     _daemon: Option<ServiceDaemon>,
 }
 
@@ -163,6 +179,7 @@ impl DiscoveryService {
     ///
     /// Use when registration fails and the caller wants to continue running
     /// without mDNS discoverability.
+    #[cfg(test)]
     pub fn noop() -> Self {
         Self { _daemon: None }
     }
@@ -179,7 +196,9 @@ pub(crate) fn peer_from_service(service: &mdns_sd::ResolvedService) -> Peer {
     let address = service
         .get_addresses()
         .iter()
-        .find(|a| a.is_ipv4())
+        // Prefer loopback for consistent same-machine URLs.
+        .find(|a| a.to_string() == "127.0.0.1")
+        .or_else(|| service.get_addresses().iter().find(|a| a.is_ipv4()))
         .or_else(|| service.get_addresses().iter().next())
         .map(format_scoped_ip)
         .unwrap_or_else(|| "0.0.0.0".to_string());
@@ -212,7 +231,7 @@ pub enum PeerEvent {
 ///
 /// Uses the pure-Rust [`ServiceDaemon`] from the `mdns-sd` crate — no C FFI
 /// dependency.
-pub struct DiscoveryBrowser {
+pub(crate) struct DiscoveryBrowser {
     // NOTE: field order matters for Drop.  When the manual Drop impl runs,
     // it drops the daemon first (disconnecting the flume channel), then
     // joins the poll thread.  The daemon field is *last* so that if Rust's
@@ -230,7 +249,11 @@ impl DiscoveryBrowser {
     /// Returns a handle that can be dropped to stop browsing, and a
     /// `mpsc::Receiver` that yields [`PeerEvent`]s as peers are discovered
     /// or lost.
-    pub fn browse(daemon: ServiceDaemon, mesh_key: &str, own_name: &str) -> Result<(Self, mpsc::Receiver<PeerEvent>), A2aError> {
+    pub fn browse(
+        daemon: ServiceDaemon,
+        mesh_key: &str,
+        own_port: u16,
+    ) -> Result<(Self, mpsc::Receiver<PeerEvent>), A2aError> {
         let receiver = daemon
             .browse("_nu-agent-a2a._tcp.local.")
             .map_err(|e| A2aError::Internal(format!("mdns-sd browse: {e}")))?;
@@ -238,7 +261,7 @@ impl DiscoveryBrowser {
         let (tx, rx) = mpsc::channel::<PeerEvent>(64);
         let cb_tx = tx.clone();
         let mesh_key = mesh_key.to_string();
-        let own_name = own_name.to_string();
+        let filters = filter::build_filters(own_port, &mesh_key);
 
         let handle = std::thread::spawn(move || {
             // Initialise card fetcher inside the browse thread — safe because
@@ -251,28 +274,19 @@ impl DiscoveryBrowser {
             while let Ok(service_event) = receiver.recv() {
                 match service_event {
                     ServiceEvent::ServiceResolved(resolved) => {
-                        // Skip self — the shared daemon receives its own mDNS responses.
-                        let own_fullname = format!("{}._nu-agent-a2a._tcp.local.", own_name);
-                        if resolved.get_fullname() == own_fullname {
+                        // Apply the filter chain (self-exclusion, mesh scoping, etc.).
+                        if let Err(rejection) = filter::check_all(
+                            &filters,
+                            resolved.get_fullname(),
+                            resolved.get_properties(),
+                            resolved.get_port(),
+                            resolved
+                                .get_addresses()
+                                .iter()
+                                .any(|addr| addr.is_loopback()),
+                        ) {
+                            log::debug!("peer rejected: {rejection}");
                             continue;
-                        }
-
-                        // Mesh scoping: skip peers with non-matching key
-                        let props = resolved.get_properties();
-                        let peer_key = props
-                            .get("mesh_key")
-                            .and_then(|v| v.val())
-                            .and_then(|bytes| std::str::from_utf8(bytes).ok());
-                        match peer_key {
-                            Some(k) if k != mesh_key => continue,
-                            Some(_) => {}
-                            None => {
-                                log::warn!(
-                                    "skipping peer {}: no mesh_key in TXT records",
-                                    resolved.get_fullname()
-                                );
-                                continue;
-                            }
                         }
 
                         let address = resolved
