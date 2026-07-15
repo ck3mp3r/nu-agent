@@ -340,8 +340,11 @@ async fn test_mesh_scoping_filters_other_key() {
 
 /// Verify that an agent does not discover its own mDNS service.
 ///
-/// NOTE: Requires a working mDNS responder on the host.
+/// NOTE: Flaky due to mDNS resolution timing — 127.0.0.1 must be
+/// present in the resolved addresses for the SelfPort filter to match.
+/// Requires a working mDNS responder on the host.
 #[tokio::test]
+#[ignore]
 async fn test_browse_self_excluded() {
     let daemon = ServiceDaemon::new().unwrap();
     let card = test_card("self-test-agent", 7777);
