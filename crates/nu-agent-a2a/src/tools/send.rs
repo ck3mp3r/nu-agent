@@ -52,19 +52,51 @@ pub async fn handle(ctx: A2aToolContext, params: Value) -> ToolResult {
         && let Some(runtime_handle) = ctx.runtime_handle.clone()
     {
         runtime_handle.spawn(async move {
-            match client.subscribe_task(&url, &task_id).await {
-                Ok(final_task) => {
-                    let result = extract_text_from_task(&final_task);
-                    let event = A2aCompletionEvent {
-                        task_id: final_task.id,
-                        agent_name,
-                        result,
-                        status: final_task.status.state,
-                    };
-                    let _ = completion_tx.send(event).await;
-                }
-                Err(e) => {
-                    log::warn!("A2A task watcher failed for {task_id}: {e}");
+            loop {
+                match client.subscribe_task(&url, &task_id).await {
+                    Ok(final_task) => {
+                        let result = extract_text_from_task(&final_task);
+                        let event = A2aCompletionEvent {
+                            task_id: final_task.id,
+                            agent_name: agent_name.clone(),
+                            result,
+                            status: final_task.status.state,
+                        };
+                        if let Err(e) = completion_tx.send(event).await {
+                            log::warn!("failed to send A2A completion event: {e}");
+                        }
+                        break;
+                    }
+                    Err(e) => {
+                        // Check if the task completed between subscribe failures
+                        match get_task(&client, &url, &task_id).await {
+                            Ok(task) if task.status.state.is_terminal() => {
+                                let result = extract_text_from_task(&task);
+                                let event = A2aCompletionEvent {
+                                    task_id: task.id,
+                                    agent_name: agent_name.clone(),
+                                    result,
+                                    status: task.status.state,
+                                };
+                                let _ = completion_tx.send(event).await;
+                                break;
+                            }
+                            Ok(_) => {
+                                // Still WORKING — retry subscribe
+                                log::warn!(
+                                    "SSE connection dropped for task {task_id}, retrying..."
+                                );
+                                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                                continue;
+                            }
+                            Err(get_e) => {
+                                log::warn!(
+                                    "SSE watcher fail for {task_id}: {e}. get_task: {get_e}"
+                                );
+                                break;
+                            }
+                        }
+                    }
                 }
             }
         });

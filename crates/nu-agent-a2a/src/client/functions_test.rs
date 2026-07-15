@@ -35,7 +35,7 @@ async fn test_setup() -> (crate::A2aServer, A2aClient, String) {
     let server = crate::A2aServer::start(card, Arc::new(PeerCache::new()), 0)
         .await
         .unwrap();
-    let client = A2aClient::new();
+    let client = A2aClient::new().unwrap();
     let url = server.local_url.clone();
     (server, client, url)
 }
@@ -120,7 +120,7 @@ async fn test_send_task_with_sender_url() {
 #[tokio::test]
 async fn test_send_task_connection_refused() {
     ensure_crypto_provider();
-    let client = A2aClient::new();
+    let client = A2aClient::new().unwrap();
     let msg = Message {
         role: Role::User,
         parts: vec![Part::Text {
@@ -237,7 +237,7 @@ async fn test_get_agent_card() {
 #[tokio::test]
 async fn test_get_agent_card_connection_refused() {
     ensure_crypto_provider();
-    let client = A2aClient::new();
+    let client = A2aClient::new().unwrap();
     let result = get_agent_card(&client, "http://127.0.0.1:1").await;
     assert!(matches!(result, Err(A2aError::ConnectionRefused(_))));
 }

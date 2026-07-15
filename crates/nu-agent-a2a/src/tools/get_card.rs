@@ -8,16 +8,39 @@ pub async fn handle(ctx: A2aToolContext, params: Value) -> ToolResult {
         .and_then(|v| v.as_str())
         .ok_or_else(|| "Missing required parameter: 'name'".to_string())?;
 
-    match ctx.cache.get(name) {
-        Some(peer) => {
-            let card = match peer.card {
-                Some(ref c) => serde_json::to_value(c).unwrap_or_else(
-                    |e| serde_json::json!({"error": format!("card serialization failed: {e}")}),
-                ),
-                None => serde_json::json!({"name": peer.name}),
-            };
-            Ok(card)
+    let peer = ctx
+        .cache
+        .get(name)
+        .ok_or_else(|| format!("Agent '{name}' not found"))?;
+
+    let url = format!("{}/.well-known/agent-card.json", peer.url);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| format!("HTTP client creation failed: {e}"))?;
+
+    let resp = match client.get(&url).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            return Ok(serde_json::json!({
+                "name": name,
+                "error": format!("card fetch failed: {e}")
+            }));
         }
-        None => Err(format!("Agent '{name}' not found")),
+    };
+
+    if !resp.status().is_success() {
+        return Ok(serde_json::json!({
+            "name": name,
+            "error": format!("card fetch failed: HTTP {}", resp.status().as_u16())
+        }));
+    }
+
+    match resp.json::<serde_json::Value>().await {
+        Ok(card) => Ok(card),
+        Err(e) => Ok(serde_json::json!({
+            "name": name,
+            "error": format!("card fetch failed: bad JSON: {e}")
+        })),
     }
 }

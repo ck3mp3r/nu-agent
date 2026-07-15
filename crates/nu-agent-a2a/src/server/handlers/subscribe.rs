@@ -1,3 +1,5 @@
+use std::pin::Pin;
+
 use axum::{
     extract::State,
     http::StatusCode,
@@ -20,7 +22,10 @@ use super::SseResult;
 pub async fn handle_tasks_subscribe(
     State(state): State<AppState>,
     axum::extract::Path(id): axum::extract::Path<String>,
-) -> Result<Sse<ReceiverStream<SseResult>>, (StatusCode, impl IntoResponse)> {
+) -> Result<
+    Sse<Pin<Box<dyn tokio_stream::Stream<Item = SseResult> + Send>>>,
+    (StatusCode, impl IntoResponse),
+> {
     let task = match state.task_store.get_task(&id) {
         Ok(t) => t,
         Err(_) => {
@@ -41,14 +46,14 @@ pub async fn handle_tasks_subscribe(
     );
 
     if is_terminal {
-        let (tx, sse_rx) = mpsc::channel::<SseResult>(16);
-        // Send initial task event (StreamResponse format)
-        let data = json!({ "task": &task });
-        let _ = tx
-            .send(Ok(axum::response::sse::Event::default()
-                .data(serde_json::to_string(&data).unwrap_or_default())))
-            .await;
-        return Ok(Sse::new(ReceiverStream::new(sse_rx)));
+        // Return the terminal task as a single SSE event.
+        // A channel sender would drop before the event is written,
+        // producing an empty stream. Use tokio_stream::iter instead.
+        let data = serde_json::to_string(&json!({ "task": &task })).unwrap_or_default();
+        let event = Ok(axum::response::sse::Event::default().data(data));
+        return Ok(Sse::new(Box::pin(tokio_stream::iter(std::iter::once(
+            event,
+        )))));
     }
 
     let task_store = state.task_store.clone();
@@ -72,57 +77,81 @@ pub async fn handle_tasks_subscribe(
             }
         }
 
-        loop {
-            match rx.recv().await {
-                Some(TaskEvent::StatusChanged {
-                    task_id: tid,
-                    status,
-                }) => {
-                    let data = json!({
-                        "statusUpdate": {
-                            "taskId": tid,
-                            "status": status,
-                        }
-                    });
-                    let sent = tx
-                        .send(Ok(axum::response::sse::Event::default()
-                            .data(serde_json::to_string(&data).unwrap_or_default())))
-                        .await;
-                    if sent.is_err() {
-                        break;
-                    }
+        let keepalive = tokio::time::interval(std::time::Duration::from_secs(15));
+        tokio::pin!(keepalive);
 
-                    if status.state == TaskState::Completed
-                        || status.state == TaskState::Failed
-                        || status.state == TaskState::Canceled
-                        || status.state == TaskState::Rejected
-                    {
-                        break;
-                    }
-                }
-                Some(TaskEvent::ArtifactAdded {
-                    task_id: tid,
-                    artifact,
-                }) => {
-                    let data = json!({
-                        "artifactUpdate": {
-                            "taskId": tid,
-                            "artifact": artifact,
+        loop {
+            tokio::select! {
+                event = rx.recv() => {
+                    match event {
+                        Some(TaskEvent::StatusChanged {
+                            task_id: tid,
+                            status,
+                        }) => {
+                            let data = json!({
+                                "statusUpdate": {
+                                    "taskId": tid,
+                                    "status": status,
+                                }
+                            });
+                            let sent = tx
+                                .send(Ok(axum::response::sse::Event::default()
+                                    .data(serde_json::to_string(&data).unwrap_or_default())))
+                                .await;
+                            if sent.is_err() {
+                                break;
+                            }
+
+                            // §11.7: resend a final Task snapshot with all
+                            // artifacts before closing the stream.
+                            if status.state == TaskState::Completed
+                                || status.state == TaskState::Failed
+                                || status.state == TaskState::Canceled
+                                || status.state == TaskState::Rejected
+                            {
+                                if let Ok(final_task) = task_store.get_task(&id) {
+                                    let data = json!({ "task": final_task });
+                                    let _ = tx
+                                        .send(Ok(axum::response::sse::Event::default()
+                                            .data(serde_json::to_string(&data)
+                                                .unwrap_or_default())))
+                                        .await;
+                                }
+                                break;
+                            }
                         }
-                    });
-                    if tx
-                        .send(Ok(axum::response::sse::Event::default()
-                            .data(serde_json::to_string(&data).unwrap_or_default())))
-                        .await
-                        .is_err()
-                    {
+                        Some(TaskEvent::ArtifactAdded {
+                            task_id: tid,
+                            artifact,
+                        }) => {
+                            let data = json!({
+                                "artifactUpdate": {
+                                    "taskId": tid,
+                                    "artifact": artifact,
+                                }
+                            });
+                            if tx
+                                .send(Ok(axum::response::sse::Event::default()
+                                    .data(serde_json::to_string(&data).unwrap_or_default())))
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                        None => break,
+                    }
+                }
+                _ = keepalive.tick() => {
+                    if tx.send(Ok(axum::response::sse::Event::default().comment("keepalive"))).await.is_err() {
                         break;
                     }
                 }
-                None => break,
             }
         }
+
+        log::warn!("SSE subscription handler exited for task {id}");
     });
 
-    Ok(Sse::new(ReceiverStream::new(sse_rx)))
+    Ok(Sse::new(Box::pin(ReceiverStream::new(sse_rx))))
 }

@@ -5,7 +5,8 @@ use std::time::Duration;
 
 use nu_protocol::{LabeledError, Value};
 
-use nu_agent_a2a::{A2aCompletionEvent, IncomingTask, Part};
+use nu_agent_a2a::{A2aCompletionEvent, InMemoryTaskStore, IncomingTask, Part};
+use nu_agent_core::utils::value_ext::extract_response_text_from_value;
 use nu_agent_core::{
     conversation::runtime::AgentConversationRuntime,
     orchestrator::{
@@ -36,6 +37,34 @@ impl AgentMode {
     pub(crate) fn is_tui(self) -> bool {
         matches!(self, Self::Tui)
     }
+}
+
+/// Auto-complete an A2A task based on the LLM execution result.
+///
+/// Extracts the final text from the LLM response (handles both
+/// `Value::String` and `Value::Record` with a `"response"` field)
+/// and calls `store.complete_task()`.  Logs a warning if the
+/// completion call fails.
+pub(crate) fn auto_complete_a2a_task(store: &InMemoryTaskStore, task_id: &str, response: &Value) {
+    let final_text = extract_response_text_from_value(response);
+    if let Err(e) = store.complete_task(task_id, &final_text) {
+        log::warn!("Failed to auto-complete A2A task {task_id}: {e}");
+    }
+}
+
+/// Extract an A2A task ID from a formatted external prompt string.
+///
+/// The prompt format is: `[A2A Task {id} from {url}]: {text}`
+/// Returns the task ID portion, or `None` if the prompt doesn't match.
+pub(crate) fn extract_a2a_task_id(prompt_text: &str) -> Option<&str> {
+    if prompt_text.starts_with("[A2A Task ")
+        && let Some(end) = prompt_text.find(']')
+    {
+        // header is "id from url" (everything between "[A2A Task " and "]")
+        let header = &prompt_text["[A2A Task ".len()..end];
+        return header.split(" from ").next();
+    }
+    None
 }
 
 /// Whether the plugin should call `enter_foreground()` to receive SIGINT.
@@ -74,6 +103,7 @@ pub(crate) fn run_tui_mode(
     hydration: TuiHydrationInput,
     a2a_task_rx: Option<tokio::sync::mpsc::Receiver<IncomingTask>>,
     a2a_completion_rx: Option<tokio::sync::mpsc::Receiver<A2aCompletionEvent>>,
+    a2a_task_store: Option<Arc<InMemoryTaskStore>>,
 ) -> Result<Value, LabeledError> {
     // Set up the interactive permission pending map for TUI mode.
     // This Arc is shared between the worker thread (via InteractivePermissionResolver)
@@ -161,13 +191,14 @@ pub(crate) fn run_tui_mode(
                         .collect::<Vec<_>>()
                         .join(" ");
                     let prompt = format!(
-                        "[A2A Task {} from {}]: {}\n\nWhen you have processed this request, call `tasks.complete` with taskId `{}` and your response as the result.",
-                        incoming.task_id, incoming.sender_url, text, incoming.task_id
+                        "[A2A Task {} from {}]: {}\n\nProcess this request and respond with your answer. Your response will be automatically delivered as the task result.",
+                        incoming.task_id, incoming.sender_url, text
                     );
                     if tx.send(prompt).is_err() {
                         break; // std receiver dropped, no more forwarding needed
                     }
                 }
+                log::warn!("incoming task channel closed");
             });
         }
 
@@ -178,18 +209,41 @@ pub(crate) fn run_tui_mode(
             std::thread::spawn(move || {
                 while let Some(event) = rx.blocking_recv() {
                     let prompt = format!(
-                        "[A2A Task {} completed by {}]: {}\n\nStatus: {}. Use tasks.get to inspect the full task details.",
+                        "[A2A Task {} completed by {}]: {}\n\nStatus: {}.",
                         event.task_id, event.agent_name, event.result, event.status
                     );
                     if tx.send(prompt).is_err() {
                         break;
                     }
                 }
+                log::warn!("completion event channel closed");
             });
         }
 
         if has_sources { Some(std_rx) } else { None }
     };
+
+    // Create the auto-complete channel for A2A tasks. When the interactive loop
+    // finishes processing an external prompt (A2A task), it sends the prompt and
+    // response text through `turn_tx`. A background thread reads from the channel
+    // and calls `store.complete_task()`.
+    let turn_tx: Option<std::sync::mpsc::Sender<(String, String)>> =
+        if let Some(ref store) = a2a_task_store {
+            let (tx, rx) = std::sync::mpsc::channel::<(String, String)>();
+            let store = Arc::clone(store);
+            std::thread::spawn(move || {
+                while let Ok((prompt_text, response_text)) = rx.recv() {
+                    if let Some(task_id) = extract_a2a_task_id(&prompt_text)
+                        && let Err(e) = store.complete_task(task_id, &response_text)
+                    {
+                        log::warn!("auto-complete failed for task {task_id}: {e}");
+                    }
+                }
+            });
+            Some(tx)
+        } else {
+            None
+        };
 
     let result = run_with_terminal_restore(&mut terminal_lifecycle, || {
         if input_is_nothing {
@@ -202,6 +256,7 @@ pub(crate) fn run_tui_mode(
                     span,
                     Some(Arc::clone(&pending)),
                     external_prompt_rx,
+                    turn_tx,
                 )
             } else {
                 run_interactive_loop_with_external_prompts(
@@ -210,6 +265,7 @@ pub(crate) fn run_tui_mode(
                     span,
                     Some(Arc::clone(&pending)),
                     external_prompt_rx,
+                    turn_tx,
                 )
             }
         } else {
@@ -223,6 +279,7 @@ pub(crate) fn run_tui_mode(
     super::run_command::map_tui_run_result(result)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_stderr_mode(
     runtime_impl: &mut AgentConversationRuntime,
     input: &Value,
@@ -231,6 +288,7 @@ pub(crate) fn run_stderr_mode(
     stderr_is_tty: bool,
     mut a2a_task_rx: Option<tokio::sync::mpsc::Receiver<IncomingTask>>,
     mut a2a_completion_rx: Option<tokio::sync::mpsc::Receiver<A2aCompletionEvent>>,
+    a2a_task_store: Option<Arc<InMemoryTaskStore>>,
 ) -> Result<Value, LabeledError> {
     let cancel_flag = Arc::new(AtomicBool::new(false));
 
@@ -254,7 +312,7 @@ pub(crate) fn run_stderr_mode(
         && let Ok(event) = rx.try_recv()
     {
         let prompt = format!(
-            "[A2A Task {} completed by {}]: {}\n\nStatus: {}. Use tasks.get to inspect the full task details.",
+            "[A2A Task {} completed by {}]: {}\n\nStatus: {}.",
             event.task_id, event.agent_name, event.result, event.status
         );
         return run_single_turn(runtime_impl, &mut stderr_ui, prompt, None, span);
@@ -264,6 +322,7 @@ pub(crate) fn run_stderr_mode(
     if let Some(ref mut rx) = a2a_task_rx
         && let Ok(incoming) = rx.try_recv()
     {
+        let task_id = incoming.task_id.clone();
         let text: String = incoming
             .message
             .parts
@@ -275,10 +334,19 @@ pub(crate) fn run_stderr_mode(
             .collect::<Vec<_>>()
             .join(" ");
         let prompt = format!(
-            "[A2A Task {} from {}]: {}\n\nWhen you have processed this request, call `tasks.complete` with taskId `{}` and your response as the result.",
-            incoming.task_id, incoming.sender_url, text, incoming.task_id
+            "[A2A Task {} from {}]: {}\n\nProcess this request and respond with your answer. Your response will be automatically delivered as the task result.",
+            incoming.task_id, incoming.sender_url, text
         );
-        return run_single_turn(runtime_impl, &mut stderr_ui, prompt, None, span);
+        let result = run_single_turn(runtime_impl, &mut stderr_ui, prompt, None, span);
+
+        // Auto-complete the A2A task after the LLM finishes its tool chain
+        if let Some(ref store) = a2a_task_store
+            && let Ok(ref response) = result
+        {
+            auto_complete_a2a_task(store, &task_id, response);
+        }
+
+        return result;
     }
 
     let (prompt, context) = super::input::extract_prompt_and_context(input)?;

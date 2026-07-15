@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
 use axum::{
     Router,
     routing::{delete, get, post},
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 use tower_http::cors::CorsLayer;
 
 use crate::{A2aError, AgentCard, InMemoryTaskStore, IncomingTask, PeerCache};
@@ -44,7 +46,7 @@ pub struct A2aServer {
     pub port: u16,
     pub local_url: String,
     task_store: Arc<InMemoryTaskStore>,
-    shutdown_handle: Option<oneshot::Sender<()>>,
+    shutdown_token: Option<CancellationToken>,
     incoming_tasks_rx: Option<mpsc::Receiver<IncomingTask>>,
 }
 
@@ -72,7 +74,7 @@ impl A2aServer {
         } else {
             format!("0.0.0.0:{port}")
         };
-        let listener = tokio::net::TcpListener::bind(bind_addr)
+        let listener = tokio::net::TcpListener::bind(&bind_addr)
             .await
             .map_err(|e| A2aError::Internal(format!("bind failed: {e}")))?;
 
@@ -81,9 +83,12 @@ impl A2aServer {
             .local_addr()
             .map_err(|e| A2aError::Internal(format!("addr failed: {e}")))?
             .port();
+        let local_url = format!("http://127.0.0.1:{port}");
+        let canonical_bind = format!("0.0.0.0:{port}");
 
-        // 3. Create shutdown channel
-        let (tx, rx) = oneshot::channel::<()>();
+        // 3. Create cancellation token for graceful shutdown
+        let shutdown_token = CancellationToken::new();
+        let token = shutdown_token.clone();
 
         // 4. Build shared state and event channel
         let (incoming_tx, incoming_rx) = mpsc::channel::<IncomingTask>(64);
@@ -97,78 +102,106 @@ impl A2aServer {
             files,
         };
 
-        // 5. Build axum router with all routes (spec §11.3)
+        // 5. Spawn restart loop
         //
-        // Note: axum 0.8 requires path parameters (e.g. {id}) to be the
-        // complete path segment.  Colon-suffix actions like `{id}:cancel`
-        // are not supported in a single segment, so we use a separate
-        // segment for the colon action when a parameter is present.
+        // If the server crashes (port conflict, OS error), we log the error,
+        // re-bind, and restart automatically instead of dying silently.
         //
-        // Parameter-less colon paths (message:send, tasks:list, files:upload)
-        // work fine as literal matches.
-        let app = Router::new()
-            .route("/health", get(|| async { "ok" }))
-            // Message endpoints (§11.3.1)
-            .route("/message:send", post(handlers::handle_tasks_send))
-            .route("/message:stream", post(handlers::handle_tasks_send_stream))
-            // Task endpoints
-            .route("/tasks:list", post(handlers::handle_tasks_list))
-            .route(
-                "/tasks/{id}/subscribe",
-                get(handlers::handle_tasks_subscribe),
-            )
-            .route("/tasks/{id}/cancel", post(handlers::handle_tasks_cancel))
-            .route(
-                "/tasks/{id}/complete",
-                post(handlers::handle_tasks_complete),
-            )
-            .route("/tasks/{id}", get(handlers::handle_tasks_get))
-            // Push notification configs (§11.3.2)
-            .route(
-                "/tasks/{id}/push-notifications/create",
-                post(handlers::handle_create_push_config),
-            )
-            .route(
-                "/tasks/{id}/push-notifications/list",
-                get(handlers::handle_list_push_configs),
-            )
-            .route(
-                "/tasks/{id}/push-notifications/delete/{config_id}",
-                delete(handlers::handle_delete_push_config),
-            )
-            // File exchange
-            .route("/files:upload", post(handlers::handle_file_upload))
-            .route("/files/{id}", get(handlers::handle_file_download))
-            // Agent card discovery (§8.6)
-            .route(
-                "/.well-known/agent-card.json",
-                get(handlers::handle_agent_card),
-            )
-            .route(
-                "/extendedAgentCard",
-                get(handlers::handle_extended_agent_card),
-            )
-            .with_state(state.clone())
-            .layer(axum::middleware::from_fn(a2a_version_middleware))
-            .layer(CorsLayer::permissive());
-
-        // 6. Serve in background
-        let local_url = format!("http://127.0.0.1:{port}");
+        // The first iteration uses the pre-bound `listener` so the server is
+        // accepting connections before `start()` returns.  On restart we bind
+        // a fresh listener inside the loop.
         tokio::spawn(async move {
-            axum::serve(listener, app)
-                .with_graceful_shutdown(async {
-                    rx.await.ok();
-                })
-                .await
-                .expect("server failed");
+            let mut current_listener = Some(listener);
+
+            loop {
+                let listener = match current_listener.take() {
+                    Some(l) => l,
+                    None => match tokio::net::TcpListener::bind(&canonical_bind).await {
+                        Ok(l) => l,
+                        Err(e) => {
+                            log::error!(
+                                "A2A server failed to bind port {port}: \
+                                 {e}. retrying in 5s..."
+                            );
+                            tokio::time::sleep(Duration::from_secs(5)).await;
+                            continue;
+                        }
+                    },
+                };
+
+                // Build axum router with all routes (spec §11.3)
+                //
+                // Note: axum 0.8 requires path parameters (e.g. {id}) to be the
+                // complete path segment.  Colon-suffix actions like `{id}:cancel`
+                // are not supported in a single segment, so we use a separate
+                // segment for the colon action when a parameter is present.
+                //
+                // Parameter-less colon paths (message:send, tasks:list, files:upload)
+                // work fine as literal matches.
+                let app = Router::new()
+                    .route("/health", get(|| async { "ok" }))
+                    // Message endpoints (§11.3.1)
+                    .route("/message:send", post(handlers::handle_tasks_send))
+                    .route("/message:stream", post(handlers::handle_tasks_send_stream))
+                    // Task endpoints
+                    .route("/tasks:list", post(handlers::handle_tasks_list))
+                    .route(
+                        "/tasks/{id}/subscribe",
+                        get(handlers::handle_tasks_subscribe),
+                    )
+                    .route("/tasks/{id}/cancel", post(handlers::handle_tasks_cancel))
+                    .route("/tasks/{id}", get(handlers::handle_tasks_get))
+                    // Push notification configs (§11.3.2)
+                    .route(
+                        "/tasks/{id}/push-notifications/create",
+                        post(handlers::handle_create_push_config),
+                    )
+                    .route(
+                        "/tasks/{id}/push-notifications/list",
+                        get(handlers::handle_list_push_configs),
+                    )
+                    .route(
+                        "/tasks/{id}/push-notifications/delete/{config_id}",
+                        delete(handlers::handle_delete_push_config),
+                    )
+                    // File exchange
+                    .route("/files:upload", post(handlers::handle_file_upload))
+                    .route("/files/{id}", get(handlers::handle_file_download))
+                    // Agent card discovery (§8.6)
+                    .route(
+                        "/.well-known/agent-card.json",
+                        get(handlers::handle_agent_card),
+                    )
+                    .route(
+                        "/extendedAgentCard",
+                        get(handlers::handle_extended_agent_card),
+                    )
+                    .with_state(state.clone())
+                    .layer(axum::middleware::from_fn(a2a_version_middleware))
+                    .layer(CorsLayer::permissive());
+
+                if let Err(e) = axum::serve(listener, app)
+                    .with_graceful_shutdown({
+                        let token = token.clone();
+                        async move { token.cancelled().await }
+                    })
+                    .await
+                {
+                    log::error!("A2A server crashed: {e}. restarting in 1s...");
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                } else {
+                    log::info!("A2A server shut down gracefully");
+                    break;
+                }
+            }
         });
 
-        // 7. Return handle
+        // 6. Return handle
         Ok(Self {
             port,
             local_url,
             task_store,
-            shutdown_handle: Some(tx),
+            shutdown_token: Some(shutdown_token),
             incoming_tasks_rx: Some(incoming_rx),
         })
     }
@@ -183,9 +216,23 @@ impl A2aServer {
     }
 
     /// Gracefully shut down the server.
+    ///
+    /// Cancels the [`CancellationToken`] which signals the background task
+    /// to stop. The spawned loop exits without restarting when it detects
+    /// a graceful shutdown (the `Ok` case from `axum::serve`).
     pub async fn shutdown(mut self) {
-        if let Some(tx) = self.shutdown_handle.take() {
-            let _ = tx.send(());
+        if let Some(token) = self.shutdown_token.take() {
+            token.cancel();
+        }
+        // Brief delay to allow graceful shutdown to propagate.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+impl Drop for A2aServer {
+    fn drop(&mut self) {
+        if let Some(token) = self.shutdown_token.take() {
+            token.cancel();
         }
     }
 }

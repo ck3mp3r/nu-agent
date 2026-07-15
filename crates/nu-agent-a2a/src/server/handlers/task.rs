@@ -126,36 +126,3 @@ pub async fn handle_tasks_cancel(
         }
     }
 }
-
-pub async fn handle_tasks_complete(
-    State(state): State<AppState>,
-    axum::extract::Path(id): axum::extract::Path<String>,
-    Json(body): Json<Value>,
-) -> impl IntoResponse {
-    let result_text = body.get("result").and_then(|v| v.as_str()).unwrap_or("");
-
-    match state.task_store.complete_task(&id, result_text) {
-        Ok(task) => {
-            let task_json = serde_json::to_value(&task).unwrap_or_default();
-            (StatusCode::OK, a2a_json_response(a2a_ok(task_json)))
-        }
-        Err(A2aError::InvalidStateTransition { from, to }) => {
-            let err = a2a_error_with_meta(
-                400,
-                "INVALID_REQUEST",
-                &format!("Invalid state transition: {from:?} → {to:?}"),
-                json!({"taskId": id, "from": format!("{from:?}"), "to": format!("{to:?}")}),
-            );
-            (StatusCode::BAD_REQUEST, a2a_json_response(err))
-        }
-        Err(_) => {
-            let err = a2a_error_with_meta(
-                404,
-                "NOT_FOUND",
-                "The specified task ID does not exist or is not accessible",
-                json!({"taskId": id, "timestamp": chrono::Utc::now().to_rfc3339()}),
-            );
-            (StatusCode::NOT_FOUND, a2a_json_response(err))
-        }
-    }
-}

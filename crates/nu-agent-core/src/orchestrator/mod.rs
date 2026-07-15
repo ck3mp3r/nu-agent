@@ -141,6 +141,7 @@ fn run_interactive_loop_impl<R, U>(
     span: Span,
     interactive_pending: Option<PendingPermissions>,
     external_prompt_rx: Option<mpsc::Receiver<String>>,
+    on_turn_complete: Option<mpsc::Sender<(String, String)>>,
 ) -> Result<Value, LabeledError>
 where
     R: CoreRuntime
@@ -184,6 +185,7 @@ where
         let mut stages = OrchestratorStages::new(initial_visible_count, worker_result_rx);
         let mut worker_active = false;
         let mut should_evaluate_compaction = true; // evaluate once on startup (session resume)
+        let mut active_external_prompt: Option<String> = None;
 
         loop {
             ui.pump_once();
@@ -212,6 +214,10 @@ where
                 // so the user can see what was sent to the receiving agent.
                 ui.display_incoming_message(&prompt);
 
+                // Track this external prompt so the session stage can fire
+                // on_turn_complete after the LLM finishes processing it.
+                active_external_prompt = Some(prompt.clone());
+
                 match worker_cmd_tx.send(WorkerCommand::ExecuteTurn { prompt, span }) {
                     Ok(()) => {
                         worker_active = true;
@@ -233,6 +239,8 @@ where
                 should_evaluate_compaction: &mut should_evaluate_compaction,
                 span,
                 ui,
+                active_external_prompt: &mut active_external_prompt,
+                on_turn_complete: &on_turn_complete,
             };
             match stages.poll_all(&mut ctx) {
                 StageOutcome::Fatal(e) => {
@@ -277,19 +285,24 @@ where
         + Send,
     U: ProgressUi + UserInputUi + DisplayStateUi + LifecycleUi + TranscriptUi,
 {
-    run_interactive_loop_impl(runtime, ui, span, interactive_pending, None)
+    run_interactive_loop_impl(runtime, ui, span, interactive_pending, None, None)
 }
 
 /// Like [`run_interactive_loop`] but also checks an external channel for
 /// pre-formatted prompt strings (e.g., injected A2A tasks) before each
 /// iteration. These prompts are dispatched with higher priority than
 /// regular user input.
+///
+/// The `on_turn_complete` callback is fired after each turn that was triggered
+/// by an external prompt, with `(prompt_text, response_text)`.
+#[allow(clippy::too_many_arguments)]
 pub fn run_interactive_loop_with_external_prompts<R, U>(
     runtime: &mut R,
     ui: &mut U,
     span: Span,
     interactive_pending: Option<PendingPermissions>,
     external_prompt_rx: Option<mpsc::Receiver<String>>,
+    on_turn_complete: Option<mpsc::Sender<(String, String)>>,
 ) -> Result<Value, LabeledError>
 where
     R: CoreRuntime
@@ -300,7 +313,14 @@ where
         + Send,
     U: ProgressUi + UserInputUi + DisplayStateUi + LifecycleUi + TranscriptUi,
 {
-    run_interactive_loop_impl(runtime, ui, span, interactive_pending, external_prompt_rx)
+    run_interactive_loop_impl(
+        runtime,
+        ui,
+        span,
+        interactive_pending,
+        external_prompt_rx,
+        on_turn_complete,
+    )
 }
 
 pub fn run_hydrated_interactive_loop<R, U>(
@@ -328,9 +348,11 @@ where
         span,
         interactive_pending,
         None,
+        None,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_hydrated_interactive_loop_impl<R, U>(
     runtime: &mut R,
     ui: &mut U,
@@ -339,6 +361,7 @@ fn run_hydrated_interactive_loop_impl<R, U>(
     span: Span,
     interactive_pending: Option<PendingPermissions>,
     external_prompt_rx: Option<mpsc::Receiver<String>>,
+    on_turn_complete: Option<mpsc::Sender<(String, String)>>,
 ) -> Result<Value, LabeledError>
 where
     R: CoreRuntime
@@ -351,12 +374,23 @@ where
 {
     ui.hydrate_transcript_from_messages(messages, last_total_tokens);
     runtime.seed_last_total_tokens(last_total_tokens);
-    run_interactive_loop_impl(runtime, ui, span, interactive_pending, external_prompt_rx)
+    run_interactive_loop_impl(
+        runtime,
+        ui,
+        span,
+        interactive_pending,
+        external_prompt_rx,
+        on_turn_complete,
+    )
 }
 
 /// Like [`run_hydrated_interactive_loop`] but also checks an external channel
 /// for pre-formatted prompt strings (e.g., injected A2A tasks) before each
 /// iteration.
+///
+/// The `on_turn_complete` callback is fired after each turn that was triggered
+/// by an external prompt, with `(prompt_text, response_text)`.
+#[allow(clippy::too_many_arguments)]
 pub fn run_hydrated_interactive_loop_with_external_prompts<R, U>(
     runtime: &mut R,
     ui: &mut U,
@@ -365,6 +399,7 @@ pub fn run_hydrated_interactive_loop_with_external_prompts<R, U>(
     span: Span,
     interactive_pending: Option<PendingPermissions>,
     external_prompt_rx: Option<mpsc::Receiver<String>>,
+    on_turn_complete: Option<mpsc::Sender<(String, String)>>,
 ) -> Result<Value, LabeledError>
 where
     R: CoreRuntime
@@ -383,6 +418,7 @@ where
         span,
         interactive_pending,
         external_prompt_rx,
+        on_turn_complete,
     )
 }
 

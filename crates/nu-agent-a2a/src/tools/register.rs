@@ -8,6 +8,5 @@ pub fn register_a2a_tools() -> Vec<Tool> {
         Tool::Get,
         Tool::Cancel,
         Tool::List,
-        Tool::Complete,
     ]
 }

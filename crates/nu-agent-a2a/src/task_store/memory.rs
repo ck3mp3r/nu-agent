@@ -351,7 +351,14 @@ impl InMemoryTaskStore {
                 let config = config.clone();
                 let payload = payload.clone();
                 tokio::spawn(async move {
-                    deliver_push(config, payload).await;
+                    // Nested spawn so panics are caught via JoinHandle error
+                    if let Err(e) = tokio::spawn(async move {
+                        deliver_push(config, payload).await;
+                    })
+                    .await
+                    {
+                        log::warn!("push notification delivery panicked: {e}");
+                    }
                 });
             }
         }
@@ -549,14 +556,15 @@ impl InMemoryTaskStore {
             });
         }
 
-        task.artifacts.push(Artifact {
+        let result_artifact = Artifact {
             artifact_id: Uuid::new_v4().to_string(),
             name: Some("result".to_string()),
             parts: vec![Part::Text {
                 text: result.to_string(),
             }],
             metadata: None,
-        });
+        };
+        task.artifacts.push(result_artifact.clone());
 
         task.status = TaskStatus {
             state: TaskState::Completed,
@@ -573,11 +581,13 @@ impl InMemoryTaskStore {
         };
 
         let status = task.status.clone();
-        let result = task.clone();
+        let completed_task = task.clone();
+        let id_owned = id.to_string();
         drop(tasks); // release lock before notifying
-        self.notify_status_change(id, &status);
+        self.notify_artifact_added(&id_owned, &result_artifact);
+        self.notify_status_change(&id_owned, &status);
 
-        Ok(result)
+        Ok(completed_task)
     }
 
     /// Append a message to a task's history.

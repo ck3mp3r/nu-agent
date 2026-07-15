@@ -22,6 +22,16 @@ pub enum TaskState {
     AuthRequired,
 }
 
+impl TaskState {
+    /// Returns `true` if the task is in a terminal state (no further state transitions).
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            TaskState::Completed | TaskState::Failed | TaskState::Canceled | TaskState::Rejected
+        )
+    }
+}
+
 impl fmt::Display for TaskState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {

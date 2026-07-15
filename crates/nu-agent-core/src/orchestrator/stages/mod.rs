@@ -50,6 +50,14 @@ pub(crate) struct OrchestrationContext<'a, U> {
     pub span: Span,
     /// The interactive UI. Stages call `ui.emit(...)`, `ui.take_submitted_prompt()`, etc.
     pub ui: &'a mut U,
+    /// External prompt that triggered the current turn (if any).
+    /// Set by the main loop before dispatching a turn, consumed by the session
+    /// stage when the turn completes so it can fire `on_turn_complete`.
+    pub active_external_prompt: &'a mut Option<String>,
+    /// Optional sender for turn-completion notifications. When Some, the session
+    /// stage fires `(prompt_text, response_text)` after each turn that was
+    /// triggered by an external prompt.
+    pub on_turn_complete: &'a Option<mpsc::Sender<(String, String)>>,
 }
 
 /// All orchestration stages, bundled as a single composable unit.

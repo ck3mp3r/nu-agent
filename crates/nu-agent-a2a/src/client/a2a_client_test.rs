@@ -24,7 +24,7 @@ fn ensure_crypto_provider() {
 #[test]
 fn test_default_client() {
     ensure_crypto_provider();
-    let client = A2aClient::new();
+    let client = A2aClient::new().unwrap();
     // Just verify it doesn't panic
     let _ = client;
 }
@@ -53,7 +53,7 @@ async fn test_list_peers() {
         discovered_at: std::time::Instant::now(),
     });
 
-    let client = A2aClient::new();
+    let client = A2aClient::new().unwrap();
     let peers = client.list_peers(&cache);
     assert_eq!(peers.len(), 1);
     assert_eq!(peers[0].name, "alice");
@@ -77,7 +77,7 @@ async fn test_setup() -> (crate::A2aServer, A2aClient, String) {
     let server = crate::A2aServer::start(card, Arc::new(PeerCache::new()), 0)
         .await
         .unwrap();
-    let client = A2aClient::new();
+    let client = A2aClient::new().unwrap();
     let url = server.local_url.clone();
     (server, client, url)
 }
@@ -120,7 +120,7 @@ async fn test_subscribe_task_not_found() {
 #[tokio::test]
 async fn test_subscribe_task_connection_refused() {
     ensure_crypto_provider();
-    let client = A2aClient::new();
+    let client = A2aClient::new().unwrap();
 
     let result = client.subscribe_task("http://127.0.0.1:1", "some-id").await;
     assert!(
@@ -202,7 +202,7 @@ async fn test_client_sends_a2a_version_header() {
     });
 
     let url = format!("http://127.0.0.1:{}", addr.port());
-    let client = A2aClient::new();
+    let client = A2aClient::new().unwrap();
     let msg = Message {
         role: Role::User,
         parts: vec![Part::Text {

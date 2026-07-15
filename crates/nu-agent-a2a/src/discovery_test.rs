@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
@@ -501,4 +502,41 @@ fn test_static_discovery_start_shutdown_noop() {
     let mut discovery = StaticPeerDiscovery::new(vec![]);
     discovery.start("any", 0, &AgentCard::default(), "mesh");
     discovery.shutdown();
+}
+
+// ---------------------------------------------------------------------------
+// Agent card fetch integration test
+// ---------------------------------------------------------------------------
+
+/// Start a real A2A server, fetch its agent card at the correct URL
+/// (`/.well-known/agent-card.json`), and verify the old wrong path
+/// (`/agent.json`) returns 404.
+///
+/// NOTE: Requires a working network stack (loopback). Ignored by default
+/// in CI.
+#[tokio::test]
+#[ignore]
+async fn test_card_fetch_roundtrip() {
+    let card = AgentCard {
+        name: "test-agent".into(),
+        description: Some("A test agent".into()),
+        ..Default::default()
+    };
+
+    let cache = Arc::new(PeerCache::new());
+    let server = A2aServer::start(card, cache, 0).await.unwrap();
+    let url = format!("{}/.well-known/agent-card.json", server.local_url);
+
+    let resp = reqwest::get(&url).await.unwrap();
+    assert!(resp.status().is_success());
+    let fetched: AgentCard = resp.json().await.unwrap();
+    assert_eq!(fetched.name, "test-agent");
+    assert_eq!(fetched.description.as_deref(), Some("A test agent"));
+
+    // Verify 404 on old wrong path
+    let bad_url = format!("{}/agent.json", server.local_url);
+    let resp = reqwest::get(&bad_url).await.unwrap();
+    assert_eq!(resp.status().as_u16(), 404);
+
+    server.shutdown().await;
 }

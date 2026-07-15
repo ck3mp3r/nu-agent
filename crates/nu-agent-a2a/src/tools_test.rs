@@ -8,26 +8,26 @@ use serde_json::Value;
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_tool_defs_returns_seven_tools() {
+fn test_tool_defs_returns_six_tools() {
     let defs = a2a_tool_defs();
-    assert_eq!(defs.len(), 7, "Should have 7 tool definitions");
+    assert_eq!(defs.len(), 6, "Should have 6 tool definitions");
 }
 
 #[test]
 fn test_agent_list_has_no_parameters() {
     let defs = a2a_tool_defs();
-    let tool = defs.iter().find(|t| t.name == "agent.list").unwrap();
+    let tool = defs.iter().find(|t| t.name == "agent_list").unwrap();
     let props = tool.parameters["properties"].as_object().unwrap();
     assert!(
         props.is_empty(),
-        "agent.list should have no parameters (no filter) — LLM should get all agents"
+        "agent_list should have no parameters (no filter) — LLM should get all agents"
     );
 }
 
 #[test]
 fn test_agent_get_card_requires_name() {
     let defs = a2a_tool_defs();
-    let tool = defs.iter().find(|t| t.name == "agent.getCard").unwrap();
+    let tool = defs.iter().find(|t| t.name == "agent_getCard").unwrap();
     let required = tool.parameters["required"].as_array().unwrap();
     assert!(required.contains(&Value::String("name".into())));
 }
@@ -35,7 +35,7 @@ fn test_agent_get_card_requires_name() {
 #[test]
 fn test_tasks_send_requires_target_and_text() {
     let defs = a2a_tool_defs();
-    let tool = defs.iter().find(|t| t.name == "tasks.send").unwrap();
+    let tool = defs.iter().find(|t| t.name == "tasks_send").unwrap();
     let required = tool.parameters["required"].as_array().unwrap();
     assert!(required.contains(&Value::String("target".into())));
     assert!(required.contains(&Value::String("text".into())));
@@ -44,7 +44,7 @@ fn test_tasks_send_requires_target_and_text() {
 #[test]
 fn test_tasks_get_requires_task_id_and_target() {
     let defs = a2a_tool_defs();
-    let tool = defs.iter().find(|t| t.name == "tasks.get").unwrap();
+    let tool = defs.iter().find(|t| t.name == "tasks_get").unwrap();
     let required = tool.parameters["required"].as_array().unwrap();
     assert!(required.contains(&Value::String("taskId".into())));
     assert!(required.contains(&Value::String("target".into())));
@@ -53,7 +53,7 @@ fn test_tasks_get_requires_task_id_and_target() {
 #[test]
 fn test_tasks_cancel_requires_task_id_and_target() {
     let defs = a2a_tool_defs();
-    let tool = defs.iter().find(|t| t.name == "tasks.cancel").unwrap();
+    let tool = defs.iter().find(|t| t.name == "tasks_cancel").unwrap();
     let required = tool.parameters["required"].as_array().unwrap();
     assert!(required.contains(&Value::String("taskId".into())));
     assert!(required.contains(&Value::String("target".into())));
@@ -62,7 +62,7 @@ fn test_tasks_cancel_requires_task_id_and_target() {
 #[test]
 fn test_tasks_list_has_optional_status_param() {
     let defs = a2a_tool_defs();
-    let tool = defs.iter().find(|t| t.name == "tasks.list").unwrap();
+    let tool = defs.iter().find(|t| t.name == "tasks_list").unwrap();
     assert!(
         tool.parameters.get("required").is_none(),
         "tasks.list should have no required params"
@@ -106,7 +106,7 @@ fn ensure_crypto_provider() {
 async fn test_handle_agent_list_empty() {
     ensure_crypto_provider();
     let ctx = A2aToolContext {
-        client: A2aClient::new(),
+        client: A2aClient::new().unwrap(),
         cache: Arc::new(PeerCache::new()),
         own_card: AgentCard::default(),
         task_store: None,
@@ -122,7 +122,7 @@ async fn test_handle_agent_list_with_peers() {
     ensure_crypto_provider();
     let ctx = A2aToolContext {
         cache: Arc::new(PeerCache::new()),
-        client: A2aClient::new(),
+        client: A2aClient::new().unwrap(),
         own_card: AgentCard::default(),
         task_store: None,
         completion_tx: None,
@@ -157,7 +157,7 @@ async fn test_handle_agent_get_card_not_found() {
     ensure_crypto_provider();
     let ctx = A2aToolContext {
         cache: Arc::new(PeerCache::new()),
-        client: A2aClient::new(),
+        client: A2aClient::new().unwrap(),
         own_card: AgentCard::default(),
         task_store: None,
         completion_tx: None,
@@ -174,7 +174,7 @@ async fn test_handle_tasks_send_missing_param() {
     ensure_crypto_provider();
     let ctx = A2aToolContext {
         cache: Arc::new(PeerCache::new()),
-        client: A2aClient::new(),
+        client: A2aClient::new().unwrap(),
         own_card: AgentCard::default(),
         task_store: None,
         completion_tx: None,
@@ -200,7 +200,7 @@ async fn test_handle_tasks_send_to_real_server() {
 
     let ctx = A2aToolContext {
         cache: Arc::new(PeerCache::new()),
-        client: A2aClient::new(),
+        client: A2aClient::new().unwrap(),
         own_card: AgentCard::default(),
         task_store: None,
         completion_tx: None,
@@ -239,7 +239,7 @@ async fn test_handle_tasks_send_with_own_card_url() {
         .unwrap();
 
     let ctx = A2aToolContext {
-        client: A2aClient::new(),
+        client: A2aClient::new().unwrap(),
         cache: Arc::new(PeerCache::new()),
         own_card: AgentCard {
             name: "sender".into(),
@@ -280,7 +280,7 @@ async fn test_handle_tasks_get_to_real_server() {
 
     let ctx = A2aToolContext {
         cache: Arc::new(PeerCache::new()),
-        client: A2aClient::new(),
+        client: A2aClient::new().unwrap(),
         own_card: AgentCard::default(),
         task_store: None,
         completion_tx: None,
@@ -309,19 +309,6 @@ async fn test_handle_tasks_get_to_real_server() {
 }
 
 // ---------------------------------------------------------------------------
-// tasks.complete
-// ---------------------------------------------------------------------------
-
-#[test]
-fn test_tasks_complete_requires_task_id_and_result() {
-    let defs = a2a_tool_defs();
-    let tool = defs.iter().find(|t| t.name == "tasks.complete").unwrap();
-    let required = tool.parameters["required"].as_array().unwrap();
-    assert!(required.contains(&Value::String("taskId".into())));
-    assert!(required.contains(&Value::String("result".into())));
-}
-
-// ---------------------------------------------------------------------------
 // tasks.list handler
 // ---------------------------------------------------------------------------
 
@@ -333,7 +320,7 @@ async fn test_handle_tasks_list_with_local_store() {
     store.create_task(None, None, None, None);
 
     let ctx = A2aToolContext {
-        client: A2aClient::new(),
+        client: A2aClient::new().unwrap(),
         cache: Arc::new(PeerCache::new()),
         own_card: AgentCard::default(),
         task_store: Some(store),
@@ -357,7 +344,7 @@ async fn test_handle_tasks_list_with_local_store_filtered() {
     store.create_task(None, None, None, None);
 
     let ctx = A2aToolContext {
-        client: A2aClient::new(),
+        client: A2aClient::new().unwrap(),
         cache: Arc::new(PeerCache::new()),
         own_card: AgentCard::default(),
         task_store: Some(store),
@@ -377,7 +364,7 @@ async fn test_handle_tasks_list_with_local_store_filtered() {
 async fn test_handle_tasks_list_no_store() {
     ensure_crypto_provider();
     let ctx = A2aToolContext {
-        client: A2aClient::new(),
+        client: A2aClient::new().unwrap(),
         cache: Arc::new(PeerCache::new()),
         own_card: AgentCard::default(),
         task_store: None,

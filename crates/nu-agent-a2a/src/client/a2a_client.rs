@@ -1,3 +1,4 @@
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use serde_json::Value;
@@ -21,19 +22,29 @@ pub struct A2aClient {
 
 impl A2aClient {
     /// Default client — 30-second timeout.
-    pub fn new() -> Self {
-        Self {
-            http: default_http_client(),
+    ///
+    /// # Errors
+    ///
+    /// Returns [`A2aError::Internal`] if the reqwest `Client` cannot be
+    /// built (e.g. TLS backend unavailable).
+    pub fn new() -> Result<Self, A2aError> {
+        Ok(Self {
+            http: http_client()?.clone(),
             timeout: Duration::from_secs(30),
-        }
+        })
     }
 
     /// Client with a custom timeout.
-    pub fn with_timeout(timeout: Duration) -> Self {
-        Self {
-            http: default_http_client(),
+    ///
+    /// # Errors
+    ///
+    /// Returns [`A2aError::Internal`] if the reqwest `Client` cannot be
+    /// built (e.g. TLS backend unavailable).
+    pub fn with_timeout(timeout: Duration) -> Result<Self, A2aError> {
+        Ok(Self {
+            http: http_client()?.clone(),
             timeout,
-        }
+        })
     }
 
     /// Full custom client (shared reqwest client, custom timeout).
@@ -220,7 +231,7 @@ impl A2aClient {
 
 impl Default for A2aClient {
     fn default() -> Self {
-        Self::new()
+        Self::new().expect("A2aClient::default() requires a working TLS backend")
     }
 }
 
@@ -309,17 +320,24 @@ impl super::A2aHttpClient for A2aClient {
 // Helpers (pub(crate) for use by functions.rs)
 // ---------------------------------------------------------------------------
 
-/// Build a `reqwest::Client` with the `A2A-Version` default header set.
-fn default_http_client() -> reqwest::Client {
-    let mut headers = reqwest::header::HeaderMap::new();
-    headers.insert(
-        reqwest::header::HeaderName::from_static("a2a-version"),
-        reqwest::header::HeaderValue::from_static(crate::A2A_VERSION),
-    );
-    reqwest::Client::builder()
-        .default_headers(headers)
-        .build()
-        .expect("reqwest::Client::builder() with default headers should succeed")
+/// Lazy-initialized `reqwest::Client` with the `A2A-Version` default header
+/// set. Returns an error if the TLS backend is unavailable on first access.
+fn http_client() -> Result<&'static reqwest::Client, A2aError> {
+    static CLIENT: OnceLock<Result<reqwest::Client, A2aError>> = OnceLock::new();
+    match CLIENT.get_or_init(|| {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::HeaderName::from_static("a2a-version"),
+            reqwest::header::HeaderValue::from_static(crate::A2A_VERSION),
+        );
+        reqwest::Client::builder()
+            .default_headers(headers)
+            .build()
+            .map_err(|e| A2aError::Internal(format!("reqwest client build: {e}")))
+    }) {
+        Ok(client) => Ok(client),
+        Err(e) => Err(e.clone()),
+    }
 }
 
 /// Map reqwest errors to typed A2aError.

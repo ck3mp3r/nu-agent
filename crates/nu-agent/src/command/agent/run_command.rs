@@ -1,6 +1,10 @@
+use std::io::IsTerminal;
+use std::sync::Arc;
+
 use nu_plugin::{EngineInterface, EvaluatedCall};
 use nu_protocol::{LabeledError, Value};
-use std::io::IsTerminal;
+
+use nu_agent_a2a::InMemoryTaskStore;
 
 use super::permissions::resolve_effective_permissions_config;
 use super::resolve_policy::resolve_ui_policy;
@@ -10,7 +14,7 @@ use super::{
     resolve_agent_mode, resolve_config, should_enter_foreground,
 };
 
-use nu_agent_a2a::{AgentBuilder, AgentHandle};
+use nu_agent_a2a::{AgentBuilder, AgentHandle, Skill};
 use nu_agent_core::{
     config::PluginConfig,
     conversation::{builder::BuildInput, runtime::AgentConversationRuntime},
@@ -153,11 +157,16 @@ pub(super) fn run_command(
 
     let plugin_config_value = engine.get_plugin_config()?;
 
-    let agents_config = plugin_config_value
-        .as_ref()
-        .and_then(|v| PluginConfig::from_plugin_config(v).ok())
-        .map(|c| c.agents)
-        .unwrap_or_default();
+    let agents_config = match plugin_config_value.as_ref() {
+        Some(v) => match PluginConfig::from_plugin_config(v) {
+            Ok(c) => c.agents,
+            Err(e) => {
+                log::warn!("failed to parse plugin config: {e}");
+                Default::default()
+            }
+        },
+        None => Default::default(),
+    };
 
     let mcp_config = plugin_config_value
         .as_ref()
@@ -214,6 +223,18 @@ pub(super) fn run_command(
             let mut builder = AgentBuilder::new(agent_name).has_explicit_name(has_explicit_name);
             if let Some(desc) = description {
                 builder = builder.description(desc);
+            }
+            // Populate A2A skills from the agent persona so other agents can
+            // see what this agent does via agent.getCard / agent.list.
+            if let Some(ref persona) = persona {
+                let persona_skill = Skill {
+                    id: persona.name.clone().unwrap_or_default(),
+                    name: persona.name.clone().unwrap_or_default(),
+                    description: persona.description.clone().unwrap_or_default(),
+                    inputs: None,
+                    outputs: None,
+                };
+                builder = builder.skills(vec![persona_skill]);
             }
             builder.port(a2a_port).mesh_key(mesh_key).build().await
         }) {
@@ -400,6 +421,11 @@ pub(super) fn run_command(
         .as_mut()
         .and_then(|h| h.take_completion_receiver());
 
+    // Extract a reference to the A2A task store for auto-completing incoming
+    // tasks when the LLM finishes processing them.
+    let a2a_task_store: Option<Arc<InMemoryTaskStore>> =
+        a2a_handle.as_ref().map(|h| h.task_store());
+
     let result = match mode {
         AgentMode::Tui => run_tui_mode(
             &mut runtime_impl,
@@ -414,6 +440,7 @@ pub(super) fn run_command(
             },
             a2a_task_rx,
             a2a_completion_rx,
+            a2a_task_store.clone(),
         ),
         AgentMode::Stderr => run_stderr_mode(
             &mut runtime_impl,
@@ -423,6 +450,7 @@ pub(super) fn run_command(
             stderr_is_tty,
             a2a_task_rx,
             a2a_completion_rx,
+            a2a_task_store,
         ),
     };
 
@@ -447,6 +475,7 @@ fn run_tui_mode(
     hydration: super::mode_execute::TuiHydrationInput,
     a2a_task_rx: Option<tokio::sync::mpsc::Receiver<nu_agent_a2a::IncomingTask>>,
     a2a_completion_rx: Option<tokio::sync::mpsc::Receiver<nu_agent_a2a::A2aCompletionEvent>>,
+    a2a_task_store: Option<Arc<InMemoryTaskStore>>,
 ) -> Result<Value, LabeledError> {
     super::mode_execute::run_tui_mode(
         runtime_impl,
@@ -457,9 +486,11 @@ fn run_tui_mode(
         hydration,
         a2a_task_rx,
         a2a_completion_rx,
+        a2a_task_store,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_stderr_mode(
     runtime_impl: &mut AgentConversationRuntime,
     input: &Value,
@@ -468,6 +499,7 @@ fn run_stderr_mode(
     stderr_is_tty: bool,
     a2a_task_rx: Option<tokio::sync::mpsc::Receiver<nu_agent_a2a::IncomingTask>>,
     a2a_completion_rx: Option<tokio::sync::mpsc::Receiver<nu_agent_a2a::A2aCompletionEvent>>,
+    a2a_task_store: Option<Arc<InMemoryTaskStore>>,
 ) -> Result<Value, LabeledError> {
     super::mode_execute::run_stderr_mode(
         runtime_impl,
@@ -477,6 +509,7 @@ fn run_stderr_mode(
         stderr_is_tty,
         a2a_task_rx,
         a2a_completion_rx,
+        a2a_task_store,
     )
 }
 

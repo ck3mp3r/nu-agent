@@ -5,7 +5,7 @@ use url::Url;
 use crate::{IncomingTask, Message, Peer, Role, TaskState};
 
 use super::super::AppState;
-use super::super::response::{a2a_error, a2a_json_response, a2a_ok};
+use super::super::response::{a2a_error, a2a_error_with_meta, a2a_json_response, a2a_ok};
 
 pub async fn handle_tasks_send(
     State(state): State<AppState>,
@@ -121,10 +121,22 @@ pub async fn handle_tasks_send(
             metadata,
         )
     };
-    let task = state
+    let task_id = task.id.clone();
+    let task = match state
         .task_store
         .update_status(&task.id, TaskState::Working, None)
-        .expect("Submitted → Working is a valid transition");
+    {
+        Ok(t) => t,
+        Err(e) => {
+            let err = a2a_error_with_meta(
+                500,
+                "INTERNAL_ERROR",
+                &format!("Invalid task state transition: {e}"),
+                serde_json::json!({"taskId": task_id}),
+            );
+            return (StatusCode::INTERNAL_SERVER_ERROR, a2a_json_response(err));
+        }
+    };
 
     // Deserialize the message for the event channel, logging on failure
     let parsed_message: Message = serde_json::from_value(
@@ -142,9 +154,12 @@ pub async fn handle_tasks_send(
     });
 
     // Store the message in the task's history for multi-turn support
-    let _ = state
+    if let Err(e) = state
         .task_store
-        .append_history(&task.id, parsed_message.clone());
+        .append_history(&task.id, parsed_message.clone())
+    {
+        log::warn!("failed to append task history: {e}");
+    }
 
     // Send to event channel if a receiver is connected
     let incoming = IncomingTask {
@@ -155,7 +170,9 @@ pub async fn handle_tasks_send(
         context_id,
         parent_task_id,
     };
-    let _ = state.incoming_tasks_tx.send(incoming).await;
+    if let Err(e) = state.incoming_tasks_tx.send(incoming).await {
+        log::warn!("incoming task queue full: {e}");
+    }
 
     let result = serde_json::to_value(&task).unwrap_or_default();
     (StatusCode::OK, a2a_json_response(a2a_ok(result)))

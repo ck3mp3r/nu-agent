@@ -80,7 +80,7 @@ async fn test_agent_card_reflects_persona() {
         .await
         .unwrap();
 
-    let client = A2aClient::new();
+    let client = A2aClient::new().unwrap();
     let card = get_agent_card(&client, &handle.server.local_url)
         .await
         .unwrap();
@@ -109,7 +109,7 @@ async fn test_agent_empty_skills() {
         .await
         .unwrap();
 
-    let client = A2aClient::new();
+    let client = A2aClient::new().unwrap();
     let card = get_agent_card(&client, &handle.server.local_url)
         .await
         .unwrap();
@@ -129,7 +129,7 @@ async fn test_agent_no_description() {
         .await
         .unwrap();
 
-    let client = A2aClient::new();
+    let client = A2aClient::new().unwrap();
     let card = get_agent_card(&client, &handle.server.local_url)
         .await
         .unwrap();
@@ -207,7 +207,7 @@ async fn test_two_agents_start_independently() {
     );
 
     // Both should serve their cards correctly
-    let client = A2aClient::new();
+    let client = A2aClient::new().unwrap();
     let card_a = get_agent_card(&client, &agent_a.server.local_url)
         .await
         .unwrap();

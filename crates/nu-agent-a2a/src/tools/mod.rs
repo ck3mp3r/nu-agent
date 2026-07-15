@@ -9,7 +9,6 @@ use crate::*;
 
 mod agent;
 mod cancel;
-mod complete;
 mod get;
 mod get_card;
 mod list;
@@ -47,7 +46,6 @@ pub enum Tool {
     Get,
     List,
     Cancel,
-    Complete,
     AgentList,
     GetCard,
 }
@@ -55,23 +53,27 @@ pub enum Tool {
 impl Tool {
     pub fn name(&self) -> &'static str {
         match self {
-            Tool::Send => "tasks.send",
-            Tool::Get => "tasks.get",
-            Tool::List => "tasks.list",
-            Tool::Cancel => "tasks.cancel",
-            Tool::Complete => "tasks.complete",
-            Tool::AgentList => "agent.list",
-            Tool::GetCard => "agent.getCard",
+            Tool::Send => "tasks_send",
+            Tool::Get => "tasks_get",
+            Tool::List => "tasks_list",
+            Tool::Cancel => "tasks_cancel",
+            Tool::AgentList => "agent_list",
+            Tool::GetCard => "agent_getCard",
         }
     }
 
     pub fn description(&self) -> &'static str {
         match self {
-            Tool::Send => "Send a task to another agent over A2A",
-            Tool::Get => "Get a task by ID",
-            Tool::List => "List tasks with optional state filter",
+            Tool::Send => {
+                "Send a task to another agent over A2A. Do NOT poll tasks_get or tasks_list for completion — wait for the SSE notification (the tool will inform you when done)."
+            }
+            Tool::Get => {
+                "Get a completed task from the LOCAL task store by ID (use AFTER the SSE notification arrives, NEVER for polling). Only returns tasks sent TO this agent."
+            }
+            Tool::List => {
+                "List LOCAL tasks (use AFTER the SSE notification arrives, NEVER for polling). Only shows tasks sent TO this agent."
+            }
             Tool::Cancel => "Cancel a running task",
-            Tool::Complete => "Complete a task and deliver artifacts back to the requesting agent",
             Tool::AgentList => "List all connected A2A agents and their URLs",
             Tool::GetCard => "Get the A2A agent card for a specific peer (or the local agent)",
         }
@@ -111,14 +113,6 @@ impl Tool {
                 },
                 "required": ["taskId", "target"]
             }),
-            Tool::Complete => serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "taskId": {"type": "string", "description": "Task ID to complete"},
-                    "result": {"type": "string", "description": "Result text"}
-                },
-                "required": ["taskId", "result"]
-            }),
             Tool::AgentList => serde_json::json!({
                 "type": "object",
                 "properties": {}
@@ -139,7 +133,6 @@ impl Tool {
             Tool::Get => get::handle(ctx, params).await,
             Tool::List => list::handle(ctx, params).await,
             Tool::Cancel => cancel::handle(ctx, params).await,
-            Tool::Complete => complete::handle(ctx, params).await,
             Tool::AgentList => agent::handle(ctx, params).await,
             Tool::GetCard => get_card::handle(ctx, params).await,
         }
@@ -256,7 +249,7 @@ async fn handle_dispatch(name: &str, ctx: &A2aToolContext, params: Value) -> Too
 // Tool definition generation (for LLM function-calling)
 // ---------------------------------------------------------------------------
 
-/// Generate all A2A tool definitions for the LLM (currently 7).
+/// Generate all A2A tool definitions for the LLM (currently 6).
 pub fn a2a_tool_defs() -> Vec<A2aToolDef> {
     tool_table()
         .iter()
@@ -272,7 +265,7 @@ pub fn a2a_tool_defs() -> Vec<A2aToolDef> {
 // Register tools on a rig ToolServerHandle
 // ---------------------------------------------------------------------------
 
-/// Register all A2A tools (agent.list, agent.getCard, tasks.send, etc.) on a
+/// Register all A2A tools (agent_list, agent_getCard, tasks_send, etc.) on a
 /// rig [`ToolServerHandle`].
 ///
 /// This function blocks the current thread (via `runtime.block_on`) so it must
@@ -301,7 +294,6 @@ pub fn register_tools_on_server(
 
 pub use agent::handle as handle_agent_list;
 pub use cancel::handle as handle_tasks_cancel;
-pub use complete::handle as handle_tasks_complete;
 pub use get::handle as handle_tasks_get;
 pub use get_card::handle as handle_agent_get_card;
 pub use list::handle as handle_tasks_list;

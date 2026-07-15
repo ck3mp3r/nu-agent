@@ -340,4 +340,7 @@ mod picker_test;
 mod docs_contract_test;
 
 #[cfg(test)]
+mod mode_execute_test;
+
+#[cfg(test)]
 mod resolve_policy_test;

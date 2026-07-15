@@ -170,27 +170,27 @@ fn all_agents_have_a2a_tools() {
         .collect();
 
     assert!(
-        names.contains(&"agent.list"),
-        "All agents must have agent.list, got: {names:?}"
+        names.contains(&"agent_list"),
+        "All agents must have agent_list, got: {names:?}"
     );
     assert!(
-        names.contains(&"agent.getCard"),
-        "All agents must have agent.getCard, got: {names:?}"
+        names.contains(&"agent_getCard"),
+        "All agents must have agent_getCard, got: {names:?}"
     );
     assert!(
-        names.contains(&"tasks.send"),
-        "All agents must have tasks.send, got: {names:?}"
+        names.contains(&"tasks_send"),
+        "All agents must have tasks_send, got: {names:?}"
     );
     assert!(
-        names.contains(&"tasks.get"),
-        "All agents must have tasks.get, got: {names:?}"
+        names.contains(&"tasks_get"),
+        "All agents must have tasks_get, got: {names:?}"
     );
     assert!(
-        names.contains(&"tasks.cancel"),
-        "All agents must have tasks.cancel, got: {names:?}"
+        names.contains(&"tasks_cancel"),
+        "All agents must have tasks_cancel, got: {names:?}"
     );
     assert!(
-        names.contains(&"tasks.list"),
-        "All agents must have tasks.list, got: {names:?}"
+        names.contains(&"tasks_list"),
+        "All agents must have tasks_list, got: {names:?}"
     );
 }

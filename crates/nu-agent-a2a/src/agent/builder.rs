@@ -153,6 +153,7 @@ impl AgentBuilder {
                         }
                     }
                 }
+                log::warn!("peer event channel closed — agent is no longer discovering new peers");
             });
         }
 
@@ -175,7 +176,7 @@ impl AgentBuilder {
         // with ConnectionRefused/Timeout). mDNS's 75s TTL + ServiceRemoved goodbye
         // packets handle the crash-detection path via PeerLost → cache.remove().
 
-        let client = A2aClient::new();
+        let client = A2aClient::new().map_err(|e| (e, None))?;
         Ok(AgentHandle {
             server,
             client,

@@ -6,6 +6,7 @@ use crate::protocol::contracts::{
     DisplayStateUi, LifecycleUi, ProgressUi, TranscriptUi, UserInputUi,
 };
 use crate::protocol::event::UiEvent;
+use crate::utils::value_ext::extract_response_text_from_value;
 
 /// Polls the worker result channel and applies turn outcomes (success, cancel, error).
 pub(crate) struct SessionStage {
@@ -27,11 +28,22 @@ impl SessionStage {
             *ctx.worker_active = false;
             *ctx.should_evaluate_compaction = true;
             match outcome {
-                TurnOutcome::Success(_) => {
+                TurnOutcome::Success(ref value) => {
                     log::info!("Turn outcome: Success");
+
+                    // Fire on_turn_complete callback if this turn was triggered
+                    // by an external prompt (e.g., A2A task).
+                    if let Some(tx) = ctx.on_turn_complete
+                        && let Some(prompt_text) = ctx.active_external_prompt.take()
+                    {
+                        let response_text = extract_response_text_from_value(value);
+                        let _ = tx.send((prompt_text, response_text));
+                    }
                 }
                 TurnOutcome::Cancelled => {
                     log::info!("Turn outcome: Cancelled");
+                    // Clear pending external prompt — the turn didn't complete.
+                    let _ = ctx.active_external_prompt.take();
                 }
                 TurnOutcome::Error(error) => {
                     log::warn!(
@@ -41,6 +53,8 @@ impl SessionStage {
                     ctx.ui.emit(&UiEvent::TurnError {
                         message: format!("Turn failed: {}", error.msg),
                     });
+                    // Clear pending external prompt — the turn didn't complete.
+                    let _ = ctx.active_external_prompt.take();
                 }
             }
             handled = true;

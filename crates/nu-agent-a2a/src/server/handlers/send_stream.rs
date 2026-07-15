@@ -12,7 +12,7 @@ use url::Url;
 use crate::{IncomingTask, Message, Peer, Role, TaskEvent, TaskState};
 
 use super::super::AppState;
-use super::super::response::{a2a_error, a2a_json_response};
+use super::super::response::{a2a_error, a2a_error_with_meta, a2a_json_response};
 use super::SseResult;
 
 pub async fn handle_tasks_send_stream(
@@ -100,10 +100,19 @@ pub async fn handle_tasks_send_stream(
     let (mut rx, _) = state.task_store.subscribe(&task.id);
 
     // Transition to Working (triggers notification to subscribers)
+    let task_id = task.id.clone();
     let task = state
         .task_store
         .update_status(&task.id, TaskState::Working, None)
-        .expect("Submitted → Working is a valid transition");
+        .map_err(|e| {
+            let err = a2a_error_with_meta(
+                500,
+                "INTERNAL_ERROR",
+                &format!("Invalid task state transition: {e}"),
+                serde_json::json!({"taskId": task_id}),
+            );
+            (StatusCode::INTERNAL_SERVER_ERROR, a2a_json_response(err))
+        })?;
 
     // Forward to incoming task event channel
     let parsed_message: Message = serde_json::from_value(
@@ -121,9 +130,12 @@ pub async fn handle_tasks_send_stream(
     });
 
     // Store the message in the task's history for multi-turn support
-    let _ = state
+    if let Err(e) = state
         .task_store
-        .append_history(&task.id, parsed_message.clone());
+        .append_history(&task.id, parsed_message.clone())
+    {
+        log::warn!("failed to append task history: {e}");
+    }
 
     let incoming = IncomingTask {
         task_id: task.id.clone(),
@@ -133,7 +145,9 @@ pub async fn handle_tasks_send_stream(
         context_id,
         parent_task_id,
     };
-    let _ = state.incoming_tasks_tx.send(incoming).await;
+    if let Err(e) = state.incoming_tasks_tx.send(incoming).await {
+        log::warn!("incoming task queue full: {e}");
+    }
 
     // Build SSE stream using StreamResponse format (spec §4.2, §11.7)
     let (tx, sse_rx) = mpsc::channel::<SseResult>(16);

@@ -40,11 +40,20 @@ struct CardFetcher {
 impl CardFetcher {
     fn new() -> Self {
         ensure_crypto_provider();
-        let client = Client::builder()
-            .timeout(Duration::from_secs(5))
-            .build()
-            .ok();
-        let rt = tokio::runtime::Runtime::new().ok();
+        let client = match Client::builder().timeout(Duration::from_secs(5)).build() {
+            Ok(c) => Some(c),
+            Err(e) => {
+                log::warn!("CardFetcher: failed to create HTTP client: {e}");
+                None
+            }
+        };
+        let rt = match tokio::runtime::Runtime::new() {
+            Ok(r) => Some(r),
+            Err(e) => {
+                log::warn!("CardFetcher: failed to create tokio runtime: {e}");
+                None
+            }
+        };
         Self { client, rt }
     }
 
@@ -54,11 +63,27 @@ impl CardFetcher {
     fn fetch_card(&self, url: &str) -> Option<AgentCard> {
         let (client, rt) = (self.client.as_ref()?, self.rt.as_ref()?);
         rt.block_on(async {
-            let resp = client.get(url).send().await.ok()?;
+            let resp = match client.get(url).send().await {
+                Ok(r) => r,
+                Err(e) => {
+                    log::warn!("card fetch failed (connection error) for {url}: {e}");
+                    return None;
+                }
+            };
             if !resp.status().is_success() {
+                log::warn!(
+                    "card fetch failed (HTTP {}) for {url}",
+                    resp.status().as_u16()
+                );
                 return None;
             }
-            resp.json::<AgentCard>().await.ok()
+            match resp.json::<AgentCard>().await {
+                Ok(card) => Some(card),
+                Err(e) => {
+                    log::warn!("card fetch failed (bad JSON) for {url}: {e}");
+                    None
+                }
+            }
         })
     }
 }
@@ -196,8 +221,11 @@ pub(crate) fn peer_from_service(service: &mdns_sd::ResolvedService) -> Peer {
     let address = service
         .get_addresses()
         .iter()
-        // Prefer loopback for consistent same-machine URLs.
-        .find(|a| a.to_string() == "127.0.0.1")
+        // Prefer non-loopback IPv4 — works for both local (server binds
+        // 0.0.0.0:0) and cross-machine connections.  Loopback (127.0.0.1)
+        // would fail on a remote host because it points to the wrong
+        // machine's localhost.
+        .find(|a| a.is_ipv4() && !a.is_loopback())
         .or_else(|| service.get_addresses().iter().find(|a| a.is_ipv4()))
         .or_else(|| service.get_addresses().iter().next())
         .map(format_scoped_ip)
@@ -266,7 +294,9 @@ impl DiscoveryBrowser {
         let handle = std::thread::spawn(move || {
             // Initialise card fetcher inside the browse thread — safe because
             // we are *not* inside a tokio runtime here.
-            let _ = CARD_FETCHER.set(CardFetcher::new());
+            if CARD_FETCHER.set(CardFetcher::new()).is_err() {
+                log::warn!("CardFetcher already initialized — duplicate browse thread");
+            }
 
             // recv() blocks until an event arrives.  When the daemon is
             // shut down (on drop) the channel disconnects and recv()
@@ -289,17 +319,9 @@ impl DiscoveryBrowser {
                             continue;
                         }
 
-                        let address = resolved
-                            .get_addresses()
-                            .iter()
-                            .next()
-                            .map(format_scoped_ip)
-                            .unwrap_or_else(|| "0.0.0.0".to_string());
-                        let url = format!("http://{address}:{}/agent.json", resolved.get_port());
-                        let maybe_card = CARD_FETCHER.get().and_then(|f| f.fetch_card(&url));
-
                         let mut peer = peer_from_service(&resolved);
-                        peer.card = maybe_card;
+                        let url = format!("{}/.well-known/agent-card.json", peer.url);
+                        peer.card = CARD_FETCHER.get().and_then(|f| f.fetch_card(&url));
 
                         let _ = cb_tx
                             .try_send(PeerEvent::PeerDiscovered(Box::new(peer)))
@@ -318,6 +340,7 @@ impl DiscoveryBrowser {
                     }
                 }
             }
+            log::error!("mDNS browse thread: daemon channel closed — peer discovery stopped");
         });
 
         Ok((

@@ -16,9 +16,14 @@ pub(crate) fn register_tools(
     plugin_config_value: Option<&nu_protocol::Value>,
     input: BuildInput<'_>,
 ) -> Result<BuildArtifacts, LabeledError> {
-    let plugin_compaction = plugin_config_value
-        .and_then(|v| PluginConfig::from_plugin_config(v).ok())
-        .and_then(|pc| pc.compaction);
+    let plugin_compaction =
+        plugin_config_value.and_then(|v| match PluginConfig::from_plugin_config(v) {
+            Ok(pc) => pc.compaction,
+            Err(e) => {
+                log::warn!("failed to parse plugin config: {e}");
+                None
+            }
+        });
     let cli_compaction = super::args::extract_compaction_flags(call)?;
     let merged = merge_compaction_configs(plugin_compaction.as_ref(), &cli_compaction);
     AgentRuntimeBuilder::new(BuildInput {
