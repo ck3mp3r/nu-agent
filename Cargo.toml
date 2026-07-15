@@ -20,7 +20,7 @@ nu-parser = "0.114.1"
 
 # LLM / AI
 rig = { package = "rig-core", version = "0.40.0", default-features = false, features = ["derive", "rmcp", "test-utils"] }
-rmcp = { version = "1.8.0", default-features = false, features = [
+rmcp = { version = "2.2.0", default-features = false, features = [
   "client",
   "transport-child-process",
   "transport-streamable-http-client",
@@ -62,7 +62,7 @@ pulldown-cmark = "0.13"
 htmd = "0.5"
 arboard = "3.6"
 syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "default-themes", "parsing", "regex-fancy", "yaml-load"] }
-noyalib = "0.0.8"
+noyalib = "0.0.15"
 rand = "0.10.1"
 
 # Dev/test
