@@ -1,5 +1,7 @@
 use super::*;
 
+const MAX_TRANSCRIPT_ENTRIES: usize = 2000;
+
 impl AppState {
     pub fn push_transcript_line(&mut self, role: TranscriptRole, line: impl Into<String>) {
         let text = line.into();
@@ -72,6 +74,78 @@ impl AppState {
         self.assistant_projection_cache_misses
     }
 
+    pub(crate) fn enforce_transcript_cap(&mut self) {
+        let overflow = self
+            .transcript_preview
+            .len()
+            .saturating_sub(MAX_TRANSCRIPT_ENTRIES);
+        if overflow > 0 {
+            self.transcript_preview.drain(..overflow);
+            self.shift_indices_after_eviction(overflow);
+        }
+    }
+
+    pub(crate) fn shift_indices_after_eviction(&mut self, evicted_count: usize) {
+        if evicted_count == 0 {
+            return;
+        }
+
+        self.streaming_message_start = self.streaming_message_start.and_then(|n| {
+            if n >= evicted_count {
+                Some(n - evicted_count)
+            } else {
+                None
+            }
+        });
+
+        self.compaction_streaming_start = self.compaction_streaming_start.and_then(|n| {
+            if n >= evicted_count {
+                Some(n - evicted_count)
+            } else {
+                None
+            }
+        });
+
+        self.prompt_items = self
+            .prompt_items
+            .drain(..)
+            .filter_map(|mut item| {
+                if item.transcript_line_index >= evicted_count {
+                    item.transcript_line_index -= evicted_count;
+                    Some(item)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        self.tool_call_items = self
+            .tool_call_items
+            .drain(..)
+            .filter_map(|mut item| {
+                if item.transcript_line_index >= evicted_count {
+                    item.transcript_line_index -= evicted_count;
+                    Some(item)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        self.compaction_items = self
+            .compaction_items
+            .drain(..)
+            .filter_map(|mut item| {
+                if item.transcript_line_index >= evicted_count {
+                    item.transcript_line_index -= evicted_count;
+                    Some(item)
+                } else {
+                    None
+                }
+            })
+            .collect();
+    }
+
     pub fn push_transcript_item(&mut self, entry: TranscriptEntry) {
         let entry_role = entry.role();
         if should_insert_turn_separator(
@@ -92,6 +166,7 @@ impl AppState {
         }
 
         self.transcript_preview.push(entry);
+        self.enforce_transcript_cap();
     }
 
     pub fn scroll_transcript_line_up(&mut self) {

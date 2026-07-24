@@ -11,6 +11,9 @@ pub(super) mod transcript;
 #[cfg(test)]
 mod test;
 
+#[cfg(test)]
+mod transcript_test;
+
 use crate::markdown::{project_markdown_to_lines, rendered_line_to_plain_text};
 use nu_agent_core::protocol::event::{PermissionDecision, PermissionDecisionSubmission};
 use nu_agent_core::protocol::slash::{SlashCommand, filter_inline_slash_suggestions};
@@ -323,9 +326,9 @@ pub struct AppState {
     pending_session_switch_requests: VecDeque<String>,
     pub permission_prompt: Option<PermissionPrompt>,
     assistant_projection_cache: HashMap<String, Vec<Line<'static>>>,
-    prompt_items: Vec<QueuedPrompt>,
-    tool_call_items: Vec<ToolCallLine>,
-    compaction_items: Vec<CompactionLine>,
+    pub(crate) prompt_items: Vec<QueuedPrompt>,
+    pub(crate) tool_call_items: Vec<ToolCallLine>,
+    pub(crate) compaction_items: Vec<CompactionLine>,
     active_tool_ids_by_key: HashMap<String, VecDeque<u64>>,
     pending_prompt_ids: VecDeque<u64>,
     pending_immediate_submissions: VecDeque<String>,
