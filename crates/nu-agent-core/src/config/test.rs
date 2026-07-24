@@ -1,5 +1,6 @@
 use super::*;
 use crate::compaction::CompactionStrategy;
+use crate::session::StoreType;
 use nu_protocol::{Value, record};
 use serial_test::serial;
 use std::env;
@@ -190,6 +191,7 @@ fn test_merge_full_configs() {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        session_store_type: None,
     };
 
     let override_config = Config {
@@ -214,6 +216,7 @@ fn test_merge_full_configs() {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        session_store_type: None,
     };
 
     let merged = base.merge(override_config);
@@ -255,6 +258,7 @@ fn test_merge_with_partial_override() {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        session_store_type: None,
     };
 
     let override_config = Config {
@@ -279,6 +283,7 @@ fn test_merge_with_partial_override() {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        session_store_type: None,
     };
 
     let merged = base.merge(override_config);
@@ -320,6 +325,7 @@ fn test_merge_with_empty_override() {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        session_store_type: None,
     };
 
     let empty_override = Config {
@@ -344,6 +350,7 @@ fn test_merge_with_empty_override() {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        session_store_type: None,
     };
 
     let merged = base.clone().merge(empty_override);
@@ -377,6 +384,7 @@ fn test_merge_chain() {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        session_store_type: None,
     };
 
     let override1 = Config {
@@ -401,6 +409,7 @@ fn test_merge_chain() {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        session_store_type: None,
     };
 
     let override2 = Config {
@@ -425,6 +434,7 @@ fn test_merge_chain() {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        session_store_type: None,
     };
 
     let merged = base.merge(override1).merge(override2);
@@ -463,6 +473,7 @@ fn test_merge_required_fields() {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        session_store_type: None,
     };
 
     let override_config = Config {
@@ -487,6 +498,7 @@ fn test_merge_required_fields() {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        session_store_type: None,
     };
 
     let merged = base.merge(override_config);
@@ -521,6 +533,7 @@ fn test_validate_valid_config() {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        session_store_type: None,
     };
 
     assert!(config.validate().is_ok());
@@ -551,6 +564,7 @@ fn test_validate_minimal_config() {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        session_store_type: None,
     };
 
     assert!(config.validate().is_ok());
@@ -581,6 +595,7 @@ fn test_validate_empty_provider() {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        session_store_type: None,
     };
 
     let result = config.validate();
@@ -614,6 +629,7 @@ fn test_validate_empty_model() {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        session_store_type: None,
     };
 
     let result = config.validate();
@@ -647,6 +663,7 @@ fn test_validate_max_output_exceeds_context() {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        session_store_type: None,
     };
 
     let result = config.validate();
@@ -681,6 +698,7 @@ fn test_validate_max_output_equals_context() {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        session_store_type: None,
     };
 
     assert!(config.validate().is_ok());
@@ -711,6 +729,7 @@ fn test_validate_zero_max_tool_turns() {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        session_store_type: None,
     };
 
     let result = config.validate();
@@ -744,6 +763,7 @@ fn test_validate_only_context_tokens_set() {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        session_store_type: None,
     };
 
     assert!(config.validate().is_ok());
@@ -774,6 +794,7 @@ fn test_validate_only_output_tokens_set() {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        session_store_type: None,
     };
 
     assert!(config.validate().is_ok());
@@ -1250,6 +1271,7 @@ fn test_resolve_model_basic() {
         max_retries: None,
         retry_base_delay_ms: None,
         a2a_enabled: false,
+        session_store: None,
     };
 
     let config = plugin_config
@@ -1301,6 +1323,7 @@ fn test_resolve_model_with_env_fallback() {
         max_retries: None,
         retry_base_delay_ms: None,
         a2a_enabled: false,
+        session_store: None,
     };
 
     let config = plugin_config
@@ -1336,6 +1359,7 @@ fn test_resolve_model_invalid_format() {
         max_retries: None,
         retry_base_delay_ms: None,
         a2a_enabled: false,
+        session_store: None,
     };
 
     // No slash separator
@@ -1375,6 +1399,7 @@ fn test_resolve_model_provider_not_found() {
         max_retries: None,
         retry_base_delay_ms: None,
         a2a_enabled: false,
+        session_store: None,
     };
 
     let result = plugin_config.resolve_model("unknown/model");
@@ -1420,6 +1445,7 @@ fn test_resolve_model_model_not_in_config() {
         max_retries: None,
         retry_base_delay_ms: None,
         a2a_enabled: false,
+        session_store: None,
     };
 
     let config = plugin_config
@@ -1470,6 +1496,7 @@ fn test_resolve_model_with_provider_field() {
         max_retries: None,
         retry_base_delay_ms: None,
         a2a_enabled: false,
+        session_store: None,
     };
 
     let config = plugin_config
@@ -1539,6 +1566,7 @@ fn test_resolve_model_merges_limits() {
         max_retries: None,
         retry_base_delay_ms: None,
         a2a_enabled: false,
+        session_store: None,
     };
 
     let config = plugin_config
@@ -1595,6 +1623,7 @@ fn test_plugin_config_resolve_model_top_level_fallbacks() {
             max_retries: Some(5),
             retry_base_delay_ms: Some(2000),
             a2a_enabled: false,
+            session_store: None,
         }
     };
 
@@ -1661,6 +1690,7 @@ fn resolve_model_handles_two_part_format() {
         max_retries: None,
         retry_base_delay_ms: None,
         a2a_enabled: false,
+        session_store: None,
     };
 
     let config = plugin_config
@@ -1695,6 +1725,7 @@ fn resolve_model_validates_empty_parts() {
         max_retries: None,
         retry_base_delay_ms: None,
         a2a_enabled: false,
+        session_store: None,
     };
 
     // Empty provider
@@ -1752,6 +1783,7 @@ fn resolve_model_uses_split_once_for_multi_part_models() {
         max_retries: None,
         retry_base_delay_ms: None,
         a2a_enabled: false,
+        session_store: None,
     };
 
     let config = plugin_config
@@ -1804,6 +1836,7 @@ fn resolve_model_works_with_simple_two_part() {
         max_retries: None,
         retry_base_delay_ms: None,
         a2a_enabled: false,
+        session_store: None,
     };
 
     let config = plugin_config
@@ -1856,6 +1889,7 @@ fn integration_github_copilot_with_backend_in_model() {
         max_retries: None,
         retry_base_delay_ms: None,
         a2a_enabled: false,
+        session_store: None,
     };
 
     // Test default model
@@ -1914,6 +1948,7 @@ fn test_validate_none_max_tool_turns_is_valid() {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        session_store_type: None,
     };
 
     assert!(config.validate().is_ok());
@@ -1944,6 +1979,7 @@ fn test_validate_zero_max_tool_turns_still_invalid() {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        session_store_type: None,
     };
 
     let result = config.validate();
@@ -2343,4 +2379,253 @@ fn additional_params_merge_falls_back_to_base() {
     };
     let merged = base.merge(other);
     assert_eq!(merged.additional_params, Some(serde_json::json!({"a": 1})));
+}
+
+// ============================================================================
+// Session Store Config Tests
+// ============================================================================
+
+#[test]
+fn test_session_store_config_parses_sqlite() {
+    let value = Value::test_record(record! {
+        "model" => Value::test_string("openai/gpt-4"),
+        "providers" => Value::test_record(record! {
+            "openai" => Value::test_record(record! {
+                "models" => Value::test_record(record! {
+                    "gpt-4" => Value::test_record(record! {}),
+                }),
+            }),
+        }),
+        "session_store" => Value::test_record(record! {
+            "type" => Value::test_string("sqlite"),
+        }),
+    });
+
+    let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
+    let store = plugin_config
+        .session_store
+        .expect("should have session_store");
+    assert_eq!(store.store_type, StoreType::Sqlite);
+    assert_eq!(store.path, None);
+}
+
+#[test]
+fn test_session_store_config_parses_jsonl() {
+    let value = Value::test_record(record! {
+        "model" => Value::test_string("openai/gpt-4"),
+        "providers" => Value::test_record(record! {
+            "openai" => Value::test_record(record! {
+                "models" => Value::test_record(record! {
+                    "gpt-4" => Value::test_record(record! {}),
+                }),
+            }),
+        }),
+        "session_store" => Value::test_record(record! {
+            "type" => Value::test_string("jsonl"),
+        }),
+    });
+
+    let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
+    let store = plugin_config
+        .session_store
+        .expect("should have session_store");
+    assert_eq!(store.store_type, StoreType::Jsonl);
+}
+
+#[test]
+fn test_session_store_config_with_path() {
+    let value = Value::test_record(record! {
+        "model" => Value::test_string("openai/gpt-4"),
+        "providers" => Value::test_record(record! {
+            "openai" => Value::test_record(record! {
+                "models" => Value::test_record(record! {
+                    "gpt-4" => Value::test_record(record! {}),
+                }),
+            }),
+        }),
+        "session_store" => Value::test_record(record! {
+            "type" => Value::test_string("sqlite"),
+            "path" => Value::test_string("/custom/path/sessions.db"),
+        }),
+    });
+
+    let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
+    let store = plugin_config
+        .session_store
+        .expect("should have session_store");
+    assert_eq!(store.store_type, StoreType::Sqlite);
+    assert_eq!(store.path, Some("/custom/path/sessions.db".to_string()));
+}
+
+#[test]
+fn test_session_store_config_unknown_type_errors() {
+    let value = Value::test_record(record! {
+        "model" => Value::test_string("openai/gpt-4"),
+        "providers" => Value::test_record(record! {
+            "openai" => Value::test_record(record! {
+                "models" => Value::test_record(record! {
+                    "gpt-4" => Value::test_record(record! {}),
+                }),
+            }),
+        }),
+        "session_store" => Value::test_record(record! {
+            "type" => Value::test_string("unknown"),
+        }),
+    });
+
+    let result = PluginConfig::from_plugin_config(&value);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("Invalid session_store type"));
+}
+
+#[test]
+fn test_session_store_config_missing_type_errors() {
+    let value = Value::test_record(record! {
+        "model" => Value::test_string("openai/gpt-4"),
+        "providers" => Value::test_record(record! {
+            "openai" => Value::test_record(record! {
+                "models" => Value::test_record(record! {
+                    "gpt-4" => Value::test_record(record! {}),
+                }),
+            }),
+        }),
+        "session_store" => Value::test_record(record! {
+            "path" => Value::test_string("/custom/path"),
+        }),
+    });
+
+    let result = PluginConfig::from_plugin_config(&value);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("Missing required field"));
+}
+
+#[test]
+fn test_session_store_config_defaults_to_none() {
+    let value = Value::test_record(record! {
+        "model" => Value::test_string("openai/gpt-4"),
+        "providers" => Value::test_record(record! {
+            "openai" => Value::test_record(record! {
+                "models" => Value::test_record(record! {
+                    "gpt-4" => Value::test_record(record! {}),
+                }),
+            }),
+        }),
+    });
+
+    let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
+    assert!(plugin_config.session_store.is_none());
+}
+
+#[test]
+#[serial]
+fn test_session_store_env_var_sqlite() {
+    with_env_vars(vec![("AGENT_SESSION_STORE_TYPE", "sqlite")], || {
+        let config = Config::from_env("openai", "gpt-4");
+        assert_eq!(config.session_store_type, Some(StoreType::Sqlite));
+    });
+}
+
+#[test]
+#[serial]
+fn test_session_store_env_var_jsonl() {
+    with_env_vars(vec![("AGENT_SESSION_STORE_TYPE", "jsonl")], || {
+        let config = Config::from_env("openai", "gpt-4");
+        assert_eq!(config.session_store_type, Some(StoreType::Jsonl));
+    });
+}
+
+#[test]
+#[serial]
+fn test_session_store_env_var_unknown_ignored() {
+    // Invalid env var values are silently ignored (None) by from_env
+    with_env_vars(vec![("AGENT_SESSION_STORE_TYPE", "unknown")], || {
+        let config = Config::from_env("openai", "gpt-4");
+        assert_eq!(config.session_store_type, None);
+    });
+}
+
+#[test]
+#[serial]
+fn test_session_store_env_var_not_set() {
+    // When env var is not set, session_store_type should be None
+    let config = Config::from_env("openai", "gpt-4");
+    assert_eq!(config.session_store_type, None);
+}
+
+#[test]
+fn test_session_store_merge_other_wins() {
+    let base = Config {
+        session_store_type: Some(StoreType::Sqlite),
+        ..Config::default()
+    };
+    let other = Config {
+        session_store_type: Some(StoreType::Jsonl),
+        ..Config::default()
+    };
+    let merged = base.merge(other);
+    assert_eq!(merged.session_store_type, Some(StoreType::Jsonl));
+}
+
+#[test]
+fn test_session_store_merge_falls_back_to_base() {
+    let base = Config {
+        session_store_type: Some(StoreType::Sqlite),
+        ..Config::default()
+    };
+    let other = Config {
+        session_store_type: None,
+        ..Config::default()
+    };
+    let merged = base.merge(other);
+    assert_eq!(merged.session_store_type, Some(StoreType::Sqlite));
+}
+
+#[test]
+fn test_session_store_resolve_model_forwards_config() {
+    let plugin_config = PluginConfig {
+        model: "openai/gpt-4".to_string(),
+        small_model: None,
+        providers: {
+            let mut providers = HashMap::new();
+            providers.insert(
+                "openai".to_string(),
+                ProviderConfig {
+                    name: None,
+                    api_key: Some("sk-test".to_string()),
+                    base_url: None,
+                    provider: None,
+                    preamble: None,
+                    models: HashMap::new(),
+                },
+            );
+            providers
+        },
+        compaction: None,
+        agents: AgentsConfig::default(),
+        read_timeout_secs: None,
+        max_tool_calls_per_subturn: None,
+        additional_params: None,
+        temperature: None,
+        max_tokens: None,
+        max_context_tokens: None,
+        max_output_tokens: None,
+        max_tool_turns: None,
+        max_tool_result_bytes: None,
+        model_context_tokens: None,
+        context_warning_threshold: None,
+        max_retries: None,
+        retry_base_delay_ms: None,
+        a2a_enabled: false,
+        session_store: Some(StoreTypeConfig {
+            store_type: StoreType::Jsonl,
+            path: None,
+        }),
+    };
+
+    let config = plugin_config
+        .resolve_model("openai/gpt-4")
+        .expect("should resolve");
+    assert_eq!(config.session_store_type, Some(StoreType::Jsonl));
 }

@@ -1,7 +1,8 @@
 use std::collections::HashSet;
-use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::protocol::event::{
     PermissionDecision, PermissionDecisionSubmission, PermissionRequestContext, UiEvent,
@@ -51,18 +52,19 @@ struct State {
 struct ActiveRequest {
     request_id: String,
     matched_rule_identity: String,
-    decision_rx: Receiver<PermissionDecisionSubmission>,
+    decision_rx: UnboundedReceiver<PermissionDecisionSubmission>,
 }
 
 #[derive(Debug)]
 pub struct PermissionRequestToken {
     request_id: String,
     matched_rule_identity: String,
-    decision_tx: Sender<PermissionDecisionSubmission>,
+    decision_tx: UnboundedSender<PermissionDecisionSubmission>,
 }
 
-static ACTIVE_PERMISSION_SUBMISSION_SENDER: Mutex<Option<Sender<PermissionDecisionSubmission>>> =
-    Mutex::new(None);
+static ACTIVE_PERMISSION_SUBMISSION_SENDER: Mutex<
+    Option<UnboundedSender<PermissionDecisionSubmission>>,
+> = Mutex::new(None);
 
 impl PermissionController {
     pub fn new(timeout: Duration) -> Self {
@@ -79,7 +81,7 @@ impl PermissionController {
         &self,
         request: PermissionRequest,
     ) -> Result<(PermissionRequestToken, UiEvent), RequestError> {
-        let (decision_tx, decision_rx) = std::sync::mpsc::channel();
+        let (decision_tx, decision_rx) = tokio::sync::mpsc::unbounded_channel();
         let mut state = self.state.lock().expect("permission state lock poisoned");
         if state.active.is_some() {
             return Err(RequestError::AlreadyWaiting);
@@ -108,11 +110,11 @@ impl PermissionController {
         ))
     }
 
-    pub fn await_resolution(
+    pub async fn await_resolution(
         &self,
         token: &PermissionRequestToken,
     ) -> (PermissionResolution, Vec<UiEvent>) {
-        let (request_id, expected_rule, rx) = {
+        let (request_id, expected_rule, mut rx) = {
             let mut state = self.state.lock().expect("permission state lock poisoned");
             let Some(active) = state.active.take() else {
                 return (
@@ -141,8 +143,8 @@ impl PermissionController {
 
         let mut events = Vec::new();
         loop {
-            match rx.recv_timeout(self.timeout) {
-                Ok(submitted) => {
+            match tokio::time::timeout(self.timeout, rx.recv()).await {
+                Ok(Some(submitted)) => {
                     if submitted.request_id != request_id {
                         events.push(UiEvent::PermissionDecisionIgnored {
                             request_id: submitted.request_id,
@@ -171,18 +173,18 @@ impl PermissionController {
                         events,
                     );
                 }
-                Err(RecvTimeoutError::Timeout) => {
-                    events.push(UiEvent::PermissionDecisionTimedOut {
-                        request_id: request_id.clone(),
-                    });
-                    return (PermissionResolution::TimedOut, events);
-                }
-                Err(RecvTimeoutError::Disconnected) => {
+                Ok(None) => {
                     events.push(UiEvent::PermissionDecisionIgnored {
                         request_id: request_id.clone(),
                         reason: "decision_channel_closed".to_string(),
                     });
                     return (PermissionResolution::ChannelClosed, events);
+                }
+                Err(_elapsed) => {
+                    events.push(UiEvent::PermissionDecisionTimedOut {
+                        request_id: request_id.clone(),
+                    });
+                    return (PermissionResolution::TimedOut, events);
                 }
             }
         }
@@ -198,7 +200,7 @@ impl PermissionRequestToken {
         self.matched_rule_identity.as_str()
     }
 
-    pub fn sender_clone(&self) -> Sender<PermissionDecisionSubmission> {
+    pub fn sender_clone(&self) -> UnboundedSender<PermissionDecisionSubmission> {
         self.decision_tx.clone()
     }
 
@@ -224,7 +226,7 @@ impl PermissionRequestToken {
 }
 
 pub fn install_active_permission_submission_sender(
-    sender: Option<Sender<PermissionDecisionSubmission>>,
+    sender: Option<UnboundedSender<PermissionDecisionSubmission>>,
 ) {
     let mut slot = ACTIVE_PERMISSION_SUBMISSION_SENDER
         .lock()

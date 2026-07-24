@@ -20,8 +20,8 @@ use crate::hook::agent_hook::DoomLoopState;
 use crate::hook::permission_resolver::AsyncPermissionResolver;
 use crate::protocol::contracts::ProgressUi;
 use crate::protocol::event::UiEvent;
-use crate::session::JournalConversationMemory;
 use crate::session::repair::inject_missing_tool_results;
+use crate::session::{CachedMemory, SessionStore};
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
 use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
@@ -68,23 +68,20 @@ pub struct ToolInfra {
 
 pub struct TurnExecutor<'a, S: SessionManager> {
     pub config: &'a Config,
-    pub runtime: &'a tokio::runtime::Runtime,
     pub memory_state: &'a mut S,
     pub tool_infra: ToolInfra,
     /// Stored after a completed turn so the delegate can extract it for response formatting.
     response_data: Option<TurnResponseData>,
 }
 
-impl<'a, S: SessionManager> TurnExecutor<'a, S> {
-    pub fn new(
-        config: &'a Config,
-        runtime: &'a tokio::runtime::Runtime,
-        memory_state: &'a mut S,
-        tool_infra: ToolInfra,
-    ) -> Self {
+impl<'a, ST, S> TurnExecutor<'a, S>
+where
+    ST: SessionStore + Clone + Send + Sync + 'static,
+    S: SessionManager<Memory = CachedMemory<ST>>,
+{
+    pub fn new(config: &'a Config, memory_state: &'a mut S, tool_infra: ToolInfra) -> Self {
         Self {
             config,
-            runtime,
             memory_state,
             tool_infra,
             response_data: None,
@@ -106,7 +103,7 @@ impl<'a, S: SessionManager> TurnExecutor<'a, S> {
     /// and passes the pair here so the drain loop and the `AgentHook` share the same
     /// channel. The hook passes its `ui_tx` to the permission resolver on each call.
     /// Pass `None` for TTY/policy mode (the channel is created internally).
-    pub fn execute<U: ProgressUi, P: AsyncPermissionResolver>(
+    pub async fn execute<U: ProgressUi + Send, P: AsyncPermissionResolver>(
         &mut self,
         ui: &mut U,
         input: ExecuteInput,
@@ -153,34 +150,35 @@ impl<'a, S: SessionManager> TurnExecutor<'a, S> {
                 .expect("doom loop mutex poisoned")
                 .reset();
 
-            let result = cached_client.with_model(
-                &model_name,
-                TurnVisitor {
-                    runtime: self.runtime,
-                    memory: self.memory_state.memory(),
-                    config: self.config,
-                    permission_resolver: permission_resolver.clone(),
-                    closure_registry: self.tool_infra.closure_registry.clone(),
-                    mcp_registry: self.tool_infra.mcp_registry.clone(),
-                    tool_server_handle: &self.tool_infra.tool_server_handle,
-                    ui,
-                    prompt: prompt.clone(),
-                    conversation_id: conversation_id.clone(),
-                    has_session: final_session_id.is_some(),
-                    preamble: preamble.clone(),
-                    visible_tool_definitions: std::mem::take(
-                        &mut self.tool_infra.visible_tool_definitions,
-                    ),
-                    // Only pass the channel on the first attempt; retries create their own internally
-                    ui_channel: if attempt == 0 {
-                        ui_channel.take()
-                    } else {
-                        None
+            let result = cached_client
+                .with_model(
+                    &model_name,
+                    TurnVisitor {
+                        memory: self.memory_state.memory(),
+                        config: self.config,
+                        permission_resolver: permission_resolver.clone(),
+                        closure_registry: self.tool_infra.closure_registry.clone(),
+                        mcp_registry: self.tool_infra.mcp_registry.clone(),
+                        tool_server_handle: &self.tool_infra.tool_server_handle,
+                        ui,
+                        prompt: prompt.clone(),
+                        conversation_id: conversation_id.clone(),
+                        has_session: final_session_id.is_some(),
+                        preamble: preamble.clone(),
+                        visible_tool_definitions: std::mem::take(
+                            &mut self.tool_infra.visible_tool_definitions,
+                        ),
+                        // Only pass the channel on the first attempt; retries create their own internally
+                        ui_channel: if attempt == 0 {
+                            ui_channel.take()
+                        } else {
+                            None
+                        },
+                        circuit_breaker: self.tool_infra.circuit_breaker.clone(),
+                        doom_state: self.tool_infra.doom_state.clone(),
                     },
-                    circuit_breaker: self.tool_infra.circuit_breaker.clone(),
-                    doom_state: self.tool_infra.doom_state.clone(),
-                },
-            );
+                )
+                .await;
 
             match &result {
                 Err((
@@ -217,7 +215,7 @@ impl<'a, S: SessionManager> TurnExecutor<'a, S> {
                             "Retryable error ({kind:?}), attempt {attempt}/{}. Retrying in {delay_ms}ms.",
                             self.config.max_retries.unwrap_or(3)
                         );
-                        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
                         continue;
                     }
                     // Exhausted retries — wrap the error with attempt count
@@ -241,232 +239,244 @@ impl<'a, S: SessionManager> TurnExecutor<'a, S> {
             }
         };
 
-        let turn_result =
-            match visitor_result {
-                Ok(result) => result,
-                Err((
-                    crate::conversation::turn::TurnError::MaxTurnsExceeded {
-                        ref msg,
-                        ref messages,
-                        ..
-                    },
-                    ref ctx,
-                )) => {
-                    // Path A (non-cancelled): MaxTurnsError carries full chat_history.
-                    // Persist only the delta (new messages from this turn) so the session remembers
-                    // the failed turn without re-appending messages already in persistent storage.
-                    if let Some(session_id) = final_session_id {
-                        // messages for MaxTurnsError is rig's full accumulated
-                        // chat_history (from AgentRun::full_history()), which DOES include the
-                        // current-turn user prompt and any tool call exchanges from this turn.
-                        // This is unlike last_known_history (from on_completion_call's `history`
-                        // parameter), which contains only prior messages. skip(pre_turn_message_count)
-                        // correctly yields [user_prompt, assistant_tool_calls...] — the new messages.
-                        let delta: Vec<Message> = messages
-                            .iter()
-                            .skip(ctx.pre_turn_message_count)
-                            .cloned()
-                            .collect();
-                        log::debug!(
-                            "Path A non-cancelled: delta_count={} pre_turn={}",
-                            delta.len(),
-                            ctx.pre_turn_message_count
-                        );
-                        if !delta.is_empty() {
-                            let patched = inject_missing_tool_results(delta);
-                            if let Err(mem_err) = self.runtime.block_on(
-                                self.memory_state.memory_mut().append(session_id, patched),
-                            ) {
-                                log::warn!(
-                                    "Failed to update context for failed turn (path A history): {}",
-                                    mem_err
-                                );
-                            }
-                        }
-                    }
-                    let msg_preview = &msg[..msg.len().min(200)];
-                    log::error!("Turn error (path A non-cancelled): {msg_preview}");
-                    let user_msg = msg.clone();
-                    return Err(LabeledError::new(user_msg.clone()).with_label(user_msg, span));
-                }
-                Err((
-                    crate::conversation::turn::TurnError::UnknownTool {
-                        ref msg,
-                        ref messages,
-                        ..
-                    },
-                    ref ctx,
-                )) => {
-                    if let Some(session_id) = final_session_id {
-                        let delta: Vec<Message> = messages
-                            .iter()
-                            .skip(ctx.pre_turn_message_count)
-                            .cloned()
-                            .collect();
-                        log::debug!(
-                            "Path A non-cancelled (unknown tool): delta_count={} pre_turn={}",
-                            delta.len(),
-                            ctx.pre_turn_message_count
-                        );
-                        if !delta.is_empty() {
-                            let patched = inject_missing_tool_results(delta);
-                            if let Err(mem_err) = self.runtime.block_on(
-                                self.memory_state.memory_mut().append(session_id, patched),
-                            ) {
-                                log::warn!(
-                                    "Failed to update context for unknown tool turn: {}",
-                                    mem_err
-                                );
-                            }
-                        }
-                    }
-                    log::warn!("Unknown tool call (retries exhausted): {msg}");
-                    let user_msg =
-                        "The model attempted to call an unknown tool and could not recover. \
-                         The session has been saved — try rephrasing your request."
-                            .to_string();
-                    return Err(LabeledError::new(user_msg.clone()).with_label(user_msg, span));
-                }
-                Err((
-                    crate::conversation::turn::TurnError::Cancelled { ref messages, .. },
-                    ref ctx,
-                )) => {
-                    // Path A: rig hook cancelled — persist chat_history delta if available.
-                    // messages for PromptCancelled is rig's full_history() — it DOES include
-                    // the current-turn user prompt and any tool exchanges. skip(pre_turn_message_count)
-                    // yields only the new messages from this turn, preventing double-appending the
-                    // prior session history when a cancelled turn follows prior session messages.
-                    if let Some(session_id) = final_session_id {
-                        let delta: Vec<Message> = messages
-                            .iter()
-                            .skip(ctx.pre_turn_message_count)
-                            .cloned()
-                            .collect();
-                        log::debug!(
-                            "Path A cancelled: delta_count={} pre_turn={}",
-                            delta.len(),
-                            ctx.pre_turn_message_count
-                        );
-                        if !delta.is_empty() {
-                            let patched = inject_missing_tool_results(delta);
-                            let patched = close_open_tool_result_block(patched, "[cancelled]");
-                            if let Err(mem_err) = self.runtime.block_on(
-                                self.memory_state.memory_mut().append(session_id, patched),
-                            ) {
-                                log::warn!(
-                                    "Failed to update context for cancelled turn (path A): {}",
-                                    mem_err
-                                );
-                            }
-                        }
-                    }
-                    // Return a minimal cancelled response (not an error)
-                    let llm_response = crate::llm::LlmResponse {
-                        text: String::new(),
-                        usage: crate::llm::LlmUsage {
-                            input_tokens: 0,
-                            output_tokens: 0,
-                            total_tokens: 0,
-                            cached_input_tokens: 0,
-                            cache_creation_input_tokens: 0,
-                        },
-                        tool_calls: Vec::new(),
-                        tool_call_metadata: Vec::new(),
-                    };
-                    return Ok(TurnOutcome::EarlyReturn(crate::llm::format_response(
-                        &llm_response,
-                        self.config,
-                        final_session_id,
-                        span,
-                    )));
-                }
-                Err((e, ctx)) => {
-                    // Hard error: CompletionFailed or ToolExecutionFailed.
-                    // If on_completion_call fired at least once, we have a partial history snapshot
-                    // from the hook Arc. Persist it so completed sub-turns are not lost.
-                    // If no on_completion_call fired (failure before first HTTP request), fall back
-                    // to a synthetic user+assistant placeholder pair to maintain alternating structure.
-
-                    // Extract fields needed for history persistence and error message.
-                    let (msg, kind_opt) = match &e {
-                        crate::conversation::turn::TurnError::CompletionFailed { msg, kind } => {
-                            (msg, Some(kind))
-                        }
-                        crate::conversation::turn::TurnError::ToolExecutionFailed { msg } => {
-                            (msg, None)
-                        }
-                        // Other variants (Cancelled, MaxTurnsExceeded, UnknownTool) are already
-                        // handled above; this catch-all is for exhaustiveness.
-                        _ => {
-                            return Err(
-                                LabeledError::new(e.to_string()).with_label(e.to_string(), span)
-                            );
-                        }
-                    };
-
-                    // For retry-exhausted errors, the message already contains the retry count.
-                    // Otherwise, use the pre-classified kind to build the user-facing message.
-                    let user_msg = if msg.starts_with("Turn failed after") {
-                        msg.clone()
-                    } else if let Some(kind) = kind_opt {
-                        kind_to_user_msg(kind, msg)
-                    } else {
-                        // ToolExecutionFailed — no kind, use raw message
-                        format!("Turn failed: {msg}")
-                    };
-
-                    log::error!(
-                        "Turn failed with unrecoverable error: session={:?} error={}",
-                        final_session_id,
-                        &msg[..msg.len().min(200)]
+        let turn_result = match visitor_result {
+            Ok(result) => result,
+            Err((
+                crate::conversation::turn::TurnError::MaxTurnsExceeded {
+                    ref msg,
+                    ref messages,
+                    ..
+                },
+                ref ctx,
+            )) => {
+                // Path A (non-cancelled): MaxTurnsError carries full chat_history.
+                // Persist only the delta (new messages from this turn) so the session remembers
+                // the failed turn without re-appending messages already in persistent storage.
+                if let Some(session_id) = final_session_id {
+                    // messages for MaxTurnsError is rig's full accumulated
+                    // chat_history (from AgentRun::full_history()), which DOES include the
+                    // current-turn user prompt and any tool call exchanges from this turn.
+                    // This is unlike last_known_history (from on_completion_call's `history`
+                    // parameter), which contains only prior messages. skip(pre_turn_message_count)
+                    // correctly yields [user_prompt, assistant_tool_calls...] — the new messages.
+                    let delta: Vec<Message> = messages
+                        .iter()
+                        .skip(ctx.pre_turn_message_count)
+                        .cloned()
+                        .collect();
+                    log::debug!(
+                        "Path A non-cancelled: delta_count={} pre_turn={}",
+                        delta.len(),
+                        ctx.pre_turn_message_count
                     );
-                    if let Some(session_id) = final_session_id {
-                        let delta: Vec<Message> = ctx
-                            .last_known_history
-                            .iter()
-                            .skip(ctx.pre_turn_message_count)
-                            .cloned()
-                            .collect();
-                        log::debug!(
-                            "Hard error: delta_count={} pre_turn={}",
-                            delta.len(),
-                            ctx.pre_turn_message_count
-                        );
-                        if !delta.is_empty() {
-                            let patched = inject_missing_tool_results(delta);
-                            let patched = close_open_tool_result_block(patched, msg);
-                            if let Err(mem_err) = self.runtime.block_on(
-                                self.memory_state.memory_mut().append(session_id, patched),
-                            ) {
-                                log::warn!(
-                                    "Failed to persist recovered history on hard error: {}",
-                                    mem_err
-                                );
-                            }
-                        } else {
-                            // delta is empty: hook never fired OR error before any new messages
-                            // were added. Synthesise a placeholder to maintain the alternating
-                            // user/assistant structure.
-                            log::debug!(
-                                "Hard error: delta empty, synthesizing fallback placeholder"
+                    if !delta.is_empty() {
+                        let patched = inject_missing_tool_results(delta);
+                        if let Err(mem_err) = self
+                            .memory_state
+                            .memory_mut()
+                            .append(session_id, patched)
+                            .await
+                        {
+                            log::warn!(
+                                "Failed to update context for failed turn (path A history): {}",
+                                mem_err
                             );
-                            let fallback = vec![
-                                Message::user(prompt.clone()),
-                                Message::assistant(format!("[Turn failed: {msg}]")),
-                            ];
-                            if let Err(mem_err) = self.runtime.block_on(
-                                self.memory_state.memory_mut().append(session_id, fallback),
-                            ) {
-                                log::warn!(
-                                    "Failed to persist error placeholder on hard error: {}",
-                                    mem_err
-                                );
-                            }
                         }
                     }
-                    return Err(LabeledError::new(user_msg.clone()).with_label(user_msg, span));
                 }
-            };
+                let msg_preview = &msg[..msg.len().min(200)];
+                log::error!("Turn error (path A non-cancelled): {msg_preview}");
+                let user_msg = msg.clone();
+                return Err(LabeledError::new(user_msg.clone()).with_label(user_msg, span));
+            }
+            Err((
+                crate::conversation::turn::TurnError::UnknownTool {
+                    ref msg,
+                    ref messages,
+                    ..
+                },
+                ref ctx,
+            )) => {
+                if let Some(session_id) = final_session_id {
+                    let delta: Vec<Message> = messages
+                        .iter()
+                        .skip(ctx.pre_turn_message_count)
+                        .cloned()
+                        .collect();
+                    log::debug!(
+                        "Path A non-cancelled (unknown tool): delta_count={} pre_turn={}",
+                        delta.len(),
+                        ctx.pre_turn_message_count
+                    );
+                    if !delta.is_empty() {
+                        let patched = inject_missing_tool_results(delta);
+                        if let Err(mem_err) = self
+                            .memory_state
+                            .memory_mut()
+                            .append(session_id, patched)
+                            .await
+                        {
+                            log::warn!(
+                                "Failed to update context for unknown tool turn: {}",
+                                mem_err
+                            );
+                        }
+                    }
+                }
+                log::warn!("Unknown tool call (retries exhausted): {msg}");
+                let user_msg =
+                    "The model attempted to call an unknown tool and could not recover. \
+                         The session has been saved — try rephrasing your request."
+                        .to_string();
+                return Err(LabeledError::new(user_msg.clone()).with_label(user_msg, span));
+            }
+            Err((
+                crate::conversation::turn::TurnError::Cancelled { ref messages, .. },
+                ref ctx,
+            )) => {
+                // Path A: rig hook cancelled — persist chat_history delta if available.
+                // messages for PromptCancelled is rig's full_history() — it DOES include
+                // the current-turn user prompt and any tool exchanges. skip(pre_turn_message_count)
+                // yields only the new messages from this turn, preventing double-appending the
+                // prior session history when a cancelled turn follows prior session messages.
+                if let Some(session_id) = final_session_id {
+                    let delta: Vec<Message> = messages
+                        .iter()
+                        .skip(ctx.pre_turn_message_count)
+                        .cloned()
+                        .collect();
+                    log::debug!(
+                        "Path A cancelled: delta_count={} pre_turn={}",
+                        delta.len(),
+                        ctx.pre_turn_message_count
+                    );
+                    if !delta.is_empty() {
+                        let patched = inject_missing_tool_results(delta);
+                        let patched = close_open_tool_result_block(patched, "[cancelled]");
+                        if let Err(mem_err) = self
+                            .memory_state
+                            .memory_mut()
+                            .append(session_id, patched)
+                            .await
+                        {
+                            log::warn!(
+                                "Failed to update context for cancelled turn (path A): {}",
+                                mem_err
+                            );
+                        }
+                    }
+                }
+                // Return a minimal cancelled response (not an error)
+                let llm_response = crate::llm::LlmResponse {
+                    text: String::new(),
+                    usage: crate::llm::LlmUsage {
+                        input_tokens: 0,
+                        output_tokens: 0,
+                        total_tokens: 0,
+                        cached_input_tokens: 0,
+                        cache_creation_input_tokens: 0,
+                    },
+                    tool_calls: Vec::new(),
+                    tool_call_metadata: Vec::new(),
+                };
+                return Ok(TurnOutcome::EarlyReturn(crate::llm::format_response(
+                    &llm_response,
+                    self.config,
+                    final_session_id,
+                    span,
+                )));
+            }
+            Err((e, ctx)) => {
+                // Hard error: CompletionFailed or ToolExecutionFailed.
+                // If on_completion_call fired at least once, we have a partial history snapshot
+                // from the hook Arc. Persist it so completed sub-turns are not lost.
+                // If no on_completion_call fired (failure before first HTTP request), fall back
+                // to a synthetic user+assistant placeholder pair to maintain alternating structure.
+
+                // Extract fields needed for history persistence and error message.
+                let (msg, kind_opt) = match &e {
+                    crate::conversation::turn::TurnError::CompletionFailed { msg, kind } => {
+                        (msg, Some(kind))
+                    }
+                    crate::conversation::turn::TurnError::ToolExecutionFailed { msg } => {
+                        (msg, None)
+                    }
+                    // Other variants (Cancelled, MaxTurnsExceeded, UnknownTool) are already
+                    // handled above; this catch-all is for exhaustiveness.
+                    _ => {
+                        return Err(
+                            LabeledError::new(e.to_string()).with_label(e.to_string(), span)
+                        );
+                    }
+                };
+
+                // For retry-exhausted errors, the message already contains the retry count.
+                // Otherwise, use the pre-classified kind to build the user-facing message.
+                let user_msg = if msg.starts_with("Turn failed after") {
+                    msg.clone()
+                } else if let Some(kind) = kind_opt {
+                    kind_to_user_msg(kind, msg)
+                } else {
+                    // ToolExecutionFailed — no kind, use raw message
+                    format!("Turn failed: {msg}")
+                };
+
+                log::error!(
+                    "Turn failed with unrecoverable error: session={:?} error={}",
+                    final_session_id,
+                    &msg[..msg.len().min(200)]
+                );
+                if let Some(session_id) = final_session_id {
+                    let delta: Vec<Message> = ctx
+                        .last_known_history
+                        .iter()
+                        .skip(ctx.pre_turn_message_count)
+                        .cloned()
+                        .collect();
+                    log::debug!(
+                        "Hard error: delta_count={} pre_turn={}",
+                        delta.len(),
+                        ctx.pre_turn_message_count
+                    );
+                    if !delta.is_empty() {
+                        let patched = inject_missing_tool_results(delta);
+                        let patched = close_open_tool_result_block(patched, msg);
+                        if let Err(mem_err) = self
+                            .memory_state
+                            .memory_mut()
+                            .append(session_id, patched)
+                            .await
+                        {
+                            log::warn!(
+                                "Failed to persist recovered history on hard error: {}",
+                                mem_err
+                            );
+                        }
+                    } else {
+                        // delta is empty: hook never fired OR error before any new messages
+                        // were added. Synthesise a placeholder to maintain the alternating
+                        // user/assistant structure.
+                        log::debug!("Hard error: delta empty, synthesizing fallback placeholder");
+                        let fallback = vec![
+                            Message::user(prompt.clone()),
+                            Message::assistant(format!("[Turn failed: {msg}]")),
+                        ];
+                        if let Err(mem_err) = self
+                            .memory_state
+                            .memory_mut()
+                            .append(session_id, fallback)
+                            .await
+                        {
+                            log::warn!(
+                                "Failed to persist error placeholder on hard error: {}",
+                                mem_err
+                            );
+                        }
+                    }
+                }
+                return Err(LabeledError::new(user_msg.clone()).with_label(user_msg, span));
+            }
+        };
 
         // Path C: PromptCancelled was caught inside build_agent_and_stream and returned
         // as Ok(cancelled=true). Treat identically to Path A.
@@ -498,8 +508,10 @@ impl<'a, S: SessionManager> TurnExecutor<'a, S> {
                         let patched = inject_missing_tool_results(delta);
                         let patched = close_open_tool_result_block(patched, "[cancelled]");
                         if let Err(e) = self
-                            .runtime
-                            .block_on(self.memory_state.memory_mut().append(session_id, patched))
+                            .memory_state
+                            .memory_mut()
+                            .append(session_id, patched)
+                            .await
                         {
                             log::warn!(
                                 "Failed to update context for cancelled turn (path C): {}",
@@ -526,9 +538,12 @@ impl<'a, S: SessionManager> TurnExecutor<'a, S> {
                         if !delta.is_empty() {
                             let patched = inject_missing_tool_results(delta);
                             let patched = close_open_tool_result_block(patched, "[cancelled]");
-                            if let Err(e) = self.runtime.block_on(
-                                self.memory_state.memory_mut().append(session_id, patched),
-                            ) {
+                            if let Err(e) = self
+                                .memory_state
+                                .memory_mut()
+                                .append(session_id, patched)
+                                .await
+                            {
                                 log::warn!(
                                     "Failed to persist cancel path B with last_known_history: {}",
                                     e
@@ -542,11 +557,12 @@ impl<'a, S: SessionManager> TurnExecutor<'a, S> {
                         if !turn_result.text.is_empty() {
                             cancelled_messages.push(Message::assistant(turn_result.text.clone()));
                         }
-                        if let Err(e) = self.runtime.block_on(
-                            self.memory_state
-                                .memory_mut()
-                                .append(session_id, cancelled_messages),
-                        ) {
+                        if let Err(e) = self
+                            .memory_state
+                            .memory_mut()
+                            .append(session_id, cancelled_messages)
+                            .await
+                        {
                             log::warn!("Failed to persist cancel path B fallback: {}", e);
                         }
                     }
@@ -616,9 +632,11 @@ impl<'a, S: SessionManager> TurnExecutor<'a, S> {
 // TurnVisitor — module-level so it can be generic over P: AsyncPermissionResolver
 // ---------------------------------------------------------------------------
 
-struct TurnVisitor<'a, 'b, U, P> {
-    runtime: &'a tokio::runtime::Runtime,
-    memory: &'b JournalConversationMemory,
+struct TurnVisitor<'a, 'b, ST, U, P>
+where
+    ST: SessionStore + Clone + Send + Sync + 'static,
+{
+    memory: &'b CachedMemory<ST>,
     config: &'a Config,
     permission_resolver: P,
     closure_registry: Arc<ClosureRegistry>,
@@ -645,15 +663,19 @@ struct TurnVisitor<'a, 'b, U, P> {
     doom_state: Arc<Mutex<DoomLoopState>>,
 }
 
-impl<U: ProgressUi, P: AsyncPermissionResolver> ModelVisitor for TurnVisitor<'_, '_, U, P> {
+impl<ST, U, P> ModelVisitor for TurnVisitor<'_, '_, ST, U, P>
+where
+    ST: SessionStore + Clone + Send + Sync + 'static,
+    U: ProgressUi + Send,
+    P: AsyncPermissionResolver,
+{
     type Output = Result<TurnResult, (crate::conversation::turn::TurnError, error::TurnContext)>;
 
-    fn visit<M>(self, model: M) -> Self::Output
+    async fn visit<M>(self, model: M) -> Self::Output
     where
         M: rig::completion::CompletionModel + Clone + 'static,
     {
         let turn_ctx = TurnContext::new(
-            self.runtime.handle(),
             model,
             super::TurnConversation {
                 memory: self.memory.clone(),
@@ -677,8 +699,9 @@ impl<U: ProgressUi, P: AsyncPermissionResolver> ModelVisitor for TurnVisitor<'_,
         );
         if let Some((ui_tx, ui_rx)) = self.ui_channel {
             execute_turn_with_channel(turn_ctx, self.ui, self.permission_resolver, ui_tx, ui_rx)
+                .await
         } else {
-            execute_turn(turn_ctx, self.ui, self.permission_resolver)
+            execute_turn(turn_ctx, self.ui, self.permission_resolver).await
         }
     }
 }

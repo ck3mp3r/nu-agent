@@ -22,14 +22,19 @@ pub use runtime_build::EngineConfigInterface;
 pub use args::{extract_and_validate_session_flags, extract_tool_timeout, extract_tools_from_call};
 pub use runtime_build::resolve_config;
 
-pub struct Agent {
-    store: nu_agent_core::session::SessionStore,
-}
+pub struct Agent;
 
 impl Agent {
-    /// Creates a new Agent command with the given SessionStore.
-    pub fn new(store: nu_agent_core::session::SessionStore) -> Self {
-        Self { store }
+    /// Creates a new Agent command. The session store is obtained lazily
+    /// from the plugin in `run()`.
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for Agent {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -302,16 +307,22 @@ Compaction flags:
                 "Proactive compaction threshold (0.0-1.0)",
                 None,
             )
+            .named(
+                "store",
+                nu_protocol::SyntaxShape::String,
+                "Session store backend: sqlite|jsonl",
+                None,
+            )
     }
 
     fn run(
         &self,
-        _plugin: &AgentPlugin,
+        plugin: &AgentPlugin,
         engine: &EngineInterface,
         call: &EvaluatedCall,
         input: &Value,
     ) -> Result<Value, LabeledError> {
-        run_command::run_command(self, engine, call, input)
+        run_command::run_command(self, plugin, engine, call, input)
     }
 }
 

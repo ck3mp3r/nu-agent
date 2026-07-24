@@ -1,9 +1,12 @@
-use super::journal::JournalConversationMemory;
-use super::store::{CompactionMarker, ConversationStore, JsonlConversationStore};
+use super::journal::CachedMemory;
+use super::store::{CompactionMarker, FsSessionStore, SessionStore as _, StoreEntry};
 use super::store_test::{assert_msg_eq, assert_msgs_eq};
 use crate::types::Message;
 use rig::memory::ConversationMemory;
+use std::sync::Arc;
 use tempfile::TempDir;
+
+type TestMemory = CachedMemory<FsSessionStore>;
 
 // ---------------------------------------------------------------------------
 // Fix 1 tests: repair runs on cache-hit load
@@ -11,15 +14,9 @@ use tempfile::TempDir;
 
 #[tokio::test]
 async fn load_cache_hit_runs_repair() {
-    // Prime the cache with two consecutive user messages via append().
-    // repair_messages() would merge them — but append() populates the cache
-    // directly without repairing, so the bad state is in the cache.
-    // The second load() must be a cache-hit AND must return repaired messages.
     let tmp = TempDir::new().unwrap();
-    let mem = JournalConversationMemory::new(tmp.path().to_path_buf());
+    let mem = TestMemory::new(Arc::new(FsSessionStore::new(tmp.path().to_path_buf())));
 
-    // Append two consecutive user messages and one assistant — this goes
-    // directly into the in-memory cache (no repair on the write path).
     mem.append(
         "conv-1",
         vec![
@@ -31,11 +28,8 @@ async fn load_cache_hit_runs_repair() {
     .await
     .unwrap();
 
-    // First load is a cache hit (cache was populated by append above).
-    // It must run repair and merge the consecutive user messages.
     let loaded = mem.load("conv-1").await.unwrap();
 
-    // After merging consecutive users: [User("first" + "second"), Assistant("reply")]
     assert_eq!(loaded.len(), 2, "consecutive users should be merged");
     assert!(
         matches!(&loaded[0], Message::User { .. }),
@@ -47,52 +41,10 @@ async fn load_cache_hit_runs_repair() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Fix 2 tests: append() preserves last known token count
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn append_preserves_last_total_tokens_when_none() {
-    // Scenario: a conversation already has a known token count from a
-    // previous successful turn (written via append_messages_to_store_only).
-    // A subsequent append() call (e.g., from the error-fallback path) must
-    // NOT clobber that count with null.
-    let tmp = TempDir::new().unwrap();
-    let mem = JournalConversationMemory::new(tmp.path().to_path_buf());
-
-    // Write an initial message with a known token count to the JSONL store.
-    let initial = vec![Message::user("hello"), Message::assistant("hi")];
-    mem.append_messages_to_store_only("conv-1", &initial, Some(5000))
-        .unwrap();
-
-    // Populate the in-memory cache.
-    let _ = mem.load("conv-1").await.unwrap();
-
-    // Now append via the trait method (no token count available — simulates
-    // the error-fallback path in executor.rs).
-    let fallback = vec![
-        Message::user("failed prompt"),
-        Message::assistant("[Turn failed: some error]"),
-    ];
-    mem.append("conv-1", fallback).await.unwrap();
-
-    // Read raw JSONL and verify the last entry preserves the token count.
-    let raw = std::fs::read_to_string(tmp.path().join("conv-1.jsonl")).unwrap();
-    let last_data_line = raw.lines().rfind(|l| !l.trim().is_empty()).unwrap();
-    let value: serde_json::Value = serde_json::from_str(last_data_line).unwrap();
-    assert_eq!(
-        value["last_total_tokens"],
-        serde_json::json!(5000),
-        "append() must preserve the last known token count (5000) — \
-         got: {}",
-        value["last_total_tokens"]
-    );
-}
-
 #[tokio::test]
 async fn load_empty_returns_empty() {
     let tmp = TempDir::new().unwrap();
-    let mem = JournalConversationMemory::new(tmp.path().to_path_buf());
+    let mem = TestMemory::new(Arc::new(FsSessionStore::new(tmp.path().to_path_buf())));
 
     let messages = mem.load("conv-1").await.unwrap();
     assert!(messages.is_empty());
@@ -101,12 +53,12 @@ async fn load_empty_returns_empty() {
 #[tokio::test]
 async fn load_returns_stored_messages() {
     let tmp = TempDir::new().unwrap();
-    let mem = JournalConversationMemory::new(tmp.path().to_path_buf());
+    let mem = TestMemory::new(Arc::new(FsSessionStore::new(tmp.path().to_path_buf())));
 
-    // Write messages to JSONL manually via the underlying store
-    let store = JsonlConversationStore::new(tmp.path().to_path_buf());
+    // Write messages to store directly
+    let store = FsSessionStore::new(tmp.path().to_path_buf());
     let msgs = vec![Message::user("hello"), Message::assistant("hi")];
-    store.append("conv-1", &msgs, None).unwrap();
+    store.create("conv-1", &msgs).await.unwrap();
 
     let loaded = mem.load("conv-1").await.unwrap();
     assert_msgs_eq(&loaded, &msgs);
@@ -115,26 +67,28 @@ async fn load_returns_stored_messages() {
 #[tokio::test]
 async fn load_uses_extract_llm_context() {
     let tmp = TempDir::new().unwrap();
-    let mem = JournalConversationMemory::new(tmp.path().to_path_buf());
+    let mem = TestMemory::new(Arc::new(FsSessionStore::new(tmp.path().to_path_buf())));
 
-    // Write messages + marker + recent messages to JSONL
-    let store = JsonlConversationStore::new(tmp.path().to_path_buf());
+    let store = FsSessionStore::new(tmp.path().to_path_buf());
     let old = vec![
         Message::user("old1"),
         Message::assistant("old2"),
         Message::user("old3"),
     ];
-    store.append("conv-1", &old, None).unwrap();
+    store.create("conv-1", &old).await.unwrap();
 
     let marker = CompactionMarker::new("Summary of old stuff".to_string(), 2, 3, "sliding_summary");
-    store.append_marker("conv-1", &marker, None).unwrap();
+    store
+        .append("conv-1", &[StoreEntry::Marker(marker)])
+        .await
+        .unwrap();
 
-    let recent = vec![Message::user("recent1"), Message::assistant("recent2")];
-    store.append("conv-1", &recent, None).unwrap();
+    let recent = [Message::user("recent1"), Message::assistant("recent2")];
+    let entries: Vec<StoreEntry> = recent.iter().cloned().map(StoreEntry::Message).collect();
+    store.append("conv-1", &entries).await.unwrap();
 
     let loaded = mem.load("conv-1").await.unwrap();
 
-    // extract_llm_context: [System(summary)] + recent
     assert_eq!(loaded.len(), 3); // 1 system + 2 recent
     assert!(
         matches!(&loaded[0], Message::System { content } if content == "Summary of old stuff"),
@@ -148,24 +102,21 @@ async fn load_uses_extract_llm_context() {
 #[tokio::test]
 async fn load_is_cached() {
     let tmp = TempDir::new().unwrap();
-    let mem = JournalConversationMemory::new(tmp.path().to_path_buf());
+    let mem = TestMemory::new(Arc::new(FsSessionStore::new(tmp.path().to_path_buf())));
 
-    // Write messages directly to the backing store (not via mem.append — that
-    // would populate the cache before we exercise the cold-start JSONL path).
-    let store = JsonlConversationStore::new(tmp.path().to_path_buf());
+    let store = FsSessionStore::new(tmp.path().to_path_buf());
     let msgs = vec![Message::user("hello"), Message::assistant("hi")];
-    store.append("conv-1", &msgs, None).unwrap();
+    store.create("conv-1", &msgs).await.unwrap();
 
-    // First load: cache miss — reads from JSONL and populates cache
+    // First load: cache miss
     let first = mem.load("conv-1").await.unwrap();
     assert_eq!(first.len(), 2);
 
     // Mutate the JSONL file — add more messages (bypasses cache)
-    store
-        .append("conv-1", &[Message::user("extra")], None)
-        .unwrap();
+    let extra_entries: Vec<StoreEntry> = vec![StoreEntry::Message(Message::user("extra"))];
+    store.append("conv-1", &extra_entries).await.unwrap();
 
-    // Second load: cache hit — JSONL mutation must NOT be visible
+    // Second load: cache hit
     let second = mem.load("conv-1").await.unwrap();
     assert_eq!(
         second.len(),
@@ -177,38 +128,34 @@ async fn load_is_cached() {
 #[tokio::test]
 async fn append_writes_to_memory_and_store() {
     let tmp = TempDir::new().unwrap();
-    let mem = JournalConversationMemory::new(tmp.path().to_path_buf());
+    let mem = TestMemory::new(Arc::new(FsSessionStore::new(tmp.path().to_path_buf())));
 
     let msgs = vec![Message::user("hello"), Message::assistant("hi")];
     mem.append("conv-1", msgs.clone()).await.unwrap();
 
-    // Check in-memory cache via subsequent load (which reads from cache)
     let cached = mem.load("conv-1").await.unwrap();
     assert_msgs_eq(&cached, &msgs);
 
-    // Check JSONL store — read raw via the backing store
-    let store = JsonlConversationStore::new(tmp.path().to_path_buf());
-    let (entries, _) = store.load_all("conv-1").unwrap();
+    // Check store via load_all
+    let entries = mem.load_all("conv-1").await.unwrap();
     assert_eq!(entries.len(), msgs.len());
 }
 
 #[tokio::test]
 async fn clear_resets_cache_not_store() {
     let tmp = TempDir::new().unwrap();
-    let mem = JournalConversationMemory::new(tmp.path().to_path_buf());
+    let mem = TestMemory::new(Arc::new(FsSessionStore::new(tmp.path().to_path_buf())));
 
     let msgs = vec![Message::user("hello"), Message::assistant("hi")];
     mem.append("conv-1", msgs.clone()).await.unwrap();
 
-    // Clear — only removes from in-memory cache
     mem.clear("conv-1").await.unwrap();
 
-    // JSONL should still have messages
-    let store = JsonlConversationStore::new(tmp.path().to_path_buf());
-    let (entries, _) = store.load_all("conv-1").unwrap();
-    assert_eq!(entries.len(), msgs.len(), "JSONL should not be cleared");
+    // Store still has messages
+    let entries = mem.load_all("conv-1").await.unwrap();
+    assert_eq!(entries.len(), msgs.len(), "Store should not be cleared");
 
-    // Subsequent load should re-read from JSONL
+    // Subsequent load should re-read from store
     let reloaded = mem.load("conv-1").await.unwrap();
     assert_msgs_eq(&reloaded, &msgs);
 }
@@ -216,26 +163,15 @@ async fn clear_resets_cache_not_store() {
 #[tokio::test]
 async fn append_after_clear_no_duplicate() {
     let tmp = TempDir::new().unwrap();
-    let mem = JournalConversationMemory::new(tmp.path().to_path_buf());
+    let mem = TestMemory::new(Arc::new(FsSessionStore::new(tmp.path().to_path_buf())));
 
     let msgs = vec![Message::user("hello"), Message::assistant("hi")];
 
-    // First append
     mem.append("conv-1", msgs.clone()).await.unwrap();
-
-    // Clear in-memory cache
     mem.clear("conv-1").await.unwrap();
-
-    // Append the same messages again
     mem.append("conv-1", msgs.clone()).await.unwrap();
 
-    // JSONL should have each message ONCE (because we appended twice to JSONL)
-    // Actually the second append goes to JSONL again — so JSONL has 4 entries total.
-    // But the behavior is: clear resets in-memory only. JSONL is append-only.
-    // The important thing: no unexpected duplication within a single append call.
-    let store = JsonlConversationStore::new(tmp.path().to_path_buf());
-    let (entries, _) = store.load_all("conv-1").unwrap();
-    // Each append writes to JSONL independently, so 2 appends = 4 entries in JSONL
+    let entries = mem.load_all("conv-1").await.unwrap();
     assert_eq!(
         entries.len(),
         msgs.len() * 2,
@@ -246,76 +182,43 @@ async fn append_after_clear_no_duplicate() {
 #[tokio::test]
 async fn reset_context_replaces_cache_only() {
     let tmp = TempDir::new().unwrap();
-    let mem = JournalConversationMemory::new(tmp.path().to_path_buf());
+    let mem = TestMemory::new(Arc::new(FsSessionStore::new(tmp.path().to_path_buf())));
 
-    // Write to store
-    let store = JsonlConversationStore::new(tmp.path().to_path_buf());
+    let store = FsSessionStore::new(tmp.path().to_path_buf());
     let original = vec![Message::user("original")];
-    store.append("conv-1", &original, None).unwrap();
+    store.create("conv-1", &original).await.unwrap();
 
-    // Populate cache via load
     let _ = mem.load("conv-1").await.unwrap();
 
-    // Replace cache with new messages
     let new_msgs = vec![Message::user("replaced"), Message::assistant("answer")];
     mem.reset_context("conv-1", new_msgs.clone());
 
-    // Cache should reflect new messages
     let cached = mem.load("conv-1").await.unwrap();
     assert_msgs_eq(&cached, &new_msgs);
 
-    // JSONL should be unchanged
-    let (entries, _) = store.load_all("conv-1").unwrap();
+    // Store unchanged
+    let entries = mem.load_all("conv-1").await.unwrap();
     assert_eq!(
         entries.len(),
         1,
-        "JSONL should still have only the original message"
-    );
-}
-
-#[tokio::test]
-async fn append_writes_null_tokens_to_store_when_no_prior_count() {
-    // When there is no prior token count in the store, append() must write
-    // null (not invent a value). Token counts are only preserved when a
-    // previous entry already recorded a non-null value.
-    let tmp = TempDir::new().unwrap();
-    let mem = JournalConversationMemory::new(tmp.path().to_path_buf());
-
-    mem.append("conv-1", vec![Message::user("hi")])
-        .await
-        .unwrap();
-
-    // Read raw JSONL and verify last_total_tokens is null (no prior count to preserve)
-    let raw = std::fs::read_to_string(tmp.path().join("conv-1.jsonl")).unwrap();
-    let last_data_line = raw.lines().last().unwrap();
-    let value: serde_json::Value = serde_json::from_str(last_data_line).unwrap();
-    assert!(
-        value["last_total_tokens"].is_null(),
-        "append() must write null when there is no prior token count to preserve; \
-         got: {}",
-        value["last_total_tokens"]
+        "Store should still have only the original message"
     );
 }
 
 #[tokio::test]
 async fn append_marker_writes_to_store_only() {
     let tmp = TempDir::new().unwrap();
-    let mem = JournalConversationMemory::new(tmp.path().to_path_buf());
+    let mem = TestMemory::new(Arc::new(FsSessionStore::new(tmp.path().to_path_buf())));
 
-    // First load to initialize cache (empty)
     let _ = mem.load("conv-1").await.unwrap();
 
     let marker = CompactionMarker::new("Summary".to_string(), 2, 5, "sliding_summary");
-    mem.append_marker("conv-1", &marker, None).unwrap();
+    mem.append_marker("conv-1", &marker).await.unwrap();
 
-    // JSONL should have the marker
-    let store = JsonlConversationStore::new(tmp.path().to_path_buf());
-    let (entries, _) = store.load_all("conv-1").unwrap();
+    let entries = mem.load_all("conv-1").await.unwrap();
     assert_eq!(entries.len(), 1);
-    assert!(matches!(&entries[0], super::store::StoreEntry::Marker(_)));
+    assert!(matches!(&entries[0], StoreEntry::Marker(_)));
 
-    // Cache should NOT contain the marker (clear + reload would re-read it)
-    // After append_marker, the cache is unchanged (it was empty)
     let cached = mem.load("conv-1").await.unwrap();
     assert!(
         cached.is_empty(),
@@ -326,24 +229,21 @@ async fn append_marker_writes_to_store_only() {
 #[tokio::test]
 async fn append_messages_to_store_only_no_cache_update() {
     let tmp = TempDir::new().unwrap();
-    let mem = JournalConversationMemory::new(tmp.path().to_path_buf());
+    let mem = TestMemory::new(Arc::new(FsSessionStore::new(tmp.path().to_path_buf())));
 
-    // Populate cache with initial messages via load
-    let store = JsonlConversationStore::new(tmp.path().to_path_buf());
+    let store = FsSessionStore::new(tmp.path().to_path_buf());
     let initial = vec![Message::user("initial"), Message::assistant("reply")];
-    store.append("conv-1", &initial, None).unwrap();
-    let _ = mem.load("conv-1").await.unwrap(); // fills cache
+    store.create("conv-1", &initial).await.unwrap();
+    let _ = mem.load("conv-1").await.unwrap();
 
-    // Append to store only (no cache update)
     let extra = vec![Message::user("store-only")];
-    mem.append_messages_to_store_only("conv-1", &extra, None)
+    mem.append_messages_to_store_only("conv-1", &extra)
+        .await
         .unwrap();
 
-    // JSONL has both
-    let (entries, _) = store.load_all("conv-1").unwrap();
+    let entries = mem.load_all("conv-1").await.unwrap();
     assert_eq!(entries.len(), 3);
 
-    // Cache should still have only the initial messages (no re-read happened)
     let cached = mem.load("conv-1").await.unwrap();
     assert_eq!(
         cached.len(),
@@ -363,11 +263,9 @@ async fn no_duplication_when_appending_deltas_sequentially() {
     use rig::memory::ConversationMemory;
 
     let temp_dir = tempfile::tempdir().unwrap();
-    let memory = crate::session::JournalConversationMemory::new(temp_dir.path().to_path_buf());
-    let store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
+    let memory = TestMemory::new(Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf())));
     let conversation_id = "integ-dedup-test";
 
-    // Simulate turn 1 success: append [user, assistant]
     memory
         .append(
             conversation_id,
@@ -379,16 +277,13 @@ async fn no_duplication_when_appending_deltas_sequentially() {
         .await
         .expect("append turn1 should succeed");
 
-    // Verify the store has exactly 2 entries (no duplication at the storage layer)
-    let (entries_after_turn1, _) = store.load_all(conversation_id).unwrap();
+    let entries_after_turn1 = memory.load_all(conversation_id).await.unwrap();
     assert_eq!(
         entries_after_turn1.len(),
         2,
-        "after turn1: JSONL store must have exactly 2 entries"
+        "after turn1: store must have exactly 2 entries"
     );
 
-    // Simulate turn 2 error: the executor appends the delta [user("turn2"),
-    // assistant("[Turn failed:]")] — a complete pair so the session stays valid.
     memory
         .append(
             conversation_id,
@@ -400,15 +295,13 @@ async fn no_duplication_when_appending_deltas_sequentially() {
         .await
         .expect("append turn2 delta should succeed");
 
-    // Verify the store has exactly 4 entries (strictly additive)
-    let (entries_after_turn2, _) = store.load_all(conversation_id).unwrap();
+    let entries_after_turn2 = memory.load_all(conversation_id).await.unwrap();
     assert_eq!(
         entries_after_turn2.len(),
         4,
-        "after turn2 delta: JSONL store must have exactly 4 entries (bug would double to >4)"
+        "after turn2 delta: store must have exactly 4 entries"
     );
 
-    // load() must also return the correct count after complete pairs
     let after_turn2 = memory
         .load(conversation_id)
         .await
@@ -419,7 +312,6 @@ async fn no_duplication_when_appending_deltas_sequentially() {
         "after turn2 delta: load() expected 4 messages"
     );
 
-    // Simulate turn 3 error: append another delta pair
     memory
         .append(
             conversation_id,
@@ -431,15 +323,13 @@ async fn no_duplication_when_appending_deltas_sequentially() {
         .await
         .expect("append turn3 delta should succeed");
 
-    // Verify the store has exactly 6 entries (strictly additive)
-    let (entries_after_turn3, _) = store.load_all(conversation_id).unwrap();
+    let entries_after_turn3 = memory.load_all(conversation_id).await.unwrap();
     assert_eq!(
         entries_after_turn3.len(),
         6,
-        "after turn3 delta: JSONL store must have exactly 6 entries (bug would double)"
+        "after turn3 delta: store must have exactly 6 entries"
     );
 
-    // load() must return the correct count
     let after_turn3 = memory
         .load(conversation_id)
         .await
@@ -450,7 +340,6 @@ async fn no_duplication_when_appending_deltas_sequentially() {
         "after turn3 delta: load() expected 6 messages"
     );
 
-    // Verify no duplicate message content in the final view
     let texts: Vec<String> = after_turn3
         .iter()
         .filter_map(|msg| match msg {

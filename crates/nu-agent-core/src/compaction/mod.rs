@@ -1,5 +1,5 @@
 mod algorithm;
-mod helpers;
+pub(crate) mod helpers;
 mod strategy;
 
 pub use algorithm::compact;

@@ -11,7 +11,7 @@ use nu_agent_core::conversation::builder::{
 ///
 /// `input.merged_compaction` is ignored on entry — this function computes the
 /// merged value from `call` and `plugin_config_value` and injects it before build.
-pub(crate) fn register_tools(
+pub(crate) async fn register_tools(
     call: &EvaluatedCall,
     plugin_config_value: Option<&nu_protocol::Value>,
     input: BuildInput<'_>,
@@ -31,4 +31,5 @@ pub(crate) fn register_tools(
         ..input
     })
     .build()
+    .await
 }

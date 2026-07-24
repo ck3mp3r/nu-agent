@@ -6,9 +6,11 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex as StdMutex};
 
+use async_trait::async_trait;
 use serde_json::Value as JsonValue;
+use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 
@@ -81,8 +83,9 @@ impl PermissionEventSink for NoOpSink {
 /// Used by [`PolicyPermissionResolver`] to make the "Ask" case return Deny.
 struct NoOpAskHook;
 
+#[async_trait]
 impl AskApprovalHook for NoOpAskHook {
-    fn choose<S: PermissionEventSink>(
+    async fn choose<S: PermissionEventSink + Send>(
         &mut self,
         _decision: &crate::tools::authz::PermissionDecision,
         _tool_name: &str,
@@ -177,7 +180,7 @@ impl AsyncPermissionResolver for PolicyPermissionResolver {
                 ask_context: AskContext::default(),
             };
 
-            let mut grants = session_grants.lock().unwrap();
+            let mut grants = session_grants.lock().await;
             let denied = enforce_authorization_for_tool_call(
                 &tool_call,
                 source,
@@ -186,7 +189,8 @@ impl AsyncPermissionResolver for PolicyPermissionResolver {
                 &flow_context,
                 &mut NoOpAskHook,
                 &mut NoOpSink,
-            );
+            )
+            .await;
 
             if denied {
                 PermissionDecision::Deny
@@ -212,8 +216,9 @@ struct AskContextCapture {
     pub captured_auth_decision: Option<crate::tools::authz::PermissionDecision>,
 }
 
+#[async_trait]
 impl AskApprovalHook for AskContextCapture {
-    fn choose<S: PermissionEventSink>(
+    async fn choose<S: PermissionEventSink + Send>(
         &mut self,
         decision: &crate::tools::authz::PermissionDecision,
         tool_name: &str,
@@ -259,7 +264,7 @@ impl AskApprovalHook for AskContextCapture {
 /// drain loop's channel from closing — eliminating the sender-lifetime deadlock.
 #[derive(Clone)]
 pub struct InteractivePermissionResolver {
-    pub pending: Arc<Mutex<HashMap<String, oneshot::Sender<ProtocolPermissionDecision>>>>,
+    pub pending: Arc<StdMutex<HashMap<String, oneshot::Sender<ProtocolPermissionDecision>>>>,
     pub permissions: Arc<PermissionsConfig>,
     pub session_grants: Arc<Mutex<SessionGrantCache>>,
     pub closure_registry: Arc<ClosureRegistry>,
@@ -281,7 +286,7 @@ impl InteractivePermissionResolver {
     /// Note: `ui_tx` is NOT stored here. It is passed per-call via `resolve()`'s
     /// `ui_tx` parameter by the `AgentHook` that invokes the resolver.
     pub fn new(
-        pending: Arc<Mutex<HashMap<String, oneshot::Sender<ProtocolPermissionDecision>>>>,
+        pending: Arc<StdMutex<HashMap<String, oneshot::Sender<ProtocolPermissionDecision>>>>,
         permissions: Arc<PermissionsConfig>,
         session_grants: Arc<Mutex<SessionGrantCache>>,
         closure_registry: Arc<ClosureRegistry>,
@@ -338,7 +343,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
             };
 
             let denied = {
-                let mut grants = session_grants.lock().unwrap();
+                let mut grants = session_grants.lock().await;
                 enforce_authorization_for_tool_call(
                     &tool_call,
                     source.clone(),
@@ -348,6 +353,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                     &mut capture_hook,
                     &mut NoOpSink,
                 )
+                .await
             };
 
             if !capture_hook.was_called {
@@ -404,7 +410,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                 // Use the authz::PermissionDecision captured during the sentinel run.
                 // This is the same decision the user was shown — no second evaluation needed.
                 if let Some(auth_decision) = capture_hook.captured_auth_decision {
-                    let mut grants = session_grants.lock().unwrap();
+                    let mut grants = session_grants.lock().await;
                     apply_ask_choice(
                         auth_decision,
                         ask_choice,

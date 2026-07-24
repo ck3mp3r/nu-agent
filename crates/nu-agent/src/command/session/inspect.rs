@@ -1,6 +1,7 @@
 use crate::plugin::AgentPlugin;
+use nu_agent_core::compaction::CompactionParams;
 use nu_agent_core::session::prefix::dir_prefix;
-use nu_agent_core::session::{ConversationStore, JsonlConversationStore, SessionStore};
+use nu_agent_core::session::{SessionStore, SessionStoreImpl, StoreEntry};
 use nu_agent_core::types::{AssistantContent, Message, UserContent};
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, Example, LabeledError, Record, Signature, SyntaxShape, Value};
@@ -18,20 +19,28 @@ impl CwdInterface for EngineInterface {
 }
 
 /// The `agent session inspect` command displays full details of a specific session.
-pub struct AgentSessionInspect {
-    pub(crate) store: SessionStore,
+pub struct AgentSessionInspect;
+
+impl AgentSessionInspect {
+    /// Creates a new AgentSessionInspect command. The session store is obtained
+    /// lazily from the plugin in `run()`.
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for AgentSessionInspect {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AgentSessionInspect {
-    /// Creates a new AgentSessionInspect command with the given SessionStore.
-    pub fn new(store: SessionStore) -> Self {
-        Self { store }
-    }
-
-    pub(crate) fn run_inner<C: CwdInterface>(
+    pub(crate) async fn run_inner<C: CwdInterface>(
         &self,
         engine: &C,
         call: &EvaluatedCall,
+        store: &SessionStoreImpl,
     ) -> Result<Value, LabeledError> {
         let session_id: String = call.req(0)?;
 
@@ -39,17 +48,21 @@ impl AgentSessionInspect {
         let prefix = dir_prefix(&cwd);
         let session_id = format!("{prefix}-{session_id}");
 
-        // Load the session metadata
-        let session = self
-            .store
-            .load_session(&session_id)
-            .map_err(|e| LabeledError::new(format!("Failed to load session: {}", e)))?;
-
-        // Load messages from ConversationStore (rig::completion::Message)
-        let conversation_store = JsonlConversationStore::new(self.store.cache_dir().to_path_buf());
-        let messages = conversation_store
+        // Load session metadata and entries from the store
+        let (metadata, entries) = store
             .load(&session_id)
-            .map_err(|e| LabeledError::new(format!("Failed to load messages: {}", e)))?;
+            .await
+            .map_err(|e| LabeledError::new(format!("Failed to load session: {}", e)))?
+            .ok_or_else(|| LabeledError::new(format!("Session not found: {session_id}")))?;
+
+        // Filter messages from entries (skip compaction markers)
+        let messages: Vec<&Message> = entries
+            .iter()
+            .filter_map(|e| match e {
+                StoreEntry::Message(msg) => Some(msg),
+                StoreEntry::Marker(_) => None,
+            })
+            .collect();
 
         // Helper function to extract role and text from rig Message
         fn extract_message_info(msg: &Message) -> (String, String) {
@@ -107,26 +120,26 @@ impl AgentSessionInspect {
             })
             .collect();
 
-        // Convert config to Nushell Value (record)
+        // Convert config to Nushell Value (record).
+        // Compaction params are not persisted in the new store format;
+        // display defaults for the config block.
+        let config = CompactionParams::default();
         let mut config_record = Record::new();
         config_record.push(
             "compaction_strategy",
-            Value::string(
-                session.compaction_config().compaction_strategy.as_str(),
-                call.head,
-            ),
+            Value::string(config.compaction_strategy.as_str(), call.head),
         );
         config_record.push(
             "keep_recent",
-            Value::int(session.compaction_config().keep_recent as i64, call.head),
+            Value::int(config.keep_recent as i64, call.head),
         );
 
         // Build the final session record
         let mut session_record = Record::new();
-        session_record.push("id", Value::string(session.id(), call.head));
+        session_record.push("id", Value::string(metadata.session_id, call.head));
         session_record.push(
             "created_at",
-            Value::string(session.created_at().to_rfc3339(), call.head),
+            Value::string(metadata.created_at.to_rfc3339(), call.head),
         );
         session_record.push(
             "message_count",
@@ -169,16 +182,26 @@ impl SimplePluginCommand for AgentSessionInspect {
     fn signature(&self) -> Signature {
         Signature::build(PluginCommand::name(self))
             .required("id", SyntaxShape::String, "Session ID to inspect")
+            .named(
+                "store",
+                SyntaxShape::String,
+                "Session store backend: sqlite|jsonl",
+                None,
+            )
             .category(Category::Experimental)
     }
 
     fn run(
         &self,
-        _plugin: &AgentPlugin,
+        plugin: &AgentPlugin,
         engine: &EngineInterface,
         call: &EvaluatedCall,
         _input: &Value,
     ) -> Result<Value, LabeledError> {
-        self.run_inner(engine, call)
+        let store_type = plugin.resolve_store_type(call)?;
+        let store = plugin
+            .create_store_with(store_type)
+            .map_err(|e| LabeledError::new(format!("Failed to create session store: {e}")))?;
+        crate::block_on!(plugin, self.run_inner(engine, call, &store))
     }
 }

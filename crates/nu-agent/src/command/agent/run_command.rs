@@ -14,6 +14,7 @@ use super::{
     resolve_agent_mode, resolve_config, should_enter_foreground,
 };
 
+use crate::plugin::AgentPlugin;
 use nu_agent_a2a::{AgentBuilder, AgentHandle, Skill};
 use nu_agent_core::{
     config::PluginConfig,
@@ -22,11 +23,10 @@ use nu_agent_core::{
     session::resolver::{DefaultSessionResolver, SessionResolutionInput, SessionResolver},
     tools::handler::McpToolRegistry,
 };
-use nu_agent_tui::RuntimeRunError;
-use nu_agent_tui::platform::safety::RestoreRunError;
 
 pub(super) fn run_command(
-    agent: &super::Agent,
+    _agent: &super::Agent,
+    plugin: &AgentPlugin,
     engine: &EngineInterface,
     call: &EvaluatedCall,
     input: &Value,
@@ -135,6 +135,14 @@ pub(super) fn run_command(
         config.a2a_port = Some(port_val as u16);
     }
 
+    // Resolve session store type with CLI > env > config > default precedence
+    let store_type = plugin.resolve_store_type(call)?;
+    let store = Arc::new(
+        plugin
+            .create_store_with(store_type)
+            .map_err(|e| LabeledError::new(format!("Failed to create session store: {e}")))?,
+    );
+
     // Apply mode-specific defaults for max_tool_turns if not explicitly configured
     // User-specified value (via --max-turns or config file) always wins
     if config.max_tool_turns.is_none() && !mode.is_tui() {
@@ -208,274 +216,286 @@ pub(super) fn run_command(
         mode.is_tui(),
     )?;
 
-    // Create async runtime for LLM and MCP tool execution
-    let runtime = tokio::runtime::Runtime::new()
-        .map_err(|e| LabeledError::new(format!("Failed to create async runtime: {}", e)))?;
-
-    // ── A2A agent startup (optional, experimental) ───────────────────────
-    let mut a2a_handle: Option<AgentHandle> = if config.a2a_enabled {
-        let agent_name = messaging_identity.as_deref().unwrap_or("agent");
-        let description = persona.as_ref().and_then(|p| p.description.as_deref());
-        let a2a_port = config.a2a_port.unwrap_or(0);
-        let explicit_mesh_key = call.get_flag::<String>("mesh-key")?;
-        let mesh_key = nu_agent_a2a::mesh_key::resolve_mesh_key(explicit_mesh_key, &cwd);
-        match runtime.block_on(async {
-            let mut builder = AgentBuilder::new(agent_name).has_explicit_name(has_explicit_name);
-            if let Some(desc) = description {
-                builder = builder.description(desc);
+    // Use the shared runtime from AgentPlugin — created once at plugin startup,
+    // reused for all command invocations. The handle is cloned for use inside
+    // the async block and for spawning tasks (ToolServer, A2A, etc.).
+    let handle = plugin.runtime.handle().clone();
+    handle.clone().block_on(async move {
+        // ── A2A agent startup (optional, experimental) ───────────────────────
+        let mut a2a_handle: Option<AgentHandle> = if config.a2a_enabled {
+            let agent_name = messaging_identity.as_deref().unwrap_or("agent");
+            let description = persona.as_ref().and_then(|p| p.description.as_deref());
+            let a2a_port = config.a2a_port.unwrap_or(0);
+            let explicit_mesh_key = call.get_flag::<String>("mesh-key")?;
+            let mesh_key = nu_agent_a2a::mesh_key::resolve_mesh_key(explicit_mesh_key, &cwd);
+            match async {
+                let mut builder =
+                    AgentBuilder::new(agent_name).has_explicit_name(has_explicit_name);
+                if let Some(desc) = description {
+                    builder = builder.description(desc);
+                }
+                // Populate A2A skills from the agent persona so other agents can
+                // see what this agent does via agent.getCard / agent.list.
+                if let Some(ref persona) = persona {
+                    let persona_skill = Skill {
+                        id: persona.name.clone().unwrap_or_default(),
+                        name: persona.name.clone().unwrap_or_default(),
+                        description: persona.description.clone().unwrap_or_default(),
+                        inputs: None,
+                        outputs: None,
+                    };
+                    builder = builder.skills(vec![persona_skill]);
+                }
+                builder.port(a2a_port).mesh_key(mesh_key).build().await
             }
-            // Populate A2A skills from the agent persona so other agents can
-            // see what this agent does via agent.getCard / agent.list.
-            if let Some(ref persona) = persona {
-                let persona_skill = Skill {
-                    id: persona.name.clone().unwrap_or_default(),
-                    name: persona.name.clone().unwrap_or_default(),
-                    description: persona.description.clone().unwrap_or_default(),
-                    inputs: None,
-                    outputs: None,
-                };
-                builder = builder.skills(vec![persona_skill]);
+            .await
+            {
+                Ok(handle) => {
+                    log::info!(
+                        "A2A agent '{agent_name}' started on {}",
+                        handle.server.local_url
+                    );
+                    Some(handle)
+                }
+                Err((err, Some(server))) => {
+                    server.shutdown().await;
+                    log::warn!("A2A startup failed (non-fatal): {err}");
+                    None
+                }
+                Err((err, None)) => {
+                    log::warn!("A2A startup failed (non-fatal): {err}");
+                    None
+                }
             }
-            builder.port(a2a_port).mesh_key(mesh_key).build().await
-        }) {
-            Ok(handle) => {
-                log::info!(
-                    "A2A agent '{agent_name}' started on {}",
-                    handle.server.local_url
-                );
-                Some(handle)
-            }
-            Err((err, Some(server))) => {
-                runtime.block_on(server.shutdown());
-                log::warn!("A2A startup failed (non-fatal): {err}");
-                None
-            }
-            Err((err, None)) => {
-                log::warn!("A2A startup failed (non-fatal): {err}");
-                None
-            }
-        }
-    } else {
-        None
-    };
-
-    // Create the tool server handle ONCE — both builtins and MCP servers register into it
-    let tool_server_handle = rig::tool::server::ToolServer::new().run();
-
-    let mcp_runtime = if let Some(cfg) = mcp_config.as_ref() {
-        if cfg.mcp.is_empty() {
-            None
         } else {
-            let caller_cwd_path = cwd.as_path();
+            None
+        };
 
-            Some(
-                runtime
-                    .block_on(nu_agent_core::tools::mcp::runtime::connect_servers(
+        // Create the tool server handle ONCE — both builtins and MCP servers register into it
+        let tool_server_handle = rig::tool::server::ToolServer::new().run();
+
+        let mcp_runtime = if let Some(cfg) = mcp_config.as_ref() {
+            if cfg.mcp.is_empty() {
+                None
+            } else {
+                let caller_cwd_path = cwd.as_path();
+
+                Some(
+                    nu_agent_core::tools::mcp::runtime::connect_servers(
                         &tool_server_handle,
                         &cfg.mcp,
                         Some(caller_cwd_path),
                         config.max_tool_result_bytes.unwrap_or(20_000),
-                    ))
+                    )
+                    .await
                     .map_err(|msg| {
                         LabeledError::new("Failed to connect MCP runtime")
                             .with_label(msg, call.head)
                     })?,
-            )
-        }
-    } else {
-        None
-    };
+                )
+            }
+        } else {
+            None
+        };
 
-    let discovered_mcp_tools = if let Some(mcp_runtime) = mcp_runtime.as_ref() {
-        mcp_runtime.discovered_tools().to_vec()
-    } else {
-        Vec::new()
-    };
-
-    let mcp_lifecycle_projection =
-        if let (Some(runtime), Some(cfg)) = (mcp_runtime.as_ref(), mcp_config.as_ref()) {
-            runtime.lifecycle_projection(&cfg.mcp)
+        let discovered_mcp_tools = if let Some(mcp_runtime) = mcp_runtime.as_ref() {
+            mcp_runtime.discovered_tools().to_vec()
         } else {
             Vec::new()
         };
 
-    let mcp_registry =
-        McpToolRegistry::from_tools(discovered_mcp_tools.clone()).map_err(|msg| {
-            LabeledError::new("Failed to build MCP tool registry").with_label(msg, call.head)
-        })?;
+        let mcp_lifecycle_projection =
+            if let (Some(runtime), Some(cfg)) = (mcp_runtime.as_ref(), mcp_config.as_ref()) {
+                runtime.lifecycle_projection(&cfg.mcp)
+            } else {
+                Vec::new()
+            };
 
-    let ToolAssembly {
-        tool_definitions,
-        baseline_tool_definitions,
-        available_agents,
-    } = assemble_tool_definitions(
-        &closure_registry,
-        &agents_config,
-        &discovered_mcp_tools,
-        &cwd,
-    );
+        let mcp_registry =
+            McpToolRegistry::from_tools(discovered_mcp_tools.clone()).map_err(|msg| {
+                LabeledError::new("Failed to build MCP tool registry").with_label(msg, call.head)
+            })?;
 
-    let resolver = DefaultSessionResolver::new(&agent.store);
-    let mut session_resolution = resolver.resolve(SessionResolutionInput {
-        use_tui: mode.is_tui(),
-        session_id,
-        cwd: cwd.clone(),
-    })?;
-
-    let nu_agent_core::conversation::builder::BuildArtifacts {
-        parent_name: _,
-        merged_compaction,
-        compaction_strategy,
-    } = super::setup::register_tools(
-        call,
-        plugin_config_value.as_ref(),
-        BuildInput {
-            runtime: &runtime,
-            tool_server_handle: &tool_server_handle,
-            closure_registry: &closure_registry,
-            cwd: cwd.clone(),
-            engine,
-            span: call.head,
-            available_agents: &available_agents,
-            messaging_identity: messaging_identity.clone(),
-            tool_timeout,
-            session: session_resolution.session.as_mut(),
-            max_tool_result_bytes: config.max_tool_result_bytes.unwrap_or(20_000),
-            merged_compaction: nu_agent_core::config::CompactionConfig::default(),
-        },
-    )?;
-
-    // ── A2A tool registration ──────────────────────────────────────────────
-    // Must run BEFORE build_runtime() so tools are available when the agent
-    // context snapshots its tool set.
-    if let Some(ref handle) = a2a_handle {
-        let ctx = handle.a2a_tool_context(runtime.handle().clone());
-        if let Err(e) = nu_agent_a2a::register_tools_on_server(&tool_server_handle, ctx, &runtime) {
-            log::warn!("A2A tool registration failed (non-fatal): {e}");
-        }
-    }
-
-    let mcp_caller_cwd = cwd.clone();
-
-    // ── Phase 8: Preamble cache ───────────────────────────────────────────
-    let (cached_agents_chain, cached_available_skills, cached_sub_agent_instruction) =
-        super::runtime_build::build_preamble_cache(&cwd, None);
-
-    // ── Phase 9: Runtime construction ────────────────────────────────────
-    let context_window_max_tokens = u64::from(config.resolved_max_context_tokens());
-    let mut runtime_impl =
-        super::runtime_build::build_runtime(super::runtime_build::RuntimeBuildParams {
-            runtime,
-            config,
-            plugin_config_value,
+        let ToolAssembly {
             tool_definitions,
             baseline_tool_definitions,
-            closure_registry,
-            mcp_runtime,
-            tool_server_handle,
-            mcp_lifecycle_projection,
-            mcp_server_configs: mcp_config
-                .as_ref()
-                .map(|cfg| cfg.mcp.clone())
-                .unwrap_or_default(),
-            mcp_caller_cwd: Some(mcp_caller_cwd),
-            mcp_registry,
-            engine: engine.clone(),
-            store: agent.store.clone(),
-            final_session_id: session_resolution.final_session_id,
-            context_window_max_tokens,
-            compaction_threshold_pct: merged_compaction.proactive_threshold_pct.unwrap_or(0.80),
-            compaction_strategy,
-            base_permissions,
-            effective_permissions,
-            cli_permissions_overlay,
-            permissions_startup_summary,
-            persona_body: persona.as_ref().map(|p| p.body.clone()),
-            agent_identity,
-            agent_description: persona.as_ref().and_then(|p| p.description.clone()),
-            cached_agents_chain,
-            cached_available_skills,
-            cached_sub_agent_instruction,
             available_agents,
-            agents_config,
-            cwd: cwd.clone(),
-        });
-    log::debug!(
-        "runtime: agent_persona_body_len={:?}, agent_identity={:?}, agent_description={:?}",
-        runtime_impl.persona_body_len(),
-        runtime_impl.agent_identity(),
-        runtime_impl.agent_description()
-    );
+        } = assemble_tool_definitions(
+            &closure_registry,
+            &agents_config,
+            &discovered_mcp_tools,
+            &cwd,
+        );
 
-    // Extract the A2A incoming task receiver (if A2A is enabled).
-    // The receiver is moved into the mode function where it will be polled
-    // before each interactive turn to inject A2A tasks as user prompts.
-    let a2a_task_rx = a2a_handle
-        .as_mut()
-        .and_then(|h| h.server.take_incoming_task_receiver());
+        let resolver = DefaultSessionResolver::new(Arc::clone(&store));
+        let mut session_resolution = resolver
+            .resolve(SessionResolutionInput {
+                use_tui: mode.is_tui(),
+                session_id,
+                cwd: cwd.clone(),
+            })
+            .await?;
 
-    // Extract the A2A completion event receiver (if A2A is enabled).
-    // This receives events when remote agents finish processing tasks
-    // that were sent via tasks.send.
-    let a2a_completion_rx = a2a_handle
-        .as_mut()
-        .and_then(|h| h.take_completion_receiver());
-
-    // Extract a reference to the A2A task store for auto-completing incoming
-    // tasks when the LLM finishes processing them.
-    let a2a_task_store: Option<Arc<InMemoryTaskStore>> =
-        a2a_handle.as_ref().map(|h| h.task_store());
-
-    let result = match mode {
-        AgentMode::Tui => run_tui_mode(
-            &mut runtime_impl,
-            input,
-            input_is_nothing,
-            call.head,
-            ui_policy,
-            super::mode_execute::TuiHydrationInput {
-                should_hydrate: session_resolution.should_hydrate_transcript,
-                initial_messages: session_resolution.initial_messages,
-                last_total_tokens: session_resolution.last_total_tokens,
+        let nu_agent_core::conversation::builder::BuildArtifacts {
+            parent_name: _,
+            merged_compaction,
+            compaction_strategy,
+            compaction_params,
+        } = super::setup::register_tools(
+            call,
+            plugin_config_value.as_ref(),
+            BuildInput {
+                tool_server_handle: &tool_server_handle,
+                closure_registry: &closure_registry,
+                cwd: cwd.clone(),
+                engine,
+                span: call.head,
+                available_agents: &available_agents,
+                messaging_identity: messaging_identity.clone(),
+                tool_timeout,
+                session: session_resolution.session.as_mut(),
+                max_tool_result_bytes: config.max_tool_result_bytes.unwrap_or(20_000),
+                merged_compaction: nu_agent_core::config::CompactionConfig::default(),
             },
-            a2a_task_rx,
-            a2a_completion_rx,
-            a2a_task_store.clone(),
-        ),
-        AgentMode::Stderr => run_stderr_mode(
-            &mut runtime_impl,
-            input,
-            call.head,
-            ui_policy,
-            stderr_is_tty,
-            a2a_task_rx,
-            a2a_completion_rx,
-            a2a_task_store,
-        ),
-    };
+        )
+        .await?;
 
-    // Shutdown A2A agent before returning (catch panics, never crash agent)
-    if let Some(handle) = a2a_handle {
-        log::info!("Shutting down A2A agent...");
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            runtime_impl.runtime.block_on(handle.shutdown());
-        }));
-    }
+        // ── A2A tool registration ──────────────────────────────────────────────
+        // Must run BEFORE build_runtime() so tools are available when the agent
+        // context snapshots its tool set.
+        if let Some(ref a2a_h) = a2a_handle {
+            let ctx = a2a_h.a2a_tool_context(handle.clone());
+            if let Err(e) = nu_agent_a2a::register_tools_on_server(&tool_server_handle, ctx).await {
+                log::warn!("A2A tool registration failed (non-fatal): {e}");
+            }
+        }
 
-    result
+        let mcp_caller_cwd = cwd.clone();
+
+        // ── Phase 8: Preamble cache ───────────────────────────────────────────
+        let (cached_agents_chain, cached_available_skills, cached_sub_agent_instruction) =
+            super::runtime_build::build_preamble_cache(&cwd, None);
+
+        // ── Phase 9: Runtime construction ────────────────────────────────────
+        let context_window_max_tokens = u64::from(config.resolved_max_context_tokens());
+        let mut runtime_impl =
+            super::runtime_build::build_runtime(super::runtime_build::RuntimeBuildParams {
+                runtime: handle.clone(),
+                config,
+                plugin_config_value,
+                tool_definitions,
+                baseline_tool_definitions,
+                closure_registry,
+                mcp_runtime,
+                tool_server_handle,
+                mcp_lifecycle_projection,
+                mcp_server_configs: mcp_config
+                    .as_ref()
+                    .map(|cfg| cfg.mcp.clone())
+                    .unwrap_or_default(),
+                mcp_caller_cwd: Some(mcp_caller_cwd),
+                mcp_registry,
+                engine: engine.clone(),
+                store: store.clone(),
+                final_session_id: session_resolution.final_session_id,
+                context_window_max_tokens,
+                compaction_threshold_pct: merged_compaction.proactive_threshold_pct.unwrap_or(0.80),
+                compaction_strategy,
+                compaction_params,
+                base_permissions,
+                effective_permissions,
+                cli_permissions_overlay,
+                permissions_startup_summary,
+                persona_body: persona.as_ref().map(|p| p.body.clone()),
+                agent_identity,
+                agent_description: persona.as_ref().and_then(|p| p.description.clone()),
+                cached_agents_chain,
+                cached_available_skills,
+                cached_sub_agent_instruction,
+                available_agents,
+                agents_config,
+                cwd: cwd.clone(),
+            });
+        log::debug!(
+            "runtime: agent_persona_body_len={:?}, agent_identity={:?}, agent_description={:?}",
+            runtime_impl.persona_body_len(),
+            runtime_impl.agent_identity(),
+            runtime_impl.agent_description()
+        );
+
+        // Extract the A2A incoming task receiver (if A2A is enabled).
+        // The receiver is moved into the mode function where it will be polled
+        // before each interactive turn to inject A2A tasks as user prompts.
+        let a2a_task_rx = a2a_handle
+            .as_mut()
+            .and_then(|h| h.server.take_incoming_task_receiver());
+
+        // Extract the A2A completion event receiver (if A2A is enabled).
+        // This receives events when remote agents finish processing tasks
+        // that were sent via tasks.send.
+        let a2a_completion_rx = a2a_handle
+            .as_mut()
+            .and_then(|h| h.take_completion_receiver());
+
+        // Extract a reference to the A2A task store for auto-completing incoming
+        // tasks when the LLM finishes processing them.
+        let a2a_task_store: Option<Arc<InMemoryTaskStore>> =
+            a2a_handle.as_ref().map(|h| h.task_store());
+
+        let a2a = super::mode_execute::A2aContext {
+            task_rx: a2a_task_rx,
+            completion_rx: a2a_completion_rx,
+            task_store: a2a_task_store.clone(),
+        };
+
+        let result = match mode {
+            AgentMode::Tui => {
+                run_tui_mode(
+                    runtime_impl,
+                    input,
+                    input_is_nothing,
+                    call.head,
+                    ui_policy,
+                    super::mode_execute::TuiHydrationInput {
+                        should_hydrate: session_resolution.should_hydrate_transcript,
+                        initial_messages: session_resolution.initial_messages,
+                        last_total_tokens: session_resolution.last_total_tokens,
+                    },
+                    a2a,
+                )
+                .await
+            }
+            AgentMode::Stderr => {
+                run_stderr_mode(
+                    &mut runtime_impl,
+                    input,
+                    call.head,
+                    ui_policy,
+                    stderr_is_tty,
+                    a2a,
+                )
+                .await
+            }
+        };
+
+        // Shutdown A2A agent before returning (catch panics, never crash agent)
+        if let Some(handle) = a2a_handle {
+            log::info!("Shutting down A2A agent...");
+            let _ = handle.shutdown().await;
+        }
+
+        result
+    })
 }
 
-#[allow(clippy::too_many_arguments)]
-fn run_tui_mode(
-    runtime_impl: &mut AgentConversationRuntime,
+async fn run_tui_mode(
+    runtime_impl: AgentConversationRuntime,
     input: &Value,
     input_is_nothing: bool,
     span: nu_protocol::Span,
     ui_policy: UiPolicy,
     hydration: super::mode_execute::TuiHydrationInput,
-    a2a_task_rx: Option<tokio::sync::mpsc::Receiver<nu_agent_a2a::IncomingTask>>,
-    a2a_completion_rx: Option<tokio::sync::mpsc::Receiver<nu_agent_a2a::A2aCompletionEvent>>,
-    a2a_task_store: Option<Arc<InMemoryTaskStore>>,
+    a2a: super::mode_execute::A2aContext,
 ) -> Result<Value, LabeledError> {
     super::mode_execute::run_tui_mode(
         runtime_impl,
@@ -484,52 +504,19 @@ fn run_tui_mode(
         span,
         ui_policy,
         hydration,
-        a2a_task_rx,
-        a2a_completion_rx,
-        a2a_task_store,
+        a2a,
     )
+    .await
 }
 
-#[allow(clippy::too_many_arguments)]
-fn run_stderr_mode(
+async fn run_stderr_mode(
     runtime_impl: &mut AgentConversationRuntime,
     input: &Value,
     span: nu_protocol::Span,
     ui_policy: UiPolicy,
     stderr_is_tty: bool,
-    a2a_task_rx: Option<tokio::sync::mpsc::Receiver<nu_agent_a2a::IncomingTask>>,
-    a2a_completion_rx: Option<tokio::sync::mpsc::Receiver<nu_agent_a2a::A2aCompletionEvent>>,
-    a2a_task_store: Option<Arc<InMemoryTaskStore>>,
+    a2a: super::mode_execute::A2aContext,
 ) -> Result<Value, LabeledError> {
-    super::mode_execute::run_stderr_mode(
-        runtime_impl,
-        input,
-        span,
-        ui_policy,
-        stderr_is_tty,
-        a2a_task_rx,
-        a2a_completion_rx,
-        a2a_task_store,
-    )
-}
-
-pub(super) fn map_tui_run_result(
-    result: Result<Value, RuntimeRunError<LabeledError>>,
-) -> Result<Value, LabeledError> {
-    match result {
-        Ok(value) => Ok(value),
-        Err(RuntimeRunError::Enter(err)) => Err(LabeledError::new(format!(
-            "Failed to enter TUI terminal lifecycle: {err}"
-        ))),
-        Err(RuntimeRunError::Run(RestoreRunError::Run(err))) => Err(err),
-        Err(RuntimeRunError::Run(RestoreRunError::RunWithRestore {
-            run_error,
-            restore_error,
-        })) => Err(LabeledError::new(format!(
-            "TUI run failed and terminal restore failed: run={run_error}, restore={restore_error}"
-        ))),
-        Err(RuntimeRunError::Run(RestoreRunError::Restore(err))) => Err(LabeledError::new(
-            format!("Failed to restore terminal after TUI run: {err}"),
-        )),
-    }
+    super::mode_execute::run_stderr_mode(runtime_impl, input, span, ui_policy, stderr_is_tty, a2a)
+        .await
 }

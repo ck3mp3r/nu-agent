@@ -10,7 +10,7 @@ use nu_agent_core::utils::value_ext::extract_response_text_from_value;
 use nu_agent_core::{
     conversation::runtime::AgentConversationRuntime,
     orchestrator::{
-        run_hydrated_interactive_loop_with_external_prompts,
+        InteractiveLoopConfig, run_hydrated_interactive_loop_with_external_prompts,
         run_interactive_loop_with_external_prompts, run_single_turn,
     },
     policy::UiPolicy,
@@ -24,7 +24,7 @@ use nu_agent_tui::TuiInteractiveUi;
 use nu_agent_tui::platform::terminal::TerminalLifecycle;
 use nu_agent_tui::runtime::{
     AnsiTerminalBackend, HybridTerminalEvents, TtyTerminalEvents, TuiRuntimeRenderer,
-    open_tty_reader, run_with_terminal_restore,
+    open_tty_reader,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,17 +93,20 @@ pub(crate) struct TuiHydrationInput {
     pub last_total_tokens: Option<u64>,
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn run_tui_mode(
-    runtime_impl: &mut AgentConversationRuntime,
+pub(crate) struct A2aContext {
+    pub(crate) task_rx: Option<tokio::sync::mpsc::Receiver<IncomingTask>>,
+    pub(crate) completion_rx: Option<tokio::sync::mpsc::Receiver<A2aCompletionEvent>>,
+    pub(crate) task_store: Option<Arc<InMemoryTaskStore>>,
+}
+
+pub(crate) async fn run_tui_mode(
+    mut runtime_impl: AgentConversationRuntime,
     input: &Value,
     input_is_nothing: bool,
     span: nu_protocol::Span,
     ui_policy: UiPolicy,
     hydration: TuiHydrationInput,
-    a2a_task_rx: Option<tokio::sync::mpsc::Receiver<IncomingTask>>,
-    a2a_completion_rx: Option<tokio::sync::mpsc::Receiver<A2aCompletionEvent>>,
-    a2a_task_store: Option<Arc<InMemoryTaskStore>>,
+    a2a: A2aContext,
 ) -> Result<Value, LabeledError> {
     // Set up the interactive permission pending map for TUI mode.
     // This Arc is shared between the worker thread (via InteractivePermissionResolver)
@@ -175,7 +178,7 @@ pub(crate) fn run_tui_mode(
         let mut has_sources = false;
 
         // Forward incoming A2A tasks
-        if let Some(mut rx) = a2a_task_rx {
+        if let Some(mut rx) = a2a.task_rx {
             has_sources = true;
             let tx = tx.clone();
             std::thread::spawn(move || {
@@ -203,7 +206,7 @@ pub(crate) fn run_tui_mode(
         }
 
         // Forward A2A completion events
-        if let Some(mut rx) = a2a_completion_rx {
+        if let Some(mut rx) = a2a.completion_rx {
             has_sources = true;
             let tx = tx.clone();
             std::thread::spawn(move || {
@@ -228,7 +231,7 @@ pub(crate) fn run_tui_mode(
     // response text through `turn_tx`. A background thread reads from the channel
     // and calls `store.complete_task()`.
     let turn_tx: Option<std::sync::mpsc::Sender<(String, String)>> =
-        if let Some(ref store) = a2a_task_store {
+        if let Some(ref store) = a2a.task_store {
             let (tx, rx) = std::sync::mpsc::channel::<(String, String)>();
             let store = Arc::clone(store);
             std::thread::spawn(move || {
@@ -245,50 +248,42 @@ pub(crate) fn run_tui_mode(
             None
         };
 
-    let result = run_with_terminal_restore(&mut terminal_lifecycle, || {
-        if input_is_nothing {
-            if hydration.should_hydrate {
-                run_hydrated_interactive_loop_with_external_prompts(
-                    runtime_impl,
-                    &mut tui_ui,
-                    hydration.initial_messages,
-                    hydration.last_total_tokens,
-                    span,
-                    Some(Arc::clone(&pending)),
-                    external_prompt_rx,
-                    turn_tx,
-                )
-            } else {
-                run_interactive_loop_with_external_prompts(
-                    runtime_impl,
-                    &mut tui_ui,
-                    span,
-                    Some(Arc::clone(&pending)),
-                    external_prompt_rx,
-                    turn_tx,
-                )
-            }
-        } else {
-            // Non-interactive: run a single turn with the provided input.
-            // A2A tasks are not processed in this mode (single-turn).
-            let (prompt, context) = super::input::extract_prompt_and_context(input)?;
-            run_single_turn(runtime_impl, &mut tui_ui, prompt, context, span)
-        }
-    });
+    terminal_lifecycle
+        .enter()
+        .map_err(|e| LabeledError::new(format!("Failed to enter terminal raw mode: {e}")))?;
 
-    super::run_command::map_tui_run_result(result)
+    let result = if input_is_nothing {
+        if hydration.should_hydrate {
+            let config = InteractiveLoopConfig::new(span)
+                .with_hydration(hydration.initial_messages, hydration.last_total_tokens)
+                .with_interactive_pending(Some(Arc::clone(&pending)))
+                .with_external_prompt_rx(external_prompt_rx)
+                .with_on_turn_complete(turn_tx);
+            run_hydrated_interactive_loop_with_external_prompts(runtime_impl, &mut tui_ui, config)
+                .await
+        } else {
+            let config = InteractiveLoopConfig::new(span)
+                .with_interactive_pending(Some(Arc::clone(&pending)))
+                .with_external_prompt_rx(external_prompt_rx)
+                .with_on_turn_complete(turn_tx);
+            run_interactive_loop_with_external_prompts(runtime_impl, &mut tui_ui, config).await
+        }
+    } else {
+        let (prompt, context) = super::input::extract_prompt_and_context(input)?;
+        run_single_turn(&mut runtime_impl, &mut tui_ui, prompt, context, span).await
+    };
+
+    let _ = terminal_lifecycle.restore();
+    result
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn run_stderr_mode(
+pub(crate) async fn run_stderr_mode(
     runtime_impl: &mut AgentConversationRuntime,
     input: &Value,
     span: nu_protocol::Span,
     ui_policy: UiPolicy,
     stderr_is_tty: bool,
-    mut a2a_task_rx: Option<tokio::sync::mpsc::Receiver<IncomingTask>>,
-    mut a2a_completion_rx: Option<tokio::sync::mpsc::Receiver<A2aCompletionEvent>>,
-    a2a_task_store: Option<Arc<InMemoryTaskStore>>,
+    mut a2a: A2aContext,
 ) -> Result<Value, LabeledError> {
     let cancel_flag = Arc::new(AtomicBool::new(false));
 
@@ -308,18 +303,18 @@ pub(crate) fn run_stderr_mode(
     );
 
     // Check for A2A completion events first (highest priority).
-    if let Some(ref mut rx) = a2a_completion_rx
+    if let Some(ref mut rx) = a2a.completion_rx
         && let Ok(event) = rx.try_recv()
     {
         let prompt = format!(
             "[A2A Task {} completed by {}]: {}\n\nStatus: {}.",
             event.task_id, event.agent_name, event.result, event.status
         );
-        return run_single_turn(runtime_impl, &mut stderr_ui, prompt, None, span);
+        return run_single_turn(runtime_impl, &mut stderr_ui, prompt, None, span).await;
     }
 
     // Then check for pending A2A incoming tasks.
-    if let Some(ref mut rx) = a2a_task_rx
+    if let Some(ref mut rx) = a2a.task_rx
         && let Ok(incoming) = rx.try_recv()
     {
         let task_id = incoming.task_id.clone();
@@ -337,10 +332,10 @@ pub(crate) fn run_stderr_mode(
             "[A2A Task {} from {}]: {}\n\nProcess this request and respond with your answer. Your response will be automatically delivered as the task result.",
             incoming.task_id, incoming.sender_url, text
         );
-        let result = run_single_turn(runtime_impl, &mut stderr_ui, prompt, None, span);
+        let result = run_single_turn(runtime_impl, &mut stderr_ui, prompt, None, span).await;
 
         // Auto-complete the A2A task after the LLM finishes its tool chain
-        if let Some(ref store) = a2a_task_store
+        if let Some(ref store) = a2a.task_store
             && let Ok(ref response) = result
         {
             auto_complete_a2a_task(store, &task_id, response);
@@ -350,5 +345,5 @@ pub(crate) fn run_stderr_mode(
     }
 
     let (prompt, context) = super::input::extract_prompt_and_context(input)?;
-    run_single_turn(runtime_impl, &mut stderr_ui, prompt, context, span)
+    run_single_turn(runtime_impl, &mut stderr_ui, prompt, context, span).await
 }

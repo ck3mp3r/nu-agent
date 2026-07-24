@@ -47,7 +47,10 @@ impl CardFetcher {
                 None
             }
         };
-        let rt = match tokio::runtime::Runtime::new() {
+        let rt = match tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+        {
             Ok(r) => Some(r),
             Err(e) => {
                 log::warn!("CardFetcher: failed to create tokio runtime: {e}");
@@ -60,6 +63,9 @@ impl CardFetcher {
     /// Best-effort fetch of an [`AgentCard`] from the given URL.
     /// Returns `None` on any error (connection refused, timeout, non-200,
     /// bad JSON).
+    ///
+    /// Called from a plain OS thread (std::thread::spawn) with no
+    /// existing tokio runtime, so block_on at this boundary is correct.
     fn fetch_card(&self, url: &str) -> Option<AgentCard> {
         let (client, rt) = (self.client.as_ref()?, self.rt.as_ref()?);
         rt.block_on(async {

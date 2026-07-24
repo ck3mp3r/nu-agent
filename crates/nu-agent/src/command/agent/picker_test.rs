@@ -84,6 +84,7 @@ fn model_picker_catalog_projection_from_plugin_config_is_sorted_and_marks_active
         max_retries: None,
         retry_base_delay_ms: None,
         a2a_enabled: false,
+        session_store: None,
     };
     let projected =
         build_model_picker_catalog_from_plugin_config(&plugin_config, "a-provider/a-model");
@@ -144,6 +145,7 @@ fn tui_startup_hydrates_model_picker_catalog_from_cached_plugin_config() {
         max_retries: None,
         retry_base_delay_ms: None,
         a2a_enabled: false,
+        session_store: None,
     };
 
     let catalog = model_picker_catalog_from_cached_startup_plugin_config(

@@ -29,8 +29,9 @@ mod turn_outcome_test;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
-    mpsc,
+    mpsc as std_mpsc,
 };
+use tokio::sync::mpsc;
 
 use nu_protocol::{LabeledError, Span, Value};
 
@@ -55,19 +56,88 @@ use crate::protocol::{
     session_management::HasSessionManagement,
 };
 
+/// Configuration for the interactive loop.
+///
+/// Groups common arguments that would otherwise be passed individually,
+/// keeping function signatures under clippy's `too_many_arguments` threshold.
+pub struct InteractiveLoopConfig {
+    /// The span to use for values created during the loop.
+    pub span: Span,
+    /// Pending permission requests awaiting user decisions.
+    pub interactive_pending: Option<PendingPermissions>,
+    /// Optional channel for receiving external prompts (e.g., A2A tasks).
+    pub external_prompt_rx: Option<std_mpsc::Receiver<String>>,
+    /// Optional sender for turn-complete notifications (prompt, response).
+    pub on_turn_complete: Option<std_mpsc::Sender<(String, String)>>,
+    /// Optional hydration config for resuming a prior session.
+    pub hydration: Option<HydrationConfig>,
+}
+
+impl InteractiveLoopConfig {
+    /// Create a new config with the given span and all other fields set to `None`.
+    pub fn new(span: Span) -> Self {
+        Self {
+            span,
+            interactive_pending: None,
+            external_prompt_rx: None,
+            on_turn_complete: None,
+            hydration: None,
+        }
+    }
+
+    /// Set the interactive pending permissions.
+    pub fn with_interactive_pending(mut self, pending: Option<PendingPermissions>) -> Self {
+        self.interactive_pending = pending;
+        self
+    }
+
+    /// Set the external prompt receiver.
+    pub fn with_external_prompt_rx(mut self, rx: Option<std_mpsc::Receiver<String>>) -> Self {
+        self.external_prompt_rx = rx;
+        self
+    }
+
+    /// Set the on-turn-complete sender.
+    pub fn with_on_turn_complete(mut self, tx: Option<std_mpsc::Sender<(String, String)>>) -> Self {
+        self.on_turn_complete = tx;
+        self
+    }
+
+    /// Set the hydration config using a builder pattern.
+    pub fn with_hydration(
+        mut self,
+        messages: Vec<UiMessageSnapshot>,
+        last_total_tokens: Option<u64>,
+    ) -> Self {
+        self.hydration = Some(HydrationConfig {
+            messages,
+            last_total_tokens,
+        });
+        self
+    }
+}
+
+/// Configuration for hydrating a prior session into the interactive loop.
+pub struct HydrationConfig {
+    /// Messages from the prior session to display in the transcript.
+    pub messages: Vec<UiMessageSnapshot>,
+    /// The total token count from the prior session, if known.
+    pub last_total_tokens: Option<u64>,
+}
+
 pub type McpToggleResult = (
     Result<McpUsabilityState, String>,
     usize,
     usize,
     Vec<(String, Vec<String>)>,
 );
-pub(crate) type PendingMcpToggle = (String, mpsc::Receiver<McpToggleResult>);
+pub(crate) type PendingMcpToggle = (String, std_mpsc::Receiver<McpToggleResult>);
 pub type ModelSwitchResult = Result<(String, Option<u64>), String>;
 pub type AgentSwitchResult = Result<(String, String, Option<u64>), String>;
-pub(crate) type PendingModelSwitch = mpsc::Receiver<ModelSwitchResult>;
-pub(crate) type PendingAgentSwitch = mpsc::Receiver<AgentSwitchResult>;
-pub(crate) type PendingAutoCompaction = mpsc::Receiver<Option<String>>;
-pub(crate) type PendingCompactionTrigger = mpsc::Receiver<Option<String>>;
+pub(crate) type PendingModelSwitch = std_mpsc::Receiver<ModelSwitchResult>;
+pub(crate) type PendingAgentSwitch = std_mpsc::Receiver<AgentSwitchResult>;
+pub(crate) type PendingAutoCompaction = std_mpsc::Receiver<Option<String>>;
+pub(crate) type PendingCompactionTrigger = std_mpsc::Receiver<Option<String>>;
 
 pub enum WorkerCommand {
     ExecuteTurn {
@@ -75,24 +145,24 @@ pub enum WorkerCommand {
         span: Span,
     },
     EvaluateAutoCompaction {
-        response_tx: mpsc::Sender<Option<String>>,
+        response_tx: std_mpsc::Sender<Option<String>>,
     },
     ExecuteCompactionTrigger {
         source: CompactionTriggerSource,
-        response_tx: mpsc::Sender<Option<String>>,
+        response_tx: std_mpsc::Sender<Option<String>>,
     },
     ToggleMcp {
         server_name: String,
         enable: bool,
-        response_tx: mpsc::Sender<McpToggleResult>,
+        response_tx: std_mpsc::Sender<McpToggleResult>,
     },
     SwitchModel {
         model_spec: String,
-        response_tx: mpsc::Sender<ModelSwitchResult>,
+        response_tx: std_mpsc::Sender<ModelSwitchResult>,
     },
     SwitchAgent {
         agent_name: String,
-        response_tx: mpsc::Sender<AgentSwitchResult>,
+        response_tx: std_mpsc::Sender<AgentSwitchResult>,
     },
     ClearSession,
     NewSession,
@@ -100,7 +170,7 @@ pub enum WorkerCommand {
 }
 
 struct WorkerProgressUi {
-    events: mpsc::Sender<UiEvent>,
+    events: mpsc::UnboundedSender<UiEvent>,
     cancel_requested: Arc<AtomicBool>,
 }
 
@@ -126,32 +196,43 @@ impl ProgressUi for WorkerProgressUi {
 ///   - (None, Some(rx))    — empty, re-park
 ///   - (None, None)        — disconnected
 pub(crate) fn poll_option_channel<T>(
-    rx: mpsc::Receiver<Option<T>>,
-) -> (Option<T>, Option<mpsc::Receiver<Option<T>>>) {
+    rx: std_mpsc::Receiver<Option<T>>,
+) -> (Option<T>, Option<std_mpsc::Receiver<Option<T>>>) {
     match rx.try_recv() {
         Ok(val) => (val, None),
-        Err(mpsc::TryRecvError::Empty) => (None, Some(rx)),
-        Err(mpsc::TryRecvError::Disconnected) => (None, None),
+        Err(std_mpsc::TryRecvError::Empty) => (None, Some(rx)),
+        Err(std_mpsc::TryRecvError::Disconnected) => (None, None),
     }
 }
 
-fn run_interactive_loop_impl<R, U>(
-    runtime: &mut R,
+pub(crate) async fn run_interactive_loop_impl<R, U>(
+    mut runtime: R,
     ui: &mut U,
-    span: Span,
-    interactive_pending: Option<PendingPermissions>,
-    external_prompt_rx: Option<mpsc::Receiver<String>>,
-    on_turn_complete: Option<mpsc::Sender<(String, String)>>,
-) -> Result<Value, LabeledError>
+    config: InteractiveLoopConfig,
+) -> (R, Result<Value, LabeledError>)
 where
     R: CoreRuntime
         + HasMcpManagement
         + HasModelSwitching
         + HasSessionManagement
         + HasCompaction
-        + Send,
+        + Send
+        + 'static,
     U: ProgressUi + UserInputUi + DisplayStateUi + LifecycleUi + TranscriptUi,
 {
+    let InteractiveLoopConfig {
+        span,
+        interactive_pending,
+        mut external_prompt_rx,
+        on_turn_complete,
+        hydration,
+    } = config;
+
+    if let Some(hydration) = hydration {
+        ui.hydrate_transcript_from_messages(hydration.messages, hydration.last_total_tokens);
+        runtime.seed_last_total_tokens(hydration.last_total_tokens);
+    }
+
     let initial_visible_count = runtime.llm_visible_mcp_tool_count();
     ui.set_active_model_identity(runtime.active_model_identity().as_str());
     ui.set_context_window_max_tokens(runtime.max_context_tokens());
@@ -160,121 +241,129 @@ where
         ui.set_mcp_visible_tool_names_by_server_name(&server_name, names);
     }
 
-    std::thread::scope(|scope| {
-        let (worker_cmd_tx, worker_cmd_rx) = mpsc::channel::<WorkerCommand>();
-        let (worker_event_tx, worker_event_rx) = mpsc::channel::<UiEvent>();
-        let (worker_result_tx, worker_result_rx) = mpsc::channel::<TurnOutcome>();
-        let cancel_requested = Arc::new(AtomicBool::new(false));
-        let worker_cancel = Arc::clone(&cancel_requested);
+    let (worker_cmd_tx, mut worker_cmd_rx) = mpsc::channel::<WorkerCommand>(256);
+    let (worker_event_tx, worker_event_rx) = mpsc::unbounded_channel::<UiEvent>();
+    let (worker_result_tx, worker_result_rx) = mpsc::channel::<TurnOutcome>(256);
+    let cancel_requested = Arc::new(AtomicBool::new(false));
+    let worker_cancel = Arc::clone(&cancel_requested);
 
-        let worker = scope.spawn(move || {
-            let mut worker_ui = WorkerProgressUi {
-                events: worker_event_tx,
-                cancel_requested: worker_cancel,
-            };
-            let mut router = CommandRouter::new(runtime);
+    let mut event_pump = EventPump::new(worker_event_rx);
+    let mut stages = OrchestratorStages::new(initial_visible_count, worker_result_rx);
+    let mut worker_active = false;
+    let mut should_evaluate_compaction = true;
+    let mut active_external_prompt: Option<String> = None;
 
-            while let Ok(command) = worker_cmd_rx.recv() {
-                if !router.dispatch(command, &mut worker_ui, &worker_result_tx) {
-                    break;
-                }
-            }
-        });
+    let mut worker_ui = WorkerProgressUi {
+        events: worker_event_tx,
+        cancel_requested: worker_cancel,
+    };
 
-        let mut event_pump = EventPump::new(worker_event_rx);
-        let mut stages = OrchestratorStages::new(initial_visible_count, worker_result_rx);
-        let mut worker_active = false;
-        let mut should_evaluate_compaction = true; // evaluate once on startup (session resume)
-        let mut active_external_prompt: Option<String> = None;
-
+    // Spawn the worker task with the owned runtime. The worker processes
+    // commands (ExecuteTurn, compaction, MCP toggle, model/agent switch)
+    // independently, allowing the main loop to pump the UI and run stages
+    // concurrently. The runtime is returned when the worker completes.
+    let worker_handle = tokio::spawn(async move {
         loop {
-            ui.pump_once();
-            if let Some(error) = ui.fatal_error() {
-                let _ = worker_cmd_tx.send(WorkerCommand::Shutdown);
-                return Err(LabeledError::new(format!("Interactive UI failed: {error}")));
+            let command = worker_cmd_rx.recv().await;
+            let Some(cmd) = command else { break };
+            let should_continue =
+                CommandRouter::dispatch(cmd, &mut runtime, &mut worker_ui, &worker_result_tx).await;
+            if !should_continue {
+                break;
             }
-            if ui.take_cancel_requested() {
-                cancel_requested.store(true, Ordering::SeqCst);
-            }
-            event_pump.drain_batch(ui);
+        }
+        runtime
+    });
 
-            // Check for external prompts (e.g., A2A tasks) when worker is idle.
-            // This runs BEFORE the stage pipeline so external inputs take priority
-            // over regular user input.
-            if !worker_active
-                && let Some(ref ext_rx) = external_prompt_rx
-                && let Ok(prompt) = ext_rx.try_recv()
-            {
-                log::info!(
-                    "orchestrator: dispatching external prompt (len={})",
-                    prompt.len()
-                );
+    // Main loop: pump UI, drain events, run stages, check quit conditions.
+    loop {
+        ui.pump_once();
+        if let Some(error) = ui.fatal_error() {
+            let _ = worker_cmd_tx.send(WorkerCommand::Shutdown).await;
+            let runtime = worker_handle
+                .await
+                .unwrap_or_else(|_| panic!("worker panicked"));
+            return (
+                runtime,
+                Err(LabeledError::new(format!("Interactive UI failed: {error}"))),
+            );
+        }
+        if ui.take_cancel_requested() {
+            cancel_requested.store(true, Ordering::SeqCst);
+        }
+        event_pump.drain_batch(ui);
 
-                // Display the prompt as a user message in the TUI transcript
-                // so the user can see what was sent to the receiving agent.
-                ui.display_incoming_message(&prompt);
+        // Check for external prompts (e.g., A2A tasks) when worker is idle.
+        if !worker_active
+            && let Some(ref mut ext_rx) = external_prompt_rx
+            && let Ok(prompt) = ext_rx.try_recv()
+        {
+            log::info!(
+                "orchestrator: dispatching external prompt (len={})",
+                prompt.len()
+            );
+            ui.display_incoming_message(&prompt);
+            active_external_prompt = Some(prompt.clone());
 
-                // Track this external prompt so the session stage can fire
-                // on_turn_complete after the LLM finishes processing it.
-                active_external_prompt = Some(prompt.clone());
-
-                match worker_cmd_tx.send(WorkerCommand::ExecuteTurn { prompt, span }) {
-                    Ok(()) => {
-                        worker_active = true;
-                        continue;
-                    }
-                    Err(_) => {
-                        let _ = worker_cmd_tx.send(WorkerCommand::Shutdown);
-                        return Err(LabeledError::new(
-                            "Worker channel closed while dispatching external prompt",
-                        ));
-                    }
-                }
-            }
-
-            let mut ctx = OrchestrationContext {
-                worker_tx: &worker_cmd_tx,
-                pending: &interactive_pending,
-                worker_active: &mut worker_active,
-                should_evaluate_compaction: &mut should_evaluate_compaction,
-                span,
-                ui,
-                active_external_prompt: &mut active_external_prompt,
-                on_turn_complete: &on_turn_complete,
-            };
-            match stages.poll_all(&mut ctx) {
-                StageOutcome::Fatal(e) => {
-                    let _ = worker_cmd_tx.send(WorkerCommand::Shutdown);
-                    return Err(e);
-                }
-                StageOutcome::Handled => continue,
-                StageOutcome::Idle => {}
-            }
-            if !ui.quit_requested() {
-                continue;
-            }
-            if worker_active {
-                cancel_requested.store(true, Ordering::SeqCst);
-                continue;
-            }
-            if stages.has_pending_ops() || should_evaluate_compaction {
-                continue;
-            }
-            break;
+            worker_cmd_tx
+                .send(WorkerCommand::ExecuteTurn { prompt, span })
+                .await
+                .unwrap_or(());
+            worker_active = true;
+            continue;
         }
 
-        let _ = worker_cmd_tx.send(WorkerCommand::Shutdown);
-        let _ = worker;
+        let mut ctx = OrchestrationContext {
+            worker_tx: &worker_cmd_tx,
+            pending: &interactive_pending,
+            worker_active: &mut worker_active,
+            should_evaluate_compaction: &mut should_evaluate_compaction,
+            span,
+            ui,
+            active_external_prompt: &mut active_external_prompt,
+            on_turn_complete: &on_turn_complete,
+        };
+        match stages.poll_all(&mut ctx).await {
+            StageOutcome::Fatal(e) => {
+                let _ = worker_cmd_tx.send(WorkerCommand::Shutdown).await;
+                let runtime = worker_handle
+                    .await
+                    .unwrap_or_else(|_| panic!("worker panicked"));
+                return (runtime, Err(e));
+            }
+            StageOutcome::Handled => continue,
+            StageOutcome::Idle => {
+                // Yield to allow the worker task to make progress.
+                // Without this, the main loop spins in a tight loop and
+                // the spawned worker never gets a chance to process commands.
+                tokio::task::yield_now().await;
+            }
+        }
+        if !ui.quit_requested() {
+            continue;
+        }
+        if worker_active {
+            cancel_requested.store(true, Ordering::SeqCst);
+            continue;
+        }
+        if stages.has_pending_ops() || should_evaluate_compaction {
+            continue;
+        }
+        break;
+    }
 
-        Ok(Value::nothing(span))
-    })
+    let _ = worker_cmd_tx.send(WorkerCommand::Shutdown).await;
+    let runtime = worker_handle
+        .await
+        .unwrap_or_else(|_| panic!("worker panicked"));
+
+    (runtime, Ok(Value::nothing(span)))
 }
 
-pub fn run_interactive_loop<R, U>(
-    runtime: &mut R,
+pub async fn run_interactive_loop<R, U>(
+    runtime: R,
     ui: &mut U,
-    span: Span,
-    interactive_pending: Option<PendingPermissions>,
+    config: InteractiveLoopConfig,
 ) -> Result<Value, LabeledError>
 where
     R: CoreRuntime
@@ -282,10 +371,12 @@ where
         + HasModelSwitching
         + HasSessionManagement
         + HasCompaction
-        + Send,
+        + Send
+        + 'static,
     U: ProgressUi + UserInputUi + DisplayStateUi + LifecycleUi + TranscriptUi,
 {
-    run_interactive_loop_impl(runtime, ui, span, interactive_pending, None, None)
+    let (_runtime, result) = run_interactive_loop_impl(runtime, ui, config).await;
+    result
 }
 
 /// Like [`run_interactive_loop`] but also checks an external channel for
@@ -295,14 +386,10 @@ where
 ///
 /// The `on_turn_complete` callback is fired after each turn that was triggered
 /// by an external prompt, with `(prompt_text, response_text)`.
-#[allow(clippy::too_many_arguments)]
-pub fn run_interactive_loop_with_external_prompts<R, U>(
-    runtime: &mut R,
+pub async fn run_interactive_loop_with_external_prompts<R, U>(
+    runtime: R,
     ui: &mut U,
-    span: Span,
-    interactive_pending: Option<PendingPermissions>,
-    external_prompt_rx: Option<mpsc::Receiver<String>>,
-    on_turn_complete: Option<mpsc::Sender<(String, String)>>,
+    config: InteractiveLoopConfig,
 ) -> Result<Value, LabeledError>
 where
     R: CoreRuntime
@@ -310,26 +397,18 @@ where
         + HasModelSwitching
         + HasSessionManagement
         + HasCompaction
-        + Send,
+        + Send
+        + 'static,
     U: ProgressUi + UserInputUi + DisplayStateUi + LifecycleUi + TranscriptUi,
 {
-    run_interactive_loop_impl(
-        runtime,
-        ui,
-        span,
-        interactive_pending,
-        external_prompt_rx,
-        on_turn_complete,
-    )
+    let (_runtime, result) = run_interactive_loop_impl(runtime, ui, config).await;
+    result
 }
 
-pub fn run_hydrated_interactive_loop<R, U>(
-    runtime: &mut R,
+pub async fn run_hydrated_interactive_loop<R, U>(
+    runtime: R,
     ui: &mut U,
-    messages: impl IntoIterator<Item = UiMessageSnapshot>,
-    last_total_tokens: Option<u64>,
-    span: Span,
-    interactive_pending: Option<PendingPermissions>,
+    config: InteractiveLoopConfig,
 ) -> Result<Value, LabeledError>
 where
     R: CoreRuntime
@@ -337,51 +416,12 @@ where
         + HasModelSwitching
         + HasSessionManagement
         + HasCompaction
-        + Send,
+        + Send
+        + 'static,
     U: ProgressUi + UserInputUi + DisplayStateUi + LifecycleUi + TranscriptUi,
 {
-    run_hydrated_interactive_loop_impl(
-        runtime,
-        ui,
-        messages,
-        last_total_tokens,
-        span,
-        interactive_pending,
-        None,
-        None,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn run_hydrated_interactive_loop_impl<R, U>(
-    runtime: &mut R,
-    ui: &mut U,
-    messages: impl IntoIterator<Item = UiMessageSnapshot>,
-    last_total_tokens: Option<u64>,
-    span: Span,
-    interactive_pending: Option<PendingPermissions>,
-    external_prompt_rx: Option<mpsc::Receiver<String>>,
-    on_turn_complete: Option<mpsc::Sender<(String, String)>>,
-) -> Result<Value, LabeledError>
-where
-    R: CoreRuntime
-        + HasMcpManagement
-        + HasModelSwitching
-        + HasSessionManagement
-        + HasCompaction
-        + Send,
-    U: ProgressUi + UserInputUi + DisplayStateUi + LifecycleUi + TranscriptUi,
-{
-    ui.hydrate_transcript_from_messages(messages, last_total_tokens);
-    runtime.seed_last_total_tokens(last_total_tokens);
-    run_interactive_loop_impl(
-        runtime,
-        ui,
-        span,
-        interactive_pending,
-        external_prompt_rx,
-        on_turn_complete,
-    )
+    let (_runtime, result) = run_interactive_loop_impl(runtime, ui, config).await;
+    result
 }
 
 /// Like [`run_hydrated_interactive_loop`] but also checks an external channel
@@ -390,16 +430,10 @@ where
 ///
 /// The `on_turn_complete` callback is fired after each turn that was triggered
 /// by an external prompt, with `(prompt_text, response_text)`.
-#[allow(clippy::too_many_arguments)]
-pub fn run_hydrated_interactive_loop_with_external_prompts<R, U>(
-    runtime: &mut R,
+pub async fn run_hydrated_interactive_loop_with_external_prompts<R, U>(
+    runtime: R,
     ui: &mut U,
-    messages: impl IntoIterator<Item = UiMessageSnapshot>,
-    last_total_tokens: Option<u64>,
-    span: Span,
-    interactive_pending: Option<PendingPermissions>,
-    external_prompt_rx: Option<mpsc::Receiver<String>>,
-    on_turn_complete: Option<mpsc::Sender<(String, String)>>,
+    config: InteractiveLoopConfig,
 ) -> Result<Value, LabeledError>
 where
     R: CoreRuntime
@@ -407,22 +441,15 @@ where
         + HasModelSwitching
         + HasSessionManagement
         + HasCompaction
-        + Send,
+        + Send
+        + 'static,
     U: ProgressUi + UserInputUi + DisplayStateUi + LifecycleUi + TranscriptUi,
 {
-    run_hydrated_interactive_loop_impl(
-        runtime,
-        ui,
-        messages,
-        last_total_tokens,
-        span,
-        interactive_pending,
-        external_prompt_rx,
-        on_turn_complete,
-    )
+    let (_runtime, result) = run_interactive_loop_impl(runtime, ui, config).await;
+    result
 }
 
-pub fn run_single_turn<R, U>(
+pub async fn run_single_turn<R, U>(
     runtime: &mut R,
     ui: &mut U,
     prompt: String,
@@ -431,7 +458,7 @@ pub fn run_single_turn<R, U>(
 ) -> Result<Value, LabeledError>
 where
     R: CoreRuntime,
-    U: ProgressUi,
+    U: ProgressUi + Send,
 {
-    runtime.execute_turn(ui, prompt, context, span)
+    runtime.execute_turn(ui, prompt, context, span).await
 }

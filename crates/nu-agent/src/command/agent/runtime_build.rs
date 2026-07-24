@@ -8,6 +8,7 @@ use nu_agent_core::conversation::runtime::AgentConversationRuntime;
 use nu_agent_core::protocol::preamble::{
     PreambleDefaults, UserPreambleInput, classify_model_family, resolve_preamble,
 };
+use nu_agent_core::session::SessionStoreImpl;
 use nu_agent_core::tools::mcp::circuit_breaker::McpCircuitBreaker;
 
 /// Trait abstracting the engine interface functionality needed for config resolution.
@@ -348,7 +349,7 @@ pub(crate) fn build_preamble_cache(
 }
 
 pub(crate) struct RuntimeBuildParams {
-    pub(crate) runtime: tokio::runtime::Runtime,
+    pub(crate) runtime: tokio::runtime::Handle,
     pub(crate) config: Config,
     pub(crate) plugin_config_value: Option<nu_protocol::Value>,
     pub(crate) tool_definitions: Vec<nu_agent_core::types::ToolDefinition>,
@@ -362,11 +363,12 @@ pub(crate) struct RuntimeBuildParams {
     pub(crate) mcp_caller_cwd: Option<std::path::PathBuf>,
     pub(crate) mcp_registry: nu_agent_core::tools::handler::McpToolRegistry,
     pub(crate) engine: nu_plugin::EngineInterface,
-    pub(crate) store: nu_agent_core::session::SessionStore,
+    pub(crate) store: Arc<SessionStoreImpl>,
     pub(crate) final_session_id: Option<String>,
     pub(crate) context_window_max_tokens: u64,
     pub(crate) compaction_threshold_pct: f64,
     pub(crate) compaction_strategy: nu_agent_core::compaction::CompactionStrategy,
+    pub(crate) compaction_params: nu_agent_core::compaction::CompactionParams,
     pub(crate) base_permissions: nu_agent_core::tools::authz::PermissionsConfig,
     pub(crate) effective_permissions: nu_agent_core::tools::authz::PermissionsConfig,
     pub(crate) cli_permissions_overlay: Option<nu_agent_core::tools::authz::PermissionsOverlay>,
@@ -390,9 +392,9 @@ pub(crate) fn build_runtime(params: RuntimeBuildParams) -> AgentConversationRunt
         state::persona::PersonaState, state::provider::ProviderState, state::tool::ToolState,
     };
 
-    // CRITICAL: extract cache_dir BEFORE moving params.store into the struct literal
-    // because params.store.cache_dir() and params.store cannot both be used after move
-    let cache_dir = params.store.cache_dir().to_path_buf();
+    // CRITICAL: clone store BEFORE moving params.store into the struct literal
+    // so both AgentRuntime.store and MemoryState share the same backing store.
+    let store_for_session = Arc::clone(&params.store);
     // Extract max_tool_result_bytes before params.config is moved.
     let max_tool_result_bytes = params.config.max_tool_result_bytes.unwrap_or(20_000);
 
@@ -434,7 +436,7 @@ pub(crate) fn build_runtime(params: RuntimeBuildParams) -> AgentConversationRunt
             nu_agent_core::tools::authz::SessionGrantCache::default(),
             params.permissions_startup_summary,
         ),
-        session: MemoryState::new(cache_dir),
+        session: MemoryState::new(store_for_session),
         persona: PersonaState::new(
             params.persona_body,
             params.agent_identity,
@@ -444,6 +446,7 @@ pub(crate) fn build_runtime(params: RuntimeBuildParams) -> AgentConversationRunt
             params.cached_sub_agent_instruction,
         ),
         multi_agent: MultiAgentState::new(params.available_agents, params.agents_config),
+        compaction_params: params.compaction_params,
         cwd: params.cwd,
         interactive_pending: None,
         circuit_breaker: Arc::new(Mutex::new(McpCircuitBreaker::default())),

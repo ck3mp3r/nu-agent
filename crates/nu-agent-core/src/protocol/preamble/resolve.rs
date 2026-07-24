@@ -19,13 +19,7 @@ fn normalize_preamble(value: Option<&str>) -> Option<String> {
 
 pub fn resolve_preamble(input: UserPreambleInput, defaults: &PreambleDefaults) -> Option<String> {
     let provider = input.provider.trim().to_lowercase();
-    let family = input.model_family.and_then(|f| {
-        if f == ModelFamily::Unknown {
-            None
-        } else {
-            Some(f)
-        }
-    });
+    let family = input.model_family.filter(|&f| f != ModelFamily::Unknown);
 
     normalize_preamble(input.user_provider_family_preamble.as_deref())
         .or_else(|| normalize_preamble(input.user_provider_preamble.as_deref()))

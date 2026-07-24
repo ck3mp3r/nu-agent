@@ -1,3 +1,4 @@
+pub mod block_on;
 pub mod command;
 pub mod plugin;
 

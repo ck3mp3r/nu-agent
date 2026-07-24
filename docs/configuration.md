@@ -56,6 +56,41 @@ Optional top-level fields:
 - `context_warning_threshold` — fraction of `model_context_tokens` at which to warn (default: 0.6)
 - `preamble` — system preamble prepended before prompt/context
 - `a2a_enabled` — enable A2A (agent-to-agent) communication via JSON-RPC 2.0 over HTTP (default: `false`)
+- `session_store` — session store backend configuration (optional, defaults to SQLite)
+
+## Session Store
+
+Configure the session store backend:
+
+```nu
+$env.config.plugins.agent = {
+  # ...existing config...
+  session_store: {
+    type: "sqlite"        # "sqlite" or "jsonl"
+    path: "/custom/path"  # optional custom path
+  }
+}
+```
+
+- `type` — backend type: `"sqlite"` (default) or `"jsonl"`
+- `path` — optional custom path for the store (defaults to XDG cache directory)
+
+### Environment Variable
+
+- `AGENT_SESSION_STORE_TYPE` — set to `sqlite` or `jsonl` to override the default
+
+### CLI Flag
+
+- `--store sqlite|jsonl` — available on `agent`, `agent session list`, `agent session inspect`, and `agent session clear`
+
+### Precedence
+
+CLI flag > environment variable > config file > built-in default (SQLite)
+
+### Notes
+
+- SQLite is the default backend
+- JSONL path defaults to `~/.cache/nu-agent/sessions/`
 
 ## Model Format
 

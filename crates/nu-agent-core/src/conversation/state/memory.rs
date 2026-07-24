@@ -1,32 +1,27 @@
 use super::super::managers::SessionManager;
-use crate::session::JournalConversationMemory;
+use crate::session::{CachedMemory, FsSessionStore, SessionStore};
+use std::path::PathBuf;
+use std::sync::Arc;
 
-pub struct MemoryState {
-    memory: JournalConversationMemory,
+pub struct MemoryState<S: SessionStore + Clone + Send + Sync> {
+    memory: CachedMemory<S>,
     last_total_tokens: Option<u64>,
 }
 
-impl MemoryState {
-    pub fn new(cache_dir: std::path::PathBuf) -> Self {
+impl<S: SessionStore + Clone + Send + Sync> MemoryState<S> {
+    pub fn new(store: Arc<S>) -> Self {
         Self {
-            memory: JournalConversationMemory::new(cache_dir),
+            memory: CachedMemory::new(store),
             last_total_tokens: None,
         }
     }
 
-    pub fn memory(&self) -> &JournalConversationMemory {
+    pub fn memory(&self) -> &CachedMemory<S> {
         &self.memory
     }
 
-    pub fn memory_mut(&mut self) -> &mut JournalConversationMemory {
+    pub fn memory_mut(&mut self) -> &mut CachedMemory<S> {
         &mut self.memory
-    }
-
-    /// Return the inner JSONL store from the journal memory.
-    ///
-    /// Used by `CompactionExecutor` and session resolver which need direct store access.
-    pub fn conversation_store(&self) -> &crate::session::JsonlConversationStore {
-        self.memory.store()
     }
 
     pub fn last_total_tokens(&self) -> Option<u64> {
@@ -43,17 +38,27 @@ impl MemoryState {
     }
 }
 
-impl SessionManager for MemoryState {
-    fn memory(&self) -> &JournalConversationMemory {
+impl MemoryState<FsSessionStore> {
+    /// Convenience constructor that creates an `FsSessionStore` from a path.
+    pub fn with_path(base_path: PathBuf) -> Self {
+        Self::new(Arc::new(FsSessionStore::new(base_path)))
+    }
+}
+
+impl<S: SessionStore + Clone + Send + Sync> SessionManager for MemoryState<S> {
+    type Memory = CachedMemory<S>;
+
+    fn memory(&self) -> &Self::Memory {
         &self.memory
     }
 
-    fn memory_mut(&mut self) -> &mut JournalConversationMemory {
+    fn memory_mut(&mut self) -> &mut Self::Memory {
         &mut self.memory
     }
 
     fn clear(&mut self) {
-        self.clear()
+        self.memory.clear_all();
+        self.last_total_tokens = None;
     }
 
     fn last_total_tokens(&self) -> Option<u64> {

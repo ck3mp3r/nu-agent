@@ -23,7 +23,7 @@ use crate::{
         help_panel_overflow_cue_for_test, help_panel_visible_window_for_test,
         inline_slash_lines_for_test, input_line_for_test, input_line_for_test_at_millis,
         input_pane_content_width_for_test, input_rows_with_prompt_for_test,
-        mcp_table_model_for_test, parse_persisted_tool_status_line, run_with_terminal_restore,
+        mcp_table_model_for_test, parse_persisted_tool_status_line, run_with_terminal_restore_sync,
         status_panel_lines, transition_spacer_for_roles_for_test,
     },
     state::{
@@ -3534,13 +3534,13 @@ fn assert_terminal_restored(state: &Rc<RefCell<MockTerminalState>>) {
 }
 
 #[test]
-fn run_with_terminal_restore_executes_enter_run_and_restore_in_order() {
+fn run_with_terminal_restore_sync_executes_enter_run_and_restore_in_order() {
     let actions = Rc::new(RefCell::new(Vec::new()));
     let state = Rc::new(RefCell::new(MockTerminalState::default()));
     let backend = MockTerminalBackend::new(actions.clone(), state.clone(), None);
     let mut lifecycle = TerminalLifecycle::new(backend);
 
-    let value = run_with_terminal_restore(&mut lifecycle, || Ok::<_, &'static str>(42))
+    let value = run_with_terminal_restore_sync(&mut lifecycle, || Ok::<_, &'static str>(42))
         .expect("run should succeed");
     assert_eq!(value, 42);
 
@@ -3569,7 +3569,7 @@ fn runtime_enter_failure_maps_to_enter_error() {
     );
     let mut lifecycle = TerminalLifecycle::new(backend);
 
-    let err = run_with_terminal_restore::<_, (), &'static str, _>(&mut lifecycle, || Ok(()))
+    let err = run_with_terminal_restore_sync::<_, (), &'static str, _>(&mut lifecycle, || Ok(()))
         .expect_err("expected enter failure");
 
     match err {
@@ -3597,7 +3597,7 @@ fn runtime_run_error_maps_to_run() {
     let backend = MockTerminalBackend::new(actions, state.clone(), None);
     let mut lifecycle = TerminalLifecycle::new(backend);
 
-    let err = run_with_terminal_restore::<_, (), _, _>(&mut lifecycle, || Err("boom"))
+    let err = run_with_terminal_restore_sync::<_, (), _, _>(&mut lifecycle, || Err("boom"))
         .expect_err("expected run failure");
 
     match err {
@@ -3617,7 +3617,7 @@ fn runtime_run_and_restore_error_maps_to_run_with_restore() {
     let backend = MockTerminalBackend::new(actions, state, Some(TerminalAction::ShowCursor));
     let mut lifecycle = TerminalLifecycle::new(backend);
 
-    let err = run_with_terminal_restore::<_, (), _, _>(&mut lifecycle, || Err("boom"))
+    let err = run_with_terminal_restore_sync::<_, (), _, _>(&mut lifecycle, || Err("boom"))
         .expect_err("expected combined run/restore failure");
 
     match err {
@@ -3639,7 +3639,7 @@ fn runtime_restore_error_after_success_maps_to_restore() {
     let backend = MockTerminalBackend::new(actions, state, Some(TerminalAction::ShowCursor));
     let mut lifecycle = TerminalLifecycle::new(backend);
 
-    let err = run_with_terminal_restore::<_, (), &'static str, _>(&mut lifecycle, || Ok(()))
+    let err = run_with_terminal_restore_sync::<_, (), &'static str, _>(&mut lifecycle, || Ok(()))
         .expect_err("expected restore failure");
 
     match err {
@@ -3658,7 +3658,7 @@ fn runtime_panic_restores_and_rethrows() {
     let mut lifecycle = TerminalLifecycle::new(backend);
 
     let panic_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _ = run_with_terminal_restore::<_, (), &'static str, _>(&mut lifecycle, || {
+        let _ = run_with_terminal_restore_sync::<_, (), &'static str, _>(&mut lifecycle, || {
             panic!("boom");
         });
     }));
@@ -3686,7 +3686,7 @@ fn panic_during_busy_render_loop_still_restores_terminal_state() {
     let mut lifecycle = TerminalLifecycle::new(backend);
 
     let panic_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _ = run_with_terminal_restore::<_, (), &'static str, _>(&mut lifecycle, || {
+        let _ = run_with_terminal_restore_sync::<_, (), &'static str, _>(&mut lifecycle, || {
             panic!("simulated panic during busy render loop")
         });
     }));
@@ -3713,7 +3713,7 @@ fn cancellation_during_shutdown_restores_terminal_and_preserves_cancel_error() {
     let backend = MockTerminalBackend::new(actions.clone(), state.clone(), None);
     let mut lifecycle = TerminalLifecycle::new(backend);
 
-    let err = run_with_terminal_restore::<_, (), _, _>(&mut lifecycle, || {
+    let err = run_with_terminal_restore_sync::<_, (), _, _>(&mut lifecycle, || {
         Err("cancelled during shutdown")
     })
     .expect_err("expected cancellation error");

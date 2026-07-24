@@ -1,27 +1,37 @@
 use super::test_shared::*;
 
-#[test]
-fn palette_models_does_not_bypass_shared_models_action_path() {
-    let mut runtime = FakeRuntime::default();
+#[tokio::test]
+async fn palette_models_does_not_bypass_shared_models_action_path() {
+    let runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["/models"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
-        .expect("interactive loop");
+    let (runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(ui.shared_actions, vec![SharedUiAction::Models]);
     assert!(runtime.prompts.is_empty());
 }
 
-#[test]
-fn inline_model_picker_enter_switches_active_model_and_provider() {
-    let mut runtime = FakeRuntime::default();
+#[tokio::test]
+async fn inline_model_picker_enter_switches_active_model_and_provider() {
+    let runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&[]);
     ui.model_switch_requests
         .push_back("openai/gpt-4o-mini".to_string());
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
-        .expect("interactive loop");
+    let (runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -34,9 +44,9 @@ fn inline_model_picker_enter_switches_active_model_and_provider() {
     );
 }
 
-#[test]
-fn model_switch_failure_keeps_previous_model_and_warns() {
-    let mut runtime = FakeRuntime {
+#[tokio::test]
+async fn model_switch_failure_keeps_previous_model_and_warns() {
+    let runtime = FakeRuntime {
         switch_model_result: Some(Err("switch failed".to_string())),
         ..Default::default()
     };
@@ -44,8 +54,13 @@ fn model_switch_failure_keeps_previous_model_and_warns() {
     ui.model_switch_requests
         .push_back("openai/gpt-4o-mini".to_string());
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
-        .expect("interactive loop");
+    let (runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -59,15 +74,20 @@ fn model_switch_failure_keeps_previous_model_and_warns() {
     assert!(ui.warnings.iter().any(|w| w == "switch failed"));
 }
 
-#[test]
-fn model_switch_uses_cached_startup_plugin_config() {
-    let mut runtime = FakeRuntime::default();
+#[tokio::test]
+async fn model_switch_uses_cached_startup_plugin_config() {
+    let runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&[]);
     ui.model_switch_requests
         .push_back("openai/gpt-4o-mini".to_string());
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
-        .expect("interactive loop");
+    let (runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -76,15 +96,20 @@ fn model_switch_uses_cached_startup_plugin_config() {
     );
 }
 
-#[test]
-fn model_switch_updates_footer_active_model_identity_immediately() {
-    let mut runtime = FakeRuntime::default();
+#[tokio::test]
+async fn model_switch_updates_footer_active_model_identity_immediately() {
+    let runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&[]);
     ui.model_switch_requests
         .push_back("openai/gpt-4o-mini".to_string());
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
-        .expect("interactive loop");
+    let (_runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -93,15 +118,20 @@ fn model_switch_updates_footer_active_model_identity_immediately() {
     );
 }
 
-#[test]
-fn model_switch_result_artifact_is_rendered() {
-    let mut runtime = FakeRuntime::default();
+#[tokio::test]
+async fn model_switch_result_artifact_is_rendered() {
+    let runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&[]);
     ui.model_switch_requests
         .push_back("openai/gpt-4o-mini".to_string());
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
-        .expect("interactive loop");
+    let (_runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert!(
@@ -111,15 +141,20 @@ fn model_switch_result_artifact_is_rendered() {
     );
 }
 
-#[test]
-fn next_turn_uses_newly_selected_model() {
-    let mut runtime = FakeRuntime::default();
+#[tokio::test]
+async fn next_turn_uses_newly_selected_model() {
+    let runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["after-switch"]);
     ui.model_switch_requests
         .push_back("openai/gpt-4o-mini".to_string());
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
-        .expect("interactive loop");
+    let (runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -129,10 +164,10 @@ fn next_turn_uses_newly_selected_model() {
     assert_eq!(runtime.prompts, vec!["after-switch".to_string()]);
 }
 
-#[test]
-fn model_switch_while_worker_active_is_queued_for_next_turn() {
+#[tokio::test]
+async fn model_switch_while_worker_active_is_queued_for_next_turn() {
     let block_first_turn = Arc::new(AtomicBool::new(false));
-    let mut runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn));
+    let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn));
     let active_pump_count = Arc::new(AtomicUsize::new(0));
     let mut ui = ResponsiveInteractiveUi::new(
         &["first"],
@@ -144,16 +179,28 @@ fn model_switch_while_worker_active_is_queued_for_next_turn() {
         Arc::clone(&active_pump_count),
     );
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
-        .expect("interactive loop");
+    // Spawn a background task to unblock the turn after a delay.
+    let unblock = Arc::clone(&block_first_turn);
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        unblock.store(true, Ordering::SeqCst);
+    });
+
+    let (_runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
-        runtime.prompts.lock().expect("prompts lock").as_slice(),
+        _runtime.prompts.lock().expect("prompts lock").as_slice(),
         ["first"]
     );
     assert_eq!(
-        runtime
+        _runtime
             .switched_models
             .lock()
             .expect("switched models lock")
@@ -167,10 +214,10 @@ fn model_switch_while_worker_active_is_queued_for_next_turn() {
     );
 }
 
-#[test]
-fn queued_model_switch_applies_after_current_turn_before_next_dispatch() {
+#[tokio::test]
+async fn queued_model_switch_applies_after_current_turn_before_next_dispatch() {
     let block_first_turn = Arc::new(AtomicBool::new(false));
-    let mut runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn));
+    let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn));
     let active_pump_count = Arc::new(AtomicUsize::new(0));
     let mut ui = ResponsiveInteractiveUi::new(
         &["first"],
@@ -182,12 +229,24 @@ fn queued_model_switch_applies_after_current_turn_before_next_dispatch() {
         Arc::clone(&active_pump_count),
     );
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
-        .expect("interactive loop");
+    // Spawn a background task to unblock the turn after a delay.
+    let unblock = Arc::clone(&block_first_turn);
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        unblock.store(true, Ordering::SeqCst);
+    });
+
+    let (_runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
-        runtime
+        _runtime
             .action_log
             .lock()
             .expect("action log lock")
@@ -196,10 +255,10 @@ fn queued_model_switch_applies_after_current_turn_before_next_dispatch() {
     );
 }
 
-#[test]
-fn queued_model_switch_last_write_wins() {
+#[tokio::test]
+async fn queued_model_switch_last_write_wins() {
     let block_first_turn = Arc::new(AtomicBool::new(false));
-    let mut runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn));
+    let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn));
     let active_pump_count = Arc::new(AtomicUsize::new(0));
     let mut ui = ResponsiveInteractiveUi::new(
         &["first"],
@@ -211,12 +270,24 @@ fn queued_model_switch_last_write_wins() {
         Arc::clone(&active_pump_count),
     );
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
-        .expect("interactive loop");
+    // Spawn a background task to unblock the turn after a delay.
+    let unblock = Arc::clone(&block_first_turn);
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        unblock.store(true, Ordering::SeqCst);
+    });
+
+    let (_runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
-        runtime
+        _runtime
             .switched_models
             .lock()
             .expect("switched models lock")
@@ -225,10 +296,10 @@ fn queued_model_switch_last_write_wins() {
     );
 }
 
-#[test]
-fn queued_model_switch_failure_keeps_previous_model_and_warns() {
+#[tokio::test]
+async fn queued_model_switch_failure_keeps_previous_model_and_warns() {
     let block_first_turn = Arc::new(AtomicBool::new(false));
-    let mut runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn))
+    let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn))
         .with_switch_model_result(Err("queued switch failed".to_string()));
     let active_pump_count = Arc::new(AtomicUsize::new(0));
     let mut ui = ResponsiveInteractiveUi::new(
@@ -241,12 +312,24 @@ fn queued_model_switch_failure_keeps_previous_model_and_warns() {
         Arc::clone(&active_pump_count),
     );
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
-        .expect("interactive loop");
+    // Spawn a background task to unblock the turn after a delay.
+    let unblock = Arc::clone(&block_first_turn);
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        unblock.store(true, Ordering::SeqCst);
+    });
+
+    let (_runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
-        runtime.active_model_identity(),
+        _runtime.active_model_identity(),
         "openai/gpt-4o-mini",
         "failed queued switch must keep previous active identity"
     );

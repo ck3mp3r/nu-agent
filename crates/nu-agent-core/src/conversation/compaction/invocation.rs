@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use crate::compaction::CompactionOutcome;
 use crate::protocol::{compaction::CompactionTriggerSource, contracts::ProgressUi, event::UiEvent};
-use crate::session::{JournalConversationMemory, Session};
+use crate::session::{CachedMemory, SessionStore};
 use crate::types::{AssistantContent, Message, UserContent};
 
 pub(in crate::conversation) const COMPACTION_FAILURE_WARNING: &str =
@@ -10,14 +10,15 @@ pub(in crate::conversation) const COMPACTION_FAILURE_WARNING: &str =
 
 const COMPACTION_SUMMARY_PROMPT: &str = include_str!("prompts/compaction_summary.md");
 
-pub(in crate::conversation) fn execute_compaction_event_shared<F>(
+pub(in crate::conversation) async fn execute_compaction_event_shared<F, Fut>(
     source: CompactionTriggerSource,
-    mut execute: F,
+    execute: F,
 ) -> Result<Option<(UiEvent, Option<u64>)>, String>
 where
-    F: FnMut() -> Result<Option<CompactionOutcome>, String>,
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<Option<CompactionOutcome>, String>>,
 {
-    let Some(outcome) = execute()? else {
+    let Some(outcome) = execute().await? else {
         return Ok(None);
     };
 
@@ -38,31 +39,35 @@ pub(in crate::conversation) struct CompactionInvocation<'a> {
     pub(in crate::conversation) source: &'a str,
 }
 
-/// Execute compaction using `JournalConversationMemory`.
+/// Execute compaction using any `CachedMemory<S: SessionStore>` with explicit config.
 ///
 /// This async function:
 /// 1. Loads messages from the conversation memory
 /// 2. Calls the summarizer with old rig messages
 /// 3. Compacts using `compact()`
-/// 4. Updates in-memory state and persists marker + kept messages to JSONL
+/// 4. Updates in-memory state and persists marker + kept messages to store
 ///
 /// # Arguments
-/// * `session` - Session to compact
-/// * `memory` - `JournalConversationMemory` owning cache and JSONL store
+/// * `session_id` - The session ID to compact
+/// * `params` - Compaction parameters (thresholds, strategy, budget)
+/// * `memory` - `CachedMemory<S>` owning cache and backing store
 /// * `model` - Completion model for summarization
 /// * `ui` - Progress UI for emitting events
 /// * `invocation` - Compaction mode, source label, and token state
 ///
 /// # Returns
 /// Ok(Some(outcome)) on successful compaction, Ok(None) if no compaction needed
-pub(in crate::conversation) async fn execute_compaction<M, U>(
-    session: &mut Session,
-    memory: &JournalConversationMemory,
+pub(in crate::conversation) async fn execute_compaction_with_config<S, M, U>(
+    session_id: &str,
+    params: &crate::compaction::CompactionParams,
+    memory: &CachedMemory<S>,
     model: M,
     ui: &mut U,
     invocation: CompactionInvocation<'_>,
 ) -> Result<Option<CompactionOutcome>, String>
 where
+    S: SessionStore + Clone + Send + Sync,
+    S::Error: std::fmt::Display,
     M: rig::completion::CompletionModel + Clone + 'static,
     U: ProgressUi,
 {
@@ -75,14 +80,9 @@ where
         async move { summarize_messages(model_clone, ui, &messages, &src).await }
     };
 
-    let outcome = crate::compaction::compact(
-        session.id(),
-        session.compaction_config(),
-        memory,
-        summarizer,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
+    let outcome = crate::compaction::compact(session_id, params, memory, summarizer)
+        .await
+        .map_err(|e| e.to_string())?;
 
     if outcome.summarized_count == 0 {
         return Ok(None);

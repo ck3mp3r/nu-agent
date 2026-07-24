@@ -17,7 +17,7 @@ impl Default for ContextWindowRuntime {
 }
 
 impl CoreRuntime for ContextWindowRuntime {
-    fn execute_turn<U: ProgressUi>(
+    async fn execute_turn<U: ProgressUi>(
         &mut self,
         _ui: &mut U,
         _prompt: String,
@@ -29,7 +29,7 @@ impl CoreRuntime for ContextWindowRuntime {
 }
 
 impl HasMcpManagement for ContextWindowRuntime {
-    fn set_mcp_server_enabled(
+    async fn set_mcp_server_enabled(
         &mut self,
         _name: &str,
         _enabled: bool,
@@ -175,7 +175,7 @@ struct TokenSeedingRuntime {
 }
 
 impl CoreRuntime for TokenSeedingRuntime {
-    fn execute_turn<U: ProgressUi>(
+    async fn execute_turn<U: ProgressUi>(
         &mut self,
         _ui: &mut U,
         _prompt: String,
@@ -217,12 +217,18 @@ impl HasSessionManagement for TokenSeedingRuntime {
 crate::default_mcp!(TokenSeedingRuntime);
 crate::default_compaction!(TokenSeedingRuntime);
 
-#[test]
-fn context_window_max_tokens_set_on_ui_at_startup() {
-    let mut runtime = ContextWindowRuntime::default(); // max_context_tokens = Some(128_000)
+#[tokio::test]
+async fn context_window_max_tokens_set_on_ui_at_startup() {
+    let runtime = ContextWindowRuntime::default();
     let mut ui = ContextWindowUi::new(&[]);
 
-    run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None).expect("interactive loop");
+    let (_runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    result.expect("interactive loop");
 
     assert_eq!(
         ui.context_window_max_tokens,
@@ -231,20 +237,24 @@ fn context_window_max_tokens_set_on_ui_at_startup() {
     );
 }
 
-#[test]
-fn model_switch_updates_context_window_max_tokens_in_ui() {
-    let mut runtime = ContextWindowRuntime::default(); // max_context_tokens = Some(128_000)
+#[tokio::test]
+async fn model_switch_updates_context_window_max_tokens_in_ui() {
+    let runtime = ContextWindowRuntime::default();
     let mut ui = ContextWindowUi::new(&["openai/gpt-4o-mini"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
-        .expect("interactive loop");
+    let (runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
         runtime.switched_models,
         vec!["openai/gpt-4o-mini".to_string()]
     );
-    // context_window_max_tokens must have been set on the UI
     assert_eq!(
         ui.context_window_max_tokens,
         Some(Some(128_000)),
@@ -252,16 +262,21 @@ fn model_switch_updates_context_window_max_tokens_in_ui() {
     );
 }
 
-#[test]
-fn model_switch_updates_context_window_max_tokens_none_when_unset() {
-    let mut runtime = ContextWindowRuntime {
+#[tokio::test]
+async fn model_switch_updates_context_window_max_tokens_none_when_unset() {
+    let runtime = ContextWindowRuntime {
         max_context_tokens: None,
         ..Default::default()
     };
     let mut ui = ContextWindowUi::new(&["openai/gpt-4o-mini"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
-        .expect("interactive loop");
+    let (_runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -271,20 +286,18 @@ fn model_switch_updates_context_window_max_tokens_none_when_unset() {
     );
 }
 
-#[test]
-fn session_resume_seeds_last_total_tokens() {
-    let mut runtime = TokenSeedingRuntime::default();
+#[tokio::test]
+async fn session_resume_seeds_last_total_tokens() {
+    let runtime = TokenSeedingRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&[]);
 
-    run_hydrated_interactive_loop(
-        &mut runtime,
+    let (runtime, result) = run_interactive_loop_impl(
+        runtime,
         &mut ui,
-        vec![],
-        Some(90_000),
-        Span::test_data(),
-        None,
+        InteractiveLoopConfig::new(Span::test_data()).with_hydration(vec![], Some(90_000)),
     )
-    .expect("hydrated interactive loop");
+    .await;
+    result.expect("hydrated interactive loop");
 
     assert_eq!(
         runtime.seeded_tokens,
@@ -293,13 +306,18 @@ fn session_resume_seeds_last_total_tokens() {
     );
 }
 
-#[test]
-fn session_resume_seeds_last_total_tokens_none_when_no_prior_session() {
-    let mut runtime = TokenSeedingRuntime::default();
+#[tokio::test]
+async fn session_resume_seeds_last_total_tokens_none_when_no_prior_session() {
+    let runtime = TokenSeedingRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&[]);
 
-    run_hydrated_interactive_loop(&mut runtime, &mut ui, vec![], None, Span::test_data(), None)
-        .expect("hydrated interactive loop");
+    let (runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()).with_hydration(vec![], None),
+    )
+    .await;
+    result.expect("hydrated interactive loop");
 
     assert_eq!(
         runtime.seeded_tokens,

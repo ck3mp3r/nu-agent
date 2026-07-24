@@ -68,8 +68,8 @@ fn adapter_returns_correct_description_and_parameters() {
     assert_eq!(adapter.parameters(), tool_def.parameters);
 }
 
-#[test]
-fn adapter_calls_skill_tool() {
+#[tokio::test]
+async fn adapter_calls_skill_tool() {
     use rig::tool::ToolDyn;
 
     let tool_def = ToolDefinition {
@@ -84,14 +84,12 @@ fn adapter_calls_skill_tool() {
         }),
     };
 
-    // Use a temp directory for testing
     let temp_dir = std::env::temp_dir();
     let cwd = temp_dir.join("nu-agent-test-builtin-adapter");
     std::fs::create_dir_all(&cwd).unwrap();
 
     let adapter = BuiltinToolAdapter::new(tool_def, cwd.clone(), 20_000);
 
-    // Create a simple skill for testing
     let skill_dir = cwd.join(".agents").join("skills").join("test_skill");
     std::fs::create_dir_all(&skill_dir).unwrap();
     let skill_file = skill_dir.join("SKILL.md");
@@ -101,10 +99,8 @@ fn adapter_calls_skill_tool() {
         "name": "test_skill"
     });
 
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let result = runtime.block_on(adapter.call(args.to_string()));
+    let result = adapter.call(args.to_string()).await;
 
-    // Clean up
     std::fs::remove_dir_all(&cwd).ok();
 
     assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
@@ -124,14 +120,11 @@ fn adapter_calls_skill_tool() {
 // We verify the critical trait bounds (Send + Sync) and basic functionality here.
 // The dispatch_fs_tool function is already tested elsewhere.
 
-#[test]
-fn adapter_truncates_large_output() {
+#[tokio::test]
+async fn adapter_truncates_large_output() {
     use crate::tools::limits::MAX_TOOL_OUTPUT_BYTES;
     use rig::tool::ToolDyn;
 
-    // Write a skill file that is large enough to trigger truncation.
-    // When the skill tool reads this file and serializes it as JSON, the
-    // result will exceed MAX_TOOL_OUTPUT_BYTES, causing truncation.
     let temp_dir = std::env::temp_dir();
     let cwd = temp_dir.join("nu-agent-test-builtin-adapter-truncate");
     std::fs::create_dir_all(&cwd).unwrap();
@@ -139,8 +132,6 @@ fn adapter_truncates_large_output() {
     let skill_dir = cwd.join(".agents").join("skills").join("big_skill");
     std::fs::create_dir_all(&skill_dir).unwrap();
 
-    // MAX_TOOL_OUTPUT_BYTES of 'x' to ensure the serialized JSON output
-    // (which wraps content in a JSON string with extra fields) exceeds the limit.
     let big_content = "x".repeat(MAX_TOOL_OUTPUT_BYTES + 1_000);
     let skill_file = skill_dir.join("SKILL.md");
     std::fs::write(&skill_file, &big_content).unwrap();
@@ -159,10 +150,8 @@ fn adapter_truncates_large_output() {
     let adapter = BuiltinToolAdapter::new(tool_def, cwd.clone(), MAX_TOOL_OUTPUT_BYTES);
 
     let args = serde_json::json!({ "name": "big_skill" });
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let result = runtime.block_on(adapter.call(args.to_string()));
+    let result = adapter.call(args.to_string()).await;
 
-    // Clean up
     std::fs::remove_dir_all(&cwd).ok();
 
     assert!(result.is_ok(), "Expected Ok, got: {:?}", result);

@@ -1,12 +1,6 @@
 use nu_protocol::{LabeledError, Span, Value};
 
-use crate::protocol::{
-    compaction_runtime::HasCompaction,
-    event::{PermissionDecisionSubmission, ToolDisplay, UiEvent},
-    mcp_management::HasMcpManagement,
-    model_switching::HasModelSwitching,
-    session_management::HasSessionManagement,
-};
+use crate::protocol::event::{PermissionDecisionSubmission, ToolDisplay, UiEvent};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum McpUsabilityState {
@@ -201,32 +195,11 @@ pub trait TranscriptUi {
 
 /// Minimal runtime required for a single turn. Used by run_single_turn.
 pub trait CoreRuntime {
-    fn execute_turn<U: ProgressUi>(
+    fn execute_turn<U: ProgressUi + Send>(
         &mut self,
         ui: &mut U,
         prompt: String,
         context: Option<String>,
         span: Span,
-    ) -> Result<Value, LabeledError>;
-}
-
-/// Full runtime with MCP, model switching, compaction, and session management.
-/// Used by run_interactive_loop.
-///
-/// # Deprecation
-///
-/// This trait is deprecated. Prefer the focused capability traits:
-/// `CoreRuntime + HasMcpManagement + HasModelSwitching + HasSessionManagement + HasCompaction`
-#[deprecated(
-    note = "Use focused traits: CoreRuntime + HasMcpManagement + HasModelSwitching + HasSessionManagement + HasCompaction"
-)]
-pub trait ExtendedRuntime:
-    CoreRuntime + HasMcpManagement + HasModelSwitching + HasSessionManagement + HasCompaction
-{
-}
-
-#[allow(deprecated)]
-impl<T> ExtendedRuntime for T where
-    T: CoreRuntime + HasMcpManagement + HasModelSwitching + HasSessionManagement + HasCompaction
-{
+    ) -> impl std::future::Future<Output = Result<Value, LabeledError>> + Send;
 }

@@ -415,8 +415,8 @@ fn begin_request_rejects_duplicate_request_id() {
     assert!(matches!(second, Err(RequestError::AlreadyWaiting)));
 }
 
-#[test]
-fn await_resolution_emits_ignored_event_for_rule_identity_mismatch_then_times_out() {
+#[tokio::test]
+async fn await_resolution_emits_ignored_event_for_rule_identity_mismatch_then_times_out() {
     let controller = PermissionController::new(Duration::from_millis(30));
     let (token, _event) = controller
         .begin_request(request_with_id("ask-0000000000000002"))
@@ -434,7 +434,7 @@ fn await_resolution_emits_ignored_event_for_rule_identity_mismatch_then_times_ou
         }
     );
 
-    let (resolution, events) = controller.await_resolution(&token);
+    let (resolution, events) = controller.await_resolution(&token).await;
     assert_eq!(resolution, PermissionResolution::TimedOut);
     assert!(
         events
@@ -443,8 +443,8 @@ fn await_resolution_emits_ignored_event_for_rule_identity_mismatch_then_times_ou
     );
 }
 
-#[test]
-fn await_resolution_ignores_stale_submission_and_accepts_matching_submission() {
+#[tokio::test]
+async fn await_resolution_ignores_stale_submission_and_accepts_matching_submission() {
     let controller = PermissionController::new(Duration::from_secs(1));
     let (token, _event) = controller
         .begin_request(request_with_id("ask-0000000000000003"))
@@ -466,7 +466,7 @@ fn await_resolution_ignores_stale_submission_and_accepts_matching_submission() {
         })
         .expect("send matching submission");
 
-    let (resolution, events) = controller.await_resolution(&token);
+    let (resolution, events) = controller.await_resolution(&token).await;
     assert_eq!(
         resolution,
         PermissionResolution::Decision {

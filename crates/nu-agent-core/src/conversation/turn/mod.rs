@@ -15,8 +15,8 @@ use crate::hook::chain::HookChain;
 use crate::hook::permission_resolver::AsyncPermissionResolver;
 use crate::protocol::contracts::ProgressUi;
 use crate::protocol::event::UiEvent;
-use crate::session::JournalConversationMemory;
 use crate::session::repair::repair_messages;
+use crate::session::{CachedMemory, SessionStore};
 use crate::types::{Message, Text, ToolDefinition, UserContent};
 use rig::memory::ConversationMemory;
 use rig::streaming::StreamingPrompt;
@@ -60,8 +60,8 @@ pub struct TurnResult {
 }
 
 /// Context for executing a conversation turn.
-pub struct TurnConversation {
-    pub memory: JournalConversationMemory,
+pub struct TurnConversation<S: SessionStore + Clone + Send + Sync> {
+    pub memory: CachedMemory<S>,
     pub conversation_id: String,
     /// Whether this turn belongs to a persistent session.
     ///
@@ -80,34 +80,33 @@ pub struct TurnInput<'a> {
     pub max_turns: Option<u32>,
 }
 
-pub struct TurnContext<'a, M>
+pub struct TurnContext<'a, S, M>
 where
+    S: SessionStore + Clone + Send + Sync,
     M: rig::completion::CompletionModel + Clone + 'static,
     M::StreamingResponse: rig::completion::request::GetTokenUsage,
 {
-    runtime: &'a tokio::runtime::Handle,
     model: M,
-    conversation: TurnConversation,
+    conversation: TurnConversation<S>,
     input: TurnInput<'a>,
     tool_infra: executor::ToolInfra,
     config: &'a Config,
 }
 
-impl<'a, M> TurnContext<'a, M>
+impl<'a, S, M> TurnContext<'a, S, M>
 where
+    S: SessionStore + Clone + Send + Sync,
     M: rig::completion::CompletionModel + Clone + 'static,
     M::StreamingResponse: rig::completion::request::GetTokenUsage,
 {
     pub fn new(
-        runtime: &'a tokio::runtime::Handle,
         model: M,
-        conversation: TurnConversation,
+        conversation: TurnConversation<S>,
         input: TurnInput<'a>,
         tool_infra: executor::ToolInfra,
         config: &'a Config,
     ) -> Self {
         Self {
-            runtime,
             model,
             conversation,
             input,
@@ -145,19 +144,20 @@ where
 /// Returns `TurnError` if:
 /// - The agent completion fails (LLM error, network, etc.)
 /// - User cancels via UI
-pub(crate) fn execute_turn<M, U, P>(
-    ctx: TurnContext<'_, M>,
+pub(crate) async fn execute_turn<S, M, U, P>(
+    ctx: TurnContext<'_, S, M>,
     ui: &mut U,
     permission_resolver: P,
 ) -> Result<TurnResult, (TurnError, error::TurnContext)>
 where
+    S: SessionStore + Clone + Send + Sync + 'static,
     M: rig::completion::CompletionModel + Clone + 'static,
     M::StreamingResponse: rig::completion::request::GetTokenUsage,
     U: ProgressUi,
     P: AsyncPermissionResolver,
 {
     let (ui_tx, ui_rx) = mpsc::unbounded_channel::<UiEvent>();
-    execute_turn_with_channel(ctx, ui, permission_resolver, ui_tx, ui_rx)
+    execute_turn_with_channel(ctx, ui, permission_resolver, ui_tx, ui_rx).await
 }
 
 /// Execute a conversation turn with a pre-built UI event channel.
@@ -168,14 +168,15 @@ where
 /// per-call from the `HookChain` (which gets it from this same channel).
 ///
 /// For non-interactive (TTY/policy) mode, use `execute_turn` which creates its own channel.
-pub(crate) fn execute_turn_with_channel<M, U, P>(
-    ctx: TurnContext<'_, M>,
+pub(crate) async fn execute_turn_with_channel<S, M, U, P>(
+    ctx: TurnContext<'_, S, M>,
     ui: &mut U,
     permission_resolver: P,
     ui_tx: mpsc::UnboundedSender<UiEvent>,
     mut ui_rx: mpsc::UnboundedReceiver<UiEvent>,
 ) -> Result<TurnResult, (TurnError, error::TurnContext)>
 where
+    S: SessionStore + Clone + Send + Sync + 'static,
     M: rig::completion::CompletionModel + Clone + 'static,
     M::StreamingResponse: rig::completion::request::GetTokenUsage,
     U: ProgressUi,
@@ -187,12 +188,10 @@ where
     // the new-message delta from the error variant's history fields.
     // Cache-first load: no JSONL I/O if the cache is already warm.
     let pre_turn_messages: Vec<Message> = if ctx.conversation.has_session {
-        ctx.runtime
-            .block_on(
-                ctx.conversation
-                    .memory
-                    .load(&ctx.conversation.conversation_id),
-            )
+        ctx.conversation
+            .memory
+            .load(&ctx.conversation.conversation_id)
+            .await
             .unwrap_or_default()
     } else {
         vec![]
@@ -296,12 +295,12 @@ where
     let model = ctx.model.clone();
     let prompt_future = Box::pin(build_agent_and_stream(model, config));
 
-    // Spawn the completion on the tokio runtime.
+    // Spawn the completion on the current task.
     // Cancellation note: cancel_token fires Terminate on the next hook entry (on_completion_call,
     // on_text_delta, or on_tool_call), causing rig to yield PromptCancelled { chat_history }.
     // If the HTTP request hangs before any hook fires (e.g. dead network), the stream blocks
     // until the provider's own HTTP client timeout. Ensure timeouts are configured on the client.
-    let prompt_handle = ctx.runtime.spawn(prompt_future);
+    let prompt_handle = tokio::spawn(prompt_future);
 
     // Main-thread drain loop: forward UiEvents from the hook to the UI,
     // and propagate cancel requests from the UI to the cancel token.
@@ -313,7 +312,7 @@ where
             Ok(event) => ui.emit(&event),
             Err(mpsc::error::TryRecvError::Empty) => {
                 ui.emit(&UiEvent::Tick);
-                std::thread::sleep(std::time::Duration::from_millis(16));
+                tokio::time::sleep(std::time::Duration::from_millis(16)).await;
             }
             Err(mpsc::error::TryRecvError::Disconnected) => break,
         }
@@ -323,7 +322,7 @@ where
     log::info!("execute_turn: ui_rx drained, joining spawn handle");
 
     // Collect the result from the spawned task
-    let join_result = ctx.runtime.block_on(prompt_handle).map_err(|e| {
+    let join_result = prompt_handle.await.map_err(|e| {
         log::error!("Agent task panicked: {e}");
         let err = TurnError::CompletionFailed {
             msg: format!("Agent task panicked: {}", e),
@@ -371,11 +370,11 @@ where
 }
 
 /// Configuration for building and prompting an agent.
-struct AgentPromptConfig<P: AsyncPermissionResolver> {
+struct AgentPromptConfig<S: SessionStore + Clone + Send + Sync, P: AsyncPermissionResolver> {
     hook: HookChain<P>,
     preamble: Option<String>,
     prompt: Message,
-    memory: JournalConversationMemory,
+    memory: CachedMemory<S>,
     conversation_id: String,
     /// Whether this turn belongs to a persistent session.
     ///
@@ -450,11 +449,12 @@ impl ToolDyn for FilteredToolProxy {
 }
 
 /// Build an agent with a hook and execute a multi-turn streaming prompt loop.
-async fn build_agent_and_stream<M, P>(
+async fn build_agent_and_stream<S, M, P>(
     model: M,
-    config: AgentPromptConfig<P>,
+    config: AgentPromptConfig<S, P>,
 ) -> Result<StreamingTurnResult, rig::agent::StreamingError>
 where
+    S: SessionStore + Clone + Send + Sync + 'static,
     M: rig::completion::CompletionModel + Clone + 'static,
     M::StreamingResponse: rig::completion::request::GetTokenUsage,
     P: AsyncPermissionResolver,
@@ -651,4 +651,5 @@ pub(crate) mod token_estimate;
 mod test;
 
 #[cfg(test)]
-mod cancel;
+#[path = "cancel_test.rs"]
+mod cancel_test;

@@ -1,14 +1,14 @@
-use std::sync::mpsc;
+use tokio::sync::mpsc;
 
 use crate::protocol::contracts::ProgressUi;
 use crate::protocol::event::UiEvent;
 
 pub struct EventPump {
-    event_rx: mpsc::Receiver<UiEvent>,
+    event_rx: mpsc::UnboundedReceiver<UiEvent>,
 }
 
 impl EventPump {
-    pub fn new(event_rx: mpsc::Receiver<UiEvent>) -> Self {
+    pub fn new(event_rx: mpsc::UnboundedReceiver<UiEvent>) -> Self {
         Self { event_rx }
     }
 

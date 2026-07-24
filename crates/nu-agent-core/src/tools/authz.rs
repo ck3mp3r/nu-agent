@@ -4,6 +4,8 @@ use std::time::Duration;
 
 use serde_json::Value as JsonValue;
 
+use async_trait::async_trait;
+
 use crate::protocol::{
     event::{PermissionDecision as UiPermissionDecision, PermissionRequestContext, ToolDisplay},
     permission::{
@@ -79,7 +81,7 @@ impl Default for AskRuntimeConfig {
     }
 }
 
-pub trait PermissionEventSink {
+pub trait PermissionEventSink: Send {
     fn emit(&mut self, event: crate::protocol::event::UiEvent);
 }
 
@@ -110,7 +112,7 @@ impl AsyncAskHook {
         self.active_request_id.as_deref()
     }
 
-    pub fn choose_with_sink<S: PermissionEventSink>(
+    pub async fn choose_with_sink<S: PermissionEventSink + Send>(
         &mut self,
         decision: &PermissionDecision,
         tool_name: &str,
@@ -161,7 +163,8 @@ impl AsyncAskHook {
 
         let (resolution, events) = self
             .controller
-            .await_resolution(self.current_token.as_ref().expect("token set"));
+            .await_resolution(self.current_token.as_ref().expect("token set"))
+            .await;
         if let Some(s) = &mut sink {
             for event in events {
                 s.emit(event);
@@ -270,8 +273,9 @@ fn format_arg_value(value: &JsonValue) -> String {
     }
 }
 
+#[async_trait]
 pub trait AskApprovalHook {
-    fn choose<S: PermissionEventSink>(
+    async fn choose<S: PermissionEventSink + Send>(
         &mut self,
         decision: &PermissionDecision,
         tool_name: &str,
@@ -282,8 +286,9 @@ pub trait AskApprovalHook {
     ) -> AskChoice;
 }
 
+#[async_trait]
 impl AskApprovalHook for AsyncAskHook {
-    fn choose<S: PermissionEventSink>(
+    async fn choose<S: PermissionEventSink + Send>(
         &mut self,
         decision: &PermissionDecision,
         tool_name: &str,
@@ -293,14 +298,13 @@ impl AskApprovalHook for AsyncAskHook {
         sink: Option<&mut S>,
     ) -> AskChoice {
         AsyncAskHook::choose_with_sink(self, decision, tool_name, source, args, ask_context, sink)
+            .await
     }
 }
 
-#[derive(Debug, Default)]
-pub struct AutoApproveAskHook;
-
+#[async_trait]
 impl AskApprovalHook for AutoApproveAskHook {
-    fn choose<S: PermissionEventSink>(
+    async fn choose<S: PermissionEventSink + Send>(
         &mut self,
         _decision: &PermissionDecision,
         _tool_name: &str,
@@ -312,6 +316,9 @@ impl AskApprovalHook for AutoApproveAskHook {
         AskChoice::AllowOnce
     }
 }
+
+#[derive(Debug, Default)]
+pub struct AutoApproveAskHook;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PermissionDiagnostic {
@@ -344,7 +351,6 @@ pub struct PermissionsConfig {
 }
 
 #[derive(Debug, Clone, Default)]
-#[allow(dead_code)] // used in subsequent subtasks of 77f9b887
 pub struct PermissionsOverlay {
     global: Option<PermissionAction>,
     tool_rules: BTreeMap<String, PermissionAction>,

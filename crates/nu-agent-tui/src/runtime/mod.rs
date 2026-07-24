@@ -26,7 +26,9 @@ mod terminal_events;
 mod terminal_io;
 mod tool_hydration;
 use backend::LiveTerminalUi;
-pub use backend::{AnsiTerminalBackend, RuntimeRunError, run_with_terminal_restore};
+pub use backend::{
+    AnsiTerminalBackend, RuntimeRunError, run_with_terminal_restore, run_with_terminal_restore_sync,
+};
 use panels::*;
 pub use renderer::TuiRuntimeRenderer;
 use status_help::*;

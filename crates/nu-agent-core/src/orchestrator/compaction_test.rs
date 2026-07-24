@@ -1,8 +1,8 @@
 use super::test_shared::*;
 
-#[test]
-fn interactive_loop_emits_auto_compaction_when_policy_fires() {
-    let mut runtime = FakeRuntime {
+#[tokio::test]
+async fn interactive_loop_emits_auto_compaction_when_policy_fires() {
+    let runtime = FakeRuntime {
         auto_decisions: [CompactionTriggerDecision::Fire {
             source: CompactionTriggerSource::AutoThreshold,
             reason: "threshold_reached".to_string(),
@@ -14,8 +14,13 @@ fn interactive_loop_emits_auto_compaction_when_policy_fires() {
     };
     let mut ui = FakeInteractiveUi::with_prompts(&[]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
-        .expect("interactive loop");
+    let (runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -24,9 +29,9 @@ fn interactive_loop_emits_auto_compaction_when_policy_fires() {
     );
 }
 
-#[test]
-fn interactive_loop_skips_auto_compaction_when_policy_no_fire() {
-    let mut runtime = FakeRuntime {
+#[tokio::test]
+async fn interactive_loop_skips_auto_compaction_when_policy_no_fire() {
+    let runtime = FakeRuntime {
         auto_decisions: [CompactionTriggerDecision::NoFire {
             reason: "below_lower_bound".to_string(),
         }]
@@ -36,16 +41,21 @@ fn interactive_loop_skips_auto_compaction_when_policy_no_fire() {
     };
     let mut ui = FakeInteractiveUi::with_prompts(&[]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
-        .expect("interactive loop");
+    let (runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert!(runtime.executed_compaction_sources.is_empty());
 }
 
-#[test]
-fn interactive_loop_does_not_duplicate_auto_compaction_while_disarmed() {
-    let mut runtime = FakeRuntime {
+#[tokio::test]
+async fn interactive_loop_does_not_duplicate_auto_compaction_while_disarmed() {
+    let runtime = FakeRuntime {
         auto_decisions: [CompactionTriggerDecision::Fire {
             source: CompactionTriggerSource::AutoThreshold,
             reason: "threshold_reached".to_string(),
@@ -57,8 +67,13 @@ fn interactive_loop_does_not_duplicate_auto_compaction_while_disarmed() {
     };
     let mut ui = FakeInteractiveUi::with_prompts(&[]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
-        .expect("interactive loop");
+    let (runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(runtime.executed_compaction_sources.len(), 1);
@@ -68,9 +83,9 @@ fn interactive_loop_does_not_duplicate_auto_compaction_while_disarmed() {
     );
 }
 
-#[test]
-fn auto_compaction_rearms_after_turn_completion() {
-    let mut runtime = FakeRuntime {
+#[tokio::test]
+async fn auto_compaction_rearms_after_turn_completion() {
+    let runtime = FakeRuntime {
         auto_decisions: [
             CompactionTriggerDecision::Fire {
                 source: CompactionTriggerSource::AutoThreshold,
@@ -87,11 +102,15 @@ fn auto_compaction_rearms_after_turn_completion() {
         .collect(),
         ..Default::default()
     };
-    // 10 pumps: startup eval → dispatch prompt → collect result → re-arm → second eval
     let mut ui = FakeInteractiveUi::with_prompts(&["hello"]).with_min_pump_count(10);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
-        .expect("interactive loop");
+    let (runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -113,9 +132,9 @@ fn auto_compaction_rearms_after_turn_completion() {
     );
 }
 
-#[test]
-fn interactive_loop_continues_turn_processing_with_auto_compaction_enabled() {
-    let mut runtime = FakeRuntime {
+#[tokio::test]
+async fn interactive_loop_continues_turn_processing_with_auto_compaction_enabled() {
+    let runtime = FakeRuntime {
         auto_decisions: [CompactionTriggerDecision::Fire {
             source: CompactionTriggerSource::AutoThreshold,
             reason: "threshold_reached".to_string(),
@@ -127,8 +146,13 @@ fn interactive_loop_continues_turn_processing_with_auto_compaction_enabled() {
     };
     let mut ui = FakeInteractiveUi::with_prompts(&["hello"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
-        .expect("interactive loop");
+    let (runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(runtime.prompts, vec!["hello".to_string()]);
@@ -138,15 +162,20 @@ fn interactive_loop_continues_turn_processing_with_auto_compaction_enabled() {
     );
 }
 
-#[test]
-fn recognized_slash_commands_never_sent_to_llm() {
-    let mut runtime = FakeRuntime::default();
+#[tokio::test]
+async fn recognized_slash_commands_never_sent_to_llm() {
+    let runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&[
         "/help", "/status", "/mcp", "/models", "/agent", "/compact",
     ]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
-        .expect("interactive loop");
+    let (runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert!(runtime.prompts.is_empty());
@@ -156,37 +185,52 @@ fn recognized_slash_commands_never_sent_to_llm() {
     );
 }
 
-#[test]
-fn models_slash_command_not_sent_to_llm() {
-    let mut runtime = FakeRuntime::default();
+#[tokio::test]
+async fn models_slash_command_not_sent_to_llm() {
+    let runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["/models"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
-        .expect("interactive loop");
+    let (runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert!(runtime.prompts.is_empty());
 }
 
-#[test]
-fn models_slash_command_routes_to_shared_models_action() {
-    let mut runtime = FakeRuntime::default();
+#[tokio::test]
+async fn models_slash_command_routes_to_shared_models_action() {
+    let runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["/models"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
-        .expect("interactive loop");
+    let (_runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(ui.shared_actions, vec![SharedUiAction::Models]);
 }
 
-#[test]
-fn interactive_loop_routes_compact_slash_to_compaction_executor() {
-    let mut runtime = FakeRuntime::default();
+#[tokio::test]
+async fn interactive_loop_routes_compact_slash_to_compaction_executor() {
+    let runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["/compact", "hello"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
-        .expect("interactive loop");
+    let (runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -196,13 +240,18 @@ fn interactive_loop_routes_compact_slash_to_compaction_executor() {
     assert_eq!(runtime.prompts, vec!["hello".to_string()]);
 }
 
-#[test]
-fn typed_compact_submit_triggers_compaction_path() {
-    let mut runtime = FakeRuntime::default();
+#[tokio::test]
+async fn typed_compact_submit_triggers_compaction_path() {
+    let runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["/compact"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
-        .expect("interactive loop");
+    let (runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -212,13 +261,18 @@ fn typed_compact_submit_triggers_compaction_path() {
     assert!(runtime.prompts.is_empty());
 }
 
-#[test]
-fn interactive_loop_unknown_slash_emits_warning_and_continues() {
-    let mut runtime = FakeRuntime::default();
+#[tokio::test]
+async fn interactive_loop_unknown_slash_emits_warning_and_continues() {
+    let runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["/compact now", "real prompt"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
-        .expect("interactive loop");
+    let (runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert!(
@@ -229,13 +283,18 @@ fn interactive_loop_unknown_slash_emits_warning_and_continues() {
     assert_eq!(runtime.prompts, vec!["real prompt".to_string()]);
 }
 
-#[test]
-fn recognized_slash_commands_not_persisted_as_session_turn_messages() {
-    let mut runtime = FakeRuntime::default();
+#[tokio::test]
+async fn recognized_slash_commands_not_persisted_as_session_turn_messages() {
+    let runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["/help", "/status", "/mcp", "/compact"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
-        .expect("interactive loop");
+    let (runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert!(runtime.prompts.is_empty());
@@ -245,9 +304,9 @@ fn recognized_slash_commands_not_persisted_as_session_turn_messages() {
     );
 }
 
-#[test]
-fn manual_and_auto_compaction_failure_surface_is_consistent() {
-    let mut runtime = FakeRuntime {
+#[tokio::test]
+async fn manual_and_auto_compaction_failure_surface_is_consistent() {
+    let runtime = FakeRuntime {
         fail_compaction: true,
         auto_decisions: [CompactionTriggerDecision::Fire {
             source: CompactionTriggerSource::AutoThreshold,
@@ -260,8 +319,13 @@ fn manual_and_auto_compaction_failure_surface_is_consistent() {
     };
     let mut ui = FakeInteractiveUi::with_prompts(&["/compact"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
-        .expect("interactive loop");
+    let (runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert!(
@@ -274,14 +338,19 @@ fn manual_and_auto_compaction_failure_surface_is_consistent() {
     }));
 }
 
-#[test]
-fn slash_commands_reuse_command_palette_action_handlers() {
-    let mut runtime = FakeRuntime::default();
+#[tokio::test]
+async fn slash_commands_reuse_command_palette_action_handlers() {
+    let runtime = FakeRuntime::default();
     let mut ui =
         FakeInteractiveUi::with_prompts(&["/help", "/status", "/mcp", "/models", "/agent"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
-        .expect("interactive loop");
+    let (runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -297,21 +366,26 @@ fn slash_commands_reuse_command_palette_action_handlers() {
     assert!(runtime.prompts.is_empty());
 }
 
-#[test]
-fn command_palette_models_action_opens_inline_model_picker() {
-    let mut runtime = FakeRuntime::default();
+#[tokio::test]
+async fn command_palette_models_action_opens_inline_model_picker() {
+    let runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["/models"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
-        .expect("interactive loop");
+    let (_runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(ui.shared_actions, vec![SharedUiAction::Models]);
 }
 
-#[test]
-fn manual_and_auto_compaction_share_single_execution_path() {
-    let mut runtime = FakeRuntime {
+#[tokio::test]
+async fn manual_and_auto_compaction_share_single_execution_path() {
+    let runtime = FakeRuntime {
         auto_decisions: [CompactionTriggerDecision::Fire {
             source: CompactionTriggerSource::AutoThreshold,
             reason: "threshold_reached".to_string(),
@@ -323,8 +397,13 @@ fn manual_and_auto_compaction_share_single_execution_path() {
     };
     let mut ui = FakeInteractiveUi::with_prompts(&["/compact"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
-        .expect("interactive loop");
+    let (runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(runtime.compaction_call_count, 2);

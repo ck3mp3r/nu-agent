@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::compaction::CompactionStrategy;
+use crate::session::StoreType;
 
 /// Default context window size (tokens) when not configured.
 pub const DEFAULT_MAX_CONTEXT_TOKENS: u32 = 128_000;
@@ -113,6 +114,9 @@ pub struct PluginConfig {
 
     /// Enable A2A agent-to-agent protocol support (experimental, default: false).
     pub a2a_enabled: bool,
+
+    /// Session store backend configuration (optional, defaults to SQLite).
+    pub session_store: Option<StoreTypeConfig>,
 }
 
 /// Configuration for conversation compaction behavior.
@@ -129,6 +133,15 @@ pub struct CompactionConfig {
     pub token_budget: Option<usize>,
     /// Proactive compaction threshold percentage 0.0-1.0 (default: 0.80)
     pub proactive_threshold_pct: Option<f64>,
+}
+
+/// Configuration for session store backend selection.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoreTypeConfig {
+    /// Session store backend type: sqlite or jsonl
+    pub store_type: StoreType,
+    /// Optional custom path for the session store
+    pub path: Option<String>,
 }
 
 /// Configuration for agent personas (planner/maker).
@@ -360,6 +373,13 @@ impl PluginConfig {
             .and_then(|v| v.as_bool().ok())
             .unwrap_or(false);
 
+        // Extract optional 'session_store' config
+        let session_store = if let Some(store_value) = record.get("session_store") {
+            Some(Self::parse_session_store_config(store_value)?)
+        } else {
+            None
+        };
+
         Ok(Self {
             model,
             small_model,
@@ -380,6 +400,7 @@ impl PluginConfig {
             max_retries,
             retry_base_delay_ms,
             a2a_enabled,
+            session_store,
         })
     }
 
@@ -658,6 +679,53 @@ impl PluginConfig {
         })
     }
 
+    /// Parse session store configuration from a Nushell record.
+    ///
+    /// Expected structure:
+    /// ```nushell
+    /// {
+    ///   type: "sqlite" | "jsonl"
+    ///   path: "/custom/path"  # optional
+    /// }
+    /// ```
+    fn parse_session_store_config(
+        value: &nu_protocol::Value,
+    ) -> Result<StoreTypeConfig, nu_protocol::LabeledError> {
+        use nu_protocol::LabeledError;
+
+        let record = value.as_record().map_err(|_| {
+            LabeledError::new("Invalid session_store configuration")
+                .with_label("session_store must be a record", value.span())
+        })?;
+
+        let span = value.span();
+
+        // Parse required 'type' field
+        let type_str = record
+            .get("type")
+            .ok_or_else(|| {
+                LabeledError::new("Missing required field")
+                    .with_label("session_store must have a 'type' field", span)
+            })?
+            .as_str()
+            .map_err(|_| {
+                LabeledError::new("Invalid field type").with_label("'type' must be a string", span)
+            })?;
+
+        let store_type: StoreType = type_str.parse().map_err(|e: String| {
+            LabeledError::new(format!("Invalid session_store type: {e}"))
+                .with_label("expected 'sqlite' or 'jsonl'", span)
+        })?;
+
+        // Parse optional 'path' field
+        let path = record
+            .get("path")
+            .and_then(|v| v.as_str().ok())
+            .map(|s| s.to_string());
+
+        Ok(StoreTypeConfig { store_type, path })
+    }
+
     /// Resolve model specification to runtime Config.
     ///
     /// Model specification format: `"provider/model"`
@@ -811,6 +879,11 @@ impl PluginConfig {
             config.a2a_enabled = self.a2a_enabled;
         }
 
+        // Forward session_store_type from plugin config (env var already checked)
+        if config.session_store_type.is_none() {
+            config.session_store_type = self.session_store.as_ref().map(|s| s.store_type);
+        }
+
         Ok(config)
     }
 }
@@ -895,6 +968,9 @@ pub struct Config {
 
     /// A2A agent port (CLI-only). Some(0) = random, Some(n>0) = fixed, None = not set.
     pub a2a_port: Option<u16>,
+
+    /// Session store backend type. None = use default (SQLite).
+    pub session_store_type: Option<StoreType>,
 }
 
 /// Convert a `nu_protocol::Value` to a `serde_json::Value` without including
@@ -984,6 +1060,10 @@ impl Config {
             .and_then(|v| v.parse().ok())
             .unwrap_or(false);
 
+        let session_store_type: Option<StoreType> = env::var("AGENT_SESSION_STORE_TYPE")
+            .ok()
+            .and_then(|s| s.parse().ok());
+
         log::debug!(
             "Config.from_env: provider={provider} model={model} api_key={} base_url={base_url:?}",
             api_key.is_some()
@@ -1011,6 +1091,7 @@ impl Config {
             additional_params: None,
             a2a_enabled,
             a2a_port: None,
+            session_store_type,
         }
     }
 
@@ -1056,6 +1137,7 @@ impl Config {
             additional_params: other.additional_params.or(self.additional_params),
             a2a_enabled: other.a2a_enabled || self.a2a_enabled,
             a2a_port: other.a2a_port.or(self.a2a_port),
+            session_store_type: other.session_store_type.or(self.session_store_type),
         }
     }
 

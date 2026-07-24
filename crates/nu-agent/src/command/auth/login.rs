@@ -64,7 +64,7 @@ Currently supports: github-copilot (default)."
 
     fn run(
         &self,
-        _plugin: &AgentPlugin,
+        plugin: &AgentPlugin,
         _engine: &EngineInterface,
         call: &EvaluatedCall,
         _input: &Value,
@@ -74,35 +74,34 @@ Currently supports: github-copilot (default)."
             .and_then(|v| v.as_str().ok().map(|s| s.to_string()))
             .unwrap_or_else(|| "github-copilot".to_string());
 
-        match provider.as_str() {
-            "github-copilot" | "copilot" => {
-                let client = rig::providers::copilot::Client::builder()
-                    .oauth()
-                    .on_device_code(|params| {
-                        eprintln!(
-                            "Sign in with GitHub Copilot:\n  1) Visit: {}\n  2) Enter code: {}",
-                            params.verification_uri, params.user_code
-                        );
-                    })
-                    .build()
-                    .map_err(|e| LabeledError::new(format!("Authentication failed: {e}")))?;
+        crate::block_on!(plugin, async {
+            match provider.as_str() {
+                "github-copilot" | "copilot" => {
+                    let client = rig::providers::copilot::Client::builder()
+                        .oauth()
+                        .on_device_code(|params| {
+                            eprintln!(
+                                "Sign in with GitHub Copilot:\n  1) Visit: {}\n  2) Enter code: {}",
+                                params.verification_uri, params.user_code
+                            );
+                        })
+                        .build()
+                        .map_err(|e| LabeledError::new(format!("Authentication failed: {e}")))?;
 
-                // authorize() is async, SimplePluginCommand::run() is sync
-                // Create a tokio runtime to execute the async operation
-                let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| LabeledError::new(format!("Failed to create runtime: {e}")))?;
+                    client
+                        .authorize()
+                        .await
+                        .map_err(|e| LabeledError::new(format!("Authentication failed: {e}")))?;
 
-                rt.block_on(client.authorize())
-                    .map_err(|e| LabeledError::new(format!("Authentication failed: {e}")))?;
-
-                Ok(Value::string(
-                    "Successfully authenticated with GitHub Copilot",
-                    call.head,
-                ))
+                    Ok(Value::string(
+                        "Successfully authenticated with GitHub Copilot",
+                        call.head,
+                    ))
+                }
+                _ => Err(LabeledError::new(format!(
+                    "Unsupported provider: {provider}. Supported: github-copilot"
+                ))),
             }
-            _ => Err(LabeledError::new(format!(
-                "Unsupported provider: {provider}. Supported: github-copilot"
-            ))),
-        }
+        })
     }
 }

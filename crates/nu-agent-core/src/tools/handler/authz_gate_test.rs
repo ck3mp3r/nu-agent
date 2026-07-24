@@ -7,10 +7,13 @@ use crate::tools::authz::{
     SessionGrantCache,
 };
 
+use async_trait::async_trait;
+
 struct AlwaysDenyHook;
 
+#[async_trait]
 impl crate::tools::authz::AskApprovalHook for AlwaysDenyHook {
-    fn choose<S: crate::tools::authz::PermissionEventSink>(
+    async fn choose<S: crate::tools::authz::PermissionEventSink + Send>(
         &mut self,
         _decision: &PermissionDecision,
         _tool_name: &str,
@@ -36,8 +39,8 @@ fn make_tool_call(name: &str) -> ToolCall {
     )
 }
 
-#[test]
-fn builtin_tools_bypass_permission_flow() {
+#[tokio::test]
+async fn builtin_tools_bypass_permission_flow() {
     // Even with deny-all permissions, builtin tools should be allowed
     let permissions = PermissionsConfig::safe_defaults(true);
     let mut grant_cache = SessionGrantCache::default();
@@ -63,7 +66,8 @@ fn builtin_tools_bypass_permission_flow() {
             &flow_context,
             &mut ask_hook,
             &mut sink,
-        );
+        )
+        .await;
         assert!(
             !result,
             "builtin tool '{}' should be auto-allowed but was denied",
@@ -72,8 +76,8 @@ fn builtin_tools_bypass_permission_flow() {
     }
 }
 
-#[test]
-fn fs_tools_go_through_permission_flow() {
+#[tokio::test]
+async fn fs_tools_go_through_permission_flow() {
     let permissions = PermissionsConfig::safe_defaults(true);
     let mut grant_cache = SessionGrantCache::default();
     let flow_context = AuthorizationFlowContext {
@@ -92,7 +96,8 @@ fn fs_tools_go_through_permission_flow() {
             &flow_context,
             &mut ask_hook,
             &mut sink,
-        );
+        )
+        .await;
         assert!(
             result,
             "BuiltinFs tool '{}' should go through permission flow and be denied by AlwaysDenyHook",
@@ -101,8 +106,8 @@ fn fs_tools_go_through_permission_flow() {
     }
 }
 
-#[test]
-fn non_builtin_tools_go_through_permission_flow() {
+#[tokio::test]
+async fn non_builtin_tools_go_through_permission_flow() {
     let permissions = PermissionsConfig::safe_defaults(true);
     let mut grant_cache = SessionGrantCache::default();
     let flow_context = AuthorizationFlowContext {
@@ -121,7 +126,8 @@ fn non_builtin_tools_go_through_permission_flow() {
         &flow_context,
         &mut ask_hook,
         &mut sink,
-    );
+    )
+    .await;
     assert!(
         result,
         "non-builtin tool should go through permission flow and be denied",

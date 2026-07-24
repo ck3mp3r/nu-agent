@@ -253,7 +253,7 @@ pub enum CachedProviderClient {
 /// replacing the duplicated `with_cached_model!` macro with static dispatch.
 pub trait ModelVisitor {
     type Output;
-    fn visit<M>(self, model: M) -> Self::Output
+    fn visit<M>(self, model: M) -> impl std::future::Future<Output = Self::Output> + Send
     where
         M: rig::completion::CompletionModel + Clone + 'static;
 }
@@ -264,19 +264,21 @@ impl CachedProviderClient {
     /// This replaces the `with_cached_model!` macro: each match arm builds the
     /// concrete completion model and passes it to `visitor.visit(model)`, which
     /// is monomorphised per variant — no dynamic dispatch needed.
-    pub fn with_model<V: ModelVisitor>(&self, model_name: &str, visitor: V) -> V::Output {
+    pub async fn with_model<V: ModelVisitor>(&self, model_name: &str, visitor: V) -> V::Output {
         log::debug!("with_model: model={model_name}");
         use rig::client::CompletionClient;
         match self {
-            CachedProviderClient::Copilot(c) => visitor.visit(c.completion_model(model_name)),
-            CachedProviderClient::OpenAi(c) => visitor.visit(c.completion_model(model_name)),
+            CachedProviderClient::Copilot(c) => visitor.visit(c.completion_model(model_name)).await,
+            CachedProviderClient::OpenAi(c) => visitor.visit(c.completion_model(model_name)).await,
             CachedProviderClient::OpenAiCompletions(c) => {
-                visitor.visit(c.completion_model(model_name))
+                visitor.visit(c.completion_model(model_name)).await
             }
-            CachedProviderClient::Anthropic(c) => visitor.visit(c.completion_model(model_name)),
-            CachedProviderClient::Ollama(c) => visitor.visit(c.completion_model(model_name)),
+            CachedProviderClient::Anthropic(c) => {
+                visitor.visit(c.completion_model(model_name)).await
+            }
+            CachedProviderClient::Ollama(c) => visitor.visit(c.completion_model(model_name)).await,
             #[cfg(test)]
-            CachedProviderClient::Mock(m) => visitor.visit(m.clone()),
+            CachedProviderClient::Mock(m) => visitor.visit(m.clone()).await,
         }
     }
 }

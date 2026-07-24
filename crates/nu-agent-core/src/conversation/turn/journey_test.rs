@@ -8,7 +8,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use nu_protocol::LabeledError;
-use rig::memory::ConversationMemory;
 use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
 use super::super::test::{default_circuit_breaker, default_doom_state};
@@ -17,7 +16,7 @@ use super::*;
 use crate::conversation::providers::CachedProviderClient;
 use crate::conversation::state::memory::MemoryState;
 use crate::protocol::event::UiEvent;
-use crate::session::ConversationStore;
+use crate::session::{FsSessionStore, StoreEntry};
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
 use crate::types::Message;
@@ -70,9 +69,8 @@ fn sse_tool_call_response(id: &str, name: &str, args: &str) -> String {
 // ---------------------------------------------------------------------------
 
 struct JourneyHarness {
-    rt: tokio::runtime::Runtime,
     _temp_dir: tempfile::TempDir, // leading underscore keeps TempDir alive
-    memory_state: MemoryState,
+    memory_state: MemoryState<FsSessionStore>,
     session_id: &'static str,
     config: crate::config::Config,
 }
@@ -85,9 +83,9 @@ impl JourneyHarness {
     /// Create a harness with a custom config (e.g., to set max_tool_result_bytes).
     fn new_with_config(session_id: &'static str, config: crate::config::Config) -> Self {
         let temp_dir = tempfile::tempdir().expect("tempdir");
-        let memory_state = MemoryState::new(temp_dir.path().to_path_buf());
+        let store = Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
+        let memory_state = MemoryState::new(store);
         Self {
-            rt: tokio::runtime::Runtime::new().expect("runtime"),
             _temp_dir: temp_dir,
             memory_state,
             session_id,
@@ -96,7 +94,7 @@ impl JourneyHarness {
     }
 
     /// Execute one turn with a default (non-cancelled) MockUi.
-    fn turn(
+    async fn turn(
         &mut self,
         prompt: &str,
         model: MockCompletionModel,
@@ -106,10 +104,11 @@ impl JourneyHarness {
         Vec<crate::protocol::event::UiEvent>,
     ) {
         self.turn_with_ui(prompt, model, tool_infra, MockUi::new())
+            .await
     }
 
     /// Execute one turn with a caller-supplied MockUi (e.g. immediately_cancelled).
-    fn turn_with_ui(
+    async fn turn_with_ui(
         &mut self,
         prompt: &str,
         model: MockCompletionModel,
@@ -122,53 +121,52 @@ impl JourneyHarness {
         let cached_client = CachedProviderClient::Mock(model);
         // Fresh TurnExecutor per call — REQUIRED: execute() calls std::mem::take()
         // on visible_tool_definitions, consuming them. Production code does the same.
-        let mut executor =
-            TurnExecutor::new(&self.config, &self.rt, &mut self.memory_state, tool_infra);
-        let outcome = executor.execute(
-            &mut ui,
-            ExecuteInput {
-                prompt: prompt.to_string(),
-                preamble: None,
-                span: nu_protocol::Span::test_data(),
-            },
-            &cached_client,
-            MockResolver,
-            Some(self.session_id),
-            None,
-        );
+        let mut executor = TurnExecutor::new(&self.config, &mut self.memory_state, tool_infra);
+        let outcome = executor
+            .execute(
+                &mut ui,
+                ExecuteInput {
+                    prompt: prompt.to_string(),
+                    preamble: None,
+                    span: nu_protocol::Span::test_data(),
+                },
+                &cached_client,
+                MockResolver,
+                Some(self.session_id),
+                None,
+            )
+            .await;
         let events = ui.events;
         (outcome, events)
     }
 
-    /// Raw JSONL messages — no repair, no filtering.
-    fn raw_messages(&self) -> Vec<Message> {
-        self.memory_state
-            .conversation_store()
-            .load(self.session_id)
-            .expect("store load")
-    }
-
-    /// Repair-filtered messages (via rig's repair_messages pass).
-    /// Reserved for future scenarios that need to verify repair behaviour.
-    #[allow(dead_code)]
-    fn filtered_messages(&mut self) -> Vec<Message> {
-        self.rt
-            .block_on(self.memory_state.memory_mut().load(self.session_id))
-            .expect("memory load")
+    /// Raw messages from store — no repair, no filtering.
+    async fn raw_messages(&self) -> Vec<Message> {
+        let entries = self
+            .memory_state
+            .memory()
+            .load_all(self.session_id)
+            .await
+            .expect("store load");
+        entries
+            .into_iter()
+            .filter_map(|e| match e {
+                StoreEntry::Message(m) => Some(m),
+                _ => None,
+            })
+            .collect()
     }
 
     /// Starts a wiremock MockServer on the harness runtime.
     /// Caller must keep the returned MockServer alive for the duration of the test —
     /// dropping it early causes connection refused mid-stream.
-    fn start_mock_server(&self) -> (wiremock::MockServer, CachedProviderClient) {
+    async fn start_mock_server(&self) -> (wiremock::MockServer, CachedProviderClient) {
         // Install the rustls crypto provider required by reqwest+rustls before building
         // any HTTP client. This is a process-global install; `let _` discards the error
         // when it has already been installed by another test in the same process.
         let _ = rustls::crypto::ring::default_provider().install_default();
         // Start MockServer on a dedicated runtime to avoid conflicts with the harness rt.
-        let server = tokio::runtime::Runtime::new()
-            .expect("mock server runtime")
-            .block_on(wiremock::MockServer::start());
+        let server = wiremock::MockServer::start().await;
         // Use OpenAiCompletions (which targets /chat/completions) for wiremock tests.
         // This is the OpenAI-compatible completions API path, matching our wiremock setup.
         let openai_client = rig::providers::openai::Client::builder()
@@ -180,7 +178,7 @@ impl JourneyHarness {
         (server, cached)
     }
 
-    fn turn_with_client(
+    async fn turn_with_client(
         &mut self,
         prompt: &str,
         client: &CachedProviderClient,
@@ -190,9 +188,10 @@ impl JourneyHarness {
         Vec<crate::protocol::event::UiEvent>,
     ) {
         self.turn_with_client_and_ui(prompt, client, tool_infra, MockUi::new())
+            .await
     }
 
-    fn turn_with_client_and_ui(
+    async fn turn_with_client_and_ui(
         &mut self,
         prompt: &str,
         client: &CachedProviderClient,
@@ -202,20 +201,21 @@ impl JourneyHarness {
         Result<TurnOutcome, LabeledError>,
         Vec<crate::protocol::event::UiEvent>,
     ) {
-        let mut executor =
-            TurnExecutor::new(&self.config, &self.rt, &mut self.memory_state, tool_infra);
-        let outcome = executor.execute(
-            &mut ui,
-            ExecuteInput {
-                prompt: prompt.to_string(),
-                preamble: None,
-                span: nu_protocol::Span::test_data(),
-            },
-            client,
-            MockResolver,
-            Some(self.session_id),
-            None,
-        );
+        let mut executor = TurnExecutor::new(&self.config, &mut self.memory_state, tool_infra);
+        let outcome = executor
+            .execute(
+                &mut ui,
+                ExecuteInput {
+                    prompt: prompt.to_string(),
+                    preamble: None,
+                    span: nu_protocol::Span::test_data(),
+                },
+                client,
+                MockResolver,
+                Some(self.session_id),
+                None,
+            )
+            .await;
         (outcome, ui.events)
     }
 }
@@ -311,19 +311,19 @@ impl rig::tool::ToolDyn for TestTruncatingNuShellTool {
 }
 
 /// Register a nu__shell tool that applies truncation at `max_tool_result_bytes`.
-fn nu_shell_tool_truncating(response: &'static str, max_tool_result_bytes: usize) -> ToolInfra {
+async fn nu_shell_tool_truncating(
+    response: &'static str,
+    max_tool_result_bytes: usize,
+) -> ToolInfra {
     let handle = rig::tool::server::ToolServer::new().run();
     // Register via add_tool since ToolDyn cannot use the .tool() builder
-    let rt = tokio::runtime::Runtime::new().expect("tmp runtime for tool registration");
-    rt.block_on(async {
-        handle
-            .add_tool(TestTruncatingNuShellTool {
-                response,
-                max_tool_result_bytes,
-            })
-            .await
-            .expect("add_tool must succeed")
-    });
+    handle
+        .add_tool(TestTruncatingNuShellTool {
+            response,
+            max_tool_result_bytes,
+        })
+        .await
+        .expect("add_tool must succeed");
     default_tool_infra(
         handle,
         vec![rig::completion::ToolDefinition {
@@ -338,16 +338,7 @@ fn nu_shell_tool_truncating(response: &'static str, max_tool_result_bytes: usize
 // TestEchoTool — two named structs because Tool::NAME is a const
 // ---------------------------------------------------------------------------
 
-// TestEchoTool is used by echo_tool(). TestEchoTool2 is reserved for future scenarios
-// that need two distinct tool names (Tool::NAME is a const &'static str).
 struct TestEchoTool {
-    response: &'static str,
-}
-
-/// Second echo tool with a distinct NAME for scenarios needing two different registered tools.
-/// Reserved for future multi-tool-name scenarios.
-#[allow(dead_code)]
-struct TestEchoTool2 {
     response: &'static str,
 }
 
@@ -359,25 +350,6 @@ impl rig::tool::Tool for TestEchoTool {
 
     fn description(&self) -> String {
         "Test echo tool".to_string()
-    }
-
-    fn parameters(&self) -> serde_json::Value {
-        serde_json::json!({"type": "object", "properties": {}})
-    }
-
-    async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
-        Ok(self.response.to_string())
-    }
-}
-
-impl rig::tool::Tool for TestEchoTool2 {
-    const NAME: &'static str = "test_echo_2";
-    type Error = std::convert::Infallible;
-    type Args = serde_json::Value;
-    type Output = String;
-
-    fn description(&self) -> String {
-        "Test echo tool 2".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -565,16 +537,16 @@ fn assert_no_interrupted(msgs: &[Message]) {
 // Smoke test
 // ---------------------------------------------------------------------------
 
-#[test]
-fn journey_harness_smoke() {
+#[tokio::test]
+async fn journey_harness_smoke() {
     let mut h = JourneyHarness::new("journey-smoke");
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("hi".into()),
         MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
     ]]);
-    let (r, _) = h.turn("hello", model, no_tools());
+    let (r, _) = h.turn("hello", model, no_tools()).await;
     assert!(r.is_ok(), "smoke turn must succeed: {r:?}");
-    let msgs = h.raw_messages();
+    let msgs = h.raw_messages().await;
     assert_eq!(msgs.len(), 2);
     assert_user_text(&msgs[0], "hello");
     assert_assistant_text_contains(&msgs[1], "hi");
@@ -593,8 +565,8 @@ fn journey_harness_smoke() {
 /// `MockCompletionModel` is `Clone` — it wraps `Arc<MockCompletionModelState>`,
 /// so a clone shares the same internal state. Cloning before passing to `h.turn()`
 /// lets us inspect `requests()` after the model is consumed.
-#[test]
-fn journey_three_text_turns_accumulate_correctly() {
+#[tokio::test]
+async fn journey_three_text_turns_accumulate_correctly() {
     let mut h = JourneyHarness::new("journey-three-text");
 
     // Turn 1
@@ -602,9 +574,9 @@ fn journey_three_text_turns_accumulate_correctly() {
         MockStreamEvent::Text("hello back".into()),
         MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
     ]]);
-    let (r1, _) = h.turn("hello", model1, no_tools());
+    let (r1, _) = h.turn("hello", model1, no_tools()).await;
     assert!(r1.is_ok(), "turn 1 must succeed: {r1:?}");
-    let msgs = h.raw_messages();
+    let msgs = h.raw_messages().await;
     assert_eq!(msgs.len(), 2, "after turn 1: expected 2 messages");
     assert_user_text(&msgs[0], "hello");
     assert_assistant_text_contains(&msgs[1], "hello back");
@@ -614,9 +586,9 @@ fn journey_three_text_turns_accumulate_correctly() {
         MockStreamEvent::Text("world back".into()),
         MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
     ]]);
-    let (r2, _) = h.turn("world", model2, no_tools());
+    let (r2, _) = h.turn("world", model2, no_tools()).await;
     assert!(r2.is_ok(), "turn 2 must succeed: {r2:?}");
-    let msgs = h.raw_messages();
+    let msgs = h.raw_messages().await;
     assert_eq!(msgs.len(), 4, "after turn 2: expected 4 messages");
     assert_user_text(&msgs[2], "world");
     assert_assistant_text_contains(&msgs[3], "world back");
@@ -628,10 +600,10 @@ fn journey_three_text_turns_accumulate_correctly() {
         MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
     ]]);
     let model3_spy = model3.clone();
-    let (r3, _) = h.turn("last", model3, no_tools());
+    let (r3, _) = h.turn("last", model3, no_tools()).await;
     assert!(r3.is_ok(), "turn 3 must succeed: {r3:?}");
     assert_eq!(
-        h.raw_messages().len(),
+        h.raw_messages().await.len(),
         6,
         "after turn 3: expected 6 messages"
     );
@@ -666,8 +638,8 @@ fn journey_three_text_turns_accumulate_correctly() {
 ///
 /// Rig produces one `Message::Assistant` per sub-turn (no batching between sub-turns),
 /// so the confirmed JSONL shape is 6 messages.
-#[test]
-fn journey_two_sequential_tool_calls_then_text() {
+#[tokio::test]
+async fn journey_two_sequential_tool_calls_then_text() {
     let mut h = JourneyHarness::new("journey-two-tool-calls");
 
     let model = MockCompletionModel::from_stream_turns([
@@ -684,10 +656,10 @@ fn journey_two_sequential_tool_calls_then_text() {
             MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
         ],
     ]);
-    let (r, _) = h.turn("do two things", model, echo_tool("result_42"));
+    let (r, _) = h.turn("do two things", model, echo_tool("result_42")).await;
     assert!(r.is_ok(), "turn must succeed: {r:?}");
 
-    let msgs = h.raw_messages();
+    let msgs = h.raw_messages().await;
     // Confirmed shape (rig produces one Assistant per sub-turn, no batching):
     // [0] User(prompt)
     // [1] Assistant(ToolCall tc1)
@@ -718,8 +690,8 @@ fn journey_two_sequential_tool_calls_then_text() {
 /// Because all three tool calls arrive in the same stream turn (before FinalResponse),
 /// rig accumulates them into one assistant message and batches all results into one
 /// user message. Total: 4 messages.
-#[test]
-fn journey_three_batched_tool_calls_in_one_response() {
+#[tokio::test]
+async fn journey_three_batched_tool_calls_in_one_response() {
     let mut h = JourneyHarness::new("journey-batched-tools");
 
     let model = MockCompletionModel::from_stream_turns([
@@ -734,10 +706,12 @@ fn journey_three_batched_tool_calls_in_one_response() {
             MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
         ],
     ]);
-    let (r, _) = h.turn("do three things", model, echo_tool("batch_result"));
+    let (r, _) = h
+        .turn("do three things", model, echo_tool("batch_result"))
+        .await;
     assert!(r.is_ok(), "turn must succeed: {r:?}");
 
-    let msgs = h.raw_messages();
+    let msgs = h.raw_messages().await;
     // Shape: [User(prompt), Assistant([tc1,tc2,tc3]), User([tr1,tr2,tr3]), Assistant(text)]
     // All three tool calls arrive in the same stream turn → same Assistant message.
     // All three tool results are batched by rig into one User message.
@@ -774,22 +748,24 @@ fn journey_three_batched_tool_calls_in_one_response() {
 ///
 /// Turn 1 (success): 2 messages total.
 /// Turns 2, 3, 4 (error): each appends 1 message → totals 3, 4, 5.
-#[test]
-fn journey_repeated_errors_grow_linearly() {
+#[tokio::test]
+async fn journey_repeated_errors_grow_linearly() {
     let mut h = JourneyHarness::new("journey-linear-errors");
 
     // Turn 1: success → 2 messages
-    let (r1, _) = h.turn(
-        "t1",
-        MockCompletionModel::from_stream_turns([[
-            MockStreamEvent::Text("ok".into()),
-            MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
-        ]]),
-        no_tools(),
-    );
+    let (r1, _) = h
+        .turn(
+            "t1",
+            MockCompletionModel::from_stream_turns([[
+                MockStreamEvent::Text("ok".into()),
+                MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+            ]]),
+            no_tools(),
+        )
+        .await;
     assert!(r1.is_ok(), "turn 1 must succeed: {r1:?}");
     assert_eq!(
-        h.raw_messages().len(),
+        h.raw_messages().await.len(),
         2,
         "after turn 1: expected 2 messages"
     );
@@ -797,20 +773,24 @@ fn journey_repeated_errors_grow_linearly() {
     // Turns 2, 3, 4: error → each appends 1 message (user prompt delta)
     // Before the fix: 2+3+4+5=14. After: 2+1+1+1=5.
     for (i, prompt) in ["t2", "t3", "t4"].iter().enumerate() {
-        let (r, _) = h.turn(
-            prompt,
-            MockCompletionModel::from_stream_turns([[MockStreamEvent::error("network timeout")]]),
-            no_tools(),
-        );
+        let (r, _) = h
+            .turn(
+                prompt,
+                MockCompletionModel::from_stream_turns([[MockStreamEvent::error(
+                    "network timeout",
+                )]]),
+                no_tools(),
+            )
+            .await;
         assert!(r.is_err(), "turn {} must error", i + 2);
         let expected = 3 + i; // 3, 4, 5
         assert_eq!(
-            h.raw_messages().len(),
+            h.raw_messages().await.len(),
             expected,
             "after error turn {}: expected {} messages, got {}",
             i + 2,
             expected,
-            h.raw_messages().len()
+            h.raw_messages().await.len()
         );
     }
 }
@@ -852,8 +832,8 @@ fn journey_repeated_errors_grow_linearly() {
 ///
 /// The task says "not synthetic placeholders, not doubled" and specifically
 /// `prior.len(), 5`. Following the task description exactly as given.
-#[test]
-fn journey_error_mid_tool_loop_then_recovery() {
+#[tokio::test]
+async fn journey_error_mid_tool_loop_then_recovery() {
     let mut h = JourneyHarness::new("journey-error-recovery");
 
     // Turn 1: tc1 executes, tc2 executes, sub-turn 3 errors (CompletionError)
@@ -868,10 +848,10 @@ fn journey_error_mid_tool_loop_then_recovery() {
         ],
         vec![MockStreamEvent::error("connection reset")],
     ]);
-    let (r1, _) = h.turn("do things", model1, echo_tool("real_result"));
+    let (r1, _) = h.turn("do things", model1, echo_tool("real_result")).await;
     assert!(r1.is_err(), "CompletionError must propagate");
 
-    let msgs = h.raw_messages();
+    let msgs = h.raw_messages().await;
     assert_eq!(
         msgs.len(),
         6,
@@ -896,10 +876,10 @@ fn journey_error_mid_tool_loop_then_recovery() {
         MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
     ]]);
     let model2_spy = model2.clone();
-    let (r2, _) = h.turn("continue", model2, no_tools());
+    let (r2, _) = h.turn("continue", model2, no_tools()).await;
     assert!(r2.is_ok(), "recovery turn must succeed: {r2:?}");
 
-    let msgs = h.raw_messages();
+    let msgs = h.raw_messages().await;
     assert_eq!(msgs.len(), 8, "6 prior + 2 new; got: {msgs:?}");
     assert_user_text(&msgs[6], "continue");
     assert_assistant_text_contains(&msgs[7], "recovered");
@@ -943,8 +923,8 @@ fn journey_error_mid_tool_loop_then_recovery() {
 /// 7. Path C: delta = 3 messages persisted
 ///
 /// Turn 2 sees the 3-message prior context.
-#[test]
-fn journey_cancelled_turn_then_continuation() {
+#[tokio::test]
+async fn journey_cancelled_turn_then_continuation() {
     let mut h = JourneyHarness::new("journey-cancel-tool");
 
     // Turn 1: the tool executes and cancels the turn from within call().
@@ -963,16 +943,18 @@ fn journey_cancelled_turn_then_continuation() {
             MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
         ],
     ]);
-    let (r1, _) = h.turn_with_ui(
-        "run a git command",
-        model1,
-        nu_shell_cancelling_tool("Already up to date.", token),
-        ui,
-    );
+    let (r1, _) = h
+        .turn_with_ui(
+            "run a git command",
+            model1,
+            nu_shell_cancelling_tool("Already up to date.", token),
+            ui,
+        )
+        .await;
     assert!(r1.is_ok(), "cancelled turn must return Ok: {r1:?}");
     assert!(matches!(r1.unwrap(), TurnOutcome::EarlyReturn(_)));
 
-    let msgs = h.raw_messages();
+    let msgs = h.raw_messages().await;
     assert_eq!(
         msgs.len(),
         4,
@@ -995,9 +977,9 @@ fn journey_cancelled_turn_then_continuation() {
         MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
     ]]);
     let model2_spy = model2.clone();
-    let (r2, _) = h.turn("what happened?", model2, no_tools());
+    let (r2, _) = h.turn("what happened?", model2, no_tools()).await;
     assert!(r2.is_ok());
-    assert_eq!(h.raw_messages().len(), 6);
+    assert_eq!(h.raw_messages().await.len(), 6);
     let requests = model2_spy.requests();
     let prior: Vec<_> = requests[0].chat_history.iter().collect();
     // rig appends the current prompt into chat_history before sending (see rig-core request.rs).
@@ -1019,8 +1001,8 @@ fn journey_cancelled_turn_then_continuation() {
 ///
 /// Does NOT use `JourneyHarness` — uses `TurnExecutor` directly to keep two
 /// separate `MemoryState` lifetimes.
-#[test]
-fn journey_session_reload_from_disk() {
+#[tokio::test]
+async fn journey_session_reload_from_disk() {
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let path = temp_dir.path().to_path_buf();
     let session_id = "journey-reload";
@@ -1028,28 +1010,30 @@ fn journey_session_reload_from_disk() {
 
     // Turn 1 — MemoryState A: write 2 messages to disk then drop.
     let spy1 = {
-        let rt = tokio::runtime::Runtime::new().expect("rt");
-        let mut ms = crate::conversation::state::memory::MemoryState::new(path.clone());
+        let store = Arc::new(FsSessionStore::new(path.clone()));
+        let mut ms = crate::conversation::state::memory::MemoryState::new(store);
         let model = MockCompletionModel::from_stream_turns([[
             MockStreamEvent::Text("turn1 response".into()),
             MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
         ]]);
         let spy = model.clone();
         let mut ui = MockUi::new();
-        let mut executor = TurnExecutor::new(&config, &rt, &mut ms, no_tools());
-        let r = executor.execute(
-            &mut ui,
-            ExecuteInput {
-                prompt: "turn1".to_string(),
-                preamble: None,
-                span: nu_protocol::Span::test_data(),
-            },
-            &CachedProviderClient::Mock(model),
-            MockResolver,
-            Some(session_id),
-            None,
-        );
-        assert!(r.is_ok(), "turn 1 must succeed: {r:?}");
+        let mut executor = TurnExecutor::new(&config, &mut ms, no_tools());
+        let r = executor
+            .execute(
+                &mut ui,
+                ExecuteInput {
+                    prompt: "turn1".to_string(),
+                    preamble: None,
+                    span: nu_protocol::Span::test_data(),
+                },
+                &CachedProviderClient::Mock(model),
+                MockResolver,
+                Some(session_id),
+                None,
+            )
+            .await;
+        assert!(r.is_ok(), "turn 1 must succeed");
         spy
     }; // ms dropped — only JSONL remains on disk
 
@@ -1059,34 +1043,40 @@ fn journey_session_reload_from_disk() {
 
     // Turn 2 — fresh MemoryState B: must load 2 prior messages from disk.
     {
-        let rt = tokio::runtime::Runtime::new().expect("rt");
-        let mut ms = crate::conversation::state::memory::MemoryState::new(path.clone());
+        let store = Arc::new(FsSessionStore::new(path.clone()));
+        let mut ms = crate::conversation::state::memory::MemoryState::new(store);
         let model2 = MockCompletionModel::from_stream_turns([[
             MockStreamEvent::Text("turn2 response".into()),
             MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
         ]]);
         let spy2 = model2.clone();
         let mut ui = MockUi::new();
-        let mut executor = TurnExecutor::new(&config, &rt, &mut ms, no_tools());
-        let r = executor.execute(
-            &mut ui,
-            ExecuteInput {
-                prompt: "turn2".to_string(),
-                preamble: None,
-                span: nu_protocol::Span::test_data(),
-            },
-            &CachedProviderClient::Mock(model2),
-            MockResolver,
-            Some(session_id),
-            None,
-        );
-        assert!(r.is_ok(), "turn 2 must succeed: {r:?}");
+        let mut executor = TurnExecutor::new(&config, &mut ms, no_tools());
+        let r = executor
+            .execute(
+                &mut ui,
+                ExecuteInput {
+                    prompt: "turn2".to_string(),
+                    preamble: None,
+                    span: nu_protocol::Span::test_data(),
+                },
+                &CachedProviderClient::Mock(model2),
+                MockResolver,
+                Some(session_id),
+                None,
+            )
+            .await;
+        assert!(r.is_ok(), "turn 2 must succeed");
 
         // Verify the total JSONL: 2 from turn1 + 2 from turn2
-        let msgs = ms
-            .conversation_store()
-            .load(session_id)
-            .expect("store load");
+        let entries = ms.memory().load_all(session_id).await.expect("store load");
+        let msgs: Vec<Message> = entries
+            .iter()
+            .filter_map(|e| match e {
+                StoreEntry::Message(m) => Some(m.clone()),
+                _ => None,
+            })
+            .collect();
         assert_eq!(
             msgs.len(),
             4,
@@ -1123,8 +1113,8 @@ fn journey_session_reload_from_disk() {
 ///
 /// The repair happens inside `JournalConversationMemory::load()` via `repair_messages()`.
 /// This test proves end-to-end that a corrupt session is healed and a new turn can succeed.
-#[test]
-fn journey_corrupt_session_healed_by_repair_on_load() {
+#[tokio::test]
+async fn journey_corrupt_session_healed_by_repair_on_load() {
     use std::io::Write;
 
     let temp_dir = tempfile::tempdir().expect("tempdir");
@@ -1187,8 +1177,8 @@ fn journey_corrupt_session_healed_by_repair_on_load() {
 
     // Now create a MemoryState pointing to the same directory (simulating a new CLI invocation
     // that loads the corrupt JSONL). Repair fires inside load().
-    let rt = tokio::runtime::Runtime::new().expect("rt");
-    let mut ms = crate::conversation::state::memory::MemoryState::new(path.clone());
+    let store = Arc::new(FsSessionStore::new(path.clone()));
+    let mut ms = crate::conversation::state::memory::MemoryState::new(store);
 
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("The git pull succeeded.".into()),
@@ -1196,19 +1186,21 @@ fn journey_corrupt_session_healed_by_repair_on_load() {
     ]]);
 
     let mut ui = MockUi::new();
-    let mut executor = TurnExecutor::new(&config, &rt, &mut ms, no_tools());
-    let outcome = executor.execute(
-        &mut ui,
-        ExecuteInput {
-            prompt: "what happened?".to_string(),
-            preamble: None,
-            span: nu_protocol::Span::test_data(),
-        },
-        &CachedProviderClient::Mock(model),
-        MockResolver,
-        Some(session_id),
-        None,
-    );
+    let mut executor = TurnExecutor::new(&config, &mut ms, no_tools());
+    let outcome = executor
+        .execute(
+            &mut ui,
+            ExecuteInput {
+                prompt: "what happened?".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            &CachedProviderClient::Mock(model),
+            MockResolver,
+            Some(session_id),
+            None,
+        )
+        .await;
 
     // The turn must succeed — repair healed the corrupt session on load.
     assert!(
@@ -1220,10 +1212,14 @@ fn journey_corrupt_session_healed_by_repair_on_load() {
     // The corrupt JSONL had 4 messages. Repair is applied in-memory on load (not written
     // back to JSONL). The turn then appends 2 new messages (user prompt + assistant reply).
     // Raw JSONL = 4 original (corrupt) + 2 new = 6 total.
-    let raw = ms
-        .conversation_store()
-        .load(session_id)
-        .expect("store load");
+    let entries = ms.memory().load_all(session_id).await.expect("store load");
+    let raw: Vec<Message> = entries
+        .iter()
+        .filter_map(|e| match e {
+            StoreEntry::Message(m) => Some(m.clone()),
+            _ => None,
+        })
+        .collect();
     assert_eq!(
         raw.len(),
         6,
@@ -1231,13 +1227,13 @@ fn journey_corrupt_session_healed_by_repair_on_load() {
     );
 }
 
-#[test]
-fn journey_wiremock_basic_text_smoke() {
+#[tokio::test]
+async fn journey_wiremock_basic_text_smoke() {
     let mut h = JourneyHarness::new("journey-wiremock-smoke");
-    let (server, client) = h.start_mock_server();
+    let (server, client) = h.start_mock_server().await;
 
     let sse_body = sse_text_response("hello from mock");
-    h.rt.block_on(async {
+    {
         use wiremock::matchers::method;
         use wiremock::{Mock, ResponseTemplate};
         Mock::given(method("POST"))
@@ -1248,11 +1244,11 @@ fn journey_wiremock_basic_text_smoke() {
             )
             .mount(&server)
             .await;
-    });
+    }
 
-    let (r, _) = h.turn_with_client("test", &client, no_tools());
+    let (r, _) = h.turn_with_client("test", &client, no_tools()).await;
     assert!(r.is_ok(), "basic wiremock text turn must succeed: {r:?}");
-    let msgs = h.raw_messages();
+    let msgs = h.raw_messages().await;
     assert_eq!(msgs.len(), 2, "expect [user, assistant]; got: {msgs:?}");
 }
 
@@ -1264,14 +1260,14 @@ fn journey_wiremock_basic_text_smoke() {
 ///
 /// Turn 2: Normal text response. Must succeed — proves the session is no longer broken
 /// (the message history ends with Assistant, so the next User can follow without API error).
-#[test]
-fn journey_hard_error_after_tool_results_session_remains_valid() {
+#[tokio::test]
+async fn journey_hard_error_after_tool_results_session_remains_valid() {
     let mut h = JourneyHarness::new("journey-gap1a");
-    let (server, client) = h.start_mock_server();
+    let (server, client) = h.start_mock_server().await;
 
     // Turn 1: tool call succeeds, sub-turn 2 → HTTP 500
     let tool_call_body = sse_tool_call_response("tc1", "nu__shell", "{\"command\":\"git pull\"}");
-    h.rt.block_on(async {
+    {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, ResponseTemplate};
 
@@ -1296,12 +1292,14 @@ fn journey_hard_error_after_tool_results_session_remains_valid() {
             .up_to_n_times(1)
             .mount(&server)
             .await;
-    });
+    }
 
-    let (r1, _) = h.turn_with_client("run something", &client, nu_shell_tool("result_42"));
+    let (r1, _) = h
+        .turn_with_client("run something", &client, nu_shell_tool("result_42"))
+        .await;
     assert!(r1.is_err(), "turn 1 must fail with server error");
 
-    let msgs = h.raw_messages();
+    let msgs = h.raw_messages().await;
     assert_eq!(
         msgs.len(),
         4,
@@ -1316,7 +1314,7 @@ fn journey_hard_error_after_tool_results_session_remains_valid() {
 
     // Turn 2: must succeed — proves the session is no longer broken
     let text_body = sse_text_response("recovered successfully");
-    h.rt.block_on(async {
+    {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, ResponseTemplate};
         Mock::given(method("POST"))
@@ -1328,11 +1326,11 @@ fn journey_hard_error_after_tool_results_session_remains_valid() {
             )
             .mount(&server)
             .await;
-    });
+    }
 
-    let (r2, _) = h.turn_with_client("continue", &client, no_tools());
+    let (r2, _) = h.turn_with_client("continue", &client, no_tools()).await;
     assert!(r2.is_ok(), "turn 2 must succeed after repair — was: {r2:?}");
-    assert_eq!(h.raw_messages().len(), 6);
+    assert_eq!(h.raw_messages().await.len(), 6);
 }
 
 // ---------------------------------------------------------------------------
@@ -1341,8 +1339,8 @@ fn journey_hard_error_after_tool_results_session_remains_valid() {
 
 /// Verify that a tiny `max_tool_result_bytes` causes tool results to be
 /// truncated when the response exceeds the limit.
-#[test]
-fn journey_tool_result_truncated_at_configured_limit() {
+#[tokio::test]
+async fn journey_tool_result_truncated_at_configured_limit() {
     use rig::message::{Message, UserContent};
 
     // Use a tiny limit to avoid large allocations in tests.
@@ -1353,10 +1351,10 @@ fn journey_tool_result_truncated_at_configured_limit() {
             ..crate::config::Config::default()
         },
     );
-    let (server, client) = h.start_mock_server();
+    let (server, client) = h.start_mock_server().await;
 
     // Mount responses: tool call first, then a plain text response
-    h.rt.block_on(async {
+    {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, ResponseTemplate};
 
@@ -1383,18 +1381,20 @@ fn journey_tool_result_truncated_at_configured_limit() {
             )
             .mount(&server)
             .await;
-    });
+    }
 
     // Tool returns 200 bytes — well over the 100-byte limit.
     let response_200: &'static str = Box::leak("x".repeat(200).into_boxed_str());
-    let (r, _) = h.turn_with_client(
-        "list files",
-        &client,
-        nu_shell_tool_truncating(response_200, 100),
-    );
+    let (r, _) = h
+        .turn_with_client(
+            "list files",
+            &client,
+            nu_shell_tool_truncating(response_200, 100).await,
+        )
+        .await;
     assert!(r.is_ok(), "turn must succeed: {r:?}");
 
-    let msgs = h.raw_messages();
+    let msgs = h.raw_messages().await;
     // Expect [user(prompt), asst(tool_call), user(tool_result), asst(final)]
     assert!(
         msgs.len() >= 3,
@@ -1445,7 +1445,10 @@ fn journey_tool_result_truncated_at_configured_limit() {
 /// `max_tool_result_bytes` limit and temp directory (caller creates the skill content
 /// inside `cwd`).  This is the only builtin-tool path we can exercise in `nu-agent-core`
 /// tests: `nu__shell` is not handled by `dispatch_fs_tool`, but `skill` is.
-fn skill_via_builtin_adapter(max_tool_result_bytes: usize, cwd: std::path::PathBuf) -> ToolInfra {
+async fn skill_via_builtin_adapter(
+    max_tool_result_bytes: usize,
+    cwd: std::path::PathBuf,
+) -> ToolInfra {
     use crate::hook::adapter::BuiltinToolAdapter;
     use crate::types::ToolDefinition;
 
@@ -1463,13 +1466,10 @@ fn skill_via_builtin_adapter(max_tool_result_bytes: usize, cwd: std::path::PathB
     let adapter = BuiltinToolAdapter::new(tool_def.clone(), cwd.clone(), max_tool_result_bytes);
 
     let handle = rig::tool::server::ToolServer::new().run();
-    let rt = tokio::runtime::Runtime::new().expect("tmp runtime for skill adapter");
-    rt.block_on(async {
-        handle
-            .add_tool(adapter)
-            .await
-            .expect("add_tool must succeed")
-    });
+    handle
+        .add_tool(adapter)
+        .await
+        .expect("add_tool must succeed");
     default_tool_infra(
         handle,
         vec![rig::completion::ToolDefinition {
@@ -1493,8 +1493,8 @@ fn skill_via_builtin_adapter(max_tool_result_bytes: usize, cwd: std::path::PathB
 /// hand-rolled `TestTruncatingNuShellTool`), this test registers a real
 /// `BuiltinToolAdapter` (via `skill_via_builtin_adapter`) and verifies that the limit
 /// from the harness config is respected when the adapter serialises and caps the result.
-#[test]
-fn journey_tool_result_limit_flows_from_config_to_adapter() {
+#[tokio::test]
+async fn journey_tool_result_limit_flows_from_config_to_adapter() {
     use rig::message::{Message, UserContent};
 
     // ── 1. Harness with a 100-byte limit ─────────────────────────────────────
@@ -1506,7 +1506,7 @@ fn journey_tool_result_limit_flows_from_config_to_adapter() {
             ..crate::config::Config::default()
         },
     );
-    let (server, client) = h.start_mock_server();
+    let (server, client) = h.start_mock_server().await;
 
     // ── 2. Create a skill file whose serialised JSON will exceed 100 bytes ───
     //    The content itself is 200 'x' characters; once wrapped in JSON
@@ -1521,7 +1521,7 @@ fn journey_tool_result_limit_flows_from_config_to_adapter() {
     std::fs::write(skill_dir.join("SKILL.md"), "x".repeat(200)).expect("write skill");
 
     // ── 3. Mount: tool call → text response ──────────────────────────────────
-    h.rt.block_on(async {
+    {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, ResponseTemplate};
 
@@ -1548,15 +1548,21 @@ fn journey_tool_result_limit_flows_from_config_to_adapter() {
             )
             .mount(&server)
             .await;
-    });
+    }
 
     // ── 4. Run the turn with the BuiltinToolAdapter-backed ToolInfra ─────────
     let cwd = temp_dir.path().to_path_buf();
-    let (r, _) = h.turn_with_client("load skill", &client, skill_via_builtin_adapter(limit, cwd));
+    let (r, _) = h
+        .turn_with_client(
+            "load skill",
+            &client,
+            skill_via_builtin_adapter(limit, cwd).await,
+        )
+        .await;
     assert!(r.is_ok(), "turn must succeed: {r:?}");
 
     // ── 5. Assert the tool result was truncated ───────────────────────────────
-    let msgs = h.raw_messages();
+    let msgs = h.raw_messages().await;
     assert!(
         msgs.len() >= 3,
         "expected at least 3 messages, got: {}",
@@ -1602,19 +1608,19 @@ fn journey_tool_result_limit_flows_from_config_to_adapter() {
 
 /// Verifies that a context warning is emitted when the estimated token count
 /// of the session history exceeds the configured threshold before a turn.
-#[test]
-fn journey_context_warning_emitted_near_limit() {
+#[tokio::test]
+async fn journey_context_warning_emitted_near_limit() {
     let config = crate::config::Config {
         model_context_tokens: Some(100),
         context_warning_threshold: Some(0.5), // warn at 50 tokens
         ..crate::config::Config::default()
     };
     let mut h = JourneyHarness::new_with_config("journey-ctx-warn", config);
-    let (server, client) = h.start_mock_server();
+    let (server, client) = h.start_mock_server().await;
 
     // Pre-populate session with enough content to exceed threshold.
     // Execute a first turn to build up history.
-    h.rt.block_on(async {
+    {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, ResponseTemplate};
         Mock::given(method("POST"))
@@ -1626,12 +1632,14 @@ fn journey_context_warning_emitted_near_limit() {
             )
             .mount(&server)
             .await;
-    });
-    let _ = h.turn_with_client("initial prompt with some content here", &client, no_tools());
+    }
+    let _ = h
+        .turn_with_client("initial prompt with some content here", &client, no_tools())
+        .await;
 
     // Execute a second turn — pre_turn_messages will include the first turn's history
     // which should exceed the 50-token threshold (100 * 0.5).
-    h.rt.block_on(async {
+    {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, ResponseTemplate};
         Mock::given(method("POST"))
@@ -1643,8 +1651,8 @@ fn journey_context_warning_emitted_near_limit() {
             )
             .mount(&server)
             .await;
-    });
-    let (r2, events) = h.turn_with_client("follow up", &client, no_tools());
+    }
+    let (r2, events) = h.turn_with_client("follow up", &client, no_tools()).await;
 
     assert!(r2.is_ok(), "turn must succeed even with warning: {r2:?}");
     let has_warning = events
@@ -1658,13 +1666,13 @@ fn journey_context_warning_emitted_near_limit() {
 
 /// Verifies that no context warning is emitted when `model_context_tokens` is `None`
 /// (the default), regardless of session size.
-#[test]
-fn journey_no_context_warning_when_not_configured() {
+#[tokio::test]
+async fn journey_no_context_warning_when_not_configured() {
     // Config::default() has model_context_tokens = None → no warning ever
     let mut h = JourneyHarness::new("journey-no-ctx-warn");
-    let (server, client) = h.start_mock_server();
+    let (server, client) = h.start_mock_server().await;
 
-    h.rt.block_on(async {
+    {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, ResponseTemplate};
         Mock::given(method("POST"))
@@ -1676,8 +1684,8 @@ fn journey_no_context_warning_when_not_configured() {
             )
             .mount(&server)
             .await;
-    });
-    let (r, events) = h.turn_with_client("hello", &client, no_tools());
+    }
+    let (r, events) = h.turn_with_client("hello", &client, no_tools()).await;
 
     assert!(r.is_ok());
     let has_ctx_warning = events
@@ -1695,18 +1703,18 @@ fn journey_no_context_warning_when_not_configured() {
 
 /// Integration test using wiremock: first POST → 500 server error (retryable),
 /// second POST → success. Verifies the retry loop transparently recovers.
-#[test]
-fn journey_retry_on_server_error_recovers() {
+#[tokio::test]
+async fn journey_retry_on_server_error_recovers() {
     let config = crate::config::Config {
         max_retries: Some(3),
         retry_base_delay_ms: Some(1), // minimal delay for fast tests
         ..crate::config::Config::default()
     };
     let mut h = JourneyHarness::new_with_config("journey-retry-recover", config);
-    let (server, client) = h.start_mock_server();
+    let (server, client) = h.start_mock_server().await;
 
     let sse_body = sse_text_response("recovered from 500");
-    h.rt.block_on(async {
+    {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, ResponseTemplate};
 
@@ -1730,15 +1738,15 @@ fn journey_retry_on_server_error_recovers() {
             )
             .mount(&server)
             .await;
-    });
+    }
 
-    let (r, _) = h.turn_with_client("test retry", &client, no_tools());
+    let (r, _) = h.turn_with_client("test retry", &client, no_tools()).await;
     assert!(
         r.is_ok(),
         "retry should recover from server error; got: {r:?}"
     );
 
-    let msgs = h.raw_messages();
+    let msgs = h.raw_messages().await;
     assert_eq!(
         msgs.len(),
         2,
@@ -1764,8 +1772,8 @@ fn journey_retry_on_server_error_recovers() {
 ///    empty ToolResult content with "(empty result)" before rig sees the history.
 /// 3. Assert the turn succeeds (Ok).
 /// 4. Assert the in-memory history (post-turn raw messages) contains "(empty result)".
-#[test]
-fn journey_empty_tool_result_replaced_with_placeholder() {
+#[tokio::test]
+async fn journey_empty_tool_result_replaced_with_placeholder() {
     use crate::types::{
         AssistantContent, ToolCall, ToolFunction, ToolResult, ToolResultContent, UserContent,
     };
@@ -1797,28 +1805,30 @@ fn journey_empty_tool_result_replaced_with_placeholder() {
         crate::types::Message::assistant("[ok]"),
     ];
 
-    h.rt.block_on(
-        h.memory_state
-            .memory_mut()
-            .append(h.session_id, prior_messages),
-    )
-    .expect("pre-populate cache");
+    h.memory_state
+        .memory_mut()
+        .append(h.session_id, prior_messages)
+        .await
+        .expect("pre-populate cache");
 
     // Now run a follow-up turn — pre-flight repair must fix the empty ToolResult.
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("follow-up answer".into()),
         MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
     ]]);
-    let (r, _) = h.turn("what was the result?", model, no_tools());
+    let (r, _) = h.turn("what was the result?", model, no_tools()).await;
     assert!(
         r.is_ok(),
         "turn must succeed after empty ToolResult is repaired; got: {r:?}"
     );
 
     // Verify the in-memory cache contains "(empty result)" for the repaired entry.
-    let all_msgs =
-        h.rt.block_on(h.memory_state.memory_mut().load(h.session_id))
-            .expect("load messages");
+    let all_msgs = h
+        .memory_state
+        .memory_mut()
+        .load(h.session_id)
+        .await
+        .expect("load messages");
 
     let has_placeholder = all_msgs.iter().any(|msg| {
         let crate::types::Message::User { content } = msg else {
@@ -1849,8 +1859,8 @@ fn journey_empty_tool_result_replaced_with_placeholder() {
 ///
 /// The repair happens inside `JournalConversationMemory::load()` via `repair_messages()`.
 /// The `fix_null_tool_arguments` pass replaces `null` with `{}` before rig sees the history.
-#[test]
-fn journey_null_args_tool_call_repaired_on_load() {
+#[tokio::test]
+async fn journey_null_args_tool_call_repaired_on_load() {
     use std::io::Write;
 
     let temp_dir = tempfile::tempdir().expect("tempdir");
@@ -1916,8 +1926,8 @@ fn journey_null_args_tool_call_repaired_on_load() {
     }
 
     // Create a fresh MemoryState that loads the corrupt JSONL. Repair fires inside load().
-    let rt = tokio::runtime::Runtime::new().expect("rt");
-    let mut ms = crate::conversation::state::memory::MemoryState::new(path.clone());
+    let store = Arc::new(FsSessionStore::new(path.clone()));
+    let mut ms = crate::conversation::state::memory::MemoryState::new(store);
 
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("The tool was unavailable but we can continue.".into()),
@@ -1925,19 +1935,21 @@ fn journey_null_args_tool_call_repaired_on_load() {
     ]]);
 
     let mut ui = MockUi::new();
-    let mut executor = TurnExecutor::new(&config, &rt, &mut ms, no_tools());
-    let outcome = executor.execute(
-        &mut ui,
-        ExecuteInput {
-            prompt: "what happened?".to_string(),
-            preamble: None,
-            span: nu_protocol::Span::test_data(),
-        },
-        &CachedProviderClient::Mock(model),
-        MockResolver,
-        Some(session_id),
-        None,
-    );
+    let mut executor = TurnExecutor::new(&config, &mut ms, no_tools());
+    let outcome = executor
+        .execute(
+            &mut ui,
+            ExecuteInput {
+                prompt: "what happened?".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            &CachedProviderClient::Mock(model),
+            MockResolver,
+            Some(session_id),
+            None,
+        )
+        .await;
 
     // The turn must succeed — repair healed the null-args poison on load.
     assert!(

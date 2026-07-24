@@ -1,4 +1,5 @@
 use super::*;
+use std::future::Future;
 
 #[derive(Debug)]
 pub enum RuntimeRunError<E> {
@@ -6,7 +7,7 @@ pub enum RuntimeRunError<E> {
     Run(RestoreRunError<E, TerminalLifecycleError>),
 }
 
-pub fn run_with_terminal_restore<B, T, E, F>(
+pub fn run_with_terminal_restore_sync<B, T, E, F>(
     lifecycle: &mut TerminalLifecycle<B>,
     run: F,
 ) -> Result<T, RuntimeRunError<E>>
@@ -16,6 +17,21 @@ where
 {
     lifecycle.enter().map_err(RuntimeRunError::Enter)?;
     run_with_restore(lifecycle, run).map_err(RuntimeRunError::Run)
+}
+
+pub async fn run_with_terminal_restore<B, T, E, F, Fut>(
+    lifecycle: &mut TerminalLifecycle<B>,
+    run: F,
+) -> Result<T, RuntimeRunError<E>>
+where
+    B: TerminalBackend,
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = Result<T, E>>,
+{
+    lifecycle.enter().map_err(RuntimeRunError::Enter)?;
+    let run_result = run().await;
+    let _ = lifecycle.restore();
+    run_result.map_err(|e| RuntimeRunError::Run(RestoreRunError::Run(e)))
 }
 
 pub struct AnsiTerminalBackend<W>

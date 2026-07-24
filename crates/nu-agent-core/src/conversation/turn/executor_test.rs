@@ -14,24 +14,23 @@ use super::super::test::{default_circuit_breaker, default_doom_state};
 use super::test_utils::{MockResolver, MockUi, test_config};
 use super::*;
 use crate::conversation::providers::CachedProviderClient;
-use crate::session::ConversationStore;
+use crate::session::{FsSessionStore, StoreEntry};
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
 
 #[test]
 fn turn_executor_new_constructs_without_panic() {
     let config = test_config();
-    let rt = tokio::runtime::Runtime::new().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut memory_state =
-        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
+        FsSessionStore::new(temp_dir.path().to_path_buf()),
+    ));
     let closure_registry = ClosureRegistry::new();
     let mcp_registry = McpToolRegistry::from_names(Vec::<String>::new());
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
     let _executor = TurnExecutor::new(
         &config,
-        &rt,
         &mut memory_state,
         ToolInfra {
             closure_registry: Arc::new(closure_registry),
@@ -48,17 +47,16 @@ fn turn_executor_new_constructs_without_panic() {
 #[test]
 fn turn_executor_exposes_memory_state() {
     let config = test_config();
-    let rt = tokio::runtime::Runtime::new().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut memory_state =
-        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
+        FsSessionStore::new(temp_dir.path().to_path_buf()),
+    ));
     let closure_registry = ClosureRegistry::new();
     let mcp_registry = McpToolRegistry::from_names(Vec::<String>::new());
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
     let executor = TurnExecutor::new(
         &config,
-        &rt,
         &mut memory_state,
         ToolInfra {
             closure_registry: Arc::new(closure_registry),
@@ -77,17 +75,16 @@ fn turn_executor_exposes_memory_state() {
 #[test]
 fn turn_executor_take_response_data_returns_none_before_execute() {
     let config = test_config();
-    let rt = tokio::runtime::Runtime::new().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut memory_state =
-        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
+        FsSessionStore::new(temp_dir.path().to_path_buf()),
+    ));
     let closure_registry = ClosureRegistry::new();
     let mcp_registry = McpToolRegistry::from_names(Vec::<String>::new());
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
     let mut executor = TurnExecutor::new(
         &config,
-        &rt,
         &mut memory_state,
         ToolInfra {
             closure_registry: Arc::new(closure_registry),
@@ -123,14 +120,14 @@ fn turn_executor_take_response_data_returns_none_before_execute() {
 ///   2. conversation store was appended with the cancelled messages
 ///   3. UiEvent::Completed was emitted
 ///   4. UiEvent::AssistantMessage was NOT emitted
-#[test]
-fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_completed() {
+#[tokio::test]
+async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_completed() {
     let config = test_config();
-    let rt = tokio::runtime::Runtime::new().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-cancelled-session";
-    let mut memory_state =
-        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
+        FsSessionStore::new(temp_dir.path().to_path_buf()),
+    ));
 
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("partial response".to_string()),
@@ -146,7 +143,6 @@ fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_completed(
 
     let mut executor = TurnExecutor::new(
         &config,
-        &rt,
         &mut memory_state,
         ToolInfra {
             closure_registry: Arc::new(closure_registry),
@@ -158,18 +154,20 @@ fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_completed(
         },
     );
 
-    let result = executor.execute(
-        &mut ui,
-        ExecuteInput {
-            prompt: "hello".to_string(),
-            preamble: None,
-            span: nu_protocol::Span::test_data(),
-        },
-        &cached_client,
-        MockResolver,
-        Some(session_id),
-        None,
-    );
+    let result = executor
+        .execute(
+            &mut ui,
+            ExecuteInput {
+                prompt: "hello".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            &cached_client,
+            MockResolver,
+            Some(session_id),
+            None,
+        )
+        .await;
 
     // 1. Result must be EarlyReturn (not Completed — that would be the bug)
     assert!(
@@ -184,10 +182,18 @@ fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_completed(
 
     // 2. Conversation store must have been written with the cancelled messages
     //    (via JournalConversationMemory.append() — single write to both JSONL and cache)
-    let persisted = memory_state
-        .conversation_store()
-        .load(session_id)
-        .expect("conversation store load should succeed");
+    let persisted_entries = memory_state
+        .memory()
+        .load_all(session_id)
+        .await
+        .expect("store load should succeed");
+    let persisted: Vec<crate::types::Message> = persisted_entries
+        .iter()
+        .filter_map(|e| match e {
+            StoreEntry::Message(m) => Some(m.clone()),
+            _ => None,
+        })
+        .collect();
     // The mock cancels immediately (before any assistant response), so path C appends
     // the delta from PromptCancelled::chat_history. With pre_turn_count=0 on a fresh
     // session the delta is [user("hello")] = 1 message. However the mock timing may
@@ -234,14 +240,14 @@ fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_completed(
 /// This verifies the double-write elimination: executor.rs no longer calls
 /// conversation_store().append() for completed turns. The single write happens
 /// through memory.append() which rig calls internally at turn end.
-#[test]
-fn completed_turn_no_explicit_store_append_needed() {
+#[tokio::test]
+async fn completed_turn_no_explicit_store_append_needed() {
     let config = test_config();
-    let rt = tokio::runtime::Runtime::new().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-completed-session";
-    let mut memory_state =
-        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
+        FsSessionStore::new(temp_dir.path().to_path_buf()),
+    ));
 
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("Hello from LLM!".to_string()),
@@ -257,7 +263,6 @@ fn completed_turn_no_explicit_store_append_needed() {
 
     let mut executor = TurnExecutor::new(
         &config,
-        &rt,
         &mut memory_state,
         ToolInfra {
             closure_registry: Arc::new(closure_registry),
@@ -269,18 +274,20 @@ fn completed_turn_no_explicit_store_append_needed() {
         },
     );
 
-    let result = executor.execute(
-        &mut ui,
-        ExecuteInput {
-            prompt: "hello".to_string(),
-            preamble: None,
-            span: nu_protocol::Span::test_data(),
-        },
-        &cached_client,
-        MockResolver,
-        Some(session_id),
-        None,
-    );
+    let result = executor
+        .execute(
+            &mut ui,
+            ExecuteInput {
+                prompt: "hello".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            &cached_client,
+            MockResolver,
+            Some(session_id),
+            None,
+        )
+        .await;
 
     // Collect response data before dropping the executor (which holds a mutable borrow)
     let response_data = executor.take_response_data();
@@ -297,10 +304,18 @@ fn completed_turn_no_explicit_store_append_needed() {
     );
 
     // rig wrote to JSONL via memory.append() — no explicit store.append() in executor
-    let persisted = memory_state
-        .conversation_store()
-        .load(session_id)
-        .expect("conversation store load should succeed");
+    let persisted_entries = memory_state
+        .memory()
+        .load_all(session_id)
+        .await
+        .expect("store load should succeed");
+    let persisted: Vec<crate::types::Message> = persisted_entries
+        .iter()
+        .filter_map(|e| match e {
+            StoreEntry::Message(m) => Some(m.clone()),
+            _ => None,
+        })
+        .collect();
     assert!(
         !persisted.is_empty(),
         "completed turn: JSONL must contain messages written via memory.append()"
@@ -318,16 +333,16 @@ fn completed_turn_no_explicit_store_append_needed() {
 ///
 /// Verifying the single-write pattern: both `conversation_store().load()` and
 /// `memory().load()` return the same messages after a cancelled turn.
-#[test]
-fn cancelled_turn_writes_via_single_memory_append() {
+#[tokio::test]
+async fn cancelled_turn_writes_via_single_memory_append() {
     use rig::memory::ConversationMemory;
 
     let config = test_config();
-    let rt = tokio::runtime::Runtime::new().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-single-write-cancelled";
-    let mut memory_state =
-        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
+        FsSessionStore::new(temp_dir.path().to_path_buf()),
+    ));
 
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("partial".to_string()),
@@ -343,7 +358,6 @@ fn cancelled_turn_writes_via_single_memory_append() {
 
     let mut executor = TurnExecutor::new(
         &config,
-        &rt,
         &mut memory_state,
         ToolInfra {
             closure_registry: Arc::new(closure_registry),
@@ -355,27 +369,37 @@ fn cancelled_turn_writes_via_single_memory_append() {
         },
     );
 
-    let result = executor.execute(
-        &mut ui,
-        ExecuteInput {
-            prompt: "hello".to_string(),
-            preamble: None,
-            span: nu_protocol::Span::test_data(),
-        },
-        &cached_client,
-        MockResolver,
-        Some(session_id),
-        None,
-    );
+    let result = executor
+        .execute(
+            &mut ui,
+            ExecuteInput {
+                prompt: "hello".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            &cached_client,
+            MockResolver,
+            Some(session_id),
+            None,
+        )
+        .await;
 
     assert!(result.is_ok());
     assert!(matches!(result.unwrap(), TurnOutcome::EarlyReturn(_)));
 
     // Both store (JSONL) and memory cache must have the messages
-    let from_store = memory_state
-        .conversation_store()
-        .load(session_id)
+    let from_store_entries = memory_state
+        .memory()
+        .load_all(session_id)
+        .await
         .expect("store load should succeed");
+    let from_store: Vec<crate::types::Message> = from_store_entries
+        .iter()
+        .filter_map(|e| match e {
+            StoreEntry::Message(m) => Some(m.clone()),
+            _ => None,
+        })
+        .collect();
 
     assert!(
         !from_store.is_empty(),
@@ -386,8 +410,10 @@ fn cancelled_turn_writes_via_single_memory_append() {
     // where only a trailing user message was stored, repair trims it to an empty slice.
     // The key invariant is JSONL durability (from_store above), not the repair-filtered view.
     // Verify that memory.load() succeeds (doesn't panic/error) — content is repair-determined.
-    let _ = rt
-        .block_on(memory_state.memory().load(session_id))
+    let _ = memory_state
+        .memory()
+        .load(session_id)
+        .await
         .expect("memory load should succeed without error");
 }
 
@@ -400,14 +426,14 @@ fn cancelled_turn_writes_via_single_memory_append() {
 /// With the mock model (no real CompletionCall events), last_total_tokens stays 0.
 /// This test verifies that `last_total_tokens_mut()` on MemoryState is updated
 /// to reflect the turn result's last_total_tokens after a completed turn.
-#[test]
-fn last_total_tokens_updated_on_completed_turn() {
+#[tokio::test]
+async fn last_total_tokens_updated_on_completed_turn() {
     let config = test_config();
-    let rt = tokio::runtime::Runtime::new().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-token-tracking";
-    let mut memory_state =
-        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
+        FsSessionStore::new(temp_dir.path().to_path_buf()),
+    ));
 
     // Verify initial state
     assert!(memory_state.last_total_tokens().is_none());
@@ -426,7 +452,6 @@ fn last_total_tokens_updated_on_completed_turn() {
 
     let mut executor = TurnExecutor::new(
         &config,
-        &rt,
         &mut memory_state,
         ToolInfra {
             closure_registry: Arc::new(closure_registry),
@@ -438,18 +463,20 @@ fn last_total_tokens_updated_on_completed_turn() {
         },
     );
 
-    let result = executor.execute(
-        &mut ui,
-        ExecuteInput {
-            prompt: "test prompt".to_string(),
-            preamble: None,
-            span: nu_protocol::Span::test_data(),
-        },
-        &cached_client,
-        MockResolver,
-        Some(session_id),
-        None,
-    );
+    let result = executor
+        .execute(
+            &mut ui,
+            ExecuteInput {
+                prompt: "test prompt".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            &cached_client,
+            MockResolver,
+            Some(session_id),
+            None,
+        )
+        .await;
 
     assert!(result.is_ok());
     assert!(matches!(result.unwrap(), TurnOutcome::Completed));
@@ -472,19 +499,19 @@ fn last_total_tokens_updated_on_completed_turn() {
 /// raises MaxTurnsError after the first tool call attempt. After Fix 1, TurnError
 /// gets messages=Some(chat_history). After Fix 2, executor persists those messages
 /// before returning LabeledError.
-#[test]
-fn max_turns_error_persists_full_history() {
+#[tokio::test]
+async fn max_turns_error_persists_full_history() {
     // max_tool_turns=0: rig raises MaxTurnsError as soon as a tool-call turn would
     // be scheduled (current_turn > 0 + 1 after the first tool response).
     let config = Config {
         max_tool_turns: Some(0),
         ..test_config()
     };
-    let rt = tokio::runtime::Runtime::new().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-max-turns";
-    let mut memory_state =
-        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
+        FsSessionStore::new(temp_dir.path().to_path_buf()),
+    ));
 
     // Turn 1: model asks for a tool call. With max_turns=0, rig will MaxTurnsError
     // as soon as it tries to schedule the tool-call turn.
@@ -502,7 +529,6 @@ fn max_turns_error_persists_full_history() {
 
     let mut executor = TurnExecutor::new(
         &config,
-        &rt,
         &mut memory_state,
         ToolInfra {
             closure_registry: Arc::new(closure_registry),
@@ -514,18 +540,20 @@ fn max_turns_error_persists_full_history() {
         },
     );
 
-    let result = executor.execute(
-        &mut ui,
-        ExecuteInput {
-            prompt: "please call a tool".to_string(),
-            preamble: None,
-            span: nu_protocol::Span::test_data(),
-        },
-        &cached_client,
-        MockResolver,
-        Some(session_id),
-        None,
-    );
+    let result = executor
+        .execute(
+            &mut ui,
+            ExecuteInput {
+                prompt: "please call a tool".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            &cached_client,
+            MockResolver,
+            Some(session_id),
+            None,
+        )
+        .await;
 
     // Must return Err (it's a hard error, not a cancellation)
     assert!(
@@ -535,9 +563,17 @@ fn max_turns_error_persists_full_history() {
 
     // JSONL must have been written with the partial chat history
     let persisted = memory_state
-        .conversation_store()
-        .load(session_id)
+        .memory()
+        .load_all(session_id)
+        .await
         .expect("store load should succeed");
+    let persisted: Vec<crate::types::Message> = persisted
+        .iter()
+        .filter_map(|e| match e {
+            StoreEntry::Message(m) => Some(m.clone()),
+            _ => None,
+        })
+        .collect();
     assert!(
         !persisted.is_empty(),
         "MaxTurnsError must persist chat_history to JSONL (Fix 1 + Fix 2 path A history)"
@@ -549,14 +585,14 @@ fn max_turns_error_persists_full_history() {
 /// Setup: mock returns a tool_call for "nonexistent_tool" which is not registered
 /// in the agent's tool list. Rig raises UnknownToolCall. After Fix 1, TurnError
 /// gets messages=Some(chat_history). After Fix 2, executor persists them.
-#[test]
-fn unknown_tool_error_persists_full_history() {
+#[tokio::test]
+async fn unknown_tool_error_persists_full_history() {
     let config = test_config();
-    let rt = tokio::runtime::Runtime::new().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-unknown-tool";
-    let mut memory_state =
-        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
+        FsSessionStore::new(temp_dir.path().to_path_buf()),
+    ));
 
     // Model calls a tool that is not registered — triggers UnknownToolCall.
     // No visible_tool_definitions → agent has no tools → any tool call is unknown.
@@ -578,7 +614,6 @@ fn unknown_tool_error_persists_full_history() {
 
     let mut executor = TurnExecutor::new(
         &config,
-        &rt,
         &mut memory_state,
         ToolInfra {
             closure_registry: Arc::new(closure_registry),
@@ -590,18 +625,20 @@ fn unknown_tool_error_persists_full_history() {
         },
     );
 
-    let result = executor.execute(
-        &mut ui,
-        ExecuteInput {
-            prompt: "use a tool please".to_string(),
-            preamble: None,
-            span: nu_protocol::Span::test_data(),
-        },
-        &cached_client,
-        MockResolver,
-        Some(session_id),
-        None,
-    );
+    let result = executor
+        .execute(
+            &mut ui,
+            ExecuteInput {
+                prompt: "use a tool please".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            &cached_client,
+            MockResolver,
+            Some(session_id),
+            None,
+        )
+        .await;
 
     // Must return Err
     assert!(
@@ -610,10 +647,18 @@ fn unknown_tool_error_persists_full_history() {
     );
 
     // JSONL must have been written with the partial chat history
-    let persisted = memory_state
-        .conversation_store()
-        .load(session_id)
+    let persisted_entries = memory_state
+        .memory()
+        .load_all(session_id)
+        .await
         .expect("store load should succeed");
+    let persisted: Vec<crate::types::Message> = persisted_entries
+        .iter()
+        .filter_map(|e| match e {
+            StoreEntry::Message(m) => Some(m.clone()),
+            _ => None,
+        })
+        .collect();
     assert!(
         !persisted.is_empty(),
         "UnknownToolCall must persist chat_history to JSONL (Fix 1 + Fix 2 path A history)"
@@ -627,15 +672,15 @@ fn unknown_tool_error_persists_full_history() {
 /// `[] + [user_msg]` = `[user_msg]`. delta = skip(0) = `[user_msg]` (non-empty),
 /// so the delta path fires and persists just the user message. The placeholder path
 /// is no longer triggered for this case.
-#[test]
-fn network_error_on_fresh_session_persists_user_message() {
+#[tokio::test]
+async fn network_error_on_fresh_session_persists_user_message() {
     let config = test_config();
-    let rt = tokio::runtime::Runtime::new().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-network-error";
     let prompt_text = "what is the weather today?";
-    let mut memory_state =
-        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
+        FsSessionStore::new(temp_dir.path().to_path_buf()),
+    ));
 
     // Streaming error on the first event — simulates network failure.
     let model =
@@ -650,7 +695,6 @@ fn network_error_on_fresh_session_persists_user_message() {
 
     let mut executor = TurnExecutor::new(
         &config,
-        &rt,
         &mut memory_state,
         ToolInfra {
             closure_registry: Arc::new(closure_registry),
@@ -662,18 +706,20 @@ fn network_error_on_fresh_session_persists_user_message() {
         },
     );
 
-    let result = executor.execute(
-        &mut ui,
-        ExecuteInput {
-            prompt: prompt_text.to_string(),
-            preamble: None,
-            span: nu_protocol::Span::test_data(),
-        },
-        &cached_client,
-        MockResolver,
-        Some(session_id),
-        None,
-    );
+    let result = executor
+        .execute(
+            &mut ui,
+            ExecuteInput {
+                prompt: prompt_text.to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            &cached_client,
+            MockResolver,
+            Some(session_id),
+            None,
+        )
+        .await;
 
     // Must return Err
     assert!(
@@ -684,10 +730,18 @@ fn network_error_on_fresh_session_persists_user_message() {
     // After the fix: last_known_history = [user_msg], delta = skip(0) = [user_msg].
     // Delta path fires → 1 message persisted (just the user prompt).
     // The placeholder path no longer fires because the delta is non-empty.
-    let persisted = memory_state
-        .conversation_store()
-        .load(session_id)
+    let persisted_entries = memory_state
+        .memory()
+        .load_all(session_id)
+        .await
         .expect("store load should succeed");
+    let persisted: Vec<crate::types::Message> = persisted_entries
+        .iter()
+        .filter_map(|e| match e {
+            StoreEntry::Message(m) => Some(m.clone()),
+            _ => None,
+        })
+        .collect();
     assert_eq!(
         persisted.len(),
         1,
@@ -713,15 +767,15 @@ fn network_error_on_fresh_session_persists_user_message() {
 ///
 /// This is CORRECT: we now save the user's question even if the API fails to respond,
 /// which is better than saving a fake `[Turn failed:]` assistant message.
-#[test]
-fn hard_error_on_first_llm_call_persists_user_message() {
+#[tokio::test]
+async fn hard_error_on_first_llm_call_persists_user_message() {
     let config = test_config();
-    let rt = tokio::runtime::Runtime::new().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-hard-error-no-hook-history";
     let prompt_text = "fresh turn on empty session";
-    let mut memory_state =
-        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
+        FsSessionStore::new(temp_dir.path().to_path_buf()),
+    ));
 
     // Fresh session — no prior messages. on_completion_call fires with history=[]
     // and prompt = user_msg. After fix: last_known_history = [user_msg].
@@ -738,7 +792,6 @@ fn hard_error_on_first_llm_call_persists_user_message() {
 
     let mut executor = TurnExecutor::new(
         &config,
-        &rt,
         &mut memory_state,
         ToolInfra {
             closure_registry: Arc::new(closure_registry),
@@ -750,18 +803,20 @@ fn hard_error_on_first_llm_call_persists_user_message() {
         },
     );
 
-    let result = executor.execute(
-        &mut ui,
-        ExecuteInput {
-            prompt: prompt_text.to_string(),
-            preamble: None,
-            span: nu_protocol::Span::test_data(),
-        },
-        &cached_client,
-        MockResolver,
-        Some(session_id),
-        None,
-    );
+    let result = executor
+        .execute(
+            &mut ui,
+            ExecuteInput {
+                prompt: prompt_text.to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            &cached_client,
+            MockResolver,
+            Some(session_id),
+            None,
+        )
+        .await;
 
     // Must return Err
     assert!(
@@ -770,10 +825,18 @@ fn hard_error_on_first_llm_call_persists_user_message() {
     );
 
     // After the fix: last_known_history = [user_msg], delta = [user_msg], 1 message persisted.
-    let persisted = memory_state
-        .conversation_store()
-        .load(session_id)
+    let persisted_entries = memory_state
+        .memory()
+        .load_all(session_id)
+        .await
         .expect("store load should succeed");
+    let persisted: Vec<crate::types::Message> = persisted_entries
+        .iter()
+        .filter_map(|e| match e {
+            StoreEntry::Message(m) => Some(m.clone()),
+            _ => None,
+        })
+        .collect();
 
     assert_eq!(
         persisted.len(),
@@ -792,13 +855,13 @@ fn hard_error_on_first_llm_call_persists_user_message() {
 
 /// When there is no session (transient invocation), hard errors must NOT write
 /// anything to the store — there is no conversation to record.
-#[test]
-fn hard_error_no_session_persists_nothing() {
+#[tokio::test]
+async fn hard_error_no_session_persists_nothing() {
     let config = test_config();
-    let rt = tokio::runtime::Runtime::new().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut memory_state =
-        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
+        FsSessionStore::new(temp_dir.path().to_path_buf()),
+    ));
 
     // Streaming error — hard failure, no history recoverable.
     let model =
@@ -813,7 +876,6 @@ fn hard_error_no_session_persists_nothing() {
 
     let mut executor = TurnExecutor::new(
         &config,
-        &rt,
         &mut memory_state,
         ToolInfra {
             closure_registry: Arc::new(closure_registry),
@@ -825,18 +887,20 @@ fn hard_error_no_session_persists_nothing() {
         },
     );
 
-    let result = executor.execute(
-        &mut ui,
-        ExecuteInput {
-            prompt: "a transient prompt".to_string(),
-            preamble: None,
-            span: nu_protocol::Span::test_data(),
-        },
-        &cached_client,
-        MockResolver,
-        None, // <-- no session
-        None,
-    );
+    let result = executor
+        .execute(
+            &mut ui,
+            ExecuteInput {
+                prompt: "a transient prompt".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            &cached_client,
+            MockResolver,
+            None, // <-- no session
+            None,
+        )
+        .await;
 
     // Must return Err
     assert!(result.is_err(), "hard error must propagate as LabeledError");
@@ -871,14 +935,14 @@ fn hard_error_no_session_persists_nothing() {
 ///
 /// After inject_missing_tool_results, the persisted JSONL must contain both
 /// the Assistant(ToolCall) and a User(ToolResult{id, content:"[interrupted]"}).
-#[test]
-fn prompt_cancelled_with_unpaired_tool_call_injects_synthetic_result() {
+#[tokio::test]
+async fn prompt_cancelled_with_unpaired_tool_call_injects_synthetic_result() {
     let config = test_config();
-    let rt = tokio::runtime::Runtime::new().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-cancel-inject";
-    let mut memory_state =
-        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
+        FsSessionStore::new(temp_dir.path().to_path_buf()),
+    ));
 
     // Model issues a tool call — the cancel fires before the tool result is
     // appended, so chat_history will contain Assistant(ToolCall) with no
@@ -897,7 +961,6 @@ fn prompt_cancelled_with_unpaired_tool_call_injects_synthetic_result() {
 
     let mut executor = TurnExecutor::new(
         &config,
-        &rt,
         &mut memory_state,
         ToolInfra {
             closure_registry: Arc::new(closure_registry),
@@ -909,18 +972,20 @@ fn prompt_cancelled_with_unpaired_tool_call_injects_synthetic_result() {
         },
     );
 
-    let result = executor.execute(
-        &mut ui,
-        ExecuteInput {
-            prompt: "call a tool".to_string(),
-            preamble: None,
-            span: nu_protocol::Span::test_data(),
-        },
-        &cached_client,
-        MockResolver,
-        Some(session_id),
-        None,
-    );
+    let result = executor
+        .execute(
+            &mut ui,
+            ExecuteInput {
+                prompt: "call a tool".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            &cached_client,
+            MockResolver,
+            Some(session_id),
+            None,
+        )
+        .await;
 
     assert!(result.is_ok(), "cancelled turn must not return Err");
     assert!(matches!(result.unwrap(), TurnOutcome::EarlyReturn(_)));
@@ -929,10 +994,18 @@ fn prompt_cancelled_with_unpaired_tool_call_injects_synthetic_result() {
     // If the model was fast enough that the tool call was actually processed
     // before cancel fired, we may get a completed turn. Either way, if a
     // ToolCall was persisted, its ToolResult must also be persisted.
-    let persisted = memory_state
-        .conversation_store()
-        .load(session_id)
+    let persisted_entries = memory_state
+        .memory()
+        .load_all(session_id)
+        .await
         .expect("store load should succeed");
+    let persisted: Vec<crate::types::Message> = persisted_entries
+        .iter()
+        .filter_map(|e| match e {
+            StoreEntry::Message(m) => Some(m.clone()),
+            _ => None,
+        })
+        .collect();
 
     // For every Assistant message with a ToolCall, there must be a following
     // User message with the matching ToolResult.
@@ -971,14 +1044,14 @@ fn prompt_cancelled_with_unpaired_tool_call_injects_synthetic_result() {
 /// On UnknownToolCall (Err path, e.messages=Some) with an unpaired ToolCall in
 /// chat_history, the messages persisted to JSONL must contain a synthetic
 /// User(ToolResult) immediately after the unpaired Assistant(ToolCall).
-#[test]
-fn unknown_tool_error_with_unpaired_tool_call_injects_synthetic_result() {
+#[tokio::test]
+async fn unknown_tool_error_with_unpaired_tool_call_injects_synthetic_result() {
     let config = test_config();
-    let rt = tokio::runtime::Runtime::new().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-unknown-inject";
-    let mut memory_state =
-        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
+        FsSessionStore::new(temp_dir.path().to_path_buf()),
+    ));
 
     // Model calls a tool that is not registered — triggers UnknownToolCall.
     // The chat_history will contain the user prompt + Assistant(ToolCall) but
@@ -1001,7 +1074,6 @@ fn unknown_tool_error_with_unpaired_tool_call_injects_synthetic_result() {
 
     let mut executor = TurnExecutor::new(
         &config,
-        &rt,
         &mut memory_state,
         ToolInfra {
             closure_registry: Arc::new(closure_registry),
@@ -1013,26 +1085,36 @@ fn unknown_tool_error_with_unpaired_tool_call_injects_synthetic_result() {
         },
     );
 
-    let result = executor.execute(
-        &mut ui,
-        ExecuteInput {
-            prompt: "use a tool".to_string(),
-            preamble: None,
-            span: nu_protocol::Span::test_data(),
-        },
-        &cached_client,
-        MockResolver,
-        Some(session_id),
-        None,
-    );
+    let result = executor
+        .execute(
+            &mut ui,
+            ExecuteInput {
+                prompt: "use a tool".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            &cached_client,
+            MockResolver,
+            Some(session_id),
+            None,
+        )
+        .await;
 
     // UnknownToolCall returns Err
     assert!(result.is_err(), "UnknownToolCall must propagate as Err");
 
-    let persisted = memory_state
-        .conversation_store()
-        .load(session_id)
+    let persisted_entries = memory_state
+        .memory()
+        .load_all(session_id)
+        .await
         .expect("store load should succeed");
+    let persisted: Vec<crate::types::Message> = persisted_entries
+        .iter()
+        .filter_map(|e| match e {
+            StoreEntry::Message(m) => Some(m.clone()),
+            _ => None,
+        })
+        .collect();
 
     // Same invariant: every persisted ToolCall must have an adjacent ToolResult.
     use crate::types::{AssistantContent, UserContent};
@@ -1334,16 +1416,14 @@ fn is_retryable_matches_spec() {
 ///
 /// Key regression assertion: store must be exactly 3 (2 prior + 1 user prompt),
 /// NOT 4 (old placeholder pair) and NOT 5 (the doubled result from the pre-delta-fix bug).
-#[test]
-fn hard_error_after_prior_history_persists_user_message() {
-    use crate::session::ConversationStore;
-
+#[tokio::test]
+async fn hard_error_after_prior_history_persists_user_message() {
     let config = test_config();
-    let rt = tokio::runtime::Runtime::new().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-hard-error-hook-history";
-    let mut memory_state =
-        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
+        FsSessionStore::new(temp_dir.path().to_path_buf()),
+    ));
 
     // Pre-populate the session store with a completed exchange so that rig
     // loads it into the agent's context and on_completion_call fires with
@@ -1352,10 +1432,23 @@ fn hard_error_after_prior_history_persists_user_message() {
         crate::types::Message::user("work done"),
         crate::types::Message::assistant("ok"),
     ];
-    memory_state
-        .conversation_store()
-        .append(session_id, &prior_messages, None)
-        .expect("pre-populate store should succeed");
+    // Pre-populate the store by creating a separate FsSessionStore pointing to the same path
+    // (the memory_state's internal store shares the same backing directory)
+    let _prior_entries: Vec<StoreEntry> = prior_messages
+        .iter()
+        .cloned()
+        .map(StoreEntry::Message)
+        .collect();
+    memory_state.memory().load_all(session_id).await.ok();
+    // Use ConversationMemory append to pre-populate
+    {
+        use rig::memory::ConversationMemory;
+        memory_state
+            .memory()
+            .append(session_id, prior_messages.clone())
+            .await
+            .unwrap();
+    }
 
     // Mock model: errors immediately (simulates CompletionError / network failure).
     let model =
@@ -1370,7 +1463,6 @@ fn hard_error_after_prior_history_persists_user_message() {
 
     let mut executor = TurnExecutor::new(
         &config,
-        &rt,
         &mut memory_state,
         ToolInfra {
             closure_registry: Arc::new(closure_registry),
@@ -1382,26 +1474,36 @@ fn hard_error_after_prior_history_persists_user_message() {
         },
     );
 
-    let result = executor.execute(
-        &mut ui,
-        ExecuteInput {
-            prompt: "new prompt".to_string(),
-            preamble: None,
-            span: nu_protocol::Span::test_data(),
-        },
-        &cached_client,
-        MockResolver,
-        Some(session_id),
-        None,
-    );
+    let result = executor
+        .execute(
+            &mut ui,
+            ExecuteInput {
+                prompt: "new prompt".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            &cached_client,
+            MockResolver,
+            Some(session_id),
+            None,
+        )
+        .await;
 
     // Must return Err (it's a hard error)
     assert!(result.is_err(), "CompletionError must propagate as Err");
 
-    let persisted = memory_state
-        .conversation_store()
-        .load(session_id)
+    let persisted_entries = memory_state
+        .memory()
+        .load_all(session_id)
+        .await
         .expect("store load should succeed");
+    let persisted: Vec<crate::types::Message> = persisted_entries
+        .iter()
+        .filter_map(|e| match e {
+            StoreEntry::Message(m) => Some(m.clone()),
+            _ => None,
+        })
+        .collect();
 
     // After the fix: last_known_history = [prior_1, prior_2, user_prompt].
     // delta = skip(2) = [user_prompt] → delta path fires → 3 messages total.
@@ -1486,27 +1588,28 @@ fn hard_error_after_prior_history_persists_user_message() {
 ///
 /// The bound is now exactly 3 (not < 5). The delta path fires with just the user
 /// prompt — no placeholder is synthesised because the delta is non-empty.
-#[test]
-fn hard_error_after_prior_history_persists_only_delta() {
+#[tokio::test]
+async fn hard_error_after_prior_history_persists_only_delta() {
     let config = test_config();
-    let rt = tokio::runtime::Runtime::new().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-delta-hard-error";
-    let mut memory_state =
-        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
+        FsSessionStore::new(temp_dir.path().to_path_buf()),
+    ));
 
-    // Pre-populate: simulate a prior successful turn
-    memory_state
-        .conversation_store()
-        .append(
-            session_id,
-            &[
-                crate::types::Message::user("prior work"),
-                crate::types::Message::assistant("done"),
-            ],
-            None,
-        )
-        .expect("pre-populate should succeed");
+    // Pre-populate: simulate a prior successful turn using ConversationMemory append
+    let prior_msgs = vec![
+        crate::types::Message::user("prior work"),
+        crate::types::Message::assistant("done"),
+    ];
+    {
+        use rig::memory::ConversationMemory;
+        memory_state
+            .memory()
+            .append(session_id, prior_msgs)
+            .await
+            .unwrap();
+    }
 
     // Model errors immediately — simulates CompletionError / network failure.
     // on_completion_call fires with history = [user("prior work"), assistant("done")]
@@ -1524,7 +1627,6 @@ fn hard_error_after_prior_history_persists_only_delta() {
 
     let mut executor = TurnExecutor::new(
         &config,
-        &rt,
         &mut memory_state,
         ToolInfra {
             closure_registry: Arc::new(closure_registry),
@@ -1536,25 +1638,35 @@ fn hard_error_after_prior_history_persists_only_delta() {
         },
     );
 
-    let result = executor.execute(
-        &mut ui,
-        ExecuteInput {
-            prompt: "new question".to_string(),
-            preamble: None,
-            span: nu_protocol::Span::test_data(),
-        },
-        &cached_client,
-        MockResolver,
-        Some(session_id),
-        None,
-    );
+    let result = executor
+        .execute(
+            &mut ui,
+            ExecuteInput {
+                prompt: "new question".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            &cached_client,
+            MockResolver,
+            Some(session_id),
+            None,
+        )
+        .await;
 
     assert!(result.is_err(), "hard error must propagate as Err");
 
-    let persisted = memory_state
-        .conversation_store()
-        .load(session_id)
+    let persisted_entries = memory_state
+        .memory()
+        .load_all(session_id)
+        .await
         .expect("store load should succeed");
+    let persisted: Vec<crate::types::Message> = persisted_entries
+        .iter()
+        .filter_map(|e| match e {
+            StoreEntry::Message(m) => Some(m.clone()),
+            _ => None,
+        })
+        .collect();
 
     // After the fix: exactly 3 messages (2 prior + 1 user prompt delta).
     // The delta path fires because last_known_history includes the user prompt.
@@ -1582,17 +1694,17 @@ fn hard_error_after_prior_history_persists_only_delta() {
 ///   - Turn 1 success: 2 messages (rig persists [user("t1"), assistant("ok")])
 ///   - Turn 2 error: +1 = 3 messages (delta = [user("t2")])
 ///   - Turn 3 error: +1 = 4 messages (delta = [user("t3")])
-#[test]
-fn hard_error_twice_does_not_double_history() {
+#[tokio::test]
+async fn hard_error_twice_does_not_double_history() {
     let config = test_config();
     let session_id = "test-no-double";
     let temp_dir = tempfile::tempdir().unwrap();
 
     // Turn 1: successful turn — rig appends [user("t1"), assistant("ok")] → store has 2 msgs.
     {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let mut memory_state =
-            super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+        let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
+            FsSessionStore::new(temp_dir.path().to_path_buf()),
+        ));
         let model = MockCompletionModel::from_stream_turns([[
             MockStreamEvent::Text("ok".to_string()),
             MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
@@ -1604,7 +1716,6 @@ fn hard_error_twice_does_not_double_history() {
         let tool_server_handle = rig::tool::server::ToolServer::new().run();
         let mut executor = TurnExecutor::new(
             &config,
-            &rt,
             &mut memory_state,
             ToolInfra {
                 closure_registry: Arc::new(closure_registry),
@@ -1615,27 +1726,29 @@ fn hard_error_twice_does_not_double_history() {
                 doom_state: default_doom_state(),
             },
         );
-        let result = executor.execute(
-            &mut ui,
-            ExecuteInput {
-                prompt: "t1".to_string(),
-                preamble: None,
-                span: nu_protocol::Span::test_data(),
-            },
-            &cached_client,
-            MockResolver,
-            Some(session_id),
-            None,
-        );
+        let result = executor
+            .execute(
+                &mut ui,
+                ExecuteInput {
+                    prompt: "t1".to_string(),
+                    preamble: None,
+                    span: nu_protocol::Span::test_data(),
+                },
+                &cached_client,
+                MockResolver,
+                Some(session_id),
+                None,
+            )
+            .await;
         assert!(result.is_ok(), "turn 1 must succeed");
     }
 
     // Turn 2: hard error. pre_turn_count=2. last_known_history = [prior_1, prior_2, user("t2")].
     // delta = skip(2) = [user("t2")] → delta path fires → store has 3.
     {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let mut memory_state =
-            super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+        let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
+            FsSessionStore::new(temp_dir.path().to_path_buf()),
+        ));
         let model = MockCompletionModel::from_stream_turns([[MockStreamEvent::error("timeout")]]);
         let cached_client = CachedProviderClient::Mock(model);
         let mut ui = MockUi::new();
@@ -1644,7 +1757,6 @@ fn hard_error_twice_does_not_double_history() {
         let tool_server_handle = rig::tool::server::ToolServer::new().run();
         let mut executor = TurnExecutor::new(
             &config,
-            &rt,
             &mut memory_state,
             ToolInfra {
                 closure_registry: Arc::new(closure_registry),
@@ -1655,26 +1767,28 @@ fn hard_error_twice_does_not_double_history() {
                 doom_state: default_doom_state(),
             },
         );
-        let _ = executor.execute(
-            &mut ui,
-            ExecuteInput {
-                prompt: "t2".to_string(),
-                preamble: None,
-                span: nu_protocol::Span::test_data(),
-            },
-            &cached_client,
-            MockResolver,
-            Some(session_id),
-            None,
-        );
+        let _ = executor
+            .execute(
+                &mut ui,
+                ExecuteInput {
+                    prompt: "t2".to_string(),
+                    preamble: None,
+                    span: nu_protocol::Span::test_data(),
+                },
+                &cached_client,
+                MockResolver,
+                Some(session_id),
+                None,
+            )
+            .await;
     }
 
     // Turn 3: hard error again. pre_turn_count=3. last_known_history = [prior_1, prior_2, user("t2"), user("t3")].
     // delta = skip(3) = [user("t3")] → delta path fires → store has 4.
     {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let mut memory_state =
-            super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+        let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
+            FsSessionStore::new(temp_dir.path().to_path_buf()),
+        ));
         let model = MockCompletionModel::from_stream_turns([[MockStreamEvent::error("timeout")]]);
         let cached_client = CachedProviderClient::Mock(model);
         let mut ui = MockUi::new();
@@ -1683,7 +1797,6 @@ fn hard_error_twice_does_not_double_history() {
         let tool_server_handle = rig::tool::server::ToolServer::new().run();
         let mut executor = TurnExecutor::new(
             &config,
-            &rt,
             &mut memory_state,
             ToolInfra {
                 closure_registry: Arc::new(closure_registry),
@@ -1694,30 +1807,41 @@ fn hard_error_twice_does_not_double_history() {
                 doom_state: default_doom_state(),
             },
         );
-        let _ = executor.execute(
-            &mut ui,
-            ExecuteInput {
-                prompt: "t3".to_string(),
-                preamble: None,
-                span: nu_protocol::Span::test_data(),
-            },
-            &cached_client,
-            MockResolver,
-            Some(session_id),
-            None,
-        );
+        let _ = executor
+            .execute(
+                &mut ui,
+                ExecuteInput {
+                    prompt: "t3".to_string(),
+                    preamble: None,
+                    span: nu_protocol::Span::test_data(),
+                },
+                &cached_client,
+                MockResolver,
+                Some(session_id),
+                None,
+            )
+            .await;
     }
 
     // Final state: 2 (turn 1 success) + 1 (turn 2 user delta) + 1 (turn 3 user delta) = 4.
     // After the fix: on_completion_call stores history + [prompt], so delta = [user_prompt]
     // for each error turn. Delta path fires → 1 message per error turn, not 2 (no placeholder).
-    let final_memory_state =
-        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
-    let final_count = final_memory_state
-        .conversation_store()
-        .load(session_id)
-        .expect("store load should succeed")
-        .len();
+    let final_memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
+        FsSessionStore::new(temp_dir.path().to_path_buf()),
+    ));
+    let final_entries = final_memory_state
+        .memory()
+        .load_all(session_id)
+        .await
+        .expect("store load should succeed");
+    let final_count: Vec<crate::types::Message> = final_entries
+        .iter()
+        .filter_map(|e| match e {
+            StoreEntry::Message(m) => Some(m.clone()),
+            _ => None,
+        })
+        .collect();
+    let final_count = final_count.len();
 
     assert_eq!(
         final_count, 4,
@@ -1744,27 +1868,28 @@ fn hard_error_twice_does_not_double_history() {
 ///
 /// Expected: store grows by at most the new messages from this turn, not by the
 /// full prior history again.
-#[test]
-fn cancelled_turn_after_prior_history_persists_only_delta() {
+#[tokio::test]
+async fn cancelled_turn_after_prior_history_persists_only_delta() {
     let config = test_config();
-    let rt = tokio::runtime::Runtime::new().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-cancelled-delta";
-    let mut memory_state =
-        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
+        FsSessionStore::new(temp_dir.path().to_path_buf()),
+    ));
 
-    // Pre-populate: simulate a prior successful turn
-    memory_state
-        .conversation_store()
-        .append(
-            session_id,
-            &[
-                crate::types::Message::user("prior work"),
-                crate::types::Message::assistant("done"),
-            ],
-            None,
-        )
-        .expect("pre-populate should succeed");
+    // Pre-populate: simulate a prior successful turn using ConversationMemory append
+    let prior_msgs = vec![
+        crate::types::Message::user("prior work"),
+        crate::types::Message::assistant("done"),
+    ];
+    {
+        use rig::memory::ConversationMemory;
+        memory_state
+            .memory()
+            .append(session_id, prior_msgs)
+            .await
+            .unwrap();
+    }
 
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("partial".to_string()),
@@ -1778,7 +1903,6 @@ fn cancelled_turn_after_prior_history_persists_only_delta() {
 
     let mut executor = TurnExecutor::new(
         &config,
-        &rt,
         &mut memory_state,
         ToolInfra {
             closure_registry: Arc::new(closure_registry),
@@ -1790,26 +1914,36 @@ fn cancelled_turn_after_prior_history_persists_only_delta() {
         },
     );
 
-    let result = executor.execute(
-        &mut ui,
-        ExecuteInput {
-            prompt: "new question".to_string(),
-            preamble: None,
-            span: nu_protocol::Span::test_data(),
-        },
-        &cached_client,
-        MockResolver,
-        Some(session_id),
-        None,
-    );
+    let result = executor
+        .execute(
+            &mut ui,
+            ExecuteInput {
+                prompt: "new question".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            &cached_client,
+            MockResolver,
+            Some(session_id),
+            None,
+        )
+        .await;
 
     assert!(result.is_ok(), "cancelled turn must not return Err");
     assert!(matches!(result.unwrap(), TurnOutcome::EarlyReturn(_)));
 
-    let persisted = memory_state
-        .conversation_store()
-        .load(session_id)
+    let persisted_entries = memory_state
+        .memory()
+        .load_all(session_id)
+        .await
         .expect("store load should succeed");
+    let persisted: Vec<crate::types::Message> = persisted_entries
+        .iter()
+        .filter_map(|e| match e {
+            StoreEntry::Message(m) => Some(m.clone()),
+            _ => None,
+        })
+        .collect();
 
     // MUST be <= 4 (2 prior + at most 2 new), NOT 5+ (prior doubled)
     assert!(
@@ -1834,15 +1968,15 @@ fn cancelled_turn_after_prior_history_persists_only_delta() {
 ///
 /// This also confirms the `test-hard-error-no-hook-history` session_id is used
 /// consistently across this and the renamed test.
-#[test]
-fn hard_error_on_first_llm_call_no_prior_history_persists_user_message() {
+#[tokio::test]
+async fn hard_error_on_first_llm_call_no_prior_history_persists_user_message() {
     let config = test_config();
-    let rt = tokio::runtime::Runtime::new().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-hard-error-fresh-session-2";
     let prompt_text = "fresh turn on empty session";
-    let mut memory_state =
-        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
+        FsSessionStore::new(temp_dir.path().to_path_buf()),
+    ));
 
     // Fresh session — no prior messages. on_completion_call fires with history=[]
     // and prompt = user_msg. After fix: last_known_history = [user_msg].
@@ -1859,7 +1993,6 @@ fn hard_error_on_first_llm_call_no_prior_history_persists_user_message() {
 
     let mut executor = TurnExecutor::new(
         &config,
-        &rt,
         &mut memory_state,
         ToolInfra {
             closure_registry: Arc::new(closure_registry),
@@ -1871,18 +2004,20 @@ fn hard_error_on_first_llm_call_no_prior_history_persists_user_message() {
         },
     );
 
-    let result = executor.execute(
-        &mut ui,
-        ExecuteInput {
-            prompt: prompt_text.to_string(),
-            preamble: None,
-            span: nu_protocol::Span::test_data(),
-        },
-        &cached_client,
-        MockResolver,
-        Some(session_id),
-        None,
-    );
+    let result = executor
+        .execute(
+            &mut ui,
+            ExecuteInput {
+                prompt: prompt_text.to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            &cached_client,
+            MockResolver,
+            Some(session_id),
+            None,
+        )
+        .await;
 
     // Must return Err
     assert!(
@@ -1891,10 +2026,18 @@ fn hard_error_on_first_llm_call_no_prior_history_persists_user_message() {
     );
 
     // After the fix: 1 message persisted (user prompt via delta path, no placeholder).
-    let persisted = memory_state
-        .conversation_store()
-        .load(session_id)
+    let persisted_entries = memory_state
+        .memory()
+        .load_all(session_id)
+        .await
         .expect("store load should succeed");
+    let persisted: Vec<crate::types::Message> = persisted_entries
+        .iter()
+        .filter_map(|e| match e {
+            StoreEntry::Message(m) => Some(m.clone()),
+            _ => None,
+        })
+        .collect();
 
     assert_eq!(
         persisted.len(),
@@ -1968,14 +2111,14 @@ impl rig::tool::Tool for SimpleEchoTool {
     }
 }
 
-#[test]
-fn hard_error_mid_tool_loop_preserves_real_tool_results() {
+#[tokio::test]
+async fn hard_error_mid_tool_loop_preserves_real_tool_results() {
     let config = test_config();
-    let rt = tokio::runtime::Runtime::new().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-mid-tool-loop-error";
-    let mut memory_state =
-        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
+        FsSessionStore::new(temp_dir.path().to_path_buf()),
+    ));
 
     // Turn 1: LLM emits tool_call + FinalResponse
     // Turn 2: LLM errors (simulates CompletionError after tool result is in history)
@@ -1998,7 +2141,6 @@ fn hard_error_mid_tool_loop_preserves_real_tool_results() {
 
     let mut executor = TurnExecutor::new(
         &config,
-        &rt,
         &mut memory_state,
         ToolInfra {
             closure_registry: Arc::new(closure_registry),
@@ -2014,18 +2156,20 @@ fn hard_error_mid_tool_loop_preserves_real_tool_results() {
         },
     );
 
-    let result = executor.execute(
-        &mut ui,
-        ExecuteInput {
-            prompt: "do the thing".to_string(),
-            preamble: None,
-            span: nu_protocol::Span::test_data(),
-        },
-        &cached_client,
-        MockResolver,
-        Some(session_id),
-        None,
-    );
+    let result = executor
+        .execute(
+            &mut ui,
+            ExecuteInput {
+                prompt: "do the thing".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            &cached_client,
+            MockResolver,
+            Some(session_id),
+            None,
+        )
+        .await;
 
     // The error must propagate (CompletionError from turn 2, or UnknownToolCall from turn 1)
     assert!(
@@ -2033,10 +2177,18 @@ fn hard_error_mid_tool_loop_preserves_real_tool_results() {
         "error on sub-call must propagate as Err; got ok"
     );
 
-    let persisted = memory_state
-        .conversation_store()
-        .load(session_id)
+    let persisted_entries = memory_state
+        .memory()
+        .load_all(session_id)
+        .await
         .expect("store load should succeed");
+    let persisted: Vec<crate::types::Message> = persisted_entries
+        .iter()
+        .filter_map(|e| match e {
+            StoreEntry::Message(m) => Some(m.clone()),
+            _ => None,
+        })
+        .collect();
 
     // Must have exactly 4 messages:
     //   [User(prompt), Assistant(ToolCall), User(ToolResult), Assistant(close-block)]
@@ -2255,18 +2407,18 @@ fn close_open_tool_result_block_noop_when_last_user_has_mixed_content() {
 
 /// Retry succeeds on the second attempt: first call returns a retryable 500 error,
 /// second call succeeds. Result should be Ok with 2 messages in JSONL.
-#[test]
-fn retry_succeeds_on_second_attempt() {
+#[tokio::test]
+async fn retry_succeeds_on_second_attempt() {
     let config = Config {
         max_retries: Some(3),
         retry_base_delay_ms: Some(1),
         ..test_config()
     };
-    let rt = tokio::runtime::Runtime::new().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-retry-success";
-    let mut memory_state =
-        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
+        FsSessionStore::new(temp_dir.path().to_path_buf()),
+    ));
 
     // Turn 1: error (retryable 500). Turn 2: success.
     let model = MockCompletionModel::from_stream_turns([
@@ -2286,7 +2438,6 @@ fn retry_succeeds_on_second_attempt() {
 
     let mut executor = TurnExecutor::new(
         &config,
-        &rt,
         &mut memory_state,
         ToolInfra {
             closure_registry: Arc::new(closure_registry),
@@ -2298,18 +2449,20 @@ fn retry_succeeds_on_second_attempt() {
         },
     );
 
-    let result = executor.execute(
-        &mut ui,
-        ExecuteInput {
-            prompt: "hello".to_string(),
-            preamble: None,
-            span: nu_protocol::Span::test_data(),
-        },
-        &cached_client,
-        MockResolver,
-        Some(session_id),
-        None,
-    );
+    let result = executor
+        .execute(
+            &mut ui,
+            ExecuteInput {
+                prompt: "hello".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            &cached_client,
+            MockResolver,
+            Some(session_id),
+            None,
+        )
+        .await;
 
     assert!(
         result.is_ok(),
@@ -2318,10 +2471,18 @@ fn retry_succeeds_on_second_attempt() {
     );
     assert!(matches!(result.unwrap(), TurnOutcome::Completed));
 
-    let persisted = memory_state
-        .conversation_store()
-        .load(session_id)
+    let persisted_entries = memory_state
+        .memory()
+        .load_all(session_id)
+        .await
         .expect("store load should succeed");
+    let persisted: Vec<crate::types::Message> = persisted_entries
+        .iter()
+        .filter_map(|e| match e {
+            StoreEntry::Message(m) => Some(m.clone()),
+            _ => None,
+        })
+        .collect();
     assert_eq!(
         persisted.len(),
         2,
@@ -2332,18 +2493,18 @@ fn retry_succeeds_on_second_attempt() {
 
 /// Retry exhausted: all attempts fail with retryable errors. The final error
 /// message must mention the retry attempt count.
-#[test]
-fn retry_exhausted_surfaces_attempt_count() {
+#[tokio::test]
+async fn retry_exhausted_surfaces_attempt_count() {
     let config = Config {
         max_retries: Some(2),
         retry_base_delay_ms: Some(1),
         ..test_config()
     };
-    let rt = tokio::runtime::Runtime::new().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-retry-exhausted";
-    let mut memory_state =
-        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
+        FsSessionStore::new(temp_dir.path().to_path_buf()),
+    ));
 
     // All 3 attempts (1 initial + 2 retries) fail with retryable error
     let model = MockCompletionModel::from_stream_turns([
@@ -2361,7 +2522,6 @@ fn retry_exhausted_surfaces_attempt_count() {
 
     let mut executor = TurnExecutor::new(
         &config,
-        &rt,
         &mut memory_state,
         ToolInfra {
             closure_registry: Arc::new(closure_registry),
@@ -2373,18 +2533,20 @@ fn retry_exhausted_surfaces_attempt_count() {
         },
     );
 
-    let result = executor.execute(
-        &mut ui,
-        ExecuteInput {
-            prompt: "hello".to_string(),
-            preamble: None,
-            span: nu_protocol::Span::test_data(),
-        },
-        &cached_client,
-        MockResolver,
-        Some(session_id),
-        None,
-    );
+    let result = executor
+        .execute(
+            &mut ui,
+            ExecuteInput {
+                prompt: "hello".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            &cached_client,
+            MockResolver,
+            Some(session_id),
+            None,
+        )
+        .await;
 
     assert!(result.is_err(), "exhausted retries must return Err");
     let err_msg = result.unwrap_err().to_string();
@@ -2396,18 +2558,18 @@ fn retry_exhausted_surfaces_attempt_count() {
 
 /// Non-retryable errors (e.g., context_length_exceeded) must NOT be retried.
 /// Exactly 1 attempt should be made.
-#[test]
-fn non_retryable_error_not_retried() {
+#[tokio::test]
+async fn non_retryable_error_not_retried() {
     let config = Config {
         max_retries: Some(3),
         retry_base_delay_ms: Some(1),
         ..test_config()
     };
-    let rt = tokio::runtime::Runtime::new().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-non-retryable";
-    let mut memory_state =
-        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
+        FsSessionStore::new(temp_dir.path().to_path_buf()),
+    ));
 
     // Only 1 turn — if retried, MockCompletionModel would panic (no more turns).
     // A 400 context_length_exceeded is NOT retryable.
@@ -2424,7 +2586,6 @@ fn non_retryable_error_not_retried() {
 
     let mut executor = TurnExecutor::new(
         &config,
-        &rt,
         &mut memory_state,
         ToolInfra {
             closure_registry: Arc::new(closure_registry),
@@ -2436,18 +2597,20 @@ fn non_retryable_error_not_retried() {
         },
     );
 
-    let result = executor.execute(
-        &mut ui,
-        ExecuteInput {
-            prompt: "hello".to_string(),
-            preamble: None,
-            span: nu_protocol::Span::test_data(),
-        },
-        &cached_client,
-        MockResolver,
-        Some(session_id),
-        None,
-    );
+    let result = executor
+        .execute(
+            &mut ui,
+            ExecuteInput {
+                prompt: "hello".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            &cached_client,
+            MockResolver,
+            Some(session_id),
+            None,
+        )
+        .await;
 
     // Must fail immediately without retrying
     assert!(
@@ -2464,18 +2627,18 @@ fn non_retryable_error_not_retried() {
 /// `attempt < max_retries` is always false on the first attempt (attempt=0 < 0 = false).
 /// The test verifies the error message does NOT contain "retries" — proving the retry
 /// path was not entered.
-#[test]
-fn retry_disabled_when_max_retries_is_zero() {
+#[tokio::test]
+async fn retry_disabled_when_max_retries_is_zero() {
     let config = Config {
         max_retries: Some(0),
         retry_base_delay_ms: Some(1),
         ..test_config()
     };
-    let rt = tokio::runtime::Runtime::new().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-no-retry-guard";
-    let mut memory_state =
-        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
+        FsSessionStore::new(temp_dir.path().to_path_buf()),
+    ));
 
     let model = MockCompletionModel::from_stream_turns([vec![MockStreamEvent::error(
         "500 api_error server error",
@@ -2490,7 +2653,6 @@ fn retry_disabled_when_max_retries_is_zero() {
 
     let mut executor = TurnExecutor::new(
         &config,
-        &rt,
         &mut memory_state,
         ToolInfra {
             closure_registry: Arc::new(closure_registry),
@@ -2502,18 +2664,20 @@ fn retry_disabled_when_max_retries_is_zero() {
         },
     );
 
-    let result = executor.execute(
-        &mut ui,
-        ExecuteInput {
-            prompt: "hello".to_string(),
-            preamble: None,
-            span: nu_protocol::Span::test_data(),
-        },
-        &cached_client,
-        MockResolver,
-        Some(session_id),
-        None,
-    );
+    let result = executor
+        .execute(
+            &mut ui,
+            ExecuteInput {
+                prompt: "hello".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            &cached_client,
+            MockResolver,
+            Some(session_id),
+            None,
+        )
+        .await;
 
     assert!(result.is_err(), "error must propagate without retry");
     let err_msg = result.unwrap_err().to_string();
@@ -2641,8 +2805,8 @@ fn extract_retry_after_ms_handles_zero() {
 /// exists at the intersection of `build_agent_and_stream` (which populates
 /// `last_known_history` on `TurnResult`) and `TurnExecutor::execute` (which
 /// reads it in Path B).
-#[test]
-fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
+#[tokio::test]
+async fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -2650,7 +2814,7 @@ fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
 
     use super::test_utils::MockUi;
     use crate::conversation::providers::CachedProviderClient;
-    use crate::session::ConversationStore;
+    use crate::session::{FsSessionStore, StoreEntry};
     use crate::tools::closure::ClosureRegistry;
     use crate::tools::handler::McpToolRegistry;
 
@@ -2687,11 +2851,11 @@ fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
 
     // -- test body ---------------------------------------------------------
     let config = test_config();
-    let rt = tokio::runtime::Runtime::new().expect("runtime");
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let session_id = "test-path-b-lkh";
-    let mut memory_state =
-        super::super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
+        FsSessionStore::new(temp_dir.path().to_path_buf()),
+    ));
 
     let (ui, cancel_token) = MockUi::with_external_cancel();
 
@@ -2731,20 +2895,22 @@ fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
     let cached_client = CachedProviderClient::Mock(model);
     let mut ui = ui;
 
-    let mut executor = TurnExecutor::new(&config, &rt, &mut memory_state, tool_infra);
+    let mut executor = TurnExecutor::new(&config, &mut memory_state, tool_infra);
 
-    let result = executor.execute(
-        &mut ui,
-        ExecuteInput {
-            prompt: "call the tool".to_string(),
-            preamble: None,
-            span: nu_protocol::Span::test_data(),
-        },
-        &cached_client,
-        MockResolver,
-        Some(session_id),
-        None,
-    );
+    let result = executor
+        .execute(
+            &mut ui,
+            ExecuteInput {
+                prompt: "call the tool".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            &cached_client,
+            MockResolver,
+            Some(session_id),
+            None,
+        )
+        .await;
 
     // 1. Must be Ok(EarlyReturn) — cancelled turn, not an error
     assert!(
@@ -2758,10 +2924,18 @@ fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
     );
 
     // 2. Persisted JSONL must contain the user prompt + tool call + tool result
-    let persisted = memory_state
-        .conversation_store()
-        .load(session_id)
+    let persisted_entries = memory_state
+        .memory()
+        .load_all(session_id)
+        .await
         .expect("store load should succeed");
+    let persisted: Vec<crate::types::Message> = persisted_entries
+        .iter()
+        .filter_map(|e| match e {
+            StoreEntry::Message(m) => Some(m.clone()),
+            _ => None,
+        })
+        .collect();
 
     // Before the fix: Path B would synthesize [user("call the tool")] = 1 message.
     // After the fix: Path B uses last_known_history which contains

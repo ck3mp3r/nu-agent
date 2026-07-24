@@ -1,4 +1,5 @@
-use std::sync::mpsc;
+use std::sync::mpsc as std_mpsc;
+use tokio::sync::mpsc;
 
 use nu_protocol::{LabeledError, Span};
 
@@ -57,7 +58,7 @@ pub(crate) struct OrchestrationContext<'a, U> {
     /// Optional sender for turn-completion notifications. When Some, the session
     /// stage fires `(prompt_text, response_text)` after each turn that was
     /// triggered by an external prompt.
-    pub on_turn_complete: &'a Option<mpsc::Sender<(String, String)>>,
+    pub on_turn_complete: &'a Option<std_mpsc::Sender<(String, String)>>,
 }
 
 /// All orchestration stages, bundled as a single composable unit.
@@ -103,7 +104,7 @@ impl OrchestratorStages {
     ///
     /// `slash` is gated on `!model.has_pending_model_switch()` to match the original
     /// guard `if !worker_active && pending_model_switch.is_none()`.
-    pub fn poll_all<U>(&mut self, ctx: &mut OrchestrationContext<'_, U>) -> StageOutcome
+    pub async fn poll_all<U>(&mut self, ctx: &mut OrchestrationContext<'_, U>) -> StageOutcome
     where
         U: ProgressUi + UserInputUi + DisplayStateUi + LifecycleUi + TranscriptUi,
     {
@@ -113,11 +114,11 @@ impl OrchestratorStages {
             return session;
         }
         // model: polls results and drains queued switches (worker_active now current)
-        let model = self.model.poll(ctx);
+        let model = self.model.poll(ctx).await;
         if let StageOutcome::Fatal(_) = model {
             return model;
         }
-        let compaction = self.compaction.poll(ctx);
+        let compaction = self.compaction.poll(ctx).await;
         if let StageOutcome::Fatal(_) = compaction {
             return compaction;
         }
@@ -127,7 +128,7 @@ impl OrchestratorStages {
         }
         // slash: guard on no pending model switch (preserves original loop semantics)
         let slash = if !self.model.has_pending_model_switch() {
-            self.slash.poll(ctx)
+            self.slash.poll(ctx).await
         } else {
             StageOutcome::Idle
         };

@@ -8,7 +8,7 @@ use crate::protocol::{
     session_management::HasSessionManagement,
 };
 
-use std::sync::mpsc;
+use tokio::sync::mpsc;
 
 const COMPACTION_FAILURE_WARNING: &str =
     "Session compaction failed: sliding_summary summarization unavailable";
@@ -19,40 +19,32 @@ const COMPACTION_FAILURE_WARNING: &str =
 /// This struct encapsulates the worker-thread dispatch logic that was previously
 /// inline inside `run_interactive_loop`. Each match arm is identical to the
 /// original orchestrator implementation — this is a pure extraction.
-pub struct CommandRouter<'a, R>
-where
-    R: CoreRuntime + HasMcpManagement + HasModelSwitching + HasSessionManagement + HasCompaction,
-{
-    runtime: &'a mut R,
-}
+pub struct CommandRouter;
 
-impl<'a, R> CommandRouter<'a, R>
-where
-    R: CoreRuntime
-        + HasMcpManagement
-        + HasModelSwitching
-        + HasSessionManagement
-        + HasCompaction
-        + Send,
-{
-    pub fn new(runtime: &'a mut R) -> Self {
-        Self { runtime }
-    }
-
+impl CommandRouter {
     /// Dispatch a single [`WorkerCommand`] to the runtime.
     ///
     /// Returns `true` if the worker loop should continue, `false` if it should
     /// shut down (i.e. `WorkerCommand::Shutdown`).
-    pub fn dispatch<U: ProgressUi>(
-        &mut self,
+    pub async fn dispatch<R, U>(
         cmd: WorkerCommand,
+        runtime: &mut R,
         ui: &mut U,
         result_tx: &mpsc::Sender<TurnOutcome>,
-    ) -> bool {
+    ) -> bool
+    where
+        R: CoreRuntime
+            + HasMcpManagement
+            + HasModelSwitching
+            + HasSessionManagement
+            + HasCompaction
+            + Send,
+        U: ProgressUi + Send,
+    {
         match cmd {
             WorkerCommand::ExecuteTurn { prompt, span } => {
                 log::debug!("Router: ExecuteTurn prompt_len={}", prompt.len());
-                let result = self.runtime.execute_turn(ui, prompt, None, span);
+                let result = runtime.execute_turn(ui, prompt, None, span).await;
                 // Convert Result<Value, LabeledError> to TurnOutcome
                 // Detect cancellation by message content:
                 // - v2 path: "Turn cancelled: ..."
@@ -63,16 +55,17 @@ where
                     Ok(value) => TurnOutcome::Success(value.clone()),
                     Err(error) => TurnOutcome::Error(error.clone()),
                 };
-                let _ = result_tx.send(outcome);
+                let _ = result_tx.send(outcome).await;
                 true
             }
             WorkerCommand::EvaluateAutoCompaction { response_tx } => {
                 log::trace!("Router: EvaluateAutoCompaction");
-                let warning = match self.runtime.evaluate_auto_compaction() {
+                let warning = match runtime.evaluate_auto_compaction() {
                     Some(CompactionTriggerDecision::Fire { source, .. }) => {
                         log::trace!("Auto-compaction firing: source={source:?}");
-                        self.runtime
+                        runtime
                             .execute_compaction_trigger(ui, source)
+                            .await
                             .err()
                             .map(|_error| COMPACTION_FAILURE_WARNING.to_string())
                     }
@@ -86,9 +79,9 @@ where
                 response_tx,
             } => {
                 log::trace!("Router: ExecuteCompactionTrigger source={source:?}");
-                let warning = self
-                    .runtime
+                let warning = runtime
                     .execute_compaction_trigger(ui, source)
+                    .await
                     .err()
                     .map(|_error| COMPACTION_FAILURE_WARNING.to_string());
                 let _ = response_tx.send(warning);
@@ -100,12 +93,11 @@ where
                 response_tx,
             } => {
                 log::debug!("Router dispatching ToggleMcp: server={server_name} enable={enable}");
-                let result = self.runtime.set_mcp_server_enabled(&server_name, enable);
-                let visible_count = self.runtime.llm_visible_mcp_tool_count();
-                let visible_count_for_server = self
-                    .runtime
-                    .llm_visible_mcp_tool_count_for_server(&server_name);
-                let visible_names_by_server = self.runtime.llm_visible_mcp_tool_names_by_server();
+                let result = runtime.set_mcp_server_enabled(&server_name, enable).await;
+                let visible_count = runtime.llm_visible_mcp_tool_count();
+                let visible_count_for_server =
+                    runtime.llm_visible_mcp_tool_count_for_server(&server_name);
+                let visible_names_by_server = runtime.llm_visible_mcp_tool_names_by_server();
                 let success = result.is_ok();
                 log::debug!(
                     "Router ToggleMcp result: server={server_name} success={success} visible_count={visible_count}"
@@ -123,7 +115,7 @@ where
                 response_tx,
             } => {
                 log::debug!("Router: SwitchModel spec={model_spec}");
-                let _ = response_tx.send(self.runtime.switch_model(&model_spec));
+                let _ = response_tx.send(runtime.switch_model(&model_spec));
                 true
             }
             WorkerCommand::SwitchAgent {
@@ -131,10 +123,10 @@ where
                 response_tx,
             } => {
                 log::debug!("Router: SwitchAgent name={agent_name}");
-                let result = self.runtime.switch_agent(&agent_name);
+                let result = runtime.switch_agent(&agent_name);
                 let response = result.map(|agent_identity| {
-                    let model_identity = self.runtime.active_model_identity();
-                    let max_tokens = self.runtime.max_context_tokens();
+                    let model_identity = runtime.active_model_identity();
+                    let max_tokens = runtime.max_context_tokens();
                     (agent_identity, model_identity, max_tokens)
                 });
                 let _ = response_tx.send(response);
@@ -142,12 +134,12 @@ where
             }
             WorkerCommand::ClearSession => {
                 log::info!("Router: ClearSession");
-                self.runtime.clear_session();
+                runtime.clear_session();
                 true
             }
             WorkerCommand::NewSession => {
                 log::info!("Router: NewSession");
-                self.runtime.new_session();
+                runtime.new_session();
                 true
             }
             WorkerCommand::Shutdown => {

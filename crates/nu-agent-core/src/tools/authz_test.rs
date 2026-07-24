@@ -1,8 +1,7 @@
 use super::*;
 use nu_protocol::{Value, record};
-use std::sync::mpsc;
-use std::thread;
 use std::time::Duration;
+use tokio::sync::mpsc;
 
 use crate::protocol::event::{
     PermissionDecision as UiPermissionDecision, PermissionDecisionSubmission, UiEvent,
@@ -23,7 +22,7 @@ fn ask_decision_fixture() -> PermissionDecision {
 }
 
 struct ChannelPermissionSink {
-    tx: mpsc::Sender<UiEvent>,
+    tx: mpsc::UnboundedSender<UiEvent>,
 }
 
 impl PermissionEventSink for ChannelPermissionSink {
@@ -385,9 +384,9 @@ fn defaults_apply_when_permissions_block_is_missing() {
     );
 }
 
-#[test]
+#[tokio::test]
 #[serial_test::serial]
-fn async_ask_waits_for_matching_decision_before_resolving() {
+async fn async_ask_waits_for_matching_decision_before_resolving() {
     crate::protocol::permission::install_active_permission_submission_sender(None);
     let mut hook = AsyncAskHook::new(AskRuntimeConfig {
         interactive: true,
@@ -397,25 +396,25 @@ fn async_ask_waits_for_matching_decision_before_resolving() {
     let decision = ask_decision_fixture();
     let args = serde_json::json!({"command": "echo hi"});
 
-    let (event_tx, event_rx) = mpsc::channel::<UiEvent>();
-    let (choice_tx, choice_rx) = mpsc::channel::<AskChoice>();
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<UiEvent>();
+    let (choice_tx, mut choice_rx) = mpsc::channel::<AskChoice>(1);
 
-    let handle = thread::spawn(move || {
+    let handle = tokio::spawn(async move {
         let mut sink = ChannelPermissionSink { tx: event_tx };
-        let choice = hook.choose_with_sink(
-            &decision,
-            "shell",
-            "closure",
-            &args,
-            &AskContext::default(),
-            Some(&mut sink),
-        );
-        let _ = choice_tx.send(choice);
+        let choice = hook
+            .choose_with_sink(
+                &decision,
+                "shell",
+                "closure",
+                &args,
+                &AskContext::default(),
+                Some(&mut sink),
+            )
+            .await;
+        let _ = choice_tx.send(choice).await;
     });
 
-    let (request_id, rule_identity) = match event_rx
-        .recv_timeout(Duration::from_secs(1))
-        .expect("permission request event")
+    let (request_id, rule_identity) = match event_rx.recv().await.expect("permission request event")
     {
         UiEvent::PermissionRequested {
             request_id,
@@ -429,7 +428,9 @@ fn async_ask_waits_for_matching_decision_before_resolving() {
     };
 
     assert!(
-        choice_rx.recv_timeout(Duration::from_millis(100)).is_err(),
+        tokio::time::timeout(Duration::from_millis(100), choice_rx.recv())
+            .await
+            .is_err(),
         "ask must block until a decision is submitted"
     );
 
@@ -443,14 +444,10 @@ fn async_ask_waits_for_matching_decision_before_resolving() {
         crate::protocol::permission::SubmitOutcome::Accepted
     );
 
-    let choice = choice_rx
-        .recv_timeout(Duration::from_secs(1))
-        .expect("resolved choice");
+    let choice = choice_rx.recv().await.expect("resolved choice");
     assert_eq!(choice, AskChoice::AllowOnce);
 
-    let submitted = event_rx
-        .recv_timeout(Duration::from_secs(1))
-        .expect("submitted event");
+    let submitted = event_rx.recv().await.expect("submitted event");
     match submitted {
         UiEvent::PermissionDecisionSubmitted {
             request_id: submitted_id,
@@ -463,12 +460,12 @@ fn async_ask_waits_for_matching_decision_before_resolving() {
         other => panic!("unexpected event: {other:?}"),
     }
 
-    handle.join().expect("ask thread join");
+    handle.await.expect("ask task join");
 }
 
-#[test]
+#[tokio::test]
 #[serial_test::serial]
-fn ask_event_carries_pre_authorize_display_context_when_provided() {
+async fn ask_event_carries_pre_authorize_display_context_when_provided() {
     crate::protocol::permission::install_active_permission_submission_sender(None);
     let mut hook = AsyncAskHook::new(AskRuntimeConfig {
         interactive: true,
@@ -490,25 +487,25 @@ fn ask_event_carries_pre_authorize_display_context_when_provided() {
         }),
     };
 
-    let (event_tx, event_rx) = mpsc::channel::<UiEvent>();
-    let (choice_tx, choice_rx) = mpsc::channel::<AskChoice>();
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<UiEvent>();
+    let (choice_tx, mut choice_rx) = mpsc::channel::<AskChoice>(1);
 
-    let handle = thread::spawn(move || {
+    let handle = tokio::spawn(async move {
         let mut sink = ChannelPermissionSink { tx: event_tx };
-        let choice = hook.choose_with_sink(
-            &decision,
-            "edit",
-            "closure",
-            &args,
-            &ask_context,
-            Some(&mut sink),
-        );
-        let _ = choice_tx.send(choice);
+        let choice = hook
+            .choose_with_sink(
+                &decision,
+                "edit",
+                "closure",
+                &args,
+                &ask_context,
+                Some(&mut sink),
+            )
+            .await;
+        let _ = choice_tx.send(choice).await;
     });
 
-    let request = event_rx
-        .recv_timeout(Duration::from_secs(1))
-        .expect("permission request event");
+    let request = event_rx.recv().await.expect("permission request event");
     let (request_id, rule_identity) = match request {
         UiEvent::PermissionRequested {
             request_id,
@@ -534,16 +531,14 @@ fn ask_event_carries_pre_authorize_display_context_when_provided() {
         outcome,
         crate::protocol::permission::SubmitOutcome::Accepted
     );
-    let choice = choice_rx
-        .recv_timeout(Duration::from_secs(1))
-        .expect("resolved choice");
+    let choice = choice_rx.recv().await.expect("resolved choice");
     assert_eq!(choice, AskChoice::AllowOnce);
-    handle.join().expect("ask thread join");
+    handle.await.expect("ask task join");
 }
 
-#[test]
+#[tokio::test]
 #[serial_test::serial]
-fn async_ask_timeout_is_deterministic_deny() {
+async fn async_ask_timeout_is_deterministic_deny() {
     crate::protocol::permission::install_active_permission_submission_sender(None);
     let mut hook = AsyncAskHook::new(AskRuntimeConfig {
         interactive: true,
@@ -554,14 +549,16 @@ fn async_ask_timeout_is_deterministic_deny() {
     let args = serde_json::json!({"command": "echo timeout"});
     let mut sink = RecordingPermissionSink::default();
 
-    let choice = hook.choose_with_sink(
-        &decision,
-        "shell",
-        "closure",
-        &args,
-        &AskContext::default(),
-        Some(&mut sink),
-    );
+    let choice = hook
+        .choose_with_sink(
+            &decision,
+            "shell",
+            "closure",
+            &args,
+            &AskContext::default(),
+            Some(&mut sink),
+        )
+        .await;
     assert_eq!(choice, AskChoice::Deny);
     assert!(
         sink.events
@@ -570,9 +567,9 @@ fn async_ask_timeout_is_deterministic_deny() {
     );
 }
 
-#[test]
+#[tokio::test]
 #[serial_test::serial]
-fn non_interactive_ask_defaults_to_deny() {
+async fn non_interactive_ask_defaults_to_deny() {
     crate::protocol::permission::install_active_permission_submission_sender(None);
     let mut hook = AsyncAskHook::new(AskRuntimeConfig {
         interactive: false,
@@ -582,21 +579,23 @@ fn non_interactive_ask_defaults_to_deny() {
     let decision = ask_decision_fixture();
     let mut sink = RecordingPermissionSink::default();
 
-    let choice = hook.choose_with_sink(
-        &decision,
-        "shell",
-        "closure",
-        &serde_json::json!({"command": "echo denied"}),
-        &AskContext::default(),
-        Some(&mut sink),
-    );
+    let choice = hook
+        .choose_with_sink(
+            &decision,
+            "shell",
+            "closure",
+            &serde_json::json!({"command": "echo denied"}),
+            &AskContext::default(),
+            Some(&mut sink),
+        )
+        .await;
     assert_eq!(choice, AskChoice::Deny);
     assert!(sink.events.is_empty());
 }
 
-#[test]
+#[tokio::test]
 #[serial_test::serial]
-fn non_interactive_ask_allow_override_returns_allow_once() {
+async fn non_interactive_ask_allow_override_returns_allow_once() {
     crate::protocol::permission::install_active_permission_submission_sender(None);
     let mut hook = AsyncAskHook::new(AskRuntimeConfig {
         interactive: false,
@@ -606,14 +605,16 @@ fn non_interactive_ask_allow_override_returns_allow_once() {
     let decision = ask_decision_fixture();
     let mut sink = RecordingPermissionSink::default();
 
-    let choice = hook.choose_with_sink(
-        &decision,
-        "shell",
-        "closure",
-        &serde_json::json!({"command": "echo allowed"}),
-        &AskContext::default(),
-        Some(&mut sink),
-    );
+    let choice = hook
+        .choose_with_sink(
+            &decision,
+            "shell",
+            "closure",
+            &serde_json::json!({"command": "echo allowed"}),
+            &AskContext::default(),
+            Some(&mut sink),
+        )
+        .await;
     assert_eq!(choice, AskChoice::AllowOnce);
     assert!(sink.events.is_empty());
 }
@@ -663,9 +664,9 @@ fn cli_permissions_overlay_rejects_non_record_with_explicit_path() {
     assert!(err.contains("record"));
 }
 
-#[test]
+#[tokio::test]
 #[serial_test::serial]
-fn async_ask_waits_for_matching_decision_before_resolving_via_trait() {
+async fn async_ask_waits_for_matching_decision_before_resolving_via_trait() {
     crate::protocol::permission::install_active_permission_submission_sender(None);
     let mut hook = AsyncAskHook::new(AskRuntimeConfig {
         interactive: true,
@@ -675,10 +676,10 @@ fn async_ask_waits_for_matching_decision_before_resolving_via_trait() {
     let decision = ask_decision_fixture();
     let args = serde_json::json!({"command": "echo hi"});
 
-    let (event_tx, event_rx) = mpsc::channel::<UiEvent>();
-    let (choice_tx, choice_rx) = mpsc::channel::<AskChoice>();
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<UiEvent>();
+    let (choice_tx, mut choice_rx) = mpsc::channel::<AskChoice>(1);
 
-    let handle = thread::spawn(move || {
+    let handle = tokio::spawn(async move {
         let mut sink = ChannelPermissionSink { tx: event_tx };
         // Call through the trait method instead of the inherent method.
         let choice = AskApprovalHook::choose(
@@ -689,13 +690,12 @@ fn async_ask_waits_for_matching_decision_before_resolving_via_trait() {
             &args,
             &AskContext::default(),
             Some(&mut sink),
-        );
-        let _ = choice_tx.send(choice);
+        )
+        .await;
+        let _ = choice_tx.send(choice).await;
     });
 
-    let (request_id, rule_identity) = match event_rx
-        .recv_timeout(Duration::from_secs(1))
-        .expect("permission request event")
+    let (request_id, rule_identity) = match event_rx.recv().await.expect("permission request event")
     {
         UiEvent::PermissionRequested {
             request_id,
@@ -709,7 +709,9 @@ fn async_ask_waits_for_matching_decision_before_resolving_via_trait() {
     };
 
     assert!(
-        choice_rx.recv_timeout(Duration::from_millis(100)).is_err(),
+        tokio::time::timeout(Duration::from_millis(100), choice_rx.recv())
+            .await
+            .is_err(),
         "ask must block until a decision is submitted"
     );
 
@@ -723,14 +725,10 @@ fn async_ask_waits_for_matching_decision_before_resolving_via_trait() {
         crate::protocol::permission::SubmitOutcome::Accepted
     );
 
-    let choice = choice_rx
-        .recv_timeout(Duration::from_secs(1))
-        .expect("resolved choice");
+    let choice = choice_rx.recv().await.expect("resolved choice");
     assert_eq!(choice, AskChoice::AllowOnce);
 
-    let submitted = event_rx
-        .recv_timeout(Duration::from_secs(1))
-        .expect("submitted event");
+    let submitted = event_rx.recv().await.expect("submitted event");
     match submitted {
         UiEvent::PermissionDecisionSubmitted {
             request_id: submitted_id,
@@ -743,7 +741,7 @@ fn async_ask_waits_for_matching_decision_before_resolving_via_trait() {
         other => panic!("unexpected event: {other:?}"),
     }
 
-    handle.join().expect("ask thread join");
+    handle.await.expect("ask task join");
 }
 
 #[test]

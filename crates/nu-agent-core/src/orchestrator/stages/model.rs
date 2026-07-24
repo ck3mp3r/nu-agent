@@ -1,4 +1,4 @@
-use std::sync::mpsc;
+use std::sync::mpsc as std_mpsc;
 
 use crate::orchestrator::pending::PendingOps;
 use crate::orchestrator::poll::{PollOutcome, poll_pending};
@@ -39,7 +39,7 @@ impl ModelSwitchStage {
         }
     }
 
-    pub fn poll<U>(&mut self, ctx: &mut OrchestrationContext<'_, U>) -> StageOutcome
+    pub async fn poll<U>(&mut self, ctx: &mut OrchestrationContext<'_, U>) -> StageOutcome
     where
         U: ProgressUi + UserInputUi + DisplayStateUi + LifecycleUi + TranscriptUi,
     {
@@ -52,12 +52,15 @@ impl ModelSwitchStage {
         }) = ctx.ui.take_next_mcp_toggle_request()
         {
             log::trace!("Dequeued MCP toggle: server={server_name} enable={enable}");
-            let (response_tx, response_rx) = mpsc::channel();
-            let send_result = ctx.worker_tx.send(WorkerCommand::ToggleMcp {
-                server_name: server_name.clone(),
-                enable,
-                response_tx,
-            });
+            let (response_tx, response_rx) = std_mpsc::channel();
+            let send_result = ctx
+                .worker_tx
+                .send(WorkerCommand::ToggleMcp {
+                    server_name: server_name.clone(),
+                    enable,
+                    response_tx,
+                })
+                .await;
 
             if send_result.is_err() {
                 log::warn!("ToggleMcp send failed (channel closed): server={server_name}");
@@ -185,8 +188,8 @@ impl ModelSwitchStage {
                     );
                     handled = true;
                 }
-                Err(mpsc::TryRecvError::Empty) => retained.push((server_name, response_rx)),
-                Err(mpsc::TryRecvError::Disconnected) => {
+                Err(std_mpsc::TryRecvError::Empty) => retained.push((server_name, response_rx)),
+                Err(std_mpsc::TryRecvError::Disconnected) => {
                     log::warn!("MCP toggle worker disconnected: server={server_name}");
                     ctx.ui.set_mcp_server_state_with_details(
                         &server_name,
@@ -220,13 +223,14 @@ impl ModelSwitchStage {
                     message: format!("Model switch queued for next turn: {model_spec}"),
                 });
             } else if self.pending_model_switch.is_none() {
-                let (response_tx, response_rx) = mpsc::channel();
+                let (response_tx, response_rx) = std_mpsc::channel();
                 if ctx
                     .worker_tx
                     .send(WorkerCommand::SwitchModel {
                         model_spec,
                         response_tx,
                     })
+                    .await
                     .is_ok()
                 {
                     self.pending_model_switch = Some(response_rx);
@@ -249,13 +253,14 @@ impl ModelSwitchStage {
                     message: format!("Agent switch queued for next turn: {agent_name}"),
                 });
             } else if self.pending_agent_switch.is_none() {
-                let (response_tx, response_rx) = mpsc::channel();
+                let (response_tx, response_rx) = std_mpsc::channel();
                 if ctx
                     .worker_tx
                     .send(WorkerCommand::SwitchAgent {
                         agent_name,
                         response_tx,
                     })
+                    .await
                     .is_ok()
                 {
                     self.pending_agent_switch = Some(response_rx);
@@ -274,13 +279,14 @@ impl ModelSwitchStage {
             && self.pending_model_switch.is_none()
             && let Some(model_spec) = self.pending_ops.take_queued_model_switch()
         {
-            let (response_tx, response_rx) = mpsc::channel();
+            let (response_tx, response_rx) = std_mpsc::channel();
             if ctx
                 .worker_tx
                 .send(WorkerCommand::SwitchModel {
                     model_spec,
                     response_tx,
                 })
+                .await
                 .is_ok()
             {
                 self.pending_model_switch = Some(response_rx);
@@ -297,13 +303,14 @@ impl ModelSwitchStage {
             && self.pending_agent_switch.is_none()
             && let Some(agent_name) = self.pending_ops.take_queued_agent_switch()
         {
-            let (response_tx, response_rx) = mpsc::channel();
+            let (response_tx, response_rx) = std_mpsc::channel();
             if ctx
                 .worker_tx
                 .send(WorkerCommand::SwitchAgent {
                     agent_name,
                     response_tx,
                 })
+                .await
                 .is_ok()
             {
                 self.pending_agent_switch = Some(response_rx);

@@ -1,10 +1,10 @@
-use super::SessionMetadata;
+use super::{SessionInfo, SessionMetadata};
 use crate::types::Message;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, BufRead, BufReader, Write};
 use std::path::PathBuf;
+use tokio::fs::{self, File, OpenOptions};
+use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CompactionMarker {
@@ -47,110 +47,67 @@ pub enum StoreEntry {
     Marker(CompactionMarker),
 }
 
-/// Trait for conversation storage implementations.
-///
-/// This trait defines the interface for storing and retrieving conversation messages.
-/// Implementations must use static dispatch via generic bounds (T: ConversationStore),
-/// NOT dynamic dispatch (Box<dyn ConversationStore>).
-///
-/// # Design principles
-/// - Static dispatch: Use generics with trait bounds for zero-cost abstractions
-/// - Error handling: All methods return Result for consistent error handling
-/// - Session isolation: Each session is identified by a unique session_id string
-pub trait ConversationStore {
-    /// The concrete error type returned by all storage operations.
-    type Error: std::error::Error;
+pub trait SessionStore {
+    type Error: std::error::Error + Send + Sync;
 
-    /// Load all messages for a session.
-    ///
-    /// Returns an empty vector for new or missing sessions (not an error).
-    ///
-    /// # Arguments
-    /// * `session_id` - The unique identifier for the session
-    ///
-    /// # Returns
-    /// A vector of messages in the order they were stored, or empty vec if session doesn't exist.
-    fn load(&self, session_id: &str) -> Result<Vec<Message>, Self::Error>;
+    /// Persist a new session with its first messages. Metadata derived atomically.
+    fn create(
+        &self,
+        id: &str,
+        first_messages: &[Message],
+    ) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send;
 
-    /// Append new messages to an existing session.
-    ///
-    /// If the session doesn't exist, it will be created.
-    ///
-    /// # Arguments
-    /// * `session_id` - The unique identifier for the session
-    /// * `messages` - Slice of messages to append
-    ///
-    /// # Returns
-    /// Ok(()) on success, or an error if the operation fails.
+    /// Load full session: metadata + all entries. None if doesn't exist or empty.
+    fn load(
+        &self,
+        id: &str,
+    ) -> impl std::future::Future<
+        Output = Result<Option<(SessionMetadata, Vec<StoreEntry>)>, Self::Error>,
+    > + Send;
+
+    /// Append entries (messages or compaction markers) to existing session.
     fn append(
         &self,
-        session_id: &str,
-        messages: &[Message],
-        last_total_tokens: Option<u64>,
-    ) -> Result<(), Self::Error>;
+        id: &str,
+        entries: &[StoreEntry],
+    ) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send;
 
-    /// Clear all messages from a session.
-    ///
-    /// After this operation, the session will be deleted from storage.
-    /// Does not return an error if the session doesn't exist.
-    ///
-    /// # Arguments
-    /// * `session_id` - The unique identifier for the session
-    ///
-    /// # Returns
-    /// Ok(()) on success, or an error if the operation fails.
-    fn clear(&self, session_id: &str) -> Result<(), Self::Error>;
-
-    /// Append a compaction marker to the session log.
-    ///
-    /// If the session doesn't exist, it will be created with a metadata line first.
-    ///
-    /// # Arguments
-    /// * `session_id` - The unique identifier for the session
-    /// * `marker` - The compaction marker to append
-    ///
-    /// # Returns
-    /// Ok(()) on success, or an error if the operation fails.
-    fn append_marker(
+    /// Replace all entries for a session (compaction). Keeps metadata.
+    fn replace_entries(
         &self,
-        session_id: &str,
-        marker: &CompactionMarker,
-        last_total_tokens: Option<u64>,
-    ) -> Result<(), Self::Error>;
+        id: &str,
+        entries: &[StoreEntry],
+    ) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send;
 
-    /// Load all entries (messages + markers) preserving JSONL order.
-    ///
-    /// Returns an empty vector for new or missing sessions (not an error).
-    ///
-    /// # Arguments
-    /// * `session_id` - The unique identifier for the session
-    ///
-    /// # Returns
-    /// A vector of StoreEntry in the order they were stored.
-    fn load_all(&self, session_id: &str) -> Result<(Vec<StoreEntry>, Option<u64>), Self::Error>;
+    /// List all persisted sessions (metadata only, newest first). Filters empty sessions.
+    fn list(
+        &self,
+    ) -> impl std::future::Future<Output = Result<Vec<SessionInfo>, Self::Error>> + Send;
+
+    /// Delete a session entirely.
+    fn delete(&self, id: &str)
+    -> impl std::future::Future<Output = Result<(), Self::Error>> + Send;
 }
 
-/// JSONL-based implementation of ConversationStore.
+/// JSONL-based implementation of SessionStore.
 ///
 /// Stores each session in a separate .jsonl file with the following format:
 /// - Line 1: SessionMetadata (JSON object)
-/// - Line 2+: rig::completion::Message (JSON objects, one per line)
+/// - Line 2+: StoreEntry items (JSON objects, one per line)
 ///
-/// The rig::completion::Message type uses serde with:
-/// `#[serde(tag = "role", rename_all = "lowercase")]`
-/// which serializes as: `{"role":"user","content":[...]}`
+/// Messages use serde with role-tagged serialization:
+/// `{"role":"user","content":[...]}`
+/// Markers use type-tagged serialization:
+/// `{"type":"compaction_marker",...}`
 #[derive(Debug, Clone)]
-pub struct JsonlConversationStore {
+pub struct FsSessionStore {
     base_path: PathBuf,
 }
 
-impl JsonlConversationStore {
-    /// Create a new JsonlConversationStore with the given base path.
+impl FsSessionStore {
+    /// Create a new FsSessionStore with the given base path.
     ///
     /// Session files will be stored as `base_path/session_id.jsonl`.
-    ///
-    /// # Arguments
-    /// * `base_path` - Directory where session files will be stored
     pub fn new(base_path: PathBuf) -> Self {
         Self { base_path }
     }
@@ -159,233 +116,275 @@ impl JsonlConversationStore {
     fn session_path(&self, session_id: &str) -> PathBuf {
         self.base_path.join(format!("{}.jsonl", session_id))
     }
+
+    /// Parse a single JSONL line (after metadata) into a StoreEntry.
+    fn parse_entry(line: &str) -> Option<StoreEntry> {
+        let value = serde_json::from_str::<serde_json::Value>(line).ok()?;
+
+        if value.get("type").and_then(|v| v.as_str()) == Some("compaction_marker") {
+            serde_json::from_value::<CompactionMarker>(value)
+                .ok()
+                .map(StoreEntry::Marker)
+        } else if value.get("role").is_some() {
+            serde_json::from_value::<Message>(value)
+                .ok()
+                .map(StoreEntry::Message)
+        } else {
+            None
+        }
+    }
+
+    /// Serialize a StoreEntry to a JSON string.
+    fn serialize_entry(entry: &StoreEntry) -> io::Result<String> {
+        let value = match entry {
+            StoreEntry::Message(msg) => serde_json::to_value(msg),
+            StoreEntry::Marker(marker) => serde_json::to_value(marker),
+        };
+        let value = value.map_err(io::Error::other)?;
+        serde_json::to_string(&value).map_err(io::Error::other)
+    }
+
+    /// Ensure the parent directory of the session file exists.
+    async fn ensure_parent(&self, path: &std::path::Path) -> io::Result<()> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+        Ok(())
+    }
+
+    /// Write the metadata header line to a file.
+    async fn write_metadata_header(file: &mut File, id: &str) -> io::Result<()> {
+        let metadata = SessionMetadata {
+            metadata_type: "session".to_string(),
+            session_id: id.to_string(),
+            created_at: chrono::Utc::now(),
+        };
+        let json = serde_json::to_string(&metadata).map_err(io::Error::other)?;
+        file.write_all(json.as_bytes()).await?;
+        file.write_all(b"\n").await?;
+        Ok(())
+    }
 }
 
-impl ConversationStore for JsonlConversationStore {
+impl SessionStore for FsSessionStore {
     type Error = io::Error;
 
-    fn load(&self, session_id: &str) -> Result<Vec<Message>, io::Error> {
-        let path = self.session_path(session_id);
+    async fn create(&self, id: &str, first_messages: &[Message]) -> Result<(), Self::Error> {
+        let path = self.session_path(id);
+        self.ensure_parent(&path).await?;
 
-        // Return empty vec if file doesn't exist (new session)
-        if !path.exists() {
-            return Ok(vec![]);
+        // Write atomically: metadata + all messages in one go.
+        let mut file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&path)
+            .await?;
+
+        Self::write_metadata_header(&mut file, id).await?;
+
+        for msg in first_messages {
+            let json = Self::serialize_entry(&StoreEntry::Message(msg.clone()))?;
+            file.write_all(json.as_bytes()).await?;
+            file.write_all(b"\n").await?;
         }
 
-        let file = File::open(&path)?;
-        let reader = BufReader::new(file);
-        let mut messages = Vec::new();
-
-        for (line_num, line) in reader.lines().enumerate() {
-            let line = line?;
-
-            // Skip empty lines
-            if line.trim().is_empty() {
-                continue;
-            }
-
-            // Skip first line (metadata)
-            if line_num == 0 {
-                // Could validate metadata here, but we just skip it for now
-                continue;
-            }
-
-            // Try to parse as Message
-            match serde_json::from_str::<Message>(&line) {
-                Ok(message) => messages.push(message),
-                Err(e) => {
-                    log::warn!(
-                        "Skipping corrupt line {} in session {}: {}",
-                        line_num + 1,
-                        session_id,
-                        e
-                    );
-                }
-            }
-        }
-
-        Ok(messages)
+        Ok(())
     }
 
-    fn append(
+    async fn load(
         &self,
-        session_id: &str,
-        messages: &[Message],
-        last_total_tokens: Option<u64>,
-    ) -> Result<(), io::Error> {
-        let path = self.session_path(session_id);
+        id: &str,
+    ) -> Result<Option<(SessionMetadata, Vec<StoreEntry>)>, Self::Error> {
+        let path = self.session_path(id);
 
-        // Ensure base directory exists
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
-        // If file doesn't exist, create it with metadata first
         if !path.exists() {
-            let metadata = SessionMetadata {
-                metadata_type: "session".to_string(),
-                session_id: session_id.to_string(),
-                created_at: chrono::Utc::now(),
-            };
-
-            let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
-
-            let json = serde_json::to_string(&metadata).map_err(io::Error::other)?;
-            writeln!(file, "{}", json)?;
+            return Ok(None);
         }
 
-        // Append messages
-        let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
-
-        for message in messages {
-            let mut value = serde_json::to_value(message).map_err(io::Error::other)?;
-            if let (Some(obj), Some(tokens)) = (value.as_object_mut(), last_total_tokens) {
-                obj.insert("last_total_tokens".to_string(), serde_json::json!(tokens));
-            }
-            let json = serde_json::to_string(&value).map_err(io::Error::other)?;
-            writeln!(file, "{}", json)?;
-        }
-
-        Ok(())
-    }
-
-    fn clear(&self, session_id: &str) -> Result<(), io::Error> {
-        let path = self.session_path(session_id);
-
-        // Only attempt to remove if file exists
-        if path.exists() {
-            fs::remove_file(&path)?;
-        }
-
-        Ok(())
-    }
-
-    fn append_marker(
-        &self,
-        session_id: &str,
-        marker: &CompactionMarker,
-        last_total_tokens: Option<u64>,
-    ) -> Result<(), io::Error> {
-        let path = self.session_path(session_id);
-
-        // Ensure base directory exists
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
-        // If file doesn't exist, create it with metadata first
-        if !path.exists() {
-            let metadata = SessionMetadata {
-                metadata_type: "session".to_string(),
-                session_id: session_id.to_string(),
-                created_at: chrono::Utc::now(),
-            };
-
-            let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
-
-            let json = serde_json::to_string(&metadata).map_err(io::Error::other)?;
-            writeln!(file, "{}", json)?;
-        }
-
-        // Append marker
-        let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
-
-        let mut value = serde_json::to_value(marker).map_err(io::Error::other)?;
-        if let (Some(obj), Some(tokens)) = (value.as_object_mut(), last_total_tokens) {
-            obj.insert("last_total_tokens".to_string(), serde_json::json!(tokens));
-        }
-        let json = serde_json::to_string(&value).map_err(io::Error::other)?;
-        writeln!(file, "{}", json)?;
-
-        Ok(())
-    }
-
-    fn load_all(&self, session_id: &str) -> Result<(Vec<StoreEntry>, Option<u64>), io::Error> {
-        let path = self.session_path(session_id);
-
-        // Return empty vec if file doesn't exist (new session)
-        if !path.exists() {
-            return Ok((vec![], None));
-        }
-
-        let file = File::open(&path)?;
+        let file = File::open(&path).await?;
         let reader = BufReader::new(file);
+        let mut lines = reader.lines();
+
+        // First line must be metadata
+        let metadata_line = lines
+            .next_line()
+            .await?
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Empty JSONL file"))?;
+
+        let metadata: SessionMetadata = serde_json::from_str(&metadata_line).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Failed to parse metadata: {}", e),
+            )
+        })?;
+
         let mut entries = Vec::new();
-        // Track only tokens from AFTER the last compaction marker.
-        // When we encounter a marker, reset this to None so that stale
-        // pre-compaction token counts don't surface on resume.
-        let mut last_total_tokens: Option<u64> = None;
-
-        for (line_num, line) in reader.lines().enumerate() {
-            let line = line?;
-
-            // Skip empty lines
+        let mut line_num = 0usize;
+        while let Some(line) = lines.next_line().await? {
             if line.trim().is_empty() {
+                line_num += 1;
                 continue;
             }
-
-            // Skip first line (metadata)
-            if line_num == 0 {
-                continue;
+            if let Some(entry) = Self::parse_entry(&line) {
+                entries.push(entry);
+            } else {
+                log::warn!(
+                    "Skipping corrupt/unrecognized line {} in session {}",
+                    line_num + 2,
+                    id
+                );
             }
-
-            // Parse as serde_json::Value first to discriminate type
-            match serde_json::from_str::<serde_json::Value>(&line) {
-                Ok(value) => {
-                    if value.get("type").and_then(|v| v.as_str()) == Some("compaction_marker") {
-                        // Reset token tracking — pre-compaction values are stale.
-                        // Tokens recorded on the marker itself are also null (by design).
-                        last_total_tokens = None;
-                        // Deserialize as CompactionMarker
-                        match serde_json::from_value::<CompactionMarker>(value) {
-                            Ok(marker) => entries.push(StoreEntry::Marker(marker)),
-                            Err(e) => {
-                                log::warn!(
-                                    "Skipping corrupt marker at line {} in session {}: {}",
-                                    line_num + 1,
-                                    session_id,
-                                    e
-                                );
-                            }
-                        }
-                    } else if value.get("role").is_some() {
-                        // Extract last_total_tokens from post-marker entries if present.
-                        let tokens = value.get("last_total_tokens").and_then(|v| v.as_u64());
-                        if tokens.is_some() {
-                            last_total_tokens = tokens;
-                        }
-                        // Deserialize as Message
-                        match serde_json::from_value::<Message>(value) {
-                            Ok(message) => entries.push(StoreEntry::Message(message)),
-                            Err(e) => {
-                                log::warn!(
-                                    "Skipping corrupt message at line {} in session {}: {}",
-                                    line_num + 1,
-                                    session_id,
-                                    e
-                                );
-                            }
-                        }
-                    } else {
-                        log::warn!(
-                            "Skipping unknown entry at line {} in session {}: no 'type' or 'role' key",
-                            line_num + 1,
-                            session_id,
-                        );
-                    }
-                }
-                Err(e) => {
-                    log::warn!(
-                        "Skipping corrupt line {} in session {}: {}",
-                        line_num + 1,
-                        session_id,
-                        e
-                    );
-                }
-            }
+            line_num += 1;
         }
 
-        Ok((entries, last_total_tokens))
+        if entries.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some((metadata, entries)))
+    }
+
+    async fn append(&self, id: &str, entries: &[StoreEntry]) -> Result<(), Self::Error> {
+        let path = self.session_path(id);
+        self.ensure_parent(&path).await?;
+
+        // If file doesn't exist yet, create it with metadata header first
+        if !path.exists() {
+            let mut file = OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&path)
+                .await?;
+            Self::write_metadata_header(&mut file, id).await?;
+        }
+
+        // Append entries
+        let mut file = OpenOptions::new().append(true).open(&path).await?;
+        for entry in entries {
+            let json = Self::serialize_entry(entry)?;
+            file.write_all(json.as_bytes()).await?;
+            file.write_all(b"\n").await?;
+        }
+
+        Ok(())
+    }
+
+    async fn replace_entries(&self, id: &str, entries: &[StoreEntry]) -> Result<(), Self::Error> {
+        let path = self.session_path(id);
+
+        // Read existing metadata
+        let metadata = if path.exists() {
+            let content = fs::read_to_string(&path).await?;
+            let first_line = content
+                .lines()
+                .next()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Empty JSONL file"))?;
+            serde_json::from_str::<SessionMetadata>(first_line).map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Failed to parse metadata: {}", e),
+                )
+            })?
+        } else {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("Session '{}' not found", id),
+            ));
+        };
+
+        // Truncate and rewrite: metadata + new entries
+        let mut file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&path)
+            .await?;
+
+        let json = serde_json::to_string(&metadata).map_err(io::Error::other)?;
+        file.write_all(json.as_bytes()).await?;
+        file.write_all(b"\n").await?;
+
+        for entry in entries {
+            let json = Self::serialize_entry(entry)?;
+            file.write_all(json.as_bytes()).await?;
+            file.write_all(b"\n").await?;
+        }
+
+        Ok(())
+    }
+
+    async fn list(&self) -> Result<Vec<SessionInfo>, Self::Error> {
+        let mut sessions = Vec::new();
+
+        let mut read_dir = match fs::read_dir(&self.base_path).await {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                return Ok(sessions);
+            }
+            Err(e) => return Err(e),
+        };
+
+        while let Some(entry) = read_dir.next_entry().await? {
+            let path = entry.path();
+
+            if path.extension().and_then(|s| s.to_str()) != Some("jsonl") {
+                continue;
+            }
+
+            // Read metadata (first line) and count non-empty subsequent lines
+            let file = match File::open(&path).await {
+                Ok(f) => f,
+                Err(_) => continue,
+            };
+            let mut reader = BufReader::new(file);
+
+            let mut metadata_line = String::new();
+            if reader.read_line(&mut metadata_line).await? == 0 {
+                continue; // empty file
+            }
+            if metadata_line.trim().is_empty() {
+                continue;
+            }
+
+            let metadata: SessionMetadata = match serde_json::from_str(&metadata_line) {
+                Ok(m) => m,
+                Err(_) => continue, // skip corrupt files
+            };
+
+            let mut message_count = 0usize;
+            let mut line_buf = String::new();
+            while reader.read_line(&mut line_buf).await? != 0 {
+                if !line_buf.trim().is_empty() {
+                    message_count += 1;
+                }
+                line_buf.clear();
+            }
+
+            // Filter out sessions with zero entries
+            if message_count == 0 {
+                continue;
+            }
+
+            sessions.push(SessionInfo {
+                id: metadata.session_id,
+                message_count,
+                last_active: metadata.created_at,
+            });
+        }
+
+        // Sort newest first by created_at
+        sessions.sort_by_key(|s| std::cmp::Reverse(s.last_active));
+        Ok(sessions)
+    }
+
+    async fn delete(&self, id: &str) -> Result<(), Self::Error> {
+        let path = self.session_path(id);
+        if path.exists() {
+            fs::remove_file(&path).await?;
+        }
+        Ok(())
     }
 }
 

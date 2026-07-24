@@ -268,21 +268,18 @@ pub fn a2a_tool_defs() -> Vec<A2aToolDef> {
 /// Register all A2A tools (agent_list, agent_getCard, tasks_send, etc.) on a
 /// rig [`ToolServerHandle`].
 ///
-/// This function blocks the current thread (via `runtime.block_on`) so it must
-/// be called from a non-async context (e.g., a synchronous plugin command).
-///
 /// # Errors
 ///
 /// Returns an error string if any tool cannot be registered on the server.
-pub fn register_tools_on_server(
+pub async fn register_tools_on_server(
     tool_server_handle: &rig::tool::server::ToolServerHandle,
     ctx: A2aToolContext,
-    runtime: &tokio::runtime::Runtime,
 ) -> Result<(), String> {
     for def in a2a_tool_defs() {
         let adapter = A2aToolAdapter::new(def, ctx.clone());
-        runtime
-            .block_on(async { tool_server_handle.add_tool(adapter).await })
+        tool_server_handle
+            .add_tool(adapter)
+            .await
             .map_err(|e| format!("Failed to register A2A tool: {e}"))?;
     }
     Ok(())

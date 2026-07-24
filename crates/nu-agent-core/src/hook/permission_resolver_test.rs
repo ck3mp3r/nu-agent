@@ -1,6 +1,7 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex as StdMutex};
 
+use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 
 use crate::protocol::event::{PermissionDecision as ProtocolPermissionDecision, UiEvent};
@@ -30,7 +31,7 @@ fn make_interactive(
 ) {
     let (ui_tx, ui_rx) = mpsc::unbounded_channel();
     let resolver = InteractivePermissionResolver {
-        pending: Arc::new(Mutex::new(HashMap::new())),
+        pending: Arc::new(StdMutex::new(HashMap::new())),
         permissions: Arc::new(permissions),
         session_grants: Arc::new(Mutex::new(SessionGrantCache::default())),
         closure_registry: Arc::new(ClosureRegistry::new()),
@@ -290,7 +291,7 @@ async fn session_grant_arc_is_shared_across_resolver_instances() {
     // matches the global rule: identity="global:*", source="unknown" (not in any
     // registry), mode=None, target_field=None.
     {
-        let mut cache = session_grants.lock().unwrap();
+        let mut cache = session_grants.lock().await;
         let synthetic_decision = AuthzPermissionDecision {
             action: PermissionAction::Ask,
             matched_rule: PermissionRuleMatch {

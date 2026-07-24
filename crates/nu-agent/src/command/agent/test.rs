@@ -98,6 +98,7 @@ mod max_tool_turns_mode_defaults {
             additional_params: None,
             a2a_enabled: false,
             a2a_port: None,
+            session_store_type: None,
         };
 
         // Simulate the mode-specific default logic from mod.rs
@@ -135,6 +136,7 @@ mod max_tool_turns_mode_defaults {
             additional_params: None,
             a2a_enabled: false,
             a2a_port: None,
+            session_store_type: None,
         };
 
         // Simulate the mode-specific default logic from mod.rs
@@ -172,6 +174,7 @@ mod max_tool_turns_mode_defaults {
                 additional_params: None,
                 a2a_enabled: false,
                 a2a_port: None,
+                session_store_type: None,
             };
 
             // Simulate the mode-specific default logic from mod.rs
@@ -613,6 +616,7 @@ fn create_minimal_flag_config() -> Config {
         additional_params: None,
         a2a_enabled: false,
         a2a_port: None,
+        session_store_type: None,
     }
 }
 

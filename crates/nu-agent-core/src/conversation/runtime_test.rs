@@ -185,30 +185,26 @@ fn build_system_preamble_sub_agent_instruction_only() {
 
 #[test]
 fn runtime_struct_has_memory_field() {
-    // GREEN: This test now compiles, proving the memory field exists as JournalConversationMemory
-    use crate::session::JournalConversationMemory;
+    // GREEN: This test now compiles, proving the memory field exists as CachedMemory<SessionStoreImpl>
+    use crate::session::{CachedMemory, SessionStoreImpl};
 
     // Compile-time check that the field exists with correct type
-    fn _assert_field_exists(_memory: &JournalConversationMemory) {}
+    fn _assert_field_exists(_: &CachedMemory<SessionStoreImpl>) {}
 
-    // We can't easily construct a runtime in tests, but we can verify
-    // the type signature compiles
     let _type_check: fn(&AgentConversationRuntime) = |r| {
         _assert_field_exists(r.session.memory());
     };
 }
 
 #[test]
-fn runtime_struct_has_conversation_store_field() {
-    // GREEN: This test now compiles, proving the conversation_store field exists
-    use crate::session::JsonlConversationStore;
+fn runtime_struct_has_session_store() {
+    // Verify MemoryState wraps a store-backed CachedMemory
+    use crate::session::FsSessionStore;
 
-    // Compile-time check that the field exists with correct type
-    fn _assert_field_exists(_store: &JsonlConversationStore) {}
-
-    let _type_check: fn(&AgentConversationRuntime) = |r| {
-        _assert_field_exists(r.session.conversation_store());
-    };
+    let temp_dir = tempfile::tempdir().unwrap();
+    let store = std::sync::Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
+    let ms = super::super::state::memory::MemoryState::new(store);
+    assert!(ms.last_total_tokens().is_none());
 }
 
 #[test]
@@ -269,6 +265,7 @@ fn provider_dispatch_unsupported_provider_returns_error() {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        session_store_type: None,
     };
 
     // This test will compile once we add the dispatch logic
@@ -334,6 +331,7 @@ fn client_cache_key_contains_provider_and_model() {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        session_store_type: None,
     };
 
     // client_cache_key clones (provider, api_key, base_url) from config.
@@ -382,6 +380,7 @@ fn client_cache_key_includes_base_url_when_set() {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        session_store_type: None,
     };
 
     let key: ClientCacheKey = (
@@ -518,13 +517,16 @@ fn memory_state_hydrated_flag_starts_false() {
     // The load-on-demand pattern means the cache starts empty — verified
     // by checking last_total_tokens is None on a fresh MemoryState.
     let temp_dir = tempfile::tempdir().unwrap();
-    let ms = super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+    let store = std::sync::Arc::new(crate::session::FsSessionStore::new(
+        temp_dir.path().to_path_buf(),
+    ));
+    let ms = super::super::state::memory::MemoryState::new(store);
     assert!(
         ms.last_total_tokens().is_none(),
         "last_total_tokens must be None in a fresh MemoryState"
     );
 
-    // Compile-time proof that session.memory() returns JournalConversationMemory.
+    // Compile-time proof that session.last_total_tokens() works.
     let _type_check: fn(&AgentConversationRuntime) = |r| {
         let _: Option<u64> = r.session.last_total_tokens();
     };
@@ -558,6 +560,7 @@ fn active_model_identity_returns_provider_slash_model() {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        session_store_type: None,
     };
 
     // Replicate the method body exactly
@@ -696,6 +699,7 @@ fn provider_state_client_cache_key_contains_provider_and_api_key() {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        session_store_type: None,
     };
 
     // Replicate client_cache_key body
@@ -832,6 +836,7 @@ fn accessor_provider_returns_provider_string() {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        session_store_type: None,
     };
 
     // Verify the accessor delegation chain: provider() -> provider_state.config().provider
@@ -866,6 +871,7 @@ fn accessor_model_returns_model_string() {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        session_store_type: None,
     };
 
     let provider_state = super::super::state::provider::ProviderState::new(config, None);
@@ -898,6 +904,7 @@ fn accessor_max_context_tokens_returns_none_when_unset() {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        session_store_type: None,
     };
 
     let provider_state = super::super::state::provider::ProviderState::new(config, None);
@@ -933,6 +940,7 @@ fn accessor_max_context_tokens_returns_value_when_set() {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        session_store_type: None,
     };
 
     let provider_state = super::super::state::provider::ProviderState::new(config, None);
@@ -968,6 +976,7 @@ fn accessor_startup_plugin_config_returns_none_when_default() {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        session_store_type: None,
     };
 
     let provider_state = super::super::state::provider::ProviderState::new(config, None);
@@ -1043,14 +1052,20 @@ fn memory_state_hydrated_false_on_construction() {
     // JournalConversationMemory is load-on-demand (cache starts empty).
     // Verify last_total_tokens is None on construction.
     let temp_dir = tempfile::tempdir().unwrap();
-    let ms = super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+    let store = std::sync::Arc::new(crate::session::FsSessionStore::new(
+        temp_dir.path().to_path_buf(),
+    ));
+    let ms = super::super::state::memory::MemoryState::new(store);
     assert!(ms.last_total_tokens().is_none());
 }
 
 #[test]
 fn memory_state_last_total_tokens_none_on_construction() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let ms = super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+    let store = std::sync::Arc::new(crate::session::FsSessionStore::new(
+        temp_dir.path().to_path_buf(),
+    ));
+    let ms = super::super::state::memory::MemoryState::new(store);
     assert!(ms.last_total_tokens().is_none());
 }
 
@@ -1079,7 +1094,10 @@ fn persona_state_agent_description_none_by_default() {
 #[test]
 fn mcp_state_caller_cwd_none_by_default() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let _ms = super::super::state::memory::MemoryState::new(temp_dir.path().to_path_buf());
+    let store = std::sync::Arc::new(crate::session::FsSessionStore::new(
+        temp_dir.path().to_path_buf(),
+    ));
+    let _ms = super::super::state::memory::MemoryState::new(store);
     // Access mcp_state through a compile-time type check
     let _type_check: fn(&AgentConversationRuntime) = |rt| {
         assert!(rt.mcp_state.mcp_caller_cwd().is_none());

@@ -1,5 +1,4 @@
 use super::{Agent, EngineConfigInterface};
-use nu_agent_core::session::SessionStore;
 use nu_parser::parse;
 use nu_plugin::EvaluatedCall;
 use nu_protocol::{
@@ -9,11 +8,11 @@ use nu_protocol::{
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
-/// Helper to create an Agent with a test SessionStore
+/// Helper to create an Agent for testing. The Agent no longer holds a store;
+/// this is kept for tests that only check signature/name properties.
 pub(super) fn create_test_agent() -> (Agent, TempDir) {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
-    let agent = Agent::new(store);
+    let agent = Agent::new();
     (agent, temp_dir)
 }
 

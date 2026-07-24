@@ -11,7 +11,7 @@ use std::sync::{
 };
 use std::time::Duration;
 
-use crate::orchestrator::run_interactive_loop;
+use crate::orchestrator::{InteractiveLoopConfig, run_interactive_loop_impl};
 use crate::protocol::{
     compaction::{CompactionTriggerDecision, CompactionTriggerSource},
     compaction_runtime::HasCompaction,
@@ -46,7 +46,7 @@ impl Default for AgentSwitchRuntime {
 }
 
 impl CoreRuntime for AgentSwitchRuntime {
-    fn execute_turn<U: ProgressUi>(
+    async fn execute_turn<U: ProgressUi>(
         &mut self,
         ui: &mut U,
         _prompt: String,
@@ -59,7 +59,7 @@ impl CoreRuntime for AgentSwitchRuntime {
 }
 
 impl HasMcpManagement for AgentSwitchRuntime {
-    fn set_mcp_server_enabled(
+    async fn set_mcp_server_enabled(
         &mut self,
         _name: &str,
         _enabled: bool,
@@ -113,7 +113,7 @@ impl HasCompaction for AgentSwitchRuntime {
         None
     }
 
-    fn execute_compaction_trigger<U: ProgressUi>(
+    async fn execute_compaction_trigger<U: ProgressUi>(
         &mut self,
         _ui: &mut U,
         _source: CompactionTriggerSource,
@@ -241,7 +241,7 @@ impl LongRunningAgentRuntime {
 }
 
 impl CoreRuntime for LongRunningAgentRuntime {
-    fn execute_turn<U: ProgressUi>(
+    async fn execute_turn<U: ProgressUi>(
         &mut self,
         ui: &mut U,
         prompt: String,
@@ -261,7 +261,7 @@ impl CoreRuntime for LongRunningAgentRuntime {
                     return Err(LabeledError::new("LLM call cancelled"));
                 }
                 ui.emit(&UiEvent::Tick);
-                std::thread::sleep(Duration::from_millis(2));
+                tokio::time::sleep(Duration::from_millis(2)).await;
             }
         }
 
@@ -272,7 +272,7 @@ impl CoreRuntime for LongRunningAgentRuntime {
 }
 
 impl HasMcpManagement for LongRunningAgentRuntime {
-    fn set_mcp_server_enabled(
+    async fn set_mcp_server_enabled(
         &mut self,
         _name: &str,
         _enabled: bool,
@@ -326,7 +326,7 @@ impl HasCompaction for LongRunningAgentRuntime {
         None
     }
 
-    fn execute_compaction_trigger<U: ProgressUi>(
+    async fn execute_compaction_trigger<U: ProgressUi>(
         &mut self,
         _ui: &mut U,
         _source: CompactionTriggerSource,
@@ -469,13 +469,18 @@ impl TranscriptUi for ResponsiveAgentSwitchUi {
 // Tests
 // ---------------------------------------------------------------------------
 
-#[test]
-fn agent_switch_sends_command_and_updates_ui_identity() {
-    let mut runtime = AgentSwitchRuntime::default();
+#[tokio::test]
+async fn agent_switch_sends_command_and_updates_ui_identity() {
+    let runtime = AgentSwitchRuntime::default();
     let mut ui = AgentSwitchUi::new(&["research-agent"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
-        .expect("interactive loop");
+    let (runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(runtime.switched_agents, vec!["research-agent"]);
@@ -486,26 +491,31 @@ fn agent_switch_sends_command_and_updates_ui_identity() {
     );
 }
 
-#[test]
-fn agent_switch_failure_warns_and_keeps_previous_agent() {
-    let mut runtime = AgentSwitchRuntime {
+#[tokio::test]
+async fn agent_switch_failure_warns_and_keeps_previous_agent() {
+    let runtime = AgentSwitchRuntime {
         switch_agent_result: Some(Err("agent not found".to_string())),
         ..Default::default()
     };
     let mut ui = AgentSwitchUi::new(&["nonexistent-agent"]);
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
-        .expect("interactive loop");
+    let (_runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert!(ui.warnings.iter().any(|w| w == "agent not found"));
     assert_eq!(ui.active_agent_identity, None);
 }
 
-#[test]
-fn agent_switch_while_worker_active_is_queued_for_next_turn() {
+#[tokio::test]
+async fn agent_switch_while_worker_active_is_queued_for_next_turn() {
     let block_first_turn = Arc::new(AtomicBool::new(false));
-    let mut runtime = LongRunningAgentRuntime::new(Arc::clone(&block_first_turn));
+    let runtime = LongRunningAgentRuntime::new(Arc::clone(&block_first_turn));
     let active_pump_count = Arc::new(AtomicUsize::new(0));
     let mut ui = ResponsiveAgentSwitchUi::new(
         &["first"],
@@ -516,12 +526,24 @@ fn agent_switch_while_worker_active_is_queued_for_next_turn() {
         Arc::clone(&active_pump_count),
     );
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
-        .expect("interactive loop");
+    // Spawn a background task to unblock the turn after a delay.
+    let unblock = Arc::clone(&block_first_turn);
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        unblock.store(true, Ordering::SeqCst);
+    });
+
+    let (_runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
-        runtime
+        _runtime
             .switched_agents
             .lock()
             .expect("switched agents lock")
@@ -536,10 +558,10 @@ fn agent_switch_while_worker_active_is_queued_for_next_turn() {
     assert_eq!(ui.active_agent_identity, Some("research-agent".to_string()));
 }
 
-#[test]
-fn queued_agent_switch_last_write_wins() {
+#[tokio::test]
+async fn queued_agent_switch_last_write_wins() {
     let block_first_turn = Arc::new(AtomicBool::new(false));
-    let mut runtime = LongRunningAgentRuntime::new(Arc::clone(&block_first_turn));
+    let runtime = LongRunningAgentRuntime::new(Arc::clone(&block_first_turn));
     let active_pump_count = Arc::new(AtomicUsize::new(0));
     let mut ui = ResponsiveAgentSwitchUi::new(
         &["first"],
@@ -550,12 +572,24 @@ fn queued_agent_switch_last_write_wins() {
         Arc::clone(&active_pump_count),
     );
 
-    let value = run_interactive_loop(&mut runtime, &mut ui, Span::test_data(), None)
-        .expect("interactive loop");
+    // Spawn a background task to unblock the turn after a delay.
+    let unblock = Arc::clone(&block_first_turn);
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        unblock.store(true, Ordering::SeqCst);
+    });
+
+    let (_runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
-        runtime
+        _runtime
             .switched_agents
             .lock()
             .expect("switched agents lock")

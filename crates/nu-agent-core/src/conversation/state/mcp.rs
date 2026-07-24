@@ -48,13 +48,12 @@ impl McpState {
         &self.mcp_lifecycle_projection
     }
 
-    pub fn set_mcp_server_enabled(
+    pub async fn set_mcp_server_enabled(
         &mut self,
         tool_server_handle: &rig::tool::server::ToolServerHandle,
         server_name: &str,
         enabled: bool,
         tool_definitions: &mut Vec<ToolDefinition>,
-        runtime: &tokio::runtime::Handle,
     ) -> Result<McpUsabilityState, String> {
         if !enabled {
             log::info!("MCP disable: server={server_name}");
@@ -128,12 +127,14 @@ impl McpState {
             })
             .collect();
 
-        match runtime.block_on(crate::tools::mcp::runtime::connect_servers(
+        match crate::tools::mcp::runtime::connect_servers(
             tool_server_handle,
             &single_server_config,
             self.mcp_caller_cwd.as_deref(),
             self.max_tool_result_bytes,
-        )) {
+        )
+        .await
+        {
             Ok(new_rt) if new_rt.has_sessions() => {
                 let discovered = new_rt.discovered_tools().to_vec();
                 log::info!(

@@ -22,7 +22,7 @@ impl ProgressUi for CollectingProgressUi {
 
 #[test]
 fn drain_forwards_all_pending_events_to_ui() {
-    let (tx, rx) = std::sync::mpsc::channel::<UiEvent>();
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<UiEvent>();
     let mut ui = CollectingProgressUi::new();
     let mut pump = EventPump::new(rx);
     tx.send(UiEvent::LlmStart).ok();
@@ -34,7 +34,7 @@ fn drain_forwards_all_pending_events_to_ui() {
 
 #[test]
 fn drain_returns_zero_when_channel_empty() {
-    let (_tx, rx) = std::sync::mpsc::channel::<UiEvent>();
+    let (_tx, rx) = tokio::sync::mpsc::unbounded_channel::<UiEvent>();
     let mut ui = CollectingProgressUi::new();
     let mut pump = EventPump::new(rx);
     assert_eq!(pump.drain(&mut ui), 0);
@@ -43,8 +43,8 @@ fn drain_returns_zero_when_channel_empty() {
 
 #[test]
 fn drain_on_disconnected_channel_returns_zero() {
-    let (tx, rx) = std::sync::mpsc::channel::<UiEvent>();
-    drop(tx); // disconnect sender
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<UiEvent>();
+    drop(tx);
     let mut ui = CollectingProgressUi::new();
     let mut pump = EventPump::new(rx);
     assert_eq!(pump.drain(&mut ui), 0);

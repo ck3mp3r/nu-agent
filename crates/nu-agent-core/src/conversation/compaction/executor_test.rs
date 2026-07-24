@@ -4,8 +4,10 @@
 //! the expected API. They replace the Phase B RED stubs.
 
 use super::*;
+use crate::compaction::CompactionParams;
 use crate::config::Config;
-use crate::session::{JournalConversationMemory, SessionStore};
+use crate::session::{CachedMemory, FsSessionStore};
+use std::sync::Arc;
 
 /// Helper to build a minimal Config for testing.
 fn test_config() -> Config {
@@ -31,30 +33,39 @@ fn test_config() -> Config {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        session_store_type: None,
     }
 }
 
 #[test]
 fn compaction_executor_new_constructs_without_panic() {
     let config = test_config();
-    let rt = tokio::runtime::Runtime::new().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
-    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
-    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+    let store = Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
+    let memory = CachedMemory::<FsSessionStore>::new(Arc::clone(&store));
 
-    let _executor = CompactionExecutor::new(&config, &rt, &memory, &store, "test-session");
+    let _executor = CompactionExecutor::new(
+        &config,
+        &memory,
+        "test-session",
+        CompactionParams::default(),
+    );
     // Construction succeeded — no panic.
 }
 
 #[test]
 fn compaction_executor_session_id_accessor() {
     let config = test_config();
-    let rt = tokio::runtime::Runtime::new().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
-    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
-    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+    let store = Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
+    let memory = CachedMemory::<FsSessionStore>::new(Arc::clone(&store));
 
-    let executor = CompactionExecutor::new(&config, &rt, &memory, &store, "my-session-id");
+    let executor = CompactionExecutor::new(
+        &config,
+        &memory,
+        "my-session-id",
+        CompactionParams::default(),
+    );
 
     assert_eq!(executor.session_id(), "my-session-id");
 }
@@ -62,12 +73,16 @@ fn compaction_executor_session_id_accessor() {
 #[test]
 fn compaction_executor_empty_session_id() {
     let config = test_config();
-    let rt = tokio::runtime::Runtime::new().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
-    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
-    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+    let store = Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
+    let memory = CachedMemory::<FsSessionStore>::new(Arc::clone(&store));
 
-    let executor = CompactionExecutor::new(&config, &rt, &memory, &store, "session-no-tokens");
+    let executor = CompactionExecutor::new(
+        &config,
+        &memory,
+        "session-no-tokens",
+        CompactionParams::default(),
+    );
 
     assert_eq!(executor.session_id(), "session-no-tokens");
 }

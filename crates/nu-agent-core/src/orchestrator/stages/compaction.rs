@@ -1,4 +1,4 @@
-use std::sync::mpsc;
+use std::sync::mpsc as std_mpsc;
 
 use crate::orchestrator::stages::{OrchestrationContext, StageOutcome};
 use crate::orchestrator::{
@@ -23,7 +23,7 @@ impl CompactionStage {
         }
     }
 
-    pub fn poll<U>(&mut self, ctx: &mut OrchestrationContext<'_, U>) -> StageOutcome
+    pub async fn poll<U>(&mut self, ctx: &mut OrchestrationContext<'_, U>) -> StageOutcome
     where
         U: ProgressUi + UserInputUi + DisplayStateUi + LifecycleUi + TranscriptUi,
     {
@@ -53,10 +53,11 @@ impl CompactionStage {
 
         if *ctx.should_evaluate_compaction && self.pending_auto_compaction.is_none() {
             *ctx.should_evaluate_compaction = false;
-            let (response_tx, response_rx) = mpsc::channel();
+            let (response_tx, response_rx) = std_mpsc::channel();
             if ctx
                 .worker_tx
                 .send(WorkerCommand::EvaluateAutoCompaction { response_tx })
+                .await
                 .is_ok()
             {
                 self.pending_auto_compaction = Some(response_rx);

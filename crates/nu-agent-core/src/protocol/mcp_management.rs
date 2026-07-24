@@ -6,12 +6,14 @@ pub trait HasMcpManagement {
         &mut self,
         _name: &str,
         enabled: bool,
-    ) -> Result<McpUsabilityState, String> {
-        Ok(if enabled {
-            McpUsabilityState::Enabled
-        } else {
-            McpUsabilityState::Disabled
-        })
+    ) -> impl std::future::Future<Output = Result<McpUsabilityState, String>> + Send {
+        async move {
+            Ok(if enabled {
+                McpUsabilityState::Enabled
+            } else {
+                McpUsabilityState::Disabled
+            })
+        }
     }
 
     fn llm_visible_mcp_tool_count(&self) -> usize {

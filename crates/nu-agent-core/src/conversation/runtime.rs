@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 
 use crate::hook::agent_hook::DoomLoopState;
-use crate::session::SessionStore;
+use crate::session::SessionStoreImpl;
 use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
 
 use super::compaction::CompactionGuard;
@@ -18,6 +18,7 @@ use super::managers::{
     CompactionManager, MultiAgentManager, PersonaManager, ProviderManager, SessionManager,
     ToolManager,
 };
+use crate::compaction::CompactionParams;
 use crate::protocol::event::PermissionDecision as ProtocolPermissionDecision;
 
 /// Shared pending-permission map for TUI mode: maps request IDs to oneshot senders
@@ -95,12 +96,12 @@ where
     Multi: MultiAgentManager,
 {
     // ── Concrete infrastructure ──────────────────────────────────────────────
-    pub runtime: tokio::runtime::Runtime,
+    pub runtime: tokio::runtime::Handle,
     pub tool_server_handle: rig::tool::server::ToolServerHandle,
     pub mcp_state: super::state::mcp::McpState,
     pub permission_state: super::state::permission::PermissionState,
     pub engine: EngineInterface,
-    pub store: SessionStore,
+    pub store: Arc<SessionStoreImpl>,
     pub final_session_id: Option<String>,
     pub cwd: PathBuf,
     /// Shared pending-decision map for interactive (TUI) mode.
@@ -125,13 +126,15 @@ where
     pub compaction: Comp,
     pub persona: Persona,
     pub multi_agent: Multi,
+    // ── Compaction params ─────────────────────────────────────────────────────
+    pub compaction_params: CompactionParams,
 }
 
 /// Concrete production runtime: all managers use their default state types.
 pub type AgentConversationRuntime = AgentRuntime<
     super::state::provider::ProviderState,
     super::state::tool::ToolState,
-    super::state::memory::MemoryState,
+    super::state::memory::MemoryState<SessionStoreImpl>,
     super::compaction::state::CompactionState,
     super::state::persona::PersonaState,
     super::state::multi_agent::MultiAgentState,
@@ -140,14 +143,14 @@ pub type AgentConversationRuntime = AgentRuntime<
 impl<Prov, Tools, Sess, Comp, Persona, Multi> CoreRuntime
     for AgentRuntime<Prov, Tools, Sess, Comp, Persona, Multi>
 where
-    Prov: ProviderManager,
-    Tools: ToolManager,
-    Sess: SessionManager,
-    Comp: CompactionManager,
-    Persona: PersonaManager,
-    Multi: MultiAgentManager,
+    Prov: ProviderManager + Send,
+    Tools: ToolManager + Send,
+    Sess: SessionManager<Memory = crate::session::CachedMemory<SessionStoreImpl>> + Send,
+    Comp: CompactionManager + Send,
+    Persona: PersonaManager + Send,
+    Multi: MultiAgentManager + Send,
 {
-    fn execute_turn<U: ProgressUi>(
+    async fn execute_turn<U: ProgressUi + Send>(
         &mut self,
         ui: &mut U,
         prompt: String,
@@ -200,7 +203,6 @@ where
         let (outcome, response_data) = {
             let mut executor = TurnExecutor::new(
                 self.provider.provider_config(),
-                &self.runtime,
                 &mut self.session,
                 ToolInfra {
                     closure_registry: Arc::clone(&closure_registry),
@@ -229,18 +231,20 @@ where
                     Arc::clone(&closure_registry),
                     Arc::clone(&mcp_registry),
                 );
-                executor.execute(
-                    ui,
-                    ExecuteInput {
-                        prompt,
-                        preamble,
-                        span,
-                    },
-                    cached_client,
-                    resolver,
-                    self.final_session_id.as_deref(),
-                    Some((ui_tx, ui_rx)),
-                )
+                executor
+                    .execute(
+                        ui,
+                        ExecuteInput {
+                            prompt,
+                            preamble,
+                            span,
+                        },
+                        cached_client,
+                        resolver,
+                        self.final_session_id.as_deref(),
+                        Some((ui_tx, ui_rx)),
+                    )
+                    .await
             } else {
                 // TTY mode: use PolicyPermissionResolver (immediate Allow/Deny from config).
                 let permission_resolver = PolicyPermissionResolver {
@@ -249,18 +253,20 @@ where
                     closure_registry: Arc::clone(&closure_registry),
                     mcp_registry: Arc::clone(&mcp_registry),
                 };
-                executor.execute(
-                    ui,
-                    ExecuteInput {
-                        prompt,
-                        preamble,
-                        span,
-                    },
-                    cached_client,
-                    permission_resolver,
-                    self.final_session_id.as_deref(),
-                    None,
-                )
+                executor
+                    .execute(
+                        ui,
+                        ExecuteInput {
+                            prompt,
+                            preamble,
+                            span,
+                        },
+                        cached_client,
+                        permission_resolver,
+                        self.final_session_id.as_deref(),
+                        None,
+                    )
+                    .await
             };
 
             // Extract response data before executor is dropped
@@ -275,7 +281,7 @@ where
                 if self.final_session_id.is_some()
                     && let Some(CompactionTriggerDecision::Fire { source, .. }) =
                         self.evaluate_auto_compaction()
-                    && let Err(error) = self.execute_compaction_event(ui, source)
+                    && let Err(error) = self.execute_compaction_event(ui, source).await
                 {
                     ui.emit(&UiEvent::Warning { message: error });
                 }
@@ -294,26 +300,22 @@ where
 impl<Prov, Tools, Sess, Comp, Persona, Multi> HasMcpManagement
     for AgentRuntime<Prov, Tools, Sess, Comp, Persona, Multi>
 where
-    Prov: ProviderManager,
-    Tools: ToolManager,
-    Sess: SessionManager,
-    Comp: CompactionManager,
-    Persona: PersonaManager,
-    Multi: MultiAgentManager,
+    Prov: ProviderManager + Send,
+    Tools: ToolManager + Send,
+    Sess: SessionManager + Send,
+    Comp: CompactionManager + Send,
+    Persona: PersonaManager + Send,
+    Multi: MultiAgentManager + Send,
 {
-    fn set_mcp_server_enabled(
+    async fn set_mcp_server_enabled(
         &mut self,
         name: &str,
         enabled: bool,
     ) -> Result<McpUsabilityState, String> {
         let handle = self.tool_server_handle.clone();
-        self.mcp_state.set_mcp_server_enabled(
-            &handle,
-            name,
-            enabled,
-            self.tools.tool_definitions_mut(),
-            &self.runtime.handle().clone(),
-        )
+        self.mcp_state
+            .set_mcp_server_enabled(&handle, name, enabled, self.tools.tool_definitions_mut())
+            .await
     }
 
     fn llm_visible_mcp_tool_count(&self) -> usize {
@@ -426,31 +428,34 @@ where
     }
 
     fn max_context_tokens(&self) -> Option<u64> {
-        AgentRuntime::<Prov, Tools, Sess, Comp, Persona, Multi>::max_context_tokens(self)
+        self.provider
+            .provider_config()
+            .max_context_tokens
+            .map(u64::from)
     }
 }
 
 impl<Prov, Tools, Sess, Comp, Persona, Multi> HasCompaction
     for AgentRuntime<Prov, Tools, Sess, Comp, Persona, Multi>
 where
-    Prov: ProviderManager,
-    Tools: ToolManager,
-    Sess: SessionManager,
-    Comp: CompactionManager,
-    Persona: PersonaManager,
-    Multi: MultiAgentManager,
+    Prov: ProviderManager + Send,
+    Tools: ToolManager + Send,
+    Sess: SessionManager<Memory = crate::session::CachedMemory<SessionStoreImpl>> + Send,
+    Comp: CompactionManager + Send,
+    Persona: PersonaManager + Send,
+    Multi: MultiAgentManager + Send,
 {
     fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
         self.compaction
             .evaluate_auto_compaction(self.session.last_total_tokens())
     }
 
-    fn execute_compaction_trigger<U: ProgressUi>(
+    async fn execute_compaction_trigger<U: ProgressUi + Send>(
         &mut self,
         ui: &mut U,
         source: CompactionTriggerSource,
     ) -> Result<(), String> {
-        self.execute_compaction_event(ui, source)
+        self.execute_compaction_event(ui, source).await
     }
 }
 
@@ -473,8 +478,7 @@ where
         let new_id = crate::session::resolver::generate_session_id();
         let prefix = crate::session::prefix::dir_prefix(&self.cwd);
         let new_id = format!("{prefix}-{new_id}");
-        self.final_session_id = Some(new_id.clone());
-        let _ = self.store.get_or_create(Some(new_id));
+        self.final_session_id = Some(new_id);
     }
 
     fn seed_last_total_tokens(&mut self, tokens: Option<u64>) {
@@ -486,7 +490,7 @@ impl<Prov, Tools, Sess, Comp, Persona, Multi> AgentRuntime<Prov, Tools, Sess, Co
 where
     Prov: ProviderManager,
     Tools: ToolManager,
-    Sess: SessionManager,
+    Sess: SessionManager<Memory = crate::session::CachedMemory<SessionStoreImpl>>,
     Comp: CompactionManager,
     Persona: PersonaManager,
     Multi: MultiAgentManager,
@@ -558,7 +562,7 @@ where
 
     // ── End Phase I accessor methods ────────────────────────────────
 
-    fn execute_compaction_event<U: ProgressUi>(
+    async fn execute_compaction_event<U: ProgressUi + Send>(
         &mut self,
         ui: &mut U,
         source: CompactionTriggerSource,
@@ -582,12 +586,11 @@ where
             .as_ref()
             .ok_or_else(|| "session_unavailable".to_string())?;
 
-        let result = CompactionExecutor::new(
+        let result = CompactionExecutor::<SessionStoreImpl>::new(
             self.provider.provider_config(),
-            &self.runtime,
             self.session.memory(),
-            &self.store,
             session_id,
+            self.compaction_params.clone(),
         )
         .execute(
             ui,
@@ -595,7 +598,8 @@ where
             self.provider
                 .cached_client()
                 .expect("client must be cached during compaction"),
-        )?;
+        )
+        .await?;
 
         if let Some(summary_total_tokens) = result {
             // Use the summary token count captured from the streaming Final chunk.

@@ -10,7 +10,6 @@ use nu_protocol::LabeledError;
 use crate::config::{Config, PluginConfig};
 use crate::conversation::providers::CachedProviderClient;
 use crate::protocol::compaction::CompactionTriggerDecision;
-use crate::session::JournalConversationMemory;
 use crate::tools::authz::PermissionsConfig;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
@@ -69,11 +68,14 @@ pub trait ToolManager {
 
 /// Manages conversation memory and session IDs.
 pub trait SessionManager {
-    /// Return a shared reference to the underlying `JournalConversationMemory`.
-    fn memory(&self) -> &JournalConversationMemory;
+    /// The concrete memory type backed by this manager.
+    type Memory: rig::memory::ConversationMemory + Clone;
 
-    /// Return a mutable reference to the underlying `JournalConversationMemory`.
-    fn memory_mut(&mut self) -> &mut JournalConversationMemory;
+    /// Return a shared reference to the underlying memory.
+    fn memory(&self) -> &Self::Memory;
+
+    /// Return a mutable reference to the underlying memory.
+    fn memory_mut(&mut self) -> &mut Self::Memory;
 
     /// Clear all messages from conversation memory and reset token tracking.
     fn clear(&mut self);

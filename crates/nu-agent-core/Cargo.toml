@@ -9,6 +9,8 @@ nu-protocol = { workspace = true }
 rig = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
+async-trait = "0.1"
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio", "chrono", "migrate"] }
 futures = { workspace = true }
 rmcp = { workspace = true }
 thiserror = { workspace = true }
@@ -30,6 +32,7 @@ pulldown-cmark = { workspace = true }
 htmd = { workspace = true }
 
 [dev-dependencies]
+tokio = { workspace = true }
 serial_test = { workspace = true }
 rig = { workspace = true, features = ["test-utils"] }
 wiremock = "0.6"

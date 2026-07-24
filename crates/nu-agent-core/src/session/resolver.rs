@@ -1,11 +1,10 @@
 use nu_protocol::LabeledError;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::hook::agent_hook::is_tool_failure;
 use crate::protocol::contracts::UiMessageSnapshot;
-use crate::session::{
-    ConversationStore, JsonlConversationStore, Session, SessionStore, StoreEntry,
-};
+use crate::session::{CompactionMarker, Session, SessionStore, StoreEntry, extract_llm_context};
 use crate::types::{AssistantContent, Message, ToolResultContent, UserContent};
 use std::collections::HashMap;
 
@@ -35,21 +34,27 @@ pub struct SessionResolution {
 }
 
 pub trait SessionResolver {
-    fn resolve(&self, input: SessionResolutionInput) -> Result<SessionResolution, LabeledError>;
+    fn resolve(
+        &self,
+        input: SessionResolutionInput,
+    ) -> impl std::future::Future<Output = Result<SessionResolution, LabeledError>> + Send;
 }
 
-pub struct DefaultSessionResolver<'a> {
-    store: &'a SessionStore,
+pub struct DefaultSessionResolver<S: SessionStore + Clone + Send + Sync> {
+    store: Arc<S>,
 }
 
-impl<'a> DefaultSessionResolver<'a> {
-    pub fn new(store: &'a SessionStore) -> Self {
+impl<S: SessionStore + Clone + Send + Sync> DefaultSessionResolver<S> {
+    pub fn new(store: Arc<S>) -> Self {
         Self { store }
     }
 }
 
-impl SessionResolver for DefaultSessionResolver<'_> {
-    fn resolve(&self, input: SessionResolutionInput) -> Result<SessionResolution, LabeledError> {
+impl<S: SessionStore + Clone + Send + Sync> SessionResolver for DefaultSessionResolver<S> {
+    async fn resolve(
+        &self,
+        input: SessionResolutionInput,
+    ) -> Result<SessionResolution, LabeledError> {
         let prefix = crate::session::prefix::dir_prefix(&input.cwd);
         let request = resolve_session_request(input.use_tui, input.session_id);
         let request = match request {
@@ -66,19 +71,40 @@ impl SessionResolver for DefaultSessionResolver<'_> {
                 last_total_tokens: None,
             }),
             SessionRequest::Attach(id) => {
-                let (session, existed_before_attach) = load_or_create_tui_session(self.store, &id)?;
+                let (session, existed_before_attach) =
+                    load_or_create_session(&self.store, &id).await?;
                 let (initial_messages, last_total_tokens) = if existed_before_attach {
-                    // Load store entries (messages + markers) from JSONL
-                    let conversation_store =
-                        JsonlConversationStore::new(self.store.cache_dir().to_path_buf());
-                    let (entries, last_total_tokens) = conversation_store
-                        .load_all(&id)
-                        .map_err(|e| LabeledError::new(format!("Failed to load messages: {e}")))?;
+                    // Load store entries (messages + markers) from the store
+                    let (_metadata, entries) = self
+                        .store
+                        .load(&id)
+                        .await
+                        .map_err(|e| LabeledError::new(format!("Failed to load messages: {e}")))?
+                        .unwrap_or_else(|| {
+                            // Session exists but has no entries yet — shouldn't happen
+                            // after load_or_create_session returned existed=true,
+                            // but handle gracefully.
+                            (
+                                crate::session::SessionMetadata {
+                                    metadata_type: "session".to_string(),
+                                    session_id: id.clone(),
+                                    created_at: chrono::Utc::now(),
+                                },
+                                Vec::new(),
+                            )
+                        });
 
-                    // Convert to UiMessageSnapshots for transcript display
+                    // Convert to UiMessageSnapshots for transcript display.
+                    // Estimate token count from extracted LLM context so that
+                    // compaction evaluation works correctly on re-attach.
+                    let llm_context = extract_llm_context(&entries);
+                    let estimated_tokens: u64 = llm_context
+                        .iter()
+                        .map(|msg| crate::compaction::helpers::estimate_tokens(msg) as u64)
+                        .sum();
                     (
                         hydrate_transcript_from_store_entries(&entries),
-                        last_total_tokens,
+                        Some(estimated_tokens),
                     )
                 } else {
                     (Vec::new(), None)
@@ -93,10 +119,7 @@ impl SessionResolver for DefaultSessionResolver<'_> {
                 })
             }
             SessionRequest::Create(id) => {
-                let _ = input.use_tui;
-                let session = self.store.get_or_create(Some(id.clone())).map_err(|e| {
-                    LabeledError::new(format!("Failed to load/create session: {e}"))
-                })?;
+                let session = create_session(&id);
                 Ok(SessionResolution {
                     final_session_id: Some(id),
                     session: Some(session),
@@ -106,6 +129,33 @@ impl SessionResolver for DefaultSessionResolver<'_> {
                 })
             }
         }
+    }
+}
+
+/// Create a new Session with the given ID.
+fn create_session(id: &str) -> Session {
+    Session::new(id.to_string())
+}
+
+/// Load an existing session or create a new one.
+/// Returns `(Session, existed_before_attach)`.
+async fn load_or_create_session<S: SessionStore + Clone + Send + Sync>(
+    store: &Arc<S>,
+    session_id: &str,
+) -> Result<(Session, bool), LabeledError> {
+    match store.load(session_id).await {
+        Ok(Some((metadata, _entries))) => {
+            let session = Session::from_metadata(metadata);
+            Ok((session, true))
+        }
+        Ok(None) => {
+            // Session doesn't exist yet — create it
+            let session = create_session(session_id);
+            Ok((session, false))
+        }
+        Err(e) => Err(LabeledError::new(format!(
+            "Failed to attach session '{session_id}': {e}"
+        ))),
     }
 }
 
@@ -138,7 +188,7 @@ pub fn resolve_session_request(use_tui: bool, session_id: Option<String>) -> Ses
 /// - `StoreEntry::Marker` → compaction snapshot with strategy, counts, and summary text
 ///
 /// # Arguments
-/// * `entries` - Slice of StoreEntry from ConversationStore::load_all()
+/// * `entries` - Slice of StoreEntry from SessionStore::load()
 ///
 /// # Returns
 /// Iterator of UiMessageSnapshot ready for transcript hydration
@@ -202,7 +252,7 @@ const COMPACTION_SUMMARY_MAX_CHARS: usize = 500;
 /// ```
 ///
 /// If the summary is empty, only the stats header is emitted.
-fn format_compaction_content(marker: &crate::session::CompactionMarker) -> String {
+fn format_compaction_content(marker: &CompactionMarker) -> String {
     let stats = format!(
         "{} summarized · strategy: {}",
         marker.summarized_count, marker.strategy
@@ -304,24 +354,4 @@ pub(crate) fn hydrate_single_message(
     }
 
     snapshots
-}
-
-fn load_or_create_tui_session(
-    store: &SessionStore,
-    session_id: &str,
-) -> Result<(Session, bool), LabeledError> {
-    match store.load_session(session_id) {
-        Ok(session) => Ok((session, true)),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => store
-            .get_or_create(Some(session_id.to_string()))
-            .map_err(|create_err| {
-                LabeledError::new(format!(
-                    "Failed to create missing session '{session_id}': {create_err}"
-                ))
-            })
-            .map(|session| (session, false)),
-        Err(err) => Err(LabeledError::new(format!(
-            "Failed to attach session '{session_id}': {err}"
-        ))),
-    }
 }

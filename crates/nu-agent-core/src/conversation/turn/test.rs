@@ -9,13 +9,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use rig::one_or_many::OneOrMany;
 use rig::test_utils::{MockCompletionModel, MockStreamEvent};
-use tokio::runtime::Runtime;
 
 use super::*;
 use crate::config::Config;
 use crate::hook::agent_hook::DoomLoopState;
 use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
-use crate::session::JournalConversationMemory;
+use crate::session::{CachedMemory, FsSessionStore};
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
 use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
@@ -115,12 +114,12 @@ impl ProgressUi for MockUi {
 // ---------------------------------------------------------------------------
 
 fn make_turn_context<'a>(
-    runtime: &'a tokio::runtime::Handle,
     model: MockCompletionModel,
     config: &'a Config,
-) -> TurnContext<'a, MockCompletionModel> {
+) -> TurnContext<'a, FsSessionStore, MockCompletionModel> {
     let temp_dir = tempfile::tempdir().expect("tempdir");
-    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
+    let store = Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
+    let memory = CachedMemory::<FsSessionStore>::new(store);
     let conversation = TurnConversation {
         memory,
         conversation_id: "test-conv".to_string(),
@@ -139,7 +138,7 @@ fn make_turn_context<'a>(
         circuit_breaker: default_circuit_breaker(),
         doom_state: default_doom_state(),
     };
-    TurnContext::new(runtime, model, conversation, input, tool_infra, config)
+    TurnContext::new(model, conversation, input, tool_infra, config)
 }
 
 // ---------------------------------------------------------------------------
@@ -147,20 +146,21 @@ fn make_turn_context<'a>(
 // ---------------------------------------------------------------------------
 
 /// Text-only stream: verify `TurnResult.text` is populated and `tool_call_count == 0`.
-#[test]
-fn execute_turn_text_only_response() {
-    let rt = Runtime::new().expect("failed to create tokio runtime");
+#[tokio::test]
+async fn execute_turn_text_only_response() {
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("Hello, world!".to_string()),
         MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
     ]]);
 
     let config = Config::default();
-    let ctx = make_turn_context(rt.handle(), model, &config);
+    let ctx = make_turn_context(model, &config);
     let mut ui = MockUi::new();
     let resolver = MockResolver(PermissionDecision::Allow);
 
-    let result = execute_turn(ctx, &mut ui, resolver).expect("execute_turn should succeed");
+    let result = execute_turn(ctx, &mut ui, resolver)
+        .await
+        .expect("execute_turn should succeed");
 
     assert!(
         result.text.contains("Hello, world!") || !result.text.is_empty(),
@@ -176,38 +176,29 @@ fn execute_turn_text_only_response() {
 
 /// Cancellation via UI: the UI requests cancellation before the agent starts,
 /// which causes the cancel_token to fire on the drain loop's first iteration.
-/// The spawned tokio task sees the already-cancelled token (either via
-/// `on_completion_call` returning `Terminate` or the `select!` cancel branch)
-/// and returns a result with `cancelled == true`.
-#[test]
-fn execute_turn_cancel_returns_cancelled_true() {
-    let rt = Runtime::new().expect("failed to create tokio runtime");
-
-    // Use a normal model — the cancel fires before any stream event is processed.
+#[tokio::test]
+async fn execute_turn_cancel_returns_cancelled_true() {
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("partial".to_string()),
         MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
     ]]);
 
     let config = Config::default();
-    let ctx = make_turn_context(rt.handle(), model, &config);
-    // Pre-set cancel flag so take_cancel_requested() fires on the very first drain
-    // loop iteration — before any 16ms sleep, giving the cancel_token the best
-    // chance to be seen by the spawned task before it processes stream events.
+    let ctx = make_turn_context(model, &config);
     let mut ui = MockUi::immediately_cancelled();
     let resolver = MockResolver(PermissionDecision::Allow);
 
-    let result = execute_turn(ctx, &mut ui, resolver).expect("execute_turn should not error");
+    let result = execute_turn(ctx, &mut ui, resolver)
+        .await
+        .expect("execute_turn should not error");
 
     assert!(result.cancelled, "Turn should be marked as cancelled");
 }
 
 /// Verify that `additional_params` set in `Config` is forwarded through `AgentPromptConfig`
-/// to `AgentBuilder` without panicking. The mock model ignores extra params; this test
-/// confirms the forwarding path compiles and the turn completes normally.
-#[test]
-fn execute_turn_with_additional_params_succeeds() {
-    let rt = Runtime::new().expect("failed to create tokio runtime");
+/// to `AgentBuilder` without panicking.
+#[tokio::test]
+async fn execute_turn_with_additional_params_succeeds() {
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("OK".to_string()),
         MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
@@ -217,11 +208,13 @@ fn execute_turn_with_additional_params_succeeds() {
         additional_params: Some(serde_json::json!({"thinking": {"type": "disabled"}})),
         ..Config::default()
     };
-    let ctx = make_turn_context(rt.handle(), model, &config);
+    let ctx = make_turn_context(model, &config);
     let mut ui = MockUi::new();
     let resolver = MockResolver(PermissionDecision::Allow);
 
-    let result = execute_turn(ctx, &mut ui, resolver).expect("execute_turn should succeed");
+    let result = execute_turn(ctx, &mut ui, resolver)
+        .await
+        .expect("execute_turn should succeed");
     assert!(!result.cancelled, "Turn should not be cancelled");
 }
 
@@ -354,11 +347,12 @@ fn turn_context_always_has_tool_server_handle() {
     let _handle_clone = handle.clone();
 }
 
-/// Test that TurnContext uses JournalConversationMemory.
+/// Test that TurnContext uses CachedMemory<FsSessionStore>.
 #[test]
 fn turn_context_uses_memory_instead_of_history_vec() {
     let temp_dir = tempfile::tempdir().expect("tempdir");
-    let memory = JournalConversationMemory::new(temp_dir.path().to_path_buf());
+    let store = Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
+    let memory = CachedMemory::<FsSessionStore>::new(store);
     let conversation_id = "test-conversation-123".to_string();
     let _memory_clone = memory.clone();
     let _id_clone = conversation_id.clone();
@@ -397,60 +391,52 @@ fn streaming_error_from_prompt_cancelled_captures_messages() {
 
 /// A cancelled token causes FilteredToolProxy::call to return Err immediately
 /// without waiting for the (potentially hanging) MCP tool server.
-#[test]
-fn filtered_tool_proxy_call_returns_err_when_cancelled() {
-    let rt = Runtime::new().expect("runtime");
-    rt.block_on(async {
-        let handle = rig::tool::server::ToolServer::new().run();
-        let cancel_token = CancellationToken::new();
+#[tokio::test]
+async fn filtered_tool_proxy_call_returns_err_when_cancelled() {
+    let handle = rig::tool::server::ToolServer::new().run();
+    let cancel_token = CancellationToken::new();
 
-        let proxy = FilteredToolProxy {
-            tool_name: "nonexistent_tool".to_string(),
-            tool_definition: ToolDefinition {
-                name: "nonexistent_tool".to_string(),
-                description: "test".to_string(),
-                parameters: serde_json::json!({}),
-            },
-            handle,
-            cancel_token: cancel_token.clone(),
-        };
+    let proxy = FilteredToolProxy {
+        tool_name: "nonexistent_tool".to_string(),
+        tool_definition: ToolDefinition {
+            name: "nonexistent_tool".to_string(),
+            description: "test".to_string(),
+            parameters: serde_json::json!({}),
+        },
+        handle,
+        cancel_token: cancel_token.clone(),
+    };
 
-        // Cancel before calling — the select! branch fires immediately.
-        cancel_token.cancel();
+    cancel_token.cancel();
 
-        let result = proxy.call("{}".to_string()).await;
+    let result = proxy.call("{}".to_string()).await;
 
-        assert!(
-            result.is_err(),
-            "A cancelled token must cause call() to return Err"
-        );
-    });
+    assert!(
+        result.is_err(),
+        "A cancelled token must cause call() to return Err"
+    );
 }
 
 /// A pre-cancelled token causes call() to return Err even when the tool would succeed.
-/// This validates the select! biasing: cancelled() wins over a ready future.
-#[test]
-fn filtered_tool_proxy_cancelled_before_call_short_circuits() {
-    let rt = Runtime::new().expect("runtime");
-    rt.block_on(async {
-        let handle = rig::tool::server::ToolServer::new().run();
-        let cancel_token = CancellationToken::new();
-        cancel_token.cancel();
+#[tokio::test]
+async fn filtered_tool_proxy_cancelled_before_call_short_circuits() {
+    let handle = rig::tool::server::ToolServer::new().run();
+    let cancel_token = CancellationToken::new();
+    cancel_token.cancel();
 
-        let proxy = FilteredToolProxy {
-            tool_name: "any_tool".to_string(),
-            tool_definition: ToolDefinition {
-                name: "any_tool".to_string(),
-                description: "test".to_string(),
-                parameters: serde_json::json!({}),
-            },
-            handle,
-            cancel_token,
-        };
+    let proxy = FilteredToolProxy {
+        tool_name: "any_tool".to_string(),
+        tool_definition: ToolDefinition {
+            name: "any_tool".to_string(),
+            description: "test".to_string(),
+            parameters: serde_json::json!({}),
+        },
+        handle,
+        cancel_token,
+    };
 
-        let result = proxy.call("{}".to_string()).await;
-        assert!(result.is_err(), "Pre-cancelled token must produce Err");
-    });
+    let result = proxy.call("{}".to_string()).await;
+    assert!(result.is_err(), "Pre-cancelled token must produce Err");
 }
 
 /// TurnError from PromptCancelled captures chat_history as messages.
@@ -821,13 +807,13 @@ fn cancel_preserves_multiple_tool_use_cycles() {
 /// writing a `transient-{millis}.jsonl` file that accumulates indefinitely.
 /// After the fix, `.memory()` is omitted from the rig `AgentBuilder` when
 /// `has_session = false`, so `memory.append()` is never called.
-#[test]
-fn transient_turn_does_not_write_jsonl() {
-    let rt = Runtime::new().expect("failed to create tokio runtime");
+#[tokio::test]
+async fn transient_turn_does_not_write_jsonl() {
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let sessions_path = temp_dir.path().to_path_buf();
 
-    let memory = JournalConversationMemory::new(sessions_path.clone());
+    let store = Arc::new(FsSessionStore::new(sessions_path.clone()));
+    let memory = CachedMemory::<FsSessionStore>::new(store);
     let conversation = TurnConversation {
         memory,
         conversation_id: format!(
@@ -857,14 +843,15 @@ fn transient_turn_does_not_write_jsonl() {
         MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
     ]]);
     let config = Config::default();
-    let ctx = TurnContext::new(rt.handle(), model, conversation, input, tool_infra, &config);
+    let ctx = TurnContext::new(model, conversation, input, tool_infra, &config);
     let mut ui = MockUi::new();
     let resolver = MockResolver(PermissionDecision::Allow);
 
-    let result = execute_turn(ctx, &mut ui, resolver).expect("execute_turn should succeed");
+    let result = execute_turn(ctx, &mut ui, resolver)
+        .await
+        .expect("execute_turn should succeed");
     assert!(!result.cancelled, "transient turn should not be cancelled");
 
-    // After the turn, the sessions directory must contain NO JSONL files.
     let jsonl_files: Vec<_> = std::fs::read_dir(&sessions_path)
         .expect("sessions dir must be readable")
         .filter_map(|entry| entry.ok())
@@ -882,14 +869,14 @@ fn transient_turn_does_not_write_jsonl() {
 ///
 /// Verifies that the guard does not accidentally suppress JSONL writes for real
 /// sessions — only transient invocations are exempted.
-#[test]
-fn persistent_turn_writes_jsonl() {
-    let rt = Runtime::new().expect("failed to create tokio runtime");
+#[tokio::test]
+async fn persistent_turn_writes_jsonl() {
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let sessions_path = temp_dir.path().to_path_buf();
     let session_id = "test-persistent-session";
 
-    let memory = JournalConversationMemory::new(sessions_path.clone());
+    let store = Arc::new(FsSessionStore::new(sessions_path.clone()));
+    let memory = CachedMemory::<FsSessionStore>::new(store);
     let conversation = TurnConversation {
         memory,
         conversation_id: session_id.to_string(),
@@ -913,14 +900,15 @@ fn persistent_turn_writes_jsonl() {
         MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
     ]]);
     let config = Config::default();
-    let ctx = TurnContext::new(rt.handle(), model, conversation, input, tool_infra, &config);
+    let ctx = TurnContext::new(model, conversation, input, tool_infra, &config);
     let mut ui = MockUi::new();
     let resolver = MockResolver(PermissionDecision::Allow);
 
-    let result = execute_turn(ctx, &mut ui, resolver).expect("execute_turn should succeed");
+    let result = execute_turn(ctx, &mut ui, resolver)
+        .await
+        .expect("execute_turn should succeed");
     assert!(!result.cancelled, "persistent turn should not be cancelled");
 
-    // After the turn, the sessions directory must contain at least one JSONL file.
     let jsonl_files: Vec<_> = std::fs::read_dir(&sessions_path)
         .expect("sessions dir must be readable")
         .filter_map(|entry| entry.ok())

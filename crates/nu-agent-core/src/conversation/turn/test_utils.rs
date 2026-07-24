@@ -133,5 +133,6 @@ pub(super) fn test_config() -> Config {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: false,
+        session_store_type: None,
     }
 }

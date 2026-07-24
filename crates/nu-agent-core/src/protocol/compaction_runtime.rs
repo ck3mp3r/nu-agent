@@ -9,11 +9,11 @@ pub trait HasCompaction {
         None
     }
 
-    fn execute_compaction_trigger<U: ProgressUi>(
+    fn execute_compaction_trigger<U: ProgressUi + Send>(
         &mut self,
         _ui: &mut U,
         _source: CompactionTriggerSource,
-    ) -> Result<(), String> {
-        Ok(())
+    ) -> impl std::future::Future<Output = Result<(), String>> + Send {
+        async move { Ok(()) }
     }
 }

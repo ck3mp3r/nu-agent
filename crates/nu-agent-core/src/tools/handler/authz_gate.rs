@@ -12,7 +12,7 @@ pub struct AuthorizationFlowContext {
     pub ask_context: AskContext,
 }
 
-pub fn enforce_authorization_for_tool_call(
+pub async fn enforce_authorization_for_tool_call(
     tool_call: &ToolCall,
     source: ToolSource,
     permissions: &PermissionsConfig,
@@ -55,14 +55,16 @@ pub fn enforce_authorization_for_tool_call(
         );
     }
     if auth_decision.action == PermissionAction::Ask {
-        let choice = ask_hook.choose(
-            &auth_decision,
-            &tool_call.function.name,
-            source.as_str(),
-            &tool_call.function.arguments,
-            &flow_context.ask_context,
-            Some(event_sink),
-        );
+        let choice = ask_hook
+            .choose(
+                &auth_decision,
+                &tool_call.function.name,
+                source.as_str(),
+                &tool_call.function.arguments,
+                &flow_context.ask_context,
+                Some(event_sink),
+            )
+            .await;
         auth_decision = apply_ask_choice(
             auth_decision,
             choice,

@@ -1,4 +1,4 @@
-use std::sync::mpsc;
+use std::sync::mpsc as std_mpsc;
 
 use nu_protocol::LabeledError;
 
@@ -33,7 +33,7 @@ impl SlashStage {
         self.pending_compaction_trigger.take()
     }
 
-    pub fn poll<U>(&mut self, ctx: &mut OrchestrationContext<'_, U>) -> StageOutcome
+    pub async fn poll<U>(&mut self, ctx: &mut OrchestrationContext<'_, U>) -> StageOutcome
     where
         U: ProgressUi + UserInputUi + DisplayStateUi + LifecycleUi + TranscriptUi,
     {
@@ -51,13 +51,14 @@ impl SlashStage {
 
             match parse_slash_command(&prompt) {
                 SlashParseResult::Command(SlashCommand::Compact) => {
-                    let (response_tx, response_rx) = mpsc::channel();
+                    let (response_tx, response_rx) = std_mpsc::channel();
                     if ctx
                         .worker_tx
                         .send(WorkerCommand::ExecuteCompactionTrigger {
                             source: CompactionTriggerSource::SlashCompact,
                             response_tx,
                         })
+                        .await
                         .is_ok()
                     {
                         self.pending_compaction_trigger = Some(response_rx);
@@ -70,7 +71,7 @@ impl SlashStage {
                     continue;
                 }
                 SlashParseResult::Command(SlashCommand::New) => {
-                    let _ = ctx.worker_tx.send(WorkerCommand::NewSession);
+                    let _ = ctx.worker_tx.send(WorkerCommand::NewSession).await;
                     ctx.ui.clear_transcript();
                     handled = true;
                     continue;
@@ -111,10 +112,14 @@ impl SlashStage {
             }
 
             // Regular prompt: dispatch to worker
-            match ctx.worker_tx.send(WorkerCommand::ExecuteTurn {
-                prompt,
-                span: ctx.span,
-            }) {
+            match ctx
+                .worker_tx
+                .send(WorkerCommand::ExecuteTurn {
+                    prompt,
+                    span: ctx.span,
+                })
+                .await
+            {
                 Ok(()) => {
                     *ctx.worker_active = true;
                     handled = true;

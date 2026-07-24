@@ -3,27 +3,27 @@ use std::io;
 
 use super::helpers::{estimate_tokens, find_safe_split_index};
 use super::strategy::{CompactionOutcome, CompactionParams, CompactionStrategy};
-use crate::session::{CompactionMarker, JournalConversationMemory};
+use crate::session::{CachedMemory, CompactionMarker, SessionStore};
 use crate::types::{AssistantContent, Message, ToolResultContent, UserContent};
 use rig::memory::ConversationMemory;
 
-/// Compacts messages using `JournalConversationMemory`.
+/// Compacts messages using any `CachedMemory<S: SessionStore>`.
 ///
 /// This function:
-/// 1. Loads messages from the conversation memory (cache or JSONL on miss)
+/// 1. Loads messages from the conversation memory (cache or store on miss)
 /// 2. Applies strategy-specific compaction:
 ///    - **SlidingSummary**: summarizes ALL messages, LLM context = `[System(summary)]` only
 ///    - **SlidingWindow**: keeps last N messages verbatim
 ///    - **TokenTruncate**: keeps newest messages within token budget
-/// 3. Appends compaction marker to JSONL (durable commit point)
-/// 4. For non-SlidingSummary strategies, re-appends kept messages to JSONL
+/// 3. Appends compaction marker to store (durable commit point)
+/// 4. For non-SlidingSummary strategies, re-appends kept messages to store
 /// 5. Clears in-memory cache
-/// 6. Resets cache to LLM context (in-memory only — no JSONL write)
+/// 6. Resets cache to LLM context (in-memory only — no store write)
 ///
 /// # Arguments
 /// * `session_id` - The session ID to compact
 /// * `config` - Compaction parameters (thresholds, strategy, budget)
-/// * `memory` - `JournalConversationMemory` owning both cache and JSONL store
+/// * `memory` - `CachedMemory<S>` owning both cache and backing store
 /// * `summarizer` - Function that takes rig messages and returns a (summary, token_count) tuple
 ///
 /// # Returns
@@ -31,13 +31,15 @@ use rig::memory::ConversationMemory;
 ///
 /// # Errors
 /// Returns an error if memory operations, summarizer, or store operations fail.
-pub async fn compact<F, Fut>(
+pub async fn compact<S, F, Fut>(
     session_id: &str,
     config: &CompactionParams,
-    memory: &JournalConversationMemory,
+    memory: &CachedMemory<S>,
     summarizer: F,
 ) -> io::Result<CompactionOutcome>
 where
+    S: SessionStore + Clone + Send + Sync,
+    S::Error: std::fmt::Display,
     F: FnOnce(&[Message]) -> Fut,
     Fut: Future<Output = io::Result<(String, Option<u64>)>>,
 {
@@ -167,22 +169,26 @@ where
         }
     };
 
-    // Append compaction marker to JSONL only (durable commit point).
-    // Write None for last_total_tokens — the pre-compaction value is stale.
-    // The real post-compaction count is summary_total_tokens and is set in-memory
-    // at the runtime level, not written to the JSONL here.
+    // Append compaction marker to store only (durable commit point).
+    // Token counts are managed by MemoryState in the executor layer, not here.
     let marker = CompactionMarker::new(
         summary_text.clone(),
         kept_recent_count,
         summarized_count,
         strategy_name,
     );
-    memory.append_marker(session_id, &marker, None)?;
+    memory
+        .append_marker(session_id, &marker)
+        .await
+        .map_err(|e| io::Error::other(e.to_string()))?;
 
-    // Re-append kept messages to JSONL only (TokenTruncate and SlidingWindow).
+    // Re-append kept messages to store only (TokenTruncate and SlidingWindow).
     // SlidingSummary returns empty store_kept_messages — marker is the last entry.
     if !store_kept_messages.is_empty() {
-        memory.append_messages_to_store_only(session_id, &store_kept_messages, None)?;
+        memory
+            .append_messages_to_store_only(session_id, &store_kept_messages)
+            .await
+            .map_err(|e| io::Error::other(e.to_string()))?;
     }
 
     // Reset the in-memory cache to the compacted LLM context.

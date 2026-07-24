@@ -1,42 +1,33 @@
 use super::AgentSessionList;
-use nu_agent_core::session::{ConversationStore, JsonlConversationStore, SessionStore};
+use nu_agent_core::session::{FsSessionStore, SessionStore, SessionStoreImpl};
 use nu_agent_core::types::Message;
 use nu_plugin::SimplePluginCommand;
+use std::sync::Arc;
 use tempfile::TempDir;
 
-#[test]
-fn test_agent_session_list_returns_table_with_session_stats() {
-    // Setup: Create temp directory for sessions
+#[tokio::test]
+async fn test_agent_session_list_returns_table_with_session_stats() {
     let temp_dir = TempDir::new().unwrap();
-    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+    let store = Arc::new(SessionStoreImpl::Fs(FsSessionStore::new(
+        temp_dir.path().to_path_buf(),
+    )));
 
     // Create session 1 with 5 messages
-    let _session1 = store.get_or_create(Some("session1".to_string())).unwrap();
-    let conversation_store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
-    let messages: Vec<Message> = (0..5)
+    let messages1: Vec<Message> = (0..5)
         .map(|i| Message::user(format!("msg {}", i)))
         .collect();
-    conversation_store
-        .append("session1", &messages, None)
-        .unwrap();
+    store.create("session1", &messages1).await.unwrap();
 
     // Create session 2 with 10 messages
-    let _session2 = store.get_or_create(Some("session2".to_string())).unwrap();
-    let messages: Vec<Message> = (0..10)
+    let messages2: Vec<Message> = (0..10)
         .map(|i| Message::user(format!("msg {}", i)))
         .collect();
-    conversation_store
-        .append("session2", &messages, None)
-        .unwrap();
+    store.create("session2", &messages2).await.unwrap();
 
-    // Execute command - test the underlying list_sessions() directly
-    let command = AgentSessionList::new(store);
+    // Test the underlying list() directly
+    let sessions = store.list().await.unwrap();
 
-    // Actually, let's test just the session listing logic without the full plugin infrastructure
-    // This is a more unit-test approach
-    let sessions = command.store.list_sessions(None).unwrap();
-
-    // Verify result
+    // Verify result (newest first)
     assert_eq!(sessions.len(), 2, "Should have 2 sessions");
 
     // Find session1 and verify its message count
@@ -62,17 +53,16 @@ fn test_agent_session_list_returns_table_with_session_stats() {
     );
 }
 
-#[test]
-fn test_agent_session_list_returns_empty_list_when_no_sessions() {
+#[tokio::test]
+async fn test_agent_session_list_returns_empty_list_when_no_sessions() {
     // Setup: Create temp directory for sessions (but don't create any)
     let temp_dir = TempDir::new().unwrap();
-    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
+    let store = Arc::new(SessionStoreImpl::Fs(FsSessionStore::new(
+        temp_dir.path().to_path_buf(),
+    )));
 
-    // Execute command
-    let command = AgentSessionList::new(store);
-
-    // Test the underlying list_sessions() directly
-    let sessions = command.store.list_sessions(None).unwrap();
+    // Test the underlying list() directly
+    let sessions = store.list().await.unwrap();
 
     // Verify result
     assert_eq!(sessions.len(), 0, "Should have 0 sessions");
@@ -80,9 +70,7 @@ fn test_agent_session_list_returns_empty_list_when_no_sessions() {
 
 #[test]
 fn test_agent_session_list_command_signature() {
-    let temp_dir = TempDir::new().unwrap();
-    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
-    let command = AgentSessionList::new(store);
+    let command = AgentSessionList::new();
 
     // Verify command name
     assert_eq!(SimplePluginCommand::name(&command), "agent session list");

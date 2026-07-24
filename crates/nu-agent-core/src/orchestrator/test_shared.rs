@@ -7,7 +7,7 @@ pub(crate) use std::time::Duration;
 
 pub(crate) use crate::compaction::CompactionStrategy;
 pub(crate) use crate::orchestrator::{
-    run_hydrated_interactive_loop, run_interactive_loop, run_single_turn,
+    InteractiveLoopConfig, run_interactive_loop_impl, run_single_turn,
 };
 pub(crate) use crate::protocol::{
     compaction::{CompactionTriggerDecision, CompactionTriggerSource},
@@ -232,7 +232,7 @@ pub(crate) struct FakeRuntime {
 }
 
 impl CoreRuntime for FakeRuntime {
-    fn execute_turn<U: ProgressUi>(
+    async fn execute_turn<U: ProgressUi>(
         &mut self,
         _ui: &mut U,
         prompt: String,
@@ -245,7 +245,7 @@ impl CoreRuntime for FakeRuntime {
 }
 
 impl HasMcpManagement for FakeRuntime {
-    fn set_mcp_server_enabled(
+    async fn set_mcp_server_enabled(
         &mut self,
         _name: &str,
         enabled: bool,
@@ -297,7 +297,7 @@ impl HasCompaction for FakeRuntime {
         self.auto_decisions.pop_front()
     }
 
-    fn execute_compaction_trigger<U: ProgressUi>(
+    async fn execute_compaction_trigger<U: ProgressUi>(
         &mut self,
         _ui: &mut U,
         source: CompactionTriggerSource,
@@ -319,7 +319,7 @@ pub(crate) struct FakeValueRuntime {
 }
 
 impl CoreRuntime for FakeValueRuntime {
-    fn execute_turn<U: ProgressUi>(
+    async fn execute_turn<U: ProgressUi>(
         &mut self,
         _ui: &mut U,
         prompt: String,
@@ -384,7 +384,7 @@ impl LongRunningRuntime {
 }
 
 impl CoreRuntime for LongRunningRuntime {
-    fn execute_turn<U: ProgressUi>(
+    async fn execute_turn<U: ProgressUi>(
         &mut self,
         ui: &mut U,
         prompt: String,
@@ -408,7 +408,7 @@ impl CoreRuntime for LongRunningRuntime {
                     return Err(LabeledError::new("LLM call cancelled"));
                 }
                 ui.emit(&UiEvent::Tick);
-                std::thread::sleep(Duration::from_millis(2));
+                tokio::time::sleep(Duration::from_millis(2)).await;
             }
         }
 

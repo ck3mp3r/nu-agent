@@ -308,7 +308,6 @@ pub fn list_agents_tool_definitions() -> Vec<ToolDefinition> {
 /// completed before constructing this struct. The builder operates entirely on
 /// pre-extracted values so that `nu_plugin::EvaluatedCall` never enters core.
 pub struct BuildInput<'a> {
-    pub runtime: &'a tokio::runtime::Runtime,
     pub tool_server_handle: &'a ToolServerHandle,
     pub closure_registry: &'a ClosureRegistry,
     pub cwd: PathBuf,
@@ -329,6 +328,7 @@ pub struct BuildArtifacts {
     pub parent_name: Option<String>,
     pub merged_compaction: CompactionConfig,
     pub compaction_strategy: CompactionStrategy,
+    pub compaction_params: CompactionParams,
 }
 
 /// Builder that registers all agent tools and wires multi-agent infrastructure.
@@ -350,12 +350,11 @@ impl<'a> AgentRuntimeBuilder<'a> {
     ///
     /// Returns `BuildArtifacts` containing the parent name,
     /// merged compaction config, and resolved compaction strategy.
-    pub fn build(self) -> Result<BuildArtifacts, LabeledError> {
+    pub async fn build(self) -> Result<BuildArtifacts, LabeledError> {
         use crate::hook::adapter::builtin::adapt_builtins;
         use crate::hook::adapter::closure::adapt_closures;
 
         let BuildInput {
-            runtime,
             tool_server_handle,
             closure_registry,
             cwd,
@@ -390,12 +389,10 @@ impl<'a> AgentRuntimeBuilder<'a> {
         );
 
         for tool in closure_tools {
-            runtime
-                .block_on(async { tool_server_handle.add_tool(tool).await })
-                .map_err(|e| {
-                    LabeledError::new(format!("Failed to register closure tool: {}", e))
-                        .with_label(format!("{}", e), span)
-                })?;
+            tool_server_handle.add_tool(tool).await.map_err(|e| {
+                LabeledError::new(format!("Failed to register closure tool: {}", e))
+                    .with_label(format!("{}", e), span)
+            })?;
         }
 
         // All tool groups are always registered. The permission system gates actual use.
@@ -410,24 +407,23 @@ impl<'a> AgentRuntimeBuilder<'a> {
 
         // Apply config to session
         if let Some(session) = session {
-            session.set_compaction_config(compaction_params);
+            session.set_compaction_config(compaction_params.clone());
         }
 
         let builtin_tools = adapt_builtins(builtin_defs, cwd.clone(), max_tool_result_bytes);
 
         for tool in builtin_tools {
-            runtime
-                .block_on(async { tool_server_handle.add_tool(tool).await })
-                .map_err(|e| {
-                    LabeledError::new(format!("Failed to register builtin tool: {}", e))
-                        .with_label(format!("{}", e), span)
-                })?;
+            tool_server_handle.add_tool(tool).await.map_err(|e| {
+                LabeledError::new(format!("Failed to register builtin tool: {}", e))
+                    .with_label(format!("{}", e), span)
+            })?;
         }
 
         Ok(BuildArtifacts {
             parent_name: None,
             merged_compaction,
             compaction_strategy,
+            compaction_params,
         })
     }
 }

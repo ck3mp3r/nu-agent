@@ -1,11 +1,12 @@
 use crate::protocol::contracts::UiMessageSnapshot;
-use crate::session::{CompactionMarker, StoreEntry};
+use crate::session::{CompactionMarker, SessionStore as _, StoreEntry};
 use crate::types::{
     AssistantContent, Message, Text, ToolCall, ToolFunction, ToolResult, ToolResultContent,
     UserContent,
 };
 use rig::one_or_many::OneOrMany;
 use serde_json::json;
+use std::sync::Arc;
 
 /// Helper function to convert rig messages to UI snapshots for testing.
 /// Delegates to the actual hydrate_single_message function in resolver.rs.
@@ -864,17 +865,17 @@ fn hydrate_doom_loop_rehydrates_as_false() {
     );
 }
 
-#[test]
-fn resolve_session_request_user_provided_id_gets_prefixed() {
-    use crate::session::SessionStore;
+#[tokio::test]
+async fn resolve_session_request_user_provided_id_gets_prefixed() {
+    use crate::session::FsSessionStore;
     use crate::session::resolver::{
         DefaultSessionResolver, SessionResolutionInput, SessionResolver,
     };
     use tempfile::TempDir;
 
     let temp_dir = TempDir::new().unwrap();
-    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
-    let resolver = DefaultSessionResolver::new(&store);
+    let store = Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
+    let resolver = DefaultSessionResolver::new(store);
     let cwd = std::path::PathBuf::from("/home/user/project");
 
     let result = resolver
@@ -883,6 +884,7 @@ fn resolve_session_request_user_provided_id_gets_prefixed() {
             session_id: Some("foo".to_string()),
             cwd: cwd.clone(),
         })
+        .await
         .unwrap();
 
     let id = result.final_session_id.unwrap();
@@ -895,17 +897,17 @@ fn resolve_session_request_user_provided_id_gets_prefixed() {
     );
 }
 
-#[test]
-fn resolve_auto_generated_id_gets_prefixed() {
-    use crate::session::SessionStore;
+#[tokio::test]
+async fn resolve_auto_generated_id_gets_prefixed() {
+    use crate::session::FsSessionStore;
     use crate::session::resolver::{
         DefaultSessionResolver, SessionResolutionInput, SessionResolver,
     };
     use tempfile::TempDir;
 
     let temp_dir = TempDir::new().unwrap();
-    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
-    let resolver = DefaultSessionResolver::new(&store);
+    let store = Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
+    let resolver = DefaultSessionResolver::new(store);
     let cwd = std::path::PathBuf::from("/home/user/project");
 
     let result = resolver
@@ -914,6 +916,7 @@ fn resolve_auto_generated_id_gets_prefixed() {
             session_id: None,
             cwd: cwd.clone(),
         })
+        .await
         .unwrap();
 
     let id = result.final_session_id.unwrap();
@@ -924,18 +927,17 @@ fn resolve_auto_generated_id_gets_prefixed() {
     );
 }
 
-#[test]
-fn attach_existing_session_always_returns_initial_messages() {
+#[tokio::test]
+async fn attach_existing_session_always_returns_initial_messages() {
+    use crate::session::FsSessionStore;
     use crate::session::resolver::{
         DefaultSessionResolver, SessionResolutionInput, SessionResolver,
     };
-    use crate::session::{ConversationStore, JsonlConversationStore, SessionStore};
     use crate::types::Message;
     use tempfile::TempDir;
 
     let temp_dir = TempDir::new().unwrap();
-    let store = SessionStore::new_with_cache_dir(temp_dir.path().to_path_buf());
-    let conv_store = JsonlConversationStore::new(temp_dir.path().to_path_buf());
+    let store = Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
     let cwd = std::path::PathBuf::from("/home/user/project");
 
     // Pre-compute the prefixed session ID so we can write messages under it
@@ -943,19 +945,20 @@ fn attach_existing_session_always_returns_initial_messages() {
     let raw_id = "existing-session";
     let prefixed_id = format!("{prefix}-{raw_id}");
 
-    // Write messages to the conversation store for that session ID
+    // Write messages to the store for that session ID
     let messages = vec![Message::user("hello"), Message::assistant("world")];
-    conv_store.append(&prefixed_id, &messages, None).unwrap();
+    store.create(&prefixed_id, &messages).await.unwrap();
 
     // Resolve with use_tui: true to trigger the Attach path for an explicit session_id.
     // The Attach branch now always loads existing store entries, with no input_is_nothing gate.
-    let resolver = DefaultSessionResolver::new(&store);
+    let resolver = DefaultSessionResolver::new(Arc::clone(&store));
     let result = resolver
         .resolve(SessionResolutionInput {
             use_tui: true,
             session_id: Some(raw_id.to_string()),
             cwd: cwd.clone(),
         })
+        .await
         .unwrap();
 
     assert!(
