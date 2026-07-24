@@ -20,6 +20,7 @@ mod backend;
 mod panels;
 mod render_frame;
 mod renderer;
+mod session_picker;
 mod status;
 mod status_help;
 mod terminal_events;
@@ -305,8 +306,16 @@ impl RuntimeCoordinator {
         self.state.take_next_agent_picker_launch_request()
     }
 
+    pub(crate) fn take_next_session_picker_launch_request(&mut self) -> bool {
+        self.state.take_next_session_picker_launch_request()
+    }
+
     pub(crate) fn take_next_agent_switch_request(&mut self) -> Option<String> {
         self.state.take_next_agent_switch_request()
+    }
+
+    pub(crate) fn take_next_session_switch_request(&mut self) -> Option<String> {
+        self.state.take_next_session_switch_request()
     }
 
     pub(crate) fn clear_transcript(&mut self) {
@@ -390,6 +399,13 @@ impl RuntimeCoordinator {
         options: Vec<nu_agent_core::protocol::picker::AgentPickerOption>,
     ) {
         self.state.set_agent_picker_options(options);
+    }
+
+    pub(crate) fn set_session_picker_options(
+        &mut self,
+        options: Vec<crate::state::SessionPickerOption>,
+    ) {
+        self.state.set_session_picker_options(options);
     }
 
     pub(crate) fn set_active_agent_identity(&mut self, name: &str) {
@@ -547,6 +563,10 @@ impl RuntimeCoordinator {
             }
             SharedUiAction::Agents => {
                 self.state.open_agent_picker();
+                true
+            }
+            SharedUiAction::Sessions => {
+                self.state.open_session_picker();
                 true
             }
         }
@@ -1402,6 +1422,55 @@ impl RuntimeCoordinator {
                         frame.render_stateful_widget(table, rows[1], &mut table_state);
                     }
                 }
+
+                if self.state.session_picker_open {
+                    let popup = modal_rect_for_panel(area, ModalPanelKind::Sessions);
+                    let model =
+                        session_picker::session_picker_table_model(&self.state, popup.height);
+                    let title = if let Some(cue) = model.overflow_cue.as_deref() {
+                        format!("Sessions ({cue}) (↑/↓ · Enter · Esc)")
+                    } else {
+                        "Sessions (↑/↓ · Enter · Esc)".to_string()
+                    };
+                    let inner = render_modal_frame(frame, popup, title);
+                    let rows = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([Constraint::Length(1), Constraint::Min(0)])
+                        .split(inner);
+                    frame.render_widget(Paragraph::new(model.query_line), rows[0]);
+
+                    if model.rows.is_empty() {
+                        frame.render_widget(
+                            Paragraph::new(Line::from(
+                                session_picker::SESSION_PICKER_EMPTY_STATE_MESSAGE,
+                            )),
+                            rows[1],
+                        );
+                    } else {
+                        let header = Row::new(vec!["When", "Title", "ID"]);
+                        let table_rows = model.rows.iter().map(|row| {
+                            Row::new(vec![
+                                Cell::from(row[0].clone()),
+                                Cell::from(row[1].clone()),
+                                Cell::from(row[2].clone()),
+                            ])
+                        });
+                        let table = Table::new(
+                            table_rows,
+                            [
+                                Constraint::Length(10),
+                                Constraint::Min(12),
+                                Constraint::Length(15),
+                            ],
+                        )
+                        .header(header)
+                        .column_spacing(1)
+                        .highlight_symbol("❯ ");
+                        let mut table_state = TableState::default();
+                        table_state.select(model.selected);
+                        frame.render_stateful_widget(table, rows[1], &mut table_state);
+                    }
+                }
             })
             .map_err(|err| format!("TUI render failed: {err}"))?;
 
@@ -1479,6 +1548,7 @@ pub(super) fn modal_open_state_applies_dimmed_backdrop_for_test(state: &AppState
         || state.info_panel.is_some()
         || state.model_picker_open
         || state.agent_picker_open
+        || state.session_picker_open
 }
 
 #[cfg(test)]

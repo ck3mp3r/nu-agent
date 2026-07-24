@@ -4,7 +4,7 @@ use crate::protocol::{
 };
 
 /// Runtime capability for context compaction.
-pub trait HasCompaction {
+pub trait Compaction {
     fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
         None
     }

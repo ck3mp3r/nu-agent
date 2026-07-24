@@ -1,4 +1,4 @@
-use super::{SessionInfo, SessionMetadata};
+use super::{SessionInfo, SessionMetadata, extract_title};
 use crate::types::Message;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -152,12 +152,17 @@ impl FsSessionStore {
         Ok(())
     }
 
-    /// Write the metadata header line to a file.
-    async fn write_metadata_header(file: &mut File, id: &str) -> io::Result<()> {
+    /// Write the metadata header line to a file, extracting title from first user message.
+    async fn write_metadata_header(
+        file: &mut File,
+        id: &str,
+        first_messages: &[Message],
+    ) -> io::Result<()> {
         let metadata = SessionMetadata {
             metadata_type: "session".to_string(),
             session_id: id.to_string(),
             created_at: chrono::Utc::now(),
+            title: extract_title(first_messages),
         };
         let json = serde_json::to_string(&metadata).map_err(io::Error::other)?;
         file.write_all(json.as_bytes()).await?;
@@ -181,7 +186,7 @@ impl SessionStore for FsSessionStore {
             .open(&path)
             .await?;
 
-        Self::write_metadata_header(&mut file, id).await?;
+        Self::write_metadata_header(&mut file, id, first_messages).await?;
 
         for msg in first_messages {
             let json = Self::serialize_entry(&StoreEntry::Message(msg.clone()))?;
@@ -257,7 +262,7 @@ impl SessionStore for FsSessionStore {
                 .truncate(true)
                 .open(&path)
                 .await?;
-            Self::write_metadata_header(&mut file, id).await?;
+            Self::write_metadata_header(&mut file, id, &[]).await?;
         }
 
         // Append entries
@@ -371,6 +376,7 @@ impl SessionStore for FsSessionStore {
                 id: metadata.session_id,
                 message_count,
                 last_active: metadata.created_at,
+                title: metadata.title,
             });
         }
 

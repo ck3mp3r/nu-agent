@@ -197,6 +197,50 @@ fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserAction, bool
         );
     }
 
+    if state.session_picker_open {
+        return (
+            match action {
+                UserAction::Esc => {
+                    state.session_picker_close_on_escape();
+                    UserAction::Noop
+                }
+                UserAction::Submit => {
+                    if let Some(option) = state.selected_session_picker_option() {
+                        state.queue_session_switch_request(option.id.clone());
+                    }
+                    state.close_session_picker();
+                    UserAction::Noop
+                }
+                UserAction::ScrollLineUp | UserAction::HistoryUp => {
+                    state.session_picker_move_up();
+                    UserAction::Noop
+                }
+                UserAction::ScrollLineDown | UserAction::HistoryDown => {
+                    state.session_picker_move_down();
+                    UserAction::Noop
+                }
+                UserAction::QueryNext => {
+                    state.session_picker_move_down();
+                    UserAction::Noop
+                }
+                UserAction::ToggleCommandPalette => {
+                    state.session_picker_move_up();
+                    UserAction::Noop
+                }
+                UserAction::Backspace => {
+                    state.backspace_session_picker_query_char();
+                    UserAction::Noop
+                }
+                UserAction::InsertChar(ch) => {
+                    state.append_session_picker_query_char(ch);
+                    UserAction::Noop
+                }
+                _ => UserAction::Noop,
+            },
+            true,
+        );
+    }
+
     if state.has_permission_prompt() {
         return (
             match action {
@@ -236,6 +280,7 @@ fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserAction, bool
         && state.input_mode == InputMode::Insert
         && !state.agent_picker_open
         && !state.model_picker_open
+        && !state.session_picker_open
         && state.has_agents_to_cycle()
     {
         state.queue_cycle_agent_request();

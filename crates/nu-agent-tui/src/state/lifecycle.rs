@@ -431,6 +431,18 @@ impl AppState {
             }
         }
 
+        if !self.session_picker_open {
+            self.session_picker_selection = 0;
+            self.session_picker_query.clear();
+        } else {
+            let session_filtered_count = self.session_picker_filtered_options().len();
+            if session_filtered_count == 0 {
+                self.session_picker_selection = 0;
+            } else if self.session_picker_selection >= session_filtered_count {
+                self.session_picker_selection = session_filtered_count.saturating_sub(1);
+            }
+        }
+
         while self.input.cursor > 0 && !self.input.buffer.is_char_boundary(self.input.cursor) {
             self.input.cursor -= 1;
         }

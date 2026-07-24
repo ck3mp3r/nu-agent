@@ -1,5 +1,9 @@
-/// Runtime capability for session lifecycle management.
-pub trait HasSessionManagement {
+use crate::protocol::contracts::UiMessageSnapshot;
+use crate::session::SessionInfo;
+
+/// Pure session state lifecycle — synchronous, no I/O.
+/// Every runtime implements this: production, test fakes, mocks.
+pub trait SessionState {
     /// Clear the current session state.
     fn clear_session(&mut self) {}
 
@@ -13,4 +17,26 @@ pub trait HasSessionManagement {
     /// transcript hydration. A no-op for test runtimes that do not have a
     /// `MemoryState`.
     fn seed_last_total_tokens(&mut self, _tokens: Option<u64>) {}
+}
+
+/// Async session persistence I/O — load and list sessions from a store.
+/// Uses `impl Future + Send` following the same pattern as
+/// `Compaction::execute_compaction_trigger` and
+/// `McpManagement::set_mcp_server_enabled`.
+pub trait SessionPersistence {
+    /// Load a session by ID and return its messages as UI snapshots.
+    /// Returns an error string if the session doesn't exist or can't be loaded.
+    fn load_session(
+        &mut self,
+        _session_id: &str,
+    ) -> impl std::future::Future<Output = Result<Vec<UiMessageSnapshot>, String>> + Send {
+        async move { Err("Session loading not supported".to_string()) }
+    }
+
+    /// List all available sessions.
+    fn list_sessions(
+        &self,
+    ) -> impl std::future::Future<Output = Result<Vec<SessionInfo>, String>> + Send {
+        async move { Ok(Vec::new()) }
+    }
 }

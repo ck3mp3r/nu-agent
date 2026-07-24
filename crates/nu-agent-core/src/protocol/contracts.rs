@@ -22,6 +22,7 @@ pub enum SharedUiAction {
     Mcps,
     Models,
     Agents,
+    Sessions,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,6 +148,12 @@ pub trait UserInputUi {
         false
     }
     fn take_next_agent_switch_request(&mut self) -> Option<String> {
+        None
+    }
+    fn take_next_session_picker_launch_request(&mut self) -> bool {
+        false
+    }
+    fn take_next_session_switch_request(&mut self) -> Option<String> {
         None
     }
 }

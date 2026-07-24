@@ -17,4 +17,7 @@ pub mod slash;
 pub mod tool_args;
 
 #[cfg(test)]
+mod session_management_test;
+
+#[cfg(test)]
 mod test;

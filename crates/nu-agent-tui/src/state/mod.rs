@@ -109,6 +109,7 @@ pub enum CommandPaletteAction {
     Skills,
     Models,
     Agents,
+    Sessions,
 }
 
 impl CommandPaletteAction {
@@ -119,6 +120,7 @@ impl CommandPaletteAction {
         Self::Skills,
         Self::Models,
         Self::Agents,
+        Self::Sessions,
     ];
 
     pub fn label(&self) -> &'static str {
@@ -130,6 +132,7 @@ impl CommandPaletteAction {
             Self::Skills => "Skills",
             Self::Models => "Models",
             Self::Agents => "Agents",
+            Self::Sessions => "Sessions",
         }
     }
 
@@ -142,6 +145,7 @@ impl CommandPaletteAction {
             Self::Skills => "List available skills",
             Self::Models => "Open model picker",
             Self::Agents => "Open agent picker",
+            Self::Sessions => "Switch to an existing session",
         }
     }
 
@@ -154,6 +158,7 @@ impl CommandPaletteAction {
             Self::Skills => Some(InfoPanel::Skills),
             Self::Models => None,
             Self::Agents => None,
+            Self::Sessions => None,
         }
     }
 }
@@ -174,6 +179,14 @@ pub struct DiscoverableSkill {
 }
 
 pub use nu_agent_core::protocol::picker::{AgentPickerOption, ModelPickerOption};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionPickerOption {
+    pub id: String,
+    pub title: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub display: String,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct McpServerState {
@@ -284,6 +297,10 @@ pub struct AppState {
     pub agent_picker_query: String,
     pub agent_picker_selection: usize,
     pub agent_picker_options: Vec<AgentPickerOption>,
+    pub session_picker_open: bool,
+    pub session_picker_query: String,
+    pub session_picker_selection: usize,
+    pub session_picker_options: Vec<SessionPickerOption>,
     pending_agent_picker_launch_requests: usize,
     pending_agent_switch_requests: VecDeque<String>,
     active_agent_identity: Option<String>,
@@ -302,6 +319,8 @@ pub struct AppState {
     pending_model_switch_requests: VecDeque<String>,
     pending_permission_decisions: VecDeque<PermissionDecisionSubmission>,
     pending_model_picker_launch_requests: usize,
+    pending_session_picker_launch_requests: usize,
+    pending_session_switch_requests: VecDeque<String>,
     pub permission_prompt: Option<PermissionPrompt>,
     assistant_projection_cache: HashMap<String, Vec<Line<'static>>>,
     prompt_items: Vec<QueuedPrompt>,
@@ -358,6 +377,10 @@ impl Default for AppState {
             agent_picker_query: String::new(),
             agent_picker_selection: 0,
             agent_picker_options: Vec::new(),
+            session_picker_open: false,
+            session_picker_query: String::new(),
+            session_picker_selection: 0,
+            session_picker_options: Vec::new(),
             pending_agent_picker_launch_requests: 0,
             pending_agent_switch_requests: VecDeque::new(),
             active_agent_identity: None,
@@ -376,6 +399,8 @@ impl Default for AppState {
             pending_model_switch_requests: VecDeque::new(),
             pending_permission_decisions: VecDeque::new(),
             pending_model_picker_launch_requests: 0,
+            pending_session_picker_launch_requests: 0,
+            pending_session_switch_requests: VecDeque::new(),
             permission_prompt: None,
             assistant_projection_cache: HashMap::new(),
             prompt_items: Vec::new(),

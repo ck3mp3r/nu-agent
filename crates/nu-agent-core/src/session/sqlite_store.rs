@@ -1,5 +1,5 @@
 use super::store::{CompactionMarker, SessionStore, StoreEntry};
-use super::{SessionInfo, SessionMetadata};
+use super::{SessionInfo, SessionMetadata, extract_title};
 use crate::types::Message;
 use chrono::{DateTime, Utc};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
@@ -60,12 +60,15 @@ impl SessionStore for SqliteSessionStore {
     async fn create(&self, id: &str, first_messages: &[Message]) -> Result<(), Self::Error> {
         let mut tx = self.pool.begin().await?;
 
+        // Extract title from first user message
+        let title = extract_title(first_messages).unwrap_or_default();
+
         // Insert session metadata
         let now = Utc::now().to_rfc3339();
         sqlx::query("INSERT OR IGNORE INTO sessions (id, created_at, title) VALUES (?, ?, ?)")
             .bind(id)
             .bind(&now)
-            .bind("")
+            .bind(&title)
             .execute(&mut *tx)
             .await?;
 
@@ -92,13 +95,13 @@ impl SessionStore for SqliteSessionStore {
         id: &str,
     ) -> Result<Option<(SessionMetadata, Vec<StoreEntry>)>, Self::Error> {
         // Check if session exists
-        let session_row: Option<(String, String)> =
-            sqlx::query_as("SELECT id, created_at FROM sessions WHERE id = ?")
+        let session_row: Option<(String, String, String)> =
+            sqlx::query_as("SELECT id, created_at, title FROM sessions WHERE id = ?")
                 .bind(id)
                 .fetch_optional(&self.pool)
                 .await?;
 
-        let (session_id, created_at_str) = match session_row {
+        let (session_id, created_at_str, title) = match session_row {
             Some(row) => row,
             None => return Ok(None),
         };
@@ -140,6 +143,7 @@ impl SessionStore for SqliteSessionStore {
             metadata_type: "session".to_string(),
             session_id,
             created_at,
+            title: if title.is_empty() { None } else { Some(title) },
         };
 
         Ok(Some((metadata, entries)))
@@ -245,8 +249,8 @@ impl SessionStore for SqliteSessionStore {
     }
 
     async fn list(&self) -> Result<Vec<SessionInfo>, Self::Error> {
-        let rows: Vec<(String, String, i64)> = sqlx::query_as(
-            "SELECT s.id, s.created_at, COUNT(e.seq) as message_count
+        let rows: Vec<(String, String, i64, String)> = sqlx::query_as(
+            "SELECT s.id, s.created_at, COUNT(e.seq) as message_count, s.title
              FROM sessions s
              LEFT JOIN entries e ON e.session_id = s.id
              GROUP BY s.id
@@ -258,12 +262,13 @@ impl SessionStore for SqliteSessionStore {
 
         let sessions = rows
             .into_iter()
-            .filter_map(|(id, created_at_str, message_count)| {
+            .filter_map(|(id, created_at_str, message_count, title)| {
                 let created_at: DateTime<Utc> = created_at_str.parse().ok()?;
                 Some(SessionInfo {
                     id,
                     message_count: message_count as usize,
                     last_active: created_at,
+                    title: if title.is_empty() { None } else { Some(title) },
                 })
             })
             .collect();

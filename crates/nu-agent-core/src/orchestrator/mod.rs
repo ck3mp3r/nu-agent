@@ -45,15 +45,15 @@ use crate::orchestrator::{
 };
 use crate::protocol::{
     compaction::CompactionTriggerSource,
-    compaction_runtime::HasCompaction,
+    compaction_runtime::Compaction,
     contracts::{
         CoreRuntime, DisplayStateUi, LifecycleUi, McpUsabilityState, ProgressUi, TranscriptUi,
         UiMessageSnapshot, UserInputUi,
     },
     event::UiEvent,
-    mcp_management::HasMcpManagement,
-    model_switching::HasModelSwitching,
-    session_management::HasSessionManagement,
+    mcp_management::McpManagement,
+    model_switching::ModelSwitching,
+    session_management::{SessionPersistence, SessionState},
 };
 
 /// Configuration for the interactive loop.
@@ -134,8 +134,10 @@ pub type McpToggleResult = (
 pub(crate) type PendingMcpToggle = (String, std_mpsc::Receiver<McpToggleResult>);
 pub type ModelSwitchResult = Result<(String, Option<u64>), String>;
 pub type AgentSwitchResult = Result<(String, String, Option<u64>), String>;
+pub type SessionSwitchResult = Result<Vec<UiMessageSnapshot>, String>;
 pub(crate) type PendingModelSwitch = std_mpsc::Receiver<ModelSwitchResult>;
 pub(crate) type PendingAgentSwitch = std_mpsc::Receiver<AgentSwitchResult>;
+pub(crate) type PendingSessionSwitch = std_mpsc::Receiver<SessionSwitchResult>;
 pub(crate) type PendingAutoCompaction = std_mpsc::Receiver<Option<String>>;
 pub(crate) type PendingCompactionTrigger = std_mpsc::Receiver<Option<String>>;
 
@@ -163,6 +165,10 @@ pub enum WorkerCommand {
     SwitchAgent {
         agent_name: String,
         response_tx: std_mpsc::Sender<AgentSwitchResult>,
+    },
+    SwitchSession {
+        session_id: String,
+        response_tx: std_mpsc::Sender<SessionSwitchResult>,
     },
     ClearSession,
     NewSession,
@@ -212,10 +218,11 @@ pub(crate) async fn run_interactive_loop_impl<R, U>(
 ) -> (R, Result<Value, LabeledError>)
 where
     R: CoreRuntime
-        + HasMcpManagement
-        + HasModelSwitching
-        + HasSessionManagement
-        + HasCompaction
+        + McpManagement
+        + ModelSwitching
+        + SessionState
+        + SessionPersistence
+        + Compaction
         + Send
         + 'static,
     U: ProgressUi + UserInputUi + DisplayStateUi + LifecycleUi + TranscriptUi,
@@ -367,10 +374,11 @@ pub async fn run_interactive_loop<R, U>(
 ) -> Result<Value, LabeledError>
 where
     R: CoreRuntime
-        + HasMcpManagement
-        + HasModelSwitching
-        + HasSessionManagement
-        + HasCompaction
+        + McpManagement
+        + ModelSwitching
+        + SessionState
+        + SessionPersistence
+        + Compaction
         + Send
         + 'static,
     U: ProgressUi + UserInputUi + DisplayStateUi + LifecycleUi + TranscriptUi,
@@ -393,10 +401,11 @@ pub async fn run_interactive_loop_with_external_prompts<R, U>(
 ) -> Result<Value, LabeledError>
 where
     R: CoreRuntime
-        + HasMcpManagement
-        + HasModelSwitching
-        + HasSessionManagement
-        + HasCompaction
+        + McpManagement
+        + ModelSwitching
+        + SessionState
+        + SessionPersistence
+        + Compaction
         + Send
         + 'static,
     U: ProgressUi + UserInputUi + DisplayStateUi + LifecycleUi + TranscriptUi,
@@ -412,10 +421,11 @@ pub async fn run_hydrated_interactive_loop<R, U>(
 ) -> Result<Value, LabeledError>
 where
     R: CoreRuntime
-        + HasMcpManagement
-        + HasModelSwitching
-        + HasSessionManagement
-        + HasCompaction
+        + McpManagement
+        + ModelSwitching
+        + SessionState
+        + SessionPersistence
+        + Compaction
         + Send
         + 'static,
     U: ProgressUi + UserInputUi + DisplayStateUi + LifecycleUi + TranscriptUi,
@@ -437,10 +447,11 @@ pub async fn run_hydrated_interactive_loop_with_external_prompts<R, U>(
 ) -> Result<Value, LabeledError>
 where
     R: CoreRuntime
-        + HasMcpManagement
-        + HasModelSwitching
-        + HasSessionManagement
-        + HasCompaction
+        + McpManagement
+        + ModelSwitching
+        + SessionState
+        + SessionPersistence
+        + Compaction
         + Send
         + 'static,
     U: ProgressUi + UserInputUi + DisplayStateUi + LifecycleUi + TranscriptUi,

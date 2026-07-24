@@ -2668,6 +2668,7 @@ name = "nu-agent-tui"
 version = "0.1.0"
 dependencies = [
  "arboard",
+ "chrono",
  "crossterm",
  "libc",
  "log",

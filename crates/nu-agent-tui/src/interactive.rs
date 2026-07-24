@@ -9,6 +9,7 @@ use nu_agent_core::protocol::{
 use nu_agent_core::renderer::UiRenderer;
 
 use crate::runtime::{HybridTerminalEvents, TuiRuntimeRenderer};
+use crate::state::SessionPickerOption;
 
 pub struct TuiInteractiveUi<R>
 where
@@ -65,6 +66,10 @@ where
         options: Vec<nu_agent_core::protocol::picker::AgentPickerOption>,
     ) {
         self.renderer.set_agent_picker_options(options);
+    }
+
+    pub fn set_session_picker_options(&mut self, options: Vec<SessionPickerOption>) {
+        self.renderer.set_session_picker_options(options);
     }
 
     pub fn set_active_agent_identity(&mut self, name: &str) {
@@ -134,8 +139,16 @@ where
         self.renderer.take_next_agent_picker_launch_request()
     }
 
+    fn take_next_session_picker_launch_request(&mut self) -> bool {
+        self.renderer.take_next_session_picker_launch_request()
+    }
+
     fn take_next_agent_switch_request(&mut self) -> Option<String> {
         self.renderer.take_next_agent_switch_request()
+    }
+
+    fn take_next_session_switch_request(&mut self) -> Option<String> {
+        self.renderer.take_next_session_switch_request()
     }
 }
 

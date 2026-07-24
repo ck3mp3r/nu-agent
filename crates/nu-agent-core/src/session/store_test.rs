@@ -1,7 +1,7 @@
 use super::store::{
     CompactionMarker, FsSessionStore, StoreEntry, extract_llm_context, validate_tool_call_adjacency,
 };
-use crate::session::SessionStore;
+use crate::session::{SessionStore, extract_title};
 use crate::types::Message;
 use tempfile::TempDir;
 
@@ -932,4 +932,99 @@ async fn fs_store_delete_removes_file() {
 
     store.delete("delete-me").await.unwrap();
     assert!(store.load("delete-me").await.unwrap().is_none());
+}
+
+// ================================================================
+// Title extraction tests
+// ================================================================
+
+#[test]
+fn title_extracted_from_first_user_message() {
+    let messages = vec![
+        Message::user("Hello, this is my first message to the agent"),
+        Message::assistant("Hi there!"),
+    ];
+    let title = extract_title(&messages);
+    assert_eq!(
+        title,
+        Some("Hello, this is my first message to the agent".to_string())
+    );
+}
+
+#[test]
+fn title_none_when_no_user_message() {
+    let messages = vec![Message::assistant("Hi there!")];
+    let title = extract_title(&messages);
+    assert_eq!(title, None);
+}
+
+#[test]
+fn title_truncated_at_80_chars() {
+    let long_text = "a".repeat(100);
+    let messages = vec![Message::user(long_text)];
+    let title = extract_title(&messages);
+    assert_eq!(title, Some("a".repeat(80)));
+}
+
+#[test]
+fn title_truncated_at_word_boundary() {
+    let long_text = "hello world ".to_string() + &"x".repeat(70) + " more text";
+    let messages = vec![Message::user(long_text)];
+    let title = extract_title(&messages);
+    // Should truncate at the last space within 80 chars
+    assert!(title.as_ref().unwrap().len() <= 80);
+    // "hello world " is 12 chars, last space at index 11 → "hello world" (11 chars)
+    assert_eq!(title, Some("hello world".to_string()));
+}
+
+#[test]
+fn title_none_when_empty_user_message() {
+    let messages = vec![Message::user("   ")];
+    let title = extract_title(&messages);
+    assert_eq!(title, None);
+}
+
+#[tokio::test]
+async fn title_survives_round_trip_fs_store() {
+    let temp_dir = TempDir::new().unwrap();
+    let store = FsSessionStore::new(temp_dir.path().to_path_buf());
+
+    let messages = vec![
+        Message::user("My first message to the agent"),
+        Message::assistant("Hello! How can I help?"),
+    ];
+
+    store.create("title-test", &messages).await.unwrap();
+
+    // Verify via list
+    let sessions = store.list().await.unwrap();
+    let session = sessions.iter().find(|s| s.id == "title-test").unwrap();
+    assert_eq!(
+        session.title,
+        Some("My first message to the agent".to_string())
+    );
+
+    // Verify via load
+    let (metadata, _entries) = store.load("title-test").await.unwrap().unwrap();
+    assert_eq!(
+        metadata.title,
+        Some("My first message to the agent".to_string())
+    );
+}
+
+#[tokio::test]
+async fn title_none_when_no_user_message_fs_store() {
+    let temp_dir = TempDir::new().unwrap();
+    let store = FsSessionStore::new(temp_dir.path().to_path_buf());
+
+    // Only assistant messages
+    let messages = vec![Message::assistant("Hello!")];
+    store.create("no-user-msg", &messages).await.unwrap();
+
+    let sessions = store.list().await.unwrap();
+    let session = sessions.iter().find(|s| s.id == "no-user-msg").unwrap();
+    assert_eq!(session.title, None);
+
+    let (metadata, _entries) = store.load("no-user-msg").await.unwrap().unwrap();
+    assert_eq!(metadata.title, None);
 }

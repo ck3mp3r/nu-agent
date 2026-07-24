@@ -15,7 +15,8 @@ use nu_agent_core::{
     },
     policy::UiPolicy,
     protocol::{
-        contracts::UiMessageSnapshot, event::PermissionDecision, mcp_management::HasMcpManagement,
+        contracts::UiMessageSnapshot, event::PermissionDecision, mcp_management::McpManagement,
+        session_management::SessionPersistence,
     },
 };
 use nu_agent_tty::StderrProgressUi;
@@ -148,6 +149,33 @@ pub(crate) async fn run_tui_mode(
         runtime_impl.agent_identity(),
     );
     tui_ui.set_agent_picker_options(agent_picker_catalog);
+    // Populate session picker from session store
+    {
+        let sessions = runtime_impl.list_sessions().await;
+        match sessions {
+            Ok(sessions) => {
+                let options: Vec<nu_agent_tui::state::SessionPickerOption> = sessions
+                    .into_iter()
+                    .map(|info| {
+                        let display = info
+                            .title
+                            .clone()
+                            .unwrap_or_else(|| "(untitled)".to_string());
+                        nu_agent_tui::state::SessionPickerOption {
+                            id: info.id,
+                            title: info.title,
+                            created_at: info.last_active,
+                            display,
+                        }
+                    })
+                    .collect();
+                tui_ui.set_session_picker_options(options);
+            }
+            Err(e) => {
+                log::warn!("Failed to list sessions for picker: {e}");
+            }
+        }
+    }
     let cycle_names: Vec<String> = runtime_impl
         .available_agent_summaries()
         .iter()

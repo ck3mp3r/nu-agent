@@ -1,7 +1,7 @@
 use crate::protocol::contracts::McpUsabilityState;
 
 /// Runtime capability for MCP server management.
-pub trait HasMcpManagement {
+pub trait McpManagement {
     fn set_mcp_server_enabled(
         &mut self,
         _name: &str,

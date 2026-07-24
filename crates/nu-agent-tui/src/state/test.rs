@@ -418,6 +418,7 @@ fn command_palette_empty_query_returns_canonical_help_status_order_only() {
             CommandPaletteAction::Skills,
             CommandPaletteAction::Models,
             CommandPaletteAction::Agents,
+            CommandPaletteAction::Sessions,
         ]
     );
 }
@@ -436,6 +437,7 @@ fn command_palette_empty_query_returns_canonical_help_status_mcps_skills_order()
             CommandPaletteAction::Skills,
             CommandPaletteAction::Models,
             CommandPaletteAction::Agents,
+            CommandPaletteAction::Sessions,
         ]
     );
 }
@@ -523,6 +525,7 @@ fn inline_slash_suggestions_open_on_leading_slash() {
             nu_agent_core::protocol::slash::SlashCommand::Models,
             nu_agent_core::protocol::slash::SlashCommand::Agent,
             nu_agent_core::protocol::slash::SlashCommand::New,
+            nu_agent_core::protocol::slash::SlashCommand::Session,
         ]
     );
 }
@@ -532,7 +535,7 @@ fn inline_slash_suggestions_filter_incrementally_as_input_grows() {
     let mut state = AppState::new();
 
     state.append_input_char('/');
-    assert_eq!(state.inline_slash_suggestions().len(), 7);
+    assert_eq!(state.inline_slash_suggestions().len(), 8);
 
     state.append_input_char('c');
     assert_eq!(

@@ -9,6 +9,9 @@ use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 
 use crate::hook::agent_hook::DoomLoopState;
+use crate::protocol::contracts::UiMessageSnapshot;
+use crate::session::SessionInfo;
+use crate::session::SessionStore;
 use crate::session::SessionStoreImpl;
 use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
 
@@ -27,12 +30,12 @@ pub type PendingPermissions =
     Arc<Mutex<HashMap<String, oneshot::Sender<ProtocolPermissionDecision>>>>;
 use crate::protocol::{
     compaction::{CompactionTriggerDecision, CompactionTriggerSource},
-    compaction_runtime::HasCompaction,
+    compaction_runtime::Compaction,
     contracts::{CoreRuntime, McpUsabilityState, ProgressUi},
     event::UiEvent,
-    mcp_management::HasMcpManagement,
-    model_switching::HasModelSwitching,
-    session_management::HasSessionManagement,
+    mcp_management::McpManagement,
+    model_switching::ModelSwitching,
+    session_management::{SessionPersistence, SessionState},
 };
 
 /// Build system preamble from components.
@@ -297,7 +300,7 @@ where
     }
 }
 
-impl<Prov, Tools, Sess, Comp, Persona, Multi> HasMcpManagement
+impl<Prov, Tools, Sess, Comp, Persona, Multi> McpManagement
     for AgentRuntime<Prov, Tools, Sess, Comp, Persona, Multi>
 where
     Prov: ProviderManager + Send,
@@ -345,7 +348,7 @@ where
     }
 }
 
-impl<Prov, Tools, Sess, Comp, Persona, Multi> HasModelSwitching
+impl<Prov, Tools, Sess, Comp, Persona, Multi> ModelSwitching
     for AgentRuntime<Prov, Tools, Sess, Comp, Persona, Multi>
 where
     Prov: ProviderManager,
@@ -435,7 +438,7 @@ where
     }
 }
 
-impl<Prov, Tools, Sess, Comp, Persona, Multi> HasCompaction
+impl<Prov, Tools, Sess, Comp, Persona, Multi> Compaction
     for AgentRuntime<Prov, Tools, Sess, Comp, Persona, Multi>
 where
     Prov: ProviderManager + Send,
@@ -459,7 +462,7 @@ where
     }
 }
 
-impl<Prov, Tools, Sess, Comp, Persona, Multi> HasSessionManagement
+impl<Prov, Tools, Sess, Comp, Persona, Multi> SessionState
     for AgentRuntime<Prov, Tools, Sess, Comp, Persona, Multi>
 where
     Prov: ProviderManager,
@@ -483,6 +486,73 @@ where
 
     fn seed_last_total_tokens(&mut self, tokens: Option<u64>) {
         *self.session.last_total_tokens_mut() = tokens;
+    }
+}
+
+impl<Prov, Tools, Sess, Comp, Persona, Multi> SessionPersistence
+    for AgentRuntime<Prov, Tools, Sess, Comp, Persona, Multi>
+where
+    Prov: ProviderManager + Send + Sync,
+    Tools: ToolManager + Send + Sync,
+    Sess: SessionManager + Send + Sync,
+    Comp: CompactionManager + Send + Sync,
+    Persona: PersonaManager + Send + Sync,
+    Multi: MultiAgentManager + Send + Sync,
+{
+    async fn load_session(&mut self, session_id: &str) -> Result<Vec<UiMessageSnapshot>, String> {
+        let store = Arc::clone(&self.store);
+        let sid = session_id.to_string();
+
+        // Phase 1: try exact match
+        let result = store
+            .load(&sid)
+            .await
+            .map_err(|e| format!("Failed to load session '{session_id}': {e}"))?;
+
+        // Phase 2: prefix/contains match if exact failed
+        let (metadata, entries) = match result {
+            Some(data) => data,
+            None => {
+                let sessions = store
+                    .list()
+                    .await
+                    .map_err(|e| format!("Failed to list sessions: {e}"))?;
+
+                let matched = sessions
+                    .iter()
+                    .find(|s| {
+                        s.id.to_ascii_lowercase()
+                            .ends_with(&sid.to_ascii_lowercase())
+                    })
+                    .or_else(|| {
+                        sessions.iter().find(|s| {
+                            s.id.to_ascii_lowercase()
+                                .contains(&sid.to_ascii_lowercase())
+                        })
+                    })
+                    .ok_or_else(|| format!("Session '{session_id}' not found"))?;
+
+                let matched_id = matched.id.clone();
+                store
+                    .load(&matched_id)
+                    .await
+                    .map_err(|e| format!("Failed to load session '{}': {e}", matched.id))?
+                    .ok_or_else(|| format!("Session '{}' not found", matched.id))?
+            }
+        };
+
+        // Phase 3: update state and hydrate
+        self.session.clear();
+        self.final_session_id = Some(metadata.session_id.clone());
+
+        Ok(crate::session::resolver::hydrate_transcript_from_store_entries(&entries))
+    }
+
+    async fn list_sessions(&self) -> Result<Vec<SessionInfo>, String> {
+        self.store
+            .list()
+            .await
+            .map_err(|e| format!("Failed to list sessions: {e}"))
     }
 }
 

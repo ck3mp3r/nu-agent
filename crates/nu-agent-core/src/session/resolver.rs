@@ -89,6 +89,7 @@ impl<S: SessionStore + Clone + Send + Sync> SessionResolver for DefaultSessionRe
                                     metadata_type: "session".to_string(),
                                     session_id: id.clone(),
                                     created_at: chrono::Utc::now(),
+                                    title: None,
                                 },
                                 Vec::new(),
                             )

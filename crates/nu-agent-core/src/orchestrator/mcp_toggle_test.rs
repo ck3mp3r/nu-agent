@@ -21,7 +21,7 @@ impl CoreRuntime for McpToggleRuntime {
     }
 }
 
-impl HasMcpManagement for McpToggleRuntime {
+impl McpManagement for McpToggleRuntime {
     async fn set_mcp_server_enabled(
         &mut self,
         server_name: &str,
@@ -44,7 +44,7 @@ impl HasMcpManagement for McpToggleRuntime {
     }
 }
 
-impl HasModelSwitching for McpToggleRuntime {
+impl ModelSwitching for McpToggleRuntime {
     fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
         Err("model switching not supported".to_string())
     }
@@ -84,7 +84,7 @@ impl CoreRuntime for FailingMcpToggleRuntime {
     }
 }
 
-impl HasMcpManagement for FailingMcpToggleRuntime {
+impl McpManagement for FailingMcpToggleRuntime {
     async fn set_mcp_server_enabled(
         &mut self,
         server_name: &str,
@@ -107,7 +107,7 @@ impl HasMcpManagement for FailingMcpToggleRuntime {
     }
 }
 
-impl HasModelSwitching for FailingMcpToggleRuntime {
+impl ModelSwitching for FailingMcpToggleRuntime {
     fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
         Err("model switching not supported".to_string())
     }
@@ -151,7 +151,7 @@ impl CoreRuntime for SequencedMcpToggleRuntime {
     }
 }
 
-impl HasMcpManagement for SequencedMcpToggleRuntime {
+impl McpManagement for SequencedMcpToggleRuntime {
     async fn set_mcp_server_enabled(
         &mut self,
         server_name: &str,
@@ -182,7 +182,7 @@ impl HasMcpManagement for SequencedMcpToggleRuntime {
     }
 }
 
-impl HasModelSwitching for SequencedMcpToggleRuntime {
+impl ModelSwitching for SequencedMcpToggleRuntime {
     fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
         Err("model switching not supported".to_string())
     }
@@ -221,7 +221,7 @@ impl CoreRuntime for PanicOnToggleRuntime {
     }
 }
 
-impl HasMcpManagement for PanicOnToggleRuntime {
+impl McpManagement for PanicOnToggleRuntime {
     async fn set_mcp_server_enabled(
         &mut self,
         _name: &str,
@@ -243,7 +243,7 @@ impl HasMcpManagement for PanicOnToggleRuntime {
     }
 }
 
-impl HasModelSwitching for PanicOnToggleRuntime {
+impl ModelSwitching for PanicOnToggleRuntime {
     fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
         Err("model switching not supported".to_string())
     }

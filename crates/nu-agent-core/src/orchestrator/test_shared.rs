@@ -11,7 +11,7 @@ pub(crate) use crate::orchestrator::{
 };
 pub(crate) use crate::protocol::{
     compaction::{CompactionTriggerDecision, CompactionTriggerSource},
-    compaction_runtime::HasCompaction,
+    compaction_runtime::Compaction,
     contracts::{
         CoreRuntime, DisplayStateUi, LifecycleUi, McpToggleRequest, McpUsabilityState, ProgressUi,
         SharedUiAction, TranscriptUi, UiMessageSnapshot, UiMessageUsageSnapshot, UserInputUi,
@@ -20,9 +20,9 @@ pub(crate) use crate::protocol::{
         PermissionDecision, PermissionDecisionSubmission, PermissionRequestContext, ToolDisplay,
         ToolDisplaySection, UiEvent,
     },
-    mcp_management::HasMcpManagement,
-    model_switching::HasModelSwitching,
-    session_management::HasSessionManagement,
+    mcp_management::McpManagement,
+    model_switching::ModelSwitching,
+    session_management::{SessionPersistence, SessionState},
 };
 
 // Convenience: empty impl blocks that use the trait's default methods.
@@ -31,19 +31,20 @@ pub(crate) use crate::protocol::{
 #[macro_export]
 macro_rules! default_session {
     ($t:ty) => {
-        impl HasSessionManagement for $t {}
+        impl SessionState for $t {}
+        impl SessionPersistence for $t {}
     };
 }
 #[macro_export]
 macro_rules! default_mcp {
     ($t:ty) => {
-        impl HasMcpManagement for $t {}
+        impl McpManagement for $t {}
     };
 }
 #[macro_export]
 macro_rules! default_compaction {
     ($t:ty) => {
-        impl HasCompaction for $t {}
+        impl Compaction for $t {}
     };
 }
 
@@ -244,7 +245,7 @@ impl CoreRuntime for FakeRuntime {
     }
 }
 
-impl HasMcpManagement for FakeRuntime {
+impl McpManagement for FakeRuntime {
     async fn set_mcp_server_enabled(
         &mut self,
         _name: &str,
@@ -270,7 +271,7 @@ impl HasMcpManagement for FakeRuntime {
     }
 }
 
-impl HasModelSwitching for FakeRuntime {
+impl ModelSwitching for FakeRuntime {
     fn switch_model(&mut self, model_spec: &str) -> Result<(String, Option<u64>), String> {
         self.switched_models.push(model_spec.to_string());
         if let Some(result) = self.switch_model_result.clone() {
@@ -292,7 +293,7 @@ impl HasModelSwitching for FakeRuntime {
     }
 }
 
-impl HasCompaction for FakeRuntime {
+impl Compaction for FakeRuntime {
     fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
         self.auto_decisions.pop_front()
     }
@@ -311,7 +312,8 @@ impl HasCompaction for FakeRuntime {
     }
 }
 
-impl HasSessionManagement for FakeRuntime {}
+impl SessionState for FakeRuntime {}
+impl SessionPersistence for FakeRuntime {}
 
 #[derive(Default)]
 pub(crate) struct FakeValueRuntime {
@@ -331,7 +333,7 @@ impl CoreRuntime for FakeValueRuntime {
     }
 }
 
-impl HasModelSwitching for FakeValueRuntime {
+impl ModelSwitching for FakeValueRuntime {
     fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
         Err("model switching not supported".to_string())
     }
@@ -418,7 +420,7 @@ impl CoreRuntime for LongRunningRuntime {
     }
 }
 
-impl HasModelSwitching for LongRunningRuntime {
+impl ModelSwitching for LongRunningRuntime {
     fn switch_model(&mut self, model_spec: &str) -> Result<(String, Option<u64>), String> {
         self.action_log
             .lock()
@@ -598,10 +600,11 @@ pub(crate) fn _assert_single_turn_accepts_core_runtime<R: CoreRuntime + Send, U:
 // Compile-time check: run_interactive_loop must accept anything that impls the focused capability traits
 pub(crate) fn _assert_interactive_loop_accepts_extended_runtime<
     R: CoreRuntime
-        + HasMcpManagement
-        + HasModelSwitching
-        + HasSessionManagement
-        + HasCompaction
+        + McpManagement
+        + ModelSwitching
+        + SessionState
+        + SessionPersistence
+        + Compaction
         + Send,
     U: ProgressUi + UserInputUi + DisplayStateUi + LifecycleUi + TranscriptUi,
 >(

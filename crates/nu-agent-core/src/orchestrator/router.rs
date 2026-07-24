@@ -1,11 +1,11 @@
 use crate::orchestrator::{WorkerCommand, turn_outcome::TurnOutcome};
 use crate::protocol::{
     compaction::CompactionTriggerDecision,
-    compaction_runtime::HasCompaction,
+    compaction_runtime::Compaction,
     contracts::{CoreRuntime, ProgressUi},
-    mcp_management::HasMcpManagement,
-    model_switching::HasModelSwitching,
-    session_management::HasSessionManagement,
+    mcp_management::McpManagement,
+    model_switching::ModelSwitching,
+    session_management::{SessionPersistence, SessionState},
 };
 
 use tokio::sync::mpsc;
@@ -34,10 +34,11 @@ impl CommandRouter {
     ) -> bool
     where
         R: CoreRuntime
-            + HasMcpManagement
-            + HasModelSwitching
-            + HasSessionManagement
-            + HasCompaction
+            + McpManagement
+            + ModelSwitching
+            + SessionState
+            + SessionPersistence
+            + Compaction
             + Send,
         U: ProgressUi + Send,
     {
@@ -140,6 +141,15 @@ impl CommandRouter {
             WorkerCommand::NewSession => {
                 log::info!("Router: NewSession");
                 runtime.new_session();
+                true
+            }
+            WorkerCommand::SwitchSession {
+                session_id,
+                response_tx,
+            } => {
+                log::info!("Router: SwitchSession id={session_id}");
+                let result = runtime.load_session(&session_id).await;
+                let _ = response_tx.send(result);
                 true
             }
             WorkerCommand::Shutdown => {

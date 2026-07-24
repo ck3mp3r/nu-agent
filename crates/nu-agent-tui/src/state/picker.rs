@@ -394,6 +394,118 @@ impl AppState {
     }
 }
 
+impl AppState {
+    pub fn set_session_picker_options(&mut self, options: Vec<SessionPickerOption>) {
+        let mut options = options;
+        options.sort_by_key(|b| std::cmp::Reverse(b.created_at));
+        self.session_picker_options = options;
+        self.ensure_invariants();
+    }
+
+    pub fn open_session_picker(&mut self) {
+        self.close_command_palette();
+        self.close_info_panel();
+        self.session_picker_open = true;
+        self.session_picker_query.clear();
+        self.session_picker_selection = 0;
+        self.ensure_invariants();
+    }
+
+    pub fn close_session_picker(&mut self) {
+        self.session_picker_open = false;
+        self.session_picker_query.clear();
+        self.session_picker_selection = 0;
+        self.ensure_invariants();
+    }
+
+    pub fn session_picker_close_on_escape(&mut self) {
+        self.close_session_picker();
+    }
+
+    pub fn session_picker_move_up(&mut self) {
+        let count = self.session_picker_filtered_options().len();
+        if count == 0 {
+            return;
+        }
+        if self.session_picker_selection == 0 {
+            self.session_picker_selection = count - 1;
+        } else {
+            self.session_picker_selection -= 1;
+        }
+    }
+
+    pub fn session_picker_move_down(&mut self) {
+        let count = self.session_picker_filtered_options().len();
+        if count == 0 {
+            return;
+        }
+        self.session_picker_selection = (self.session_picker_selection + 1) % count;
+    }
+
+    pub fn append_session_picker_query_char(&mut self, ch: char) {
+        self.session_picker_query.push(ch);
+        self.session_picker_selection = 0;
+        self.ensure_invariants();
+    }
+
+    pub fn backspace_session_picker_query_char(&mut self) {
+        self.session_picker_query.pop();
+        self.session_picker_selection = 0;
+        self.ensure_invariants();
+    }
+
+    pub fn session_picker_filtered_options(&self) -> Vec<&SessionPickerOption> {
+        if self.session_picker_query.is_empty() {
+            return self.session_picker_options.iter().collect();
+        }
+        let query = self.session_picker_query.to_lowercase();
+        self.session_picker_options
+            .iter()
+            .filter(|o| {
+                o.id.to_lowercase().contains(&query)
+                    || o.display.to_lowercase().contains(&query)
+                    || o.title
+                        .as_deref()
+                        .unwrap_or("")
+                        .to_lowercase()
+                        .contains(&query)
+            })
+            .collect()
+    }
+
+    pub fn selected_session_picker_option(&self) -> Option<&SessionPickerOption> {
+        let filtered = self.session_picker_filtered_options();
+        filtered.get(self.session_picker_selection).copied()
+    }
+
+    pub fn queue_session_picker_launch_request(&mut self) {
+        self.pending_session_picker_launch_requests = self
+            .pending_session_picker_launch_requests
+            .saturating_add(1);
+        self.input.buffer.clear();
+        self.input.cursor = 0;
+        self.abort.pending = false;
+        self.ensure_invariants();
+    }
+
+    pub fn take_next_session_picker_launch_request(&mut self) -> bool {
+        if self.pending_session_picker_launch_requests > 0 {
+            self.pending_session_picker_launch_requests -= 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn queue_session_switch_request(&mut self, session_id: String) {
+        self.pending_session_switch_requests.push_back(session_id);
+    }
+
+    pub fn take_next_session_switch_request(&mut self) -> Option<String> {
+        self.pending_session_switch_requests.pop_front()
+    }
+}
+
 fn fuzzy_matches(query: &str, candidate: &str) -> bool {
     if query.is_empty() {
         return true;

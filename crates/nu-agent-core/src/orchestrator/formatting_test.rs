@@ -28,7 +28,7 @@ impl CoreRuntime for ContextWindowRuntime {
     }
 }
 
-impl HasMcpManagement for ContextWindowRuntime {
+impl McpManagement for ContextWindowRuntime {
     async fn set_mcp_server_enabled(
         &mut self,
         _name: &str,
@@ -50,7 +50,7 @@ impl HasMcpManagement for ContextWindowRuntime {
     }
 }
 
-impl HasModelSwitching for ContextWindowRuntime {
+impl ModelSwitching for ContextWindowRuntime {
     fn switch_model(&mut self, model_spec: &str) -> Result<(String, Option<u64>), String> {
         self.switched_models.push(model_spec.to_string());
         Ok((model_spec.to_string(), self.max_context_tokens))
@@ -186,7 +186,7 @@ impl CoreRuntime for TokenSeedingRuntime {
     }
 }
 
-impl HasModelSwitching for TokenSeedingRuntime {
+impl ModelSwitching for TokenSeedingRuntime {
     fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
         Err("model switching not supported".to_string())
     }
@@ -204,7 +204,7 @@ impl HasModelSwitching for TokenSeedingRuntime {
     }
 }
 
-impl HasSessionManagement for TokenSeedingRuntime {
+impl SessionState for TokenSeedingRuntime {
     fn clear_session(&mut self) {}
 
     fn new_session(&mut self) {}
@@ -213,6 +213,7 @@ impl HasSessionManagement for TokenSeedingRuntime {
         self.seeded_tokens = Some(tokens);
     }
 }
+impl SessionPersistence for TokenSeedingRuntime {}
 
 crate::default_mcp!(TokenSeedingRuntime);
 crate::default_compaction!(TokenSeedingRuntime);

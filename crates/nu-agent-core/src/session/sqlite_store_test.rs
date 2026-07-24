@@ -575,3 +575,86 @@ async fn corrupt_row_skipped_not_fatal() {
         _ => panic!("Expected Message entry at index 1"),
     }
 }
+
+// ================================================================
+// Title extraction tests
+// ================================================================
+
+#[tokio::test]
+async fn title_extracted_from_first_user_message_sqlite() {
+    let store = SqliteSessionStore::new(":memory:")
+        .await
+        .expect("create store");
+
+    let messages = vec![
+        Message::user("Hello, this is my first message"),
+        Message::assistant("Hi there!"),
+    ];
+    store
+        .create("title-test-1", &messages)
+        .await
+        .expect("create");
+
+    // Verify via list
+    let sessions = store.list().await.expect("list");
+    let session = sessions.iter().find(|s| s.id == "title-test-1").unwrap();
+    assert_eq!(
+        session.title,
+        Some("Hello, this is my first message".to_string())
+    );
+
+    // Verify via load
+    let (metadata, _entries) = store.load("title-test-1").await.expect("load").unwrap();
+    assert_eq!(
+        metadata.title,
+        Some("Hello, this is my first message".to_string())
+    );
+}
+
+#[tokio::test]
+async fn title_none_when_no_user_message_sqlite() {
+    let store = SqliteSessionStore::new(":memory:")
+        .await
+        .expect("create store");
+
+    let messages = vec![Message::assistant("Hello!")];
+    store
+        .create("no-user-msg-sqlite", &messages)
+        .await
+        .expect("create");
+
+    let sessions = store.list().await.expect("list");
+    let session = sessions
+        .iter()
+        .find(|s| s.id == "no-user-msg-sqlite")
+        .unwrap();
+    assert_eq!(session.title, None);
+
+    let (metadata, _entries) = store
+        .load("no-user-msg-sqlite")
+        .await
+        .expect("load")
+        .unwrap();
+    assert_eq!(metadata.title, None);
+}
+
+#[tokio::test]
+async fn title_survives_round_trip_sqlite() {
+    let store = SqliteSessionStore::new(":memory:")
+        .await
+        .expect("create store");
+
+    let messages = vec![
+        Message::user("Round trip title test"),
+        Message::assistant("Response"),
+    ];
+    store.create("round-trip", &messages).await.expect("create");
+
+    // list → load
+    let sessions = store.list().await.expect("list");
+    let session = sessions.iter().find(|s| s.id == "round-trip").unwrap();
+    assert_eq!(session.title, Some("Round trip title test".to_string()));
+
+    let (metadata, _entries) = store.load("round-trip").await.expect("load").unwrap();
+    assert_eq!(metadata.title, Some("Round trip title test".to_string()));
+}

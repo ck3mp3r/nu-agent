@@ -60,7 +60,7 @@ impl CoreRuntime for ToolDisplayOnlyRuntime {
     }
 }
 
-impl HasModelSwitching for ToolDisplayOnlyRuntime {
+impl ModelSwitching for ToolDisplayOnlyRuntime {
     fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
         Err("model switching not supported".to_string())
     }
@@ -102,7 +102,7 @@ impl CoreRuntime for CancelFirstRuntime {
     }
 }
 
-impl HasModelSwitching for CancelFirstRuntime {
+impl ModelSwitching for CancelFirstRuntime {
     fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
         Err("model switching not supported".to_string())
     }
@@ -148,7 +148,7 @@ impl CoreRuntime for ErrorFirstRuntime {
     }
 }
 
-impl HasModelSwitching for ErrorFirstRuntime {
+impl ModelSwitching for ErrorFirstRuntime {
     fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
         Err("model switching not supported".to_string())
     }
@@ -255,7 +255,7 @@ impl CoreRuntime for PermissionGateRuntime {
     }
 }
 
-impl HasMcpManagement for PermissionGateRuntime {
+impl McpManagement for PermissionGateRuntime {
     async fn set_mcp_server_enabled(
         &mut self,
         _name: &str,
@@ -280,7 +280,7 @@ impl HasMcpManagement for PermissionGateRuntime {
 crate::default_session!(PermissionGateRuntime);
 crate::default_compaction!(PermissionGateRuntime);
 
-impl HasModelSwitching for PermissionGateRuntime {
+impl ModelSwitching for PermissionGateRuntime {
     fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
         Err("model switching not supported".to_string())
     }
@@ -550,7 +550,7 @@ impl CoreRuntime for StartupHydrationRuntime {
     }
 }
 
-impl HasMcpManagement for StartupHydrationRuntime {
+impl McpManagement for StartupHydrationRuntime {
     async fn set_mcp_server_enabled(
         &mut self,
         _name: &str,
@@ -575,7 +575,7 @@ impl HasMcpManagement for StartupHydrationRuntime {
     }
 }
 
-impl HasModelSwitching for StartupHydrationRuntime {
+impl ModelSwitching for StartupHydrationRuntime {
     fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
         Err("model switching not supported".to_string())
     }

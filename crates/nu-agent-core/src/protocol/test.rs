@@ -15,8 +15,8 @@ use super::skills::{
     render_available_skills_preamble_for_tests, resolve_explicit_skill_request_for_cwd_for_tests,
 };
 use super::slash::{
-    SLASH_COMMAND_ORDER, SlashCommand, SlashParseResult, filter_inline_slash_suggestions,
-    parse_slash_command,
+    SLASH_COMMAND_ORDER, SlashCommand, SlashParseResult, extract_session_id,
+    filter_inline_slash_suggestions, parse_slash_command,
 };
 
 use crate::compaction::CompactionStrategy;
@@ -860,6 +860,7 @@ fn inline_slash_filter_is_prefix_based_and_deterministic() {
             SlashCommand::Models,
             SlashCommand::Agent,
             SlashCommand::New,
+            SlashCommand::Session,
         ]
     );
     assert_eq!(
@@ -890,6 +891,7 @@ fn slash_command_catalog_exports_expected_labels_and_order() {
             SlashCommand::Models,
             SlashCommand::Agent,
             SlashCommand::New,
+            SlashCommand::Session,
         ]
     );
 
@@ -900,6 +902,7 @@ fn slash_command_catalog_exports_expected_labels_and_order() {
     assert_eq!(SlashCommand::Models.label(), "/models");
     assert_eq!(SlashCommand::Agent.label(), "/agent");
     assert_eq!(SlashCommand::New.label(), "/new");
+    assert_eq!(SlashCommand::Session.label(), "/session");
 
     assert!(!SlashCommand::Compact.summary().is_empty());
     assert!(!SlashCommand::Mcp.summary().is_empty());
@@ -908,6 +911,7 @@ fn slash_command_catalog_exports_expected_labels_and_order() {
     assert!(!SlashCommand::Models.summary().is_empty());
     assert!(!SlashCommand::Agent.summary().is_empty());
     assert!(!SlashCommand::New.summary().is_empty());
+    assert!(!SlashCommand::Session.summary().is_empty());
 }
 
 #[test]
@@ -934,4 +938,49 @@ fn slash_command_label_agent_returns_slash_agent() {
 #[test]
 fn slash_command_summary_agent_returns_switch_agent_persona() {
     assert_eq!(SlashCommand::Agent.summary(), "Switch agent persona");
+}
+
+#[test]
+fn parse_slash_command_session_exact() {
+    assert_eq!(
+        parse_slash_command("/session"),
+        SlashParseResult::Command(SlashCommand::Session)
+    );
+}
+
+#[test]
+fn parse_slash_command_session_case_insensitive() {
+    assert_eq!(
+        parse_slash_command("/SESSION"),
+        SlashParseResult::Command(SlashCommand::Session)
+    );
+}
+
+#[test]
+fn parse_slash_command_session_with_id() {
+    assert_eq!(
+        parse_slash_command("/session abc123"),
+        SlashParseResult::Command(SlashCommand::Session)
+    );
+}
+
+#[test]
+fn extract_session_id_returns_none_for_bare_session() {
+    assert_eq!(extract_session_id("/session"), None);
+}
+
+#[test]
+fn extract_session_id_returns_id_argument() {
+    assert_eq!(extract_session_id("/session abc123"), Some("abc123"));
+}
+
+#[test]
+fn extract_session_id_case_insensitive_prefix() {
+    assert_eq!(extract_session_id("/SESSION abc123"), Some("abc123"));
+    assert_eq!(extract_session_id("/Session abc123"), Some("abc123"));
+}
+
+#[test]
+fn extract_session_id_trims_whitespace() {
+    assert_eq!(extract_session_id("  /session   abc123  "), Some("abc123"));
 }

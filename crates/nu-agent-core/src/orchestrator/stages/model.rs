@@ -4,7 +4,7 @@ use crate::orchestrator::pending::PendingOps;
 use crate::orchestrator::poll::{PollOutcome, poll_pending};
 use crate::orchestrator::stages::{OrchestrationContext, StageOutcome};
 use crate::orchestrator::{
-    PendingAgentSwitch, PendingMcpToggle, PendingModelSwitch, WorkerCommand,
+    PendingAgentSwitch, PendingMcpToggle, PendingModelSwitch, PendingSessionSwitch, WorkerCommand,
 };
 use crate::protocol::contracts::{
     DisplayStateUi, LifecycleUi, McpToggleRequest, McpUsabilityState, ProgressUi, SharedUiAction,
@@ -24,6 +24,7 @@ pub(crate) struct ModelSwitchStage {
     last_authoritative_visible_count: usize,
     pending_model_switch: Option<PendingModelSwitch>,
     pending_agent_switch: Option<PendingAgentSwitch>,
+    pending_session_switch: Option<PendingSessionSwitch>,
     pending_mcp_toggles: Vec<PendingMcpToggle>,
     pending_ops: PendingOps,
 }
@@ -34,6 +35,7 @@ impl ModelSwitchStage {
             last_authoritative_visible_count: initial_visible_count,
             pending_model_switch: None,
             pending_agent_switch: None,
+            pending_session_switch: None,
             pending_mcp_toggles: Vec::new(),
             pending_ops: PendingOps::new(),
         }
@@ -134,6 +136,33 @@ impl ModelSwitchStage {
             }
         }
 
+        // --- Poll pending session switch result ---
+        if let Some(response_rx) = self.pending_session_switch.take() {
+            match poll_pending(response_rx) {
+                PollOutcome::Ready(Ok(snapshots)) => {
+                    log::debug!("Session switch succeeded: {} messages", snapshots.len());
+                    ctx.ui.clear_transcript();
+                    ctx.ui.hydrate_transcript_from_messages(snapshots, None);
+                    ctx.ui.emit(&UiEvent::Warning {
+                        message: "Session switched".to_string(),
+                    });
+                    handled = true;
+                }
+                PollOutcome::Ready(Err(message)) => {
+                    log::warn!("Session switch failed: {message}");
+                    ctx.ui.emit(&UiEvent::Warning { message });
+                    handled = true;
+                }
+                PollOutcome::Pending(rx) => self.pending_session_switch = Some(rx),
+                PollOutcome::Disconnected => {
+                    ctx.ui.emit(&UiEvent::Warning {
+                        message: "Session switch worker disconnected".to_string(),
+                    });
+                    handled = true;
+                }
+            }
+        }
+
         // --- Poll pending MCP toggle results ---
         let mut retained = Vec::new();
         for (server_name, response_rx) in self.pending_mcp_toggles.drain(..) {
@@ -203,7 +232,7 @@ impl ModelSwitchStage {
         }
         self.pending_mcp_toggles = retained;
 
-        // --- Model/agent picker launch requests ---
+        // --- Model/agent/session picker launch requests ---
         while ctx.ui.take_next_model_picker_launch_request() {
             let _ = ctx.ui.execute_shared_ui_action(SharedUiAction::Models);
             handled = true;
@@ -211,6 +240,11 @@ impl ModelSwitchStage {
 
         while ctx.ui.take_next_agent_picker_launch_request() {
             let _ = ctx.ui.execute_shared_ui_action(SharedUiAction::Agents);
+            handled = true;
+        }
+
+        while ctx.ui.take_next_session_picker_launch_request() {
+            let _ = ctx.ui.execute_shared_ui_action(SharedUiAction::Sessions);
             handled = true;
         }
 
@@ -271,6 +305,33 @@ impl ModelSwitchStage {
                 }
             } else {
                 self.pending_ops.queue_agent_switch(agent_name);
+            }
+        }
+
+        // --- Session switch requests from UI ---
+        while let Some(session_id) = ctx.ui.take_next_session_switch_request() {
+            handled = true;
+            if *ctx.worker_active {
+                ctx.ui.emit(&UiEvent::Warning {
+                    message: "Cannot switch session while worker is active".to_string(),
+                });
+            } else if self.pending_session_switch.is_none() {
+                let (response_tx, response_rx) = std_mpsc::channel();
+                if ctx
+                    .worker_tx
+                    .send(WorkerCommand::SwitchSession {
+                        session_id,
+                        response_tx,
+                    })
+                    .await
+                    .is_ok()
+                {
+                    self.pending_session_switch = Some(response_rx);
+                } else {
+                    ctx.ui.emit(&UiEvent::Warning {
+                        message: "Session switch worker channel closed".to_string(),
+                    });
+                }
             }
         }
 

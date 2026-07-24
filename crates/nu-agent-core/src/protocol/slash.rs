@@ -7,6 +7,7 @@ pub enum SlashCommand {
     Models,
     Agent,
     New,
+    Session,
 }
 
 impl SlashCommand {
@@ -19,6 +20,7 @@ impl SlashCommand {
             SlashCommand::Models => "/models",
             SlashCommand::Agent => "/agent",
             SlashCommand::New => "/new",
+            SlashCommand::Session => "/session",
         }
     }
 
@@ -31,8 +33,22 @@ impl SlashCommand {
             SlashCommand::Models => "Open model picker",
             SlashCommand::Agent => "Switch agent persona",
             SlashCommand::New => "Start a new session",
+            SlashCommand::Session => "Switch to an existing session",
         }
     }
+}
+
+/// Extract the session ID argument from a `/session <id>` input.
+/// Returns `None` if the input is just `/session` with no argument.
+/// Case-insensitive on the `/session` prefix.
+pub fn extract_session_id(input: &str) -> Option<&str> {
+    let trimmed = input.trim();
+    let rest = trimmed
+        .strip_prefix("/session")
+        .or_else(|| trimmed.strip_prefix("/Session"))
+        .or_else(|| trimmed.strip_prefix("/SESSION"))?
+        .trim();
+    if rest.is_empty() { None } else { Some(rest) }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,7 +58,7 @@ pub enum SlashParseResult {
     Unknown(String),
 }
 
-pub const SLASH_COMMAND_ORDER: [SlashCommand; 7] = [
+pub const SLASH_COMMAND_ORDER: [SlashCommand; 8] = [
     SlashCommand::Compact,
     SlashCommand::Mcp,
     SlashCommand::Help,
@@ -50,6 +66,7 @@ pub const SLASH_COMMAND_ORDER: [SlashCommand; 7] = [
     SlashCommand::Models,
     SlashCommand::Agent,
     SlashCommand::New,
+    SlashCommand::Session,
 ];
 
 pub fn filter_inline_slash_suggestions(input: &str) -> Vec<SlashCommand> {
@@ -83,7 +100,15 @@ pub fn parse_slash_command(input: &str) -> SlashParseResult {
         "/models" => Some(SlashCommand::Models),
         "/agent" => Some(SlashCommand::Agent),
         "/new" => Some(SlashCommand::New),
-        _ => None,
+        "/session" => Some(SlashCommand::Session),
+        _ => {
+            // Check for /session <id> prefix match
+            if command.starts_with("/session ") {
+                Some(SlashCommand::Session)
+            } else {
+                None
+            }
+        }
     };
 
     if let Some(command) = parsed {

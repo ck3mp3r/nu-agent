@@ -6,7 +6,7 @@ use crate::{
 use nu_agent_core::protocol::event::{
     PermissionDecision, PermissionRequestContext, ToolDisplay, ToolDisplaySection, UiEvent,
 };
-use nu_agent_core::protocol::slash::{SlashParseResult, parse_slash_command};
+use nu_agent_core::protocol::slash::{SlashParseResult, extract_session_id, parse_slash_command};
 use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry};
 
 pub const ESC_ABORT_CONFIRM_STATUS: &str = "Hit escape again to abort.";
@@ -168,6 +168,14 @@ fn handle_submit(state: &mut AppState) {
             state.queue_agent_picker_launch_request();
             return;
         }
+        SlashParseResult::Command(nu_agent_core::protocol::slash::SlashCommand::Session) => {
+            if let Some(session_id) = extract_session_id(&submitted_text) {
+                state.queue_session_switch_request(session_id.to_string());
+            } else {
+                state.queue_session_picker_launch_request();
+            }
+            return;
+        }
         SlashParseResult::Command(_) | SlashParseResult::Unknown(_) => {
             state.enqueue_immediate_submission(submitted_text);
             return;
@@ -275,6 +283,12 @@ fn handle_command_palette_select(state: &mut AppState) {
         if action == crate::state::CommandPaletteAction::Agents {
             state.close_command_palette();
             state.queue_agent_picker_launch_request();
+            return;
+        }
+
+        if action == crate::state::CommandPaletteAction::Sessions {
+            state.close_command_palette();
+            state.queue_session_picker_launch_request();
             return;
         }
 

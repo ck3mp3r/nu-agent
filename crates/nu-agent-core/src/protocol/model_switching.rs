@@ -1,5 +1,5 @@
 /// Runtime capability for model and agent switching.
-pub trait HasModelSwitching {
+pub trait ModelSwitching {
     fn switch_model(&mut self, model_spec: &str) -> Result<(String, Option<u64>), String>;
 
     fn switch_agent(&mut self, agent_name: &str) -> Result<String, String>;

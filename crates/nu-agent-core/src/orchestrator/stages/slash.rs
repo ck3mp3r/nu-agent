@@ -101,6 +101,11 @@ impl SlashStage {
                     handled = true;
                     continue;
                 }
+                SlashParseResult::Command(SlashCommand::Session) => {
+                    let _ = ctx.ui.execute_shared_ui_action(SharedUiAction::Sessions);
+                    handled = true;
+                    continue;
+                }
                 SlashParseResult::Unknown(command) => {
                     ctx.ui.emit(&UiEvent::Warning {
                         message: format!("Unknown slash command: {command}"),

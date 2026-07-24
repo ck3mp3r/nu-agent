@@ -161,6 +161,13 @@ where
         self.coordinator.set_agent_picker_options(options);
     }
 
+    pub(crate) fn set_session_picker_options(
+        &mut self,
+        options: Vec<crate::state::SessionPickerOption>,
+    ) {
+        self.coordinator.set_session_picker_options(options);
+    }
+
     pub(crate) fn set_active_agent_identity(&mut self, name: &str) {
         self.coordinator.set_active_agent_identity(name);
     }
@@ -233,8 +240,16 @@ where
         self.coordinator.take_next_agent_picker_launch_request()
     }
 
+    pub(crate) fn take_next_session_picker_launch_request(&mut self) -> bool {
+        self.coordinator.take_next_session_picker_launch_request()
+    }
+
     pub(crate) fn take_next_agent_switch_request(&mut self) -> Option<String> {
         self.coordinator.take_next_agent_switch_request()
+    }
+
+    pub(crate) fn take_next_session_switch_request(&mut self) -> Option<String> {
+        self.coordinator.take_next_session_switch_request()
     }
 
     pub(crate) fn execute_shared_ui_action(&mut self, action: SharedUiAction) -> bool {

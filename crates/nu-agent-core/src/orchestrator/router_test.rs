@@ -11,18 +11,20 @@ use std::sync::{
 };
 use std::time::Duration;
 
-use crate::orchestrator::{InteractiveLoopConfig, run_interactive_loop_impl};
+use crate::orchestrator::{
+    CommandRouter, InteractiveLoopConfig, WorkerCommand, run_interactive_loop_impl,
+};
 use crate::protocol::{
     compaction::{CompactionTriggerDecision, CompactionTriggerSource},
-    compaction_runtime::HasCompaction,
+    compaction_runtime::Compaction,
     contracts::{
         CoreRuntime, DisplayStateUi, LifecycleUi, McpUsabilityState, ProgressUi, SharedUiAction,
         TranscriptUi, UiMessageSnapshot, UserInputUi,
     },
     event::UiEvent,
-    mcp_management::HasMcpManagement,
-    model_switching::HasModelSwitching,
-    session_management::HasSessionManagement,
+    mcp_management::McpManagement,
+    model_switching::ModelSwitching,
+    session_management::{SessionPersistence, SessionState},
 };
 
 // ---------------------------------------------------------------------------
@@ -58,7 +60,7 @@ impl CoreRuntime for AgentSwitchRuntime {
     }
 }
 
-impl HasMcpManagement for AgentSwitchRuntime {
+impl McpManagement for AgentSwitchRuntime {
     async fn set_mcp_server_enabled(
         &mut self,
         _name: &str,
@@ -80,7 +82,7 @@ impl HasMcpManagement for AgentSwitchRuntime {
     }
 }
 
-impl HasModelSwitching for AgentSwitchRuntime {
+impl ModelSwitching for AgentSwitchRuntime {
     fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
         Err("model switching not supported".to_string())
     }
@@ -102,13 +104,14 @@ impl HasModelSwitching for AgentSwitchRuntime {
     }
 }
 
-impl HasSessionManagement for AgentSwitchRuntime {
+impl SessionState for AgentSwitchRuntime {
     fn clear_session(&mut self) {}
     fn new_session(&mut self) {}
     fn seed_last_total_tokens(&mut self, _tokens: Option<u64>) {}
 }
+impl SessionPersistence for AgentSwitchRuntime {}
 
-impl HasCompaction for AgentSwitchRuntime {
+impl Compaction for AgentSwitchRuntime {
     fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
         None
     }
@@ -271,7 +274,7 @@ impl CoreRuntime for LongRunningAgentRuntime {
     }
 }
 
-impl HasMcpManagement for LongRunningAgentRuntime {
+impl McpManagement for LongRunningAgentRuntime {
     async fn set_mcp_server_enabled(
         &mut self,
         _name: &str,
@@ -293,7 +296,7 @@ impl HasMcpManagement for LongRunningAgentRuntime {
     }
 }
 
-impl HasModelSwitching for LongRunningAgentRuntime {
+impl ModelSwitching for LongRunningAgentRuntime {
     fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
         Err("model switching not supported".to_string())
     }
@@ -315,13 +318,14 @@ impl HasModelSwitching for LongRunningAgentRuntime {
     }
 }
 
-impl HasSessionManagement for LongRunningAgentRuntime {
+impl SessionState for LongRunningAgentRuntime {
     fn clear_session(&mut self) {}
     fn new_session(&mut self) {}
     fn seed_last_total_tokens(&mut self, _tokens: Option<u64>) {}
 }
+impl SessionPersistence for LongRunningAgentRuntime {}
 
-impl HasCompaction for LongRunningAgentRuntime {
+impl Compaction for LongRunningAgentRuntime {
     fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
         None
     }
@@ -597,4 +601,122 @@ async fn queued_agent_switch_last_write_wins() {
         ["agent-b"]
     );
     assert_eq!(ui.active_agent_identity, Some("agent-b".to_string()));
+}
+
+// ---------------------------------------------------------------------------
+// SwitchSession runtime — tracks load_session calls to verify async dispatch
+// ---------------------------------------------------------------------------
+
+struct SwitchSessionRuntime {
+    loaded_session_id: Arc<Mutex<Option<String>>>,
+    active_model: String,
+}
+
+impl CoreRuntime for SwitchSessionRuntime {
+    async fn execute_turn<U: ProgressUi>(
+        &mut self,
+        _ui: &mut U,
+        _prompt: String,
+        _context: Option<String>,
+        span: Span,
+    ) -> Result<Value, LabeledError> {
+        Ok(Value::nothing(span))
+    }
+}
+
+impl ModelSwitching for SwitchSessionRuntime {
+    fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
+        Err("model switching not supported".to_string())
+    }
+
+    fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
+        Err("agent switch not supported".to_string())
+    }
+
+    fn active_model_identity(&self) -> String {
+        self.active_model.clone()
+    }
+
+    fn max_context_tokens(&self) -> Option<u64> {
+        None
+    }
+}
+
+impl SessionState for SwitchSessionRuntime {
+    fn clear_session(&mut self) {}
+    fn new_session(&mut self) {}
+    fn seed_last_total_tokens(&mut self, _tokens: Option<u64>) {}
+}
+
+impl SessionPersistence for SwitchSessionRuntime {
+    async fn load_session(&mut self, session_id: &str) -> Result<Vec<UiMessageSnapshot>, String> {
+        self.loaded_session_id
+            .lock()
+            .expect("loaded_session_id lock")
+            .replace(session_id.to_string());
+        Err("Session loading not supported".to_string())
+    }
+}
+
+crate::default_mcp!(SwitchSessionRuntime);
+crate::default_compaction!(SwitchSessionRuntime);
+
+// ---------------------------------------------------------------------------
+// Test: SwitchSession dispatches async load_session without panic
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn switch_session_dispatches_async_load_without_panic() {
+    let loaded_session_id: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+
+    let mut runtime = SwitchSessionRuntime {
+        loaded_session_id: Arc::clone(&loaded_session_id),
+        active_model: "openai/gpt-4o-mini".to_string(),
+    };
+
+    // Minimal ProgressUi — only needed to satisfy the trait bound on dispatch
+    struct NoopProgressUi;
+    impl ProgressUi for NoopProgressUi {
+        fn emit(&mut self, _event: &UiEvent) {}
+        fn flush(&mut self) {}
+        fn take_cancel_requested(&self) -> bool {
+            false
+        }
+    }
+    let mut ui = NoopProgressUi;
+
+    // result_tx is unused by SwitchSession but required by the dispatch signature
+    let (result_tx, _result_rx) = tokio::sync::mpsc::channel(1);
+
+    // Response channel for the SwitchSession command
+    let (response_tx, response_rx) = std::sync::mpsc::channel();
+
+    let cmd = WorkerCommand::SwitchSession {
+        session_id: "test-session-123".to_string(),
+        response_tx,
+    };
+
+    // Dispatch from within an async context — this is the exact scenario
+    // that was panicking with "Cannot start a runtime from within a runtime"
+    // when load_session used Handle::current().block_on(...)
+    let should_continue = CommandRouter::dispatch(cmd, &mut runtime, &mut ui, &result_tx).await;
+
+    // 1. No panic occurred (reaching here proves it)
+    assert!(should_continue, "SwitchSession should not trigger shutdown");
+
+    // 2. load_session was called with the correct session_id
+    let loaded = loaded_session_id.lock().expect("lock");
+    assert_eq!(
+        loaded.as_deref(),
+        Some("test-session-123"),
+        "load_session should be called with the correct session_id"
+    );
+    drop(loaded);
+
+    // 3. The result is sent through the response channel
+    let result = response_rx.recv().expect("response should be sent");
+    assert!(
+        result.is_err(),
+        "default load_session should return an error"
+    );
 }
