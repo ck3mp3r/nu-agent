@@ -3173,4 +3173,114 @@ mod visual_selection_tests {
         assert_eq!(state.transcript_scroll_offset, 50);
         assert!(!state.transcript_following_tail);
     }
+
+    #[test]
+    fn ctrl_u_moves_cursor_up_by_page() {
+        let mut state = AppState::new();
+        state.input_mode = InputMode::Normal;
+        state.pane_focus = PaneFocus::Transcript;
+        state.viewport_height = 10;
+        state.cursor_visual_row = 10;
+        state.total_visual_rows = 30;
+        state.transcript_scroll_offset = 5;
+        state.transcript_following_tail = false;
+        state.entry_indices = (0..30).collect();
+        for i in 0..30 {
+            state.push_transcript_item(TranscriptEntry::User(ProseMessage {
+                markdown: format!("line {i}"),
+            }));
+        }
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::ScrollPageUp),
+            None,
+        );
+        // cursor moves 10 - 8 = 2
+        assert_eq!(state.cursor_visual_row, 2);
+        // scroll_margin = 10/3 = 3, cursor 2 < 5 + 3 = 8, so scroll_offset = 5 - 8 = 0
+        assert_eq!(state.transcript_scroll_offset, 0);
+        assert!(!state.transcript_following_tail);
+    }
+
+    #[test]
+    fn ctrl_d_moves_cursor_down_by_page() {
+        let mut state = AppState::new();
+        state.input_mode = InputMode::Normal;
+        state.pane_focus = PaneFocus::Transcript;
+        state.viewport_height = 10;
+        state.cursor_visual_row = 0;
+        state.total_visual_rows = 30;
+        state.transcript_scroll_offset = 0;
+        state.transcript_following_tail = false;
+        state.entry_indices = (0..30).collect();
+        for i in 0..30 {
+            state.push_transcript_item(TranscriptEntry::User(ProseMessage {
+                markdown: format!("line {i}"),
+            }));
+        }
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::ScrollPageDown),
+            None,
+        );
+        // cursor moves 0 + 8 = 8
+        assert_eq!(state.cursor_visual_row, 8);
+        // scroll_margin = 3, viewport_bottom = 0 + 10 - 3 = 7, cursor 8 >= 7, so scroll_offset = 0 + 8 = 8
+        assert_eq!(state.transcript_scroll_offset, 8);
+        assert!(!state.transcript_following_tail);
+    }
+
+    #[test]
+    fn ctrl_u_in_visual_mode_extends_selection() {
+        let mut state = AppState::new();
+        state.input_mode = InputMode::Visual;
+        state.pane_focus = PaneFocus::Transcript;
+        state.transcript_selection = Some(TranscriptSelection::new(10));
+        state.cursor_visual_row = 10;
+        state.total_visual_rows = 30;
+        state.viewport_height = 10;
+        state.transcript_scroll_offset = 5;
+        state.transcript_following_tail = false;
+        state.entry_indices = (0..30).collect();
+        for i in 0..30 {
+            state.push_transcript_item(TranscriptEntry::User(ProseMessage {
+                markdown: format!("line {i}"),
+            }));
+        }
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::ScrollPageUp),
+            None,
+        );
+        let sel = state.transcript_selection.expect("selection should exist");
+        assert_eq!(state.cursor_visual_row, 2);
+        assert_eq!(sel.cursor(), 2);
+    }
+
+    #[test]
+    fn ctrl_d_in_visual_mode_extends_selection() {
+        let mut state = AppState::new();
+        state.input_mode = InputMode::Visual;
+        state.pane_focus = PaneFocus::Transcript;
+        state.transcript_selection = Some(TranscriptSelection::new(0));
+        state.cursor_visual_row = 0;
+        state.total_visual_rows = 30;
+        state.viewport_height = 10;
+        state.transcript_scroll_offset = 0;
+        state.transcript_following_tail = false;
+        state.entry_indices = (0..30).collect();
+        for i in 0..30 {
+            state.push_transcript_item(TranscriptEntry::User(ProseMessage {
+                markdown: format!("line {i}"),
+            }));
+        }
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::ScrollPageDown),
+            None,
+        );
+        let sel = state.transcript_selection.expect("selection should exist");
+        assert_eq!(state.cursor_visual_row, 8);
+        assert_eq!(sel.cursor(), 8);
+    }
 }

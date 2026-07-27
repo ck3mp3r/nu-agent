@@ -384,13 +384,47 @@ fn handle_inline_slash_accept(state: &mut AppState) {
 }
 
 fn handle_scroll_page_up(state: &mut AppState) {
-    // Visual mode removed - just scroll
-    state.scroll_transcript_page_up(TRANSCRIPT_PAGE_LINES);
+    if state.transcript_following_tail {
+        state.transcript_scroll_offset = state.max_scroll;
+        state.transcript_following_tail = false;
+    }
+    let page = TRANSCRIPT_PAGE_LINES.max(1);
+    state.cursor_visual_row = state.cursor_visual_row.saturating_sub(page);
+    if state.input_mode == InputMode::Visual
+        && let Some(ref mut sel) = state.transcript_selection
+    {
+        sel.set_cursor(state.cursor_visual_row);
+    }
+    let scroll_margin = (state.viewport_height / 3).max(1);
+    if state.cursor_visual_row < state.transcript_scroll_offset + scroll_margin {
+        state.transcript_scroll_offset = state.transcript_scroll_offset.saturating_sub(page);
+    }
 }
 
 fn handle_scroll_page_down(state: &mut AppState) {
-    // Visual mode removed - just scroll
-    state.scroll_transcript_page_down(TRANSCRIPT_PAGE_LINES);
+    if state.transcript_following_tail {
+        state.transcript_scroll_offset = state.max_scroll;
+        state.transcript_following_tail = false;
+    }
+    let page = TRANSCRIPT_PAGE_LINES.max(1);
+    let max_visual_row = state.total_visual_rows.saturating_sub(1);
+    state.cursor_visual_row = state
+        .cursor_visual_row
+        .saturating_add(page)
+        .min(max_visual_row);
+    if state.input_mode == InputMode::Visual
+        && let Some(ref mut sel) = state.transcript_selection
+    {
+        sel.set_cursor(state.cursor_visual_row);
+    }
+    let scroll_margin = (state.viewport_height / 3).max(1);
+    let viewport_bottom = state
+        .transcript_scroll_offset
+        .saturating_add(state.viewport_height)
+        .saturating_sub(scroll_margin);
+    if state.cursor_visual_row >= viewport_bottom {
+        state.transcript_scroll_offset = state.transcript_scroll_offset.saturating_add(page);
+    }
 }
 
 fn handle_quit(state: &mut AppState, cancel_controller: Option<&CancelController>) {
