@@ -1,7 +1,7 @@
-use crate::rendering::selection::TranscriptSelection;
+use super::selection::TranscriptSelection;
 
 #[test]
-fn starts_at_provided_transcript_index_for_gg_and_g_positions() {
+fn starts_at_provided_transcript_index() {
     let at_top = TranscriptSelection::new(0);
     assert_eq!(at_top.anchor(), 0);
     assert_eq!(at_top.cursor(), 0);

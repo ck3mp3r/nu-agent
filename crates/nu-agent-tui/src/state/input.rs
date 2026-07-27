@@ -59,12 +59,12 @@ impl AppState {
         matches
     }
 
-    pub fn transcript_cursor_index(&self) -> Option<usize> {
-        Some(self.transcript_scroll_offset)
-    }
-
     pub fn take_clipboard_request(&mut self) -> Option<String> {
         self.clipboard_request.take()
+    }
+
+    pub fn set_clipboard_request(&mut self, payload: String) {
+        self.clipboard_request = Some(payload);
     }
 
     pub fn backspace_input_char(&mut self) {

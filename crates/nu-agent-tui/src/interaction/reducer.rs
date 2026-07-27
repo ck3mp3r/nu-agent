@@ -1,7 +1,10 @@
 use crate::{
     interaction::cancel::CancelController,
     markdown,
-    state::{AppState, CompactionStatus, InputMode, PaneFocus, TranscriptRole, UiPhase},
+    state::{
+        AppState, CompactionStatus, InputMode, PaneFocus, TranscriptRole, UiPhase,
+        selection::TranscriptSelection,
+    },
 };
 use nu_agent_core::protocol::event::{
     PermissionDecision, PermissionRequestContext, ToolDisplay, ToolDisplaySection, UiEvent,
@@ -11,7 +14,7 @@ use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry};
 
 pub const ESC_ABORT_CONFIRM_STATUS: &str = "Hit escape again to abort.";
 const ABORT_REQUESTED_STATUS: &str = "Abort requested.";
-const VISUAL_REQUIRES_TRANSCRIPT_FOCUS_STATUS: &str =
+pub(crate) const VISUAL_REQUIRES_TRANSCRIPT_FOCUS_STATUS: &str =
     "Visual mode requires transcript focus (Tab/h/l).";
 const TRANSCRIPT_PAGE_LINES: usize = 8;
 
@@ -211,15 +214,16 @@ fn handle_enter_insert_mode(state: &mut AppState) {
 }
 
 fn handle_enter_visual_mode(state: &mut AppState) {
-    // Visual mode is not supported with ListState - make this a no-op
-    if state.phase == UiPhase::Idle {
-        if state.pane_focus == PaneFocus::Transcript {
-            // No-op: visual mode to be retrofitted later
-            state.status_line = "Visual mode not available".to_string();
-        } else {
-            state.status_line = VISUAL_REQUIRES_TRANSCRIPT_FOCUS_STATUS.to_string();
-        }
+    if state.phase != UiPhase::Idle {
+        return;
     }
+    if state.pane_focus != PaneFocus::Transcript {
+        state.status_line = VISUAL_REQUIRES_TRANSCRIPT_FOCUS_STATUS.to_string();
+        return;
+    }
+    state.transcript_selection = Some(TranscriptSelection::new(state.cursor_visual_row));
+    state.input_mode = InputMode::Visual;
+    state.status_line = "-- VISUAL --".to_string();
 }
 
 fn handle_enter_normal_mode_from_chord(state: &mut AppState) {
@@ -230,22 +234,68 @@ fn handle_enter_normal_mode_from_chord(state: &mut AppState) {
 }
 
 fn handle_scroll_line_up(state: &mut AppState) {
-    // Visual mode removed - just scroll
-    state.scroll_transcript_line_up();
+    if state.transcript_following_tail {
+        state.transcript_scroll_offset = state.max_scroll;
+        state.transcript_following_tail = false;
+    }
+    state.cursor_visual_row = state.cursor_visual_row.saturating_sub(1);
+    if state.input_mode == InputMode::Visual
+        && let Some(ref mut sel) = state.transcript_selection
+    {
+        sel.set_cursor(state.cursor_visual_row);
+    }
+    let scroll_margin = (state.viewport_height / 3).max(1);
+    if state.cursor_visual_row < state.transcript_scroll_offset + scroll_margin {
+        state.transcript_scroll_offset = state.transcript_scroll_offset.saturating_sub(1);
+    }
 }
 
 fn handle_scroll_line_down(state: &mut AppState) {
-    // Visual mode removed - just scroll
-    state.scroll_transcript_line_down();
+    if state.transcript_following_tail {
+        state.transcript_scroll_offset = state.max_scroll;
+        state.transcript_following_tail = false;
+    }
+    let max_visual_row = state.total_visual_rows.saturating_sub(1);
+    state.cursor_visual_row = state
+        .cursor_visual_row
+        .saturating_add(1)
+        .min(max_visual_row);
+    if state.input_mode == InputMode::Visual
+        && let Some(ref mut sel) = state.transcript_selection
+    {
+        sel.set_cursor(state.cursor_visual_row);
+    }
+    let scroll_margin = (state.viewport_height / 3).max(1);
+    let viewport_bottom = state
+        .transcript_scroll_offset
+        .saturating_add(state.viewport_height)
+        .saturating_sub(scroll_margin);
+    if state.cursor_visual_row >= viewport_bottom {
+        state.transcript_scroll_offset = state.transcript_scroll_offset.saturating_add(1);
+    }
 }
 
 fn handle_scroll_to_top(state: &mut AppState) {
-    // Visual mode removed - just scroll
-    state.scroll_transcript_to_top();
+    if state.transcript_following_tail {
+        state.transcript_scroll_offset = state.max_scroll;
+        state.transcript_following_tail = false;
+    }
+    state.cursor_visual_row = 0;
+    state.transcript_scroll_offset = 0;
+    if state.input_mode == InputMode::Visual
+        && let Some(ref mut sel) = state.transcript_selection
+    {
+        sel.move_cursor_to_top();
+    }
 }
 
 fn handle_scroll_to_bottom(state: &mut AppState) {
-    // Visual mode removed - just scroll
+    state.cursor_visual_row = state.total_visual_rows.saturating_sub(1);
+    if state.input_mode == InputMode::Visual
+        && let Some(ref mut sel) = state.transcript_selection
+    {
+        sel.move_cursor_to_bottom(state.total_visual_rows.saturating_sub(1));
+    }
     state.scroll_transcript_to_bottom();
 }
 
@@ -258,10 +308,32 @@ fn handle_focus_pane_right(state: &mut AppState) {
 }
 
 fn handle_yank_selection(state: &mut AppState) {
-    // Visual mode removed - make this a no-op
-    if state.input_mode == InputMode::Visual {
-        state.enter_normal_mode();
+    if state.input_mode != InputMode::Visual {
+        return;
     }
+    if let Some(ref sel) = state.transcript_selection {
+        let (start_row, end_row) = sel.normalized_range();
+        let offset = state.rendered_line_start_row;
+        let payload: String = state
+            .rendered_line_text
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| {
+                let abs_row = offset + i;
+                abs_row >= start_row && abs_row <= end_row
+            })
+            .map(|(_, text)| text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !payload.is_empty() {
+            state.set_clipboard_request(payload);
+            state.status_line = "Yanked selection to clipboard".to_string();
+        } else {
+            state.status_line = "Nothing to yank".to_string();
+        }
+    }
+    state.transcript_selection = None;
+    state.enter_normal_mode();
 }
 
 fn handle_toggle_command_palette(state: &mut AppState) {
@@ -354,6 +426,7 @@ fn handle_escape(state: &mut AppState) {
         return;
     }
     if state.phase == UiPhase::Idle && state.input_mode == InputMode::Visual {
+        state.transcript_selection = None;
         state.enter_normal_mode();
         return;
     }

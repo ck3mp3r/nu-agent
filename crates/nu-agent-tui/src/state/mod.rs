@@ -5,8 +5,12 @@ mod mcp;
 mod permissions;
 mod picker;
 mod prompt_queue;
+pub mod selection;
 mod tool_calls;
 pub(super) mod transcript;
+
+#[cfg(test)]
+mod selection_test;
 
 #[cfg(test)]
 mod test;
@@ -24,6 +28,7 @@ use nu_agent_core::transcript::items::{
     parse_tool_text,
 };
 use ratatui::text::Line;
+use selection::TranscriptSelection;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 
@@ -342,7 +347,15 @@ pub struct AppState {
     input_history_saved: String,
     inline_slash_commands: Vec<SlashCommand>,
     clipboard_request: Option<String>,
+    pub transcript_selection: Option<TranscriptSelection>,
+    pub cursor_visual_row: usize,
+    pub viewport_height: usize,
+    pub max_scroll: usize,
+    pub entry_indices: Vec<usize>,
+    pub total_visual_rows: usize,
     pub pre_displayed_tool_keys: std::collections::HashSet<String>,
+    pub rendered_line_text: Vec<String>,
+    pub rendered_line_start_row: usize,
     pub(crate) streaming_message_start: Option<usize>,
     pub(crate) compaction_streaming_start: Option<usize>,
     #[cfg(test)]
@@ -422,7 +435,15 @@ impl Default for AppState {
             input_history_saved: String::new(),
             inline_slash_commands: Vec::new(),
             clipboard_request: None,
+            transcript_selection: None,
+            cursor_visual_row: 0,
+            viewport_height: 0,
+            max_scroll: 0,
+            entry_indices: Vec::new(),
+            total_visual_rows: 0,
             pre_displayed_tool_keys: std::collections::HashSet::new(),
+            rendered_line_text: Vec::new(),
+            rendered_line_start_row: 0,
             streaming_message_start: None,
             compaction_streaming_start: None,
             #[cfg(test)]

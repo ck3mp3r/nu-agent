@@ -58,6 +58,9 @@ mod test;
 #[cfg(test)]
 mod hybrid_events_test;
 
+#[cfg(test)]
+mod selection_render_test;
+
 use crate::tui_renderer::TuiRenderer;
 use crate::{
     interaction::{
@@ -79,8 +82,9 @@ use crate::{
         theme::TuiTheme,
     },
     state::{
-        AppState, CompactionStatus, InfoPanel, McpServerState, McpServerUsabilityState,
-        McpToggleRequest, ModelPickerOption, PromptStatus, TranscriptLineStatus, TranscriptRole,
+        AppState, CompactionStatus, InfoPanel, InputMode, McpServerState, McpServerUsabilityState,
+        McpToggleRequest, ModelPickerOption, PaneFocus, PromptStatus, TranscriptLineStatus,
+        TranscriptRole,
     },
 };
 use nu_agent_core::protocol::contracts::{SharedUiAction, UiMessageSnapshot};
@@ -765,6 +769,34 @@ impl RuntimeCoordinator {
         self.last_render_at = at;
     }
 
+    /// Apply selection highlight to buffer cells for the given visual row range.
+    fn apply_selection_highlight(
+        buffer: &mut ratatui::buffer::Buffer,
+        area: ratatui::layout::Rect,
+        sel_start: usize,
+        sel_end: usize,
+        effective_offset: usize,
+        viewport_height: usize,
+    ) {
+        let highlight_style = ratatui::style::Style::default()
+            .bg(ratatui::style::Color::DarkGray)
+            .add_modifier(ratatui::style::Modifier::REVERSED);
+
+        for vis_row in sel_start..=sel_end {
+            if vis_row >= effective_offset && vis_row < effective_offset + viewport_height {
+                let row_y = (vis_row - effective_offset) as u16;
+                let row_screen_y = area.y + row_y;
+                for x in area.x..area.x + area.width {
+                    if let Some(cell) =
+                        buffer.cell_mut(ratatui::layout::Position { x, y: row_screen_y })
+                    {
+                        cell.set_style(highlight_style);
+                    }
+                }
+            }
+        }
+    }
+
     fn render_frame(&mut self, live: &mut Option<LiveTerminalUi>) -> Result<(), String> {
         let Some(live) = live.as_mut() else {
             return Ok(());
@@ -875,6 +907,7 @@ impl RuntimeCoordinator {
                         let width = transcript_list_area.width as usize;
 
                         let mut all_lines: Vec<Line<'static>> = Vec::new();
+                        let mut entry_indices: Vec<usize> = Vec::new();
 
                         for (idx, entry) in entries_for_render.iter().enumerate() {
                             let block = entry.to_render_block();
@@ -890,25 +923,90 @@ impl RuntimeCoordinator {
                                 status: item_status,
                                 now_millis,
                             };
-                            all_lines.extend(renderer.render(&block, &ctx));
+                            let entry_lines = renderer.render(&block, &ctx);
+                            for _ in 0..entry_lines.len() {
+                                entry_indices.push(idx);
+                            }
+                            all_lines.extend(entry_lines);
                         }
 
+                        // Expand entry_indices to visual rows for cursor/selection mapping
+                        let expanded_entry_indices =
+                            expand_to_visual_rows(entry_indices.clone(), &all_lines, width);
+                        self.state.entry_indices = expanded_entry_indices.clone();
+
                         let text = ratatui::text::Text::from(all_lines);
-                        let paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
+                        let paragraph = Paragraph::new(text).wrap(Wrap::default());
+                        let total_visual_rows = paragraph.line_count(transcript_list_area.width);
 
                         let viewport_height = transcript_list_area.height as usize;
-                        let total_visual_rows = paragraph.line_count(transcript_list_area.width);
+                        self.state.viewport_height = viewport_height;
+                        self.state.total_visual_rows = total_visual_rows;
                         let max_scroll: usize = total_visual_rows.saturating_sub(viewport_height);
+                        self.state.max_scroll = max_scroll;
                         let effective_offset: usize = if transcript_following_tail {
                             max_scroll
                         } else {
                             transcript_scroll_offset.min(max_scroll)
                         };
                         rendered_scroll_offset = Some(effective_offset);
+                        // When following tail, keep cursor at the last visual row
+                        if transcript_following_tail {
+                            self.state.cursor_visual_row = total_visual_rows.saturating_sub(1);
+                        }
+                        // When not tailing, cursor_visual_row is user-controlled — don't touch it
 
                         let scroll_u16 = effective_offset.min(u16::MAX as usize) as u16;
                         frame
                             .render_widget(paragraph.scroll((scroll_u16, 0)), transcript_list_area);
+
+                        // Store rendered text per visible viewport row for yank support
+                        let mut rendered_text: Vec<String> = Vec::with_capacity(viewport_height);
+                        for row in 0..viewport_height {
+                            let row_screen_y = transcript_list_area.y + row as u16;
+                            let mut row_text = String::new();
+                            for x in transcript_list_area.x
+                                ..transcript_list_area.x + transcript_list_area.width
+                            {
+                                if let Some(cell) = frame.buffer_mut().cell((x, row_screen_y)) {
+                                    let ch = cell.symbol().chars().next().unwrap_or(' ');
+                                    row_text.push(ch);
+                                }
+                            }
+                            rendered_text.push(row_text.trim_end().to_string());
+                        }
+                        self.state.rendered_line_text = rendered_text;
+                        self.state.rendered_line_start_row = effective_offset;
+
+                        // Post-render buffer manipulation: apply selection highlight to visual rows
+                        if self.state.input_mode == InputMode::Visual
+                            && let Some(ref sel) = self.state.transcript_selection
+                        {
+                            let (sel_start, sel_end) = sel.normalized_range();
+                            Self::apply_selection_highlight(
+                                frame.buffer_mut(),
+                                transcript_list_area,
+                                sel_start,
+                                sel_end,
+                                effective_offset,
+                                viewport_height,
+                            );
+                        }
+
+                        // Overlay > cursor indicator at the correct screen position
+                        if self.state.pane_focus == PaneFocus::Transcript
+                            && self.state.cursor_visual_row >= effective_offset
+                            && self.state.cursor_visual_row < effective_offset + viewport_height
+                            && (self.state.input_mode == InputMode::Normal
+                                || self.state.input_mode == InputMode::Visual)
+                        {
+                            let cursor_y = (self.state.cursor_visual_row - effective_offset) as u16;
+                            let cursor_screen_y = transcript_list_area.y + cursor_y;
+                            frame.render_widget(
+                                Paragraph::new("> "),
+                                Rect::new(transcript_list_area.x, cursor_screen_y, 2, 1),
+                            );
+                        }
 
                         if total_visual_rows > viewport_height {
                             let mut scrollbar_state =
@@ -1561,6 +1659,34 @@ pub(super) fn inline_model_picker_modal_respects_border_and_backdrop_policy_for_
 #[cfg(test)]
 pub(super) fn model_picker_empty_state_message_for_test() -> &'static str {
     MODEL_PICKER_EMPTY_STATE_MESSAGE
+}
+
+/// Expand entry_indices from pre-wrap line count to post-wrap visual row count.
+/// Each pre-wrap line may wrap into multiple visual rows; the entry index is
+/// replicated for each resulting visual row.
+fn expand_to_visual_rows(
+    entry_indices: Vec<usize>,
+    lines: &[Line<'static>],
+    width: usize,
+) -> Vec<usize> {
+    let mut expanded = Vec::with_capacity(lines.len().max(entry_indices.len()));
+    for (i, line) in lines.iter().enumerate() {
+        let entry_idx = *entry_indices.get(i).unwrap_or(&0);
+        let visual_rows = single_line_visual_row_count(line, width);
+        for _ in 0..visual_rows {
+            expanded.push(entry_idx);
+        }
+    }
+    expanded
+}
+
+/// Count how many visual rows a single Line will occupy after wrapping at `width`.
+fn single_line_visual_row_count(line: &Line<'_>, width: usize) -> usize {
+    if width < 1 {
+        return 1;
+    }
+    let text = Paragraph::new(ratatui::text::Text::from(line.clone())).wrap(Wrap::default());
+    text.line_count(width as u16).max(1)
 }
 
 #[cfg(test)]

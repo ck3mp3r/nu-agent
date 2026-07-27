@@ -1,8 +1,12 @@
 use crate::{
     interaction::reducer::{
-        ESC_ABORT_CONFIRM_STATUS, ReducerInput, UserAction, reduce_with_cancel_controller,
+        ESC_ABORT_CONFIRM_STATUS, ReducerInput, UserAction,
+        VISUAL_REQUIRES_TRANSCRIPT_FOCUS_STATUS, reduce_with_cancel_controller,
     },
-    state::{AppState, CompactionStatus, InputMode, ToolCallStatus, TranscriptLineStatus, UiPhase},
+    state::{
+        AppState, CompactionStatus, InputMode, PaneFocus, ToolCallStatus, TranscriptLineStatus,
+        UiPhase,
+    },
 };
 use nu_agent_core::protocol::event::{
     PermissionRequestContext, ToolDisplay, ToolDisplaySection, UiEvent,
@@ -2772,5 +2776,401 @@ mod task_4a_tests {
         assert_eq!(state.input.buffer, "");
         assert!(state.pending_prompt_ids().is_empty());
         assert_eq!(state.active_prompt_id(), None);
+    }
+}
+
+#[cfg(test)]
+mod visual_selection_tests {
+    use super::*;
+    use crate::state::selection::TranscriptSelection;
+    use nu_agent_core::transcript::items::ProseMessage;
+
+    #[test]
+    fn enter_visual_mode_selects_first_visible_entry_not_scroll_offset() {
+        let mut state = AppState::new();
+        state.pane_focus = PaneFocus::Transcript;
+        // Populate transcript with entries that render as multiple lines
+        // Entry 0: multi-line markdown (renders as 3 visual rows)
+        // Entry 1: multi-line markdown (renders as 2 visual rows)
+        state.push_transcript_item(TranscriptEntry::User(ProseMessage {
+            markdown: "line 0\nextra\nmore".to_string(),
+        }));
+        state.push_transcript_item(TranscriptEntry::User(ProseMessage {
+            markdown: "line 1\nextra".to_string(),
+        }));
+        // Scroll offset = 2 means we've scrolled past entry 0's 3 lines
+        // (offset 0, 1, 2 are all entry 0's visual rows)
+        // The first visible entry should be entry 1
+        state.transcript_scroll_offset = 2;
+        state.cursor_visual_row = 3;
+        state.entry_indices = vec![0, 0, 0, 1, 1];
+        state.total_visual_rows = 5;
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::EnterVisualMode),
+            None,
+        );
+        let sel = state.transcript_selection.expect("selection should be set");
+        // Should select visual row 3 (maps to entry 1 via entry_indices)
+        assert_eq!(sel.anchor(), 3);
+        assert_eq!(sel.cursor(), 3);
+        assert_eq!(state.input_mode, InputMode::Visual);
+    }
+
+    #[test]
+    fn enter_visual_mode_sets_selection_at_scroll_offset() {
+        let mut state = AppState::new();
+        state.pane_focus = PaneFocus::Transcript;
+        state.cursor_visual_row = 5;
+        state.entry_indices = (0..10).collect();
+        state.total_visual_rows = 10;
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::EnterVisualMode),
+            None,
+        );
+        let sel = state.transcript_selection.expect("selection should be set");
+        assert_eq!(sel.anchor(), 5);
+        assert_eq!(sel.cursor(), 5);
+        assert_eq!(state.input_mode, InputMode::Visual);
+        assert_eq!(state.status_line, "-- VISUAL --");
+    }
+
+    #[test]
+    fn enter_visual_mode_requires_transcript_focus() {
+        let mut state = AppState::new();
+        state.pane_focus = PaneFocus::Input;
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::EnterVisualMode),
+            None,
+        );
+        assert_eq!(state.status_line, VISUAL_REQUIRES_TRANSCRIPT_FOCUS_STATUS);
+        assert!(state.transcript_selection.is_none());
+    }
+
+    #[test]
+    fn enter_visual_mode_noop_when_busy() {
+        let mut state = AppState::new();
+        state.phase = UiPhase::Busy;
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::EnterVisualMode),
+            None,
+        );
+        assert!(state.transcript_selection.is_none());
+    }
+
+    #[test]
+    fn visual_j_extends_selection_down() {
+        let mut state = AppState::new();
+        state.input_mode = InputMode::Visual;
+        state.transcript_selection = Some(TranscriptSelection::new(0));
+        state.entry_indices = (0..5).collect();
+        state.total_visual_rows = 5;
+        for i in 0..5 {
+            state.push_transcript_item(TranscriptEntry::User(ProseMessage {
+                markdown: format!("line {i}"),
+            }));
+        }
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::ScrollLineDown),
+            None,
+        );
+        let sel = state.transcript_selection.expect("selection should exist");
+        assert_eq!(sel.cursor(), 1);
+        assert_eq!(state.cursor_visual_row, 1);
+        assert_eq!(state.transcript_scroll_offset, 1);
+        assert!(!state.transcript_following_tail);
+    }
+
+    #[test]
+    fn visual_k_extends_selection_up() {
+        let mut state = AppState::new();
+        state.input_mode = InputMode::Visual;
+        state.transcript_selection = Some(TranscriptSelection::new(2));
+        state.cursor_visual_row = 2;
+        state.entry_indices = (0..3).collect();
+        state.total_visual_rows = 3;
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::ScrollLineUp),
+            None,
+        );
+        let sel = state.transcript_selection.expect("selection should exist");
+        assert_eq!(sel.cursor(), 1);
+        assert_eq!(state.cursor_visual_row, 1);
+        assert_eq!(state.transcript_scroll_offset, 0);
+        assert!(!state.transcript_following_tail);
+    }
+
+    #[test]
+    fn visual_yank_copies_and_exits_visual() {
+        let mut state = AppState::new();
+        state.input_mode = InputMode::Visual;
+        state.rendered_line_text = vec![
+            "line 0".to_string(),
+            "line 1".to_string(),
+            "line 2".to_string(),
+            "line 3".to_string(),
+            "line 4".to_string(),
+        ];
+        state.rendered_line_start_row = 0;
+        // Set selection covering visual rows 1-3
+        let mut sel = TranscriptSelection::new(1);
+        sel.set_cursor(3);
+        state.transcript_selection = Some(sel);
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::YankSelection),
+            None,
+        );
+        let clipboard = state.take_clipboard_request();
+        assert_eq!(clipboard, Some("line 1\nline 2\nline 3".to_string()));
+        assert!(state.transcript_selection.is_none());
+        assert_eq!(state.input_mode, InputMode::Normal);
+    }
+
+    #[test]
+    fn visual_yank_copies_only_selected_rows_not_whole_entry() {
+        let mut state = AppState::new();
+        state.input_mode = InputMode::Visual;
+        state.rendered_line_text = (0..10).map(|i| format!("row {i}")).collect();
+        state.rendered_line_start_row = 0;
+        // Select rows 3-5 out of 10
+        let mut sel = TranscriptSelection::new(3);
+        sel.set_cursor(5);
+        state.transcript_selection = Some(sel);
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::YankSelection),
+            None,
+        );
+        let clipboard = state.take_clipboard_request();
+        assert_eq!(clipboard, Some("row 3\nrow 4\nrow 5".to_string()));
+        assert!(state.transcript_selection.is_none());
+        assert_eq!(state.input_mode, InputMode::Normal);
+    }
+
+    #[test]
+    fn visual_yank_with_nonzero_scroll_offset_copies_correct_rows() {
+        let mut state = AppState::new();
+        state.input_mode = InputMode::Visual;
+        // Simulate viewport scrolled down — rendered_line_text[0] is absolute row 10
+        state.rendered_line_start_row = 10;
+        state.rendered_line_text = vec![
+            "row 10".to_string(),
+            "row 11".to_string(),
+            "row 12".to_string(),
+            "row 13".to_string(),
+            "row 14".to_string(),
+        ];
+        // Select absolute visual rows 11-13
+        let mut sel = TranscriptSelection::new(11);
+        sel.set_cursor(13);
+        state.transcript_selection = Some(sel);
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::YankSelection),
+            None,
+        );
+        let clipboard = state.take_clipboard_request();
+        assert_eq!(clipboard, Some("row 11\nrow 12\nrow 13".to_string()));
+        assert!(state.transcript_selection.is_none());
+        assert_eq!(state.input_mode, InputMode::Normal);
+    }
+
+    #[test]
+    fn visual_yank_nothing_to_yank_shows_status() {
+        let mut state = AppState::new();
+        state.input_mode = InputMode::Visual;
+        state.rendered_line_text = Vec::new();
+        state.transcript_scroll_offset = 0;
+        state.transcript_selection = Some(TranscriptSelection::new(0));
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::YankSelection),
+            None,
+        );
+        assert!(state.take_clipboard_request().is_none());
+        assert_eq!(state.status_line, "Nothing to yank");
+        assert!(state.transcript_selection.is_none());
+        assert_eq!(state.input_mode, InputMode::Normal);
+    }
+
+    #[test]
+    fn visual_yank_empty_selection_noop() {
+        let mut state = AppState::new();
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::YankSelection),
+            None,
+        );
+        assert!(state.take_clipboard_request().is_none());
+    }
+
+    #[test]
+    fn visual_esc_clears_selection_and_exits() {
+        let mut state = AppState::new();
+        state.input_mode = InputMode::Visual;
+        state.transcript_selection = Some(TranscriptSelection::new(0));
+        reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Esc), None);
+        assert!(state.transcript_selection.is_none());
+        assert_eq!(state.input_mode, InputMode::Normal);
+    }
+
+    #[test]
+    fn visual_gg_jumps_to_top() {
+        let mut state = AppState::new();
+        state.input_mode = InputMode::Visual;
+        state.transcript_selection = Some(TranscriptSelection::new(5));
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::ScrollToTop),
+            None,
+        );
+        let sel = state.transcript_selection.expect("selection should exist");
+        assert_eq!(sel.cursor(), 0);
+        assert_eq!(state.transcript_scroll_offset, 0);
+        assert!(!state.transcript_following_tail);
+    }
+
+    #[test]
+    fn visual_g_jumps_to_bottom() {
+        let mut state = AppState::new();
+        state.input_mode = InputMode::Visual;
+        state.transcript_selection = Some(TranscriptSelection::new(0));
+        state.total_visual_rows = 5;
+        for i in 0..5 {
+            state.push_transcript_item(TranscriptEntry::User(ProseMessage {
+                markdown: format!("line {i}"),
+            }));
+        }
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::ScrollToBottom),
+            None,
+        );
+        let sel = state.transcript_selection.expect("selection should exist");
+        assert_eq!(sel.cursor(), 4);
+        assert!(state.transcript_following_tail);
+    }
+
+    #[test]
+    fn normal_j_moves_cursor_not_viewport() {
+        let mut state = AppState::new();
+        state.input_mode = InputMode::Normal;
+        state.pane_focus = PaneFocus::Transcript;
+        state.viewport_height = 10;
+        state.cursor_visual_row = 5;
+        state.transcript_scroll_offset = 0;
+        state.entry_indices = (0..20).collect();
+        state.total_visual_rows = 20;
+        for i in 0..20 {
+            state.push_transcript_item(TranscriptEntry::User(ProseMessage {
+                markdown: format!("line {i}"),
+            }));
+        }
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::ScrollLineDown),
+            None,
+        );
+        // Cursor moved from 5 to 6, viewport didn't scroll (6 < 0+10-3=7)
+        assert_eq!(state.cursor_visual_row, 6);
+        assert_eq!(state.transcript_scroll_offset, 0);
+        assert!(!state.transcript_following_tail);
+    }
+
+    #[test]
+    fn normal_j_scrolls_viewport_when_cursor_leaves_margin() {
+        let mut state = AppState::new();
+        state.input_mode = InputMode::Normal;
+        state.pane_focus = PaneFocus::Transcript;
+        state.viewport_height = 10;
+        state.cursor_visual_row = 6;
+        state.transcript_scroll_offset = 0;
+        state.entry_indices = (0..20).collect();
+        state.total_visual_rows = 20;
+        for i in 0..20 {
+            state.push_transcript_item(TranscriptEntry::User(ProseMessage {
+                markdown: format!("line {i}"),
+            }));
+        }
+        // scroll_margin = 3, viewport_bottom = 0+10-3 = 7
+        // cursor moves 6→7, visual_row=7 >= 7, viewport scrolls
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::ScrollLineDown),
+            None,
+        );
+        assert_eq!(state.cursor_visual_row, 7);
+        assert_eq!(state.transcript_scroll_offset, 1);
+        assert!(!state.transcript_following_tail);
+    }
+
+    #[test]
+    fn visual_j_scrolls_viewport_only_when_cursor_leaves_visible_area() {
+        let mut state = AppState::new();
+        state.input_mode = InputMode::Visual;
+        state.transcript_following_tail = false;
+        state.viewport_height = 10;
+        state.transcript_scroll_offset = 0;
+        state.transcript_selection = Some(TranscriptSelection::new(0));
+        // 20 entries, 1 visual row each
+        state.entry_indices = (0..20).collect();
+        state.total_visual_rows = 20;
+        for i in 0..20 {
+            state.push_transcript_item(TranscriptEntry::User(ProseMessage {
+                markdown: format!("line {i}"),
+            }));
+        }
+        // scroll_margin = 10/3 = 3
+        // viewport shows rows 0-9 (scroll_offset=0, viewport_height=10)
+        // Press j 7 times: cursor moves 0→1→2→3→4→5→6→7
+        // Cursor 1-6: visual row < 0+10-3=7, no scroll
+        // Cursor 7: visual row 7 >= 7, scroll_offset → 1
+        for _ in 0..7 {
+            reduce_with_cancel_controller(
+                &mut state,
+                ReducerInput::User(UserAction::ScrollLineDown),
+                None,
+            );
+        }
+        let sel = state.transcript_selection.expect("selection should exist");
+        assert_eq!(sel.cursor(), 7);
+        assert_eq!(state.cursor_visual_row, 7);
+        assert_eq!(state.transcript_scroll_offset, 1);
+        assert!(!state.transcript_following_tail);
+    }
+
+    #[test]
+    fn visual_k_syncs_scroll_offset_when_exiting_tail_following() {
+        let mut state = AppState::new();
+        state.input_mode = InputMode::Visual;
+        state.transcript_following_tail = true;
+        state.max_scroll = 50;
+        state.transcript_scroll_offset = 0; // stale
+        state.cursor_visual_row = 55;
+        state.transcript_selection = Some(TranscriptSelection::new(55));
+        state.entry_indices = (0..60).collect();
+        state.total_visual_rows = 60;
+        for i in 0..60 {
+            state.push_transcript_item(TranscriptEntry::User(ProseMessage {
+                markdown: format!("line {i}"),
+            }));
+        }
+        reduce_with_cancel_controller(
+            &mut state,
+            ReducerInput::User(UserAction::ScrollLineUp),
+            None,
+        );
+        // scroll_offset should be synced from max_scroll (50), then cursor moves
+        // 55→54. cursor_visual_row=54, scroll_margin=1, 54 < 50+1=51 is false,
+        // so no additional scroll.
+        assert_eq!(state.cursor_visual_row, 54);
+        assert_eq!(state.transcript_scroll_offset, 50);
+        assert!(!state.transcript_following_tail);
     }
 }

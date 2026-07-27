@@ -4,7 +4,6 @@ use ratatui::{
 };
 
 use crate::rendering::theme::TuiTheme;
-
 use nu_agent_core::transcript::{
     ir::{ContentLine, RenderBlock, Role, StyleHint},
     renderer::{BlockRenderer, ItemStatus, RenderContext},
