@@ -887,8 +887,10 @@ fn test_validate_model_context_tokens_one_is_ok() {
 fn test_plugin_config_full_structure() {
     // Test parsing a full PluginConfig structure from Nushell record
     let value = Value::test_record(record! {
-        "model" => Value::test_string("openai/gpt-4"),
-        "small_model" => Value::test_string("openai/gpt-3.5-turbo"),
+        "models" => Value::test_record(record! {
+            "default" => Value::test_string("openai/gpt-4"),
+            "light" => Value::test_string("openai/gpt-3.5-turbo"),
+        }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
                 "name" => Value::test_string("OpenAI"),
@@ -931,10 +933,13 @@ fn test_plugin_config_full_structure() {
     let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
 
     // Verify top-level fields
-    assert_eq!(plugin_config.model, "openai/gpt-4");
     assert_eq!(
-        plugin_config.small_model,
-        Some("openai/gpt-3.5-turbo".to_string())
+        plugin_config.models.get("default"),
+        Some(&"openai/gpt-4".to_string())
+    );
+    assert_eq!(
+        plugin_config.models.get("light"),
+        Some(&"openai/gpt-3.5-turbo".to_string())
     );
 
     // Verify OpenAI provider
@@ -990,7 +995,9 @@ fn test_plugin_config_full_structure() {
 #[test]
 fn test_plugin_config_parses_top_level_numeric_fields() {
     let value = Value::test_record(record! {
-        "model" => Value::test_string("openai/gpt-4"),
+        "models" => Value::test_record(record! {
+            "default" => Value::test_string("openai/gpt-4"),
+        }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
                 "models" => Value::test_record(record! {
@@ -1028,7 +1035,9 @@ fn test_plugin_config_parses_top_level_numeric_fields() {
 fn test_plugin_config_minimal() {
     // Test parsing minimal PluginConfig (only required fields)
     let value = Value::test_record(record! {
-        "model" => Value::test_string("openai/gpt-4"),
+        "models" => Value::test_record(record! {
+            "default" => Value::test_string("openai/gpt-4"),
+        }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
                 "models" => Value::test_record(record! {
@@ -1040,14 +1049,17 @@ fn test_plugin_config_minimal() {
 
     let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
 
-    assert_eq!(plugin_config.model, "openai/gpt-4");
-    assert_eq!(plugin_config.small_model, None);
+    assert_eq!(
+        plugin_config.models.get("default"),
+        Some(&"openai/gpt-4".to_string())
+    );
+    assert_eq!(plugin_config.models.len(), 1);
     assert!(plugin_config.providers.contains_key("openai"));
 }
 
 #[test]
-fn test_plugin_config_missing_model() {
-    // Test that missing 'model' field returns error
+fn test_plugin_config_missing_models() {
+    // Test that missing 'models' field returns error
     let value = Value::test_record(record! {
         "providers" => Value::test_record(record! {}),
     });
@@ -1063,7 +1075,9 @@ fn test_plugin_config_missing_model() {
 fn test_plugin_config_missing_providers() {
     // Test that missing 'providers' field returns error
     let value = Value::test_record(record! {
-        "model" => Value::test_string("openai/gpt-4"),
+        "models" => Value::test_record(record! {
+            "default" => Value::test_string("openai/gpt-4"),
+        }),
     });
 
     let result = PluginConfig::from_plugin_config(&value);
@@ -1073,10 +1087,10 @@ fn test_plugin_config_missing_providers() {
 }
 
 #[test]
-fn test_plugin_config_invalid_model_type() {
-    // Test that invalid 'model' type returns error
+fn test_plugin_config_invalid_models_type() {
+    // Test that invalid 'models' type returns error
     let value = Value::test_record(record! {
-        "model" => Value::test_int(123),
+        "models" => Value::test_int(123),
         "providers" => Value::test_record(record! {}),
     });
 
@@ -1099,7 +1113,9 @@ fn test_plugin_config_not_record() {
 fn test_plugin_config_provider_field() {
     // Test parsing provider field (for custom providers like github-copilot)
     let value = Value::test_record(record! {
-        "model" => Value::test_string("copilot/claude"),
+        "models" => Value::test_record(record! {
+            "default" => Value::test_string("copilot/claude"),
+        }),
         "providers" => Value::test_record(record! {
             "copilot" => Value::test_record(record! {
                 "provider" => Value::test_string("openai"),
@@ -1126,7 +1142,9 @@ fn test_plugin_config_provider_field() {
 #[test]
 fn test_plugin_config_provider_preamble_whitespace_normalized_to_none() {
     let value = Value::test_record(record! {
-        "model" => Value::test_string("openai/gpt-4"),
+        "models" => Value::test_record(record! {
+            "default" => Value::test_string("openai/gpt-4"),
+        }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
                 "preamble" => Value::test_string("   \n\t   "),
@@ -1148,7 +1166,9 @@ fn test_plugin_config_provider_preamble_whitespace_normalized_to_none() {
 #[test]
 fn test_plugin_config_model_preamble_whitespace_normalized_to_none() {
     let value = Value::test_record(record! {
-        "model" => Value::test_string("openai/gpt-4"),
+        "models" => Value::test_record(record! {
+            "default" => Value::test_string("openai/gpt-4"),
+        }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
                 "models" => Value::test_record(record! {
@@ -1172,7 +1192,9 @@ fn test_plugin_config_model_preamble_whitespace_normalized_to_none() {
 #[test]
 fn test_plugin_config_provider_preamble_invalid_type_errors() {
     let value = Value::test_record(record! {
-        "model" => Value::test_string("openai/gpt-4"),
+        "models" => Value::test_record(record! {
+            "default" => Value::test_string("openai/gpt-4"),
+        }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
                 "preamble" => Value::test_int(42),
@@ -1194,7 +1216,9 @@ fn test_plugin_config_provider_preamble_invalid_type_errors() {
 #[test]
 fn test_plugin_config_model_preamble_invalid_type_errors() {
     let value = Value::test_record(record! {
-        "model" => Value::test_string("openai/gpt-4"),
+        "models" => Value::test_record(record! {
+            "default" => Value::test_string("openai/gpt-4"),
+        }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
                 "models" => Value::test_record(record! {
@@ -1222,8 +1246,11 @@ fn test_plugin_config_model_preamble_invalid_type_errors() {
 fn test_resolve_model_basic() {
     // Test resolving a basic model specification
     let plugin_config = PluginConfig {
-        model: "openai/gpt-4".to_string(),
-        small_model: None,
+        models: {
+            let mut m = HashMap::new();
+            m.insert("default".to_string(), "openai/gpt-4".to_string());
+            m
+        },
         providers: {
             let mut providers = HashMap::new();
             providers.insert(
@@ -1290,8 +1317,11 @@ fn test_resolve_model_basic() {
 fn test_resolve_model_with_env_fallback() {
     // Test that resolve_model falls back to env vars when provider doesn't have api_key
     let plugin_config = PluginConfig {
-        model: "anthropic/claude".to_string(),
-        small_model: None,
+        models: {
+            let mut m = HashMap::new();
+            m.insert("default".to_string(), "anthropic/claude".to_string());
+            m
+        },
         providers: {
             let mut providers = HashMap::new();
             providers.insert(
@@ -1340,8 +1370,11 @@ fn test_resolve_model_with_env_fallback() {
 fn test_resolve_model_invalid_format() {
     // Test that invalid model format returns error
     let plugin_config = PluginConfig {
-        model: "openai/gpt-4".to_string(),
-        small_model: None,
+        models: {
+            let mut m = HashMap::new();
+            m.insert("default".to_string(), "openai/gpt-4".to_string());
+            m
+        },
         providers: HashMap::new(),
         compaction: None,
         agents: AgentsConfig::default(),
@@ -1380,8 +1413,11 @@ fn test_resolve_model_invalid_format() {
 fn test_resolve_model_provider_not_found() {
     // Test that unknown provider returns error
     let plugin_config = PluginConfig {
-        model: "openai/gpt-4".to_string(),
-        small_model: None,
+        models: {
+            let mut m = HashMap::new();
+            m.insert("default".to_string(), "openai/gpt-4".to_string());
+            m
+        },
         providers: HashMap::new(),
         compaction: None,
         agents: AgentsConfig::default(),
@@ -1412,8 +1448,11 @@ fn test_resolve_model_provider_not_found() {
 fn test_resolve_model_model_not_in_config() {
     // Test that model not in provider's models map still works (uses defaults)
     let plugin_config = PluginConfig {
-        model: "openai/gpt-4".to_string(),
-        small_model: None,
+        models: {
+            let mut m = HashMap::new();
+            m.insert("default".to_string(), "openai/gpt-4".to_string());
+            m
+        },
         providers: {
             let mut providers = HashMap::new();
             providers.insert(
@@ -1463,8 +1502,11 @@ fn test_resolve_model_model_not_in_config() {
 fn test_resolve_model_with_provider_field() {
     // Test resolving with custom provider field (like github-copilot)
     let plugin_config = PluginConfig {
-        model: "copilot/claude".to_string(),
-        small_model: None,
+        models: {
+            let mut m = HashMap::new();
+            m.insert("default".to_string(), "copilot/claude".to_string());
+            m
+        },
         providers: {
             let mut providers = HashMap::new();
             providers.insert(
@@ -1517,8 +1559,11 @@ fn test_resolve_model_with_provider_field() {
 fn test_resolve_model_merges_limits() {
     // Test that model limits are properly merged into Config
     let plugin_config = PluginConfig {
-        model: "openai/gpt-4".to_string(),
-        small_model: None,
+        models: {
+            let mut m = HashMap::new();
+            m.insert("default".to_string(), "openai/gpt-4".to_string());
+            m
+        },
         providers: {
             let mut providers = HashMap::new();
             providers.insert(
@@ -1604,8 +1649,11 @@ fn test_plugin_config_resolve_model_top_level_fallbacks() {
             },
         );
         PluginConfig {
-            model: "openai/gpt-4".to_string(),
-            small_model: None,
+            models: {
+                let mut m = HashMap::new();
+                m.insert("default".to_string(), "openai/gpt-4".to_string());
+                m
+            },
             providers,
             compaction: None,
             agents: AgentsConfig::default(),
@@ -1657,8 +1705,11 @@ fn test_plugin_config_resolve_model_top_level_fallbacks() {
 fn resolve_model_handles_two_part_format() {
     // Test that traditional 2-part format still works (backward compatibility)
     let plugin_config = PluginConfig {
-        model: "openai/gpt-4".to_string(),
-        small_model: None,
+        models: {
+            let mut m = HashMap::new();
+            m.insert("default".to_string(), "openai/gpt-4".to_string());
+            m
+        },
         providers: {
             let mut providers = HashMap::new();
             providers.insert(
@@ -1706,8 +1757,11 @@ fn resolve_model_handles_two_part_format() {
 fn resolve_model_validates_empty_parts() {
     // Test that empty parts in model specification are rejected
     let plugin_config = PluginConfig {
-        model: "provider/model".to_string(),
-        small_model: None,
+        models: {
+            let mut m = HashMap::new();
+            m.insert("default".to_string(), "provider/model".to_string());
+            m
+        },
         providers: HashMap::new(),
         compaction: None,
         agents: AgentsConfig::default(),
@@ -1750,8 +1804,14 @@ fn resolve_model_validates_empty_parts() {
 #[test]
 fn resolve_model_uses_split_once_for_multi_part_models() {
     let plugin_config = PluginConfig {
-        model: "github-copilot/anthropic/claude-sonnet-4-20250514".to_string(),
-        small_model: None,
+        models: {
+            let mut m = HashMap::new();
+            m.insert(
+                "default".to_string(),
+                "github-copilot/anthropic/claude-sonnet-4-20250514".to_string(),
+            );
+            m
+        },
         providers: {
             let mut map = HashMap::new();
             map.insert(
@@ -1803,8 +1863,11 @@ fn resolve_model_uses_split_once_for_multi_part_models() {
 #[test]
 fn resolve_model_works_with_simple_two_part() {
     let plugin_config = PluginConfig {
-        model: "openai/gpt-4".to_string(),
-        small_model: None,
+        models: {
+            let mut m = HashMap::new();
+            m.insert("default".to_string(), "openai/gpt-4".to_string());
+            m
+        },
         providers: {
             let mut map = HashMap::new();
             map.insert(
@@ -1856,8 +1919,18 @@ fn integration_github_copilot_with_backend_in_model() {
     // 4. github-copilot provider receives model string and parses backend internally
 
     let plugin_config = PluginConfig {
-        model: "github-copilot/anthropic/claude-sonnet-4-20250514".to_string(),
-        small_model: Some("github-copilot/openai/gpt-4o-mini".to_string()),
+        models: {
+            let mut m = HashMap::new();
+            m.insert(
+                "default".to_string(),
+                "github-copilot/anthropic/claude-sonnet-4-20250514".to_string(),
+            );
+            m.insert(
+                "light".to_string(),
+                "github-copilot/openai/gpt-4o-mini".to_string(),
+            );
+            m
+        },
         providers: {
             let mut map = HashMap::new();
             map.insert(
@@ -2237,7 +2310,9 @@ fn non_copilot_provider_sets_api_key_from_env() {
 /// The `agents` block is injected as a parameter for per-test customization.
 fn base_config_record(agents_record: Value) -> Value {
     Value::test_record(record! {
-        "model" => Value::test_string("openai/gpt-4"),
+        "models" => Value::test_record(record! {
+            "default" => Value::test_string("openai/gpt-4"),
+        }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
                 "models" => Value::test_record(record! {
@@ -2253,7 +2328,9 @@ fn base_config_record(agents_record: Value) -> Value {
 fn test_parse_agents_config_defaults() {
     // Missing "agents" section → AgentsConfig::default()
     let value = Value::test_record(record! {
-        "model" => Value::test_string("openai/gpt-4"),
+        "models" => Value::test_record(record! {
+            "default" => Value::test_string("openai/gpt-4"),
+        }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
                 "models" => Value::test_record(record! {
@@ -2325,7 +2402,9 @@ fn merge_preserves_custom_max_tool_result_bytes_when_other_is_default() {
 #[test]
 fn parse_additional_params_from_record() {
     let value = Value::test_record(record! {
-        "model" => Value::test_string("openai/gpt-4"),
+        "models" => Value::test_record(record! {
+            "default" => Value::test_string("openai/gpt-4"),
+        }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
                 "models" => Value::test_record(record! {
@@ -2388,7 +2467,9 @@ fn additional_params_merge_falls_back_to_base() {
 #[test]
 fn test_session_store_config_parses_sqlite() {
     let value = Value::test_record(record! {
-        "model" => Value::test_string("openai/gpt-4"),
+        "models" => Value::test_record(record! {
+            "default" => Value::test_string("openai/gpt-4"),
+        }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
                 "models" => Value::test_record(record! {
@@ -2412,7 +2493,9 @@ fn test_session_store_config_parses_sqlite() {
 #[test]
 fn test_session_store_config_parses_jsonl() {
     let value = Value::test_record(record! {
-        "model" => Value::test_string("openai/gpt-4"),
+        "models" => Value::test_record(record! {
+            "default" => Value::test_string("openai/gpt-4"),
+        }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
                 "models" => Value::test_record(record! {
@@ -2435,7 +2518,9 @@ fn test_session_store_config_parses_jsonl() {
 #[test]
 fn test_session_store_config_with_path() {
     let value = Value::test_record(record! {
-        "model" => Value::test_string("openai/gpt-4"),
+        "models" => Value::test_record(record! {
+            "default" => Value::test_string("openai/gpt-4"),
+        }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
                 "models" => Value::test_record(record! {
@@ -2460,7 +2545,9 @@ fn test_session_store_config_with_path() {
 #[test]
 fn test_session_store_config_unknown_type_errors() {
     let value = Value::test_record(record! {
-        "model" => Value::test_string("openai/gpt-4"),
+        "models" => Value::test_record(record! {
+            "default" => Value::test_string("openai/gpt-4"),
+        }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
                 "models" => Value::test_record(record! {
@@ -2482,7 +2569,9 @@ fn test_session_store_config_unknown_type_errors() {
 #[test]
 fn test_session_store_config_missing_type_errors() {
     let value = Value::test_record(record! {
-        "model" => Value::test_string("openai/gpt-4"),
+        "models" => Value::test_record(record! {
+            "default" => Value::test_string("openai/gpt-4"),
+        }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
                 "models" => Value::test_record(record! {
@@ -2504,7 +2593,9 @@ fn test_session_store_config_missing_type_errors() {
 #[test]
 fn test_session_store_config_defaults_to_none() {
     let value = Value::test_record(record! {
-        "model" => Value::test_string("openai/gpt-4"),
+        "models" => Value::test_record(record! {
+            "default" => Value::test_string("openai/gpt-4"),
+        }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
                 "models" => Value::test_record(record! {
@@ -2583,10 +2674,18 @@ fn test_session_store_merge_falls_back_to_base() {
 }
 
 #[test]
+#[serial]
 fn test_session_store_resolve_model_forwards_config() {
+    // Clear any session store env var that might leak from serial tests
+    unsafe {
+        std::env::remove_var("AGENT_SESSION_STORE_TYPE");
+    }
     let plugin_config = PluginConfig {
-        model: "openai/gpt-4".to_string(),
-        small_model: None,
+        models: {
+            let mut m = HashMap::new();
+            m.insert("default".to_string(), "openai/gpt-4".to_string());
+            m
+        },
         providers: {
             let mut providers = HashMap::new();
             providers.insert(
@@ -2628,4 +2727,154 @@ fn test_session_store_resolve_model_forwards_config() {
         .resolve_model("openai/gpt-4")
         .expect("should resolve");
     assert_eq!(config.session_store_type, Some(StoreType::Jsonl));
+}
+
+// ============================================================================
+// PluginConfig models HashMap Tests
+// ============================================================================
+
+#[test]
+fn test_plugin_config_models_parsed_correctly() {
+    // Test parsing models map with default + optional roles
+    let value = Value::test_record(record! {
+        "models" => Value::test_record(record! {
+            "default" => Value::test_string("openai/gpt-4"),
+            "heavy" => Value::test_string("openai/gpt-4-turbo"),
+            "light" => Value::test_string("openai/gpt-3.5-turbo"),
+        }),
+        "providers" => Value::test_record(record! {
+            "openai" => Value::test_record(record! {
+                "models" => Value::test_record(record! {
+                    "gpt-4" => Value::test_record(record! {}),
+                    "gpt-4-turbo" => Value::test_record(record! {}),
+                    "gpt-3.5-turbo" => Value::test_record(record! {}),
+                }),
+            }),
+        }),
+    });
+
+    let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
+
+    assert_eq!(
+        plugin_config.models.get("default"),
+        Some(&"openai/gpt-4".to_string())
+    );
+    assert_eq!(
+        plugin_config.models.get("heavy"),
+        Some(&"openai/gpt-4-turbo".to_string())
+    );
+    assert_eq!(
+        plugin_config.models.get("light"),
+        Some(&"openai/gpt-3.5-turbo".to_string())
+    );
+    assert_eq!(plugin_config.models.len(), 3);
+}
+
+#[test]
+fn test_plugin_config_models_missing_key() {
+    // Test that missing 'models' key returns error
+    let value = Value::test_record(record! {
+        "providers" => Value::test_record(record! {}),
+    });
+
+    let result = PluginConfig::from_plugin_config(&value);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("Missing required field 'models'"));
+}
+
+#[test]
+fn test_plugin_config_models_missing_default() {
+    // Test that models without 'default' key returns error
+    let value = Value::test_record(record! {
+        "models" => Value::test_record(record! {
+            "heavy" => Value::test_string("openai/gpt-4"),
+        }),
+        "providers" => Value::test_record(record! {
+            "openai" => Value::test_record(record! {
+                "models" => Value::test_record(record! {
+                    "gpt-4" => Value::test_record(record! {}),
+                }),
+            }),
+        }),
+    });
+
+    let result = PluginConfig::from_plugin_config(&value);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("models.default"));
+}
+
+#[test]
+fn test_plugin_config_models_value_without_slash() {
+    // Test that model value without '/' returns error
+    let value = Value::test_record(record! {
+        "models" => Value::test_record(record! {
+            "default" => Value::test_string("invalid-format"),
+        }),
+        "providers" => Value::test_record(record! {
+            "openai" => Value::test_record(record! {
+                "models" => Value::test_record(record! {}),
+            }),
+        }),
+    });
+
+    let result = PluginConfig::from_plugin_config(&value);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("provider/model format"));
+}
+
+#[test]
+fn test_plugin_config_models_empty_map() {
+    // Test that empty models map returns error
+    let value = Value::test_record(record! {
+        "models" => Value::test_record(record! {}),
+        "providers" => Value::test_record(record! {
+            "openai" => Value::test_record(record! {
+                "models" => Value::test_record(record! {}),
+            }),
+        }),
+    });
+
+    let result = PluginConfig::from_plugin_config(&value);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("models.default"));
+}
+
+#[test]
+fn test_plugin_config_models_with_only_default() {
+    // Test that models with only 'default' works
+    let value = Value::test_record(record! {
+        "models" => Value::test_record(record! {
+            "default" => Value::test_string("openai/gpt-4"),
+        }),
+        "providers" => Value::test_record(record! {
+            "openai" => Value::test_record(record! {
+                "models" => Value::test_record(record! {
+                    "gpt-4" => Value::test_record(record! {}),
+                }),
+            }),
+        }),
+    });
+
+    let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
+    assert_eq!(plugin_config.models.len(), 1);
+    assert_eq!(
+        plugin_config.models.get("default"),
+        Some(&"openai/gpt-4".to_string())
+    );
+}
+
+#[test]
+fn test_plugin_config_models_invalid_type() {
+    // Test that non-record 'models' value returns error
+    let value = Value::test_record(record! {
+        "models" => Value::test_string("not-a-record"),
+        "providers" => Value::test_record(record! {}),
+    });
+
+    let result = PluginConfig::from_plugin_config(&value);
+    assert!(result.is_err());
 }

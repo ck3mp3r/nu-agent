@@ -18,10 +18,8 @@ pub(crate) fn resolve_persona(
     cwd: &std::path::Path,
     call: &EvaluatedCall,
     config: &mut Config,
-    call_has_model_flag: bool,
 ) -> Result<PersonaResolution, LabeledError> {
     use super::permissions::{is_builtin_enabled, resolve_default_agent};
-    use super::runtime_build::apply_persona_model;
     use nu_agent_core::protocol::persona::{
         FrontMatterParser, FsPersonaResolver, PersonaFileResolver, PulldownCmarkFrontMatterParser,
         interpret_front_matter,
@@ -108,12 +106,9 @@ pub(crate) fn resolve_persona(
     );
 
     // Wire model with precedence: CLI --model > front matter model > plugin config
-    // Config already has plugin/env/default merged, we just need to inject persona model if CLI didn't provide one
-    apply_persona_model(
-        config,
-        persona.as_ref().and_then(|p| p.model.as_deref()),
-        call_has_model_flag,
-    );
+    // Config already has plugin/env/default merged, we just need to inject persona model if CLI didn't provide one.
+    // NOTE: apply_persona_model is called from run_command.rs where PluginConfig is available
+    // for role label resolution. The persona model value is passed through the PersonaResolution.
     log::debug!(
         "effective model after persona merge: provider={}, model={}",
         config.provider,

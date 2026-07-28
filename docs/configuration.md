@@ -4,8 +4,11 @@
 
 ```nu
 $env.config.plugins.agent = {
-  model: "provider/model"
-  small_model: "provider/model"           # optional
+  models: {
+    default: "provider/model"             # required
+    heavy: "provider/model"               # optional
+    light: "provider/model"               # optional
+  }
   temperature: 0.7                        # optional, 0.0–2.0
   max_tokens: 4096                        # optional
   max_context_tokens: 128000              # optional
@@ -33,12 +36,13 @@ $env.config.plugins.agent = {
 
 Required top-level fields:
 
-- `model`
+- `models` (with at least `models.default`)
 - `providers`
 
 Optional top-level fields:
 
-- `small_model` — model used for lightweight tasks (e.g. compaction summarization)
+- `models.heavy` — model used for heavy/expensive tasks
+- `models.light` — model used for lightweight tasks (e.g. compaction summarization)
 - `mcp` — MCP server configuration
 - `compaction` — conversation compaction settings
 - `additional_params` — provider-specific parameters forwarded verbatim to the completion request body (see [Additional Parameters](#additional-parameters))
@@ -101,15 +105,39 @@ All models use `provider/model` format:
 - `anthropic/claude-sonnet-4-6`
 - `github-copilot/claude-sonnet-4.6`
 
-## Precedence
+## Model Roles
+
+The `models` map defines named model roles that agents can reference by name:
+
+```nu
+models: {
+  default: "openai/gpt-4o"          # required — fallback when no model: field
+  heavy: "anthropic/claude-sonnet-4-6"  # optional — for complex reasoning
+  light: "ollama/gemma4:31b"        # optional — for quick/cheap tasks
+}
+```
+
+### Resolution rules
+
+When an agent persona has a `model:` front matter field, it is resolved as follows:
+
+1. **`model: heavy`** (no slash, matches a key in `models`) → resolves to the value of `models.heavy`
+2. **`model: provider/model`** (contains a slash) → used as-is (literal model identifier)
+3. **`model: foo`** (no slash, not a key in `models`) → **error** at startup
+4. **No `model:` field** → falls back to `models.default`
+5. **CLI `--model provider/model`** → overrides everything, used as-is
+
+### Precedence
 
 Highest to lowest:
 
-1. CLI flags
-2. Model-level config (`providers.<name>.models.<name>` fields)
-3. Environment variables
-4. Top-level `$env.config.plugins.agent` fields
-5. Built-in defaults
+1. CLI `--model` flag — overrides all model resolution
+2. Persona front matter `model:` field — role name or literal
+3. `models.default` — fallback when no `model:` field is set
+4. Model-level config (`providers.<name>.models.<name>` fields)
+5. Environment variables
+6. Top-level `$env.config.plugins.agent` fields
+7. Built-in defaults
 
 ## Environment Variables
 
@@ -135,7 +163,7 @@ There is no `AGENT_MODEL`. Set the default model in plugin config.
 
 ```nu
 $env.config.plugins.agent = {
-  model: "openai/gpt-4o"
+  models: { default: "openai/gpt-4o" }
   providers: {
     openai: {
       api_key: $env.OPENAI_API_KEY
@@ -149,7 +177,7 @@ $env.config.plugins.agent = {
 
 ```nu
 $env.config.plugins.agent = {
-  model: "anthropic/claude-sonnet-4-6"
+  models: { default: "anthropic/claude-sonnet-4-6" }
   providers: {
     anthropic: {
       api_key: $env.ANTHROPIC_API_KEY
@@ -163,7 +191,7 @@ $env.config.plugins.agent = {
 
 ```nu
 $env.config.plugins.agent = {
-  model: "ollama/gemma4:31b"
+  models: { default: "ollama/gemma4:31b" }
   providers: {
     ollama: {
       base_url: "http://127.0.0.1:11434"
@@ -179,7 +207,7 @@ Multi-instance example (same provider, different hosts):
 
 ```nu
 $env.config.plugins.agent = {
-  model: "ollama-remote/gemma4:31b"
+  models: { default: "ollama-remote/gemma4:31b" }
   providers: {
     ollama: {
       models: {
@@ -203,7 +231,7 @@ Any provider that implements the OpenAI Chat Completions API (`POST /chat/comple
 
 ```nu
 $env.config.plugins.agent = {
-  model: "together/meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"
+  models: { default: "together/meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo" }
   providers: {
     together: {
       provider: "openai"
@@ -227,7 +255,7 @@ By default the HTTP client uses a 30-second read timeout (fires only when no byt
 $env.config.plugins.agent = {
   read_timeout_secs: 60   # increase for slow providers
   # read_timeout_secs: 0  # disable entirely
-  model: "..."
+  models: { default: "..." }
   providers: { ... }
 }
 ```
@@ -293,7 +321,7 @@ All `agents` fields are optional. Defaults: `planner` enabled, `maker` enabled, 
 
 ```nu
 $env.config.plugins.agent = {
-  model: "anthropic/claude-sonnet-4-6"
+  models: { default: "anthropic/claude-sonnet-4-6" }
   additional_params: {
     output_config: { effort: "medium" }
   }
@@ -317,7 +345,7 @@ Anthropic recommends `medium` effort as the default for agentic workloads — it
 
 ```nu
 $env.config.plugins.agent = {
-  model: "anthropic/claude-sonnet-4-6"
+  models: { default: "anthropic/claude-sonnet-4-6" }
   additional_params: {
     output_config: { effort: "medium" }
   }

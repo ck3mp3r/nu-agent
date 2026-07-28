@@ -65,8 +65,7 @@ fn model_picker_catalog_projection_from_plugin_config_is_sorted_and_marks_active
     );
 
     let plugin_config = nu_agent_core::config::PluginConfig {
-        model: "a-provider/a-model".to_string(),
-        small_model: None,
+        models: [("default".to_string(), "a-provider/a-model".to_string())].into(),
         providers,
         compaction: None,
         agents: nu_agent_core::config::AgentsConfig::default(),
@@ -126,8 +125,7 @@ fn tui_startup_hydrates_model_picker_catalog_from_cached_plugin_config() {
     );
 
     let plugin_config = nu_agent_core::config::PluginConfig {
-        model: "openai/gpt-4o-mini".to_string(),
-        small_model: None,
+        models: [("default".to_string(), "openai/gpt-4o-mini".to_string())].into(),
         providers,
         compaction: None,
         agents: nu_agent_core::config::AgentsConfig::default(),

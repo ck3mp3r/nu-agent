@@ -2,6 +2,7 @@ use super::test_helpers::{
     MockEngineInterface, create_test_agent, create_test_call, parse_agent_invocation_with_signature,
 };
 use super::{EngineConfigInterface, extract_tool_timeout, extract_tools_from_call, runtime_build};
+
 use nu_agent_core::config::Config;
 use nu_plugin::{EvaluatedCall, SimplePluginCommand};
 use nu_protocol::{ParseError, Span, Spanned, SyntaxShape, Value, record};
@@ -718,7 +719,9 @@ mod config_resolution_integration {
 
         // New-format config: providers block required for resolve_config() to succeed
         let plugin_config = Value::test_record(record! {
-            "model" => Value::test_string("openai/gpt-4"),
+            "models" => Value::test_record(record! {
+                "default" => Value::test_string("openai/gpt-4"),
+            }),
             "providers" => Value::test_record(record! {
                 "openai" => Value::test_record(record! {
                     "models" => Value::test_record(record! {
@@ -758,7 +761,9 @@ mod config_resolution_integration {
 
         // New-format config: both providers present so --model openai/gpt-4 can override
         let plugin_config = Value::test_record(record! {
-            "model" => Value::test_string("anthropic/claude-3"),
+            "models" => Value::test_record(record! {
+                "default" => Value::test_string("anthropic/claude-3"),
+            }),
             "providers" => Value::test_record(record! {
                 "anthropic" => Value::test_record(record! {
                     "models" => Value::test_record(record! {
@@ -811,10 +816,59 @@ mod config_resolution_integration {
         // Test validation with conflicting token limits
         let plugin_config = Value::test_record(
             vec![
-                ("provider".to_string(), Value::test_string("openai")),
-                ("model".to_string(), Value::test_string("gpt-4")),
-                ("max_output_tokens".to_string(), Value::test_int(5000)), // Output > Context
-                ("max_context_tokens".to_string(), Value::test_int(1000)),
+                (
+                    "models".to_string(),
+                    Value::test_record(
+                        vec![("default".to_string(), Value::test_string("openai/gpt-4"))]
+                            .into_iter()
+                            .collect(),
+                    ),
+                ),
+                (
+                    "providers".to_string(),
+                    Value::test_record(
+                        vec![(
+                            "openai".to_string(),
+                            Value::test_record(
+                                vec![(
+                                    "models".to_string(),
+                                    Value::test_record(
+                                        vec![(
+                                            "gpt-4".to_string(),
+                                            Value::test_record(
+                                                vec![(
+                                                    "limit".to_string(),
+                                                    Value::test_record(
+                                                        vec![
+                                                            (
+                                                                "output".to_string(),
+                                                                Value::test_int(5000),
+                                                            ),
+                                                            (
+                                                                "context".to_string(),
+                                                                Value::test_int(1000),
+                                                            ),
+                                                        ]
+                                                        .into_iter()
+                                                        .collect(),
+                                                    ),
+                                                )]
+                                                .into_iter()
+                                                .collect(),
+                                            ),
+                                        )]
+                                        .into_iter()
+                                        .collect(),
+                                    ),
+                                )]
+                                .into_iter()
+                                .collect(),
+                            ),
+                        )]
+                        .into_iter()
+                        .collect(),
+                    ),
+                ),
             ]
             .into_iter()
             .collect(),
@@ -849,10 +903,11 @@ mod config_resolution_integration {
 
     #[test]
     fn resolve_config_errors_on_missing_providers() {
-        // A plugin config that has a model key but no providers block must error,
-        // not silently fall through to the legacy path.
+        // A plugin config that has models but no providers block must error
         let plugin_config = Value::test_record(record! {
-            "model" => Value::test_string("openai/gpt-4"),
+            "models" => Value::test_record(record! {
+                "default" => Value::test_string("openai/gpt-4"),
+            }),
         });
 
         let mock = MockEngineInterface::with_config(plugin_config);
@@ -906,18 +961,15 @@ mod new_plugin_config_tests {
     }
 
     #[test]
-    fn signature_has_small_flag() {
+    fn signature_does_not_have_small_flag() {
         let (agent, _temp_dir) = create_test_agent();
         let sig = SimplePluginCommand::signature(&agent);
 
         let small_flag = sig.named.iter().find(|f| f.long == "small");
-        assert!(small_flag.is_some(), "Missing --small flag");
-
-        let flag = small_flag.unwrap();
-        assert_eq!(flag.short, Some('s'), "Missing -s short flag");
-        // --small is a switch (no argument)
-        assert_eq!(flag.arg, None, "--small should be a switch");
-        assert!(!flag.desc.is_empty(), "Missing description for --small");
+        assert!(
+            small_flag.is_none(),
+            "--small flag should have been removed"
+        );
     }
 
     #[test]
@@ -969,7 +1021,14 @@ mod new_plugin_config_tests {
 
         let plugin_config = Value::test_record(
             vec![
-                ("model".to_string(), Value::test_string("openai/gpt-4")),
+                (
+                    "models".to_string(),
+                    Value::test_record(
+                        vec![("default".to_string(), Value::test_string("openai/gpt-4"))]
+                            .into_iter()
+                            .collect(),
+                    ),
+                ),
                 (
                     "providers".to_string(),
                     Value::test_record(providers_map.into_iter().collect()),
@@ -1033,7 +1092,9 @@ mod new_plugin_config_tests {
                     }),
                 }),
             }),
-            "model" => Value::test_string("github-copilot/anthropic/claude-sonnet-4-20250514"),
+            "models" => Value::test_record(record! {
+                "default" => Value::test_string("github-copilot/anthropic/claude-sonnet-4-20250514"),
+            }),
             "providers" => Value::test_record(providers_map.into_iter().collect()),
         });
 
@@ -1096,7 +1157,14 @@ mod new_plugin_config_tests {
 
         let plugin_config = Value::test_record(
             vec![
-                ("model".to_string(), Value::test_string("openai/gpt-4")), // Default
+                (
+                    "models".to_string(),
+                    Value::test_record(
+                        vec![("default".to_string(), Value::test_string("openai/gpt-4"))]
+                            .into_iter()
+                            .collect(),
+                    ),
+                ),
                 (
                     "providers".to_string(),
                     Value::test_record(providers_map.into_iter().collect()),
@@ -1154,7 +1222,14 @@ mod new_plugin_config_tests {
 
         let plugin_config = Value::test_record(
             vec![
-                ("model".to_string(), Value::test_string("openai/gpt-4")),
+                (
+                    "models".to_string(),
+                    Value::test_record(
+                        vec![("default".to_string(), Value::test_string("openai/gpt-4"))]
+                            .into_iter()
+                            .collect(),
+                    ),
+                ),
                 (
                     "providers".to_string(),
                     Value::test_record(providers_map.into_iter().collect()),
@@ -1181,10 +1256,10 @@ mod new_plugin_config_tests {
 
     #[test]
     #[serial]
-    fn resolve_config_with_small_flag() {
+    fn resolve_config_uses_models_default() {
         use std::collections::HashMap;
 
-        // Create plugin config with small_model
+        // Create plugin config with models.default
         let mut providers_map = HashMap::new();
 
         let mut openai_models = HashMap::new();
@@ -1218,10 +1293,16 @@ mod new_plugin_config_tests {
 
         let plugin_config = Value::test_record(
             vec![
-                ("model".to_string(), Value::test_string("openai/gpt-4")),
                 (
-                    "small_model".to_string(),
-                    Value::test_string("openai/gpt-3.5-turbo"),
+                    "models".to_string(),
+                    Value::test_record(
+                        vec![(
+                            "default".to_string(),
+                            Value::test_string("openai/gpt-3.5-turbo"),
+                        )]
+                        .into_iter()
+                        .collect(),
+                    ),
                 ),
                 (
                     "providers".to_string(),
@@ -1234,15 +1315,15 @@ mod new_plugin_config_tests {
 
         let mock = MockEngineInterface::with_config(plugin_config);
 
-        // Use --small flag
-        let call = create_test_call(vec![("small", Value::test_bool(true))]);
+        // No --model flag — should use models.default
+        let call = create_test_call(vec![]);
 
         let result = resolve_config(&mock, &call);
         assert!(result.is_ok(), "Failed to resolve config: {:?}", result);
 
         let config = result.unwrap();
         assert_eq!(config.provider, "openai");
-        assert_eq!(config.model, "gpt-3.5-turbo"); // Uses small_model
+        assert_eq!(config.model, "gpt-3.5-turbo"); // Uses models.default
         assert_eq!(config.temperature, Some(1.0)); // Model-specific temperature
     }
 
@@ -1268,7 +1349,9 @@ mod new_plugin_config_tests {
         );
 
         let plugin_config = Value::test_record(record! {
-            "model" => Value::test_string("openai/gpt-5-mini"),
+            "models" => Value::test_record(record! {
+                "default" => Value::test_string("openai/gpt-5-mini"),
+            }),
             "providers" => Value::test_record(providers_map.into_iter().collect()),
         });
 
@@ -1297,7 +1380,9 @@ mod new_plugin_config_tests {
         );
 
         let plugin_config = Value::test_record(record! {
-            "model" => Value::test_string("custom/unknown-model"),
+            "models" => Value::test_record(record! {
+                "default" => Value::test_string("custom/unknown-model"),
+            }),
             "providers" => Value::test_record(providers_map.into_iter().collect()),
         });
 
@@ -1317,7 +1402,7 @@ mod new_plugin_config_tests {
 
     #[test]
     #[serial]
-    fn resolve_config_model_flag_overrides_small_flag() {
+    fn resolve_config_model_flag_overrides_models_default() {
         use std::collections::HashMap;
 
         // Create plugin config
@@ -1350,10 +1435,16 @@ mod new_plugin_config_tests {
 
         let plugin_config = Value::test_record(
             vec![
-                ("model".to_string(), Value::test_string("openai/gpt-4")),
                 (
-                    "small_model".to_string(),
-                    Value::test_string("openai/gpt-3.5-turbo"),
+                    "models".to_string(),
+                    Value::test_record(
+                        vec![(
+                            "default".to_string(),
+                            Value::test_string("openai/gpt-3.5-turbo"),
+                        )]
+                        .into_iter()
+                        .collect(),
+                    ),
                 ),
                 (
                     "providers".to_string(),
@@ -1366,17 +1457,14 @@ mod new_plugin_config_tests {
 
         let mock = MockEngineInterface::with_config(plugin_config);
 
-        // Both --small and --model provided, --model should win
-        let call = create_test_call(vec![
-            ("small", Value::test_bool(true)),
-            ("model", Value::test_string("openai/gpt-4")),
-        ]);
+        // --model flag provided, should override models.default
+        let call = create_test_call(vec![("model", Value::test_string("openai/gpt-4"))]);
 
         let result = resolve_config(&mock, &call);
         assert!(result.is_ok(), "Failed to resolve config: {:?}", result);
 
         let config = result.unwrap();
-        assert_eq!(config.model, "gpt-4"); // --model wins over --small
+        assert_eq!(config.model, "gpt-4"); // --model wins over models.default
     }
 
     #[test]
@@ -1831,10 +1919,13 @@ fn apply_persona_model_overrides_plugin_config() {
 
     let applied = runtime_build::apply_persona_model(
         &mut config,
+        None,
         Some("github-copilot/claude-opus-4.6"),
         false,
     );
 
+    assert!(applied.is_ok(), "Should succeed: {:?}", applied);
+    let applied = applied.unwrap();
     assert!(applied, "Should apply persona model");
     assert_eq!(config.provider, "github-copilot");
     assert_eq!(config.model, "claude-opus-4.6");
@@ -1852,10 +1943,13 @@ fn apply_persona_model_cli_wins() {
 
     let applied = runtime_build::apply_persona_model(
         &mut config,
+        None,
         Some("github-copilot/claude-opus-4.6"),
         true, // CLI model was provided
     );
 
+    assert!(applied.is_ok(), "Should succeed: {:?}", applied);
+    let applied = applied.unwrap();
     assert!(!applied, "Should NOT apply persona model when CLI provided");
     assert_eq!(config.provider, "openai", "Config should be unchanged");
     assert_eq!(config.model, "gpt-4o", "Config should be unchanged");
@@ -1870,11 +1964,13 @@ fn apply_persona_model_no_slash_ignored() {
         ..Config::default()
     };
 
-    let applied = runtime_build::apply_persona_model(&mut config, Some("just-a-model"), false);
+    let applied =
+        runtime_build::apply_persona_model(&mut config, None, Some("just-a-model"), false);
 
-    assert!(!applied, "Should NOT apply invalid persona model");
-    assert_eq!(config.provider, "openai", "Config should be unchanged");
-    assert_eq!(config.model, "gpt-4o", "Config should be unchanged");
+    assert!(
+        applied.is_err(),
+        "Should error when no plugin config and no slash"
+    );
 }
 
 #[test]
@@ -1886,8 +1982,10 @@ fn apply_persona_model_none_preserves_config() {
         ..Config::default()
     };
 
-    let applied = runtime_build::apply_persona_model(&mut config, None, false);
+    let applied = runtime_build::apply_persona_model(&mut config, None, None, false);
 
+    assert!(applied.is_ok(), "Should succeed: {:?}", applied);
+    let applied = applied.unwrap();
     assert!(!applied, "Should NOT apply when persona model is None");
     assert_eq!(config.provider, "openai", "Config should be unchanged");
     assert_eq!(config.model, "gpt-4o", "Config should be unchanged");
@@ -1904,10 +2002,13 @@ fn apply_persona_model_clears_provider_impl() {
 
     let applied = runtime_build::apply_persona_model(
         &mut config,
+        None,
         Some("anthropic/claude-sonnet-4-20250514"),
         false,
     );
 
+    assert!(applied.is_ok(), "Should succeed: {:?}", applied);
+    let applied = applied.unwrap();
     assert!(applied, "Should apply persona model");
     assert_eq!(config.provider, "anthropic");
     assert_eq!(config.model, "claude-sonnet-4-20250514");

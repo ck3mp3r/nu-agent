@@ -172,11 +172,6 @@ Compaction flags:
                 "Model to use in provider/model format (e.g., 'openai/gpt-4', 'anthropic/claude-3-opus')",
                 Some('m'),
             )
-            .switch(
-                "small",
-                "Use the small/fast model configured in plugin config",
-                Some('s'),
-            )
             .named(
                 "api-key",
                 nu_protocol::SyntaxShape::String,

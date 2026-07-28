@@ -59,11 +59,9 @@ pub struct ProviderConfig {
 /// Top-level plugin configuration (provider-centric)
 #[derive(Debug, Clone, PartialEq)]
 pub struct PluginConfig {
-    /// Active model (provider/model format)
-    pub model: String,
-
-    /// Small/fast model for simple tasks (optional)
-    pub small_model: Option<String>,
+    /// Model role map — maps role labels (e.g. "default", "heavy", "light")
+    /// to `provider/model` strings. At minimum must contain a "default" entry.
+    pub models: HashMap<String, String>,
 
     /// Provider configurations
     pub providers: HashMap<String, ProviderConfig>,
@@ -208,8 +206,11 @@ impl PluginConfig {
     /// Expected structure:
     /// ```nushell
     /// {
-    ///   model: "openai/gpt-4"
-    ///   small_model: "openai/gpt-3.5-turbo"  # optional
+    ///   models: {
+    ///     default: "openai/gpt-4"
+    ///     heavy: "openai/gpt-4-turbo"   # optional
+    ///     light: "openai/gpt-3.5-turbo" # optional
+    ///   }
     ///   providers: {
     ///     openai: {
     ///       name: "OpenAI"  # optional
@@ -252,19 +253,55 @@ impl PluginConfig {
 
         let span = value.span();
 
-        // Extract required 'model' field
-        let model = record
-            .get("model")
-            .ok_or_else(|| labeled_error("Missing required field", "Missing 'model' field", span))?
-            .as_str()
-            .map_err(|_| labeled_error("Invalid field type", "'model' must be a string", span))?
-            .to_string();
+        // Extract required 'models' field — a record mapping role labels to provider/model strings
+        let models_record = record
+            .get("models")
+            .ok_or_else(|| {
+                labeled_error(
+                    "Missing required field 'models'",
+                    "Missing 'models' field",
+                    span,
+                )
+            })?
+            .as_record()
+            .map_err(|_| {
+                labeled_error(
+                    "'models' must be a record",
+                    "'models' must be a record",
+                    span,
+                )
+            })?;
 
-        // Extract optional 'small_model' field
-        let small_model = record
-            .get("small_model")
-            .and_then(|v| v.as_str().ok())
-            .map(|s| s.to_string());
+        let mut models = HashMap::new();
+        for (key, value) in models_record.iter() {
+            let model_str = value.as_str().map_err(|_| {
+                labeled_error(
+                    &format!("'models.{key}' must be a string"),
+                    &format!("'models.{key}' must be a string"),
+                    span,
+                )
+            })?;
+
+            // Validate provider/model format (must contain '/')
+            if !model_str.contains('/') {
+                return Err(labeled_error(
+                    &format!("models.{key} must be in provider/model format, got '{model_str}'"),
+                    &format!("models.{key} must be in provider/model format, got '{model_str}'"),
+                    span,
+                ));
+            }
+
+            models.insert(key.clone(), model_str.to_string());
+        }
+
+        // Validate that 'default' role exists
+        if !models.contains_key("default") {
+            return Err(labeled_error(
+                "models.default is required",
+                "models.default is required",
+                span,
+            ));
+        }
 
         // Extract required 'providers' field
         let providers_record = record
@@ -381,8 +418,7 @@ impl PluginConfig {
         };
 
         Ok(Self {
-            model,
-            small_model,
+            models,
             providers,
             compaction,
             agents,

@@ -165,14 +165,19 @@ pub(super) fn run_command(
 
     let plugin_config_value = engine.get_plugin_config()?;
 
-    let agents_config = match plugin_config_value.as_ref() {
+    let plugin_config = match plugin_config_value.as_ref() {
         Some(v) => match PluginConfig::from_plugin_config(v) {
-            Ok(c) => c.agents,
+            Ok(c) => Some(c),
             Err(e) => {
                 log::warn!("failed to parse plugin config: {e}");
-                Default::default()
+                None
             }
         },
+        None => None,
+    };
+
+    let agents_config = match plugin_config.as_ref() {
+        Some(c) => c.agents.clone(),
         None => Default::default(),
     };
 
@@ -197,12 +202,19 @@ pub(super) fn run_command(
         &cwd,
         call,
         &mut config,
-        call_has_model_flag,
     )?;
     let persona = persona_resolution.persona;
     let agent_identity = persona_resolution.agent_identity;
     let messaging_identity = persona_resolution.messaging_identity;
     let agent_permissions_overlay = persona_resolution.agent_permissions_overlay;
+
+    // Apply persona model override (role label resolution requires PluginConfig)
+    super::runtime_build::apply_persona_model(
+        &mut config,
+        plugin_config.as_ref(),
+        persona.as_ref().and_then(|p| p.model.as_deref()),
+        call_has_model_flag,
+    )?;
 
     let (
         base_permissions,

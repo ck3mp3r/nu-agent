@@ -361,8 +361,11 @@ fn plugin_config_read_timeout_secs_propagates_to_resolved_config() {
     );
 
     let plugin_config = PluginConfig {
-        model: "openai/gpt-4".to_string(),
-        small_model: None,
+        models: {
+            let mut m = std::collections::HashMap::new();
+            m.insert("default".to_string(), "openai/gpt-4".to_string());
+            m
+        },
         providers,
         compaction: None,
         agents: AgentsConfig::default(),
@@ -414,8 +417,11 @@ fn plugin_config_without_read_timeout_secs_resolves_to_none() {
     );
 
     let plugin_config = PluginConfig {
-        model: "openai/gpt-4".to_string(),
-        small_model: None,
+        models: {
+            let mut m = std::collections::HashMap::new();
+            m.insert("default".to_string(), "openai/gpt-4".to_string());
+            m
+        },
         providers,
         compaction: None,
         agents: AgentsConfig::default(),

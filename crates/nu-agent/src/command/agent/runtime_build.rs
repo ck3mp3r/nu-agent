@@ -33,8 +33,7 @@ impl EngineConfigInterface for EngineInterface {
 /// 1. Parse PluginConfig from $env.config.plugins.agent (if present)
 /// 2. Determine active model:
 ///    - If --model flag provided: use it (provider/model format)
-///    - Else if --small flag provided: use small_model from PluginConfig
-///    - Else use config.model (default)
+///    - Else use models.default from PluginConfig
 /// 3. Call PluginConfig::resolve_model() to get base Config
 /// 4. Merge with flag overrides (temperature, max-context/output-tokens, etc.)
 /// 5. Validate and return
@@ -146,6 +145,30 @@ pub fn resolve_config<E: EngineConfigInterface>(
     Ok(config)
 }
 
+/// Resolve preamble for a specific provider/model pair.
+///
+/// Looks up the provider config and model config from `plugin_config` and
+/// resolves the preamble using the canonical `resolve_preamble` function.
+/// Returns `None` if the provider is not found in the plugin config.
+pub(crate) fn resolve_preamble_for_model(
+    plugin_config: &PluginConfig,
+    provider_name: &str,
+    model_name: &str,
+) -> Option<String> {
+    let provider_cfg = plugin_config.providers.get(provider_name)?;
+    let model_cfg = provider_cfg.models.get(model_name);
+    let defaults = PreambleDefaults::builtin();
+    resolve_preamble(
+        UserPreambleInput {
+            provider: provider_name.to_string(),
+            model_family: Some(classify_model_family(provider_name, model_name)),
+            user_provider_preamble: provider_cfg.preamble.clone(),
+            user_provider_family_preamble: model_cfg.and_then(|cfg| cfg.preamble.clone()),
+        },
+        &defaults,
+    )
+}
+
 /// NEW resolution flow using PluginConfig structure
 pub fn resolve_with_new_config(
     plugin_config: PluginConfig,
@@ -159,26 +182,20 @@ pub fn resolve_with_new_config(
             .and_then(|v: Value| v.as_str().map(|s| s.to_string()).ok())
     }
 
-    // Helper to get bool flag (switch)
-    fn get_bool_flag(call: &EvaluatedCall, name: &str) -> bool {
-        call.get_flag(name).ok().flatten().unwrap_or(false)
-    }
-
-    // Determine which model to use (priority: --model > --small > config.model)
+    // Determine which model to use (priority: --model flag > models.default)
     let model_ref = if let Some(model_flag) = get_string_flag(call, "model") {
         // --model flag takes highest priority
         model_flag
-    } else if get_bool_flag(call, "small") {
-        // --small flag uses small_model from config
-        plugin_config.small_model.clone().ok_or_else(|| {
-            LabeledError::new("No small model configured").with_label(
-                "Set 'small_model' in plugin config to use --small flag",
-                call.head,
-            )
-        })?
     } else {
         // Use default model from config
-        plugin_config.model.clone()
+        plugin_config
+            .models
+            .get("default")
+            .ok_or_else(|| {
+                LabeledError::new("No default model configured")
+                    .with_label("Set models.default in plugin config", call.head)
+            })?
+            .clone()
     };
 
     // Resolve model to Config using PluginConfig
@@ -187,20 +204,8 @@ pub fn resolve_with_new_config(
         .map_err(|msg| LabeledError::new("Failed to resolve model").with_label(msg, call.head))?;
 
     // Resolve preamble via canonical resolver.
-    if let Some((provider_name, model_name)) = model_ref.split_once('/')
-        && let Some(provider_cfg) = plugin_config.providers.get(provider_name)
-    {
-        let model_cfg = provider_cfg.models.get(model_name);
-        let defaults = PreambleDefaults::builtin();
-        config.preamble = resolve_preamble(
-            UserPreambleInput {
-                provider: provider_name.to_string(),
-                model_family: Some(classify_model_family(provider_name, model_name)),
-                user_provider_preamble: provider_cfg.preamble.clone(),
-                user_provider_family_preamble: model_cfg.and_then(|cfg| cfg.preamble.clone()),
-            },
-            &defaults,
-        );
+    if let Some((provider_name, model_name)) = model_ref.split_once('/') {
+        config.preamble = resolve_preamble_for_model(&plugin_config, provider_name, model_name);
     }
 
     // Step 3: Apply flag overrides for optional fields
@@ -256,26 +261,62 @@ pub fn resolve_with_new_config(
 }
 
 /// Apply persona model override if CLI --model was not provided.
-/// Returns true if persona model was applied.
+///
+/// `persona_model` can be:
+/// - A literal `provider/model` string (contains `/`) → used as-is
+/// - A role label (no `/`) → resolved through `plugin_config.models`
+///
+/// Returns `Ok(true)` if persona model was applied, `Ok(false)` if skipped.
+/// Returns `Err` if a role label is unknown or not configured.
 pub(crate) fn apply_persona_model(
     config: &mut Config,
+    plugin_config: Option<&PluginConfig>,
     persona_model: Option<&str>,
     cli_model_provided: bool,
-) -> bool {
+) -> Result<bool, LabeledError> {
     if cli_model_provided {
-        return false;
+        return Ok(false);
     }
     let Some(m) = persona_model else {
-        return false;
+        return Ok(false);
     };
-    let Some((provider, model)) = m.split_once('/') else {
-        return false;
+
+    let resolved = if m.contains('/') {
+        // Literal provider/model string — use as-is
+        m.to_string()
+    } else {
+        // Role label — resolve through plugin_config.models
+        let pc = plugin_config.ok_or_else(|| {
+            LabeledError::new(format!(
+                "Unknown model role: '{m}'. No plugin config available — role labels require a plugin config with a models map."
+            ))
+        })?;
+        let mapped = pc.models.get(m).ok_or_else(|| {
+            let mut available: Vec<&str> = pc.models.keys().map(|s| s.as_str()).collect();
+            available.sort();
+            LabeledError::new(format!(
+                "Unknown model role: '{m}'. Available roles: {}",
+                available.join(", ")
+            ))
+        })?;
+        mapped.clone()
     };
+
+    let Some((provider, model)) = resolved.split_once('/') else {
+        return Err(LabeledError::new(format!(
+            "Invalid model mapping for role: '{resolved}' — expected provider/model format"
+        )));
+    };
+
     config.provider = provider.to_string();
     config.model = model.to_string();
     config.provider_impl = None;
+    // Re-resolve preamble for the new provider/model
+    if let Some(pc) = plugin_config {
+        config.preamble = resolve_preamble_for_model(pc, provider, model);
+    }
     log::debug!("apply_persona_model: overriding to provider={provider}, model={model}");
-    true
+    Ok(true)
 }
 
 /// Apply per-persona config overrides to runtime Config.

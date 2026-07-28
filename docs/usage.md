@@ -21,9 +21,6 @@ Input can be:
 # Override model for one call
 "quick answer" | agent --model "ollama/gemma4:31b"
 
-# Use configured small model
-"quick answer" | agent --small
-
 # Quiet mode (suppress non-essential progress UX)
 "debug this" | agent --quiet
 
@@ -81,7 +78,7 @@ permissions:
 All front matter keys are optional:
 - `name` — agent identity (overridden by `--name` flag)
 - `description` — persona summary shown in `agent list`
-- `model` — default model in `provider/model` format (overridden by `--model` flag)
+- `model` — model role name or literal `provider/model` (resolved via `models` map; overridden by `--model` flag)
 - `temperature` — response creativity, 0.0–2.0 (overridden by `--temperature` flag)
 - `max_tokens` — maximum tokens to generate
 - `max_tool_turns` — maximum tool execution turns per conversation turn
@@ -105,6 +102,45 @@ agent --agent coder --model openai/gpt-4o
 agent --agent coder --name "bob"
 
 ```
+
+## Model roles
+
+Configure named model roles in plugin config:
+
+```nu
+$env.config.plugins.agent = {
+  models: {
+    default: "openai/gpt-4o"
+    heavy: "anthropic/claude-sonnet-4-6"
+    light: "ollama/gemma4:31b"
+  }
+  providers: { ... }
+}
+```
+
+Then reference roles by name in agent persona front matter:
+
+```yaml
+---
+model: light
+---
+```
+
+When a persona has `model: light`, it resolves to `models.light` from plugin config. If your persona needs a specific model that isn't in the map, use the full `provider/model` identifier instead:
+
+```yaml
+---
+model: openai/gpt-4o-mini
+---
+```
+
+CLI `--model provider/model` overrides all resolution and is used as-is.
+
+Resolution rules:
+1. **Role name** (e.g. `model: heavy`, no slash, matches a key in `models`) → resolves to that key's value
+2. **Literal** (e.g. `model: provider/model`, contains slash) → used as-is
+3. **Unknown role** (no slash, not in the map) → error at startup
+4. **No `model:` field** → falls back to `models.default`
 
 ## Tool authorization (permissions DSL)
 
@@ -596,7 +632,6 @@ $env.config.plugins.agent = {
 ## Flag reference
 
 - `--model <provider/model>`
-- `--small`
 - `--api-key <string>`
 - `--base-url <string>`
 - `--temperature <number>`
