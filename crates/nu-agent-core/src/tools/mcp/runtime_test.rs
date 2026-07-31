@@ -1,6 +1,10 @@
+use std::collections::HashMap;
+
+use http::HeaderName;
+
 use crate::tools::mcp::{
     client::McpToolDefinition,
-    config::{McpServerConfig, McpTransportType},
+    config::{McpAuthConfig, McpServerConfig, McpTransportType},
 };
 
 use super::{McpRuntime, build_http_transport_config};
@@ -31,6 +35,7 @@ fn connect_server_states_reports_all_configured_servers_with_deterministic_field
             transport: McpTransportType::Sse,
             url: Some("https://example.com/mcp/sse".to_string()),
             headers: Default::default(),
+            auth: McpAuthConfig::None,
             command: None,
             cwd: None,
             args: vec![],
@@ -42,6 +47,7 @@ fn connect_server_states_reports_all_configured_servers_with_deterministic_field
             transport: McpTransportType::Http,
             url: Some("https://example.com/mcp/http".to_string()),
             headers: Default::default(),
+            auth: McpAuthConfig::None,
             command: None,
             cwd: None,
             args: vec![],
@@ -53,6 +59,7 @@ fn connect_server_states_reports_all_configured_servers_with_deterministic_field
     let runtime = McpRuntime {
         sessions: vec![],
         connected_servers: std::collections::BTreeSet::new(),
+
         discovered_tools: vec![],
     };
 
@@ -85,6 +92,7 @@ fn connect_server_states_marks_connected_when_runtime_session_exists_for_server(
         transport: McpTransportType::Sse,
         url: Some("https://example.com/mcp/sse".to_string()),
         headers: Default::default(),
+        auth: McpAuthConfig::None,
         command: None,
         cwd: None,
         args: vec![],
@@ -95,6 +103,7 @@ fn connect_server_states_marks_connected_when_runtime_session_exists_for_server(
     let runtime = McpRuntime {
         sessions: vec![],
         connected_servers: std::collections::BTreeSet::from(["connected-server".to_string()]),
+
         discovered_tools: vec![McpToolDefinition {
             server: "connected-server".to_string(),
             name: "connected-server__list".to_string(),
@@ -119,6 +128,7 @@ fn mark_disconnected_removes_from_connected_servers() {
         transport: McpTransportType::Sse,
         url: Some("https://example.com/mcp/sse".to_string()),
         headers: Default::default(),
+        auth: McpAuthConfig::None,
         command: None,
         cwd: None,
         args: vec![],
@@ -129,6 +139,7 @@ fn mark_disconnected_removes_from_connected_servers() {
     let mut runtime = McpRuntime {
         sessions: vec![],
         connected_servers: std::collections::BTreeSet::from(["my-server".to_string()]),
+
         discovered_tools: vec![],
     };
 
@@ -155,6 +166,7 @@ fn activation_gating_selects_only_enabled_servers() {
             transport: McpTransportType::Sse,
             url: Some("https://example.com/mcp/sse".to_string()),
             headers: Default::default(),
+            auth: McpAuthConfig::None,
             command: None,
             cwd: None,
             args: vec![],
@@ -166,6 +178,7 @@ fn activation_gating_selects_only_enabled_servers() {
             transport: McpTransportType::Http,
             url: Some("https://example.com/mcp/http".to_string()),
             headers: Default::default(),
+            auth: McpAuthConfig::None,
             command: None,
             cwd: None,
             args: vec![],
@@ -186,6 +199,7 @@ fn sse_transport_config_is_stateless() {
         transport: McpTransportType::Sse,
         url: Some("https://example.com/mcp/sse".to_string()),
         headers: Default::default(),
+        auth: McpAuthConfig::None,
         command: None,
         cwd: None,
         args: vec![],
@@ -204,6 +218,7 @@ fn http_transport_config_requires_session() {
         transport: McpTransportType::Http,
         url: Some("https://example.com/mcp".to_string()),
         headers: Default::default(),
+        auth: McpAuthConfig::None,
         command: None,
         cwd: None,
         args: vec![],
@@ -381,6 +396,194 @@ fn resolve_stdio_cwd_absolute_override_works() {
     assert_eq!(resolved, expected);
 }
 
+// ── build_http_transport_config auth wiring ─────────────────────────────────
+
+#[test]
+fn http_bearer_auth_sets_auth_header_on_transport_config() {
+    let server = McpServerConfig {
+        name: "bearer-test".to_string(),
+        transport: McpTransportType::Http,
+        url: Some("https://api.example.com/mcp".to_string()),
+        headers: HashMap::new(),
+        auth: McpAuthConfig::Bearer {
+            token: "my-token".to_string(),
+        },
+        command: None,
+        cwd: None,
+        args: vec![],
+        env: HashMap::new(),
+        enabled: true,
+    };
+
+    let config = build_http_transport_config(&server).expect("config");
+    assert_eq!(config.auth_header, Some("my-token".to_string()));
+}
+
+#[test]
+fn http_none_auth_leaves_auth_header_unset() {
+    let server = McpServerConfig {
+        name: "none-auth".to_string(),
+        transport: McpTransportType::Http,
+        url: Some("https://api.example.com/mcp".to_string()),
+        headers: HashMap::new(),
+        auth: McpAuthConfig::None,
+        command: None,
+        cwd: None,
+        args: vec![],
+        env: HashMap::new(),
+        enabled: true,
+    };
+
+    let config = build_http_transport_config(&server).expect("config");
+    assert_eq!(config.auth_header, None);
+}
+
+#[test]
+fn http_oauth_auth_leaves_auth_header_unset() {
+    let server = McpServerConfig {
+        name: "oauth-test".to_string(),
+        transport: McpTransportType::Http,
+        url: Some("https://api.example.com/mcp".to_string()),
+        headers: HashMap::new(),
+        auth: McpAuthConfig::OAuth {
+            client_id: None,
+            client_secret: None,
+            scope: None,
+            redirect_uri: None,
+        },
+        command: None,
+        cwd: None,
+        args: vec![],
+        env: HashMap::new(),
+        enabled: true,
+    };
+
+    let config = build_http_transport_config(&server).expect("config");
+    assert_eq!(config.auth_header, None);
+}
+
+#[test]
+fn http_bearer_auth_skips_authorization_from_custom_headers() {
+    let mut headers = HashMap::new();
+    headers.insert("Authorization".to_string(), "Bearer old-token".to_string());
+    headers.insert("X-API-Key".to_string(), "abc123".to_string());
+
+    let server = McpServerConfig {
+        name: "bearer-skip".to_string(),
+        transport: McpTransportType::Http,
+        url: Some("https://api.example.com/mcp".to_string()),
+        headers,
+        auth: McpAuthConfig::Bearer {
+            token: "new-token".to_string(),
+        },
+        command: None,
+        cwd: None,
+        args: vec![],
+        env: HashMap::new(),
+        enabled: true,
+    };
+
+    let config = build_http_transport_config(&server).expect("config");
+    // auth_header is set from the auth field
+    assert_eq!(config.auth_header, Some("new-token".to_string()));
+    // Authorization header is NOT in custom_headers
+    assert!(
+        !config
+            .custom_headers
+            .contains_key(&HeaderName::from_static("authorization"))
+    );
+    // Non-auth headers still pass through
+    assert!(
+        config
+            .custom_headers
+            .contains_key(&HeaderName::from_static("x-api-key"))
+    );
+}
+
+#[test]
+fn http_none_auth_passes_authorization_header_through() {
+    let mut headers = HashMap::new();
+    headers.insert("Authorization".to_string(), "Bearer old-token".to_string());
+
+    let server = McpServerConfig {
+        name: "none-pass".to_string(),
+        transport: McpTransportType::Http,
+        url: Some("https://api.example.com/mcp".to_string()),
+        headers,
+        auth: McpAuthConfig::None,
+        command: None,
+        cwd: None,
+        args: vec![],
+        env: HashMap::new(),
+        enabled: true,
+    };
+
+    let config = build_http_transport_config(&server).expect("config");
+    // auth_header is not set
+    assert_eq!(config.auth_header, None);
+    // Authorization header IS in custom_headers (backwards compat)
+    assert!(
+        config
+            .custom_headers
+            .contains_key(&HeaderName::from_static("authorization"))
+    );
+}
+
+#[test]
+fn http_non_auth_headers_always_pass_through() {
+    let mut headers = HashMap::new();
+    headers.insert("X-Custom".to_string(), "value1".to_string());
+    headers.insert("X-Request-Id".to_string(), "req-123".to_string());
+
+    let server = McpServerConfig {
+        name: "custom-headers".to_string(),
+        transport: McpTransportType::Http,
+        url: Some("https://api.example.com/mcp".to_string()),
+        headers,
+        auth: McpAuthConfig::Bearer {
+            token: "tok".to_string(),
+        },
+        command: None,
+        cwd: None,
+        args: vec![],
+        env: HashMap::new(),
+        enabled: true,
+    };
+
+    let config = build_http_transport_config(&server).expect("config");
+    assert!(
+        config
+            .custom_headers
+            .contains_key(&HeaderName::from_static("x-custom"))
+    );
+    assert!(
+        config
+            .custom_headers
+            .contains_key(&HeaderName::from_static("x-request-id"))
+    );
+}
+
+#[test]
+fn sse_bearer_auth_sets_auth_header() {
+    let server = McpServerConfig {
+        name: "sse-bearer".to_string(),
+        transport: McpTransportType::Sse,
+        url: Some("https://api.example.com/mcp/sse".to_string()),
+        headers: HashMap::new(),
+        auth: McpAuthConfig::Bearer {
+            token: "sse-token".to_string(),
+        },
+        command: None,
+        cwd: None,
+        args: vec![],
+        env: HashMap::new(),
+        enabled: true,
+    };
+
+    let config = build_http_transport_config(&server).expect("config");
+    assert_eq!(config.auth_header, Some("sse-token".to_string()));
+}
+
 #[tokio::test]
 async fn connect_servers_does_not_replace_existing_handle_contents() {
     use rig::tool::server::ToolServer;
@@ -409,4 +612,85 @@ async fn connect_servers_does_not_replace_existing_handle_contents() {
     // Structural proof: if McpRuntime had a tool_server_handle field,
     // this line would not compile (field access would exist but not here).
     // The absence of McpRuntime::tool_server_handle() is enforced at compile time.
+}
+
+// ── classify_mcp_error ────────────────────────────────────────────────────────
+
+#[test]
+fn classify_mcp_error_returns_auth_required_for_auth_required() {
+    let err = super::classify_mcp_error("AuthRequired: token expired", "my-server");
+    assert!(err.is_some());
+    match err.unwrap() {
+        crate::tools::mcp::auth_error::McpAuthError::AuthRequired { server } => {
+            assert_eq!(server, "my-server");
+        }
+        other => panic!("expected AuthRequired, got {other:?}"),
+    }
+}
+
+#[test]
+fn classify_mcp_error_returns_refresh_failed_for_refresh_failed() {
+    let err = super::classify_mcp_error("token refresh failed", "my-server");
+    assert!(err.is_some());
+    match err.unwrap() {
+        crate::tools::mcp::auth_error::McpAuthError::RefreshFailed { server } => {
+            assert_eq!(server, "my-server");
+        }
+        other => panic!("expected RefreshFailed, got {other:?}"),
+    }
+}
+
+#[test]
+fn classify_mcp_error_returns_insufficient_scope_for_insufficient_scope() {
+    let err = super::classify_mcp_error("InsufficientScope: missing read", "my-server");
+    assert!(err.is_some());
+    match err.unwrap() {
+        crate::tools::mcp::auth_error::McpAuthError::InsufficientScope { server, required } => {
+            assert_eq!(server, "my-server");
+            assert_eq!(required, "see server documentation");
+        }
+        other => panic!("expected InsufficientScope, got {other:?}"),
+    }
+}
+
+#[test]
+fn classify_mcp_error_returns_not_authenticated_for_not_authenticated() {
+    let err = super::classify_mcp_error("not authenticated", "my-server");
+    assert!(err.is_some());
+    match err.unwrap() {
+        crate::tools::mcp::auth_error::McpAuthError::NotAuthenticated { server } => {
+            assert_eq!(server, "my-server");
+        }
+        other => panic!("expected NotAuthenticated, got {other:?}"),
+    }
+}
+
+#[test]
+fn classify_mcp_error_returns_none_for_transport_errors() {
+    assert!(super::classify_mcp_error("connection refused", "my-server").is_none());
+    assert!(super::classify_mcp_error("transport closed", "my-server").is_none());
+    assert!(super::classify_mcp_error("broken pipe", "my-server").is_none());
+}
+
+#[test]
+fn classify_mcp_error_returns_none_for_arbitrary_text() {
+    assert!(super::classify_mcp_error("some random error", "my-server").is_none());
+    assert!(super::classify_mcp_error("", "my-server").is_none());
+}
+
+#[test]
+fn classify_mcp_error_returns_none_for_transport_errors_containing_auth() {
+    // These are transport errors, not auth errors — must not match
+    assert!(
+        super::classify_mcp_error("failed to connect to auth server", "my-server").is_none(),
+        "transport error 'failed to connect to auth server' should not match auth patterns"
+    );
+    assert!(
+        super::classify_mcp_error("failed to resolve auth.example.com", "my-server").is_none(),
+        "transport error 'failed to resolve auth.example.com' should not match auth patterns"
+    );
+    assert!(
+        super::classify_mcp_error("connection to auth backend failed", "my-server").is_none(),
+        "transport error 'connection to auth backend failed' should not match auth patterns"
+    );
 }

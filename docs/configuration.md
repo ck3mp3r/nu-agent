@@ -295,6 +295,139 @@ All compaction fields are optional — defaults are used when omitted. **`max_co
 
 CLI flags override plugin config, which overrides built-in defaults.
 
+## MCP Authentication
+
+MCP servers can require authentication. Configure it per-server under the `auth` field inside each `mcp.<server>` block.
+
+### Auth types
+
+Three auth types are supported:
+
+| Type | Description |
+|------|-------------|
+| `none` | No authentication (default) |
+| `bearer` | Static bearer token from config |
+| `oauth` | OAuth 2.0 authorization-code flow with PKCE |
+
+### McpAuthConfig field reference
+
+| Field | Type | Required | Applies to | Description |
+|-------|------|----------|------------|-------------|
+| `type` | string | **yes** | all | One of `none`, `bearer`, `oauth` |
+| `token` | string | **yes** | `bearer` | Static bearer token value |
+| `client-id` | string | no | `oauth` | OAuth client ID. Omit for dynamic client registration |
+| `client-secret` | string | no | `oauth` | OAuth client secret (optional, for confidential clients) |
+| `scope` | string | no | `oauth` | Space-separated OAuth scopes |
+| `redirect-uri` | string | no | `oauth` | Custom redirect URI (default: `http://127.0.0.1:<random-port>/mcp/oauth/callback`) |
+
+### Examples
+
+**No auth (default):**
+
+```nu
+$env.config.plugins.agent = {
+  mcp: {
+    my-server: {
+      transport: "sse"
+      url: "http://localhost:8080/mcp"
+      auth: { type: "none" }
+    }
+  }
+  models: { default: "..." }
+  providers: { ... }
+}
+```
+
+Omitting the `auth` field entirely is equivalent to `auth: { type: "none" }`.
+
+**Bearer token:**
+
+```nu
+$env.config.plugins.agent = {
+  mcp: {
+    my-server: {
+      transport: "sse"
+      url: "http://localhost:8080/mcp"
+      auth: {
+        type: "bearer"
+        token: $env.MY_MCP_TOKEN
+      }
+    }
+  }
+  models: { default: "..." }
+  providers: { ... }
+}
+```
+
+**OAuth with static client ID:**
+
+```nu
+$env.config.plugins.agent = {
+  mcp: {
+    my-server: {
+      transport: "sse"
+      url: "http://localhost:8080/mcp"
+      auth: {
+        type: "oauth"
+        client-id: "my-client"
+        client-secret: $env.MCP_CLIENT_SECRET
+        scope: "read write"
+        redirect-uri: "http://127.0.0.1:19876/mcp/oauth/callback"
+      }
+    }
+  }
+  models: { default: "..." }
+  providers: { ... }
+}
+```
+
+**OAuth with dynamic client registration:**
+
+```nu
+$env.config.plugins.agent = {
+  mcp: {
+    my-server: {
+      transport: "sse"
+      url: "http://localhost:8080/mcp"
+      auth: {
+        type: "oauth"
+        scope: "read write"
+      }
+    }
+  }
+  models: { default: "..." }
+  providers: { ... }
+}
+```
+
+When `client-id` is omitted, the agent performs dynamic client registration with the MCP server's OAuth endpoint. The redirect URI defaults to `http://127.0.0.1:<random-port>/mcp/oauth/callback`.
+
+### Backwards compatibility
+
+The legacy `headers` field still works for setting `Authorization` headers:
+
+```nu
+$env.config.plugins.agent = {
+  mcp: {
+    my-server: {
+      transport: "sse"
+      url: "http://localhost:8080/mcp"
+      headers: {
+        Authorization: $"Bearer ($env.MY_MCP_TOKEN)"
+      }
+    }
+  }
+}
+```
+
+If both `auth` and `headers.Authorization` are set, the `auth` field takes precedence and a warning is logged.
+
+### Validation rules
+
+- `oauth` requires HTTP or SSE transport (not stdio)
+- `bearer` token must not be empty
+- Unknown auth types are rejected at parse time
+
 ## Agents
 
 Configure built-in persona availability via the optional `agents` block:

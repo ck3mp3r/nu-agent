@@ -1,7 +1,9 @@
 use nu_plugin::{Plugin, PluginCommand};
 
 use crate::command::agent::Agent;
-use crate::command::auth::AgentAuthLogin;
+use crate::command::auth::{
+    AgentAuthLogin, AgentAuthMcpLogin, AgentAuthMcpLogout, AgentAuthMcpStatus,
+};
 use crate::command::session::{AgentSessionClear, AgentSessionInspect, AgentSessionList};
 use nu_agent_core::session::{SessionStoreImpl, StoreError, StoreType, create_store};
 
@@ -68,6 +70,9 @@ impl Plugin for AgentPlugin {
         vec![
             Box::new(Agent::new()),
             Box::new(AgentAuthLogin::new()),
+            Box::new(AgentAuthMcpLogin::new()),
+            Box::new(AgentAuthMcpLogout::new()),
+            Box::new(AgentAuthMcpStatus::new()),
             Box::new(AgentSessionClear::new()),
             Box::new(AgentSessionInspect::new()),
             Box::new(AgentSessionList::new()),

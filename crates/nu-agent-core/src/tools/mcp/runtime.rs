@@ -1,9 +1,14 @@
+use std::sync::Arc;
+
 use http::{HeaderName, HeaderValue};
+use tokio::sync::Mutex;
 
 use crate::tools::mcp::{
     MCP_TOOL_NAMESPACE_DELIMITER,
+    auth_error::McpAuthError,
     client::McpToolDefinition,
-    config::{McpServerConfig, McpTransportType},
+    config::{McpAuthConfig, McpServerConfig, McpTransportType},
+    credentials::{FileCredentialStore, FileStateStore, McpCredentialsStore},
     namespaced::NamespacedClientHandler,
 };
 
@@ -211,6 +216,16 @@ fn build_http_transport_config(
 
     let mut custom_headers = std::collections::HashMap::new();
     for (name, value) in headers {
+        // When auth field is set, skip Authorization header — auth takes precedence
+        if name.eq_ignore_ascii_case("Authorization") && !matches!(server.auth, McpAuthConfig::None)
+        {
+            log::warn!(
+                "MCP server '{}' has both 'auth' and 'headers.Authorization' configured. \
+                 The 'auth' field takes precedence.",
+                server.name
+            );
+            continue;
+        }
         let header_name = HeaderName::from_bytes(name.as_bytes())
             .map_err(|e| format!("invalid MCP header name '{}': {e}", name))?;
         let header_value = HeaderValue::from_str(&value)
@@ -222,6 +237,16 @@ fn build_http_transport_config(
         rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig::with_uri(url)
             .custom_headers(custom_headers);
     config.allow_stateless = allow_stateless;
+
+    match &server.auth {
+        McpAuthConfig::Bearer { token } => {
+            config = config.auth_header(token.clone());
+        }
+        McpAuthConfig::None | McpAuthConfig::OAuth { .. } => {
+            // No config-level auth header for None or OAuth
+        }
+    }
+
     Ok(config)
 }
 
@@ -283,6 +308,18 @@ pub async fn connect_servers(
     caller_cwd: Option<&std::path::Path>,
     max_tool_result_bytes: usize,
 ) -> Result<McpRuntime, String> {
+    // Check if any server uses OAuth — if so, load the shared credential store
+    let needs_oauth = servers
+        .iter()
+        .any(|s| matches!(s.auth, McpAuthConfig::OAuth { .. }));
+    let shared_cred_store: Option<Arc<Mutex<McpCredentialsStore>>> = if needs_oauth {
+        Some(Arc::new(Mutex::new(
+            McpCredentialsStore::load().unwrap_or_default(),
+        )))
+    } else {
+        None
+    };
+
     let mut sessions = Vec::new();
     let mut connected_servers = std::collections::BTreeSet::new();
     let mut discovered_tools = Vec::new();
@@ -294,6 +331,7 @@ pub async fn connect_servers(
             server,
             caller_cwd,
             max_tool_result_bytes,
+            shared_cred_store.as_ref(),
         )
         .await?;
 
@@ -318,6 +356,7 @@ pub(crate) async fn connect_server(
     server: &McpServerConfig,
     caller_cwd: Option<&std::path::Path>,
     max_tool_result_bytes: usize,
+    shared_cred_store: Option<&Arc<Mutex<McpCredentialsStore>>>,
 ) -> Result<
     (
         rmcp::service::RunningService<rmcp::service::RoleClient, NamespacedClientHandler>,
@@ -370,52 +409,176 @@ pub(crate) async fn connect_server(
                 .await
                 .map_err(|e| format!("failed to connect stdio MCP server: {e}"))?;
 
-            // Build McpToolDefinition from raw tools without a second round-trip
-            let mut discovered_tools = Vec::with_capacity(raw_tools.len());
-            for tool in raw_tools {
-                let raw_name = tool.name.to_string();
-                validate_raw_tool_name(server_name, &raw_name)?;
-
-                discovered_tools.push(McpToolDefinition {
-                    raw_name: raw_name.clone(),
-                    server: server_name.to_string(),
-                    name: compose_exposed_tool_name(server_name, &raw_name),
-                    description: tool.description.map(|d| d.to_string()),
-                    parameters: Some(serde_json::Value::Object((*tool.input_schema).clone())),
-                });
-            }
-
+            let discovered_tools = build_tool_definitions(server_name, raw_tools)?;
             Ok((service, discovered_tools))
         }
         McpTransportType::Sse | McpTransportType::Http => {
             let config = build_http_transport_config(server)?;
-            let transport = rmcp::transport::StreamableHttpClientTransport::with_client(
-                build_mcp_http_client(MCP_DEFAULT_READ_TIMEOUT_SECS),
-                config,
-            );
-            let (service, raw_tools) = handler
-                .connect(transport)
-                .await
-                .map_err(|e| format!("failed to connect http MCP server: {e}"))?;
 
-            // Build McpToolDefinition from raw tools without a second round-trip
-            let mut discovered_tools = Vec::with_capacity(raw_tools.len());
-            for tool in raw_tools {
-                let raw_name = tool.name.to_string();
-                validate_raw_tool_name(server_name, &raw_name)?;
+            match &server.auth {
+                McpAuthConfig::None | McpAuthConfig::Bearer { .. } => {
+                    // EXISTING PATH — no change
+                    let transport = rmcp::transport::StreamableHttpClientTransport::with_client(
+                        build_mcp_http_client(MCP_DEFAULT_READ_TIMEOUT_SECS),
+                        config,
+                    );
+                    let (service, raw_tools) = handler
+                        .connect(transport)
+                        .await
+                        .map_err(|e| format!("failed to connect http MCP server: {e}"))?;
 
-                discovered_tools.push(McpToolDefinition {
-                    raw_name: raw_name.clone(),
-                    server: server_name.to_string(),
-                    name: compose_exposed_tool_name(server_name, &raw_name),
-                    description: tool.description.map(|d| d.to_string()),
-                    parameters: Some(serde_json::Value::Object((*tool.input_schema).clone())),
-                });
+                    let discovered_tools = build_tool_definitions(server_name, raw_tools)?;
+                    Ok((service, discovered_tools))
+                }
+                McpAuthConfig::OAuth {
+                    client_id,
+                    client_secret,
+                    scope: _,
+                    redirect_uri,
+                } => {
+                    let server_url = server.url.clone().ok_or_else(|| {
+                        format!("MCP server '{}' with OAuth auth requires url", server.name)
+                    })?;
+
+                    // Validate the server URL for SSRF protection
+                    crate::tools::mcp::safe_http_client::validate_url(&server_url).map_err(
+                        |e| format!("Invalid MCP server URL for '{}': {e}", server.name),
+                    )?;
+
+                    // Load the shared credential store
+                    let shared_store = shared_cred_store.as_ref().ok_or_else(|| {
+                        format!(
+                            "MCP server '{}' requires OAuth but credential store not initialized",
+                            server.name
+                        )
+                    })?;
+
+                    // Create per-server FileCredentialStore and FileStateStore
+                    let file_cred_store =
+                        FileCredentialStore::new((*shared_store).clone(), &server.name);
+                    let file_state_store = FileStateStore::new((*shared_store).clone());
+
+                    // Create AuthorizationManager
+                    let mut auth_manager = rmcp::transport::AuthorizationManager::new(&server_url)
+                        .await
+                        .map_err(|e| {
+                            format!("failed to create auth manager for '{}': {e}", server.name)
+                        })?;
+
+                    // Set credential and state stores
+                    auth_manager.set_credential_store(file_cred_store);
+                    auth_manager.set_state_store(file_state_store);
+
+                    // Discover OAuth metadata (required before the manager can use stored credentials)
+                    let metadata = auth_manager.discover_metadata().await.map_err(|e| {
+                        format!(
+                            "failed to discover OAuth metadata for '{}': {e}",
+                            server.name
+                        )
+                    })?;
+                    auth_manager.set_metadata(metadata);
+
+                    // Configure the OAuth client with client_id and client_secret from config.
+                    // The redirect_uri is not used at runtime (no callback server), but
+                    // OAuthClientConfig requires it. Use the config value or a placeholder.
+                    if let Some(cid) = client_id {
+                        let rd_uri = redirect_uri
+                            .as_deref()
+                            .unwrap_or("http://127.0.0.1:0/mcp/oauth/callback");
+                        let mut client_config =
+                            rmcp::transport::auth::OAuthClientConfig::new(cid.clone(), rd_uri);
+                        if let Some(secret) = client_secret {
+                            client_config = client_config.with_client_secret(secret.clone());
+                        }
+                        auth_manager.configure_client(client_config).map_err(|e| {
+                            format!(
+                                "failed to configure OAuth client for '{}': {e}",
+                                server.name
+                            )
+                        })?;
+                    }
+                    // If no client_id in config, the client was registered during login.
+                    // The stored client_info in the credential store has the client_id.
+                    // rmcp's AuthorizationManager loads it from FileCredentialStore.
+
+                    // Build HTTP client and wrap with AuthClient
+                    let http_client = build_mcp_http_client(MCP_DEFAULT_READ_TIMEOUT_SECS);
+                    let auth_client = rmcp::transport::AuthClient::new(http_client, auth_manager);
+
+                    let transport = rmcp::transport::StreamableHttpClientTransport::with_client(
+                        auth_client,
+                        config,
+                    );
+                    let (service, raw_tools) = handler
+                        .connect(transport)
+                        .await
+                        .map_err(|e| format!("failed to connect http MCP server: {e}"))?;
+
+                    let discovered_tools = build_tool_definitions(server_name, raw_tools)?;
+                    Ok((service, discovered_tools))
+                }
             }
-
-            Ok((service, discovered_tools))
         }
     }
+}
+
+fn build_tool_definitions(
+    server_name: &str,
+    raw_tools: Vec<rmcp::model::Tool>,
+) -> Result<Vec<McpToolDefinition>, String> {
+    let mut discovered_tools = Vec::with_capacity(raw_tools.len());
+    for tool in raw_tools {
+        let raw_name = tool.name.to_string();
+        validate_raw_tool_name(server_name, &raw_name)?;
+
+        discovered_tools.push(McpToolDefinition {
+            raw_name: raw_name.clone(),
+            server: server_name.to_string(),
+            name: compose_exposed_tool_name(server_name, &raw_name),
+            description: tool.description.map(|d| d.to_string()),
+            parameters: Some(serde_json::Value::Object((*tool.input_schema).clone())),
+        });
+    }
+    Ok(discovered_tools)
+}
+
+/// Classify an MCP tool call error as either a transport error or an auth error.
+///
+/// Returns `Some(McpAuthError)` if the error is auth-related, `None` otherwise.
+/// Auth errors are user-actionable (re-login, scope grant) rather than
+/// transport-level failures.
+///
+/// Uses specific phrase matching to avoid false positives from transport errors
+/// that happen to contain the word "auth" (e.g. "failed to connect to auth server").
+pub fn classify_mcp_error(error: &str, server_name: &str) -> Option<McpAuthError> {
+    let lower = error.to_lowercase();
+
+    if lower.contains("insufficient scope") || lower.contains("insufficientscope") {
+        return Some(McpAuthError::InsufficientScope {
+            server: server_name.to_string(),
+            required: "see server documentation".to_string(),
+        });
+    }
+
+    if lower.contains("token refresh failed") || lower.contains("refreshfailed") {
+        return Some(McpAuthError::RefreshFailed {
+            server: server_name.to_string(),
+        });
+    }
+
+    if lower.contains("auth required") || lower.contains("authrequired") {
+        return Some(McpAuthError::AuthRequired {
+            server: server_name.to_string(),
+        });
+    }
+
+    if lower.contains("not authenticated") || lower.contains("notauthenticated") {
+        return Some(McpAuthError::NotAuthenticated {
+            server: server_name.to_string(),
+        });
+    }
+
+    None
 }
 
 #[cfg(test)]

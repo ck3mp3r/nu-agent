@@ -15,6 +15,26 @@ pub enum McpTransportType {
     Http,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+pub enum McpAuthConfig {
+    #[default]
+    None,
+    Bearer {
+        token: String,
+    },
+    OAuth {
+        #[serde(default)]
+        client_id: Option<String>,
+        #[serde(default)]
+        client_secret: Option<String>,
+        #[serde(default)]
+        scope: Option<String>,
+        #[serde(default)]
+        redirect_uri: Option<String>,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct McpServerConfig {
     pub name: String,
@@ -22,6 +42,8 @@ pub struct McpServerConfig {
     #[serde(default = "default_enabled")]
     pub enabled: bool,
     pub url: Option<String>,
+    #[serde(default)]
+    pub auth: McpAuthConfig,
     #[serde(default)]
     pub headers: std::collections::HashMap<String, String>,
     pub command: Option<String>,
@@ -73,6 +95,7 @@ impl McpConfig {
             let enabled = get_optional_bool(server_record, "enabled")?.unwrap_or(true);
             let args = get_optional_string_list(server_record, "args")?;
             let headers = get_optional_string_record(server_record, "headers")?;
+            let auth = get_optional_auth(server_record, "auth")?;
             let env = get_optional_string_record(server_record, "env")?;
 
             servers.push(McpServerConfig {
@@ -80,6 +103,7 @@ impl McpConfig {
                 transport,
                 enabled,
                 url,
+                auth,
                 headers,
                 command,
                 cwd,
@@ -142,6 +166,37 @@ impl McpConfig {
                         ));
                     }
                 }
+            }
+
+            // OAuth requires HTTP or SSE transport (not stdio)
+            if matches!(server.auth, McpAuthConfig::OAuth { .. })
+                && server.transport == McpTransportType::Stdio
+            {
+                return Err(format!(
+                    "MCP server '{}' with auth type 'oauth' requires HTTP or SSE transport, not stdio",
+                    server.name
+                ));
+            }
+
+            // Bearer token must not be empty
+            if let McpAuthConfig::Bearer { token } = &server.auth
+                && token.trim().is_empty()
+            {
+                return Err(format!(
+                    "MCP server '{}' has bearer auth with empty token",
+                    server.name
+                ));
+            }
+
+            // Warn if both auth.bearer and headers.Authorization are set
+            if !matches!(server.auth, McpAuthConfig::None)
+                && server.headers.contains_key("Authorization")
+            {
+                log::warn!(
+                    "MCP server '{}' has both 'auth' and 'headers.Authorization' configured. \
+                     The 'auth' field takes precedence.",
+                    server.name
+                );
             }
         }
 
@@ -240,6 +295,50 @@ fn get_optional_string_record(
     }
 
     Ok(out)
+}
+
+fn get_optional_auth(
+    record: &nu_protocol::Record,
+    key: &str,
+) -> Result<McpAuthConfig, nu_protocol::LabeledError> {
+    let Some(value) = record.get(key) else {
+        return Ok(McpAuthConfig::None);
+    };
+
+    let auth_record = value.as_record().map_err(|_| {
+        nu_protocol::LabeledError::new("Invalid auth configuration").with_label(
+            format!("'{key}' must be a record with a 'type' field"),
+            value.span(),
+        )
+    })?;
+
+    let auth_type = get_required_string(auth_record, "type", value.span())?;
+
+    match auth_type.as_str() {
+        "none" => Ok(McpAuthConfig::None),
+        "bearer" => {
+            let token = get_required_string(auth_record, "token", value.span())?;
+            Ok(McpAuthConfig::Bearer { token })
+        }
+        "oauth" => {
+            let client_id = get_optional_string(auth_record, "client-id")?;
+            let client_secret = get_optional_string(auth_record, "client-secret")?;
+            let scope = get_optional_string(auth_record, "scope")?;
+            let redirect_uri = get_optional_string(auth_record, "redirect-uri")?;
+            Ok(McpAuthConfig::OAuth {
+                client_id,
+                client_secret,
+                scope,
+                redirect_uri,
+            })
+        }
+        other => Err(
+            nu_protocol::LabeledError::new("Invalid auth type").with_label(
+                format!("Unknown auth type '{other}'. Expected: none, bearer, oauth"),
+                value.span(),
+            ),
+        ),
+    }
 }
 
 fn parse_transport(

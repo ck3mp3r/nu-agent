@@ -651,6 +651,113 @@ $env.config.plugins.agent = {
 - `--proactive-threshold-pct <number>` — proactive compaction threshold 0.0–1.0 (default: 0.80)
 - `--log-level <string>` — log level for file-based logging (`error|warn|info|debug|trace`); writes to `$XDG_STATE_HOME/nu-agent/logs/agent.log`
 
+## MCP Authentication Commands
+
+Manage OAuth credentials for MCP servers. These commands operate on the credential store (not the plugin config).
+
+### `agent mcp auth login`
+
+Triggers the OAuth authorization-code flow with PKCE for a configured MCP server. Opens a browser to the server's authorization URL and waits for the callback.
+
+```nu
+agent mcp auth login my-server
+```
+
+The MCP server must be configured with `auth: { type: "oauth" }` in the plugin config. On success, tokens are saved to the credential store and automatically refreshed on expiry.
+
+Example output (stderr):
+
+```
+Opening browser to authenticate with MCP server 'my-server'...
+If the browser doesn't open, visit:
+  http://auth-server.example.com/authorize?response_type=code&client_id=...
+Successfully authenticated with MCP server 'my-server'
+```
+
+#### What happens during login
+
+The OAuth authorization-code flow with PKCE proceeds as follows:
+
+1. **Load config** — reads the MCP server configuration from plugin config.
+2. **Start callback server** — binds a local HTTP server to `127.0.0.1` on a random port to receive the OAuth redirect.
+3. **Discover OAuth metadata** — fetches `/.well-known/oauth-authorization-server` from the server URL to find authorization, token, and registration endpoints.
+4. **Register client** — if no `client-id` is configured, performs dynamic client registration via the discovered registration endpoint. If `client-id` is configured, uses it directly.
+5. **Generate PKCE challenge** — creates a cryptographically random `code_verifier` and `code_challenge` (SHA-256 hashed) for the authorization request.
+6. **Build authorization URL** — constructs the URL with `response_type=code`, `client_id`, `redirect_uri`, `scope`, `state` (CSRF token), and `code_challenge`.
+7. **Open browser** — launches the system browser to the authorization URL.
+8. **User authenticates** — the user logs in and grants consent in the browser.
+9. **Browser redirects** — the authorization server redirects to the callback server at `http://127.0.0.1:<random-port>/mcp/oauth/callback?code=...&state=...`.
+10. **Validate state** — the callback server verifies the `state` parameter matches the one sent (CSRF protection).
+11. **Exchange code for tokens** — sends the authorization code, `code_verifier`, and `redirect_uri` to the token endpoint. Receives `access_token`, `refresh_token`, and `expires_in`.
+12. **Save credentials** — stores tokens to `$XDG_DATA_HOME/nu-agent/mcp-auth.json` with `0600` permissions.
+13. **Stop callback server** — shuts down the local HTTP server.
+
+On subsequent agent runs, the stored access token is used automatically. If expired, the refresh token is used to obtain a new access token without user interaction.
+
+### `agent mcp auth logout`
+
+Clears stored OAuth tokens and client registration data for a server. Does not modify the plugin config.
+
+```nu
+agent mcp auth logout my-server
+```
+
+Example output:
+
+```
+Cleared credentials for 'my-server'
+```
+
+If no credentials are stored for the server:
+
+```
+No stored credentials for 'my-server'
+```
+
+### `agent mcp auth status`
+
+Shows authentication status for all configured MCP servers as a table.
+
+```nu
+agent mcp auth status
+```
+
+Example output:
+
+```
+╭───────┬───────────┬──────────────────────────────────────────╮
+│ server│ auth_type │ status                                   │
+├───────┼───────────┼──────────────────────────────────────────┤
+│ c5t   │ none      │ no auth required                         │
+│ nu    │ bearer    │ static token (from config)                │
+│ gh    │ oauth     │ authenticated (token valid)               │
+│ gitlab│ oauth     │ authenticated (token expired — will       │
+│       │           │ refresh)                                  │
+│ jira  │ oauth     │ not authenticated (run: agent mcp auth    │
+│       │           │ login jira)                                │
+╰───────┴───────────┴──────────────────────────────────────────╯
+```
+
+Status values:
+
+| Status | Meaning |
+|--------|---------|
+| `no auth required` | Server uses `auth: { type: "none" }` |
+| `static token (from config)` | Server uses `auth: { type: "bearer" }` |
+| `authenticated (token valid)` | OAuth token is stored and not expired |
+| `authenticated (token expired — will refresh)` | OAuth token is expired; auto-refresh on next use |
+| `not authenticated (run: ...)` | OAuth server with no stored credentials |
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `401 Unauthorized` | Missing or invalid credentials | Run `agent mcp auth login <name>` |
+| `403 Forbidden` | Insufficient OAuth scopes | Re-login with additional scopes in the `auth.scope` config field |
+| `Callback port in use` | Another process is using the callback port. Stop it or configure a different `redirect-uri`. |
+| `Token expired` | Refresh token also expired | Run `agent mcp auth login <name>` to re-authenticate |
+| `OAuth requires HTTP or SSE transport` | OAuth configured on stdio server | Change transport to `sse` or `http` in plugin config |
+
 ## Output contract
 
 - `stdout`: final machine-readable Nushell record output only.

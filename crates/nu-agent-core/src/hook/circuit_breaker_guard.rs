@@ -11,6 +11,7 @@ use tokio::sync::mpsc;
 use crate::protocol::event::UiEvent;
 use crate::tools::handler::McpToolRegistry;
 use crate::tools::mcp::circuit_breaker::{McpCircuitBreaker, is_transport_error};
+use crate::tools::mcp::runtime::classify_mcp_error;
 
 /// Guards MCP tool calls behind a circuit breaker.
 #[derive(Clone)]
@@ -46,6 +47,10 @@ impl CircuitBreakerGuard {
     ///
     /// If the result is a transport error, increments the failure counter and
     /// potentially trips the breaker, disabling the server.
+    ///
+    /// Auth errors (401/403) are NOT transport errors — they bypass the circuit
+    /// breaker entirely so that user-actionable auth failures don't disable the
+    /// server.
     pub fn record_result(
         &self,
         tool_name: &str,
@@ -57,6 +62,13 @@ impl CircuitBreakerGuard {
         let Some(server_name) = mcp_registry.server_name_for(tool_name) else {
             return;
         };
+
+        // Auth errors bypass the circuit breaker — they are user-actionable
+        // (re-login, scope grant) rather than transport-level failures.
+        if let Some(auth_err) = classify_mcp_error(result, server_name) {
+            log::error!("{auth_err}");
+            return;
+        }
 
         if is_transport_error(result) {
             let tripped = {

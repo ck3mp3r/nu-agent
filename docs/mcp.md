@@ -44,7 +44,7 @@ $env.config.plugins.agent = {
 
 - `transport: "stdio"` requires `command`
 - `transport: "sse" | "http"` requires `url`
-- optional fields: `args`, `env`, `headers`, `cwd` (`stdio` only)
+- optional fields: `args`, `env`, `headers`, `cwd` (`stdio` only), `auth`
 
 ## Stdio working directory behavior
 
@@ -101,6 +101,42 @@ If a closure tool and an MCP tool share the same exposed name, closure tools tak
 
 - precedence order: closure tool, then MCP tool
 - use distinct names to avoid accidental shadowing
+
+## MCP Authentication
+
+MCP servers can require authentication. The agent supports three auth types: `none`, `bearer`, and `oauth`.
+
+Configure auth under `mcp.<server>.auth` in plugin config. See [configuration.md](./configuration.md#mcp-authentication) for config examples.
+
+### OAuth flow (step-by-step)
+
+When you run `agent mcp auth login <name>`, the following happens:
+
+1. **Load config** — reads the MCP server configuration from plugin config.
+2. **Start callback server** — binds a local HTTP server to `127.0.0.1` on a random port to receive the OAuth redirect.
+3. **Discover OAuth metadata** — fetches `/.well-known/oauth-authorization-server` from the server URL to find authorization, token, and registration endpoints.
+4. **Register client** — if no `client-id` is configured, performs dynamic client registration via the discovered registration endpoint. If `client-id` is configured, uses it directly.
+5. **Generate PKCE challenge** — creates a cryptographically random `code_verifier` and `code_challenge` (SHA-256 hashed) for the authorization request.
+6. **Build authorization URL** — constructs the URL with `response_type=code`, `client_id`, `redirect_uri`, `scope`, `state` (CSRF token), and `code_challenge`.
+7. **Open browser** — launches the system browser to the authorization URL.
+8. **User authenticates** — the user logs in and grants consent in the browser.
+9. **Browser redirects** — the authorization server redirects to the callback server at `http://127.0.0.1:<random-port>/mcp/oauth/callback?code=...&state=...`.
+10. **Validate state** — the callback server verifies the `state` parameter matches the one sent (CSRF protection).
+11. **Exchange code for tokens** — sends the authorization code, `code_verifier`, and `redirect_uri` to the token endpoint. Receives `access_token`, `refresh_token`, and `expires_in`.
+12. **Save credentials** — stores tokens to `$XDG_DATA_HOME/nu-agent/mcp-auth.json` with `0600` permissions.
+13. **Stop callback server** — shuts down the local HTTP server.
+
+On subsequent agent runs, the stored access token is used automatically. If expired, the refresh token is used to obtain a new access token without user interaction.
+
+### Security notes
+
+| Measure | Implementation |
+|---------|---------------|
+| **File permissions** | Credentials stored at `$XDG_DATA_HOME/nu-agent/mcp-auth.json` with `0600` permissions (owner read/write only). |
+| **Loopback-only callback** | The OAuth callback server binds exclusively to `127.0.0.1` — never exposed to the network. |
+| **CSRF protection** | The `state` parameter is a cryptographically random token. The callback validates it matches the sent value before exchanging the code. |
+| **SSRF blocking** | URL validation in the HTTP client blocks requests to cloud metadata endpoints (`169.254.169.254`) and link-local addresses (`169.254.0.0/16`). |
+| **PKCE** | Proof Key for Code Exchange ensures the authorization code can only be exchanged by the client that initiated the flow, protecting against interception. |
 
 ## Migration note
 

@@ -3,7 +3,7 @@ use crate::{
     protocol::{contracts::ProgressUi, event::UiEvent},
     tools::mcp::{
         client::McpToolDefinition,
-        config::{McpServerConfig, McpTransportType},
+        config::{McpAuthConfig, McpServerConfig, McpTransportType},
     },
 };
 
@@ -49,6 +49,7 @@ pub fn mcp_server_config(name: &str, enabled: bool) -> McpServerConfig {
         enabled,
         url: Some("http://localhost:7777/mcp".to_string()),
         headers: std::collections::HashMap::new(),
+        auth: McpAuthConfig::None,
         command: None,
         cwd: None,
         args: Vec::new(),

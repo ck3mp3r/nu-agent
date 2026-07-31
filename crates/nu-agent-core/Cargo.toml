@@ -26,13 +26,21 @@ regex = { workspace = true }
 ignore = { workspace = true }
 similar = { workspace = true }
 http = { workspace = true }
+http-body-util = { workspace = true }
+bytes = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+url = { workspace = true }
 noyalib = { workspace = true }
 rand = { workspace = true }
 pulldown-cmark = { workspace = true }
 htmd = { workspace = true }
+fs2 = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
 serial_test = { workspace = true }
 rig = { workspace = true, features = ["test-utils"] }
+reqwest = { workspace = true }
 wiremock = "0.6"
+oauth2 = "5.0"

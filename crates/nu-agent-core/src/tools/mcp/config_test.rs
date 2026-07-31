@@ -1,4 +1,4 @@
-use super::McpConfig;
+use super::{McpAuthConfig, McpConfig};
 use nu_protocol::{Record, Value, record};
 
 #[test]
@@ -188,4 +188,245 @@ fn mcp_config_rejects_server_name_with_reserved_delimiter() {
     let err = McpConfig::from_plugin_config(&plugin_config).expect_err("should fail");
     let msg = err.to_string();
     assert!(msg.contains("reserved delimiter") || msg.contains("Invalid MCP configuration"));
+}
+
+// ── McpAuthConfig tests ──────────────────────────────────────────────────────
+
+#[test]
+fn mcp_auth_defaults_to_none_when_omitted() {
+    let plugin_config = Value::test_record(record! {
+        "mcp" => Value::test_record(record! {
+            "c5t" => Value::test_record(record! {
+                "transport" => Value::test_string("sse"),
+                "url" => Value::test_string("http://0.0.0.0:3737/mcp"),
+            }),
+        }),
+    });
+
+    let parsed = McpConfig::from_plugin_config(&plugin_config).expect("should parse");
+    let c5t = parsed.mcp.iter().find(|s| s.name == "c5t").unwrap();
+    assert_eq!(c5t.auth, McpAuthConfig::None);
+}
+
+#[test]
+fn mcp_auth_parses_none_explicitly() {
+    let plugin_config = Value::test_record(record! {
+        "mcp" => Value::test_record(record! {
+            "c5t" => Value::test_record(record! {
+                "transport" => Value::test_string("sse"),
+                "url" => Value::test_string("http://0.0.0.0:3737/mcp"),
+                "auth" => Value::test_record(record! {
+                    "type" => Value::test_string("none"),
+                }),
+            }),
+        }),
+    });
+
+    let parsed = McpConfig::from_plugin_config(&plugin_config).expect("should parse");
+    let c5t = parsed.mcp.iter().find(|s| s.name == "c5t").unwrap();
+    assert_eq!(c5t.auth, McpAuthConfig::None);
+}
+
+#[test]
+fn mcp_auth_parses_bearer() {
+    let plugin_config = Value::test_record(record! {
+        "mcp" => Value::test_record(record! {
+            "api" => Value::test_record(record! {
+                "transport" => Value::test_string("http"),
+                "url" => Value::test_string("https://api.example.com/mcp"),
+                "auth" => Value::test_record(record! {
+                    "type" => Value::test_string("bearer"),
+                    "token" => Value::test_string("abc123"),
+                }),
+            }),
+        }),
+    });
+
+    let parsed = McpConfig::from_plugin_config(&plugin_config).expect("should parse");
+    let api = parsed.mcp.iter().find(|s| s.name == "api").unwrap();
+    assert_eq!(
+        api.auth,
+        McpAuthConfig::Bearer {
+            token: "abc123".to_string()
+        }
+    );
+}
+
+#[test]
+fn mcp_auth_parses_oauth_with_scope() {
+    let plugin_config = Value::test_record(record! {
+        "mcp" => Value::test_record(record! {
+            "ctx" => Value::test_record(record! {
+                "transport" => Value::test_string("http"),
+                "url" => Value::test_string("https://mcp.context7.com/mcp"),
+                "auth" => Value::test_record(record! {
+                    "type" => Value::test_string("oauth"),
+                    "scope" => Value::test_string("profile email"),
+                }),
+            }),
+        }),
+    });
+
+    let parsed = McpConfig::from_plugin_config(&plugin_config).expect("should parse");
+    let ctx = parsed.mcp.iter().find(|s| s.name == "ctx").unwrap();
+    assert_eq!(
+        ctx.auth,
+        McpAuthConfig::OAuth {
+            client_id: None,
+            client_secret: None,
+            scope: Some("profile email".to_string()),
+            redirect_uri: None,
+        }
+    );
+}
+
+#[test]
+fn mcp_auth_parses_oauth_with_client_credentials() {
+    let plugin_config = Value::test_record(record! {
+        "mcp" => Value::test_record(record! {
+            "gh" => Value::test_record(record! {
+                "transport" => Value::test_string("http"),
+                "url" => Value::test_string("https://api.github.com/mcp"),
+                "auth" => Value::test_record(record! {
+                    "type" => Value::test_string("oauth"),
+                    "client-id" => Value::test_string("Iv1.example"),
+                    "client-secret" => Value::test_string("secret123"),
+                    "scope" => Value::test_string("repo read:org"),
+                }),
+            }),
+        }),
+    });
+
+    let parsed = McpConfig::from_plugin_config(&plugin_config).expect("should parse");
+    let gh = parsed.mcp.iter().find(|s| s.name == "gh").unwrap();
+    assert_eq!(
+        gh.auth,
+        McpAuthConfig::OAuth {
+            client_id: Some("Iv1.example".to_string()),
+            client_secret: Some("secret123".to_string()),
+            scope: Some("repo read:org".to_string()),
+            redirect_uri: None,
+        }
+    );
+}
+
+#[test]
+fn mcp_auth_rejects_unknown_auth_type() {
+    let plugin_config = Value::test_record(record! {
+        "mcp" => Value::test_record(record! {
+            "x" => Value::test_record(record! {
+                "transport" => Value::test_string("http"),
+                "url" => Value::test_string("http://example.com/mcp"),
+                "auth" => Value::test_record(record! {
+                    "type" => Value::test_string("unknown"),
+                }),
+            }),
+        }),
+    });
+
+    let err = McpConfig::from_plugin_config(&plugin_config).expect_err("should fail");
+    let msg = err.to_string();
+    assert!(msg.contains("Unknown auth type") || msg.contains("Invalid auth type"));
+}
+
+#[test]
+fn mcp_auth_rejects_bearer_with_empty_token() {
+    let plugin_config = Value::test_record(record! {
+        "mcp" => Value::test_record(record! {
+            "x" => Value::test_record(record! {
+                "transport" => Value::test_string("http"),
+                "url" => Value::test_string("http://example.com/mcp"),
+                "auth" => Value::test_record(record! {
+                    "type" => Value::test_string("bearer"),
+                    "token" => Value::test_string(""),
+                }),
+            }),
+        }),
+    });
+
+    let err = McpConfig::from_plugin_config(&plugin_config).expect_err("should fail");
+    let msg = err.to_string();
+    assert!(msg.contains("empty token") || msg.contains("Invalid MCP configuration"));
+}
+
+#[test]
+fn mcp_auth_rejects_oauth_on_stdio() {
+    let plugin_config = Value::test_record(record! {
+        "mcp" => Value::test_record(record! {
+            "x" => Value::test_record(record! {
+                "transport" => Value::test_string("stdio"),
+                "command" => Value::test_string("my-server"),
+                "cwd" => Value::test_string("/tmp"),
+                "auth" => Value::test_record(record! {
+                    "type" => Value::test_string("oauth"),
+                    "scope" => Value::test_string("profile"),
+                }),
+            }),
+        }),
+    });
+
+    let err = McpConfig::from_plugin_config(&plugin_config).expect_err("should fail");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("requires HTTP or SSE transport") || msg.contains("Invalid MCP configuration")
+    );
+}
+
+#[test]
+fn mcp_auth_backwards_compat_headers_authorization_still_works() {
+    let plugin_config = Value::test_record(record! {
+        "mcp" => Value::test_record(record! {
+            "api" => Value::test_record(record! {
+                "transport" => Value::test_string("http"),
+                "url" => Value::test_string("https://api.example.com/mcp"),
+                "headers" => Value::test_record(record! {
+                    "Authorization" => Value::test_string("Bearer abc123"),
+                }),
+            }),
+        }),
+    });
+
+    let parsed = McpConfig::from_plugin_config(&plugin_config).expect("should parse");
+    let api = parsed.mcp.iter().find(|s| s.name == "api").unwrap();
+    assert_eq!(api.auth, McpAuthConfig::None);
+    assert_eq!(
+        api.headers.get("Authorization").map(String::as_str),
+        Some("Bearer abc123")
+    );
+}
+
+#[test]
+fn mcp_auth_rejects_non_record_auth_field() {
+    let plugin_config = Value::test_record(record! {
+        "mcp" => Value::test_record(record! {
+            "x" => Value::test_record(record! {
+                "transport" => Value::test_string("http"),
+                "url" => Value::test_string("http://example.com/mcp"),
+                "auth" => Value::test_string("bearer"),
+            }),
+        }),
+    });
+
+    let err = McpConfig::from_plugin_config(&plugin_config).expect_err("should fail");
+    let msg = err.to_string();
+    assert!(msg.contains("must be a record") || msg.contains("Invalid auth configuration"));
+}
+
+#[test]
+fn mcp_auth_rejects_missing_type_field() {
+    let plugin_config = Value::test_record(record! {
+        "mcp" => Value::test_record(record! {
+            "x" => Value::test_record(record! {
+                "transport" => Value::test_string("http"),
+                "url" => Value::test_string("http://example.com/mcp"),
+                "auth" => Value::test_record(record! {
+                    "token" => Value::test_string("abc"),
+                }),
+            }),
+        }),
+    });
+
+    let err = McpConfig::from_plugin_config(&plugin_config).expect_err("should fail");
+    let msg = err.to_string();
+    assert!(msg.contains("Missing 'type'") || msg.contains("Missing required field"));
 }

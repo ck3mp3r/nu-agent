@@ -22,6 +22,10 @@ env_logger = { workspace = true }
 rustls = { workspace = true }
 chrono = { workspace = true }
 serde_json = { workspace = true }
+open = "5"
+rmcp = { workspace = true }
+oauth2 = { workspace = true }
+url = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

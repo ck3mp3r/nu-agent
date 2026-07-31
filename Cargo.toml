@@ -26,6 +26,7 @@ rmcp = { version = "1.8.0", default-features = false, features = [
   "transport-streamable-http-client",
   "transport-streamable-http-client-reqwest",
   "transport-io",
+  "auth",
 ] }
 
 # Async runtime
@@ -37,6 +38,11 @@ futures = "0.3"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider", "system-proxy"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
 http = "1.4"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["server", "tokio"] }
+http-body-util = "0.1"
+bytes = "1"
+url = "2"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -62,11 +68,13 @@ pulldown-cmark = "0.13"
 htmd = "0.5"
 arboard = "3.6"
 syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "default-themes", "parsing", "regex-fancy", "yaml-load"] }
-noyalib = "0.0.15"
+noyalib = "0.0.17"
+oauth2 = "5.0"
 rand = "0.10.1"
+fs2 = "0.4"
 
 # Dev/test
-serial_test = "3.4.0"
+serial_test = "4.0.1"
 
 [profile.release]
 opt-level = "z"
