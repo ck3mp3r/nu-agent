@@ -65,23 +65,17 @@ fn model_picker_catalog_projection_from_plugin_config_is_sorted_and_marks_active
     );
 
     let plugin_config = nu_agent_core::config::PluginConfig {
-        models: [("default".to_string(), "a-provider/a-model".to_string())].into(),
+        models: [(
+            "default".to_string(),
+            nu_agent_core::config::ModelRoleConfig {
+                model: "a-provider/a-model".to_string(),
+                ..nu_agent_core::config::ModelRoleConfig::default()
+            },
+        )]
+        .into(),
         providers,
         compaction: None,
         agents: nu_agent_core::config::AgentsConfig::default(),
-        read_timeout_secs: None,
-        max_tool_calls_per_subturn: None,
-        additional_params: None,
-        temperature: None,
-        max_tokens: None,
-        max_context_tokens: None,
-        max_output_tokens: None,
-        max_tool_turns: None,
-        max_tool_result_bytes: None,
-        model_context_tokens: None,
-        context_warning_threshold: None,
-        max_retries: None,
-        retry_base_delay_ms: None,
         a2a_enabled: false,
         session_store: None,
     };
@@ -125,23 +119,17 @@ fn tui_startup_hydrates_model_picker_catalog_from_cached_plugin_config() {
     );
 
     let plugin_config = nu_agent_core::config::PluginConfig {
-        models: [("default".to_string(), "openai/gpt-4o-mini".to_string())].into(),
+        models: [(
+            "default".to_string(),
+            nu_agent_core::config::ModelRoleConfig {
+                model: "openai/gpt-4o-mini".to_string(),
+                ..nu_agent_core::config::ModelRoleConfig::default()
+            },
+        )]
+        .into(),
         providers,
         compaction: None,
         agents: nu_agent_core::config::AgentsConfig::default(),
-        read_timeout_secs: None,
-        max_tool_calls_per_subturn: None,
-        additional_params: None,
-        temperature: None,
-        max_tokens: None,
-        max_context_tokens: None,
-        max_output_tokens: None,
-        max_tool_turns: None,
-        max_tool_result_bytes: None,
-        model_context_tokens: None,
-        context_warning_threshold: None,
-        max_retries: None,
-        retry_base_delay_ms: None,
         a2a_enabled: false,
         session_store: None,
     };

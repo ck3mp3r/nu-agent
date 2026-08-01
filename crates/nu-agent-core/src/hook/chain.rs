@@ -22,6 +22,7 @@ use rig::completion::GetTokenUsage;
 use rig::completion::request::CompletionModel;
 use rig::message::Message;
 
+use crate::config::defaults;
 use crate::protocol::event::UiEvent;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::{McpToolRegistry, ToolSource, builtin_kinds::BuiltinKind};
@@ -52,9 +53,6 @@ fn resolve_tool_source(
         ToolSource::Unknown
     }
 }
-
-/// Default cap on tool calls per sub-turn when not configured.
-const DEFAULT_MAX_TOOL_CALLS_PER_SUBTURN: usize = 25;
 
 /// Composable hook that delegates to named concern structs in explicit order.
 ///
@@ -87,7 +85,7 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
                 token: cancel_token,
             },
             subturn: SubTurnCap::new(
-                max_tool_calls_per_subturn.unwrap_or(DEFAULT_MAX_TOOL_CALLS_PER_SUBTURN),
+                max_tool_calls_per_subturn.unwrap_or(defaults::MAX_TOOL_CALLS_PER_SUBTURN),
             ),
             doom: DoomLoopDetector {
                 state: hook_state.doom_state,

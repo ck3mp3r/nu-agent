@@ -3,7 +3,7 @@ use super::super::providers::{
     CachedProviderClient, ClientCacheKey, build_anthropic_client, build_copilot_client,
     build_ollama_client, build_openai_client, resolve_provider_type,
 };
-use crate::config::{Config, PluginConfig};
+use crate::config::{Config, ModelRoleConfig, PluginConfig};
 use nu_protocol::LabeledError;
 
 pub struct ProviderState {
@@ -88,7 +88,11 @@ impl ProviderState {
         let plugin_config = self.startup_plugin_config.clone().ok_or_else(|| {
             "model switch unavailable: startup plugin config cache is missing".to_string()
         })?;
-        let resolved = plugin_config.resolve_model(model_spec)?;
+        let role_config = ModelRoleConfig {
+            model: model_spec.to_string(),
+            ..Default::default()
+        };
+        let resolved = plugin_config.resolve_model(&role_config)?;
         self.config = resolved;
         self.invalidate_cache();
         Ok(format!("{}/{}", self.config.provider, self.config.model))

@@ -3,6 +3,7 @@ use std::sync::Arc;
 use http::{HeaderName, HeaderValue};
 use tokio::sync::Mutex;
 
+use crate::config::defaults;
 use crate::tools::mcp::{
     MCP_TOOL_NAMESPACE_DELIMITER,
     auth_error::McpAuthError,
@@ -11,10 +12,6 @@ use crate::tools::mcp::{
     credentials::{FileCredentialStore, FileStateStore, McpCredentialsStore},
     namespaced::NamespacedClientHandler,
 };
-
-/// Default read timeout for MCP HTTP/SSE transport connections in seconds.
-/// Fires only when no bytes are received for this duration — resets on each received chunk.
-const MCP_DEFAULT_READ_TIMEOUT_SECS: u64 = 120;
 
 pub struct McpRuntime {
     sessions: Vec<McpSessionHandle>,
@@ -419,7 +416,7 @@ pub(crate) async fn connect_server(
                 McpAuthConfig::None | McpAuthConfig::Bearer { .. } => {
                     // EXISTING PATH — no change
                     let transport = rmcp::transport::StreamableHttpClientTransport::with_client(
-                        build_mcp_http_client(MCP_DEFAULT_READ_TIMEOUT_SECS),
+                        build_mcp_http_client(defaults::MCP_READ_TIMEOUT_SECS),
                         config,
                     );
                     let (service, raw_tools) = handler
@@ -502,7 +499,7 @@ pub(crate) async fn connect_server(
                     // rmcp's AuthorizationManager loads it from FileCredentialStore.
 
                     // Build HTTP client and wrap with AuthClient
-                    let http_client = build_mcp_http_client(MCP_DEFAULT_READ_TIMEOUT_SECS);
+                    let http_client = build_mcp_http_client(defaults::MCP_READ_TIMEOUT_SECS);
                     let auth_client = rmcp::transport::AuthClient::new(http_client, auth_manager);
 
                     let transport = rmcp::transport::StreamableHttpClientTransport::with_client(

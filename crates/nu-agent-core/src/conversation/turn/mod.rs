@@ -9,7 +9,7 @@ use futures::StreamExt;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::config::Config;
+use crate::config::{Config, defaults};
 use crate::hook::agent_hook::HookState;
 use crate::hook::chain::HookChain;
 use crate::hook::permission_resolver::AsyncPermissionResolver;
@@ -223,8 +223,11 @@ where
     // `load()`).
     if let Some(limit) = ctx.config.model_context_tokens {
         let estimated = token_estimate::estimate_token_count(&repaired_messages);
-        let threshold =
-            (limit as f32 * ctx.config.context_warning_threshold.unwrap_or(0.6)) as usize;
+        let threshold = (limit as f32
+            * ctx
+                .config
+                .context_warning_threshold
+                .unwrap_or(defaults::CONTEXT_WARNING_THRESHOLD)) as usize;
         log::debug!("execute_turn: token_estimate={estimated} threshold={threshold} limit={limit}");
         if estimated >= threshold {
             let _ = ui_tx.send(UiEvent::Warning {

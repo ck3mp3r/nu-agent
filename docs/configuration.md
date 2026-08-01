@@ -5,22 +5,32 @@
 ```nu
 $env.config.plugins.agent = {
   models: {
-    default: "provider/model"             # required
-    heavy: "provider/model"               # optional
-    light: "provider/model"               # optional
+    default: {
+      model: "ollama-cloud/glm-5.2"
+      temperature: 0.3
+      max_tokens: 8192
+      max_context_tokens: 128000
+      max_tool_turns: 20
+      max_tool_result_bytes: 20000
+      max_tool_calls_per_subturn: 10
+      read_timeout_secs: 30
+      max_retries: 3
+      retry_base_delay_ms: 1000
+    }
+    heavy: {
+      model: "ollama-cloud/claude-opus-4"
+      temperature: 0.7
+      max_tokens: 16384
+      max_context_tokens: 200000
+      max_tool_turns: 30
+    }
+    light: {
+      model: "ollama-cloud/qwen3:8b"
+      temperature: 0.1
+      max_tokens: 4096
+      max_context_tokens: 32768
+    }
   }
-  temperature: 0.7                        # optional, 0.0–2.0
-  max_tokens: 4096                        # optional
-  max_context_tokens: 128000              # optional
-  max_output_tokens: 4096                 # optional
-  max_tool_turns: 20                      # optional
-  max_tool_result_bytes: 20000            # optional, 0 = unlimited
-  model_context_tokens: 200000            # optional, enables context warnings
-  context_warning_threshold: 0.8         # optional, 0.0–1.0
-  max_retries: 3                          # optional
-  retry_base_delay_ms: 1000              # optional
-  read_timeout_secs: 30                   # optional
-  max_tool_calls_per_subturn: 10          # optional
   providers: {
     provider_name: {
       api_key: "..."                      # optional
@@ -41,23 +51,10 @@ Required top-level fields:
 
 Optional top-level fields:
 
-- `models.heavy` — model used for heavy/expensive tasks
-- `models.light` — model used for lightweight tasks (e.g. compaction summarization)
+- `models.heavy` — model role for heavy/expensive tasks
+- `models.light` — model role for lightweight tasks (e.g. compaction summarization)
 - `mcp` — MCP server configuration
 - `compaction` — conversation compaction settings
-- `additional_params` — provider-specific parameters forwarded verbatim to the completion request body (see [Additional Parameters](#additional-parameters))
-- `temperature` — response randomness (0.0–2.0)
-- `max_tokens` — maximum tokens to generate
-- `max_context_tokens` — context window size in tokens (default: 128_000 — set this to match your model)
-- `max_output_tokens` — maximum output tokens
-- `max_tool_turns` — maximum tool execution turns per conversation turn
-- `max_tool_calls_per_subturn` — maximum tool calls in a single LLM response (default: 10)
-- `max_tool_result_bytes` — truncation limit for tool results in bytes (default: 20_000, 0 = disable)
-- `read_timeout_secs` — HTTP read timeout in seconds for inference API and MCP HTTP connections (default: 120). Set to 0 to disable.
-- `max_retries` — retry attempts for transient errors (default: 3)
-- `retry_base_delay_ms` — base backoff in ms, doubles each attempt, capped at 30s (default: 1000)
-- `model_context_tokens` — approximate context window for in-session token warnings (no auto-detection)
-- `context_warning_threshold` — fraction of `model_context_tokens` at which to warn (default: 0.6)
 - `preamble` — system preamble prepended before prompt/context
 - `a2a_enabled` — enable A2A (agent-to-agent) communication via JSON-RPC 2.0 over HTTP (default: `false`)
 - `session_store` — session store backend configuration (optional, defaults to SQLite)
@@ -107,22 +104,95 @@ All models use `provider/model` format:
 
 ## Model Roles
 
-The `models` map defines named model roles that agents can reference by name:
+The `models` map defines named model roles. Each role is a **`ModelRoleConfig`** record — a set of per-role overrides for model selection and generation parameters:
 
 ```nu
 models: {
-  default: "openai/gpt-4o"          # required — fallback when no model: field
-  heavy: "anthropic/claude-sonnet-4-6"  # optional — for complex reasoning
-  light: "ollama/gemma4:31b"        # optional — for quick/cheap tasks
+  default: {
+    model: "ollama-cloud/glm-5.2"
+    temperature: 0.3
+    max_tokens: 8192
+    max_context_tokens: 128000
+  }
+  heavy: {
+    model: "ollama-cloud/claude-opus-4"
+    temperature: 0.7
+    max_tokens: 16384
+    max_context_tokens: 200000
+    max_tool_turns: 30
+  }
+  light: {
+    model: "ollama-cloud/qwen3:8b"
+    temperature: 0.1
+    max_tokens: 4096
+    max_context_tokens: 32768
+  }
 }
 ```
+
+### ModelRoleConfig field reference
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| `model` | String (required) | Provider/model identifier (e.g. `"ollama-cloud/qwen3:8b"`) | — |
+| `temperature` | Option\<f64\> | Response randomness, 0.0–2.0 | env / provider / model default |
+| `max_tokens` | Option\<u32\> | Maximum tokens to generate | env / provider / model default |
+| `max_context_tokens` | Option\<u32\> | Context window size in tokens; drives compaction threshold | 128,000 |
+| `max_output_tokens` | Option\<u32\> | Maximum output tokens | env / provider / model default |
+| `max_tool_turns` | Option\<u32\> | Maximum tool execution turns per conversation turn | env / provider / model default |
+| `max_tool_result_bytes` | Option\<usize\> | Truncation limit for tool results in bytes; 0 = unlimited | 20,000 |
+| `max_tool_calls_per_subturn` | Option\<usize\> | Maximum tool calls in a single LLM response; 0 = unlimited | 25 |
+| `model_context_tokens` | Option\<usize\> | Approximate context window for in-session token warnings | env / provider / model default |
+| `context_warning_threshold` | Option\<f32\> | Fraction of `model_context_tokens` at which to warn, 0.0–1.0 | 0.6 |
+| `additional_params` | Option\<json\> | Provider-specific parameters forwarded verbatim to the completion request body (see [Additional Parameters](#additional-parameters)) | env / provider / model default |
+| `read_timeout_secs` | Option\<u64\> | HTTP read timeout in seconds for inference API and MCP connections; 0 = disable | 120 |
+| `max_retries` | Option\<u8\> | Retry attempts for transient errors | 3 |
+| `retry_base_delay_ms` | Option\<u64\> | Base backoff in ms, doubles each attempt, capped at 30s | 1,000 |
+
+All fields except `model` are optional. When omitted, the value is inherited from the next level in the [precedence chain](#precedence).
+
+### Per-role settings example
+
+Different roles can have completely different models and parameters. Here the `heavy` role uses a powerful model with high token limits and more tool turns, while `light` uses a small local model with conservative settings:
+
+```nu
+$env.config.plugins.agent = {
+  models: {
+    default: {
+      model: "ollama-cloud/glm-5.2"
+      temperature: 0.3
+      max_tokens: 8192
+      max_context_tokens: 128000
+      max_tool_turns: 20
+    }
+    heavy: {
+      model: "ollama-cloud/claude-opus-4"
+      temperature: 0.7
+      max_tokens: 16384
+      max_context_tokens: 200000
+      max_tool_turns: 30
+      read_timeout_secs: 60
+    }
+    light: {
+      model: "ollama-cloud/qwen3:8b"
+      temperature: 0.1
+      max_tokens: 4096
+      max_context_tokens: 32768
+      max_tool_turns: 5
+    }
+  }
+  providers: { ... }
+}
+```
+
+When a persona sets `model: heavy`, it gets the Claude Opus config with 200k context and 30 tool turns. When a persona sets `model: light`, it gets the Qwen config with 32k context and only 5 tool turns. The `default` role is the fallback when no `model:` field is set.
 
 ### Resolution rules
 
 When an agent persona has a `model:` front matter field, it is resolved as follows:
 
-1. **`model: heavy`** (no slash, matches a key in `models`) → resolves to the value of `models.heavy`
-2. **`model: provider/model`** (contains a slash) → used as-is (literal model identifier)
+1. **`model: heavy`** (no slash, matches a key in `models`) → resolves to the `ModelRoleConfig` at `models.heavy`
+2. **`model: provider/model`** (contains a slash) → used as-is (literal model identifier); all other parameters inherit from `models.default`
 3. **`model: foo`** (no slash, not a key in `models`) → **error** at startup
 4. **No `model:` field** → falls back to `models.default`
 5. **CLI `--model provider/model`** → overrides everything, used as-is
@@ -131,13 +201,12 @@ When an agent persona has a `model:` front matter field, it is resolved as follo
 
 Highest to lowest:
 
-1. CLI `--model` flag — overrides all model resolution
-2. Persona front matter `model:` field — role name or literal
-3. `models.default` — fallback when no `model:` field is set
-4. Model-level config (`providers.<name>.models.<name>` fields)
-5. Environment variables
-6. Top-level `$env.config.plugins.agent` fields
-7. Built-in defaults
+1. **CLI flags** — `--model`, `--temperature`, `--max-tokens`, etc. override all config
+2. **Persona front matter** — `model:` field selects a role or literal model
+3. **Role-level config** — the `ModelRoleConfig` record for the selected role (e.g. `models.heavy`)
+4. **Model-level config** — `providers.<name>.models.<name>` fields, applied in `PluginConfig::resolve_model()`
+5. **Environment variables** — `AGENT_TEMPERATURE`, `AGENT_MAX_TOKENS`, etc.
+6. **Built-in defaults** — hardcoded fallbacks in `ModelRoleConfig` and runtime `Config`
 
 ## Environment Variables
 
@@ -163,7 +232,7 @@ There is no `AGENT_MODEL`. Set the default model in plugin config.
 
 ```nu
 $env.config.plugins.agent = {
-  models: { default: "openai/gpt-4o" }
+  models: { default: { model: "openai/gpt-4o" } }
   providers: {
     openai: {
       api_key: $env.OPENAI_API_KEY
@@ -177,7 +246,7 @@ $env.config.plugins.agent = {
 
 ```nu
 $env.config.plugins.agent = {
-  models: { default: "anthropic/claude-sonnet-4-6" }
+  models: { default: { model: "anthropic/claude-sonnet-4-6" } }
   providers: {
     anthropic: {
       api_key: $env.ANTHROPIC_API_KEY
@@ -191,7 +260,7 @@ $env.config.plugins.agent = {
 
 ```nu
 $env.config.plugins.agent = {
-  models: { default: "ollama/gemma4:31b" }
+  models: { default: { model: "ollama/gemma4:31b" } }
   providers: {
     ollama: {
       base_url: "http://127.0.0.1:11434"
@@ -207,7 +276,7 @@ Multi-instance example (same provider, different hosts):
 
 ```nu
 $env.config.plugins.agent = {
-  models: { default: "ollama-remote/gemma4:31b" }
+  models: { default: { model: "ollama-remote/gemma4:31b" } }
   providers: {
     ollama: {
       models: {
@@ -231,7 +300,7 @@ Any provider that implements the OpenAI Chat Completions API (`POST /chat/comple
 
 ```nu
 $env.config.plugins.agent = {
-  models: { default: "together/meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo" }
+  models: { default: { model: "together/meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo" } }
   providers: {
     together: {
       provider: "openai"
@@ -249,13 +318,17 @@ This works for Together AI, Groq, OpenRouter, vLLM, LiteLLM, and any other OpenA
 
 ### HTTP timeout
 
-By default the HTTP client uses a 30-second read timeout (fires only when no bytes are received — safe for long but active streaming responses). Override at the top level:
+By default the HTTP client uses a 30-second read timeout (fires only when no bytes are received — safe for long but active streaming responses). Override per role in the model config:
 
 ```nu
 $env.config.plugins.agent = {
-  read_timeout_secs: 60   # increase for slow providers
-  # read_timeout_secs: 0  # disable entirely
-  models: { default: "..." }
+  models: {
+    default: {
+      model: "..."
+      read_timeout_secs: 60   # increase for slow providers
+      # read_timeout_secs: 0  # disable entirely
+    }
+  }
   providers: { ... }
 }
 ```
@@ -267,7 +340,12 @@ Configure conversation compaction via the optional `compaction` block:
 ```nu
 $env.config.plugins.agent = {
   # ...existing config...
-  max_context_tokens: 200000               # MUST match your model's actual context window
+  models: {
+    default: {
+      model: "..."
+      max_context_tokens: 200000    # MUST match your model's actual context window
+    }
+  }
   compaction: {
     strategy: "sliding_summary"              # or sliding_window, token_truncate
     keep_recent: 10                          # minimum-message guard for sliding_summary; last N kept for sliding_window
@@ -277,7 +355,7 @@ $env.config.plugins.agent = {
 }
 ```
 
-All compaction fields are optional — defaults are used when omitted. **`max_context_tokens` is not part of the `compaction` block** — it is a top-level `Config` field, but it directly controls when compaction fires. The default is `128_000`. If your model has a larger context window (e.g. 200k), set this explicitly or compaction will trigger too early.
+All compaction fields are optional — defaults are used when omitted. **`max_context_tokens` is not part of the `compaction` block** — it is a `ModelRoleConfig` field on the active role, but it directly controls when compaction fires. The default is `128_000`. If your model has a larger context window (e.g. 200k), set this explicitly or compaction will trigger too early.
 
 ### Strategies
 
@@ -333,7 +411,7 @@ $env.config.plugins.agent = {
       auth: { type: "none" }
     }
   }
-  models: { default: "..." }
+  models: { default: { model: "..." } }
   providers: { ... }
 }
 ```
@@ -354,7 +432,7 @@ $env.config.plugins.agent = {
       }
     }
   }
-  models: { default: "..." }
+  models: { default: { model: "..." } }
   providers: { ... }
 }
 ```
@@ -376,7 +454,7 @@ $env.config.plugins.agent = {
       }
     }
   }
-  models: { default: "..." }
+  models: { default: { model: "..." } }
   providers: { ... }
 }
 ```
@@ -395,7 +473,7 @@ $env.config.plugins.agent = {
       }
     }
   }
-  models: { default: "..." }
+  models: { default: { model: "..." } }
   providers: { ... }
 }
 ```
@@ -452,11 +530,17 @@ All `agents` fields are optional. Defaults: `planner` enabled, `maker` enabled, 
 
 `additional_params` forwards a record of provider-specific keys verbatim into the top-level HTTP request body. The record is flattened — each key becomes a top-level field alongside `model`, `messages`, etc.
 
+Set it per role in the `ModelRoleConfig`:
+
 ```nu
 $env.config.plugins.agent = {
-  models: { default: "anthropic/claude-sonnet-4-6" }
-  additional_params: {
-    output_config: { effort: "medium" }
+  models: {
+    default: {
+      model: "anthropic/claude-sonnet-4-6"
+      additional_params: {
+        output_config: { effort: "medium" }
+      }
+    }
   }
   providers: { ... }
 }
@@ -478,9 +562,13 @@ Anthropic recommends `medium` effort as the default for agentic workloads — it
 
 ```nu
 $env.config.plugins.agent = {
-  models: { default: "anthropic/claude-sonnet-4-6" }
-  additional_params: {
-    output_config: { effort: "medium" }
+  models: {
+    default: {
+      model: "anthropic/claude-sonnet-4-6"
+      additional_params: {
+        output_config: { effort: "medium" }
+      }
+    }
   }
   providers: {
     anthropic: {

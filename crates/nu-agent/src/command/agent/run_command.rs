@@ -17,7 +17,7 @@ use super::{
 use crate::plugin::AgentPlugin;
 use nu_agent_a2a::{AgentBuilder, AgentHandle, Skill};
 use nu_agent_core::{
-    config::PluginConfig,
+    config::{PluginConfig, defaults},
     conversation::{builder::BuildInput, runtime::AgentConversationRuntime},
     policy::UiPolicy,
     session::resolver::{DefaultSessionResolver, SessionResolutionInput, SessionResolver},
@@ -121,7 +121,7 @@ pub(super) fn run_command(
     let session_id = extract_and_validate_session_flags(call)?;
 
     // Resolve configuration from all sources with proper precedence:
-    // default < env < plugin < flags
+    // 1. Resolve default role config (--model flag handled here)
     let mut config = resolve_config(engine, call)?;
 
     // --a2a-port enables A2A and optionally sets the port
@@ -208,13 +208,22 @@ pub(super) fn run_command(
     let messaging_identity = persona_resolution.messaging_identity;
     let agent_permissions_overlay = persona_resolution.agent_permissions_overlay;
 
-    // Apply persona model override (role label resolution requires PluginConfig)
+    // 3. Apply persona model (resolves heavy/light role, replaces config)
     super::runtime_build::apply_persona_model(
         &mut config,
         plugin_config.as_ref(),
         persona.as_ref().and_then(|p| p.model.as_deref()),
         call_has_model_flag,
     )?;
+
+    // 4. Apply persona config (front matter overrides)
+    if let Some(ref p) = persona {
+        let cli_max_turns_provided = call.get_flag::<Value>("max-turns").ok().flatten().is_some();
+        super::runtime_build::apply_persona_config(&mut config, p, cli_max_turns_provided);
+    }
+
+    // 5. Apply CLI flags LAST (highest priority)
+    super::runtime_build::apply_cli_flags(&mut config, call);
 
     let (
         base_permissions,
@@ -297,7 +306,9 @@ pub(super) fn run_command(
                         &tool_server_handle,
                         &cfg.mcp,
                         Some(caller_cwd_path),
-                        config.max_tool_result_bytes.unwrap_or(20_000),
+                        config
+                            .max_tool_result_bytes
+                            .unwrap_or(defaults::MAX_TOOL_RESULT_BYTES),
                     )
                     .await
                     .map_err(|msg| {
@@ -366,7 +377,9 @@ pub(super) fn run_command(
                 messaging_identity: messaging_identity.clone(),
                 tool_timeout,
                 session: session_resolution.session.as_mut(),
-                max_tool_result_bytes: config.max_tool_result_bytes.unwrap_or(20_000),
+                max_tool_result_bytes: config
+                    .max_tool_result_bytes
+                    .unwrap_or(defaults::MAX_TOOL_RESULT_BYTES),
                 merged_compaction: nu_agent_core::config::CompactionConfig::default(),
             },
         )

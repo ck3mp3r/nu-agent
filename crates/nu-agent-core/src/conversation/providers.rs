@@ -2,14 +2,7 @@ use std::time::Duration;
 
 use nu_protocol::LabeledError;
 
-use crate::config::Config;
-
-/// Default read timeout for HTTP streaming responses in seconds.
-///
-/// This fires only when no bytes are received for this duration —
-/// it resets on each successful read, so active long-running responses
-/// are not affected.
-const DEFAULT_READ_TIMEOUT_SECS: u64 = 120;
+use crate::config::{Config, defaults};
 
 /// Build a shared HTTP client with a connect timeout and optional read timeout.
 ///
@@ -17,7 +10,7 @@ const DEFAULT_READ_TIMEOUT_SECS: u64 = 120;
 ///   Pass `Some(0)` to disable. This is safe for long active LLM responses.
 /// Uses system certificate store via rustls-native-certs (supports corporate CAs).
 fn build_http_client(read_timeout_secs: Option<u64>) -> reqwest::Client {
-    let read_timeout = read_timeout_secs.unwrap_or(DEFAULT_READ_TIMEOUT_SECS);
+    let read_timeout = read_timeout_secs.unwrap_or(defaults::READ_TIMEOUT_SECS);
     let mut builder = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .pool_idle_timeout(Some(Duration::from_secs(55))) // evict before server-side idle timeout (~60-90s)

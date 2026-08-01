@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use nu_agent_core::config::{Config, ModelConfig, PluginConfig, ProviderConfig};
+use nu_agent_core::config::{Config, ModelConfig, ModelRoleConfig, PluginConfig, ProviderConfig};
 
 #[test]
 fn apply_persona_config_all_fields_when_config_empty() {
@@ -149,25 +149,31 @@ fn apply_persona_config_partial_persona_leaves_others_unchanged() {
 
 // ── apply_persona_model tests ──────────────────────────────────────────────
 
-fn make_plugin_config(models: HashMap<String, String>) -> PluginConfig {
+fn make_plugin_config(models: HashMap<String, ModelRoleConfig>) -> PluginConfig {
+    // Build providers for each unique provider referenced in models
+    let mut providers = std::collections::HashMap::new();
+    for role in models.values() {
+        if let Some((provider_name, _)) = role.model.split_once('/')
+            && !providers.contains_key(provider_name)
+        {
+            providers.insert(
+                provider_name.to_string(),
+                nu_agent_core::config::ProviderConfig {
+                    name: None,
+                    api_key: None,
+                    base_url: None,
+                    provider: None,
+                    preamble: None,
+                    models: std::collections::HashMap::new(),
+                },
+            );
+        }
+    }
     PluginConfig {
         models,
-        providers: HashMap::new(),
+        providers,
         compaction: None,
         agents: Default::default(),
-        read_timeout_secs: None,
-        max_tool_calls_per_subturn: None,
-        additional_params: None,
-        temperature: None,
-        max_tokens: None,
-        max_context_tokens: None,
-        max_output_tokens: None,
-        max_tool_turns: None,
-        max_tool_result_bytes: None,
-        model_context_tokens: None,
-        context_warning_threshold: None,
-        max_retries: None,
-        retry_base_delay_ms: None,
         a2a_enabled: false,
         session_store: None,
     }
@@ -176,7 +182,15 @@ fn make_plugin_config(models: HashMap<String, String>) -> PluginConfig {
 #[test]
 fn apply_persona_model_literal_slash_applied() {
     let mut config = Config::default();
-    let plugin_config = make_plugin_config(HashMap::new());
+    let mut models = HashMap::new();
+    models.insert(
+        "default".to_string(),
+        ModelRoleConfig {
+            model: "anthropic/claude-sonnet-4-6".to_string(),
+            ..ModelRoleConfig::default()
+        },
+    );
+    let plugin_config = make_plugin_config(models);
 
     let result = super::apply_persona_model(
         &mut config,
@@ -195,7 +209,13 @@ fn apply_persona_model_literal_slash_applied() {
 fn apply_persona_model_role_label_resolved() {
     let mut config = Config::default();
     let mut models = HashMap::new();
-    models.insert("heavy".to_string(), "anthropic/claude-opus-4".to_string());
+    models.insert(
+        "heavy".to_string(),
+        ModelRoleConfig {
+            model: "anthropic/claude-opus-4".to_string(),
+            ..ModelRoleConfig::default()
+        },
+    );
     let plugin_config = make_plugin_config(models);
 
     let result =
@@ -211,7 +231,13 @@ fn apply_persona_model_role_label_resolved() {
 fn apply_persona_model_role_label_default_resolved() {
     let mut config = Config::default();
     let mut models = HashMap::new();
-    models.insert("default".to_string(), "openai/gpt-4o".to_string());
+    models.insert(
+        "default".to_string(),
+        ModelRoleConfig {
+            model: "openai/gpt-4o".to_string(),
+            ..ModelRoleConfig::default()
+        },
+    );
     let plugin_config = make_plugin_config(models);
 
     let result =
@@ -227,8 +253,20 @@ fn apply_persona_model_role_label_default_resolved() {
 fn apply_persona_model_unknown_role_returns_error() {
     let mut config = Config::default();
     let mut models = HashMap::new();
-    models.insert("default".to_string(), "openai/gpt-4o".to_string());
-    models.insert("heavy".to_string(), "anthropic/claude-opus-4".to_string());
+    models.insert(
+        "default".to_string(),
+        ModelRoleConfig {
+            model: "openai/gpt-4o".to_string(),
+            ..ModelRoleConfig::default()
+        },
+    );
+    models.insert(
+        "heavy".to_string(),
+        ModelRoleConfig {
+            model: "anthropic/claude-opus-4".to_string(),
+            ..ModelRoleConfig::default()
+        },
+    );
     let plugin_config = make_plugin_config(models);
 
     let result = super::apply_persona_model(&mut config, Some(&plugin_config), Some("foo"), false);
@@ -254,7 +292,13 @@ fn apply_persona_model_unknown_role_returns_error() {
 fn apply_persona_model_role_not_configured_returns_error() {
     let mut config = Config::default();
     let mut models = HashMap::new();
-    models.insert("default".to_string(), "openai/gpt-4o".to_string());
+    models.insert(
+        "default".to_string(),
+        ModelRoleConfig {
+            model: "openai/gpt-4o".to_string(),
+            ..ModelRoleConfig::default()
+        },
+    );
     // "heavy" is not in models
     let plugin_config = make_plugin_config(models);
 
@@ -341,7 +385,7 @@ fn make_model_config(preamble: Option<&str>) -> ModelConfig {
 }
 
 fn make_plugin_config_with_providers(
-    models: HashMap<String, String>,
+    models: HashMap<String, ModelRoleConfig>,
     providers: HashMap<String, ProviderConfig>,
 ) -> PluginConfig {
     PluginConfig {
@@ -349,19 +393,6 @@ fn make_plugin_config_with_providers(
         providers,
         compaction: None,
         agents: Default::default(),
-        read_timeout_secs: None,
-        max_tool_calls_per_subturn: None,
-        additional_params: None,
-        temperature: None,
-        max_tokens: None,
-        max_context_tokens: None,
-        max_output_tokens: None,
-        max_tool_turns: None,
-        max_tool_result_bytes: None,
-        model_context_tokens: None,
-        context_warning_threshold: None,
-        max_retries: None,
-        retry_base_delay_ms: None,
         a2a_enabled: false,
         session_store: None,
     }
@@ -377,7 +408,13 @@ fn resolve_preamble_for_model_returns_provider_preamble() {
         make_provider_config(Some("You are OpenAI GPT-4o."), models),
     );
     let mut plugin_models = HashMap::new();
-    plugin_models.insert("default".to_string(), "openai/gpt-4o".to_string());
+    plugin_models.insert(
+        "default".to_string(),
+        ModelRoleConfig {
+            model: "openai/gpt-4o".to_string(),
+            ..ModelRoleConfig::default()
+        },
+    );
     let pc = make_plugin_config_with_providers(plugin_models, providers);
 
     let preamble = super::resolve_preamble_for_model(&pc, "openai", "gpt-4o");
@@ -400,7 +437,10 @@ fn resolve_preamble_for_model_returns_model_preamble_over_provider() {
     let mut plugin_models = HashMap::new();
     plugin_models.insert(
         "default".to_string(),
-        "anthropic/claude-sonnet-4-6".to_string(),
+        ModelRoleConfig {
+            model: "anthropic/claude-sonnet-4-6".to_string(),
+            ..ModelRoleConfig::default()
+        },
     );
     let pc = make_plugin_config_with_providers(plugin_models, providers);
 
@@ -417,7 +457,13 @@ fn resolve_preamble_for_model_returns_none_when_no_preamble_configured() {
     let mut providers = HashMap::new();
     providers.insert("openai".to_string(), make_provider_config(None, models));
     let mut plugin_models = HashMap::new();
-    plugin_models.insert("default".to_string(), "openai/gpt-4o".to_string());
+    plugin_models.insert(
+        "default".to_string(),
+        ModelRoleConfig {
+            model: "openai/gpt-4o".to_string(),
+            ..ModelRoleConfig::default()
+        },
+    );
     let pc = make_plugin_config_with_providers(plugin_models, providers);
 
     let preamble = super::resolve_preamble_for_model(&pc, "openai", "gpt-4o");
@@ -452,7 +498,13 @@ fn apply_persona_model_re_resolves_preamble_for_literal_model() {
         make_provider_config(Some("You are Anthropic."), models),
     );
     let mut plugin_models = HashMap::new();
-    plugin_models.insert("default".to_string(), "openai/gpt-4o".to_string());
+    plugin_models.insert(
+        "default".to_string(),
+        ModelRoleConfig {
+            model: "openai/gpt-4o".to_string(),
+            ..ModelRoleConfig::default()
+        },
+    );
     let pc = make_plugin_config_with_providers(plugin_models, providers);
 
     let mut config = Config {
@@ -490,8 +542,20 @@ fn apply_persona_model_re_resolves_preamble_for_role_label() {
         make_provider_config(Some("You are Anthropic."), models),
     );
     let mut plugin_models = HashMap::new();
-    plugin_models.insert("default".to_string(), "openai/gpt-4o".to_string());
-    plugin_models.insert("heavy".to_string(), "anthropic/claude-opus-4".to_string());
+    plugin_models.insert(
+        "default".to_string(),
+        ModelRoleConfig {
+            model: "openai/gpt-4o".to_string(),
+            ..ModelRoleConfig::default()
+        },
+    );
+    plugin_models.insert(
+        "heavy".to_string(),
+        ModelRoleConfig {
+            model: "anthropic/claude-opus-4".to_string(),
+            ..ModelRoleConfig::default()
+        },
+    );
     let pc = make_plugin_config_with_providers(plugin_models, providers);
 
     let mut config = Config {
@@ -524,7 +588,13 @@ fn apply_persona_model_skipped_does_not_change_preamble() {
         make_provider_config(Some("You are Anthropic."), models),
     );
     let mut plugin_models = HashMap::new();
-    plugin_models.insert("default".to_string(), "openai/gpt-4o".to_string());
+    plugin_models.insert(
+        "default".to_string(),
+        ModelRoleConfig {
+            model: "openai/gpt-4o".to_string(),
+            ..ModelRoleConfig::default()
+        },
+    );
     let pc = make_plugin_config_with_providers(plugin_models, providers);
 
     let mut config = Config {

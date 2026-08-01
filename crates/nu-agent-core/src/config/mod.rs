@@ -5,8 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::compaction::CompactionStrategy;
 use crate::session::StoreType;
 
-/// Default context window size (tokens) when not configured.
-pub const DEFAULT_MAX_CONTEXT_TOKENS: u32 = 128_000;
+pub mod defaults;
 
 /// Model limits (context and output token limits)
 #[derive(Debug, Clone, PartialEq)]
@@ -56,40 +55,17 @@ pub struct ProviderConfig {
     pub models: HashMap<String, ModelConfig>,
 }
 
-/// Top-level plugin configuration (provider-centric)
-#[derive(Debug, Clone, PartialEq)]
-pub struct PluginConfig {
-    /// Model role map — maps role labels (e.g. "default", "heavy", "light")
-    /// to `provider/model` strings. At minimum must contain a "default" entry.
-    pub models: HashMap<String, String>,
+/// Per-role model configuration.
+///
+/// Each entry in `PluginConfig.models` maps a role label (e.g. "default", "heavy", "light")
+/// to a `ModelRoleConfig` that specifies the model string and optional overrides for
+/// that role's runtime behavior.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ModelRoleConfig {
+    /// Model specification in `provider/model` format (e.g. "openai/gpt-4").
+    pub model: String,
 
-    /// Provider configurations
-    pub providers: HashMap<String, ProviderConfig>,
-
-    /// Compaction configuration (optional, uses defaults if not set)
-    pub compaction: Option<CompactionConfig>,
-
-    /// Agent persona configuration
-    pub agents: AgentsConfig,
-
-    /// Read timeout for HTTP streaming responses in seconds (default: 30).
-    /// Only fires when no bytes are received for this duration — safe for long
-    /// but active LLM responses. Set to 0 to disable.
-    pub read_timeout_secs: Option<u64>,
-
-    /// Maximum tool calls allowed per sub-turn (single LLM response).
-    /// Defense against models that ignore `parallel_tool_calls: false` and emit
-    /// many tool calls in one response, causing oversized follow-up requests.
-    /// None = use default (10). Some(0) = unlimited.
-    pub max_tool_calls_per_subturn: Option<usize>,
-
-    /// Additional provider-specific parameters forwarded verbatim to the
-    /// completion request. Merged as a JSON object into the request body.
-    /// Example: `{ thinking: { type: "disabled" } }` disables Anthropic extended thinking.
-    /// None = no additional parameters.
-    pub additional_params: Option<serde_json::Value>,
-
-    /// Temperature for response generation (0.0 to 2.0). Fallback when not set at model level.
+    /// Temperature for response generation (0.0 to 2.0).
     pub temperature: Option<f64>,
     /// Maximum tokens to generate.
     pub max_tokens: Option<u32>,
@@ -101,14 +77,37 @@ pub struct PluginConfig {
     pub max_tool_turns: Option<u32>,
     /// Maximum bytes of a single tool result before truncation. None = 20_000. Some(0) = unlimited.
     pub max_tool_result_bytes: Option<usize>,
+    /// Maximum tool calls allowed per sub-turn (single LLM response).
+    pub max_tool_calls_per_subturn: Option<usize>,
     /// Approximate context window in tokens for the configured model. None = no warning.
     pub model_context_tokens: Option<usize>,
     /// Fraction of model_context_tokens at which to warn (0.0–1.0). None = 0.6.
     pub context_warning_threshold: Option<f32>,
+    /// Additional provider-specific parameters forwarded verbatim to the completion request.
+    pub additional_params: Option<serde_json::Value>,
+    /// Read timeout for HTTP streaming responses in seconds (default: 30).
+    pub read_timeout_secs: Option<u64>,
     /// Max retry attempts for transient errors. None = 3.
     pub max_retries: Option<u8>,
     /// Base backoff in ms, doubles each attempt, capped at 30_000ms. None = 1000.
     pub retry_base_delay_ms: Option<u64>,
+}
+
+/// Top-level plugin configuration (provider-centric)
+#[derive(Debug, Clone, PartialEq)]
+pub struct PluginConfig {
+    /// Model role map — maps role labels (e.g. "default", "heavy", "light")
+    /// to per-role model configuration. At minimum must contain a "default" entry.
+    pub models: HashMap<String, ModelRoleConfig>,
+
+    /// Provider configurations
+    pub providers: HashMap<String, ProviderConfig>,
+
+    /// Compaction configuration (optional, uses defaults if not set)
+    pub compaction: Option<CompactionConfig>,
+
+    /// Agent persona configuration
+    pub agents: AgentsConfig,
 
     /// Enable A2A agent-to-agent protocol support (experimental, default: false).
     pub a2a_enabled: bool,
@@ -207,9 +206,17 @@ impl PluginConfig {
     /// ```nushell
     /// {
     ///   models: {
-    ///     default: "openai/gpt-4"
-    ///     heavy: "openai/gpt-4-turbo"   # optional
-    ///     light: "openai/gpt-3.5-turbo" # optional
+    ///     default: {
+    ///       model: "openai/gpt-4"
+    ///       temperature: 0.7          # optional
+    ///       max_tokens: 2048          # optional
+    ///       max_context_tokens: 32000 # optional
+    ///       max_output_tokens: 1024   # optional
+    ///       max_tool_turns: 5         # optional
+    ///       read_timeout_secs: 60     # optional
+    ///     }
+    ///     heavy: { model: "openai/gpt-4-turbo" }   # optional
+    ///     light: { model: "openai/gpt-3.5-turbo" } # optional
     ///   }
     ///   providers: {
     ///     openai: {
@@ -253,7 +260,7 @@ impl PluginConfig {
 
         let span = value.span();
 
-        // Extract required 'models' field — a record mapping role labels to provider/model strings
+        // Extract required 'models' field — a record mapping role labels to model role configs
         let models_record = record
             .get("models")
             .ok_or_else(|| {
@@ -274,24 +281,135 @@ impl PluginConfig {
 
         let mut models = HashMap::new();
         for (key, value) in models_record.iter() {
-            let model_str = value.as_str().map_err(|_| {
+            let role_record = value.as_record().map_err(|_| {
                 labeled_error(
-                    &format!("'models.{key}' must be a string"),
-                    &format!("'models.{key}' must be a string"),
+                    &format!("'models.{key}' must be a record"),
+                    &format!("'models.{key}' must be a record"),
                     span,
                 )
             })?;
 
+            // Extract required 'model' field
+            let model_str = role_record
+                .get("model")
+                .ok_or_else(|| {
+                    labeled_error(
+                        &format!("'models.{key}.model' is required"),
+                        &format!("'models.{key}.model' is required"),
+                        span,
+                    )
+                })?
+                .as_str()
+                .map_err(|_| {
+                    labeled_error(
+                        &format!("'models.{key}.model' must be a string"),
+                        &format!("'models.{key}.model' must be a string"),
+                        span,
+                    )
+                })?;
+
             // Validate provider/model format (must contain '/')
             if !model_str.contains('/') {
                 return Err(labeled_error(
-                    &format!("models.{key} must be in provider/model format, got '{model_str}'"),
-                    &format!("models.{key} must be in provider/model format, got '{model_str}'"),
+                    &format!(
+                        "models.{key}.model must be in provider/model format, got '{model_str}'"
+                    ),
+                    &format!(
+                        "models.{key}.model must be in provider/model format, got '{model_str}'"
+                    ),
                     span,
                 ));
             }
 
-            models.insert(key.clone(), model_str.to_string());
+            // Parse optional fields
+            let temperature = role_record
+                .get("temperature")
+                .and_then(|v| v.as_float().ok());
+            let max_tokens = role_record.get("max_tokens").and_then(|v| {
+                v.as_int()
+                    .ok()
+                    .and_then(|i| if i >= 0 { Some(i as u32) } else { None })
+            });
+            let max_context_tokens = role_record.get("max_context_tokens").and_then(|v| {
+                v.as_int()
+                    .ok()
+                    .and_then(|i| if i >= 0 { Some(i as u32) } else { None })
+            });
+            let max_output_tokens = role_record.get("max_output_tokens").and_then(|v| {
+                v.as_int()
+                    .ok()
+                    .and_then(|i| if i >= 0 { Some(i as u32) } else { None })
+            });
+            let max_tool_turns = role_record.get("max_tool_turns").and_then(|v| {
+                v.as_int()
+                    .ok()
+                    .and_then(|i| if i >= 0 { Some(i as u32) } else { None })
+            });
+            let max_tool_result_bytes = role_record.get("max_tool_result_bytes").and_then(|v| {
+                v.as_int()
+                    .ok()
+                    .and_then(|i| if i >= 0 { Some(i as usize) } else { None })
+            });
+            let max_tool_calls_per_subturn =
+                role_record.get("max_tool_calls_per_subturn").and_then(|v| {
+                    v.as_int()
+                        .ok()
+                        .and_then(|i| if i >= 0 { Some(i as usize) } else { None })
+                });
+            let model_context_tokens = role_record.get("model_context_tokens").and_then(|v| {
+                v.as_int()
+                    .ok()
+                    .and_then(|i| if i >= 0 { Some(i as usize) } else { None })
+            });
+            let context_warning_threshold = role_record
+                .get("context_warning_threshold")
+                .and_then(|v| v.as_float().ok())
+                .map(|f| f as f32);
+            let additional_params = role_record
+                .get("additional_params")
+                .map(nu_value_to_json)
+                .transpose()
+                .map_err(|e| {
+                    nu_protocol::LabeledError::new(format!(
+                        "Invalid models.{key}.additional_params: {e}"
+                    ))
+                    .with_label("expected a record", span)
+                })?;
+            let read_timeout_secs = role_record.get("read_timeout_secs").and_then(|v| {
+                v.as_int()
+                    .ok()
+                    .and_then(|i| if i >= 0 { Some(i as u64) } else { None })
+            });
+            let max_retries = role_record.get("max_retries").and_then(|v| {
+                v.as_int()
+                    .ok()
+                    .and_then(|i| if i >= 0 { Some(i as u8) } else { None })
+            });
+            let retry_base_delay_ms = role_record.get("retry_base_delay_ms").and_then(|v| {
+                v.as_int()
+                    .ok()
+                    .and_then(|i| if i >= 0 { Some(i as u64) } else { None })
+            });
+
+            models.insert(
+                key.clone(),
+                ModelRoleConfig {
+                    model: model_str.to_string(),
+                    temperature,
+                    max_tokens,
+                    max_context_tokens,
+                    max_output_tokens,
+                    max_tool_turns,
+                    max_tool_result_bytes,
+                    max_tool_calls_per_subturn,
+                    model_context_tokens,
+                    context_warning_threshold,
+                    additional_params,
+                    read_timeout_secs,
+                    max_retries,
+                    retry_base_delay_ms,
+                },
+            );
         }
 
         // Validate that 'default' role exists
@@ -335,76 +453,6 @@ impl PluginConfig {
             AgentsConfig::default()
         };
 
-        // Extract optional 'read_timeout_secs' field
-        let read_timeout_secs = record.get("read_timeout_secs").and_then(|v| {
-            v.as_int()
-                .ok()
-                .and_then(|i| if i >= 0 { Some(i as u64) } else { None })
-        });
-
-        // Extract optional 'max_tool_calls_per_subturn' field
-        let max_tool_calls_per_subturn = record.get("max_tool_calls_per_subturn").and_then(|v| {
-            v.as_int()
-                .ok()
-                .and_then(|i| if i >= 0 { Some(i as usize) } else { None })
-        });
-
-        // Extract optional 'additional_params' field
-        let additional_params = record
-            .get("additional_params")
-            .map(nu_value_to_json)
-            .transpose()
-            .map_err(|e| {
-                nu_protocol::LabeledError::new(format!("Invalid additional_params: {e}"))
-                    .with_label("expected a record", span)
-            })?;
-
-        let temperature = record.get("temperature").and_then(|v| v.as_float().ok());
-        let max_tokens = record.get("max_tokens").and_then(|v| {
-            v.as_int()
-                .ok()
-                .and_then(|i| if i >= 0 { Some(i as u32) } else { None })
-        });
-        let max_context_tokens = record.get("max_context_tokens").and_then(|v| {
-            v.as_int()
-                .ok()
-                .and_then(|i| if i >= 0 { Some(i as u32) } else { None })
-        });
-        let max_output_tokens = record.get("max_output_tokens").and_then(|v| {
-            v.as_int()
-                .ok()
-                .and_then(|i| if i >= 0 { Some(i as u32) } else { None })
-        });
-        let max_tool_turns = record.get("max_tool_turns").and_then(|v| {
-            v.as_int()
-                .ok()
-                .and_then(|i| if i >= 0 { Some(i as u32) } else { None })
-        });
-        let max_tool_result_bytes = record.get("max_tool_result_bytes").and_then(|v| {
-            v.as_int()
-                .ok()
-                .and_then(|i| if i >= 0 { Some(i as usize) } else { None })
-        });
-        let model_context_tokens = record.get("model_context_tokens").and_then(|v| {
-            v.as_int()
-                .ok()
-                .and_then(|i| if i >= 0 { Some(i as usize) } else { None })
-        });
-        let context_warning_threshold = record
-            .get("context_warning_threshold")
-            .and_then(|v| v.as_float().ok())
-            .map(|f| f as f32);
-        let max_retries = record.get("max_retries").and_then(|v| {
-            v.as_int()
-                .ok()
-                .and_then(|i| if i >= 0 { Some(i as u8) } else { None })
-        });
-        let retry_base_delay_ms = record.get("retry_base_delay_ms").and_then(|v| {
-            v.as_int()
-                .ok()
-                .and_then(|i| if i >= 0 { Some(i as u64) } else { None })
-        });
-
         let a2a_enabled = record
             .get("a2a_enabled")
             .and_then(|v| v.as_bool().ok())
@@ -422,19 +470,6 @@ impl PluginConfig {
             providers,
             compaction,
             agents,
-            read_timeout_secs,
-            max_tool_calls_per_subturn,
-            additional_params,
-            temperature,
-            max_tokens,
-            max_context_tokens,
-            max_output_tokens,
-            max_tool_turns,
-            max_tool_result_bytes,
-            model_context_tokens,
-            context_warning_threshold,
-            max_retries,
-            retry_base_delay_ms,
             a2a_enabled,
             session_store,
         })
@@ -762,38 +797,35 @@ impl PluginConfig {
         Ok(StoreTypeConfig { store_type, path })
     }
 
-    /// Resolve model specification to runtime Config.
+    /// Resolve a model role configuration to runtime Config.
     ///
-    /// Model specification format: `"provider/model"`
+    /// The `role_config.model` field must be in `"provider/model"` format:
     /// - Provider: extracted from first part before `/`
     /// - Model: everything after first `/` (may contain additional `/` characters)
     ///
     /// # Examples
     /// - `"openai/gpt-4"` → provider: `"openai"`, model: `"gpt-4"`
     /// - `"github-copilot/anthropic/claude-sonnet-4-20250514"` → provider: `"github-copilot"`, model: `"anthropic/claude-sonnet-4-20250514"`
-    /// - `"anthropic/claude-3"` → provider: `"anthropic"`, model: `"claude-3"`
     ///
-    /// The model string is passed directly to the provider implementation,
-    /// which may parse it further based on provider-specific conventions.
-    ///
-    /// # Process
-    /// 1. Parse provider and model name from specification
-    /// 2. Look up provider configuration
-    /// 3. Look up model-specific configuration (if exists)
-    /// 4. Merge provider and model config with environment variables
-    /// 5. Return runtime Config
+    /// # Resolution order (last wins)
+    /// 1. `Config::from_env(provider_name, model_name)` — env vars (lowest priority)
+    /// 2. Provider config — `api_key`, `base_url`, `provider_impl`
+    /// 3. Model config — `temperature`, `limits` (context/output) from `ProviderConfig.models.<name>`
+    /// 4. Role config — all `ModelRoleConfig` fields override model config (highest priority)
     ///
     /// # Arguments
-    /// * `model_spec` - Model specification in `"provider/model"` format
+    /// * `role_config` - Per-role model configuration including the model spec and overrides
     ///
     /// # Returns
-    /// Resolved Config with provider, model, and merged settings from provider/model config
+    /// Resolved Config with provider, model, and merged settings from all sources
     ///
     /// # Errors
-    /// - Missing `/` separator
+    /// - Missing `/` separator in model spec
     /// - Empty provider or model name
     /// - Provider not found in configuration
-    pub fn resolve_model(&self, model_spec: &str) -> Result<Config, String> {
+    pub fn resolve_model(&self, role_config: &ModelRoleConfig) -> Result<Config, String> {
+        let model_spec = &role_config.model;
+
         // Split on first '/' only - provider is first part, model is everything after
         let (provider_name, model_name) = model_spec.split_once('/').ok_or_else(|| {
             format!(
@@ -824,16 +856,13 @@ impl PluginConfig {
             model_config.is_some()
         );
 
-        // Start with env-based config for this provider/model
-        // Use the actual provider name, not provider_impl
+        // Step 1: Start with env-based config for this provider/model (lowest priority)
         let mut config = Config::from_env(provider_name, model_name);
 
-        // Set provider_impl if specified in provider config
+        // Step 2: Merge provider-level settings
         if let Some(impl_name) = &provider_config.provider {
             config.provider_impl = Some(impl_name.clone());
         }
-
-        // Merge provider-level settings
         if let Some(api_key) = &provider_config.api_key {
             config.api_key = Some(api_key.clone());
         }
@@ -841,13 +870,11 @@ impl PluginConfig {
             config.base_url = Some(base_url.clone());
         }
 
-        // Merge model-specific settings (if model exists in config)
+        // Step 3: Merge model-specific settings (if model exists in config)
         if let Some(model_cfg) = model_config {
             if let Some(temp) = model_cfg.temperature {
                 config.temperature = Some(temp);
             }
-
-            // Merge limits
             if let Some(limits) = &model_cfg.limit {
                 if let Some(context) = limits.context {
                     config.max_context_tokens = Some(context);
@@ -858,52 +885,45 @@ impl PluginConfig {
             }
         }
 
-        // Populate read_timeout_secs from plugin config
-        if config.read_timeout_secs.is_none() {
-            config.read_timeout_secs = self.read_timeout_secs;
+        // Step 4: Apply role-level config overrides (highest priority within resolve_model)
+        if let Some(temp) = role_config.temperature {
+            config.temperature = Some(temp);
         }
-
-        // Populate max_tool_calls_per_subturn from plugin config
-        if config.max_tool_calls_per_subturn.is_none() {
-            config.max_tool_calls_per_subturn = self.max_tool_calls_per_subturn;
+        if let Some(t) = role_config.max_tokens {
+            config.max_tokens = Some(t);
         }
-
-        // Populate additional_params from plugin config
-        if config.additional_params.is_none() {
-            config.additional_params = self.additional_params.clone();
+        if let Some(ctx) = role_config.max_context_tokens {
+            config.max_context_tokens = Some(ctx);
         }
-
-        // Forward top-level PluginConfig fields as fallbacks.
-        // Only applied when not already set by env vars or model-level config.
-        if config.temperature.is_none() {
-            config.temperature = self.temperature;
+        if let Some(out) = role_config.max_output_tokens {
+            config.max_output_tokens = Some(out);
         }
-        if config.max_tokens.is_none() {
-            config.max_tokens = self.max_tokens;
+        if let Some(t) = role_config.max_tool_turns {
+            config.max_tool_turns = Some(t);
         }
-        if config.max_context_tokens.is_none() {
-            config.max_context_tokens = self.max_context_tokens;
+        if let Some(b) = role_config.max_tool_result_bytes {
+            config.max_tool_result_bytes = Some(b);
         }
-        if config.max_output_tokens.is_none() {
-            config.max_output_tokens = self.max_output_tokens;
+        if let Some(c) = role_config.max_tool_calls_per_subturn {
+            config.max_tool_calls_per_subturn = Some(c);
         }
-        if config.max_tool_turns.is_none() {
-            config.max_tool_turns = self.max_tool_turns;
+        if let Some(m) = role_config.model_context_tokens {
+            config.model_context_tokens = Some(m);
         }
-        if config.max_tool_result_bytes.is_none() {
-            config.max_tool_result_bytes = self.max_tool_result_bytes;
+        if let Some(t) = role_config.context_warning_threshold {
+            config.context_warning_threshold = Some(t);
         }
-        if config.model_context_tokens.is_none() {
-            config.model_context_tokens = self.model_context_tokens;
+        if let Some(p) = &role_config.additional_params {
+            config.additional_params = Some(p.clone());
         }
-        if config.context_warning_threshold.is_none() {
-            config.context_warning_threshold = self.context_warning_threshold;
+        if let Some(r) = role_config.read_timeout_secs {
+            config.read_timeout_secs = Some(r);
         }
-        if config.max_retries.is_none() {
-            config.max_retries = self.max_retries;
+        if let Some(r) = role_config.max_retries {
+            config.max_retries = Some(r);
         }
-        if config.retry_base_delay_ms.is_none() {
-            config.retry_base_delay_ms = self.retry_base_delay_ms;
+        if let Some(r) = role_config.retry_base_delay_ms {
+            config.retry_base_delay_ms = Some(r);
         }
 
         // Forward global plugin config fields (not model-specific).
@@ -1040,10 +1060,10 @@ fn nu_value_to_json(value: &nu_protocol::Value) -> Result<serde_json::Value, Str
 }
 
 impl Config {
-    /// Returns max_context_tokens, falling back to DEFAULT_MAX_CONTEXT_TOKENS.
+    /// Returns max_context_tokens, falling back to defaults::MAX_CONTEXT_TOKENS.
     pub fn resolved_max_context_tokens(&self) -> u32 {
         self.max_context_tokens
-            .unwrap_or(DEFAULT_MAX_CONTEXT_TOKENS)
+            .unwrap_or(defaults::MAX_CONTEXT_TOKENS)
     }
 
     /// Create a Config by reading environment variables.

@@ -10,7 +10,7 @@ use nu_protocol::{LabeledError, Span, Value};
 use rig::memory::ConversationMemory;
 use tokio::sync::mpsc;
 
-use crate::config::Config;
+use crate::config::{Config, defaults};
 use crate::conversation::managers::SessionManager;
 use crate::conversation::providers::{CachedProviderClient, ModelVisitor};
 use crate::conversation::turn::{
@@ -193,14 +193,14 @@ where
                         ctx.last_known_history.len()
                     );
                     if kind.is_retryable()
-                        && attempt < self.config.max_retries.unwrap_or(3)
+                        && attempt < self.config.max_retries.unwrap_or(defaults::MAX_RETRIES)
                         && has_partial_history
                     {
                         attempt += 1;
                         let base_delay = self
                             .config
                             .retry_base_delay_ms
-                            .unwrap_or(1000)
+                            .unwrap_or(defaults::RETRY_BASE_DELAY_MS)
                             .saturating_mul(1u64 << attempt.min(5))
                             .min(30_000);
                         // Random jitter: ±20% (0.8–1.2× multiplier) per Goose strategy
@@ -213,7 +213,7 @@ where
                         let delay_ms = (raw_delay as f64 * jitter_factor) as u64;
                         log::warn!(
                             "Retryable error ({kind:?}), attempt {attempt}/{}. Retrying in {delay_ms}ms.",
-                            self.config.max_retries.unwrap_or(3)
+                            self.config.max_retries.unwrap_or(defaults::MAX_RETRIES)
                         );
                         tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
                         continue;

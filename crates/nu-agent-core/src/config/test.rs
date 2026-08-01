@@ -880,16 +880,90 @@ fn test_validate_model_context_tokens_one_is_ok() {
 }
 
 // ============================================================================
+// ModelRoleConfig Tests
+// ============================================================================
+
+#[test]
+fn test_model_role_config_default() {
+    let cfg = ModelRoleConfig::default();
+    assert_eq!(cfg.model, "");
+    assert_eq!(cfg.temperature, None);
+    assert_eq!(cfg.max_tokens, None);
+    assert_eq!(cfg.max_context_tokens, None);
+    assert_eq!(cfg.max_output_tokens, None);
+    assert_eq!(cfg.max_tool_turns, None);
+    assert_eq!(cfg.max_tool_result_bytes, None);
+    assert_eq!(cfg.max_tool_calls_per_subturn, None);
+    assert_eq!(cfg.model_context_tokens, None);
+    assert_eq!(cfg.context_warning_threshold, None);
+    assert_eq!(cfg.additional_params, None);
+    assert_eq!(cfg.read_timeout_secs, None);
+    assert_eq!(cfg.max_retries, None);
+    assert_eq!(cfg.retry_base_delay_ms, None);
+}
+
+// ============================================================================
 // PluginConfig Tests
 // ============================================================================
+
+/// Helper to build a model role record with a `model` string and optional fields.
+fn model_role_record(model: &str) -> Value {
+    Value::test_record(record! {
+        "model" => Value::test_string(model),
+    })
+}
+
+/// Helper to build a model role record from a ModelRoleConfig.
+fn model_role_from_config(cfg: &ModelRoleConfig) -> Value {
+    let mut rec = record! {
+        "model" => Value::test_string(&cfg.model),
+    };
+    if let Some(v) = cfg.temperature {
+        rec.push("temperature", Value::test_float(v));
+    }
+    if let Some(v) = cfg.max_tokens {
+        rec.push("max_tokens", Value::test_int(v as i64));
+    }
+    if let Some(v) = cfg.max_context_tokens {
+        rec.push("max_context_tokens", Value::test_int(v as i64));
+    }
+    if let Some(v) = cfg.max_output_tokens {
+        rec.push("max_output_tokens", Value::test_int(v as i64));
+    }
+    if let Some(v) = cfg.max_tool_turns {
+        rec.push("max_tool_turns", Value::test_int(v as i64));
+    }
+    if let Some(v) = cfg.max_tool_result_bytes {
+        rec.push("max_tool_result_bytes", Value::test_int(v as i64));
+    }
+    if let Some(v) = cfg.max_tool_calls_per_subturn {
+        rec.push("max_tool_calls_per_subturn", Value::test_int(v as i64));
+    }
+    if let Some(v) = cfg.model_context_tokens {
+        rec.push("model_context_tokens", Value::test_int(v as i64));
+    }
+    if let Some(v) = cfg.context_warning_threshold {
+        rec.push("context_warning_threshold", Value::test_float(v as f64));
+    }
+    if let Some(v) = cfg.read_timeout_secs {
+        rec.push("read_timeout_secs", Value::test_int(v as i64));
+    }
+    if let Some(v) = cfg.max_retries {
+        rec.push("max_retries", Value::test_int(v as i64));
+    }
+    if let Some(v) = cfg.retry_base_delay_ms {
+        rec.push("retry_base_delay_ms", Value::test_int(v as i64));
+    }
+    Value::test_record(rec)
+}
 
 #[test]
 fn test_plugin_config_full_structure() {
     // Test parsing a full PluginConfig structure from Nushell record
     let value = Value::test_record(record! {
         "models" => Value::test_record(record! {
-            "default" => Value::test_string("openai/gpt-4"),
-            "light" => Value::test_string("openai/gpt-3.5-turbo"),
+            "default" => model_role_record("openai/gpt-4"),
+            "light" => model_role_record("openai/gpt-3.5-turbo"),
         }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
@@ -934,11 +1008,11 @@ fn test_plugin_config_full_structure() {
 
     // Verify top-level fields
     assert_eq!(
-        plugin_config.models.get("default"),
+        plugin_config.models.get("default").map(|r| &r.model),
         Some(&"openai/gpt-4".to_string())
     );
     assert_eq!(
-        plugin_config.models.get("light"),
+        plugin_config.models.get("light").map(|r| &r.model),
         Some(&"openai/gpt-3.5-turbo".to_string())
     );
 
@@ -993,10 +1067,26 @@ fn test_plugin_config_full_structure() {
 }
 
 #[test]
-fn test_plugin_config_parses_top_level_numeric_fields() {
+fn test_plugin_config_parses_role_level_fields() {
+    // Test parsing role-level fields from model records
     let value = Value::test_record(record! {
         "models" => Value::test_record(record! {
-            "default" => Value::test_string("openai/gpt-4"),
+            "default" => model_role_from_config(&ModelRoleConfig {
+                model: "openai/gpt-4".to_string(),
+                temperature: Some(0.5),
+                max_tokens: Some(2048),
+                max_context_tokens: Some(32000),
+                max_output_tokens: Some(1024),
+                max_tool_turns: Some(5),
+                max_tool_result_bytes: Some(10000),
+                max_tool_calls_per_subturn: Some(15),
+                model_context_tokens: Some(128000),
+                context_warning_threshold: Some(0.75f32),
+                read_timeout_secs: Some(60),
+                max_retries: Some(5),
+                retry_base_delay_ms: Some(2000),
+                ..ModelRoleConfig::default()
+            }),
         }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
@@ -1005,30 +1095,24 @@ fn test_plugin_config_parses_top_level_numeric_fields() {
                 }),
             }),
         }),
-        "temperature"               => Value::test_float(0.5),
-        "max_tokens"                => Value::test_int(2048),
-        "max_context_tokens"        => Value::test_int(32000),
-        "max_output_tokens"         => Value::test_int(1024),
-        "max_tool_turns"            => Value::test_int(5),
-        "max_tool_result_bytes"     => Value::test_int(10000),
-        "model_context_tokens"      => Value::test_int(128000),
-        "context_warning_threshold" => Value::test_float(0.75),
-        "max_retries"               => Value::test_int(5),
-        "retry_base_delay_ms"       => Value::test_int(2000),
     });
 
     let cfg = PluginConfig::from_plugin_config(&value).expect("should parse");
 
-    assert_eq!(cfg.temperature, Some(0.5));
-    assert_eq!(cfg.max_tokens, Some(2048));
-    assert_eq!(cfg.max_context_tokens, Some(32000));
-    assert_eq!(cfg.max_output_tokens, Some(1024));
-    assert_eq!(cfg.max_tool_turns, Some(5));
-    assert_eq!(cfg.max_tool_result_bytes, Some(10000));
-    assert_eq!(cfg.model_context_tokens, Some(128000));
-    assert_eq!(cfg.context_warning_threshold, Some(0.75f32));
-    assert_eq!(cfg.max_retries, Some(5));
-    assert_eq!(cfg.retry_base_delay_ms, Some(2000));
+    let default_role = cfg.models.get("default").expect("default role");
+    assert_eq!(default_role.model, "openai/gpt-4");
+    assert_eq!(default_role.temperature, Some(0.5));
+    assert_eq!(default_role.max_tokens, Some(2048));
+    assert_eq!(default_role.max_context_tokens, Some(32000));
+    assert_eq!(default_role.max_output_tokens, Some(1024));
+    assert_eq!(default_role.max_tool_turns, Some(5));
+    assert_eq!(default_role.max_tool_result_bytes, Some(10000));
+    assert_eq!(default_role.max_tool_calls_per_subturn, Some(15));
+    assert_eq!(default_role.model_context_tokens, Some(128000));
+    assert_eq!(default_role.context_warning_threshold, Some(0.75f32));
+    assert_eq!(default_role.read_timeout_secs, Some(60));
+    assert_eq!(default_role.max_retries, Some(5));
+    assert_eq!(default_role.retry_base_delay_ms, Some(2000));
 }
 
 #[test]
@@ -1036,7 +1120,7 @@ fn test_plugin_config_minimal() {
     // Test parsing minimal PluginConfig (only required fields)
     let value = Value::test_record(record! {
         "models" => Value::test_record(record! {
-            "default" => Value::test_string("openai/gpt-4"),
+            "default" => model_role_record("openai/gpt-4"),
         }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
@@ -1050,7 +1134,7 @@ fn test_plugin_config_minimal() {
     let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
 
     assert_eq!(
-        plugin_config.models.get("default"),
+        plugin_config.models.get("default").map(|r| &r.model),
         Some(&"openai/gpt-4".to_string())
     );
     assert_eq!(plugin_config.models.len(), 1);
@@ -1076,7 +1160,7 @@ fn test_plugin_config_missing_providers() {
     // Test that missing 'providers' field returns error
     let value = Value::test_record(record! {
         "models" => Value::test_record(record! {
-            "default" => Value::test_string("openai/gpt-4"),
+            "default" => model_role_record("openai/gpt-4"),
         }),
     });
 
@@ -1114,7 +1198,7 @@ fn test_plugin_config_provider_field() {
     // Test parsing provider field (for custom providers like github-copilot)
     let value = Value::test_record(record! {
         "models" => Value::test_record(record! {
-            "default" => Value::test_string("copilot/claude"),
+            "default" => model_role_record("copilot/claude"),
         }),
         "providers" => Value::test_record(record! {
             "copilot" => Value::test_record(record! {
@@ -1143,7 +1227,7 @@ fn test_plugin_config_provider_field() {
 fn test_plugin_config_provider_preamble_whitespace_normalized_to_none() {
     let value = Value::test_record(record! {
         "models" => Value::test_record(record! {
-            "default" => Value::test_string("openai/gpt-4"),
+            "default" => model_role_record("openai/gpt-4"),
         }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
@@ -1167,7 +1251,7 @@ fn test_plugin_config_provider_preamble_whitespace_normalized_to_none() {
 fn test_plugin_config_model_preamble_whitespace_normalized_to_none() {
     let value = Value::test_record(record! {
         "models" => Value::test_record(record! {
-            "default" => Value::test_string("openai/gpt-4"),
+            "default" => model_role_record("openai/gpt-4"),
         }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
@@ -1193,7 +1277,7 @@ fn test_plugin_config_model_preamble_whitespace_normalized_to_none() {
 fn test_plugin_config_provider_preamble_invalid_type_errors() {
     let value = Value::test_record(record! {
         "models" => Value::test_record(record! {
-            "default" => Value::test_string("openai/gpt-4"),
+            "default" => model_role_record("openai/gpt-4"),
         }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
@@ -1217,7 +1301,7 @@ fn test_plugin_config_provider_preamble_invalid_type_errors() {
 fn test_plugin_config_model_preamble_invalid_type_errors() {
     let value = Value::test_record(record! {
         "models" => Value::test_record(record! {
-            "default" => Value::test_string("openai/gpt-4"),
+            "default" => model_role_record("openai/gpt-4"),
         }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
@@ -1248,7 +1332,13 @@ fn test_resolve_model_basic() {
     let plugin_config = PluginConfig {
         models: {
             let mut m = HashMap::new();
-            m.insert("default".to_string(), "openai/gpt-4".to_string());
+            m.insert(
+                "default".to_string(),
+                ModelRoleConfig {
+                    model: "openai/gpt-4".to_string(),
+                    ..ModelRoleConfig::default()
+                },
+            );
             m
         },
         providers: {
@@ -1284,25 +1374,16 @@ fn test_resolve_model_basic() {
         },
         compaction: None,
         agents: AgentsConfig::default(),
-        read_timeout_secs: None,
-        max_tool_calls_per_subturn: None,
-        additional_params: None,
-        temperature: None,
-        max_tokens: None,
-        max_context_tokens: None,
-        max_output_tokens: None,
-        max_tool_turns: None,
-        max_tool_result_bytes: None,
-        model_context_tokens: None,
-        context_warning_threshold: None,
-        max_retries: None,
-        retry_base_delay_ms: None,
         a2a_enabled: false,
         session_store: None,
     };
 
+    let role_config = ModelRoleConfig {
+        model: "openai/gpt-4".to_string(),
+        ..ModelRoleConfig::default()
+    };
     let config = plugin_config
-        .resolve_model("openai/gpt-4")
+        .resolve_model(&role_config)
         .expect("should resolve");
 
     assert_eq!(config.provider, "openai");
@@ -1319,7 +1400,13 @@ fn test_resolve_model_with_env_fallback() {
     let plugin_config = PluginConfig {
         models: {
             let mut m = HashMap::new();
-            m.insert("default".to_string(), "anthropic/claude".to_string());
+            m.insert(
+                "default".to_string(),
+                ModelRoleConfig {
+                    model: "anthropic/claude".to_string(),
+                    ..ModelRoleConfig::default()
+                },
+            );
             m
         },
         providers: {
@@ -1339,25 +1426,16 @@ fn test_resolve_model_with_env_fallback() {
         },
         compaction: None,
         agents: AgentsConfig::default(),
-        read_timeout_secs: None,
-        max_tool_calls_per_subturn: None,
-        additional_params: None,
-        temperature: None,
-        max_tokens: None,
-        max_context_tokens: None,
-        max_output_tokens: None,
-        max_tool_turns: None,
-        max_tool_result_bytes: None,
-        model_context_tokens: None,
-        context_warning_threshold: None,
-        max_retries: None,
-        retry_base_delay_ms: None,
         a2a_enabled: false,
         session_store: None,
     };
 
+    let role_config = ModelRoleConfig {
+        model: "anthropic/claude".to_string(),
+        ..ModelRoleConfig::default()
+    };
     let config = plugin_config
-        .resolve_model("anthropic/claude")
+        .resolve_model(&role_config)
         .expect("should resolve");
 
     assert_eq!(config.provider, "anthropic");
@@ -1372,40 +1450,42 @@ fn test_resolve_model_invalid_format() {
     let plugin_config = PluginConfig {
         models: {
             let mut m = HashMap::new();
-            m.insert("default".to_string(), "openai/gpt-4".to_string());
+            m.insert(
+                "default".to_string(),
+                ModelRoleConfig {
+                    model: "openai/gpt-4".to_string(),
+                    ..ModelRoleConfig::default()
+                },
+            );
             m
         },
         providers: HashMap::new(),
         compaction: None,
         agents: AgentsConfig::default(),
-        read_timeout_secs: None,
-        max_tool_calls_per_subturn: None,
-        additional_params: None,
-        temperature: None,
-        max_tokens: None,
-        max_context_tokens: None,
-        max_output_tokens: None,
-        max_tool_turns: None,
-        max_tool_result_bytes: None,
-        model_context_tokens: None,
-        context_warning_threshold: None,
-        max_retries: None,
-        retry_base_delay_ms: None,
         a2a_enabled: false,
         session_store: None,
     };
 
     // No slash separator
-    let result = plugin_config.resolve_model("openaigpt4");
+    let result = plugin_config.resolve_model(&ModelRoleConfig {
+        model: "openaigpt4".to_string(),
+        ..ModelRoleConfig::default()
+    });
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("Expected 'provider/model'"));
 
     // Empty provider
-    let result = plugin_config.resolve_model("/gpt-4");
+    let result = plugin_config.resolve_model(&ModelRoleConfig {
+        model: "/gpt-4".to_string(),
+        ..ModelRoleConfig::default()
+    });
     assert!(result.is_err());
 
     // Empty model
-    let result = plugin_config.resolve_model("openai/");
+    let result = plugin_config.resolve_model(&ModelRoleConfig {
+        model: "openai/".to_string(),
+        ..ModelRoleConfig::default()
+    });
     assert!(result.is_err());
 }
 
@@ -1415,30 +1495,26 @@ fn test_resolve_model_provider_not_found() {
     let plugin_config = PluginConfig {
         models: {
             let mut m = HashMap::new();
-            m.insert("default".to_string(), "openai/gpt-4".to_string());
+            m.insert(
+                "default".to_string(),
+                ModelRoleConfig {
+                    model: "openai/gpt-4".to_string(),
+                    ..ModelRoleConfig::default()
+                },
+            );
             m
         },
         providers: HashMap::new(),
         compaction: None,
         agents: AgentsConfig::default(),
-        read_timeout_secs: None,
-        max_tool_calls_per_subturn: None,
-        additional_params: None,
-        temperature: None,
-        max_tokens: None,
-        max_context_tokens: None,
-        max_output_tokens: None,
-        max_tool_turns: None,
-        max_tool_result_bytes: None,
-        model_context_tokens: None,
-        context_warning_threshold: None,
-        max_retries: None,
-        retry_base_delay_ms: None,
         a2a_enabled: false,
         session_store: None,
     };
 
-    let result = plugin_config.resolve_model("unknown/model");
+    let result = plugin_config.resolve_model(&ModelRoleConfig {
+        model: "unknown/model".to_string(),
+        ..ModelRoleConfig::default()
+    });
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(err.contains("provider") || err.contains("not found"));
@@ -1450,7 +1526,13 @@ fn test_resolve_model_model_not_in_config() {
     let plugin_config = PluginConfig {
         models: {
             let mut m = HashMap::new();
-            m.insert("default".to_string(), "openai/gpt-4".to_string());
+            m.insert(
+                "default".to_string(),
+                ModelRoleConfig {
+                    model: "openai/gpt-4".to_string(),
+                    ..ModelRoleConfig::default()
+                },
+            );
             m
         },
         providers: {
@@ -1470,25 +1552,16 @@ fn test_resolve_model_model_not_in_config() {
         },
         compaction: None,
         agents: AgentsConfig::default(),
-        read_timeout_secs: None,
-        max_tool_calls_per_subturn: None,
-        additional_params: None,
-        temperature: None,
-        max_tokens: None,
-        max_context_tokens: None,
-        max_output_tokens: None,
-        max_tool_turns: None,
-        max_tool_result_bytes: None,
-        model_context_tokens: None,
-        context_warning_threshold: None,
-        max_retries: None,
-        retry_base_delay_ms: None,
         a2a_enabled: false,
         session_store: None,
     };
 
+    let role_config = ModelRoleConfig {
+        model: "openai/gpt-3.5-turbo".to_string(),
+        ..ModelRoleConfig::default()
+    };
     let config = plugin_config
-        .resolve_model("openai/gpt-3.5-turbo")
+        .resolve_model(&role_config)
         .expect("should resolve");
 
     assert_eq!(config.provider, "openai");
@@ -1504,7 +1577,13 @@ fn test_resolve_model_with_provider_field() {
     let plugin_config = PluginConfig {
         models: {
             let mut m = HashMap::new();
-            m.insert("default".to_string(), "copilot/claude".to_string());
+            m.insert(
+                "default".to_string(),
+                ModelRoleConfig {
+                    model: "copilot/claude".to_string(),
+                    ..ModelRoleConfig::default()
+                },
+            );
             m
         },
         providers: {
@@ -1524,25 +1603,16 @@ fn test_resolve_model_with_provider_field() {
         },
         compaction: None,
         agents: AgentsConfig::default(),
-        read_timeout_secs: None,
-        max_tool_calls_per_subturn: None,
-        additional_params: None,
-        temperature: None,
-        max_tokens: None,
-        max_context_tokens: None,
-        max_output_tokens: None,
-        max_tool_turns: None,
-        max_tool_result_bytes: None,
-        model_context_tokens: None,
-        context_warning_threshold: None,
-        max_retries: None,
-        retry_base_delay_ms: None,
         a2a_enabled: false,
         session_store: None,
     };
 
+    let role_config = ModelRoleConfig {
+        model: "copilot/claude".to_string(),
+        ..ModelRoleConfig::default()
+    };
     let config = plugin_config
-        .resolve_model("copilot/claude")
+        .resolve_model(&role_config)
         .expect("should resolve");
 
     assert_eq!(config.provider, "copilot");
@@ -1561,7 +1631,13 @@ fn test_resolve_model_merges_limits() {
     let plugin_config = PluginConfig {
         models: {
             let mut m = HashMap::new();
-            m.insert("default".to_string(), "openai/gpt-4".to_string());
+            m.insert(
+                "default".to_string(),
+                ModelRoleConfig {
+                    model: "openai/gpt-4".to_string(),
+                    ..ModelRoleConfig::default()
+                },
+            );
             m
         },
         providers: {
@@ -1597,25 +1673,16 @@ fn test_resolve_model_merges_limits() {
         },
         compaction: None,
         agents: AgentsConfig::default(),
-        read_timeout_secs: None,
-        max_tool_calls_per_subturn: None,
-        additional_params: None,
-        temperature: None,
-        max_tokens: None,
-        max_context_tokens: None,
-        max_output_tokens: None,
-        max_tool_turns: None,
-        max_tool_result_bytes: None,
-        model_context_tokens: None,
-        context_warning_threshold: None,
-        max_retries: None,
-        retry_base_delay_ms: None,
         a2a_enabled: false,
         session_store: None,
     };
 
+    let role_config = ModelRoleConfig {
+        model: "openai/gpt-4".to_string(),
+        ..ModelRoleConfig::default()
+    };
     let config = plugin_config
-        .resolve_model("openai/gpt-4")
+        .resolve_model(&role_config)
         .expect("should resolve");
 
     assert_eq!(config.max_context_tokens, Some(128000));
@@ -1623,7 +1690,7 @@ fn test_resolve_model_merges_limits() {
 }
 
 #[test]
-fn test_plugin_config_resolve_model_top_level_fallbacks() {
+fn test_plugin_config_resolve_model_role_level_overrides() {
     let make_config = |model_temperature: Option<f64>| -> PluginConfig {
         let mut models = HashMap::new();
         models.insert(
@@ -1651,33 +1718,51 @@ fn test_plugin_config_resolve_model_top_level_fallbacks() {
         PluginConfig {
             models: {
                 let mut m = HashMap::new();
-                m.insert("default".to_string(), "openai/gpt-4".to_string());
+                m.insert(
+                    "default".to_string(),
+                    ModelRoleConfig {
+                        model: "openai/gpt-4".to_string(),
+                        temperature: Some(0.5),
+                        max_tokens: Some(2048),
+                        max_context_tokens: Some(32000),
+                        max_output_tokens: Some(1024),
+                        max_tool_turns: Some(5),
+                        max_tool_result_bytes: Some(10000),
+                        model_context_tokens: Some(128000),
+                        context_warning_threshold: Some(0.8f32),
+                        max_retries: Some(5),
+                        retry_base_delay_ms: Some(2000),
+                        ..ModelRoleConfig::default()
+                    },
+                );
                 m
             },
             providers,
             compaction: None,
             agents: AgentsConfig::default(),
-            read_timeout_secs: None,
-            max_tool_calls_per_subturn: None,
-            additional_params: None,
-            temperature: Some(0.5),
-            max_tokens: Some(2048),
-            max_context_tokens: Some(32000),
-            max_output_tokens: Some(1024),
-            max_tool_turns: Some(5),
-            max_tool_result_bytes: Some(10000),
-            model_context_tokens: Some(128000),
-            context_warning_threshold: Some(0.8f32),
-            max_retries: Some(5),
-            retry_base_delay_ms: Some(2000),
             a2a_enabled: false,
             session_store: None,
         }
     };
 
-    // Case 1: no model-level temperature — top-level 0.5 must survive
+    let default_role = ModelRoleConfig {
+        model: "openai/gpt-4".to_string(),
+        temperature: Some(0.5),
+        max_tokens: Some(2048),
+        max_context_tokens: Some(32000),
+        max_output_tokens: Some(1024),
+        max_tool_turns: Some(5),
+        max_tool_result_bytes: Some(10000),
+        model_context_tokens: Some(128000),
+        context_warning_threshold: Some(0.8f32),
+        max_retries: Some(5),
+        retry_base_delay_ms: Some(2000),
+        ..ModelRoleConfig::default()
+    };
+
+    // Case 1: no model-level temperature — role-level 0.5 must survive
     let cfg = make_config(None)
-        .resolve_model("openai/gpt-4")
+        .resolve_model(&default_role)
         .expect("resolve");
     assert_eq!(cfg.temperature, Some(0.5));
     assert_eq!(cfg.max_tokens, Some(2048));
@@ -1690,11 +1775,12 @@ fn test_plugin_config_resolve_model_top_level_fallbacks() {
     assert_eq!(cfg.max_retries, Some(5));
     assert_eq!(cfg.retry_base_delay_ms, Some(2000));
 
-    // Case 2: model-level temperature 0.9 must beat top-level 0.5
+    // Case 2: role-level temperature 0.5 must beat model-level 0.9
+    // (role config is highest priority within resolve_model)
     let cfg = make_config(Some(0.9))
-        .resolve_model("openai/gpt-4")
+        .resolve_model(&default_role)
         .expect("resolve");
-    assert_eq!(cfg.temperature, Some(0.9));
+    assert_eq!(cfg.temperature, Some(0.5));
 }
 
 // ============================================================================
@@ -1707,7 +1793,13 @@ fn resolve_model_handles_two_part_format() {
     let plugin_config = PluginConfig {
         models: {
             let mut m = HashMap::new();
-            m.insert("default".to_string(), "openai/gpt-4".to_string());
+            m.insert(
+                "default".to_string(),
+                ModelRoleConfig {
+                    model: "openai/gpt-4".to_string(),
+                    ..ModelRoleConfig::default()
+                },
+            );
             m
         },
         providers: {
@@ -1727,25 +1819,16 @@ fn resolve_model_handles_two_part_format() {
         },
         compaction: None,
         agents: AgentsConfig::default(),
-        read_timeout_secs: None,
-        max_tool_calls_per_subturn: None,
-        additional_params: None,
-        temperature: None,
-        max_tokens: None,
-        max_context_tokens: None,
-        max_output_tokens: None,
-        max_tool_turns: None,
-        max_tool_result_bytes: None,
-        model_context_tokens: None,
-        context_warning_threshold: None,
-        max_retries: None,
-        retry_base_delay_ms: None,
         a2a_enabled: false,
         session_store: None,
     };
 
+    let role_config = ModelRoleConfig {
+        model: "openai/gpt-4".to_string(),
+        ..ModelRoleConfig::default()
+    };
     let config = plugin_config
-        .resolve_model("openai/gpt-4")
+        .resolve_model(&role_config)
         .expect("should resolve 2-part format");
 
     assert_eq!(config.provider, "openai");
@@ -1759,41 +1842,43 @@ fn resolve_model_validates_empty_parts() {
     let plugin_config = PluginConfig {
         models: {
             let mut m = HashMap::new();
-            m.insert("default".to_string(), "provider/model".to_string());
+            m.insert(
+                "default".to_string(),
+                ModelRoleConfig {
+                    model: "provider/model".to_string(),
+                    ..ModelRoleConfig::default()
+                },
+            );
             m
         },
         providers: HashMap::new(),
         compaction: None,
         agents: AgentsConfig::default(),
-        read_timeout_secs: None,
-        max_tool_calls_per_subturn: None,
-        additional_params: None,
-        temperature: None,
-        max_tokens: None,
-        max_context_tokens: None,
-        max_output_tokens: None,
-        max_tool_turns: None,
-        max_tool_result_bytes: None,
-        model_context_tokens: None,
-        context_warning_threshold: None,
-        max_retries: None,
-        retry_base_delay_ms: None,
         a2a_enabled: false,
         session_store: None,
     };
 
     // Empty provider
-    let result = plugin_config.resolve_model("/model");
+    let result = plugin_config.resolve_model(&ModelRoleConfig {
+        model: "/model".to_string(),
+        ..ModelRoleConfig::default()
+    });
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("cannot be empty"));
 
     // Empty model
-    let result = plugin_config.resolve_model("provider/");
+    let result = plugin_config.resolve_model(&ModelRoleConfig {
+        model: "provider/".to_string(),
+        ..ModelRoleConfig::default()
+    });
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("cannot be empty"));
 
     // Both empty
-    let result = plugin_config.resolve_model("/");
+    let result = plugin_config.resolve_model(&ModelRoleConfig {
+        model: "/".to_string(),
+        ..ModelRoleConfig::default()
+    });
     assert!(result.is_err());
 }
 
@@ -1808,7 +1893,10 @@ fn resolve_model_uses_split_once_for_multi_part_models() {
             let mut m = HashMap::new();
             m.insert(
                 "default".to_string(),
-                "github-copilot/anthropic/claude-sonnet-4-20250514".to_string(),
+                ModelRoleConfig {
+                    model: "github-copilot/anthropic/claude-sonnet-4-20250514".to_string(),
+                    ..ModelRoleConfig::default()
+                },
             );
             m
         },
@@ -1829,25 +1917,16 @@ fn resolve_model_uses_split_once_for_multi_part_models() {
         },
         compaction: None,
         agents: AgentsConfig::default(),
-        read_timeout_secs: None,
-        max_tool_calls_per_subturn: None,
-        additional_params: None,
-        temperature: None,
-        max_tokens: None,
-        max_context_tokens: None,
-        max_output_tokens: None,
-        max_tool_turns: None,
-        max_tool_result_bytes: None,
-        model_context_tokens: None,
-        context_warning_threshold: None,
-        max_retries: None,
-        retry_base_delay_ms: None,
         a2a_enabled: false,
         session_store: None,
     };
 
+    let role_config = ModelRoleConfig {
+        model: "github-copilot/anthropic/claude-sonnet-4-20250514".to_string(),
+        ..ModelRoleConfig::default()
+    };
     let config = plugin_config
-        .resolve_model("github-copilot/anthropic/claude-sonnet-4-20250514")
+        .resolve_model(&role_config)
         .expect("Should resolve github-copilot model");
 
     // Provider should be "github-copilot"
@@ -1865,7 +1944,13 @@ fn resolve_model_works_with_simple_two_part() {
     let plugin_config = PluginConfig {
         models: {
             let mut m = HashMap::new();
-            m.insert("default".to_string(), "openai/gpt-4".to_string());
+            m.insert(
+                "default".to_string(),
+                ModelRoleConfig {
+                    model: "openai/gpt-4".to_string(),
+                    ..ModelRoleConfig::default()
+                },
+            );
             m
         },
         providers: {
@@ -1885,25 +1970,16 @@ fn resolve_model_works_with_simple_two_part() {
         },
         compaction: None,
         agents: AgentsConfig::default(),
-        read_timeout_secs: None,
-        max_tool_calls_per_subturn: None,
-        additional_params: None,
-        temperature: None,
-        max_tokens: None,
-        max_context_tokens: None,
-        max_output_tokens: None,
-        max_tool_turns: None,
-        max_tool_result_bytes: None,
-        model_context_tokens: None,
-        context_warning_threshold: None,
-        max_retries: None,
-        retry_base_delay_ms: None,
         a2a_enabled: false,
         session_store: None,
     };
 
+    let role_config = ModelRoleConfig {
+        model: "openai/gpt-4".to_string(),
+        ..ModelRoleConfig::default()
+    };
     let config = plugin_config
-        .resolve_model("openai/gpt-4")
+        .resolve_model(&role_config)
         .expect("Should resolve openai model");
 
     assert_eq!(config.provider, "openai");
@@ -1923,11 +1999,17 @@ fn integration_github_copilot_with_backend_in_model() {
             let mut m = HashMap::new();
             m.insert(
                 "default".to_string(),
-                "github-copilot/anthropic/claude-sonnet-4-20250514".to_string(),
+                ModelRoleConfig {
+                    model: "github-copilot/anthropic/claude-sonnet-4-20250514".to_string(),
+                    ..ModelRoleConfig::default()
+                },
             );
             m.insert(
                 "light".to_string(),
-                "github-copilot/openai/gpt-4o-mini".to_string(),
+                ModelRoleConfig {
+                    model: "github-copilot/openai/gpt-4o-mini".to_string(),
+                    ..ModelRoleConfig::default()
+                },
             );
             m
         },
@@ -1948,26 +2030,17 @@ fn integration_github_copilot_with_backend_in_model() {
         },
         compaction: None,
         agents: AgentsConfig::default(),
-        read_timeout_secs: None,
-        max_tool_calls_per_subturn: None,
-        additional_params: None,
-        temperature: None,
-        max_tokens: None,
-        max_context_tokens: None,
-        max_output_tokens: None,
-        max_tool_turns: None,
-        max_tool_result_bytes: None,
-        model_context_tokens: None,
-        context_warning_threshold: None,
-        max_retries: None,
-        retry_base_delay_ms: None,
         a2a_enabled: false,
         session_store: None,
     };
 
     // Test default model
+    let default_role = ModelRoleConfig {
+        model: "github-copilot/anthropic/claude-sonnet-4-20250514".to_string(),
+        ..ModelRoleConfig::default()
+    };
     let config = plugin_config
-        .resolve_model("github-copilot/anthropic/claude-sonnet-4-20250514")
+        .resolve_model(&default_role)
         .expect("Should resolve github-copilot anthropic model");
 
     assert_eq!(config.provider, "github-copilot");
@@ -1979,8 +2052,12 @@ fn integration_github_copilot_with_backend_in_model() {
     );
 
     // Test small model (OpenAI backend)
+    let light_role = ModelRoleConfig {
+        model: "github-copilot/openai/gpt-4o-mini".to_string(),
+        ..ModelRoleConfig::default()
+    };
     let config = plugin_config
-        .resolve_model("github-copilot/openai/gpt-4o-mini")
+        .resolve_model(&light_role)
         .expect("Should resolve github-copilot openai model");
 
     assert_eq!(config.provider, "github-copilot");
@@ -2311,7 +2388,7 @@ fn non_copilot_provider_sets_api_key_from_env() {
 fn base_config_record(agents_record: Value) -> Value {
     Value::test_record(record! {
         "models" => Value::test_record(record! {
-            "default" => Value::test_string("openai/gpt-4"),
+            "default" => model_role_record("openai/gpt-4"),
         }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
@@ -2329,7 +2406,7 @@ fn test_parse_agents_config_defaults() {
     // Missing "agents" section → AgentsConfig::default()
     let value = Value::test_record(record! {
         "models" => Value::test_record(record! {
-            "default" => Value::test_string("openai/gpt-4"),
+            "default" => model_role_record("openai/gpt-4"),
         }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
@@ -2403,7 +2480,14 @@ fn merge_preserves_custom_max_tool_result_bytes_when_other_is_default() {
 fn parse_additional_params_from_record() {
     let value = Value::test_record(record! {
         "models" => Value::test_record(record! {
-            "default" => Value::test_string("openai/gpt-4"),
+            "default" => Value::test_record(record! {
+                "model" => Value::test_string("openai/gpt-4"),
+                "additional_params" => Value::test_record(record! {
+                    "thinking" => Value::test_record(record! {
+                        "type" => Value::test_string("disabled"),
+                    })
+                }),
+            }),
         }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
@@ -2412,15 +2496,16 @@ fn parse_additional_params_from_record() {
                 }),
             }),
         }),
-        "additional_params" => Value::test_record(record! {
-            "thinking" => Value::test_record(record! {
-                "type" => Value::test_string("disabled"),
-            })
-        })
     });
+    // The role config must include additional_params for them to survive resolve_model
+    let role_config = ModelRoleConfig {
+        model: "openai/gpt-4".to_string(),
+        additional_params: Some(serde_json::json!({"thinking": {"type": "disabled"}})),
+        ..ModelRoleConfig::default()
+    };
     let config = PluginConfig::from_plugin_config(&value)
         .expect("parse")
-        .resolve_model("openai/gpt-4")
+        .resolve_model(&role_config)
         .expect("resolve");
     let params = config.additional_params.expect("should have params");
     assert_eq!(params["thinking"]["type"], "disabled");
@@ -2468,7 +2553,7 @@ fn additional_params_merge_falls_back_to_base() {
 fn test_session_store_config_parses_sqlite() {
     let value = Value::test_record(record! {
         "models" => Value::test_record(record! {
-            "default" => Value::test_string("openai/gpt-4"),
+            "default" => model_role_record("openai/gpt-4"),
         }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
@@ -2494,7 +2579,7 @@ fn test_session_store_config_parses_sqlite() {
 fn test_session_store_config_parses_jsonl() {
     let value = Value::test_record(record! {
         "models" => Value::test_record(record! {
-            "default" => Value::test_string("openai/gpt-4"),
+            "default" => model_role_record("openai/gpt-4"),
         }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
@@ -2519,7 +2604,7 @@ fn test_session_store_config_parses_jsonl() {
 fn test_session_store_config_with_path() {
     let value = Value::test_record(record! {
         "models" => Value::test_record(record! {
-            "default" => Value::test_string("openai/gpt-4"),
+            "default" => model_role_record("openai/gpt-4"),
         }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
@@ -2546,7 +2631,7 @@ fn test_session_store_config_with_path() {
 fn test_session_store_config_unknown_type_errors() {
     let value = Value::test_record(record! {
         "models" => Value::test_record(record! {
-            "default" => Value::test_string("openai/gpt-4"),
+            "default" => model_role_record("openai/gpt-4"),
         }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
@@ -2570,7 +2655,7 @@ fn test_session_store_config_unknown_type_errors() {
 fn test_session_store_config_missing_type_errors() {
     let value = Value::test_record(record! {
         "models" => Value::test_record(record! {
-            "default" => Value::test_string("openai/gpt-4"),
+            "default" => model_role_record("openai/gpt-4"),
         }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
@@ -2594,7 +2679,7 @@ fn test_session_store_config_missing_type_errors() {
 fn test_session_store_config_defaults_to_none() {
     let value = Value::test_record(record! {
         "models" => Value::test_record(record! {
-            "default" => Value::test_string("openai/gpt-4"),
+            "default" => model_role_record("openai/gpt-4"),
         }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
@@ -2683,7 +2768,13 @@ fn test_session_store_resolve_model_forwards_config() {
     let plugin_config = PluginConfig {
         models: {
             let mut m = HashMap::new();
-            m.insert("default".to_string(), "openai/gpt-4".to_string());
+            m.insert(
+                "default".to_string(),
+                ModelRoleConfig {
+                    model: "openai/gpt-4".to_string(),
+                    ..ModelRoleConfig::default()
+                },
+            );
             m
         },
         providers: {
@@ -2703,19 +2794,6 @@ fn test_session_store_resolve_model_forwards_config() {
         },
         compaction: None,
         agents: AgentsConfig::default(),
-        read_timeout_secs: None,
-        max_tool_calls_per_subturn: None,
-        additional_params: None,
-        temperature: None,
-        max_tokens: None,
-        max_context_tokens: None,
-        max_output_tokens: None,
-        max_tool_turns: None,
-        max_tool_result_bytes: None,
-        model_context_tokens: None,
-        context_warning_threshold: None,
-        max_retries: None,
-        retry_base_delay_ms: None,
         a2a_enabled: false,
         session_store: Some(StoreTypeConfig {
             store_type: StoreType::Jsonl,
@@ -2723,8 +2801,12 @@ fn test_session_store_resolve_model_forwards_config() {
         }),
     };
 
+    let role_config = ModelRoleConfig {
+        model: "openai/gpt-4".to_string(),
+        ..ModelRoleConfig::default()
+    };
     let config = plugin_config
-        .resolve_model("openai/gpt-4")
+        .resolve_model(&role_config)
         .expect("should resolve");
     assert_eq!(config.session_store_type, Some(StoreType::Jsonl));
 }
@@ -2738,9 +2820,9 @@ fn test_plugin_config_models_parsed_correctly() {
     // Test parsing models map with default + optional roles
     let value = Value::test_record(record! {
         "models" => Value::test_record(record! {
-            "default" => Value::test_string("openai/gpt-4"),
-            "heavy" => Value::test_string("openai/gpt-4-turbo"),
-            "light" => Value::test_string("openai/gpt-3.5-turbo"),
+            "default" => model_role_record("openai/gpt-4"),
+            "heavy" => model_role_record("openai/gpt-4-turbo"),
+            "light" => model_role_record("openai/gpt-3.5-turbo"),
         }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
@@ -2756,15 +2838,15 @@ fn test_plugin_config_models_parsed_correctly() {
     let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
 
     assert_eq!(
-        plugin_config.models.get("default"),
+        plugin_config.models.get("default").map(|r| &r.model),
         Some(&"openai/gpt-4".to_string())
     );
     assert_eq!(
-        plugin_config.models.get("heavy"),
+        plugin_config.models.get("heavy").map(|r| &r.model),
         Some(&"openai/gpt-4-turbo".to_string())
     );
     assert_eq!(
-        plugin_config.models.get("light"),
+        plugin_config.models.get("light").map(|r| &r.model),
         Some(&"openai/gpt-3.5-turbo".to_string())
     );
     assert_eq!(plugin_config.models.len(), 3);
@@ -2788,7 +2870,7 @@ fn test_plugin_config_models_missing_default() {
     // Test that models without 'default' key returns error
     let value = Value::test_record(record! {
         "models" => Value::test_record(record! {
-            "heavy" => Value::test_string("openai/gpt-4"),
+            "heavy" => model_role_record("openai/gpt-4"),
         }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
@@ -2810,7 +2892,7 @@ fn test_plugin_config_models_value_without_slash() {
     // Test that model value without '/' returns error
     let value = Value::test_record(record! {
         "models" => Value::test_record(record! {
-            "default" => Value::test_string("invalid-format"),
+            "default" => model_role_record("invalid-format"),
         }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
@@ -2848,7 +2930,7 @@ fn test_plugin_config_models_with_only_default() {
     // Test that models with only 'default' works
     let value = Value::test_record(record! {
         "models" => Value::test_record(record! {
-            "default" => Value::test_string("openai/gpt-4"),
+            "default" => model_role_record("openai/gpt-4"),
         }),
         "providers" => Value::test_record(record! {
             "openai" => Value::test_record(record! {
@@ -2862,7 +2944,7 @@ fn test_plugin_config_models_with_only_default() {
     let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
     assert_eq!(plugin_config.models.len(), 1);
     assert_eq!(
-        plugin_config.models.get("default"),
+        plugin_config.models.get("default").map(|r| &r.model),
         Some(&"openai/gpt-4".to_string())
     );
 }
@@ -2877,4 +2959,110 @@ fn test_plugin_config_models_invalid_type() {
 
     let result = PluginConfig::from_plugin_config(&value);
     assert!(result.is_err());
+}
+
+// ============================================================================
+// ModelRoleConfig Validation Tests
+// ============================================================================
+
+#[test]
+fn test_plugin_config_models_value_missing_model_field() {
+    // Test that model role record without 'model' field returns error
+    let value = Value::test_record(record! {
+        "models" => Value::test_record(record! {
+            "default" => Value::test_record(record! {
+                "temperature" => Value::test_float(0.5),
+            }),
+        }),
+        "providers" => Value::test_record(record! {
+            "openai" => Value::test_record(record! {
+                "models" => Value::test_record(record! {}),
+            }),
+        }),
+    });
+
+    let result = PluginConfig::from_plugin_config(&value);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("models.default.model"));
+}
+
+#[test]
+fn test_plugin_config_models_value_not_a_record() {
+    // Test that model role value that is not a record returns error
+    let value = Value::test_record(record! {
+        "models" => Value::test_record(record! {
+            "default" => Value::test_string("openai/gpt-4"),
+        }),
+        "providers" => Value::test_record(record! {
+            "openai" => Value::test_record(record! {
+                "models" => Value::test_record(record! {}),
+            }),
+        }),
+    });
+
+    let result = PluginConfig::from_plugin_config(&value);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("must be a record"));
+}
+
+#[test]
+fn test_plugin_config_models_default_missing_model_field() {
+    // Test that models.default without 'model' field returns error
+    let value = Value::test_record(record! {
+        "models" => Value::test_record(record! {
+            "default" => Value::test_record(record! {
+                "temperature" => Value::test_float(0.5),
+            }),
+        }),
+        "providers" => Value::test_record(record! {
+            "openai" => Value::test_record(record! {
+                "models" => Value::test_record(record! {}),
+            }),
+        }),
+    });
+
+    let result = PluginConfig::from_plugin_config(&value);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("models.default.model"));
+}
+
+#[test]
+fn test_plugin_config_models_default_model_without_slash() {
+    // Test that models.default.model without '/' returns error
+    let value = Value::test_record(record! {
+        "models" => Value::test_record(record! {
+            "default" => model_role_record("invalid-format"),
+        }),
+        "providers" => Value::test_record(record! {
+            "openai" => Value::test_record(record! {
+                "models" => Value::test_record(record! {}),
+            }),
+        }),
+    });
+
+    let result = PluginConfig::from_plugin_config(&value);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("provider/model format"));
+}
+
+#[test]
+fn test_plugin_config_models_empty_map_errors() {
+    // Test that empty models map returns error
+    let value = Value::test_record(record! {
+        "models" => Value::test_record(record! {}),
+        "providers" => Value::test_record(record! {
+            "openai" => Value::test_record(record! {
+                "models" => Value::test_record(record! {}),
+            }),
+        }),
+    });
+
+    let result = PluginConfig::from_plugin_config(&value);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("models.default"));
 }

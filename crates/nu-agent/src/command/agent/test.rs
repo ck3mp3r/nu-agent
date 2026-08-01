@@ -720,7 +720,9 @@ mod config_resolution_integration {
         // New-format config: providers block required for resolve_config() to succeed
         let plugin_config = Value::test_record(record! {
             "models" => Value::test_record(record! {
-                "default" => Value::test_string("openai/gpt-4"),
+                "default" => Value::test_record(record! {
+                    "model" => Value::test_string("openai/gpt-4"),
+                }),
             }),
             "providers" => Value::test_record(record! {
                 "openai" => Value::test_record(record! {
@@ -762,7 +764,9 @@ mod config_resolution_integration {
         // New-format config: both providers present so --model openai/gpt-4 can override
         let plugin_config = Value::test_record(record! {
             "models" => Value::test_record(record! {
-                "default" => Value::test_string("anthropic/claude-3"),
+                "default" => Value::test_record(record! {
+                    "model" => Value::test_string("anthropic/claude-3"),
+                }),
             }),
             "providers" => Value::test_record(record! {
                 "anthropic" => Value::test_record(record! {
@@ -819,9 +823,16 @@ mod config_resolution_integration {
                 (
                     "models".to_string(),
                     Value::test_record(
-                        vec![("default".to_string(), Value::test_string("openai/gpt-4"))]
-                            .into_iter()
-                            .collect(),
+                        vec![(
+                            "default".to_string(),
+                            Value::test_record(
+                                vec![("model".to_string(), Value::test_string("openai/gpt-4"))]
+                                    .into_iter()
+                                    .collect(),
+                            ),
+                        )]
+                        .into_iter()
+                        .collect(),
                     ),
                 ),
                 (
@@ -906,7 +917,9 @@ mod config_resolution_integration {
         // A plugin config that has models but no providers block must error
         let plugin_config = Value::test_record(record! {
             "models" => Value::test_record(record! {
-                "default" => Value::test_string("openai/gpt-4"),
+                "default" => Value::test_record(record! {
+                    "model" => Value::test_string("openai/gpt-4"),
+                }),
             }),
         });
 
@@ -1024,9 +1037,16 @@ mod new_plugin_config_tests {
                 (
                     "models".to_string(),
                     Value::test_record(
-                        vec![("default".to_string(), Value::test_string("openai/gpt-4"))]
-                            .into_iter()
-                            .collect(),
+                        vec![(
+                            "default".to_string(),
+                            Value::test_record(
+                                vec![("model".to_string(), Value::test_string("openai/gpt-4"))]
+                                    .into_iter()
+                                    .collect(),
+                            ),
+                        )]
+                        .into_iter()
+                        .collect(),
                     ),
                 ),
                 (
@@ -1093,7 +1113,9 @@ mod new_plugin_config_tests {
                 }),
             }),
             "models" => Value::test_record(record! {
-                "default" => Value::test_string("github-copilot/anthropic/claude-sonnet-4-20250514"),
+                "default" => Value::test_record(record! {
+                    "model" => Value::test_string("github-copilot/anthropic/claude-sonnet-4-20250514"),
+                }),
             }),
             "providers" => Value::test_record(providers_map.into_iter().collect()),
         });
@@ -1160,9 +1182,16 @@ mod new_plugin_config_tests {
                 (
                     "models".to_string(),
                     Value::test_record(
-                        vec![("default".to_string(), Value::test_string("openai/gpt-4"))]
-                            .into_iter()
-                            .collect(),
+                        vec![(
+                            "default".to_string(),
+                            Value::test_record(
+                                vec![("model".to_string(), Value::test_string("openai/gpt-4"))]
+                                    .into_iter()
+                                    .collect(),
+                            ),
+                        )]
+                        .into_iter()
+                        .collect(),
                     ),
                 ),
                 (
@@ -1225,9 +1254,16 @@ mod new_plugin_config_tests {
                 (
                     "models".to_string(),
                     Value::test_record(
-                        vec![("default".to_string(), Value::test_string("openai/gpt-4"))]
-                            .into_iter()
-                            .collect(),
+                        vec![(
+                            "default".to_string(),
+                            Value::test_record(
+                                vec![("model".to_string(), Value::test_string("openai/gpt-4"))]
+                                    .into_iter()
+                                    .collect(),
+                            ),
+                        )]
+                        .into_iter()
+                        .collect(),
                     ),
                 ),
                 (
@@ -1298,7 +1334,14 @@ mod new_plugin_config_tests {
                     Value::test_record(
                         vec![(
                             "default".to_string(),
-                            Value::test_string("openai/gpt-3.5-turbo"),
+                            Value::test_record(
+                                vec![(
+                                    "model".to_string(),
+                                    Value::test_string("openai/gpt-3.5-turbo"),
+                                )]
+                                .into_iter()
+                                .collect(),
+                            ),
                         )]
                         .into_iter()
                         .collect(),
@@ -1350,7 +1393,9 @@ mod new_plugin_config_tests {
 
         let plugin_config = Value::test_record(record! {
             "models" => Value::test_record(record! {
-                "default" => Value::test_string("openai/gpt-5-mini"),
+                "default" => Value::test_record(record! {
+                    "model" => Value::test_string("openai/gpt-5-mini"),
+                }),
             }),
             "providers" => Value::test_record(providers_map.into_iter().collect()),
         });
@@ -1381,7 +1426,9 @@ mod new_plugin_config_tests {
 
         let plugin_config = Value::test_record(record! {
             "models" => Value::test_record(record! {
-                "default" => Value::test_string("custom/unknown-model"),
+                "default" => Value::test_record(record! {
+                    "model" => Value::test_string("custom/unknown-model"),
+                }),
             }),
             "providers" => Value::test_record(providers_map.into_iter().collect()),
         });
@@ -1440,7 +1487,14 @@ mod new_plugin_config_tests {
                     Value::test_record(
                         vec![(
                             "default".to_string(),
-                            Value::test_string("openai/gpt-3.5-turbo"),
+                            Value::test_record(
+                                vec![(
+                                    "model".to_string(),
+                                    Value::test_string("openai/gpt-3.5-turbo"),
+                                )]
+                                .into_iter()
+                                .collect(),
+                            ),
                         )]
                         .into_iter()
                         .collect(),
@@ -1910,6 +1964,8 @@ mod tool_timeout_tests {
 
 #[test]
 fn apply_persona_model_overrides_plugin_config() {
+    use std::collections::HashMap;
+
     let mut config = Config {
         provider: "openai".to_string(),
         model: "gpt-4o".to_string(),
@@ -1917,9 +1973,39 @@ fn apply_persona_model_overrides_plugin_config() {
         ..Config::default()
     };
 
+    // Build a minimal plugin config with the required provider
+    let mut models = HashMap::new();
+    models.insert(
+        "default".to_string(),
+        nu_agent_core::config::ModelRoleConfig {
+            model: "openai/gpt-4o".to_string(),
+            ..Default::default()
+        },
+    );
+    let mut providers = HashMap::new();
+    providers.insert(
+        "github-copilot".to_string(),
+        nu_agent_core::config::ProviderConfig {
+            name: None,
+            api_key: None,
+            base_url: None,
+            provider: None,
+            preamble: None,
+            models: HashMap::new(),
+        },
+    );
+    let plugin_config = nu_agent_core::config::PluginConfig {
+        models,
+        providers,
+        compaction: None,
+        agents: Default::default(),
+        a2a_enabled: false,
+        session_store: None,
+    };
+
     let applied = runtime_build::apply_persona_model(
         &mut config,
-        None,
+        Some(&plugin_config),
         Some("github-copilot/claude-opus-4.6"),
         false,
     );
@@ -1993,6 +2079,8 @@ fn apply_persona_model_none_preserves_config() {
 
 #[test]
 fn apply_persona_model_clears_provider_impl() {
+    use std::collections::HashMap;
+
     let mut config = Config {
         provider: "openai".to_string(),
         model: "gpt-4o".to_string(),
@@ -2000,9 +2088,39 @@ fn apply_persona_model_clears_provider_impl() {
         ..Config::default()
     };
 
+    // Build a minimal plugin config with the required provider
+    let mut models = HashMap::new();
+    models.insert(
+        "default".to_string(),
+        nu_agent_core::config::ModelRoleConfig {
+            model: "openai/gpt-4o".to_string(),
+            ..Default::default()
+        },
+    );
+    let mut providers = HashMap::new();
+    providers.insert(
+        "anthropic".to_string(),
+        nu_agent_core::config::ProviderConfig {
+            name: None,
+            api_key: None,
+            base_url: None,
+            provider: None,
+            preamble: None,
+            models: HashMap::new(),
+        },
+    );
+    let plugin_config = nu_agent_core::config::PluginConfig {
+        models,
+        providers,
+        compaction: None,
+        agents: Default::default(),
+        a2a_enabled: false,
+        session_store: None,
+    };
+
     let applied = runtime_build::apply_persona_model(
         &mut config,
-        None,
+        Some(&plugin_config),
         Some("anthropic/claude-sonnet-4-20250514"),
         false,
     );

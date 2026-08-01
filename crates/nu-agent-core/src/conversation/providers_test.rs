@@ -345,7 +345,7 @@ fn openai_with_base_url_produces_openai_completions_variant() {
 fn plugin_config_read_timeout_secs_propagates_to_resolved_config() {
     use std::collections::HashMap;
 
-    use crate::config::{AgentsConfig, PluginConfig, ProviderConfig};
+    use crate::config::{AgentsConfig, ModelRoleConfig, PluginConfig, ProviderConfig};
 
     let mut providers = HashMap::new();
     providers.insert(
@@ -363,31 +363,30 @@ fn plugin_config_read_timeout_secs_propagates_to_resolved_config() {
     let plugin_config = PluginConfig {
         models: {
             let mut m = std::collections::HashMap::new();
-            m.insert("default".to_string(), "openai/gpt-4".to_string());
+            m.insert(
+                "default".to_string(),
+                ModelRoleConfig {
+                    model: "openai/gpt-4".to_string(),
+                    read_timeout_secs: Some(60),
+                    ..ModelRoleConfig::default()
+                },
+            );
             m
         },
         providers,
         compaction: None,
         agents: AgentsConfig::default(),
-        read_timeout_secs: Some(60),
-        max_tool_calls_per_subturn: None,
-        additional_params: None,
-        temperature: None,
-        max_tokens: None,
-        max_context_tokens: None,
-        max_output_tokens: None,
-        max_tool_turns: None,
-        max_tool_result_bytes: None,
-        model_context_tokens: None,
-        context_warning_threshold: None,
-        max_retries: None,
-        retry_base_delay_ms: None,
         a2a_enabled: false,
         session_store: None,
     };
 
+    let role_config = ModelRoleConfig {
+        model: "openai/gpt-4".to_string(),
+        read_timeout_secs: Some(60),
+        ..ModelRoleConfig::default()
+    };
     let resolved = plugin_config
-        .resolve_model("openai/gpt-4")
+        .resolve_model(&role_config)
         .expect("should resolve");
 
     assert_eq!(
@@ -401,7 +400,7 @@ fn plugin_config_read_timeout_secs_propagates_to_resolved_config() {
 fn plugin_config_without_read_timeout_secs_resolves_to_none() {
     use std::collections::HashMap;
 
-    use crate::config::{AgentsConfig, PluginConfig, ProviderConfig};
+    use crate::config::{AgentsConfig, ModelRoleConfig, PluginConfig, ProviderConfig};
 
     let mut providers = HashMap::new();
     providers.insert(
@@ -419,31 +418,28 @@ fn plugin_config_without_read_timeout_secs_resolves_to_none() {
     let plugin_config = PluginConfig {
         models: {
             let mut m = std::collections::HashMap::new();
-            m.insert("default".to_string(), "openai/gpt-4".to_string());
+            m.insert(
+                "default".to_string(),
+                ModelRoleConfig {
+                    model: "openai/gpt-4".to_string(),
+                    ..ModelRoleConfig::default()
+                },
+            );
             m
         },
         providers,
         compaction: None,
         agents: AgentsConfig::default(),
-        read_timeout_secs: None,
-        max_tool_calls_per_subturn: None,
-        additional_params: None,
-        temperature: None,
-        max_tokens: None,
-        max_context_tokens: None,
-        max_output_tokens: None,
-        max_tool_turns: None,
-        max_tool_result_bytes: None,
-        model_context_tokens: None,
-        context_warning_threshold: None,
-        max_retries: None,
-        retry_base_delay_ms: None,
         a2a_enabled: false,
         session_store: None,
     };
 
+    let role_config = ModelRoleConfig {
+        model: "openai/gpt-4".to_string(),
+        ..ModelRoleConfig::default()
+    };
     let resolved = plugin_config
-        .resolve_model("openai/gpt-4")
+        .resolve_model(&role_config)
         .expect("should resolve");
 
     assert_eq!(

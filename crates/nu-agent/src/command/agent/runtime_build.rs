@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use nu_plugin::{EngineInterface, EvaluatedCall};
 use nu_protocol::{LabeledError, Value};
 
-use nu_agent_core::config::{Config, PluginConfig};
+use nu_agent_core::config::{Config, ModelRoleConfig, PluginConfig, defaults};
 use nu_agent_core::conversation::runtime::AgentConversationRuntime;
 use nu_agent_core::protocol::preamble::{
     PreambleDefaults, UserPreambleInput, classify_model_family, resolve_preamble,
@@ -182,10 +182,25 @@ pub fn resolve_with_new_config(
             .and_then(|v: Value| v.as_str().map(|s| s.to_string()).ok())
     }
 
-    // Determine which model to use (priority: --model flag > models.default)
-    let model_ref = if let Some(model_flag) = get_string_flag(call, "model") {
-        // --model flag takes highest priority
-        model_flag
+    // Determine which model role to use (priority: --model flag > models.default)
+    let role_config = if let Some(model_flag) = get_string_flag(call, "model") {
+        if model_flag.contains('/') {
+            // Literal provider/model string — use as-is with default overrides
+            ModelRoleConfig {
+                model: model_flag,
+                ..Default::default()
+            }
+        } else {
+            // Role label — look up from plugin_config.models
+            plugin_config
+                .models
+                .get(&model_flag)
+                .ok_or_else(|| {
+                    LabeledError::new(format!("Unknown model role: '{model_flag}'"))
+                        .with_label("Available roles: see models in plugin config", call.head)
+                })?
+                .clone()
+        }
     } else {
         // Use default model from config
         plugin_config
@@ -200,16 +215,39 @@ pub fn resolve_with_new_config(
 
     // Resolve model to Config using PluginConfig
     let mut config = plugin_config
-        .resolve_model(&model_ref)
+        .resolve_model(&role_config)
         .map_err(|msg| LabeledError::new("Failed to resolve model").with_label(msg, call.head))?;
 
     // Resolve preamble via canonical resolver.
-    if let Some((provider_name, model_name)) = model_ref.split_once('/') {
+    if let Some((provider_name, model_name)) = role_config.model.split_once('/') {
         config.preamble = resolve_preamble_for_model(&plugin_config, provider_name, model_name);
     }
 
-    // Step 3: Apply flag overrides for optional fields
-    // These override any values from PluginConfig
+    // Apply CLI flag overrides (highest precedence).
+    apply_cli_flags(&mut config, call);
+
+    // Validate final config
+    config
+        .validate()
+        .map_err(|msg| LabeledError::new("Config validation failed").with_label(msg, call.head))?;
+
+    Ok(config)
+}
+
+/// Apply CLI flag overrides to a Config.
+///
+/// These are the highest-priority overrides, applied last in the resolution chain.
+/// Fields: --api-key, --base-url, --temperature, --max-context-tokens,
+/// --max-output-tokens, --max-turns
+pub(crate) fn apply_cli_flags(config: &mut Config, call: &EvaluatedCall) {
+    // Helper to get string flag
+    fn get_string_flag(call: &EvaluatedCall, name: &str) -> Option<String> {
+        call.get_flag(name)
+            .ok()
+            .flatten()
+            .and_then(|v: Value| v.as_str().map(|s| s.to_string()).ok())
+    }
+
     if let Some(api_key) = get_string_flag(call, "api-key") {
         config.api_key = Some(api_key);
     }
@@ -251,13 +289,6 @@ pub fn resolve_with_new_config(
     {
         config.max_tool_turns = Some(max_turns);
     }
-
-    // Step 4: Validate final config
-    config
-        .validate()
-        .map_err(|msg| LabeledError::new("Config validation failed").with_label(msg, call.head))?;
-
-    Ok(config)
 }
 
 /// Apply persona model override if CLI --model was not provided.
@@ -281,9 +312,12 @@ pub(crate) fn apply_persona_model(
         return Ok(false);
     };
 
-    let resolved = if m.contains('/') {
-        // Literal provider/model string — use as-is
-        m.to_string()
+    let role_config = if m.contains('/') {
+        // Literal provider/model string — use as-is with default overrides
+        ModelRoleConfig {
+            model: m.to_string(),
+            ..Default::default()
+        }
     } else {
         // Role label — resolve through plugin_config.models
         let pc = plugin_config.ok_or_else(|| {
@@ -291,31 +325,37 @@ pub(crate) fn apply_persona_model(
                 "Unknown model role: '{m}'. No plugin config available — role labels require a plugin config with a models map."
             ))
         })?;
-        let mapped = pc.models.get(m).ok_or_else(|| {
-            let mut available: Vec<&str> = pc.models.keys().map(|s| s.as_str()).collect();
-            available.sort();
-            LabeledError::new(format!(
-                "Unknown model role: '{m}'. Available roles: {}",
-                available.join(", ")
-            ))
-        })?;
-        mapped.clone()
+        pc.models
+            .get(m)
+            .ok_or_else(|| {
+                let mut available: Vec<&str> = pc.models.keys().map(|s| s.as_str()).collect();
+                available.sort();
+                LabeledError::new(format!(
+                    "Unknown model role: '{m}'. Available roles: {}",
+                    available.join(", ")
+                ))
+            })?
+            .clone()
     };
 
-    let Some((provider, model)) = resolved.split_once('/') else {
-        return Err(LabeledError::new(format!(
-            "Invalid model mapping for role: '{resolved}' — expected provider/model format"
-        )));
-    };
+    // Re-resolve the full config using resolve_model with the role config.
+    // This replaces provider, model, provider_impl, and all role-level overrides.
+    let pc = plugin_config
+        .ok_or_else(|| LabeledError::new("Plugin config required for persona model resolution"))?;
+    *config = pc
+        .resolve_model(&role_config)
+        .map_err(|msg| LabeledError::new(format!("Failed to resolve persona model: {msg}")))?;
 
-    config.provider = provider.to_string();
-    config.model = model.to_string();
-    config.provider_impl = None;
-    // Re-resolve preamble for the new provider/model
-    if let Some(pc) = plugin_config {
-        config.preamble = resolve_preamble_for_model(pc, provider, model);
+    // Re-resolve preamble for the new model.
+    if let Some((provider_name, model_name)) = role_config.model.split_once('/') {
+        config.preamble = resolve_preamble_for_model(pc, provider_name, model_name);
     }
-    log::debug!("apply_persona_model: overriding to provider={provider}, model={model}");
+
+    log::debug!(
+        "apply_persona_model: overriding to provider={}, model={}",
+        config.provider,
+        config.model
+    );
     Ok(true)
 }
 
@@ -437,7 +477,10 @@ pub(crate) fn build_runtime(params: RuntimeBuildParams) -> AgentConversationRunt
     // so both AgentRuntime.store and MemoryState share the same backing store.
     let store_for_session = Arc::clone(&params.store);
     // Extract max_tool_result_bytes before params.config is moved.
-    let max_tool_result_bytes = params.config.max_tool_result_bytes.unwrap_or(20_000);
+    let max_tool_result_bytes = params
+        .config
+        .max_tool_result_bytes
+        .unwrap_or(defaults::MAX_TOOL_RESULT_BYTES);
 
     AgentConversationRuntime {
         runtime: params.runtime,
