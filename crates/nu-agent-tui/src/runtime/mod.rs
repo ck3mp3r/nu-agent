@@ -656,9 +656,38 @@ impl RuntimeCoordinator {
             }
             // Esc — let dispatch handle
             TerminalKey::Esc => false,
-            // History — save textarea content, navigate history
-            TerminalKey::Up => self.handle_history_up(),
-            TerminalKey::Down => self.handle_history_down(),
+            // History — navigate within multiline textarea or history
+            TerminalKey::Up => {
+                let ratatui_textarea::DataCursor(row, _) = self.textarea.cursor();
+                if row > 0 {
+                    self.textarea.input(ratatui_textarea::Input {
+                        key: ratatui_textarea::Key::Up,
+                        ctrl: false,
+                        alt: false,
+                        shift: false,
+                    });
+                    self.mark_render_needed();
+                    true
+                } else {
+                    self.handle_history_up()
+                }
+            }
+            TerminalKey::Down => {
+                let ratatui_textarea::DataCursor(row, _) = self.textarea.cursor();
+                let line_count = self.textarea.lines().len();
+                if row < line_count.saturating_sub(1) {
+                    self.textarea.input(ratatui_textarea::Input {
+                        key: ratatui_textarea::Key::Down,
+                        ctrl: false,
+                        alt: false,
+                        shift: false,
+                    });
+                    self.mark_render_needed();
+                    true
+                } else {
+                    self.handle_history_down()
+                }
+            }
             // Navigation keys — route directly to TextArea
             TerminalKey::Left | TerminalKey::Right | TerminalKey::Home | TerminalKey::End => {
                 let input = match key {
@@ -733,8 +762,18 @@ impl RuntimeCoordinator {
             | TerminalKey::CtrlP
             | TerminalKey::CtrlN
             | TerminalKey::Tab
-            | TerminalKey::BackTab
-            | TerminalKey::CtrlC => false,
+            | TerminalKey::BackTab => false,
+            TerminalKey::CtrlC => {
+                let text = self.textarea.lines().join("\n");
+                if !text.is_empty() && self.state.phase == crate::state::UiPhase::Idle {
+                    self.textarea = ratatui_textarea::TextArea::default();
+                    self.state.check_inline_slash("");
+                    self.mark_render_needed();
+                    true
+                } else {
+                    false
+                }
+            }
             // Char keys — map to UserAction, run through rewrite_action, then route
             TerminalKey::Char(ch) => {
                 let mapped_action = UserAction::InsertChar(ch);
