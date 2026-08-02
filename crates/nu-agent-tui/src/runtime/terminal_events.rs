@@ -289,6 +289,7 @@ fn map_crossterm_event(event: crossterm::event::Event) -> Option<TerminalEvent> 
         Event::Resize(columns, rows) => Some(TerminalEvent::Resize(
             crate::interaction::input::TerminalResize { columns, rows },
         )),
+        Event::Paste(text) => Some(TerminalEvent::Paste(text)),
         Event::Key(key_event) => {
             if key_event.kind != KeyEventKind::Press && key_event.kind != KeyEventKind::Repeat {
                 return None;
@@ -392,6 +393,10 @@ fn parse_script_token(token: &str) -> Option<TerminalEvent> {
         && let (Ok(columns), Ok(rows)) = (columns.parse::<u16>(), rows.parse::<u16>())
     {
         return Some(TerminalEvent::Resize(TerminalResize { columns, rows }));
+    }
+
+    if let Some(text) = token.strip_prefix("paste:") {
+        return Some(TerminalEvent::Paste(text.to_string()));
     }
 
     None

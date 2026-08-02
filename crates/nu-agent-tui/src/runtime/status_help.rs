@@ -179,6 +179,28 @@ pub(super) fn command_palette_table_model_for_test(
     }
 }
 
+pub(crate) fn inline_slash_lines_for_render(state: &AppState) -> Vec<Line<'static>> {
+    if !state.inline_slash_open {
+        return Vec::new();
+    }
+
+    state
+        .inline_slash_suggestions()
+        .iter()
+        .enumerate()
+        .map(|(idx, command)| {
+            let marker = if idx == state.inline_slash_selection {
+                "❯"
+            } else {
+                " "
+            };
+            let label = command.label();
+            let summary = command.summary();
+            Line::from(format!("{marker} {label} — {summary}"))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 pub(super) fn inline_slash_lines_for_test(state: &AppState) -> Vec<String> {
     inline_slash_lines_for_render(state)
@@ -280,19 +302,29 @@ pub(super) fn transition_spacer_for_roles_for_test(
 
 #[cfg(test)]
 pub(super) fn input_line_for_test(state: &AppState) -> String {
+    let _ = state;
     let _ = current_time_millis();
-    state.input.buffer.clone()
+    String::new()
 }
 
 #[cfg(test)]
 pub(super) fn input_line_for_test_at_millis(state: &AppState, now_millis: u128) -> String {
+    let _ = state;
     let _ = now_millis;
-    state.input.buffer.clone()
+    String::new()
+}
+
+#[cfg(test)]
+pub(super) fn input_prompt_prefix(mode: crate::state::InputMode) -> &'static str {
+    match mode {
+        crate::state::InputMode::Insert => "❯ ",
+        crate::state::InputMode::Normal | crate::state::InputMode::Visual => "❮ ",
+    }
 }
 
 #[cfg(test)]
 pub(super) fn input_rows_with_prompt_for_test(state: &AppState, pane_width: u16) -> Vec<String> {
-    let rows = wrapped_input_rows(&state.input.buffer, pane_width.saturating_sub(2) as usize);
+    let rows = wrapped_input_rows("", pane_width.saturating_sub(2) as usize);
 
     let mut lines = Vec::new();
     let prompt_prefix = input_prompt_prefix(state.input_mode);

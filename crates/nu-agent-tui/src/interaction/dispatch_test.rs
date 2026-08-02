@@ -30,11 +30,7 @@ fn open_permission_prompt(state: &mut AppState) {
 fn busy_state_with_controller() -> (AppState, CancelController) {
     let mut state = AppState::new();
     let cancel_controller = CancelController::new();
-    dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('w')),
-        Some(&cancel_controller),
-    );
+    state.pending_submit_text = Some("w".to_string());
     dispatch_terminal_event(
         &mut state,
         &TerminalEvent::Key(TerminalKey::Enter),
@@ -45,11 +41,7 @@ fn busy_state_with_controller() -> (AppState, CancelController) {
 
 fn busy_state() -> AppState {
     let mut state = AppState::new();
-    dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('w')),
-        None,
-    );
+    state.pending_submit_text = Some("w".to_string());
     dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
     state
 }
@@ -116,11 +108,7 @@ fn typing_remains_available_while_prompt_is_active() {
     let mut state = AppState::new();
     let cancel_controller = CancelController::new();
 
-    dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('f')),
-        Some(&cancel_controller),
-    );
+    state.pending_submit_text = Some("f".to_string());
     dispatch_terminal_event(
         &mut state,
         &TerminalEvent::Key(TerminalKey::Enter),
@@ -129,14 +117,15 @@ fn typing_remains_available_while_prompt_is_active() {
     // Activate the prompt so the transcript entry is written
     let _ = state.take_next_prompt_for_execution();
 
+    // Typing in insert mode is now handled by the coordinator, not the dispatch path.
+    // The dispatch path's InsertChar is a no-op.
     let changed = dispatch_terminal_event(
         &mut state,
         &TerminalEvent::Key(TerminalKey::Char('s')),
         Some(&cancel_controller),
     );
 
-    assert!(changed);
-    assert_eq!(state.input.buffer, "s");
+    assert!(!changed);
     assert_eq!(state.transcript_preview.len(), 1);
     assert_eq!(state.transcript_preview[0].role(), Role::User);
     assert_eq!(state.transcript_preview[0].text(), "f");
@@ -146,18 +135,13 @@ fn typing_remains_available_while_prompt_is_active() {
 fn submit_path_appends_prompt_and_keeps_input_editable() {
     let mut state = AppState::new();
 
-    dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('s')),
-        None,
-    );
+    state.pending_submit_text = Some("s".to_string());
     let changed =
         dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
 
     assert!(changed);
     assert_eq!(state.phase, UiPhase::Busy);
-    assert!(!state.input.locked);
-    assert!(state.input.buffer.is_empty());
+    assert!(!state.input_locked);
     let _ = state.take_next_prompt_for_execution();
     assert_eq!(state.transcript_preview.len(), 1);
     assert_eq!(state.transcript_preview[0].role(), Role::User);
@@ -166,24 +150,16 @@ fn submit_path_appends_prompt_and_keeps_input_editable() {
 
 #[test]
 fn backspace_and_cursor_movement_edit_in_dispatch_path() {
+    // Backspace and cursor movement are now handled by TextArea, not the dispatch path.
+    // The dispatch path's Backspace/Delete/MoveCursor actions are no-ops.
     let mut state = AppState::new();
 
-    for ch in ['a', 'b', 'c'] {
-        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char(ch)), None);
-    }
-    dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Left), None);
-    dispatch_terminal_event(
+    let changed = dispatch_terminal_event(
         &mut state,
         &TerminalEvent::Key(TerminalKey::Backspace),
         None,
     );
-
-    assert_eq!(state.input.buffer, "ac");
-    assert_eq!(state.input.cursor, 1);
-
-    dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Delete), None);
-    assert_eq!(state.input.buffer, "a");
-    assert_eq!(state.input.cursor, 1);
+    assert!(!changed);
 }
 
 #[test]
@@ -285,7 +261,6 @@ fn busy_normal_mode_blocks_plain_typing_until_explicit_i() {
         None,
     );
     assert!(!typed_while_normal);
-    assert!(state.input.buffer.is_empty());
     assert_eq!(state.input_mode, InputMode::Normal);
 
     let enter_insert = dispatch_terminal_event(
@@ -301,8 +276,7 @@ fn busy_normal_mode_blocks_plain_typing_until_explicit_i() {
         &TerminalEvent::Key(TerminalKey::Char('x')),
         None,
     );
-    assert!(typed_after_i);
-    assert_eq!(state.input.buffer, "x");
+    assert!(!typed_after_i); // InsertChar is now a no-op in dispatch
 }
 
 #[test]
@@ -331,7 +305,6 @@ fn busy_normal_mode_after_jk_chord_requires_i_before_typing() {
         None,
     );
     assert!(!typed_while_normal);
-    assert!(state.input.buffer.is_empty());
 
     let enter_insert = dispatch_terminal_event(
         &mut state,
@@ -346,8 +319,7 @@ fn busy_normal_mode_after_jk_chord_requires_i_before_typing() {
         &TerminalEvent::Key(TerminalKey::Char('z')),
         None,
     );
-    assert!(typed_after_i);
-    assert_eq!(state.input.buffer, "z");
+    assert!(!typed_after_i); // InsertChar is now a no-op in dispatch
 }
 
 #[test]
@@ -362,7 +334,6 @@ fn normal_mode_blocks_plain_typing_and_keeps_input_unchanged() {
     );
 
     assert!(!changed);
-    assert!(state.input.buffer.is_empty());
     assert_eq!(state.input_mode, InputMode::Normal);
 }
 
@@ -480,15 +451,17 @@ fn insert_mode_jk_chord_enters_normal_and_removes_j() {
     let mut state = AppState::new();
     assert_eq!(state.input_mode, InputMode::Insert);
 
+    // InsertChar is now a no-op in the dispatch path (handled by TextArea).
+    // The first 'j' sets insert_exit_pending_j but returns false (no-op).
     let first = dispatch_terminal_event(
         &mut state,
         &TerminalEvent::Key(TerminalKey::Char('j')),
         None,
     );
-    assert!(first);
-    assert_eq!(state.input.buffer, "j");
+    assert!(!first);
     assert_eq!(state.input_mode, InputMode::Insert);
 
+    // The second 'k' triggers EnterNormalModeFromChord which still works.
     let second = dispatch_terminal_event(
         &mut state,
         &TerminalEvent::Key(TerminalKey::Char('k')),
@@ -496,7 +469,6 @@ fn insert_mode_jk_chord_enters_normal_and_removes_j() {
     );
     assert!(second);
     assert_eq!(state.input_mode, InputMode::Normal);
-    assert!(state.input.buffer.is_empty());
 }
 
 #[test]
@@ -514,24 +486,18 @@ fn normal_mode_z_is_noop() {
 
 #[test]
 fn insert_mode_alt_and_shift_enter_insert_newline_while_enter_submits() {
+    // Alt+Enter and Shift+Enter are now handled by the coordinator (TextArea),
+    // not the dispatch path. The dispatch path's InsertNewline is a no-op.
     let mut state = AppState::new();
 
-    dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('h')),
-        None,
-    );
-    dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::AltEnter), None);
-    dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::ShiftEnter),
-        None,
-    );
-
-    assert_eq!(state.input.buffer, "h\n\n");
+    let changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::AltEnter), None);
+    assert!(!changed);
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(state.transcript_preview.is_empty());
 
+    // Enter still submits via pending_submit_text
+    state.pending_submit_text = Some("h".to_string());
     let changed =
         dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
     assert!(changed);
@@ -659,13 +625,9 @@ fn command_palette_models_action_opens_inline_model_picker() {
 #[test]
 fn models_slash_and_palette_share_same_action_handler() {
     let mut slash_state = AppState::new();
-    for ch in "/models".chars() {
-        let _ = dispatch_terminal_event(
-            &mut slash_state,
-            &TerminalEvent::Key(TerminalKey::Char(ch)),
-            None,
-        );
-    }
+    // InsertChar is now a no-op in the dispatch path (handled by TextArea).
+    // Set pending_submit_text directly so Submit routes the slash command.
+    slash_state.pending_submit_text = Some("/models".to_string());
     let _ = dispatch_terminal_event(
         &mut slash_state,
         &TerminalEvent::Key(TerminalKey::Enter),
@@ -763,10 +725,9 @@ fn models_slash_opens_picker_while_worker_active() {
         Some("first".to_string())
     );
 
-    for ch in "/models".chars() {
-        let _ =
-            dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char(ch)), None);
-    }
+    // InsertChar is now a no-op in the dispatch path (handled by TextArea).
+    // Set pending_submit_text directly so Submit routes the slash command.
+    state.pending_submit_text = Some("/models".to_string());
 
     let changed =
         dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
@@ -1073,12 +1034,15 @@ fn escape_closes_info_panel_without_mode_regression() {
 #[test]
 fn existing_insert_mode_jk_chord_still_switches_to_normal_outside_palette() {
     let mut state = AppState::new();
+    // InsertChar is now a no-op in the dispatch path (handled by TextArea).
+    // The first 'j' sets insert_exit_pending_j but returns false (no-op).
     let first = dispatch_terminal_event(
         &mut state,
         &TerminalEvent::Key(TerminalKey::Char('j')),
         None,
     );
-    assert!(first);
+    assert!(!first);
+    // The second 'k' triggers EnterNormalModeFromChord which still works.
     let second = dispatch_terminal_event(
         &mut state,
         &TerminalEvent::Key(TerminalKey::Char('k')),
@@ -1092,12 +1056,10 @@ fn existing_insert_mode_jk_chord_still_switches_to_normal_outside_palette() {
 fn inline_slash_suggestions_open_on_leading_slash() {
     let mut state = AppState::new();
 
-    let changed = dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('/')),
-        None,
-    );
-    assert!(changed);
+    // check_inline_slash is called by the coordinator after TextArea mutations.
+    // In the dispatch-only test, call it directly to set the state.
+    state.check_inline_slash("/");
+
     assert!(state.inline_slash_open);
     assert!(!state.command_palette_open);
 }
@@ -1105,11 +1067,9 @@ fn inline_slash_suggestions_open_on_leading_slash() {
 #[test]
 fn inline_slash_enter_on_compact_triggers_compaction_path() {
     let mut state = AppState::new();
-    let _ = dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('/')),
-        None,
-    );
+    // InsertChar is now a no-op in the dispatch path (handled by TextArea).
+    // Set pending_submit_text directly so Submit routes the slash command.
+    state.pending_submit_text = Some("/compact".to_string());
 
     let changed =
         dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
@@ -1128,14 +1088,9 @@ fn immediate_slash_commands_do_not_set_busy_or_spinner() {
     for command in ["/compact", "/mcp", "/help", "/status"] {
         let mut state = AppState::new();
 
-        for ch in command.chars() {
-            let changed = dispatch_terminal_event(
-                &mut state,
-                &TerminalEvent::Key(TerminalKey::Char(ch)),
-                None,
-            );
-            assert!(changed);
-        }
+        // InsertChar is now a no-op in the dispatch path (handled by TextArea).
+        // Set pending_submit_text directly so Submit routes the slash command.
+        state.pending_submit_text = Some(command.to_string());
 
         let changed =
             dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
@@ -1151,21 +1106,11 @@ fn immediate_slash_commands_do_not_set_busy_or_spinner() {
 #[test]
 fn inline_slash_suggestions_close_when_prefix_removed() {
     let mut state = AppState::new();
-    let _ = dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('/')),
-        None,
-    );
+    state.check_inline_slash("/");
     assert!(state.inline_slash_open);
 
-    let changed = dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Backspace),
-        None,
-    );
-    assert!(changed);
+    state.check_inline_slash("");
 
-    assert_eq!(state.input.buffer, "");
     assert!(!state.inline_slash_open);
     assert!(!state.command_palette_open);
 }
@@ -1271,28 +1216,23 @@ fn agent_picker_closed_actions_pass_through_normally() {
     // Picker is NOT open
     assert!(!state.agent_picker_open);
 
-    // Char should go to input buffer
+    // Char in dispatch path is now a no-op (handled by coordinator/TextArea)
     let changed = dispatch_terminal_event(
         &mut state,
         &TerminalEvent::Key(TerminalKey::Char('x')),
         None,
     );
-    assert!(changed);
-    assert_eq!(state.input.buffer, "x");
+    assert!(!changed);
     assert!(!state.agent_picker_open);
 }
 
 #[test]
 fn agent_slash_and_palette_share_same_action_handler() {
     // /agent slash command triggers agent picker launch
+    // InsertChar is now a no-op in the dispatch path (handled by TextArea).
+    // Set pending_submit_text directly so Submit routes the slash command.
     let mut slash_state = AppState::new();
-    for ch in "/agent".chars() {
-        let _ = dispatch_terminal_event(
-            &mut slash_state,
-            &TerminalEvent::Key(TerminalKey::Char(ch)),
-            None,
-        );
-    }
+    slash_state.pending_submit_text = Some("/agent".to_string());
     let _ = dispatch_terminal_event(
         &mut slash_state,
         &TerminalEvent::Key(TerminalKey::Enter),

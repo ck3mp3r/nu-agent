@@ -133,8 +133,6 @@ impl AppState {
     }
 
     pub fn accept_submit(&mut self) {
-        self.input.buffer.clear();
-        self.input.cursor = 0;
         self.phase = UiPhase::Busy;
         self.active_cycle = self.active_prompt_id.is_some() || !self.pending_prompt_ids.is_empty();
         self.abort.pending = false;
@@ -171,8 +169,6 @@ impl AppState {
 
     pub fn enqueue_immediate_submission(&mut self, submitted_text: String) {
         self.pending_immediate_submissions.push_back(submitted_text);
-        self.input.buffer.clear();
-        self.input.cursor = 0;
         self.abort.pending = false;
         self.ensure_invariants();
     }
@@ -256,6 +252,7 @@ impl AppState {
         .complete_active_prompt();
 
         self.phase = UiPhase::Idle;
+        self.input_locked = false;
         self.active_cycle = false;
         self.abort.pending = false;
         self.ensure_invariants();
@@ -271,6 +268,7 @@ impl AppState {
         .cancel_active_and_pending_prompts();
 
         self.phase = UiPhase::Idle;
+        self.input_locked = false;
         self.active_cycle = false;
         self.abort.pending = false;
         self.ensure_invariants();
@@ -296,7 +294,11 @@ impl AppState {
         self.complete_active_prompt();
     }
 
-    pub fn cancel_and_restore_pending_to_input(&mut self) {
+    /// Returns the restored text from cancelled pending prompts, or None.
+    /// The caller is responsible for setting the textarea content.
+    /// Also stores the result in `restored_input_text` for the coordinator
+    /// to pick up on the next pump cycle.
+    pub fn cancel_and_restore_pending_to_input(&mut self) -> Option<String> {
         let texts = prompt_queue::PromptQueueLifecycle::new(
             &mut self.prompt_items,
             &mut self.pending_prompt_ids,
@@ -305,19 +307,23 @@ impl AppState {
         )
         .cancel_and_drain_to_texts();
 
-        if !texts.is_empty() {
-            self.input.buffer = texts.join("\n\n");
-            self.input.cursor = self.input.buffer.len();
-        }
+        let result = if !texts.is_empty() {
+            Some(texts.join("\n\n"))
+        } else {
+            None
+        };
 
+        self.restored_input_text = result.clone();
         self.phase = UiPhase::Idle;
+        self.input_locked = false;
         self.active_cycle = false;
         self.abort.pending = false;
         self.ensure_invariants();
+        result
     }
 
     pub fn request_quit_if_idle(&mut self) {
-        if self.phase == UiPhase::Idle && self.input.buffer.is_empty() {
+        if self.phase == UiPhase::Idle {
             self.quit_requested = true;
         }
     }
@@ -361,6 +367,18 @@ impl AppState {
         self.context_window_max_tokens
     }
 
+    /// Check inline slash suggestions based on the current textarea content.
+    /// This is called from handle_insert_mode_key after textarea mutations.
+    pub fn check_inline_slash(&mut self, buffer: &str) {
+        self.inline_slash_commands = filter_inline_slash_suggestions(buffer);
+        self.inline_slash_open = !self.inline_slash_commands.is_empty();
+        if !self.inline_slash_open {
+            self.inline_slash_selection = 0;
+        } else if self.inline_slash_selection >= self.inline_slash_commands.len() {
+            self.inline_slash_selection = self.inline_slash_commands.len().saturating_sub(1);
+        }
+    }
+
     pub fn ensure_invariants(&mut self) {
         if self.phase == UiPhase::AbortPending && !self.active_cycle {
             self.phase = UiPhase::Idle;
@@ -373,14 +391,6 @@ impl AppState {
 
         self.active_cycle = self.active_prompt_id.is_some() || !self.pending_prompt_ids.is_empty();
 
-        self.inline_slash_commands = filter_inline_slash_suggestions(&self.input.buffer);
-        self.inline_slash_open = !self.inline_slash_commands.is_empty();
-        if !self.inline_slash_open {
-            self.inline_slash_selection = 0;
-        } else if self.inline_slash_selection >= self.inline_slash_commands.len() {
-            self.inline_slash_selection = self.inline_slash_commands.len().saturating_sub(1);
-        }
-
         if self.phase == UiPhase::Idle && self.active_cycle {
             self.phase = UiPhase::Busy;
         }
@@ -388,10 +398,6 @@ impl AppState {
         if self.phase == UiPhase::AbortPending && !self.active_cycle {
             self.phase = UiPhase::Idle;
             self.abort.pending = false;
-        }
-
-        if self.input.cursor > self.input.buffer.len() {
-            self.input.cursor = self.input.buffer.len();
         }
 
         let palette_len = self.command_palette_actions().len();
@@ -443,13 +449,7 @@ impl AppState {
             }
         }
 
-        while self.input.cursor > 0 && !self.input.buffer.is_char_boundary(self.input.cursor) {
-            self.input.cursor -= 1;
-        }
-
         // With ListState, viewport invariants are managed by ratatui automatically
-
-        self.input.locked = false;
 
         prompt_queue::PromptQueueLifecycle::new(
             &mut self.prompt_items,

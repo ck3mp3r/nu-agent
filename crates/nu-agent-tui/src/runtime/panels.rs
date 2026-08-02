@@ -66,13 +66,6 @@ pub(super) fn wrapped_visual_rows_for_rendered_line(
     width.div_ceil(content_width.max(1))
 }
 
-pub(super) fn input_prompt_prefix(mode: crate::state::InputMode) -> &'static str {
-    match mode {
-        crate::state::InputMode::Insert => "❯ ",
-        crate::state::InputMode::Normal | crate::state::InputMode::Visual => "❮ ",
-    }
-}
-
 pub(super) fn help_panel_total_visual_rows(lines: &[Line<'_>], content_width: usize) -> usize {
     lines
         .iter()
@@ -124,40 +117,6 @@ pub(super) fn command_palette_title(overflow_cue: Option<&str>) -> String {
     } else {
         format!("{base} ({global_hint})")
     }
-}
-
-pub(super) fn inline_slash_lines_for_render(state: &AppState) -> Vec<Line<'static>> {
-    if !state.inline_slash_open {
-        return Vec::new();
-    }
-
-    state
-        .inline_slash_suggestions()
-        .iter()
-        .enumerate()
-        .map(|(idx, command)| {
-            let marker = if idx == state.inline_slash_selection {
-                "❯"
-            } else {
-                " "
-            };
-            let label = command.label();
-            let summary = command.summary();
-            Line::from(format!("{marker} {label} — {summary}"))
-        })
-        .collect()
-}
-
-pub(super) fn input_buffer_for_layout(state: &AppState) -> String {
-    if !state.inline_slash_open {
-        return state.input.buffer.clone();
-    }
-
-    let mut synthetic = state.input.buffer.clone();
-    for _ in state.inline_slash_suggestions() {
-        synthetic.push('\n');
-    }
-    synthetic
 }
 
 pub(super) const MODEL_PICKER_EMPTY_STATE_MESSAGE: &str =

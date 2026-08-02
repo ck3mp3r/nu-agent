@@ -61,13 +61,18 @@ mod hybrid_events_test;
 #[cfg(test)]
 mod selection_render_test;
 
+#[cfg(test)]
+use crate::rendering::layout::wrapped_input_rows;
 use crate::tui_renderer::TuiRenderer;
 use crate::{
     interaction::{
         cancel::CancelController,
         dispatch::dispatch_terminal_event,
+        dispatch::rewrite_action,
         input::{TerminalEvent, TerminalKey},
-        reducer::{ReducerInput, append_direct_tool_display, reduce_with_cancel_controller},
+        reducer::{
+            ReducerInput, UserAction, append_direct_tool_display, reduce_with_cancel_controller,
+        },
     },
     platform::{
         safety::{RestoreRunError, run_with_restore},
@@ -75,10 +80,7 @@ use crate::{
         transport::{TransportItem, TuiTransport},
     },
     rendering::{
-        layout::{
-            LayoutInput, LayoutOutput, input_cursor_row_col, input_pane_height_for_content,
-            recompute_layout, wrapped_input_rows,
-        },
+        layout::{INPUT_MAX_HEIGHT, INPUT_MIN_HEIGHT, LayoutInput, LayoutOutput, recompute_layout},
         theme::TuiTheme,
     },
     state::{
@@ -117,6 +119,7 @@ pub struct RuntimeCoordinator {
     theme: TuiTheme,
     render_needed: bool,
     last_render_at: Instant,
+    textarea: ratatui_textarea::TextArea<'static>,
 }
 
 impl RuntimeCoordinator {
@@ -255,6 +258,7 @@ impl RuntimeCoordinator {
             theme: TuiTheme::default(),
             render_needed: true,
             last_render_at: Instant::now() - Duration::from_millis(100),
+            textarea: ratatui_textarea::TextArea::default(),
         };
         coordinator.sync_transcript_viewport_lines_with_layout();
         coordinator
@@ -477,6 +481,18 @@ impl RuntimeCoordinator {
     }
 
     pub fn poll_terminal_event(&mut self, event_source: &mut impl TerminalEventSource) {
+        // Pick up any restored input text from cancelled prompts before
+        // processing the next event.
+        if let Some(text) = self.state.restored_input_text.take() {
+            let lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
+            let last_line = lines.len().saturating_sub(1) as u16;
+            let last_col = lines.last().map(|l| l.len()).unwrap_or(0) as u16;
+            self.textarea = ratatui_textarea::TextArea::new(lines);
+            self.textarea
+                .move_cursor(ratatui_textarea::CursorMove::Jump(last_line, last_col));
+            self.mark_render_needed();
+        }
+
         if let Some(tracker) = self.repo_branch_tracker.as_mut() {
             tracker.tick();
         }
@@ -517,10 +533,9 @@ impl RuntimeCoordinator {
         if let TerminalEvent::Resize(resize) = event {
             self.terminal_columns = resize.columns;
             self.terminal_rows = resize.rows;
-            let input_height = input_pane_height_for_content(
-                &input_buffer_for_layout(&self.state),
-                resize.columns,
-            );
+            let line_count = self.textarea.lines().len() as u16;
+            let desired = line_count.saturating_add(2);
+            let input_height = desired.clamp(INPUT_MIN_HEIGHT, INPUT_MAX_HEIGHT);
             self.layout = recompute_layout(LayoutInput {
                 columns: resize.columns,
                 rows: resize.rows,
@@ -533,7 +548,47 @@ impl RuntimeCoordinator {
             });
         }
 
-        let _ = dispatch_terminal_event(&mut self.state, &event, Some(&self.cancel_controller));
+        if let TerminalEvent::Paste(text) = &event
+            && self.state.input_mode == InputMode::Insert
+            && !self.state.command_palette_open
+            && self.state.info_panel.is_none()
+        {
+            self.textarea.insert_str(text.as_str());
+            let buffer = self.textarea.lines().join("\n");
+            self.state.check_inline_slash(&buffer);
+            self.mark_render_needed();
+            self.recompute_layout_for_current_input();
+            self.flush_clipboard_request();
+            self.quit_requested |= self.state.quit_requested;
+            self.sync_transcript_viewport_lines_with_layout();
+            self.mark_render_needed();
+            return;
+        }
+
+        let changed = if let TerminalEvent::Key(key) = event
+            && self.state.input_mode == InputMode::Insert
+            && !self.state.command_palette_open
+            && self.state.info_panel.is_none()
+        {
+            let handled = self.handle_insert_mode_key(key);
+            if handled {
+                true
+            } else {
+                // Fall through to dispatch for keys not handled by TextArea
+                // (CtrlC, Esc, CtrlP, CtrlN, Tab, etc.)
+                dispatch_terminal_event(
+                    &mut self.state,
+                    &TerminalEvent::Key(key),
+                    Some(&self.cancel_controller),
+                )
+            }
+        } else {
+            dispatch_terminal_event(&mut self.state, &event, Some(&self.cancel_controller))
+        };
+
+        if changed {
+            self.mark_render_needed();
+        }
         self.recompute_layout_for_current_input();
         self.flush_clipboard_request();
         self.quit_requested |= self.state.quit_requested;
@@ -545,6 +600,289 @@ impl RuntimeCoordinator {
     fn sync_transcript_viewport_lines_with_layout(&mut self) {
         // With ListState, viewport lines are managed by ratatui automatically
         // No manual tracking needed
+    }
+
+    /// Handle a key event in insert mode.
+    /// Returns `true` if the event was consumed, `false` if it should fall through
+    /// to the normal dispatch path.
+    fn handle_insert_mode_key(&mut self, key: TerminalKey) -> bool {
+        // Command palette open? Route to palette, not TextArea.
+        if self.state.command_palette_open {
+            return false;
+        }
+
+        // Picker open? Route to dispatch so rewrite_action handles picker keys
+        // (query filtering, navigation, selection, close).
+        if self.state.model_picker_open {
+            return false;
+        }
+        if self.state.agent_picker_open {
+            return false;
+        }
+        if self.state.session_picker_open {
+            return false;
+        }
+
+        // Info panel open? Route to dispatch so rewrite_action handles
+        // info panel keys (j/k scrolling, Esc to close, etc.).
+        if self.state.info_panel.is_some() {
+            return false;
+        }
+
+        // Permission prompt active? Don't mutate textarea.
+        if self.state.has_permission_prompt() {
+            return false;
+        }
+
+        // Inline slash open? Handle keys directly (navigation, accept, close).
+        if self.state.inline_slash_open {
+            return self.handle_inline_slash_key(key);
+        }
+
+        match key {
+            // Submit — read textarea, clear it, dispatch submit
+            TerminalKey::Enter => {
+                let text = self.textarea.lines().join("\n");
+                self.textarea = ratatui_textarea::TextArea::default();
+                self.state.pending_submit_text = Some(text);
+                let changed = dispatch_terminal_event(
+                    &mut self.state,
+                    &TerminalEvent::Key(TerminalKey::Enter),
+                    Some(&self.cancel_controller),
+                );
+                self.state.check_inline_slash("");
+                self.mark_render_needed();
+                changed
+            }
+            // Esc — let dispatch handle
+            TerminalKey::Esc => false,
+            // History — save textarea content, navigate history
+            TerminalKey::Up => self.handle_history_up(),
+            TerminalKey::Down => self.handle_history_down(),
+            // Navigation keys — route directly to TextArea
+            TerminalKey::Left | TerminalKey::Right | TerminalKey::Home | TerminalKey::End => {
+                let input = match key {
+                    TerminalKey::Left => ratatui_textarea::Input {
+                        key: ratatui_textarea::Key::Left,
+                        ctrl: false,
+                        alt: false,
+                        shift: false,
+                    },
+                    TerminalKey::Right => ratatui_textarea::Input {
+                        key: ratatui_textarea::Key::Right,
+                        ctrl: false,
+                        alt: false,
+                        shift: false,
+                    },
+                    TerminalKey::Home => ratatui_textarea::Input {
+                        key: ratatui_textarea::Key::Home,
+                        ctrl: false,
+                        alt: false,
+                        shift: false,
+                    },
+                    TerminalKey::End => ratatui_textarea::Input {
+                        key: ratatui_textarea::Key::End,
+                        ctrl: false,
+                        alt: false,
+                        shift: false,
+                    },
+                    _ => unreachable!(),
+                };
+                self.textarea.input(input);
+                let buffer = self.textarea.lines().join("\n");
+                self.state.check_inline_slash(&buffer);
+                self.mark_render_needed();
+                true
+            }
+            // Backspace/Delete — route directly to TextArea
+            TerminalKey::Backspace | TerminalKey::Delete => {
+                let input = match key {
+                    TerminalKey::Backspace => ratatui_textarea::Input {
+                        key: ratatui_textarea::Key::Backspace,
+                        ctrl: false,
+                        alt: false,
+                        shift: false,
+                    },
+                    TerminalKey::Delete => ratatui_textarea::Input {
+                        key: ratatui_textarea::Key::Delete,
+                        ctrl: false,
+                        alt: false,
+                        shift: false,
+                    },
+                    _ => unreachable!(),
+                };
+                self.textarea.input(input);
+                let buffer = self.textarea.lines().join("\n");
+                self.state.check_inline_slash(&buffer);
+                self.mark_render_needed();
+                true
+            }
+            // AltEnter/ShiftEnter — insert newline directly
+            TerminalKey::AltEnter | TerminalKey::ShiftEnter => {
+                self.textarea.insert_newline();
+                let buffer = self.textarea.lines().join("\n");
+                self.state.check_inline_slash(&buffer);
+                self.mark_render_needed();
+                true
+            }
+            // All other keys — let dispatch handle them
+            TerminalKey::PageUp
+            | TerminalKey::PageDown
+            | TerminalKey::CtrlU
+            | TerminalKey::CtrlD
+            | TerminalKey::CtrlP
+            | TerminalKey::CtrlN
+            | TerminalKey::Tab
+            | TerminalKey::BackTab
+            | TerminalKey::CtrlC => false,
+            // Char keys — map to UserAction, run through rewrite_action, then route
+            TerminalKey::Char(ch) => {
+                let mapped_action = UserAction::InsertChar(ch);
+                let (rewritten, force_changed) = rewrite_action(&mut self.state, mapped_action);
+                match rewritten {
+                    UserAction::InsertChar(ch) => {
+                        // InsertChar survived — route to TextArea
+                        self.textarea.input(ratatui_textarea::Input {
+                            key: ratatui_textarea::Key::Char(ch),
+                            ctrl: false,
+                            alt: false,
+                            shift: false,
+                        });
+                        let buffer = self.textarea.lines().join("\n");
+                        self.state.check_inline_slash(&buffer);
+                        self.mark_render_needed();
+                        true
+                    }
+                    UserAction::EnterNormalModeFromChord => {
+                        // j/k chord triggered normal mode exit
+                        // Remove the 'j' that was already inserted by TextArea
+                        self.textarea.delete_char();
+                        let _changed = reduce_with_cancel_controller(
+                            &mut self.state,
+                            ReducerInput::User(UserAction::EnterNormalModeFromChord),
+                            Some(&self.cancel_controller),
+                        );
+                        self.mark_render_needed();
+                        true
+                    }
+                    UserAction::Noop => {
+                        // rewrite_action modified state (e.g. insert_exit_pending_j set)
+                        if force_changed {
+                            self.mark_render_needed();
+                        }
+                        true
+                    }
+                    _ => {
+                        // Some other action — let dispatch handle it
+                        false
+                    }
+                }
+            }
+        }
+    }
+
+    /// Handle keys when inline slash suggestions are open.
+    /// Routes characters to TextArea, navigation to suggestion cycling,
+    /// Enter/Esc to accept/close, and Backspace to delete + re-check.
+    fn handle_inline_slash_key(&mut self, key: TerminalKey) -> bool {
+        match key {
+            TerminalKey::Char(ch) => {
+                let (rewritten, _) = rewrite_action(&mut self.state, UserAction::InsertChar(ch));
+                match rewritten {
+                    UserAction::InsertChar(ch) => {
+                        self.textarea.input(ratatui_textarea::Input {
+                            key: ratatui_textarea::Key::Char(ch),
+                            ctrl: false,
+                            alt: false,
+                            shift: false,
+                        });
+                        let buffer = self.textarea.lines().join("\n");
+                        self.state.check_inline_slash(&buffer);
+                        self.mark_render_needed();
+                        true
+                    }
+                    UserAction::InlineSlashAccept => {
+                        let _changed = reduce_with_cancel_controller(
+                            &mut self.state,
+                            ReducerInput::User(UserAction::InlineSlashAccept),
+                            Some(&self.cancel_controller),
+                        );
+                        self.textarea = ratatui_textarea::TextArea::default();
+                        self.state.check_inline_slash("");
+                        self.mark_render_needed();
+                        true
+                    }
+                    UserAction::InlineSlashClose => {
+                        self.state.check_inline_slash("");
+                        self.mark_render_needed();
+                        true
+                    }
+                    _ => false,
+                }
+            }
+            TerminalKey::Up | TerminalKey::BackTab => {
+                self.state.inline_slash_move_up();
+                self.mark_render_needed();
+                true
+            }
+            TerminalKey::Down => {
+                self.state.inline_slash_move_down();
+                self.mark_render_needed();
+                true
+            }
+            TerminalKey::Tab | TerminalKey::Enter => {
+                let changed = reduce_with_cancel_controller(
+                    &mut self.state,
+                    ReducerInput::User(UserAction::InlineSlashAccept),
+                    Some(&self.cancel_controller),
+                );
+                self.textarea = ratatui_textarea::TextArea::default();
+                self.state.check_inline_slash("");
+                self.mark_render_needed();
+                changed
+            }
+            TerminalKey::Esc => {
+                self.state.check_inline_slash("");
+                self.mark_render_needed();
+                true
+            }
+            TerminalKey::Backspace => {
+                self.textarea.input(ratatui_textarea::Input {
+                    key: ratatui_textarea::Key::Backspace,
+                    ctrl: false,
+                    alt: false,
+                    shift: false,
+                });
+                let buffer = self.textarea.lines().join("\n");
+                self.state.check_inline_slash(&buffer);
+                self.mark_render_needed();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Navigate up in input history.
+    /// Saves current textarea content, then loads history item into textarea.
+    fn handle_history_up(&mut self) -> bool {
+        let current = self.textarea.lines().join("\n");
+        if let Some(text) = self.state.history_up(&current) {
+            let lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
+            self.textarea = ratatui_textarea::TextArea::new(lines);
+            self.mark_render_needed();
+        }
+        true
+    }
+
+    /// Navigate down in input history.
+    /// Loads next history item or restores saved draft into textarea.
+    fn handle_history_down(&mut self) -> bool {
+        if let Some(text) = self.state.history_down() {
+            let lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
+            self.textarea = ratatui_textarea::TextArea::new(lines);
+            self.mark_render_needed();
+        }
+        true
     }
 
     fn execute_shared_ui_action(&mut self, action: SharedUiAction) -> bool {
@@ -577,10 +915,12 @@ impl RuntimeCoordinator {
     }
 
     fn recompute_layout_for_current_input(&mut self) {
-        let input_height = input_pane_height_for_content(
-            &input_buffer_for_layout(&self.state),
-            self.layout.transcript.width,
-        );
+        // Use TextArea's actual line count for height calculation.
+        // TextArea handles its own wrapping internally, so the number of
+        // logical lines is the correct measure of content height.
+        let line_count = self.textarea.lines().len() as u16;
+        let desired = line_count.saturating_add(2); // top/bottom borders
+        let input_height = desired.clamp(INPUT_MIN_HEIGHT, INPUT_MAX_HEIGHT);
         self.layout = recompute_layout(LayoutInput {
             columns: self.terminal_columns,
             rows: self.terminal_rows,
@@ -1118,6 +1458,21 @@ impl RuntimeCoordinator {
                     height: input_inner_h,
                 };
 
+                // Split input rect: 2 chars for mode indicator, rest for TextArea
+                let mode_indicator_width = if input_inner.width >= 3 { 2 } else { 0 };
+                let mode_indicator_rect = Rect {
+                    x: input_inner.x,
+                    y: input_inner.y,
+                    width: mode_indicator_width,
+                    height: input_inner.height,
+                };
+                let textarea_rect = Rect {
+                    x: input_inner.x + mode_indicator_width,
+                    y: input_inner.y,
+                    width: input_inner.width.saturating_sub(mode_indicator_width),
+                    height: input_inner.height,
+                };
+
                 // Divider after input
                 let input_div_y = bottom_box_rect
                     .y
@@ -1129,41 +1484,58 @@ impl RuntimeCoordinator {
                 if self.state.permission_prompt.is_some() {
                     render_permission_controls(frame, input_inner, &self.theme);
                 } else {
-                    let content_width = inner.width.saturating_sub(2) as usize;
-                    let input_rows = wrapped_input_rows(&self.state.input.buffer, content_width);
-                    let mut input_lines = Vec::new();
-                    let prompt_prefix = input_prompt_prefix(self.state.input_mode);
-                    if let Some((first, rest)) = input_rows.split_first() {
-                        input_lines.push(Line::from(vec![
-                            Span::styled(prompt_prefix, self.theme.input_prompt),
-                            Span::raw(first.clone()),
-                        ]));
-                        for row in rest {
-                            input_lines
-                                .push(Line::from(vec![Span::raw("  "), Span::raw(row.clone())]));
+                    // Render mode indicator
+                    if mode_indicator_width > 0 && textarea_rect.height > 0 {
+                        let indicator_char = match self.state.input_mode {
+                            InputMode::Insert => "❯ ",
+                            InputMode::Normal | InputMode::Visual => "❮ ",
+                        };
+                        frame.render_widget(
+                            Paragraph::new(Line::from(Span::styled(
+                                indicator_char,
+                                self.theme.subtle_meta,
+                            ))),
+                            mode_indicator_rect,
+                        );
+                    }
+                    // Apply theme styling to TextArea
+                    self.textarea.set_style(self.theme.input_text);
+                    // Make TextArea's internal cursor invisible — the terminal cursor
+                    // (from set_cursor_position) is what the user sees.
+                    self.textarea
+                        .set_cursor_style(ratatui::style::Style::default());
+                    self.textarea
+                        .set_cursor_line_style(ratatui::style::Style::default());
+                    // Render TextArea as the input widget
+                    if textarea_rect.height > 0 {
+                        frame.render_widget(&self.textarea, textarea_rect);
+                    }
+                    // Render inline slash suggestions above TextArea
+                    if self.state.inline_slash_open {
+                        let slash_lines = inline_slash_lines_for_render(&self.state);
+                        if !slash_lines.is_empty() {
+                            let slash_height = slash_lines.len() as u16;
+                            let slash_rect = Rect {
+                                x: textarea_rect.x,
+                                y: textarea_rect.y.saturating_sub(slash_height),
+                                width: textarea_rect.width,
+                                height: slash_height,
+                            };
+                            frame.render_widget(Text::from(slash_lines), slash_rect);
                         }
                     }
-                    input_lines.extend(inline_slash_lines_for_render(&self.state));
-                    let input_widget =
-                        Paragraph::new(Text::from(input_lines)).wrap(Wrap { trim: false });
-                    if input_inner.height > 0 {
-                        frame.render_widget(input_widget, input_inner);
-                    }
-
-                    if !self.state.input.locked
+                    // Set cursor position in insert mode
+                    if !self.state.input_locked
                         && !self.state.command_palette_open
                         && self.state.info_panel.is_none()
                         && bottom_box_rect.height >= 4
                     {
-                        let (cursor_row, cursor_col) = input_cursor_row_col(
-                            &self.state.input.buffer,
-                            self.state.input.cursor,
-                            content_width,
-                        );
+                        let ratatui_textarea::DataCursor(row, col) = self.textarea.cursor();
                         let x = bottom_box_rect
                             .x
-                            .saturating_add(3)
-                            .saturating_add(cursor_col);
+                            .saturating_add(1) // left border
+                            .saturating_add(mode_indicator_width)
+                            .saturating_add(col as u16);
                         let max_x = bottom_box_rect
                             .x
                             .saturating_add(bottom_box_rect.width.saturating_sub(2));
@@ -1171,7 +1543,7 @@ impl RuntimeCoordinator {
                             .y
                             .saturating_add(1) // top border
                             .saturating_add(vertical[2].height) // queue section
-                            .saturating_add(cursor_row)
+                            .saturating_add(row as u16)
                             .min(input_div_y.saturating_sub(1)); // clamp to last input row
                         frame.set_cursor_position(Position { x: x.min(max_x), y });
                     }

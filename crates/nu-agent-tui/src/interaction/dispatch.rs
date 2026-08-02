@@ -12,19 +12,17 @@ pub fn dispatch_terminal_event(
     event: &TerminalEvent,
     cancel_controller: Option<&CancelController>,
 ) -> bool {
-    let Some(mapped_action) = map_terminal_event(event, state.input.locked) else {
+    let Some(mapped_action) = map_terminal_event(event, state.input_locked) else {
         return false;
     };
 
     let (action, force_changed) = rewrite_action(state, mapped_action);
-    let previous = state.clone();
-
-    reduce_with_cancel_controller(state, ReducerInput::User(action), cancel_controller);
-
-    force_changed || (*state != previous)
+    let changed =
+        reduce_with_cancel_controller(state, ReducerInput::User(action), cancel_controller);
+    force_changed || changed
 }
 
-fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserAction, bool) {
+pub(crate) fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserAction, bool) {
     if let Some(panel) = state.info_panel {
         return (
             match panel {
@@ -460,23 +458,21 @@ fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserAction, bool
             UserAction::InsertChar('j') => {
                 if state.insert_exit_pending_j() {
                     state.set_insert_exit_pending_j(false);
-                    state.backspace_input_char();
                     state.enter_normal_mode();
                     (UserAction::Noop, true)
                 } else {
                     state.set_insert_exit_pending_j(true);
-                    (UserAction::InsertChar('j'), false)
+                    (UserAction::InsertChar('j'), true) // force_changed: j/k chord tracking modifies state
                 }
             }
             UserAction::InsertChar('k') => {
                 if state.insert_exit_pending_j() {
                     state.set_insert_exit_pending_j(false);
-                    state.backspace_input_char();
                     state.enter_normal_mode();
                     (UserAction::Noop, true)
                 } else {
                     state.set_insert_exit_pending_j(false);
-                    (UserAction::InsertChar('k'), false)
+                    (UserAction::InsertChar('k'), true) // force_changed: j/k chord tracking modifies state
                 }
             }
             UserAction::Esc => {

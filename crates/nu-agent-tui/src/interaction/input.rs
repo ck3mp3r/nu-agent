@@ -32,10 +32,11 @@ pub struct TerminalResize {
     pub rows: u16,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TerminalEvent {
     Key(TerminalKey),
     Resize(TerminalResize),
+    Paste(String),
 }
 
 pub fn map_terminal_event(event: &TerminalEvent, locked: bool) -> Option<UserAction> {
@@ -45,6 +46,7 @@ pub fn map_terminal_event(event: &TerminalEvent, locked: bool) -> Option<UserAct
             rows: *rows,
         }),
         TerminalEvent::Key(key) => map_key(*key, locked),
+        TerminalEvent::Paste(_) => None,
     }
 }
 

@@ -200,8 +200,6 @@ impl AppState {
     pub fn queue_model_picker_launch_request(&mut self) {
         self.pending_model_picker_launch_requests =
             self.pending_model_picker_launch_requests.saturating_add(1);
-        self.input.buffer.clear();
-        self.input.cursor = 0;
         self.abort.pending = false;
         self.ensure_invariants();
     }
@@ -309,8 +307,6 @@ impl AppState {
     pub fn queue_agent_picker_launch_request(&mut self) {
         self.pending_agent_picker_launch_requests =
             self.pending_agent_picker_launch_requests.saturating_add(1);
-        self.input.buffer.clear();
-        self.input.cursor = 0;
         self.abort.pending = false;
         self.ensure_invariants();
     }
@@ -482,8 +478,6 @@ impl AppState {
         self.pending_session_picker_launch_requests = self
             .pending_session_picker_launch_requests
             .saturating_add(1);
-        self.input.buffer.clear();
-        self.input.cursor = 0;
         self.abort.pending = false;
         self.ensure_invariants();
     }

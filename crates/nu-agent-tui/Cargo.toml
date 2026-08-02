@@ -6,6 +6,7 @@ version.workspace = true
 [dependencies]
 nu-agent-core = { workspace = true }
 ratatui = { workspace = true }
+ratatui-textarea = { workspace = true }
 crossterm = { workspace = true }
 unicode-width = { workspace = true }
 syntect = { workspace = true }

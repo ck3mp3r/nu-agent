@@ -14,8 +14,7 @@ fn defaults_start_idle_with_unlocked_input_and_no_abort_pending() {
     let state = AppState::new();
 
     assert_eq!(state.phase, UiPhase::Idle);
-    assert!(!state.input.locked);
-    assert!(state.input.buffer.is_empty());
+    assert!(!state.input_locked);
     assert!(!state.abort.pending);
     assert_eq!(state.abort.confirmation_marker, 0);
     assert!(state.transcript_preview.is_empty());
@@ -29,15 +28,11 @@ fn defaults_start_idle_with_unlocked_input_and_no_abort_pending() {
 #[test]
 fn submit_acceptance_clears_input_and_keeps_input_editable() {
     let mut state = AppState::new();
-    for ch in "check cluster status".chars() {
-        state.append_input_char(ch);
-    }
 
     state.enqueue_prompt("check cluster status".to_string());
 
     assert_eq!(state.phase, UiPhase::Busy);
-    assert!(!state.input.locked);
-    assert!(state.input.buffer.is_empty());
+    assert!(!state.input_locked);
 }
 
 #[test]
@@ -45,7 +40,7 @@ fn non_idle_phase_keeps_input_editable_for_queueing() {
     let mut state = AppState::new();
 
     state.enqueue_prompt("one".to_string());
-    assert!(!state.input.locked);
+    assert!(!state.input_locked);
     assert_eq!(state.prompt_items().len(), 1);
     assert_eq!(state.prompt_items()[0].status, PromptStatus::Queued);
 
@@ -55,7 +50,7 @@ fn non_idle_phase_keeps_input_editable_for_queueing() {
 
     state.request_abort_confirmation();
     assert_eq!(state.phase, UiPhase::AbortPending);
-    assert!(!state.input.locked);
+    assert!(!state.input_locked);
 }
 
 #[test]
@@ -83,7 +78,7 @@ fn finalize_resets_abort_pending_and_unlocks_input() {
     state.finalize_cycle();
 
     assert_eq!(state.phase, UiPhase::Idle);
-    assert!(!state.input.locked);
+    assert!(!state.input_locked);
     assert!(!state.abort.pending);
     assert_eq!(state.prompt_items()[0].status, PromptStatus::Done);
 }
@@ -161,28 +156,8 @@ fn global_abort_cancels_active_and_all_pending_prompts() {
 
 #[test]
 fn input_cursor_and_edit_operations_handle_middle_insert_delete_and_backspace() {
-    let mut state = AppState::new();
-    for ch in ['a', 'c'] {
-        state.append_input_char(ch);
-    }
-
-    state.move_cursor_left();
-    state.append_input_char('b');
-    assert_eq!(state.input.buffer, "abc");
-    assert_eq!(state.input.cursor, 2);
-
-    state.backspace_input_char();
-    assert_eq!(state.input.buffer, "ac");
-    assert_eq!(state.input.cursor, 1);
-
-    state.delete_input_char();
-    assert_eq!(state.input.buffer, "a");
-    assert_eq!(state.input.cursor, 1);
-
-    state.move_cursor_home();
-    assert_eq!(state.input.cursor, 0);
-    state.move_cursor_end();
-    assert_eq!(state.input.cursor, state.input.buffer.len());
+    // These operations are now handled by TextArea, not AppState.
+    // This test is preserved as a no-op to document the architectural change.
 }
 
 #[test]
@@ -369,27 +344,8 @@ fn pane_focus_can_cycle_left_and_right() {
 
 #[test]
 fn append_newline_insert_and_boundary_deletes_work_across_lines() {
-    let mut state = AppState::new();
-    for ch in "ab".chars() {
-        state.append_input_char(ch);
-    }
-    state.append_input_char('\n');
-    for ch in "cd".chars() {
-        state.append_input_char(ch);
-    }
-
-    assert_eq!(state.input.buffer, "ab\ncd");
-    assert_eq!(state.input.cursor, state.input.buffer.len());
-
-    state.move_cursor_left();
-    state.move_cursor_left();
-    state.backspace_input_char();
-    assert_eq!(state.input.buffer, "abcd");
-
-    state.move_cursor_left();
-    state.move_cursor_left();
-    state.delete_input_char();
-    assert_eq!(state.input.buffer, "bcd");
+    // These operations are now handled by TextArea, not AppState.
+    // This test is preserved as a no-op to document the architectural change.
 }
 
 #[test]
@@ -511,7 +467,7 @@ fn command_palette_includes_models_action() {
 fn inline_slash_suggestions_open_on_leading_slash() {
     let mut state = AppState::new();
 
-    state.append_input_char('/');
+    state.check_inline_slash("/");
 
     assert!(state.inline_slash_open);
     assert_eq!(state.inline_slash_selection, 0);
@@ -534,16 +490,16 @@ fn inline_slash_suggestions_open_on_leading_slash() {
 fn inline_slash_suggestions_filter_incrementally_as_input_grows() {
     let mut state = AppState::new();
 
-    state.append_input_char('/');
+    state.check_inline_slash("/");
     assert_eq!(state.inline_slash_suggestions().len(), 8);
 
-    state.append_input_char('c');
+    state.check_inline_slash("/c");
     assert_eq!(
         state.inline_slash_suggestions(),
         &[nu_agent_core::protocol::slash::SlashCommand::Compact]
     );
 
-    state.append_input_char('o');
+    state.check_inline_slash("/co");
     assert_eq!(
         state.inline_slash_suggestions(),
         &[nu_agent_core::protocol::slash::SlashCommand::Compact]
@@ -554,14 +510,11 @@ fn inline_slash_suggestions_filter_incrementally_as_input_grows() {
 fn inline_slash_suggestions_close_when_prefix_removed() {
     let mut state = AppState::new();
 
-    state.append_input_char('/');
-    state.append_input_char('c');
+    state.check_inline_slash("/c");
     assert!(state.inline_slash_open);
 
-    state.backspace_input_char();
-    state.backspace_input_char();
+    state.check_inline_slash("");
 
-    assert_eq!(state.input.buffer, "");
     assert!(!state.inline_slash_open);
     assert!(state.inline_slash_suggestions().is_empty());
 }
@@ -570,7 +523,7 @@ fn inline_slash_suggestions_close_when_prefix_removed() {
 fn inline_slash_suggestions_do_not_open_command_palette() {
     let mut state = AppState::new();
 
-    state.append_input_char('/');
+    state.check_inline_slash("/");
 
     assert!(state.inline_slash_open);
     assert!(!state.command_palette_open);
@@ -1211,14 +1164,10 @@ fn test_close_agent_picker() {
 #[test]
 fn test_queue_agent_picker_launch_request() {
     let mut state = AppState::new();
-    state.append_input_char('x');
-    assert_eq!(state.input.buffer, "x");
 
     state.queue_agent_picker_launch_request();
 
     assert!(state.take_next_agent_picker_launch_request());
-    assert!(state.input.buffer.is_empty());
-    assert_eq!(state.input.cursor, 0);
 }
 
 #[test]
@@ -1601,10 +1550,9 @@ fn cancel_and_restore_drains_pending_texts_into_input_buffer() {
     state.enqueue_prompt("beta".to_string());
     state.enqueue_prompt("gamma".to_string());
 
-    state.cancel_and_restore_pending_to_input();
+    let result = state.cancel_and_restore_pending_to_input();
 
-    assert_eq!(state.input.buffer, "beta\n\ngamma");
-    assert_eq!(state.input.cursor, state.input.buffer.len());
+    assert_eq!(result, Some("beta\n\ngamma".to_string()));
     assert!(state.pending_prompt_ids().is_empty());
     assert_eq!(state.active_prompt_id(), None);
     assert_eq!(state.phase, UiPhase::Idle);
@@ -1616,17 +1564,17 @@ fn cancel_and_restore_with_no_pending_leaves_buffer_empty() {
     state.enqueue_prompt("only".to_string());
     let _ = state.activate_next_prompt();
 
-    state.cancel_and_restore_pending_to_input();
+    let result = state.cancel_and_restore_pending_to_input();
 
-    assert_eq!(state.input.buffer, "");
+    assert_eq!(result, None);
     assert_eq!(state.phase, UiPhase::Idle);
 }
 
 #[test]
 fn cancel_and_restore_on_idle_is_noop() {
     let mut state = AppState::new();
-    state.cancel_and_restore_pending_to_input();
-    assert_eq!(state.input.buffer, "");
+    let result = state.cancel_and_restore_pending_to_input();
+    assert_eq!(result, None);
 }
 
 #[test]
@@ -1672,9 +1620,8 @@ fn history_up_on_first_use_loads_last_submitted() {
     state.enqueue_prompt("p1".to_string());
     let _ = state.activate_next_prompt();
     state.complete_active_prompt();
-    state.history_up();
-    assert_eq!(state.input.buffer, "p1");
-    assert_eq!(state.input.cursor, 2);
+    let result = state.history_up("");
+    assert_eq!(result, Some("p1".to_string()));
 }
 
 #[test]
@@ -1685,14 +1632,14 @@ fn history_up_cycles_newest_first_and_clamps_at_oldest() {
         let _ = state.activate_next_prompt();
         state.complete_active_prompt();
     }
-    state.history_up();
-    assert_eq!(state.input.buffer, "c");
-    state.history_up();
-    assert_eq!(state.input.buffer, "b");
-    state.history_up();
-    assert_eq!(state.input.buffer, "a");
-    state.history_up();
-    assert_eq!(state.input.buffer, "a"); // clamp
+    let r1 = state.history_up("");
+    assert_eq!(r1, Some("c".to_string()));
+    let r2 = state.history_up("");
+    assert_eq!(r2, Some("b".to_string()));
+    let r3 = state.history_up("");
+    assert_eq!(r3, Some("a".to_string()));
+    let r4 = state.history_up("");
+    assert_eq!(r4, Some("a".to_string())); // clamp
 }
 
 #[test]
@@ -1701,30 +1648,31 @@ fn history_down_past_newest_restores_draft() {
     state.enqueue_prompt("p1".to_string());
     let _ = state.activate_next_prompt();
     state.complete_active_prompt();
-    state.input.buffer = "draft".to_string();
-    state.input.cursor = 5;
-    state.history_up();
-    assert_eq!(state.input.buffer, "p1");
-    state.history_down();
-    assert_eq!(state.input.buffer, "draft");
+    let _ = state.history_up("draft");
+    assert_eq!(state.history_down(), Some("draft".to_string()));
 }
 
 #[test]
 fn history_up_moves_cursor_up_in_multiline_buffer() {
+    // History navigation now returns text; cursor is managed by TextArea.
+    // This test verifies the text is returned correctly.
     let mut state = AppState::new();
-    state.input.buffer = "abcde\nxy".to_string();
-    state.input.cursor = 8;
-    state.history_up();
-    assert_eq!(state.input.cursor, 2);
+    state.enqueue_prompt("prev".to_string());
+    let _ = state.activate_next_prompt();
+    state.complete_active_prompt();
+    let result = state.history_up("line1\nline2");
+    assert_eq!(result, Some("prev".to_string()));
 }
 
 #[test]
 fn history_up_clamps_column_to_shorter_prev_line() {
+    // History navigation now returns text; cursor is managed by TextArea.
     let mut state = AppState::new();
-    state.input.buffer = "ab\nxyz".to_string();
-    state.input.cursor = 6;
-    state.history_up();
-    assert_eq!(state.input.cursor, 2);
+    state.enqueue_prompt("prev".to_string());
+    let _ = state.activate_next_prompt();
+    state.complete_active_prompt();
+    let result = state.history_up("ab\nxyz");
+    assert_eq!(result, Some("prev".to_string()));
 }
 
 #[test]
@@ -1733,19 +1681,15 @@ fn history_up_on_first_line_of_multiline_enters_history() {
     state.enqueue_prompt("prev".to_string());
     let _ = state.activate_next_prompt();
     state.complete_active_prompt();
-    state.input.buffer = "line1\nline2".to_string();
-    state.input.cursor = 3;
-    state.history_up();
-    assert_eq!(state.input.buffer, "prev");
+    let result = state.history_up("line1\nline2");
+    assert_eq!(result, Some("prev".to_string()));
 }
 
 #[test]
 fn history_down_moves_cursor_down_in_multiline() {
-    let mut state = AppState::new();
-    state.input.buffer = "line1\nline2".to_string();
-    state.input.cursor = 0;
-    state.history_down();
-    assert_eq!(state.input.cursor, 6);
+    // History navigation now returns text; cursor is managed by TextArea.
+    let result = AppState::new().history_down();
+    assert_eq!(result, None);
 }
 
 #[test]
@@ -1754,13 +1698,9 @@ fn typing_resets_history_navigation() {
     state.enqueue_prompt("p1".to_string());
     let _ = state.activate_next_prompt();
     state.complete_active_prompt();
-    state.history_up();
-    assert_eq!(state.input.buffer, "p1");
-    state.append_input_char('x');
-    assert_eq!(state.input.buffer, "p1x");
-    // After typing, down should move cursor (not restore draft)
-    state.input.buffer = "a\nb".to_string();
-    state.input.cursor = 1;
-    state.history_down();
-    assert_eq!(state.input.cursor, 3);
+    let _ = state.history_up("");
+    assert_eq!(state.history_up(""), Some("p1".to_string()));
+    // After typing, history navigation is reset
+    state.reset_history_navigation();
+    assert_eq!(state.history_down(), None);
 }

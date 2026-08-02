@@ -75,7 +75,7 @@ pub fn reduce_with_cancel_controller(
     state: &mut AppState,
     input: ReducerInput,
     cancel_controller: Option<&CancelController>,
-) {
+) -> bool {
     match input {
         ReducerInput::User(action) => reduce_user_action(state, action, cancel_controller),
         ReducerInput::Event(event) => reduce_ui_event(state, *event),
@@ -86,7 +86,7 @@ fn reduce_user_action(
     state: &mut AppState,
     action: UserAction,
     cancel_controller: Option<&CancelController>,
-) {
+) -> bool {
     match action {
         UserAction::InsertChar(ch) => handle_insert_char(state, ch),
         UserAction::InsertNewline => handle_insert_newline(state),
@@ -97,7 +97,7 @@ fn reduce_user_action(
         UserAction::MoveCursorRight => handle_move_cursor_right(state),
         UserAction::MoveCursorHome => handle_move_cursor_home(state),
         UserAction::MoveCursorEnd => handle_move_cursor_end(state),
-        UserAction::Noop => {}
+        UserAction::Noop => false,
         UserAction::EnterInsertMode => handle_enter_insert_mode(state),
         UserAction::EnterVisualMode => handle_enter_visual_mode(state),
         UserAction::EnterNormalModeFromChord => handle_enter_normal_mode_from_chord(state),
@@ -110,66 +110,93 @@ fn reduce_user_action(
         UserAction::YankSelection => handle_yank_selection(state),
         UserAction::PermissionAllowOnce => {
             let _ = state.submit_permission_decision(PermissionDecision::AllowOnce);
+            true
         }
         UserAction::PermissionAllowAlways => {
             let _ = state.submit_permission_decision(PermissionDecision::AllowAlways);
+            true
         }
         UserAction::PermissionDeny => {
             let _ = state.submit_permission_decision(PermissionDecision::Deny);
+            true
         }
-        UserAction::Resize { .. } => {}
+        UserAction::Resize { .. } => false,
         UserAction::ToggleCommandPalette => handle_toggle_command_palette(state),
-        UserAction::CommandPaletteMoveUp => state.command_palette_move_up(),
-        UserAction::CommandPaletteMoveDown => state.command_palette_move_down(),
+        UserAction::CommandPaletteMoveUp => {
+            state.command_palette_move_up();
+            true
+        }
+        UserAction::CommandPaletteMoveDown => {
+            state.command_palette_move_down();
+            true
+        }
         UserAction::CommandPaletteSelect => handle_command_palette_select(state),
-        UserAction::CommandPaletteClose => state.close_command_palette(),
-        UserAction::InlineSlashMoveUp => state.inline_slash_move_up(),
-        UserAction::InlineSlashMoveDown => state.inline_slash_move_down(),
+        UserAction::CommandPaletteClose => {
+            state.close_command_palette();
+            true
+        }
+        UserAction::InlineSlashMoveUp => {
+            state.inline_slash_move_up();
+            true
+        }
+        UserAction::InlineSlashMoveDown => {
+            state.inline_slash_move_down();
+            true
+        }
         UserAction::InlineSlashAccept => handle_inline_slash_accept(state),
-        UserAction::InlineSlashClose => state.close_inline_slash_suggestions(),
-        UserAction::HistoryUp => state.history_up(),
-        UserAction::HistoryDown => state.history_down(),
-        UserAction::QueryNext | UserAction::CompleteForward | UserAction::CompleteBackward => {}
+        UserAction::InlineSlashClose => {
+            state.close_inline_slash_suggestions();
+            true
+        }
+        UserAction::HistoryUp => false,
+        UserAction::HistoryDown => false,
+        UserAction::QueryNext | UserAction::CompleteForward | UserAction::CompleteBackward => false,
         UserAction::ScrollPageUp => handle_scroll_page_up(state),
         UserAction::ScrollPageDown => handle_scroll_page_down(state),
         UserAction::Quit => handle_quit(state, cancel_controller),
         UserAction::Esc => handle_escape(state),
-        UserAction::EscConfirm => {
-            handle_escape_confirm(state, cancel_controller);
-        }
+        UserAction::EscConfirm => handle_escape_confirm(state, cancel_controller),
     }
 }
 
-fn handle_insert_char(state: &mut AppState, ch: char) {
-    state.append_input_char(ch);
+fn handle_insert_char(state: &mut AppState, ch: char) -> bool {
+    let _ = state;
+    let _ = ch;
+    false
 }
 
-fn handle_insert_newline(state: &mut AppState) {
-    state.insert_input_newline();
+fn handle_insert_newline(state: &mut AppState) -> bool {
+    let _ = state;
+    false
 }
 
-fn handle_backspace(state: &mut AppState) {
-    state.backspace_input_char();
+fn handle_backspace(state: &mut AppState) -> bool {
+    let _ = state;
+    false
 }
 
-fn handle_delete(state: &mut AppState) {
-    state.delete_input_char();
+fn handle_delete(state: &mut AppState) -> bool {
+    let _ = state;
+    false
 }
 
-fn handle_submit(state: &mut AppState) {
-    let submitted_text = state.input.buffer.clone();
+fn handle_submit(state: &mut AppState) -> bool {
+    // handle_submit is only called from non-insert-mode paths (normal mode, etc.)
+    // where there's no textarea. The caller must set pending_submit_text on AppState
+    // before dispatching Submit.
+    let submitted_text = state.pending_submit_text.take().unwrap_or_default();
     if submitted_text.trim().is_empty() {
-        return;
+        return false;
     }
 
     match parse_slash_command(&submitted_text) {
         SlashParseResult::Command(nu_agent_core::protocol::slash::SlashCommand::Models) => {
             state.queue_model_picker_launch_request();
-            return;
+            return true;
         }
         SlashParseResult::Command(nu_agent_core::protocol::slash::SlashCommand::Agent) => {
             state.queue_agent_picker_launch_request();
-            return;
+            return true;
         }
         SlashParseResult::Command(nu_agent_core::protocol::slash::SlashCommand::Session) => {
             if let Some(session_id) = extract_session_id(&submitted_text) {
@@ -177,63 +204,70 @@ fn handle_submit(state: &mut AppState) {
             } else {
                 state.queue_session_picker_launch_request();
             }
-            return;
+            return true;
         }
         SlashParseResult::Command(_) | SlashParseResult::Unknown(_) => {
             state.enqueue_immediate_submission(submitted_text);
-            return;
+            return true;
         }
         SlashParseResult::NotSlash => {}
     }
 
     state.enqueue_prompt(submitted_text);
-    state.input.buffer.clear();
-    state.input.cursor = 0;
+    true
 }
 
-fn handle_move_cursor_left(state: &mut AppState) {
-    state.move_cursor_left();
+fn handle_move_cursor_left(state: &mut AppState) -> bool {
+    let _ = state;
+    false
 }
 
-fn handle_move_cursor_right(state: &mut AppState) {
-    state.move_cursor_right();
+fn handle_move_cursor_right(state: &mut AppState) -> bool {
+    let _ = state;
+    false
 }
 
-fn handle_move_cursor_home(state: &mut AppState) {
-    state.move_cursor_home();
+fn handle_move_cursor_home(state: &mut AppState) -> bool {
+    let _ = state;
+    false
 }
 
-fn handle_move_cursor_end(state: &mut AppState) {
-    state.move_cursor_end();
+fn handle_move_cursor_end(state: &mut AppState) -> bool {
+    let _ = state;
+    false
 }
 
-fn handle_enter_insert_mode(state: &mut AppState) {
+fn handle_enter_insert_mode(state: &mut AppState) -> bool {
     if state.phase == UiPhase::Idle {
         state.enter_insert_mode();
+        return true;
     }
+    false
 }
 
-fn handle_enter_visual_mode(state: &mut AppState) {
+fn handle_enter_visual_mode(state: &mut AppState) -> bool {
     if state.phase != UiPhase::Idle {
-        return;
+        return false;
     }
     if state.pane_focus != PaneFocus::Transcript {
         state.status_line = VISUAL_REQUIRES_TRANSCRIPT_FOCUS_STATUS.to_string();
-        return;
+        return true;
     }
     state.transcript_selection = Some(TranscriptSelection::new(state.cursor_visual_row));
     state.input_mode = InputMode::Visual;
     state.status_line = "-- VISUAL --".to_string();
+    true
 }
 
-fn handle_enter_normal_mode_from_chord(state: &mut AppState) {
+fn handle_enter_normal_mode_from_chord(state: &mut AppState) -> bool {
     if state.phase == UiPhase::Idle {
-        state.backspace_input_char();
         state.enter_normal_mode();
+        return true;
     }
+    false
 }
 
-fn handle_scroll_line_up(state: &mut AppState) {
+fn handle_scroll_line_up(state: &mut AppState) -> bool {
     if state.transcript_following_tail {
         state.transcript_scroll_offset = state.max_scroll;
         state.transcript_following_tail = false;
@@ -248,9 +282,10 @@ fn handle_scroll_line_up(state: &mut AppState) {
     if state.cursor_visual_row < state.transcript_scroll_offset + scroll_margin {
         state.transcript_scroll_offset = state.transcript_scroll_offset.saturating_sub(1);
     }
+    true
 }
 
-fn handle_scroll_line_down(state: &mut AppState) {
+fn handle_scroll_line_down(state: &mut AppState) -> bool {
     if state.transcript_following_tail {
         state.transcript_scroll_offset = state.max_scroll;
         state.transcript_following_tail = false;
@@ -273,9 +308,10 @@ fn handle_scroll_line_down(state: &mut AppState) {
     if state.cursor_visual_row >= viewport_bottom {
         state.transcript_scroll_offset = state.transcript_scroll_offset.saturating_add(1);
     }
+    true
 }
 
-fn handle_scroll_to_top(state: &mut AppState) {
+fn handle_scroll_to_top(state: &mut AppState) -> bool {
     if state.transcript_following_tail {
         state.transcript_scroll_offset = state.max_scroll;
         state.transcript_following_tail = false;
@@ -287,9 +323,10 @@ fn handle_scroll_to_top(state: &mut AppState) {
     {
         sel.move_cursor_to_top();
     }
+    true
 }
 
-fn handle_scroll_to_bottom(state: &mut AppState) {
+fn handle_scroll_to_bottom(state: &mut AppState) -> bool {
     state.cursor_visual_row = state.total_visual_rows.saturating_sub(1);
     if state.input_mode == InputMode::Visual
         && let Some(ref mut sel) = state.transcript_selection
@@ -297,19 +334,22 @@ fn handle_scroll_to_bottom(state: &mut AppState) {
         sel.move_cursor_to_bottom(state.total_visual_rows.saturating_sub(1));
     }
     state.scroll_transcript_to_bottom();
+    true
 }
 
-fn handle_focus_pane_left(state: &mut AppState) {
+fn handle_focus_pane_left(state: &mut AppState) -> bool {
     state.focus_prev_pane();
+    true
 }
 
-fn handle_focus_pane_right(state: &mut AppState) {
+fn handle_focus_pane_right(state: &mut AppState) -> bool {
     state.focus_next_pane();
+    true
 }
 
-fn handle_yank_selection(state: &mut AppState) {
+fn handle_yank_selection(state: &mut AppState) -> bool {
     if state.input_mode != InputMode::Visual {
-        return;
+        return false;
     }
     if let Some(ref sel) = state.transcript_selection {
         let (start_row, end_row) = sel.normalized_range();
@@ -334,34 +374,36 @@ fn handle_yank_selection(state: &mut AppState) {
     }
     state.transcript_selection = None;
     state.enter_normal_mode();
+    true
 }
 
-fn handle_toggle_command_palette(state: &mut AppState) {
+fn handle_toggle_command_palette(state: &mut AppState) -> bool {
     if state.command_palette_open {
         state.close_command_palette();
     } else {
         state.open_command_palette();
     }
+    true
 }
 
-fn handle_command_palette_select(state: &mut AppState) {
+fn handle_command_palette_select(state: &mut AppState) -> bool {
     if let Some(action) = state.command_palette_selected_action() {
         if action == crate::state::CommandPaletteAction::Models {
             state.close_command_palette();
             state.queue_model_picker_launch_request();
-            return;
+            return true;
         }
 
         if action == crate::state::CommandPaletteAction::Agents {
             state.close_command_palette();
             state.queue_agent_picker_launch_request();
-            return;
+            return true;
         }
 
         if action == crate::state::CommandPaletteAction::Sessions {
             state.close_command_palette();
             state.queue_session_picker_launch_request();
-            return;
+            return true;
         }
 
         if let Some(panel) = action.info_panel() {
@@ -369,21 +411,23 @@ fn handle_command_palette_select(state: &mut AppState) {
         } else {
             state.close_command_palette();
         }
+        return true;
     }
+    false
 }
 
-fn handle_inline_slash_accept(state: &mut AppState) {
+fn handle_inline_slash_accept(state: &mut AppState) -> bool {
     let Some(command) = state.inline_slash_selected_command() else {
-        return;
+        return false;
     };
     let selected = command.label().to_string();
-    state.input.buffer = selected;
-    state.input.cursor = state.input.buffer.len();
+    state.pending_submit_text = Some(selected);
     state.ensure_invariants();
     handle_submit(state);
+    true
 }
 
-fn handle_scroll_page_up(state: &mut AppState) {
+fn handle_scroll_page_up(state: &mut AppState) -> bool {
     if state.transcript_following_tail {
         state.transcript_scroll_offset = state.max_scroll;
         state.transcript_following_tail = false;
@@ -399,9 +443,10 @@ fn handle_scroll_page_up(state: &mut AppState) {
     if state.cursor_visual_row < state.transcript_scroll_offset + scroll_margin {
         state.transcript_scroll_offset = state.transcript_scroll_offset.saturating_sub(page);
     }
+    true
 }
 
-fn handle_scroll_page_down(state: &mut AppState) {
+fn handle_scroll_page_down(state: &mut AppState) -> bool {
     if state.transcript_following_tail {
         state.transcript_scroll_offset = state.max_scroll;
         state.transcript_following_tail = false;
@@ -425,61 +470,66 @@ fn handle_scroll_page_down(state: &mut AppState) {
     if state.cursor_visual_row >= viewport_bottom {
         state.transcript_scroll_offset = state.transcript_scroll_offset.saturating_add(page);
     }
+    true
 }
 
-fn handle_quit(state: &mut AppState, cancel_controller: Option<&CancelController>) {
+fn handle_quit(state: &mut AppState, cancel_controller: Option<&CancelController>) -> bool {
     if state.phase != crate::state::UiPhase::Idle {
         // Busy: cancel the running turn and quit
         if let Some(controller) = cancel_controller {
             controller.request_cancel();
         }
         state.quit_requested = true;
-    } else if !state.input.buffer.is_empty() {
-        // Idle, non-empty input: clear the buffer
-        state.input.buffer.clear();
-        state.input.cursor = 0;
     } else {
-        // Idle, empty input: quit
+        // Idle: quit
         state.request_quit_if_idle();
     }
+    true
 }
 
-fn handle_escape(state: &mut AppState) {
+fn handle_escape(state: &mut AppState) -> bool {
     if state.has_permission_prompt() {
         let _ = state.submit_permission_decision(PermissionDecision::Deny);
-        return;
+        return true;
     }
 
     if state.info_panel.is_some() {
         state.close_info_panel();
-        return;
+        return true;
     }
 
     if state.phase == UiPhase::Idle && state.input_mode == InputMode::Insert {
         state.enter_normal_mode();
-        return;
+        return true;
     }
     if state.phase == UiPhase::Idle && state.input_mode == InputMode::Visual {
         state.transcript_selection = None;
         state.enter_normal_mode();
-        return;
+        return true;
     }
     if state.request_abort_confirmation() {
         state.status_line = ESC_ABORT_CONFIRM_STATUS.to_string();
+        return true;
     }
+    false
 }
 
-fn handle_escape_confirm(state: &mut AppState, cancel_controller: Option<&CancelController>) {
+fn handle_escape_confirm(
+    state: &mut AppState,
+    cancel_controller: Option<&CancelController>,
+) -> bool {
     if state.phase == UiPhase::AbortPending && state.abort.pending && state.is_active_cycle() {
         if let Some(controller) = cancel_controller {
             controller.request_cancel();
         }
         state.cancel_and_restore_pending_to_input();
         state.status_line = ABORT_REQUESTED_STATUS.to_string();
+        return true;
     }
+    false
 }
 
-fn reduce_ui_event(state: &mut AppState, event: UiEvent) {
+fn reduce_ui_event(state: &mut AppState, event: UiEvent) -> bool {
     match event {
         UiEvent::LlmStart => handle_llm_start(state),
         UiEvent::Tick => handle_tick(state),
@@ -499,7 +549,7 @@ fn reduce_ui_event(state: &mut AppState, event: UiEvent) {
         } => handle_permission_requested(state, request_id, context),
         UiEvent::PermissionDecisionSubmitted { .. }
         | UiEvent::PermissionDecisionTimedOut { .. }
-        | UiEvent::PermissionDecisionIgnored { .. } => {}
+        | UiEvent::PermissionDecisionIgnored { .. } => false,
         UiEvent::LlmEnd {
             response_chars,
             input_tokens,
@@ -518,15 +568,15 @@ fn reduce_ui_event(state: &mut AppState, event: UiEvent) {
             state.push_transcript_line(TranscriptRole::System, format!("Error: {}", message));
             state.status_line = message.clone();
             finalize(state);
+            true
         }
         UiEvent::CompactionStarted { source } => {
             state.start_compaction_block(&source);
+            true
         }
         UiEvent::CompactionSummaryChunk {
             source, aggregated, ..
-        } => {
-            handle_compaction_summary_chunk(state, &source, aggregated);
-        }
+        } => handle_compaction_summary_chunk(state, &source, aggregated),
         UiEvent::CompactionTriggered {
             source,
             summarized_count: _,
@@ -557,6 +607,7 @@ fn reduce_ui_event(state: &mut AppState, event: UiEvent) {
             state.status_line.clear();
             // Reset displayed token % — context was freed; wait for next LlmEnd to update.
             state.latest_total_tokens = None;
+            true
         }
         UiEvent::CompactionFailed { source, message } => {
             state.start_compaction_block(&source);
@@ -566,40 +617,48 @@ fn reduce_ui_event(state: &mut AppState, event: UiEvent) {
                 format!("Compaction failed deterministically: {message}"),
             );
             state.status_line.clear();
+            true
         }
         UiEvent::AssistantMessage { text } => {
             log::trace!("reducer: AssistantMessage text_len={}", text.len());
-            handle_assistant_message(state, text);
+            handle_assistant_message(state, text)
         }
-        UiEvent::Completed { .. } => finalize(state),
+        UiEvent::Completed { .. } => {
+            finalize(state);
+            true
+        }
     }
 }
 
-fn handle_llm_start(state: &mut AppState) {
+fn handle_llm_start(state: &mut AppState) -> bool {
     if state.phase == UiPhase::Idle {
         state.phase = UiPhase::Busy;
+        state.input_locked = true;
         state.ensure_invariants();
     }
     // Reset streaming state at the start of a new LLM response
     state.streaming_message_start = None;
+    true
 }
 
-fn handle_tick(state: &mut AppState) {
+fn handle_tick(state: &mut AppState) -> bool {
     if state.status_line.is_empty() {
         state.status_line = "Thinking...".to_string();
     }
+    true
 }
 
-fn handle_tool_start(state: &mut AppState, name: &str, arguments: &str) {
+fn handle_tool_start(state: &mut AppState, name: &str, arguments: &str) -> bool {
     state.start_tool_call(name, arguments);
     state.status_line = format!("Tool: {name}");
+    true
 }
 
 fn handle_permission_requested(
     state: &mut AppState,
     request_id: String,
     context: PermissionRequestContext,
-) {
+) -> bool {
     if let Some(display) = &context.pre_authorize_display {
         append_direct_tool_display(state, display.clone());
 
@@ -619,9 +678,10 @@ fn handle_permission_requested(
         target_field: context.target_field,
         summary: context.summary,
     });
+    true
 }
 
-pub(crate) fn append_direct_tool_display(state: &mut AppState, display: ToolDisplay) {
+pub(crate) fn append_direct_tool_display(state: &mut AppState, display: ToolDisplay) -> bool {
     let suppress_title = should_suppress_redundant_edit_title(&display);
     let suppress_single_section_stats = suppress_title && display.sections.len() == 1;
 
@@ -632,6 +692,8 @@ pub(crate) fn append_direct_tool_display(state: &mut AppState, display: ToolDisp
     for section in display.sections {
         append_direct_tool_display_section(state, section, suppress_single_section_stats);
     }
+
+    true
 }
 
 fn should_suppress_redundant_edit_title(display: &ToolDisplay) -> bool {
@@ -691,7 +753,7 @@ fn handle_tool_end(
     arguments: &str,
     success: bool,
     display: Option<ToolDisplay>,
-) {
+) -> bool {
     state.finish_tool_call(name, arguments, success);
 
     let tool_key = format!("{name}\n{arguments}");
@@ -702,6 +764,7 @@ fn handle_tool_end(
     }
 
     state.status_line = "Thinking...".to_string();
+    true
 }
 
 fn parse_hunk_start(line: &str, prefix: char) -> Option<usize> {
@@ -782,19 +845,21 @@ fn handle_llm_end(
     input_tokens: u64,
     output_tokens: u64,
     total_tokens: u64,
-) {
+) -> bool {
     state.record_token_usage(input_tokens, output_tokens, total_tokens);
     state.status_line = format!("Response ready ({response_chars} chars)");
+    true
 }
 
-fn handle_warning(state: &mut AppState, message: String) {
+fn handle_warning(state: &mut AppState, message: String) -> bool {
     state.status_line = message;
+    true
 }
 
-fn handle_assistant_message(state: &mut AppState, text: String) {
+fn handle_assistant_message(state: &mut AppState, text: String) -> bool {
     let trimmed = text.trim();
     if trimmed.is_empty() {
-        return;
+        return false;
     }
 
     // If this is the first delta, record where the message starts in transcript
@@ -811,7 +876,7 @@ fn handle_assistant_message(state: &mut AppState, text: String) {
     // Project the full accumulated text through markdown
     let projected_for_dedup = state.project_assistant_markdown_lines(trimmed);
     if assistant_diff_regurgitation_is_redundant(state, &projected_for_dedup) {
-        return;
+        return false;
     }
 
     // Always follow tail with ListState
@@ -819,12 +884,13 @@ fn handle_assistant_message(state: &mut AppState, text: String) {
     state.push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
         markdown: trimmed.to_string(),
     }));
+    true
 }
 
-fn handle_compaction_summary_chunk(state: &mut AppState, source: &str, text: String) {
+fn handle_compaction_summary_chunk(state: &mut AppState, source: &str, text: String) -> bool {
     let trimmed = text.trim();
     if trimmed.is_empty() {
-        return;
+        return false;
     }
 
     // Ensure compaction block is started (idempotent)
@@ -846,6 +912,7 @@ fn handle_compaction_summary_chunk(state: &mut AppState, source: &str, text: Str
     state.push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
         markdown: trimmed.to_string(),
     }));
+    true
 }
 
 fn assistant_diff_regurgitation_is_redundant(
@@ -938,9 +1005,11 @@ fn latest_tool_display_diff_lines(state: &AppState) -> Option<Vec<String>> {
     )
 }
 
-fn finalize(state: &mut AppState) {
+fn finalize(state: &mut AppState) -> bool {
     state.finalize_cycle();
+    state.input_locked = false;
     state.status_line.clear();
     // Reset streaming state when the LLM response is complete
     state.streaming_message_start = None;
+    true
 }

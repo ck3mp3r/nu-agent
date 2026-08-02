@@ -66,18 +66,9 @@ fn reducer_second_escape_triggers_cancel_request() {
     let cancel_controller = CancelController::new();
     let mut state = AppState::new();
 
-    reduce_with_cancel_controller(
-        &mut state,
-        ReducerInput::User(UserAction::InsertChar('w')),
-        Some(&cancel_controller),
-    );
-    for ch in "ork".chars() {
-        reduce_with_cancel_controller(
-            &mut state,
-            ReducerInput::User(UserAction::InsertChar(ch)),
-            Some(&cancel_controller),
-        );
-    }
+    // InsertChar is now a no-op in the reducer (handled by TextArea).
+    // Set pending_submit_text directly so Submit creates an active cycle.
+    state.pending_submit_text = Some("work".to_string());
     reduce_with_cancel_controller(
         &mut state,
         ReducerInput::User(UserAction::Submit),

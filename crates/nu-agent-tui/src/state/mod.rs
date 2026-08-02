@@ -263,13 +263,6 @@ pub struct PermissionPrompt {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct InputState {
-    pub buffer: String,
-    pub locked: bool,
-    pub cursor: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AbortState {
     pub pending: bool,
     pub confirmation_marker: u64,
@@ -278,7 +271,7 @@ pub struct AbortState {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AppState {
     pub phase: UiPhase,
-    pub input: InputState,
+    pub input_locked: bool,
     pub abort: AbortState,
     pub transcript_preview: Vec<TranscriptEntry>,
     pub transcript_scroll_offset: usize,
@@ -347,6 +340,10 @@ pub struct AppState {
     input_history_saved: String,
     inline_slash_commands: Vec<SlashCommand>,
     clipboard_request: Option<String>,
+    pub pending_submit_text: Option<String>,
+    /// Text restored from cancelled pending prompts, to be set on the textarea
+    /// by the coordinator after the next pump cycle.
+    pub restored_input_text: Option<String>,
     pub transcript_selection: Option<TranscriptSelection>,
     pub cursor_visual_row: usize,
     pub viewport_height: usize,
@@ -366,7 +363,7 @@ impl Default for AppState {
     fn default() -> Self {
         Self {
             phase: UiPhase::Idle,
-            input: InputState::default(),
+            input_locked: false,
             abort: AbortState::default(),
             transcript_preview: Vec::new(),
             transcript_scroll_offset: 0,
@@ -435,6 +432,8 @@ impl Default for AppState {
             input_history_saved: String::new(),
             inline_slash_commands: Vec::new(),
             clipboard_request: None,
+            pending_submit_text: None,
+            restored_input_text: None,
             transcript_selection: None,
             cursor_visual_row: 0,
             viewport_height: 0,
