@@ -20,7 +20,7 @@ nu-parser = "0.114.1"
 
 # LLM / AI
 rig = { package = "rig-core", version = "0.40.0", default-features = false, features = ["derive", "rmcp", "test-utils"] }
-rmcp = { version = "1.8.0", default-features = false, features = [
+rmcp = { version = "3.0.1", default-features = false, features = [
   "client",
   "transport-child-process",
   "transport-streamable-http-client",
