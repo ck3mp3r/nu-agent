@@ -1252,3 +1252,378 @@ fn safe_defaults_tty_mode_hides_unknown_tools() {
     assert!(!config.is_tool_visible("nu__shell"));
     assert!(!config.is_tool_visible("edit"));
 }
+
+// ── SessionGrantCache::clear tests ──────────────────────────────────────
+
+#[test]
+fn clear_empties_all_grants() {
+    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()), true);
+    let mut cache = SessionGrantCache::default();
+
+    // Insert grants for multiple tools
+    let shell_args = serde_json::json!({"command": "echo one"});
+    let shell_decision = parsed.evaluate("shell", &shell_args);
+    let _ = apply_ask_choice(
+        shell_decision,
+        AskChoice::AllowAlways,
+        &mut cache,
+        "shell",
+        "closure",
+        &shell_args,
+    );
+
+    let read_args = serde_json::json!({"filePath": "README.md"});
+    let read_decision = parsed.evaluate("read", &read_args);
+    let _ = apply_ask_choice(
+        read_decision,
+        AskChoice::AllowAlways,
+        &mut cache,
+        "read",
+        "closure",
+        &read_args,
+    );
+
+    let glob_args = serde_json::json!({"pattern": "**/*.rs"});
+    let glob_decision = parsed.evaluate("glob", &glob_args);
+    let _ = apply_ask_choice(
+        glob_decision,
+        AskChoice::AllowAlways,
+        &mut cache,
+        "glob",
+        "closure",
+        &glob_args,
+    );
+
+    // Verify grants exist before clear
+    let shell_check = parsed.evaluate("shell", &shell_args);
+    assert_eq!(
+        apply_session_grant_override(shell_check, &cache, "shell", "closure", &shell_args).action,
+        PermissionAction::Allow
+    );
+
+    let glob_check = parsed.evaluate("glob", &glob_args);
+    assert_eq!(
+        apply_session_grant_override(glob_check, &cache, "glob", "closure", &glob_args).action,
+        PermissionAction::Allow
+    );
+
+    // Clear all grants
+    cache.clear();
+
+    // Verify all grants are gone — only check tools whose config action is Ask
+    // (read is configured as Allow in the fixture, so it would still return Allow
+    // after cache clear — that's correct behavior, not a cache leak)
+    let shell_after = parsed.evaluate("shell", &shell_args);
+    assert_eq!(
+        apply_session_grant_override(shell_after, &cache, "shell", "closure", &shell_args).action,
+        PermissionAction::Ask
+    );
+
+    let glob_after = parsed.evaluate("glob", &glob_args);
+    assert_eq!(
+        apply_session_grant_override(glob_after, &cache, "glob", "closure", &glob_args).action,
+        PermissionAction::Ask
+    );
+}
+
+#[test]
+fn clear_on_empty_cache() {
+    let mut cache = SessionGrantCache::default();
+
+    // Should not panic
+    cache.clear();
+
+    // Verify still empty
+    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()), true);
+    let args = serde_json::json!({"command": "echo test"});
+    let decision = parsed.evaluate("shell", &args);
+    assert_eq!(
+        apply_session_grant_override(decision, &cache, "shell", "closure", &args).action,
+        PermissionAction::Ask
+    );
+}
+
+// ── SessionGrantCache::clear_for_server tests ─────────────────────────────
+
+#[test]
+fn clear_for_server_removes_only_matching_prefix() {
+    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()), true);
+    let mut cache = SessionGrantCache::default();
+
+    // Insert grants for context7__* tools, gh__* tool, and a local tool
+    let context7_search_args = serde_json::json!({"query": "test"});
+    let context7_search_decision = parsed.evaluate("context7__search", &context7_search_args);
+    let _ = apply_ask_choice(
+        context7_search_decision,
+        AskChoice::AllowAlways,
+        &mut cache,
+        "context7__search",
+        "mcp",
+        &context7_search_args,
+    );
+
+    let context7_fetch_args = serde_json::json!({"url": "https://example.com"});
+    let context7_fetch_decision = parsed.evaluate("context7__fetch", &context7_fetch_args);
+    let _ = apply_ask_choice(
+        context7_fetch_decision,
+        AskChoice::AllowAlways,
+        &mut cache,
+        "context7__fetch",
+        "mcp",
+        &context7_fetch_args,
+    );
+
+    let gh_list_prs_args = serde_json::json!({});
+    let gh_list_prs_decision = parsed.evaluate("gh__list_prs", &gh_list_prs_args);
+    let _ = apply_ask_choice(
+        gh_list_prs_decision,
+        AskChoice::AllowAlways,
+        &mut cache,
+        "gh__list_prs",
+        "mcp",
+        &gh_list_prs_args,
+    );
+
+    let shell_args = serde_json::json!({"command": "echo test"});
+    let shell_decision = parsed.evaluate("shell", &shell_args);
+    let _ = apply_ask_choice(
+        shell_decision,
+        AskChoice::AllowAlways,
+        &mut cache,
+        "shell",
+        "closure",
+        &shell_args,
+    );
+
+    // Verify grants exist before clear
+    let context7_search_check = parsed.evaluate("context7__search", &context7_search_args);
+    assert_eq!(
+        apply_session_grant_override(
+            context7_search_check,
+            &cache,
+            "context7__search",
+            "mcp",
+            &context7_search_args,
+        )
+        .action,
+        PermissionAction::Allow
+    );
+
+    let context7_fetch_check = parsed.evaluate("context7__fetch", &context7_fetch_args);
+    assert_eq!(
+        apply_session_grant_override(
+            context7_fetch_check,
+            &cache,
+            "context7__fetch",
+            "mcp",
+            &context7_fetch_args,
+        )
+        .action,
+        PermissionAction::Allow
+    );
+
+    let gh_list_prs_check = parsed.evaluate("gh__list_prs", &gh_list_prs_args);
+    assert_eq!(
+        apply_session_grant_override(
+            gh_list_prs_check,
+            &cache,
+            "gh__list_prs",
+            "mcp",
+            &gh_list_prs_args,
+        )
+        .action,
+        PermissionAction::Allow
+    );
+
+    let shell_check = parsed.evaluate("shell", &shell_args);
+    assert_eq!(
+        apply_session_grant_override(shell_check, &cache, "shell", "closure", &shell_args).action,
+        PermissionAction::Allow
+    );
+
+    // Clear grants for context7 server
+    cache.clear_for_server("context7");
+
+    // Verify context7__* grants are removed
+    let context7_search_after = parsed.evaluate("context7__search", &context7_search_args);
+    assert_eq!(
+        apply_session_grant_override(
+            context7_search_after,
+            &cache,
+            "context7__search",
+            "mcp",
+            &context7_search_args,
+        )
+        .action,
+        PermissionAction::Ask
+    );
+
+    let context7_fetch_after = parsed.evaluate("context7__fetch", &context7_fetch_args);
+    assert_eq!(
+        apply_session_grant_override(
+            context7_fetch_after,
+            &cache,
+            "context7__fetch",
+            "mcp",
+            &context7_fetch_args,
+        )
+        .action,
+        PermissionAction::Ask
+    );
+
+    // Verify gh__list_prs and shell remain
+    let gh_list_prs_after = parsed.evaluate("gh__list_prs", &gh_list_prs_args);
+    assert_eq!(
+        apply_session_grant_override(
+            gh_list_prs_after,
+            &cache,
+            "gh__list_prs",
+            "mcp",
+            &gh_list_prs_args,
+        )
+        .action,
+        PermissionAction::Allow
+    );
+
+    let shell_after = parsed.evaluate("shell", &shell_args);
+    assert_eq!(
+        apply_session_grant_override(shell_after, &cache, "shell", "closure", &shell_args).action,
+        PermissionAction::Allow
+    );
+}
+
+#[test]
+fn clear_for_server_with_no_matching_grants() {
+    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()), true);
+    let mut cache = SessionGrantCache::default();
+
+    // Insert grants for gh__* tools only
+    let gh_list_prs_args = serde_json::json!({});
+    let gh_list_prs_decision = parsed.evaluate("gh__list_prs", &gh_list_prs_args);
+    let _ = apply_ask_choice(
+        gh_list_prs_decision,
+        AskChoice::AllowAlways,
+        &mut cache,
+        "gh__list_prs",
+        "mcp",
+        &gh_list_prs_args,
+    );
+
+    let gh_get_pr_args = serde_json::json!({"number": 1});
+    let gh_get_pr_decision = parsed.evaluate("gh__get_pr", &gh_get_pr_args);
+    let _ = apply_ask_choice(
+        gh_get_pr_decision,
+        AskChoice::AllowAlways,
+        &mut cache,
+        "gh__get_pr",
+        "mcp",
+        &gh_get_pr_args,
+    );
+
+    // Clear grants for context7 (no matching grants)
+    cache.clear_for_server("context7");
+
+    // Verify gh__* grants remain
+    let gh_list_prs_after = parsed.evaluate("gh__list_prs", &gh_list_prs_args);
+    assert_eq!(
+        apply_session_grant_override(
+            gh_list_prs_after,
+            &cache,
+            "gh__list_prs",
+            "mcp",
+            &gh_list_prs_args,
+        )
+        .action,
+        PermissionAction::Allow
+    );
+
+    let gh_get_pr_after = parsed.evaluate("gh__get_pr", &gh_get_pr_args);
+    assert_eq!(
+        apply_session_grant_override(
+            gh_get_pr_after,
+            &cache,
+            "gh__get_pr",
+            "mcp",
+            &gh_get_pr_args,
+        )
+        .action,
+        PermissionAction::Allow
+    );
+}
+
+#[test]
+fn clear_for_server_empty_cache() {
+    let mut cache = SessionGrantCache::default();
+
+    // Should not panic
+    cache.clear_for_server("context7");
+
+    // Verify still empty
+    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()), true);
+    let args = serde_json::json!({"command": "echo test"});
+    let decision = parsed.evaluate("shell", &args);
+    assert_eq!(
+        apply_session_grant_override(decision, &cache, "shell", "closure", &args).action,
+        PermissionAction::Ask
+    );
+}
+
+#[test]
+fn clear_for_server_exact_prefix_match_only() {
+    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()), true);
+    let mut cache = SessionGrantCache::default();
+
+    // Insert context7__search and context7x__search
+    let context7_search_args = serde_json::json!({"query": "test"});
+    let context7_search_decision = parsed.evaluate("context7__search", &context7_search_args);
+    let _ = apply_ask_choice(
+        context7_search_decision,
+        AskChoice::AllowAlways,
+        &mut cache,
+        "context7__search",
+        "mcp",
+        &context7_search_args,
+    );
+
+    let context7x_search_args = serde_json::json!({"query": "other"});
+    let context7x_search_decision = parsed.evaluate("context7x__search", &context7x_search_args);
+    let _ = apply_ask_choice(
+        context7x_search_decision,
+        AskChoice::AllowAlways,
+        &mut cache,
+        "context7x__search",
+        "mcp",
+        &context7x_search_args,
+    );
+
+    // Clear grants for context7 (prefix is "context7__")
+    cache.clear_for_server("context7");
+
+    // Verify context7__search is removed
+    let context7_search_after = parsed.evaluate("context7__search", &context7_search_args);
+    assert_eq!(
+        apply_session_grant_override(
+            context7_search_after,
+            &cache,
+            "context7__search",
+            "mcp",
+            &context7_search_args,
+        )
+        .action,
+        PermissionAction::Ask
+    );
+
+    // Verify context7x__search remains (does not start with "context7__")
+    let context7x_search_after = parsed.evaluate("context7x__search", &context7x_search_args);
+    assert_eq!(
+        apply_session_grant_override(
+            context7x_search_after,
+            &cache,
+            "context7x__search",
+            "mcp",
+            &context7x_search_args,
+        )
+        .action,
+        PermissionAction::Allow
+    );
+}

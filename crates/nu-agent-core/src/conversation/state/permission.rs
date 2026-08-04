@@ -1,5 +1,4 @@
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::protocol::contracts::ProgressUi;
 use crate::protocol::event::UiEvent;
@@ -81,6 +80,24 @@ impl PermissionState {
         self.startup_emitted = false;
     }
 
+    /// Clear all session grants. Used when switching agents so that
+    /// "Allow always" grants from the previous agent do not persist.
+    pub fn clear_session_grants(&self) {
+        self.session_grants
+            .lock()
+            .expect("session_grants lock")
+            .clear();
+    }
+
+    /// Clear session grants for tools belonging to a specific MCP server.
+    /// Used when disabling an MCP server so that its tool grants are revoked.
+    pub fn clear_session_grants_for_server(&self, server_name: &str) {
+        self.session_grants
+            .lock()
+            .expect("session_grants lock")
+            .clear_for_server(server_name);
+    }
+
     pub fn emit_startup_summary_once<U: ProgressUi>(&mut self, ui: &mut U) {
         if !self.startup_emitted {
             ui.emit(&UiEvent::Warning {
@@ -90,3 +107,7 @@ impl PermissionState {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "permission_test.rs"]
+mod permission_test;

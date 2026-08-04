@@ -23,6 +23,7 @@ pub(crate) fn assemble_tool_definitions(
     agents_config: &nu_agent_core::config::AgentsConfig,
     discovered_mcp_tools: &[nu_agent_core::tools::mcp::client::McpToolDefinition],
     cwd: &std::path::Path,
+    a2a_enabled: bool,
 ) -> ToolAssembly {
     let mut tool_definitions: Vec<nu_agent_core::types::ToolDefinition> = closure_registry
         .names()
@@ -40,13 +41,15 @@ pub(crate) fn assemble_tool_definitions(
     // Old mailbox tools removed in favour of A2A:
     // tool_definitions.extend(messaging_tool_definitions());    // send_message
     // tool_definitions.extend(list_agents_tool_definitions());  // list_agents
-    tool_definitions.extend(a2a_tool_defs().into_iter().map(|def| {
-        nu_agent_core::types::ToolDefinition {
-            name: def.name,
-            description: def.description,
-            parameters: def.parameters,
-        }
-    }));
+    if a2a_enabled {
+        tool_definitions.extend(a2a_tool_defs().into_iter().map(|def| {
+            nu_agent_core::types::ToolDefinition {
+                name: def.name,
+                description: def.description,
+                parameters: def.parameters,
+            }
+        }));
+    }
 
     let available_agents = {
         use nu_agent_core::protocol::persona::{FsPersonaResolver, PersonaLister};

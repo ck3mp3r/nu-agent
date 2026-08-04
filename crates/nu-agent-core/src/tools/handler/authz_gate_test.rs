@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 use crate::types::{ToolCall, ToolFunction};
 use serde_json::json;
 
@@ -43,7 +45,7 @@ fn make_tool_call(name: &str) -> ToolCall {
 async fn builtin_tools_bypass_permission_flow() {
     // Even with deny-all permissions, builtin tools should be allowed
     let permissions = PermissionsConfig::safe_defaults(true);
-    let mut grant_cache = SessionGrantCache::default();
+    let grant_cache = Arc::new(Mutex::new(SessionGrantCache::default()));
     let flow_context = AuthorizationFlowContext {
         ask_context: AskContext::default(),
     };
@@ -62,7 +64,7 @@ async fn builtin_tools_bypass_permission_flow() {
             &tool_call,
             ToolSource::Builtin,
             &permissions,
-            &mut grant_cache,
+            Arc::clone(&grant_cache),
             &flow_context,
             &mut ask_hook,
             &mut sink,
@@ -79,7 +81,7 @@ async fn builtin_tools_bypass_permission_flow() {
 #[tokio::test]
 async fn fs_tools_go_through_permission_flow() {
     let permissions = PermissionsConfig::safe_defaults(true);
-    let mut grant_cache = SessionGrantCache::default();
+    let grant_cache = Arc::new(Mutex::new(SessionGrantCache::default()));
     let flow_context = AuthorizationFlowContext {
         ask_context: AskContext::default(),
     };
@@ -92,7 +94,7 @@ async fn fs_tools_go_through_permission_flow() {
             &tool_call,
             ToolSource::BuiltinFs,
             &permissions,
-            &mut grant_cache,
+            Arc::clone(&grant_cache),
             &flow_context,
             &mut ask_hook,
             &mut sink,
@@ -109,7 +111,7 @@ async fn fs_tools_go_through_permission_flow() {
 #[tokio::test]
 async fn non_builtin_tools_go_through_permission_flow() {
     let permissions = PermissionsConfig::safe_defaults(true);
-    let mut grant_cache = SessionGrantCache::default();
+    let grant_cache = Arc::new(Mutex::new(SessionGrantCache::default()));
     let flow_context = AuthorizationFlowContext {
         ask_context: AskContext::default(),
     };
@@ -122,7 +124,7 @@ async fn non_builtin_tools_go_through_permission_flow() {
         &tool_call,
         ToolSource::Mcp,
         &permissions,
-        &mut grant_cache,
+        Arc::clone(&grant_cache),
         &flow_context,
         &mut ask_hook,
         &mut sink,

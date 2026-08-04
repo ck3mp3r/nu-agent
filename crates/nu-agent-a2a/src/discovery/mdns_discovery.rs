@@ -1,8 +1,10 @@
+use std::time::Duration;
+
 use mdns_sd::ServiceDaemon;
 use tokio::sync::mpsc;
 
 use crate::AgentCard;
-use crate::discovery::{DiscoveryBrowser, DiscoveryService, PeerEvent};
+use crate::discovery::{DiscoveryBrowser, DiscoveryService, PeerEvent, build_service_info};
 
 /// Concrete mDNS-based peer discovery.
 ///
@@ -15,6 +17,9 @@ pub struct MdnsPeerDiscovery {
     service: Option<DiscoveryService>,
     browser: Option<DiscoveryBrowser>,
     peer_rx: Option<mpsc::Receiver<PeerEvent>>,
+    /// The full mDNS service name (e.g. `researcher-12345._nu-agent-a2a._tcp.local.`)
+    /// set during [`start`](Self::start) and updated by [`rename`](Self::rename).
+    fullname: Option<String>,
 }
 
 impl MdnsPeerDiscovery {
@@ -27,6 +32,7 @@ impl MdnsPeerDiscovery {
             service: None,
             browser: None,
             peer_rx: None,
+            fullname: None,
         }
     }
 }
@@ -73,6 +79,12 @@ impl MdnsPeerDiscovery {
                 }
             };
 
+        // Capture the full mDNS service name for later unregistration.
+        // The fullname is: <instance>.<service_type>.<domain>
+        if service.is_some() {
+            self.fullname = Some(format!("{agent_name}._nu-agent-a2a._tcp.local."));
+        }
+
         // ── mDNS discovery browser ────────────────────────────────────────
         let (browser, peer_rx) = match DiscoveryBrowser::browse(daemon.clone(), mesh_key, port) {
             Ok((b, rx)) => {
@@ -102,6 +114,74 @@ impl MdnsPeerDiscovery {
     pub fn shutdown(&mut self) {
         if let Some(d) = self.daemon.take() {
             let _ = d.shutdown();
+        }
+    }
+
+    /// The full mDNS service name (e.g. `researcher-12345._nu-agent-a2a._tcp.local.`).
+    ///
+    /// Returns `None` if mDNS was never started or registration failed.
+    pub fn fullname(&self) -> Option<&str> {
+        self.fullname.as_deref()
+    }
+
+    /// Re-register the mDNS service under a new name.
+    ///
+    /// Unregisters the old service (triggering `ServiceRemoved` on peers) and
+    /// registers a new one with the updated name, port, and card.  The browse
+    /// thread continues running — it does not need to be restarted.
+    ///
+    /// This is a no-op if mDNS was never started or the daemon is gone.
+    pub fn rename(
+        &mut self,
+        old_fullname: &str,
+        new_name: &str,
+        port: u16,
+        card: &AgentCard,
+        mesh_key: &str,
+    ) {
+        let daemon = match self.daemon.as_ref() {
+            Some(d) => d,
+            None => {
+                log::debug!("MdnsPeerDiscovery::rename: no daemon, skipping");
+                return;
+            }
+        };
+
+        // ── Unregister the old service ────────────────────────────────────
+        // Use recv_timeout so we don't block indefinitely.  The daemon's
+        // flume channel should respond quickly; 500ms is generous.
+        match daemon.unregister(old_fullname) {
+            Ok(receiver) => {
+                if receiver.recv_timeout(Duration::from_millis(500)).is_err() {
+                    log::warn!(
+                        "mDNS unregister timed out for '{old_fullname}' — continuing anyway"
+                    );
+                } else {
+                    log::info!("mDNS unregistered old service '{old_fullname}'");
+                }
+            }
+            Err(e) => {
+                log::warn!("mDNS unregister failed for '{old_fullname}': {e}");
+            }
+        }
+
+        // ── Register the new service ───────────────────────────────────────
+        let info = match build_service_info(new_name, port, card, mesh_key) {
+            Ok(i) => i,
+            Err(e) => {
+                log::warn!("mDNS rename: failed to build ServiceInfo: {e}");
+                return;
+            }
+        };
+
+        match daemon.register(info) {
+            Ok(_) => {
+                log::info!("mDNS service re-registered as '{new_name}' on port {port}");
+                self.fullname = Some(format!("{new_name}._nu-agent-a2a._tcp.local."));
+            }
+            Err(e) => {
+                log::warn!("mDNS rename: registration failed for '{new_name}': {e}");
+            }
         }
     }
 }

@@ -1,4 +1,4 @@
-use crate::orchestrator::{WorkerCommand, turn_outcome::TurnOutcome};
+use crate::orchestrator::{OnAgentSwitch, WorkerCommand, turn_outcome::TurnOutcome};
 use crate::protocol::{
     compaction::CompactionTriggerDecision,
     compaction_runtime::Compaction,
@@ -26,11 +26,15 @@ impl CommandRouter {
     ///
     /// Returns `true` if the worker loop should continue, `false` if it should
     /// shut down (i.e. `WorkerCommand::Shutdown`).
+    ///
+    /// `on_agent_switch` is an optional callback invoked after a successful
+    /// agent switch, receiving the new agent's identity and description.
     pub async fn dispatch<R, U>(
         cmd: WorkerCommand,
         runtime: &mut R,
         ui: &mut U,
         result_tx: &mpsc::Sender<TurnOutcome>,
+        on_agent_switch: Option<OnAgentSwitch>,
     ) -> bool
     where
         R: CoreRuntime
@@ -128,6 +132,11 @@ impl CommandRouter {
                 let response = result.map(|agent_identity| {
                     let model_identity = runtime.active_model_identity();
                     let max_tokens = runtime.max_context_tokens();
+                    // Notify the binary layer that the agent card should be updated.
+                    if let Some(ref cb) = on_agent_switch {
+                        let description = runtime.agent_description().map(|s| s.to_string());
+                        cb(agent_identity.clone(), description);
+                    }
                     (agent_identity, model_identity, max_tokens)
                 });
                 let _ = response_tx.send(response);

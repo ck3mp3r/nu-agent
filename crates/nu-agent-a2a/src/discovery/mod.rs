@@ -96,6 +96,46 @@ impl CardFetcher {
 
 static CARD_FETCHER: std::sync::OnceLock<CardFetcher> = std::sync::OnceLock::new();
 
+/// Build a ServiceInfo for mDNS registration without registering it.
+///
+/// Extracted from [`DiscoveryService::register`] so that callers (e.g.
+/// [`MdnsPeerDiscovery::rename`](mdns_discovery::MdnsPeerDiscovery::rename))
+/// can build a new `ServiceInfo` without going through the full register flow.
+pub(crate) fn build_service_info(
+    agent_name: &str,
+    port: u16,
+    card: &AgentCard,
+    mesh_key: &str,
+) -> Result<ServiceInfo, A2aError> {
+    let properties = build_txt_properties(agent_name, port, card, mesh_key);
+
+    // Convert Vec<(String, String)> to a slice of (&str, &str) refs.
+    let prop_refs: Vec<(&str, &str)> = properties
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+
+    // The hostname is mandatory for the mDNS SRV record (RFC 6763)
+    // but is never resolved — enable_addr_auto populates A records
+    // with all host IPs (127.0.0.1 + external interfaces).
+    let hostname = "a2a.local."; // static dummy, DNS-safe, no agent name dependency
+
+    let info = ServiceInfo::new(
+        "_nu-agent-a2a._tcp.local.",
+        agent_name,
+        hostname,
+        "", // ip — empty at creation, daemon fills in via addr_auto
+        port,
+        // Pass the slice explicitly — `&[(K, V)]` implements
+        // `IntoTxtProperties` when K, V: ToString.
+        &prop_refs[..],
+    )
+    .map_err(|e| A2aError::Internal(format!("mdns-sd service info: {e}")))?
+    .enable_addr_auto(); // daemon populates host IPs from all interfaces
+
+    Ok(info)
+}
+
 /// Build TXT properties as key-value pairs for mDNS advertisement.
 fn build_txt_properties(
     agent_name: &str,
@@ -147,6 +187,22 @@ fn format_scoped_ip(addr: &mdns_sd::ScopedIp) -> String {
     addr.to_string()
 }
 
+/// Determine the mDNS instance name for an agent switch.
+///
+/// If the old mDNS name had a `-{port}` suffix (applied at startup when
+/// `!has_explicit_name`), the new name must also carry the suffix so that
+/// the mDNS service name remains unique and DNS-legal.
+///
+/// Returns the new mDNS instance name (without the `._nu-agent-a2a._tcp.local.`
+/// suffix — that is appended by the caller).
+pub fn mdns_name_for_switch(old_mdns_name: &str, new_agent_name: &str, port: u16) -> String {
+    if old_mdns_name.ends_with(&format!("-{port}")) {
+        format!("{new_agent_name}-{port}")
+    } else {
+        new_agent_name.to_string()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // DiscoveryService — mDNS service registration
 // ---------------------------------------------------------------------------
@@ -171,31 +227,7 @@ impl DiscoveryService {
         card: &AgentCard,
         mesh_key: &str,
     ) -> Result<Self, A2aError> {
-        let properties = build_txt_properties(agent_name, port, card, mesh_key);
-
-        // Convert Vec<(String, String)> to a slice of (&str, &str) refs.
-        let prop_refs: Vec<(&str, &str)> = properties
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
-            .collect();
-
-        // The hostname is mandatory for the mDNS SRV record (RFC 6763)
-        // but is never resolved — enable_addr_auto populates A records
-        // with all host IPs (127.0.0.1 + external interfaces).
-        let hostname = "a2a.local."; // static dummy, DNS-safe, no agent name dependency
-
-        let info = ServiceInfo::new(
-            "_nu-agent-a2a._tcp.local.",
-            agent_name,
-            hostname,
-            "", // ip — empty at creation, daemon fills in via addr_auto
-            port,
-            // Pass the slice explicitly — `&[(K, V)]` implements
-            // `IntoTxtProperties` when K, V: ToString.
-            &prop_refs[..],
-        )
-        .map_err(|e| A2aError::Internal(format!("mdns-sd service info: {e}")))?
-        .enable_addr_auto(); // daemon populates host IPs from all interfaces
+        let info = build_service_info(agent_name, port, card, mesh_key)?;
 
         daemon
             .register(info)

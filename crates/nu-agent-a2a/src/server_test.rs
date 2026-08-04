@@ -1808,3 +1808,78 @@ async fn test_extended_agent_card_bypasses_version_check() {
 
     server.shutdown().await;
 }
+
+// ---------------------------------------------------------------------------
+// Agent card update via agent_card_handle()
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_agent_card_update_via_handle() {
+    ensure_crypto_provider();
+
+    let card = AgentCard {
+        name: "Agent A".to_string(),
+        description: Some("First agent".to_string()),
+        url: "http://127.0.0.1:0".to_string(),
+        version: "1.0".to_string(),
+        skills: vec![Skill {
+            id: "skill-a".into(),
+            name: "Skill A".into(),
+            description: "First skill".into(),
+            inputs: None,
+            outputs: None,
+        }],
+        ..Default::default()
+    };
+    let server = A2aServer::start(card, Arc::new(PeerCache::new()), 0)
+        .await
+        .unwrap();
+    let client = test_client();
+
+    // GET initial card — assert name is "Agent A"
+    let resp = client
+        .get(format!("{}/.well-known/agent-card.json", server.local_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["name"], "Agent A");
+    assert_eq!(body["description"], "First agent");
+    assert_eq!(body["skills"].as_array().unwrap().len(), 1);
+
+    // Write a new card via agent_card_handle()
+    {
+        let card_handle = server.agent_card_handle();
+        let mut card = card_handle.write().expect("agent_card lock");
+        let new_skills = vec![Skill {
+            id: "skill-b".into(),
+            name: "Skill B".into(),
+            description: "Second skill".into(),
+            inputs: None,
+            outputs: None,
+        }];
+        *card = rebuild_card_for_switch(&card, "Agent B", Some("Second agent"), new_skills);
+    }
+
+    // GET card again — assert name is now "Agent B"
+    let resp = client
+        .get(format!("{}/.well-known/agent-card.json", server.local_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["name"], "Agent B");
+    assert_eq!(body["description"], "Second agent");
+    assert_eq!(body["skills"].as_array().unwrap().len(), 1);
+    assert_eq!(body["skills"][0]["name"], "Skill B");
+
+    // Server-bound fields (url, version) are preserved
+    // The url stays as the original placeholder since the server doesn't
+    // update the card's url field — AgentBuilder does that after start().
+    assert_eq!(body["url"], "http://127.0.0.1:0");
+    assert_eq!(body["version"], "1.0");
+
+    server.shutdown().await;
+}

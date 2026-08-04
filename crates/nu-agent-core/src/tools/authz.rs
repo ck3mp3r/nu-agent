@@ -785,6 +785,21 @@ impl SessionGrantCache {
         let key = SessionGrantScopedKey::from_request(decision, tool_name, source, args);
         self.grants_by_scope.insert(key, PermissionAction::Allow);
     }
+
+    /// Clear all session grants. Used when switching agents so that
+    /// "Allow always" grants from the previous agent do not persist.
+    pub fn clear(&mut self) {
+        self.grants_by_scope.clear();
+    }
+
+    /// Clear session grants for tools belonging to a specific MCP server.
+    /// Used when disabling an MCP server so that its tool grants are revoked.
+    /// MCP tool names use the format `{server_name}__{tool_name}`.
+    pub fn clear_for_server(&mut self, server_name: &str) {
+        let prefix = format!("{}__", server_name);
+        self.grants_by_scope
+            .retain(|key, _| !key.tool_name.starts_with(&prefix));
+    }
 }
 
 pub fn apply_ask_choice(

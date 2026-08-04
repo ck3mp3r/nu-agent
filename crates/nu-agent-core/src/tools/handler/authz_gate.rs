@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 use crate::types::ToolCall;
 
 use crate::tools::authz::{
@@ -16,7 +18,7 @@ pub async fn enforce_authorization_for_tool_call(
     tool_call: &ToolCall,
     source: ToolSource,
     permissions: &PermissionsConfig,
-    grant_cache: &mut SessionGrantCache,
+    grant_cache: Arc<Mutex<SessionGrantCache>>,
     flow_context: &AuthorizationFlowContext,
     ask_hook: &mut impl AskApprovalHook,
     event_sink: &mut impl PermissionEventSink,
@@ -41,13 +43,19 @@ pub async fn enforce_authorization_for_tool_call(
         auth_decision.action
     );
     let pre_grant_action = auth_decision.action;
-    auth_decision = apply_session_grant_override(
-        auth_decision,
-        grant_cache,
-        &tool_call.function.name,
-        source.as_str(),
-        &tool_call.function.arguments,
-    );
+
+    // Lock, check session grants, unlock — no .await while holding the lock.
+    {
+        let grants = grant_cache.lock().expect("grant_cache lock");
+        auth_decision = apply_session_grant_override(
+            auth_decision,
+            &grants,
+            &tool_call.function.name,
+            source.as_str(),
+            &tool_call.function.arguments,
+        );
+    }
+
     if pre_grant_action == PermissionAction::Ask && auth_decision.action != PermissionAction::Ask {
         log::debug!(
             "Authz: session grant override for tool={}",
@@ -65,14 +73,19 @@ pub async fn enforce_authorization_for_tool_call(
                 Some(event_sink),
             )
             .await;
-        auth_decision = apply_ask_choice(
-            auth_decision,
-            choice,
-            grant_cache,
-            &tool_call.function.name,
-            source.as_str(),
-            &tool_call.function.arguments,
-        );
+
+        // Lock again to write the result — no .await while holding the lock.
+        {
+            let mut grants = grant_cache.lock().expect("grant_cache lock");
+            auth_decision = apply_ask_choice(
+                auth_decision,
+                choice,
+                &mut grants,
+                &tool_call.function.name,
+                source.as_str(),
+                &tool_call.function.arguments,
+            );
+        }
     }
     if auth_decision.action == PermissionAction::Deny {
         log::warn!(

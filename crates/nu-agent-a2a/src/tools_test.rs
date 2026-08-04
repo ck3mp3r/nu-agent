@@ -376,3 +376,58 @@ async fn test_handle_tasks_list_no_store() {
     let tasks = result["tasks"].as_array().unwrap();
     assert!(tasks.is_empty(), "Should return empty list when no store");
 }
+
+#[tokio::test]
+async fn agent_list_excludes_self() {
+    ensure_crypto_provider();
+    let own_url = "http://127.0.0.1:9999".to_string();
+    let ctx = A2aToolContext {
+        client: A2aClient::new().unwrap(),
+        cache: Arc::new(PeerCache::new()),
+        own_card: AgentCard {
+            name: "self-agent".into(),
+            url: own_url.clone(),
+            ..Default::default()
+        },
+        task_store: None,
+        completion_tx: None,
+        runtime_handle: None,
+    };
+
+    // Peer with same URL → should be excluded from output
+    ctx.cache.add_or_update(Peer {
+        name: "self-agent".into(),
+        url: own_url.clone(),
+        host: "127.0.0.1".into(),
+        port: 9999,
+        card: None,
+        discovered_at: std::time::Instant::now(),
+    });
+
+    // Peer with different URL → should appear in output
+    ctx.cache.add_or_update(Peer {
+        name: "other-agent".into(),
+        url: "http://127.0.0.1:8888".into(),
+        host: "127.0.0.1".into(),
+        port: 8888,
+        card: None,
+        discovered_at: std::time::Instant::now(),
+    });
+
+    let result = handle_agent_list(ctx, serde_json::json!({})).await.unwrap();
+    let agents = result["agents"].as_array().unwrap();
+
+    // Self should be excluded — only the other agent remains
+    assert_eq!(agents.len(), 1, "self-agent should be excluded from output");
+
+    let other_agent = &agents[0];
+    assert_eq!(other_agent["name"], "other-agent");
+
+    // is_self field must NOT be present in any entry
+    for agent in agents {
+        assert!(
+            !agent.as_object().unwrap().contains_key("is_self"),
+            "no entry should have an is_self field"
+        );
+    }
+}

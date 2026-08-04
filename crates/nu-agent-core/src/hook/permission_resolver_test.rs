@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex as StdMutex};
 
-use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 
 use crate::protocol::event::{PermissionDecision as ProtocolPermissionDecision, UiEvent};
@@ -33,7 +32,7 @@ fn make_interactive(
     let resolver = InteractivePermissionResolver {
         pending: Arc::new(StdMutex::new(HashMap::new())),
         permissions: Arc::new(permissions),
-        session_grants: Arc::new(Mutex::new(SessionGrantCache::default())),
+        session_grants: Arc::new(StdMutex::new(SessionGrantCache::default())),
         closure_registry: Arc::new(ClosureRegistry::new()),
         mcp_registry: Arc::new(McpToolRegistry::from_names::<[&str; 0], &str>([])),
     };
@@ -43,7 +42,7 @@ fn make_interactive(
 fn make_policy(permissions: PermissionsConfig) -> PolicyPermissionResolver {
     PolicyPermissionResolver {
         permissions: Arc::new(permissions),
-        session_grants: Arc::new(Mutex::new(SessionGrantCache::default())),
+        session_grants: Arc::new(StdMutex::new(SessionGrantCache::default())),
         closure_registry: Arc::new(ClosureRegistry::new()),
         mcp_registry: Arc::new(McpToolRegistry::from_names::<[&str; 0], &str>([])),
     }
@@ -262,7 +261,7 @@ async fn interactive_allow_always_writes_grant_and_auto_allows_subsequent_call()
 #[tokio::test]
 async fn session_grant_arc_is_shared_across_resolver_instances() {
     // Shared cache — the same Arc that PermissionState now owns.
-    let session_grants = Arc::new(Mutex::new(SessionGrantCache::default()));
+    let session_grants = Arc::new(StdMutex::new(SessionGrantCache::default()));
 
     // Build two resolvers that share the same Arc (as runtime.rs now does).
     let resolver1 = PolicyPermissionResolver {
@@ -291,7 +290,7 @@ async fn session_grant_arc_is_shared_across_resolver_instances() {
     // matches the global rule: identity="global:*", source="unknown" (not in any
     // registry), mode=None, target_field=None.
     {
-        let mut cache = session_grants.lock().await;
+        let mut cache = session_grants.lock().expect("test lock");
         let synthetic_decision = AuthzPermissionDecision {
             action: PermissionAction::Ask,
             matched_rule: PermissionRuleMatch {

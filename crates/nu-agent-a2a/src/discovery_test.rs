@@ -543,3 +543,106 @@ async fn test_card_fetch_roundtrip() {
 
     server.shutdown().await;
 }
+
+// ---------------------------------------------------------------------------
+// mdns_name_for_switch — port-suffix logic
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_mdns_name_for_switch_appends_port_suffix_when_old_name_had_it() {
+    // When the old mDNS name ends with `-{port}`, the new name must also
+    // carry the suffix.
+    let result = mdns_name_for_switch("researcher-12345", "reviewer", 12345);
+    assert_eq!(result, "reviewer-12345");
+}
+
+#[test]
+fn test_mdns_name_for_switch_does_not_append_port_suffix_when_old_name_lacks_it() {
+    // When the old mDNS name does NOT end with `-{port}`, the new name is
+    // used verbatim.
+    let result = mdns_name_for_switch("researcher", "reviewer", 12345);
+    assert_eq!(result, "reviewer");
+}
+
+#[test]
+fn test_mdns_name_for_switch_handles_partial_port_match() {
+    // The suffix must match the full `-{port}` pattern, not just a substring.
+    let result = mdns_name_for_switch("researcher-123", "reviewer", 12345);
+    assert_eq!(result, "reviewer");
+}
+
+#[test]
+fn test_mdns_name_for_switch_handles_same_name_different_port() {
+    // Same name but different port — suffix should not be appended.
+    let result = mdns_name_for_switch("agent-8080", "agent", 9090);
+    assert_eq!(result, "agent");
+}
+
+// ---------------------------------------------------------------------------
+// MdnsPeerDiscovery — fullname tracking
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_mdns_peer_discovery_fullname_starts_none() {
+    let mdns = crate::discovery::mdns_discovery::MdnsPeerDiscovery::new();
+    assert!(mdns.fullname().is_none());
+}
+
+#[test]
+fn test_mdns_peer_discovery_fullname_after_start() {
+    // We can't easily test the full start() path (needs a real daemon), but
+    // we can verify that the fullname field is set correctly by calling
+    // rename() which sets it.
+    let mut mdns = crate::discovery::mdns_discovery::MdnsPeerDiscovery::new();
+    // Without a daemon, rename() is a no-op and fullname stays None.
+    mdns.rename(
+        "old._nu-agent-a2a._tcp.local.",
+        "new-name",
+        12345,
+        &test_card("new-name", 12345),
+        "test-mesh",
+    );
+    assert!(mdns.fullname().is_none());
+}
+
+// ---------------------------------------------------------------------------
+// PeerDiscoveryImpl — fullname and rename dispatch
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_peer_discovery_impl_fullname_noop() {
+    let impl_ = PeerDiscoveryImpl::Noop;
+    assert!(impl_.fullname().is_none());
+}
+
+#[test]
+fn test_peer_discovery_impl_fullname_static() {
+    let impl_ = PeerDiscoveryImpl::Static(StaticPeerDiscovery::new(vec![]));
+    assert!(impl_.fullname().is_none());
+}
+
+#[test]
+fn test_peer_discovery_impl_rename_noop_does_not_panic() {
+    let mut impl_ = PeerDiscoveryImpl::Noop;
+    impl_.rename(
+        "old._nu-agent-a2a._tcp.local.",
+        "new-name",
+        12345,
+        &test_card("new-name", 12345),
+        "test-mesh",
+    );
+    // Should not panic — no-op is fine.
+}
+
+#[test]
+fn test_peer_discovery_impl_rename_static_does_not_panic() {
+    let mut impl_ = PeerDiscoveryImpl::Static(StaticPeerDiscovery::new(vec![]));
+    impl_.rename(
+        "old._nu-agent-a2a._tcp.local.",
+        "new-name",
+        12345,
+        &test_card("new-name", 12345),
+        "test-mesh",
+    );
+    // Should not panic — no-op is fine.
+}

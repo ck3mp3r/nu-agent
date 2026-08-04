@@ -289,6 +289,16 @@ pub(crate) fn apply_cli_flags(config: &mut Config, call: &EvaluatedCall) {
     {
         config.max_tool_turns = Some(max_turns);
     }
+
+    // --a2a-port: enables A2A and optionally sets the port.
+    // Applied here (after apply_persona_model) so CLI values survive
+    // config replacement by persona model resolution.
+    if let Some(port_val) = call.get_flag::<i64>("a2a-port").ok().flatten()
+        && (0..=65535).contains(&port_val)
+    {
+        config.a2a_enabled = true;
+        config.a2a_port = Some(port_val as u16);
+    }
 }
 
 /// Apply persona model override if CLI --model was not provided.

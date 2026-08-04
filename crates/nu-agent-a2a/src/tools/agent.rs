@@ -4,9 +4,10 @@ use super::{A2aToolContext, ToolResult};
 
 pub async fn handle(ctx: A2aToolContext, _params: Value) -> ToolResult {
     let peers = ctx.cache.list();
-    let own_name = &ctx.own_card.name;
+    let own_url = &ctx.own_card.url;
     let result: Vec<Value> = peers
         .iter()
+        .filter(|p| p.url != *own_url)
         .map(|p| {
             serde_json::json!({
                 "name": p.name,
@@ -15,7 +16,6 @@ pub async fn handle(ctx: A2aToolContext, _params: Value) -> ToolResult {
                 "skills": p.card.as_ref().map(|c| {
                     c.skills.iter().map(|s| &s.name).collect::<Vec<_>>()
                 }),
-                "is_self": p.name == *own_name,
             })
         })
         .collect();

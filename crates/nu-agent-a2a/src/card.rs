@@ -250,3 +250,44 @@ impl Default for AgentCard {
         }
     }
 }
+
+/// Rebuild an AgentCard for an agent switch, preserving server-bound fields
+/// (url, supported_interfaces, version, security_schemes, extensions, metadata,
+/// default_input_modes, default_output_modes) and updating persona-derived fields
+/// (name, description, skills).
+pub fn rebuild_card_for_switch(
+    old: &AgentCard,
+    new_name: &str,
+    new_description: Option<&str>,
+    new_skills: Vec<Skill>,
+) -> AgentCard {
+    AgentCard {
+        name: new_name.to_string(),
+        description: new_description.map(|s| s.to_string()),
+        url: old.url.clone(),
+        provider: old.provider.clone(),
+        icon_url: old.icon_url.clone(),
+        documentation_url: old.documentation_url.clone(),
+        supported_interfaces: old.supported_interfaces.clone(),
+        version: old.version.clone(),
+        capabilities: old.capabilities.clone(),
+        skills: new_skills,
+        security_schemes: old.security_schemes.clone(),
+        extensions: old.extensions.clone(),
+        metadata: old.metadata.clone(),
+        default_input_modes: old.default_input_modes.clone(),
+        default_output_modes: old.default_output_modes.clone(),
+    }
+}
+
+/// Synthesize a single Skill from a persona's name and description.
+/// Mirrors the inline logic at run_command.rs:261-267.
+pub fn skill_from_persona(name: &str, description: Option<&str>) -> Skill {
+    Skill {
+        id: name.to_string(),
+        name: name.to_string(),
+        description: description.unwrap_or_default().to_string(),
+        inputs: None,
+        outputs: None,
+    }
+}

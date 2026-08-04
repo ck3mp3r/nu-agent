@@ -10,7 +10,6 @@ use std::sync::{Arc, Mutex as StdMutex};
 
 use async_trait::async_trait;
 use serde_json::Value as JsonValue;
-use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 
@@ -149,7 +148,7 @@ pub trait AsyncPermissionResolver: Clone + Send + Sync + 'static {
 #[derive(Clone)]
 pub struct PolicyPermissionResolver {
     pub permissions: Arc<PermissionsConfig>,
-    pub session_grants: Arc<Mutex<SessionGrantCache>>,
+    pub session_grants: Arc<StdMutex<SessionGrantCache>>,
     pub closure_registry: Arc<ClosureRegistry>,
     pub mcp_registry: Arc<McpToolRegistry>,
 }
@@ -180,12 +179,11 @@ impl AsyncPermissionResolver for PolicyPermissionResolver {
                 ask_context: AskContext::default(),
             };
 
-            let mut grants = session_grants.lock().await;
             let denied = enforce_authorization_for_tool_call(
                 &tool_call,
                 source,
                 &permissions,
-                &mut grants,
+                session_grants,
                 &flow_context,
                 &mut NoOpAskHook,
                 &mut NoOpSink,
@@ -266,7 +264,7 @@ impl AskApprovalHook for AskContextCapture {
 pub struct InteractivePermissionResolver {
     pub pending: Arc<StdMutex<HashMap<String, oneshot::Sender<ProtocolPermissionDecision>>>>,
     pub permissions: Arc<PermissionsConfig>,
-    pub session_grants: Arc<Mutex<SessionGrantCache>>,
+    pub session_grants: Arc<StdMutex<SessionGrantCache>>,
     pub closure_registry: Arc<ClosureRegistry>,
     pub mcp_registry: Arc<McpToolRegistry>,
 }
@@ -288,7 +286,7 @@ impl InteractivePermissionResolver {
     pub fn new(
         pending: Arc<StdMutex<HashMap<String, oneshot::Sender<ProtocolPermissionDecision>>>>,
         permissions: Arc<PermissionsConfig>,
-        session_grants: Arc<Mutex<SessionGrantCache>>,
+        session_grants: Arc<StdMutex<SessionGrantCache>>,
         closure_registry: Arc<ClosureRegistry>,
         mcp_registry: Arc<McpToolRegistry>,
     ) -> Self {
@@ -343,12 +341,11 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
             };
 
             let denied = {
-                let mut grants = session_grants.lock().await;
                 enforce_authorization_for_tool_call(
                     &tool_call,
                     source.clone(),
                     &permissions,
-                    &mut grants,
+                    Arc::clone(&session_grants),
                     &flow_context,
                     &mut capture_hook,
                     &mut NoOpSink,
@@ -410,7 +407,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                 // Use the authz::PermissionDecision captured during the sentinel run.
                 // This is the same decision the user was shown — no second evaluation needed.
                 if let Some(auth_decision) = capture_hook.captured_auth_decision {
-                    let mut grants = session_grants.lock().await;
+                    let mut grants = session_grants.lock().expect("session_grants lock");
                     apply_ask_choice(
                         auth_decision,
                         ask_choice,

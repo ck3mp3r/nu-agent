@@ -1,4 +1,5 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, RwLock};
+
 use std::time::Duration;
 
 use tokio::sync::mpsc;
@@ -18,11 +19,17 @@ pub struct AgentHandle {
     pub server: A2aServer,
     pub completion_tx: Option<mpsc::Sender<A2aCompletionEvent>>,
     completion_rx: Option<mpsc::Receiver<A2aCompletionEvent>>,
-    discovery: PeerDiscoveryImpl,
+    discovery: Arc<Mutex<PeerDiscoveryImpl>>,
     // Private — held for A2aToolContext construction.
     client: A2aClient,
     card: AgentCard,
+    /// Handle to the server's mutable AgentCard, for runtime updates
+    /// (e.g. after an agent switch). `None` if the server was not
+    /// started via `AgentBuilder::build`.
+    card_handle: Option<Arc<RwLock<AgentCard>>>,
     cache: Arc<PeerCache>,
+    /// The mesh key used for discovery isolation.
+    mesh_key: String,
 }
 
 impl AgentHandle {
@@ -31,9 +38,27 @@ impl AgentHandle {
         &self.card
     }
 
+    /// Access the server's mutable [`AgentCard`] handle for runtime updates.
+    ///
+    /// Returns `None` if the server was not started via `AgentBuilder::build`
+    /// (e.g. in tests that construct `A2aServer` directly).
+    pub fn card_handle(&self) -> Option<Arc<RwLock<AgentCard>>> {
+        self.card_handle.clone()
+    }
+
     /// Access the peer cache.
     pub fn cache(&self) -> Arc<PeerCache> {
         self.cache.clone()
+    }
+
+    /// Access the discovery handle for runtime re-registration.
+    pub fn discovery_handle(&self) -> Arc<Mutex<PeerDiscoveryImpl>> {
+        self.discovery.clone()
+    }
+
+    /// The mesh key used for discovery isolation.
+    pub fn mesh_key(&self) -> &str {
+        &self.mesh_key
     }
 
     /// Build an [`A2aToolContext`] for registering A2A tools on the
@@ -73,13 +98,17 @@ impl AgentHandle {
     /// Shut down with a custom timeout for graceful shutdown.
     ///
     /// Consumes `self` so it cannot be called twice.
-    pub async fn shutdown_with_timeout(mut self, timeout: Duration) {
+    pub async fn shutdown_with_timeout(self, timeout: Duration) {
         // Graceful HTTP server shutdown.
         tokio::time::timeout(timeout, self.server.shutdown())
             .await
             .ok();
 
         // Shut down discovery (mDNS daemon, etc.).
-        self.discovery.shutdown();
+        // Lock, take what we need, drop the guard, then proceed.
+        // Do NOT hold the lock across any .await point.
+        let mut discovery = self.discovery.lock().expect("discovery lock");
+        discovery.shutdown();
+        // Guard dropped here — no .await after this point.
     }
 }

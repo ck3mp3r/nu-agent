@@ -224,6 +224,7 @@ Highest to lowest:
 - `AGENT_RETRY_BASE_DELAY_MS` — base backoff in ms, doubles each attempt, capped at 30s (default: 1000)
 - `AGENT_READ_TIMEOUT_SECS` — HTTP read timeout in seconds for inference API and MCP connections (default: 120). Set to 0 to disable.
 - `AGENT_A2A_ENABLED` — enable A2A agent-to-agent communication (default: `false`)
+- `AGENT_A2A_PORT` — A2A agent port (0 = random, >0 = fixed, default: not set)
 - `{PROVIDER}_API_KEY` (for providers with direct env naming, e.g. `OPENAI_API_KEY`)
 
 There is no `AGENT_MODEL`. Set the default model in plugin config.

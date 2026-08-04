@@ -45,4 +45,34 @@ impl PeerDiscoveryImpl {
             PeerDiscoveryImpl::Noop => {}
         }
     }
+
+    /// The full mDNS service name, if mDNS is active.
+    pub fn fullname(&self) -> Option<&str> {
+        match self {
+            PeerDiscoveryImpl::Mdns(m) => m.fullname(),
+            _ => None,
+        }
+    }
+
+    /// Re-register the mDNS service under a new name.
+    ///
+    /// For non-mDNS variants this is a no-op (logged at debug level).
+    pub fn rename(
+        &mut self,
+        old_fullname: &str,
+        new_name: &str,
+        port: u16,
+        card: &AgentCard,
+        mesh_key: &str,
+    ) {
+        match self {
+            PeerDiscoveryImpl::Mdns(m) => m.rename(old_fullname, new_name, port, card, mesh_key),
+            PeerDiscoveryImpl::Static(_) => {
+                log::debug!("PeerDiscoveryImpl::rename: static discovery, no-op");
+            }
+            PeerDiscoveryImpl::Noop => {
+                log::debug!("PeerDiscoveryImpl::rename: noop discovery, no-op");
+            }
+        }
+    }
 }

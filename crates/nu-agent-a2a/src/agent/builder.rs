@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use tokio::sync::mpsc;
 
@@ -157,6 +157,8 @@ impl AgentBuilder {
             });
         }
 
+        let discovery = Arc::new(Mutex::new(discovery));
+
         // ── Register self in peer cache ───────────────────────────────────────────
         // The agent adds itself to the peer cache so it can discover its own identity
         // via agent.list and agent.getCard tools. The port-based self-filter prevents
@@ -177,14 +179,17 @@ impl AgentBuilder {
         // packets handle the crash-detection path via PeerLost → cache.remove().
 
         let client = A2aClient::new().map_err(|e| (e, None))?;
+        let card_handle = Some(server.agent_card_handle());
         Ok(AgentHandle {
             server,
             client,
             card,
+            card_handle,
             cache,
             completion_tx: Some(completion_tx),
             completion_rx: Some(completion_rx),
             discovery,
+            mesh_key: self.mesh_key,
         })
     }
 }

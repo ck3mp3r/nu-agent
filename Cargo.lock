@@ -2978,6 +2978,7 @@ dependencies = [
  "nu-protocol",
  "oauth2",
  "open",
+ "reqwest 0.13.4",
  "rig-core",
  "rmcp",
  "rustls",

@@ -5,12 +5,15 @@ use std::time::Duration;
 
 use nu_protocol::{LabeledError, Value};
 
-use nu_agent_a2a::{A2aCompletionEvent, InMemoryTaskStore, IncomingTask, Part};
+use nu_agent_a2a::{
+    A2aCompletionEvent, AgentCard, InMemoryTaskStore, IncomingTask, Part, Peer, PeerCache,
+    PeerDiscoveryImpl, mdns_name_for_switch, rebuild_card_for_switch, skill_from_persona,
+};
 use nu_agent_core::utils::value_ext::extract_response_text_from_value;
 use nu_agent_core::{
     conversation::runtime::AgentConversationRuntime,
     orchestrator::{
-        InteractiveLoopConfig, run_hydrated_interactive_loop_with_external_prompts,
+        InteractiveLoopConfig, OnAgentSwitch, run_hydrated_interactive_loop_with_external_prompts,
         run_interactive_loop_with_external_prompts, run_single_turn,
     },
     policy::UiPolicy,
@@ -98,6 +101,16 @@ pub(crate) struct A2aContext {
     pub(crate) task_rx: Option<tokio::sync::mpsc::Receiver<IncomingTask>>,
     pub(crate) completion_rx: Option<tokio::sync::mpsc::Receiver<A2aCompletionEvent>>,
     pub(crate) task_store: Option<Arc<InMemoryTaskStore>>,
+    /// Handle to the server's mutable AgentCard, for updating on agent switch.
+    pub(crate) card_handle: Option<Arc<std::sync::RwLock<AgentCard>>>,
+    /// Shared peer cache, for updating the self-entry on agent switch.
+    pub(crate) cache: Option<Arc<PeerCache>>,
+    /// The port the A2A server is listening on.
+    pub(crate) self_port: Option<u16>,
+    /// Handle to the discovery implementation, for re-registering mDNS on agent switch.
+    pub(crate) discovery: Option<Arc<std::sync::Mutex<PeerDiscoveryImpl>>>,
+    /// The mesh key for mDNS discovery isolation.
+    pub(crate) mesh_key: Option<String>,
 }
 
 pub(crate) async fn run_tui_mode(
@@ -276,24 +289,68 @@ pub(crate) async fn run_tui_mode(
             None
         };
 
+    // Build the on_agent_switch callback for A2A card updates.
+    let on_agent_switch: Option<OnAgentSwitch> = a2a.card_handle.map(|card_handle| {
+        let cache = a2a.cache.clone();
+        let self_port = a2a.self_port;
+        let discovery = a2a.discovery.clone();
+        let mesh_key = a2a.mesh_key.clone();
+        Arc::new(move |name: String, description: Option<String>| {
+            let mut card = card_handle.write().expect("agent_card lock");
+            let old_name = card.name.clone();
+            let skill = skill_from_persona(&name, description.as_deref());
+            let new_card =
+                rebuild_card_for_switch(&card, &name, description.as_deref(), vec![skill]);
+            *card = new_card.clone();
+            // Update the peer cache self-entry so agent_list reflects the new name.
+            if let (Some(ref cache), Some(port)) = (cache.clone(), self_port) {
+                cache.remove(&old_name);
+                cache.add_or_update(Peer {
+                    name: name.clone(),
+                    url: card.url.clone(),
+                    host: "127.0.0.1".to_string(),
+                    port,
+                    card: Some(card.clone()),
+                    discovered_at: std::time::Instant::now(),
+                });
+            }
+            // Re-register mDNS with the new name so other agents discover the change.
+            if let (Some(discovery), Some(mesh_key)) = (discovery.as_ref(), mesh_key.as_ref()) {
+                let mut d = discovery.lock().expect("discovery lock");
+                let old_fullname = d.fullname().map(|s| s.to_string());
+                if let Some(ref old_fullname) = old_fullname {
+                    let port = self_port.expect("self_port must be set when discovery is active");
+                    let new_mdns_name = mdns_name_for_switch(&old_name, &name, port);
+                    d.rename(old_fullname, &new_mdns_name, port, &card, mesh_key);
+                }
+            }
+        }) as OnAgentSwitch
+    });
+
     terminal_lifecycle
         .enter()
         .map_err(|e| LabeledError::new(format!("Failed to enter terminal raw mode: {e}")))?;
 
     let result = if input_is_nothing {
         if hydration.should_hydrate {
-            let config = InteractiveLoopConfig::new(span)
+            let mut config = InteractiveLoopConfig::new(span)
                 .with_hydration(hydration.initial_messages, hydration.last_total_tokens)
                 .with_interactive_pending(Some(Arc::clone(&pending)))
                 .with_external_prompt_rx(external_prompt_rx)
                 .with_on_turn_complete(turn_tx);
+            if let Some(cb) = on_agent_switch {
+                config = config.with_on_agent_switch(cb);
+            }
             run_hydrated_interactive_loop_with_external_prompts(runtime_impl, &mut tui_ui, config)
                 .await
         } else {
-            let config = InteractiveLoopConfig::new(span)
+            let mut config = InteractiveLoopConfig::new(span)
                 .with_interactive_pending(Some(Arc::clone(&pending)))
                 .with_external_prompt_rx(external_prompt_rx)
                 .with_on_turn_complete(turn_tx);
+            if let Some(cb) = on_agent_switch {
+                config = config.with_on_agent_switch(cb);
+            }
             run_interactive_loop_with_external_prompts(runtime_impl, &mut tui_ui, config).await
         }
     } else {

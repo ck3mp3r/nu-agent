@@ -151,17 +151,67 @@ fn builtin_edit_definition_uses_mode_and_operation_contract_with_legacy_compat_f
     assert_eq!(op_types[1], "create");
 }
 
-// --- Tool assembly tests: all agents always have all tools ---
+// --- Tool assembly tests: A2A tools gated on a2a_enabled ---
 
 #[test]
-fn all_agents_have_a2a_tools() {
-    // All tool groups are always registered unconditionally.
-    // The permission system (allow/ask/deny) gates actual use at call time.
+fn a2a_tools_absent_when_disabled() {
     let closure_registry = nu_agent_core::tools::closure::ClosureRegistry::default();
     let agents_config = nu_agent_core::config::AgentsConfig::default();
     let cwd = std::path::Path::new("/tmp");
 
-    let assembly = assemble_tool_definitions(&closure_registry, &agents_config, &[], cwd);
+    let assembly = assemble_tool_definitions(&closure_registry, &agents_config, &[], cwd, false);
+
+    let names: Vec<&str> = assembly
+        .tool_definitions
+        .iter()
+        .map(|t| t.name.as_str())
+        .collect();
+
+    assert!(
+        !names.contains(&"agent_list"),
+        "agent_list must be absent when A2A disabled, got: {names:?}"
+    );
+    assert!(
+        !names.contains(&"agent_getCard"),
+        "agent_getCard must be absent when A2A disabled, got: {names:?}"
+    );
+    assert!(
+        !names.contains(&"tasks_send"),
+        "tasks_send must be absent when A2A disabled, got: {names:?}"
+    );
+    assert!(
+        !names.contains(&"tasks_get"),
+        "tasks_get must be absent when A2A disabled, got: {names:?}"
+    );
+    assert!(
+        !names.contains(&"tasks_cancel"),
+        "tasks_cancel must be absent when A2A disabled, got: {names:?}"
+    );
+    assert!(
+        !names.contains(&"tasks_list"),
+        "tasks_list must be absent when A2A disabled, got: {names:?}"
+    );
+
+    // Baseline must also be clean
+    let baseline_names: Vec<&str> = assembly
+        .baseline_tool_definitions
+        .iter()
+        .map(|t| t.name.as_str())
+        .collect();
+
+    assert!(
+        !baseline_names.contains(&"agent_list"),
+        "agent_list must be absent from baseline when A2A disabled"
+    );
+}
+
+#[test]
+fn a2a_tools_present_when_enabled() {
+    let closure_registry = nu_agent_core::tools::closure::ClosureRegistry::default();
+    let agents_config = nu_agent_core::config::AgentsConfig::default();
+    let cwd = std::path::Path::new("/tmp");
+
+    let assembly = assemble_tool_definitions(&closure_registry, &agents_config, &[], cwd, true);
 
     let names: Vec<&str> = assembly
         .tool_definitions
@@ -171,26 +221,38 @@ fn all_agents_have_a2a_tools() {
 
     assert!(
         names.contains(&"agent_list"),
-        "All agents must have agent_list, got: {names:?}"
+        "agent_list must be present when A2A enabled, got: {names:?}"
     );
     assert!(
         names.contains(&"agent_getCard"),
-        "All agents must have agent_getCard, got: {names:?}"
+        "agent_getCard must be present when A2A enabled, got: {names:?}"
     );
     assert!(
         names.contains(&"tasks_send"),
-        "All agents must have tasks_send, got: {names:?}"
+        "tasks_send must be present when A2A enabled, got: {names:?}"
     );
     assert!(
         names.contains(&"tasks_get"),
-        "All agents must have tasks_get, got: {names:?}"
+        "tasks_get must be present when A2A enabled, got: {names:?}"
     );
     assert!(
         names.contains(&"tasks_cancel"),
-        "All agents must have tasks_cancel, got: {names:?}"
+        "tasks_cancel must be present when A2A enabled, got: {names:?}"
     );
     assert!(
         names.contains(&"tasks_list"),
-        "All agents must have tasks_list, got: {names:?}"
+        "tasks_list must be present when A2A enabled, got: {names:?}"
+    );
+
+    // Baseline must also have them
+    let baseline_names: Vec<&str> = assembly
+        .baseline_tool_definitions
+        .iter()
+        .map(|t| t.name.as_str())
+        .collect();
+
+    assert!(
+        baseline_names.contains(&"agent_list"),
+        "agent_list must be in baseline when A2A enabled"
     );
 }

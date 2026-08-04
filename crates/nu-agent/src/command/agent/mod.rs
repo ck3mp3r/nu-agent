@@ -349,4 +349,7 @@ mod docs_contract_test;
 mod mode_execute_test;
 
 #[cfg(test)]
+mod a2a_card_switch_test;
+
+#[cfg(test)]
 mod resolve_policy_test;

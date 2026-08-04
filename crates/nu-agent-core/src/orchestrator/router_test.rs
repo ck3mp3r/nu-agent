@@ -12,7 +12,7 @@ use std::sync::{
 use std::time::Duration;
 
 use crate::orchestrator::{
-    CommandRouter, InteractiveLoopConfig, WorkerCommand, run_interactive_loop_impl,
+    CommandRouter, InteractiveLoopConfig, OnAgentSwitch, WorkerCommand, run_interactive_loop_impl,
 };
 use crate::protocol::{
     compaction::{CompactionTriggerDecision, CompactionTriggerSource},
@@ -699,7 +699,8 @@ async fn switch_session_dispatches_async_load_without_panic() {
     // Dispatch from within an async context — this is the exact scenario
     // that was panicking with "Cannot start a runtime from within a runtime"
     // when load_session used Handle::current().block_on(...)
-    let should_continue = CommandRouter::dispatch(cmd, &mut runtime, &mut ui, &result_tx).await;
+    let should_continue =
+        CommandRouter::dispatch(cmd, &mut runtime, &mut ui, &result_tx, None).await;
 
     // 1. No panic occurred (reaching here proves it)
     assert!(should_continue, "SwitchSession should not trigger shutdown");
@@ -719,4 +720,41 @@ async fn switch_session_dispatches_async_load_without_panic() {
         result.is_err(),
         "default load_session should return an error"
     );
+}
+
+// ---------------------------------------------------------------------------
+// on_agent_switch callback
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn on_agent_switch_callback_invoked_after_successful_switch() {
+    let switched_name = Arc::new(std::sync::Mutex::new(None::<String>));
+    let switched_desc = Arc::new(std::sync::Mutex::new(None::<Option<String>>));
+    let cb_name = Arc::clone(&switched_name);
+    let cb_desc = Arc::clone(&switched_desc);
+
+    let callback: OnAgentSwitch = Arc::new(move |name: String, description: Option<String>| {
+        *cb_name.lock().expect("name lock") = Some(name);
+        *cb_desc.lock().expect("desc lock") = Some(description);
+    });
+
+    let runtime = AgentSwitchRuntime {
+        switch_agent_result: Some(Ok("research-agent".to_string())),
+        ..Default::default()
+    };
+    let mut ui = AgentSwitchUi::new(&["research-agent"]);
+
+    let config = InteractiveLoopConfig::new(Span::test_data()).with_on_agent_switch(callback);
+
+    let (_runtime, result) = run_interactive_loop_impl(runtime, &mut ui, config).await;
+    let value = result.expect("interactive loop");
+    assert!(value.is_nothing());
+
+    // Verify the callback was invoked with the correct values
+    let name = switched_name.lock().expect("name lock").take();
+    let desc = switched_desc.lock().expect("desc lock").take();
+    assert_eq!(name.as_deref(), Some("research-agent"));
+    // The AgentSwitchRuntime doesn't implement agent_description(), so it
+    // returns None (the default trait method).
+    assert_eq!(desc, Some(None));
 }

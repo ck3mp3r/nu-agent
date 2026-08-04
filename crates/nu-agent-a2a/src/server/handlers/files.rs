@@ -14,9 +14,13 @@ pub async fn handle_file_upload(
         .write()
         .expect("files lock")
         .insert(file_id.clone(), body.to_vec());
+    let url = {
+        let card = state.agent_card.read().expect("agent_card lock");
+        card.url.clone()
+    };
     let resp = json!({
         "id": file_id,
-        "url": format!("{}/files/{}", state.agent_card.url, file_id),
+        "url": format!("{}/files/{}", url, file_id),
     });
     a2a_json_response(resp)
 }

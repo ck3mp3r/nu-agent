@@ -1116,6 +1116,8 @@ impl Config {
             .and_then(|v| v.parse().ok())
             .unwrap_or(false);
 
+        let a2a_port: Option<u16> = parse_env_var("AGENT_A2A_PORT");
+
         let session_store_type: Option<StoreType> = env::var("AGENT_SESSION_STORE_TYPE")
             .ok()
             .and_then(|s| s.parse().ok());
@@ -1146,7 +1148,7 @@ impl Config {
             max_tool_calls_per_subturn,
             additional_params: None,
             a2a_enabled,
-            a2a_port: None,
+            a2a_port,
             session_store_type,
         }
     }

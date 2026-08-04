@@ -315,6 +315,9 @@ where
         name: &str,
         enabled: bool,
     ) -> Result<McpUsabilityState, String> {
+        if !enabled {
+            self.permission_state.clear_session_grants_for_server(name);
+        }
         let handle = self.tool_server_handle.clone();
         self.mcp_state
             .set_mcp_server_enabled(&handle, name, enabled, self.tools.tool_definitions_mut())
@@ -416,6 +419,10 @@ where
             .unwrap_or_default();
         self.permission_state.with_agent_overlay(&overlay);
 
+        // Clear session grants so "Allow always" from the previous agent
+        // does not persist into the new agent.
+        self.permission_state.clear_session_grants();
+
         // Reset tool definitions to baseline on agent switch
         self.tools.reset_to_baseline();
 
@@ -435,6 +442,10 @@ where
             .provider_config()
             .max_context_tokens
             .map(u64::from)
+    }
+
+    fn agent_description(&self) -> Option<&str> {
+        self.persona.agent_description()
     }
 }
 

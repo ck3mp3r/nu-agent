@@ -7,4 +7,11 @@ pub trait ModelSwitching {
     fn active_model_identity(&self) -> String;
 
     fn max_context_tokens(&self) -> Option<u64>;
+
+    /// The current agent's description, if any.
+    ///
+    /// Defaults to `None` for runtimes that do not track agent descriptions.
+    fn agent_description(&self) -> Option<&str> {
+        None
+    }
 }

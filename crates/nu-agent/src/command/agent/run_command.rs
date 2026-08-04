@@ -124,17 +124,6 @@ pub(super) fn run_command(
     // 1. Resolve default role config (--model flag handled here)
     let mut config = resolve_config(engine, call)?;
 
-    // --a2a-port enables A2A and optionally sets the port
-    if let Some(port_val) = call.get_flag::<i64>("a2a-port")? {
-        if !(0..=65535).contains(&port_val) {
-            return Err(LabeledError::new(format!(
-                "Invalid --a2a-port value {port_val}. Must be between 0 and 65535."
-            )));
-        }
-        config.a2a_enabled = true;
-        config.a2a_port = Some(port_val as u16);
-    }
-
     // Resolve session store type with CLI > env > config > default precedence
     let store_type = plugin.resolve_store_type(call)?;
     let store = Arc::new(
@@ -281,10 +270,12 @@ pub(super) fn run_command(
                 Err((err, Some(server))) => {
                     server.shutdown().await;
                     log::warn!("A2A startup failed (non-fatal): {err}");
+                    eprintln!("A2A startup failed (non-fatal): {err}");
                     None
                 }
                 Err((err, None)) => {
                     log::warn!("A2A startup failed (non-fatal): {err}");
+                    eprintln!("A2A startup failed (non-fatal): {err}");
                     None
                 }
             }
@@ -348,6 +339,7 @@ pub(super) fn run_command(
             &agents_config,
             &discovered_mcp_tools,
             &cwd,
+            a2a_handle.is_some(),
         );
 
         let resolver = DefaultSessionResolver::new(Arc::clone(&store));
@@ -471,6 +463,11 @@ pub(super) fn run_command(
             task_rx: a2a_task_rx,
             completion_rx: a2a_completion_rx,
             task_store: a2a_task_store.clone(),
+            card_handle: a2a_handle.as_ref().and_then(|h| h.card_handle()),
+            cache: a2a_handle.as_ref().map(|h| h.cache()),
+            self_port: a2a_handle.as_ref().map(|h| h.server.port),
+            discovery: a2a_handle.as_ref().map(|h| h.discovery_handle()),
+            mesh_key: a2a_handle.as_ref().map(|h| h.mesh_key().to_string()),
         };
 
         let result = match mode {

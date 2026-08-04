@@ -134,3 +134,39 @@ fn test_concurrent_access() {
     }
     assert_eq!(cache.list().len(), 10);
 }
+
+#[test]
+fn peer_cache_updates_on_name_change() {
+    let cache = PeerCache::new();
+    cache.add_or_update(Peer {
+        name: "researcher-12345".into(),
+        url: "http://127.0.0.1:9999".into(),
+        host: "127.0.0.1".into(),
+        port: 9999,
+        card: None,
+        discovered_at: std::time::Instant::now(),
+    });
+    assert!(cache.get("researcher-12345").is_some());
+
+    // Simulate agent switch: remove old name, add new name
+    cache.remove("researcher-12345");
+    cache.add_or_update(Peer {
+        name: "reviewer".into(),
+        url: "http://127.0.0.1:9999".into(),
+        host: "127.0.0.1".into(),
+        port: 9999,
+        card: None,
+        discovered_at: std::time::Instant::now(),
+    });
+
+    let peers = cache.list();
+    let names: Vec<&str> = peers.iter().map(|p| p.name.as_str()).collect();
+    assert!(
+        names.contains(&"reviewer"),
+        "list should contain the new name 'reviewer', got: {names:?}"
+    );
+    assert!(
+        !names.contains(&"researcher-12345"),
+        "list should NOT contain the old name 'researcher-12345', got: {names:?}"
+    );
+}

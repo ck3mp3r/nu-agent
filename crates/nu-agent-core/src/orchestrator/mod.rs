@@ -71,6 +71,10 @@ pub struct InteractiveLoopConfig {
     pub on_turn_complete: Option<std_mpsc::Sender<(String, String)>>,
     /// Optional hydration config for resuming a prior session.
     pub hydration: Option<HydrationConfig>,
+    /// Optional callback invoked after a successful agent switch.
+    /// Receives the new agent's identity (name) and optional description.
+    /// Used by the binary layer to update the A2A agent card.
+    pub on_agent_switch: Option<OnAgentSwitch>,
 }
 
 impl InteractiveLoopConfig {
@@ -82,6 +86,7 @@ impl InteractiveLoopConfig {
             external_prompt_rx: None,
             on_turn_complete: None,
             hydration: None,
+            on_agent_switch: None,
         }
     }
 
@@ -115,6 +120,16 @@ impl InteractiveLoopConfig {
         });
         self
     }
+
+    /// Set the on-agent-switch callback.
+    ///
+    /// The callback receives the new agent's identity (name) and optional
+    /// description after a successful switch. Used by the binary layer to
+    /// update the A2A agent card.
+    pub fn with_on_agent_switch(mut self, callback: OnAgentSwitch) -> Self {
+        self.on_agent_switch = Some(callback);
+        self
+    }
 }
 
 /// Configuration for hydrating a prior session into the interactive loop.
@@ -140,6 +155,10 @@ pub(crate) type PendingAgentSwitch = std_mpsc::Receiver<AgentSwitchResult>;
 pub(crate) type PendingSessionSwitch = std_mpsc::Receiver<SessionSwitchResult>;
 pub(crate) type PendingAutoCompaction = std_mpsc::Receiver<Option<String>>;
 pub(crate) type PendingCompactionTrigger = std_mpsc::Receiver<Option<String>>;
+
+/// Callback invoked after a successful agent switch.
+/// Receives the new agent's identity (name) and optional description.
+pub type OnAgentSwitch = Arc<dyn Fn(String, Option<String>) + Send + Sync>;
 
 pub enum WorkerCommand {
     ExecuteTurn {
@@ -233,6 +252,7 @@ where
         mut external_prompt_rx,
         on_turn_complete,
         hydration,
+        ref on_agent_switch,
     } = config;
 
     if let Some(hydration) = hydration {
@@ -269,12 +289,19 @@ where
     // commands (ExecuteTurn, compaction, MCP toggle, model/agent switch)
     // independently, allowing the main loop to pump the UI and run stages
     // concurrently. The runtime is returned when the worker completes.
+    let on_agent_switch = on_agent_switch.clone();
     let worker_handle = tokio::spawn(async move {
         loop {
             let command = worker_cmd_rx.recv().await;
             let Some(cmd) = command else { break };
-            let should_continue =
-                CommandRouter::dispatch(cmd, &mut runtime, &mut worker_ui, &worker_result_tx).await;
+            let should_continue = CommandRouter::dispatch(
+                cmd,
+                &mut runtime,
+                &mut worker_ui,
+                &worker_result_tx,
+                on_agent_switch.clone(),
+            )
+            .await;
             if !should_continue {
                 break;
             }

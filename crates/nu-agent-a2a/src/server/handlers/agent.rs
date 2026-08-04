@@ -3,8 +3,10 @@ use axum::{Json, extract::State, http::HeaderMap, response::IntoResponse};
 use super::super::AppState;
 
 pub async fn handle_agent_card(State(state): State<AppState>) -> impl IntoResponse {
-    let card = serde_json::to_value(&*state.agent_card).expect("serialize AgentCard");
-    let version = state.agent_card.version.clone();
+    let card = state.agent_card.read().expect("agent_card lock");
+    let card_value = serde_json::to_value(&*card).expect("serialize AgentCard");
+    let version = card.version.clone();
+    drop(card);
     let etag = format!("\"{}\"", version);
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -22,13 +24,15 @@ pub async fn handle_agent_card(State(state): State<AppState>) -> impl IntoRespon
         etag.parse()
             .expect("card version must produce a valid ETag header value"),
     );
-    (headers, Json(card))
+    (headers, Json(card_value))
 }
 
 pub async fn handle_extended_agent_card(State(state): State<AppState>) -> impl IntoResponse {
-    let card = serde_json::to_value(&*state.agent_card).unwrap_or_default();
+    let card = state.agent_card.read().expect("agent_card lock");
+    let card_value = serde_json::to_value(&*card).unwrap_or_default();
+    drop(card);
     let extended = serde_json::json!({
-        "agentCard": card,
+        "agentCard": card_value,
         "extendedCapabilities": {
             "streaming": true,
             "pushNotifications": false,
