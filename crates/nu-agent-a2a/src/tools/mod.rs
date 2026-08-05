@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
-use rig::tool::{ToolDyn, ToolError};
-use rig::wasm_compat::WasmBoxedFuture;
+use rig::tool::{DynamicTool, ToolExecutionError, ToolOutput};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
@@ -14,20 +13,6 @@ mod get_card;
 mod list;
 mod register;
 mod send;
-
-// ---------------------------------------------------------------------------
-// Error type
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, thiserror::Error)]
-enum A2aToolError {
-    #[error("Argument parsing failed: {0}")]
-    ArgumentParsing(String),
-    #[error("Tool execution failed: {0}")]
-    Execution(String),
-    #[error("Result serialization failed: {0}")]
-    ResultSerialization(String),
-}
 
 // ---------------------------------------------------------------------------
 // ToolResult
@@ -140,10 +125,10 @@ impl Tool {
 }
 
 // ---------------------------------------------------------------------------
-// A2aToolAdapter — bridges A2A tools into rig's ToolDyn system
+// A2aToolAdapter — bridges A2A tools into rig's DynamicTool system
 // ---------------------------------------------------------------------------
 
-/// Adapter that wraps an A2A tool for rig's ToolDyn registration system.
+/// Adapter that wraps an A2A tool for rig's DynamicTool registration system.
 ///
 /// Each [`A2aToolDef`] is paired with an [`A2aToolContext`] so that rig's
 /// [`ToolServerHandle`] can route LLM function-calls to the corresponding A2A
@@ -157,39 +142,36 @@ impl A2aToolAdapter {
     pub fn new(tool_def: A2aToolDef, ctx: A2aToolContext) -> Self {
         Self { tool_def, ctx }
     }
-}
 
-impl ToolDyn for A2aToolAdapter {
-    fn name(&self) -> String {
-        self.tool_def.name.clone()
-    }
+    /// Convert this adapter into a DynamicTool for registration with rig.
+    pub fn into_dynamic_tool(self) -> DynamicTool {
+        let name = self.tool_def.name.clone();
+        let description = self.tool_def.description.clone();
+        let parameters = self.tool_def.parameters.clone();
+        let ctx = self.ctx;
 
-    fn description(&self) -> String {
-        self.tool_def.description.clone()
-    }
+        DynamicTool::new(
+            name.clone(),
+            description,
+            parameters,
+            move |_context, args| {
+                let ctx = ctx.clone();
+                let name = name.clone();
+                Box::pin(async move {
+                    let result = handle_dispatch(&name, &ctx, args)
+                        .await
+                        .map_err(ToolExecutionError::provider)?;
 
-    fn parameters(&self) -> Value {
-        self.tool_def.parameters.clone()
-    }
-
-    fn call<'a>(&'a self, args: String) -> WasmBoxedFuture<'a, Result<String, ToolError>> {
-        Box::pin(async move {
-            let args_json: Value = serde_json::from_str(&args).map_err(|e| {
-                ToolError::ToolCallError(Box::new(A2aToolError::ArgumentParsing(format!(
-                    "Invalid JSON arguments: {e}"
-                ))))
-            })?;
-
-            let result = handle_dispatch(&self.tool_def.name, &self.ctx, args_json)
-                .await
-                .map_err(|e| ToolError::ToolCallError(Box::new(A2aToolError::Execution(e))))?;
-
-            serde_json::to_string(&result).map_err(|e| {
-                ToolError::ToolCallError(Box::new(A2aToolError::ResultSerialization(format!(
-                    "Failed to serialize A2A tool result: {e}"
-                ))))
-            })
-        })
+                    serde_json::to_string(&result)
+                        .map(ToolOutput::text)
+                        .map_err(|e| {
+                            ToolExecutionError::other(format!(
+                                "Failed to serialize A2A tool result: {e}"
+                            ))
+                        })
+                })
+            },
+        )
     }
 }
 
@@ -266,7 +248,7 @@ pub fn a2a_tool_defs() -> Vec<A2aToolDef> {
 // ---------------------------------------------------------------------------
 
 /// Register all A2A tools (agent_list, agent_getCard, tasks_send, etc.) on a
-/// rig [`ToolServerHandle`].
+/// rig [`ToolServerHandle`] using DynamicTool.
 ///
 /// # Errors
 ///
@@ -278,9 +260,8 @@ pub async fn register_tools_on_server(
     for def in a2a_tool_defs() {
         let adapter = A2aToolAdapter::new(def, ctx.clone());
         tool_server_handle
-            .add_tool(adapter)
-            .await
-            .map_err(|e| format!("Failed to register A2A tool: {e}"))?;
+            .add_dynamic_tool(adapter.into_dynamic_tool())
+            .await;
     }
     Ok(())
 }

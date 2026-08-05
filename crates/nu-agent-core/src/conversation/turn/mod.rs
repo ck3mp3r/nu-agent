@@ -20,8 +20,7 @@ use crate::session::{CachedMemory, SessionStore};
 use crate::types::{Message, Text, ToolDefinition, UserContent};
 use rig::memory::ConversationMemory;
 use rig::streaming::StreamingPrompt;
-use rig::tool::{ToolDyn, ToolError};
-use rig::wasm_compat::WasmBoxedFuture;
+use rig::tool::{DynamicTool, ToolExecutionError};
 
 /// Default max tool turns when config doesn't specify a limit.
 /// Matches v1 "unlimited" semantics with a practical upper bound.
@@ -421,32 +420,39 @@ struct FilteredToolProxy {
     cancel_token: CancellationToken,
 }
 
-impl ToolDyn for FilteredToolProxy {
-    fn name(&self) -> String {
-        self.tool_name.clone()
-    }
+impl FilteredToolProxy {
+    /// Convert this proxy into a DynamicTool for registration with rig.
+    fn into_dynamic_tool(self) -> DynamicTool {
+        let name = self.tool_name.clone();
+        let description = self.tool_definition.description.clone();
+        let parameters = self.tool_definition.parameters.clone();
+        let handle = self.handle;
+        let cancel_token = self.cancel_token;
 
-    fn description(&self) -> String {
-        self.tool_definition.description.clone()
-    }
-
-    fn parameters(&self) -> serde_json::Value {
-        self.tool_definition.parameters.clone()
-    }
-
-    fn call<'a>(&'a self, args: String) -> WasmBoxedFuture<'a, Result<String, ToolError>> {
-        let cancel_token = self.cancel_token.clone();
-        Box::pin(async move {
-            tokio::select! {
-                result = self.handle.call_tool(&self.tool_name, &args) => {
-                    result.map_err(|e| ToolError::ToolCallError(Box::new(e)))
+        let tool_name_for_closure = name.clone();
+        DynamicTool::new(name, description, parameters, move |context, args| {
+            let handle = handle.clone();
+            let cancel_token = cancel_token.clone();
+            let tool_name = tool_name_for_closure.clone();
+            Box::pin(async move {
+                // Serialize args back to string for the handle.execute call
+                let args_str = serde_json::to_string(&args).unwrap_or_else(|_| "{}".to_string());
+                tokio::select! {
+                    result = handle.execute(&tool_name, &args_str, context) => {
+                        if result.is_success() {
+                            Ok(result.output().clone())
+                        } else if let Some(error) = result.error() {
+                            Err(error.clone())
+                        } else {
+                            // Refusal or skipped
+                            Ok(result.output().clone())
+                        }
+                    }
+                    _ = cancel_token.cancelled() => {
+                        Err(ToolExecutionError::cancelled("tool call cancelled"))
+                    }
                 }
-                _ = cancel_token.cancelled() => {
-                    Err(ToolError::ToolCallError(
-                        "tool call cancelled".to_string().into()
-                    ))
-                }
-            }
+            })
         })
     }
 }
@@ -479,7 +485,7 @@ where
     } = config;
     // Create proxy tools that expose only the filtered definitions to the LLM
     // while delegating execution to the original shared tool server handle.
-    let proxy_tools: Vec<Box<dyn ToolDyn>> = visible_tool_definitions
+    let proxy_tools: Vec<DynamicTool> = visible_tool_definitions
         .into_iter()
         .map(|def| {
             let proxy = FilteredToolProxy {
@@ -488,7 +494,7 @@ where
                 handle: tool_server_handle.clone(),
                 cancel_token: cancel_token.clone(),
             };
-            Box::new(proxy) as Box<dyn ToolDyn>
+            proxy.into_dynamic_tool()
         })
         .collect();
 
@@ -504,11 +510,11 @@ where
         rig::agent::AgentBuilder::new(model)
             .add_hook(hook)
             .memory(memory)
-            .tools(proxy_tools)
+            .dynamic_tools(proxy_tools)
     } else {
         rig::agent::AgentBuilder::new(model)
             .add_hook(hook)
-            .tools(proxy_tools)
+            .dynamic_tools(proxy_tools)
     };
     if let Some(ref p) = preamble {
         builder = builder.preamble(p);

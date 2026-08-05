@@ -1,55 +1,44 @@
 use super::*;
 use crate::tools::limits::MAX_TOOL_OUTPUT_BYTES;
-use rig::tool::{ToolDyn, ToolError};
-use rig::wasm_compat::WasmBoxedFuture;
+use rig::tool::{DynamicTool, ToolOutput};
 
-/// Mock tool that implements ToolDyn for testing
-struct MockTool {
-    name: String,
-    description: String,
+/// Build a mock DynamicTool for testing
+fn mock_tool(name: &str, description: &str) -> DynamicTool {
+    let name = name.to_string();
+    let description = description.to_string();
+    DynamicTool::new(
+        name,
+        description,
+        serde_json::json!({}),
+        |_context, _args| Box::pin(async { Ok(ToolOutput::text("mock result")) }),
+    )
 }
 
-impl MockTool {
-    fn new(name: impl Into<String>, description: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            description: description.into(),
-        }
-    }
-}
-
-impl ToolDyn for MockTool {
-    fn name(&self) -> String {
-        self.name.clone()
-    }
-
-    fn description(&self) -> String {
-        self.description.clone()
-    }
-
-    fn parameters(&self) -> serde_json::Value {
-        serde_json::json!({})
-    }
-
-    fn call<'a>(&'a self, _args: String) -> WasmBoxedFuture<'a, Result<String, ToolError>> {
-        Box::pin(async { Ok("mock result".to_string()) })
-    }
+/// Build a mock DynamicTool that returns a large result exceeding MAX_TOOL_OUTPUT_BYTES.
+fn large_mock_tool() -> DynamicTool {
+    DynamicTool::new(
+        "big_tool",
+        "Returns lots of data",
+        serde_json::json!({}),
+        |_context, _args| {
+            let large = "x".repeat(MAX_TOOL_OUTPUT_BYTES + 1_000);
+            Box::pin(async move { Ok(ToolOutput::text(large)) })
+        },
+    )
 }
 
 #[tokio::test]
 async fn namespaced_tool_returns_prefixed_name() {
-    // RED: Write failing test first
-    let inner = MockTool::new("run", "Run a command");
-    let tool = NamespacedTool::new(Box::new(inner), "nu", "__", MAX_TOOL_OUTPUT_BYTES);
+    let inner = mock_tool("run", "Run a command");
+    let tool = NamespacedTool::new(inner, "nu", "__", MAX_TOOL_OUTPUT_BYTES);
 
     assert_eq!(tool.name(), "nu__run");
 }
 
 #[tokio::test]
 async fn namespaced_tool_returns_prefixed_description() {
-    // RED: Test that description and parameters delegate to inner tool
-    let inner = MockTool::new("exec", "Execute something");
-    let tool = NamespacedTool::new(Box::new(inner), "mcp", "__", MAX_TOOL_OUTPUT_BYTES);
+    let inner = mock_tool("exec", "Execute something");
+    let tool = NamespacedTool::new(inner, "mcp", "__", MAX_TOOL_OUTPUT_BYTES);
 
     assert_eq!(tool.name(), "mcp__exec");
     assert_eq!(tool.description(), "Execute something");
@@ -58,9 +47,8 @@ async fn namespaced_tool_returns_prefixed_description() {
 
 #[tokio::test]
 async fn namespaced_tool_call_delegates_to_inner() {
-    // RED: Test that call delegates to inner tool
-    let inner = MockTool::new("test", "Test tool");
-    let tool = NamespacedTool::new(Box::new(inner), "server", "__", MAX_TOOL_OUTPUT_BYTES);
+    let inner = mock_tool("test", "Test tool");
+    let tool = NamespacedTool::new(inner, "server", "__", MAX_TOOL_OUTPUT_BYTES);
 
     let result = tool.call(r#"{"arg": "value"}"#.to_string()).await;
     assert!(result.is_ok());
@@ -69,41 +57,18 @@ async fn namespaced_tool_call_delegates_to_inner() {
 
 #[tokio::test]
 async fn namespaced_tool_uses_custom_delimiter() {
-    // RED: Test custom delimiter
-    let inner = MockTool::new("info", "Get info");
-    let tool = NamespacedTool::new(Box::new(inner), "server", "::", MAX_TOOL_OUTPUT_BYTES);
+    let inner = mock_tool("info", "Get info");
+    let tool = NamespacedTool::new(inner, "server", "::", MAX_TOOL_OUTPUT_BYTES);
 
     assert_eq!(tool.name(), "server::info");
     assert_eq!(tool.description(), "Get info");
     assert!(tool.parameters().is_object());
 }
 
-/// Mock tool that returns a large result exceeding MAX_TOOL_OUTPUT_BYTES.
-struct LargeMockTool;
-
-impl ToolDyn for LargeMockTool {
-    fn name(&self) -> String {
-        "big_tool".to_string()
-    }
-
-    fn description(&self) -> String {
-        "Returns lots of data".to_string()
-    }
-
-    fn parameters(&self) -> serde_json::Value {
-        serde_json::json!({})
-    }
-
-    fn call<'a>(&'a self, _args: String) -> WasmBoxedFuture<'a, Result<String, ToolError>> {
-        let large = "x".repeat(MAX_TOOL_OUTPUT_BYTES + 1_000);
-        Box::pin(async move { Ok(large) })
-    }
-}
-
 #[tokio::test]
 async fn namespaced_tool_truncates_large_output() {
-    let inner = LargeMockTool;
-    let tool = NamespacedTool::new(Box::new(inner), "server", "__", MAX_TOOL_OUTPUT_BYTES);
+    let inner = large_mock_tool();
+    let tool = NamespacedTool::new(inner, "server", "__", MAX_TOOL_OUTPUT_BYTES);
 
     let result = tool.call("{}".to_string()).await;
     assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
@@ -115,4 +80,76 @@ async fn namespaced_tool_truncates_large_output() {
          got {} bytes with no marker",
         result_str.len()
     );
+}
+
+// ---------------------------------------------------------------------------
+// mcp_result_output tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn mcp_result_output_text_block() {
+    let result =
+        rmcp::model::CallToolResult::success(vec![rmcp::model::ContentBlock::text("hello world")]);
+    let output = super::mcp_result_output(&result).unwrap();
+    assert_eq!(output, "hello world");
+}
+
+#[test]
+fn mcp_result_output_image_block() {
+    let result = rmcp::model::CallToolResult::success(vec![rmcp::model::ContentBlock::image(
+        "base64data",
+        "image/png",
+    )]);
+    let output = super::mcp_result_output(&result).unwrap();
+    assert_eq!(output, "[image: image/png]");
+}
+
+#[test]
+fn mcp_result_output_audio_block() {
+    let result = rmcp::model::CallToolResult::success(vec![rmcp::model::ContentBlock::audio(
+        "base64data",
+        "audio/wav",
+    )]);
+    let output = super::mcp_result_output(&result).unwrap();
+    assert_eq!(output, "[audio: audio/wav]");
+}
+
+#[test]
+fn mcp_result_output_resource_block() {
+    let result =
+        rmcp::model::CallToolResult::success(vec![rmcp::model::ContentBlock::embedded_text(
+            "file:///tmp/test.txt",
+            "file content",
+        )]);
+    let output = super::mcp_result_output(&result).unwrap();
+    assert_eq!(output, "[resource: file:///tmp/test.txt]");
+}
+
+#[test]
+fn mcp_result_output_resource_link_block() {
+    let resource = rmcp::model::Resource::new("https://example.com/resource", "example-resource");
+    let result =
+        rmcp::model::CallToolResult::success(vec![rmcp::model::ContentBlock::resource_link(
+            resource,
+        )]);
+    let output = super::mcp_result_output(&result).unwrap();
+    assert_eq!(output, "[resource_link: https://example.com/resource]");
+}
+
+#[test]
+fn mcp_result_output_multiple_blocks() {
+    let result = rmcp::model::CallToolResult::success(vec![
+        rmcp::model::ContentBlock::text("first"),
+        rmcp::model::ContentBlock::image("data", "image/jpeg"),
+        rmcp::model::ContentBlock::text("last"),
+    ]);
+    let output = super::mcp_result_output(&result).unwrap();
+    assert_eq!(output, "first\n[image: image/jpeg]\nlast");
+}
+
+#[test]
+fn mcp_result_output_empty_content() {
+    let result = rmcp::model::CallToolResult::success(vec![]);
+    let output = super::mcp_result_output(&result).unwrap();
+    assert_eq!(output, "");
 }

@@ -389,10 +389,7 @@ impl<'a> AgentRuntimeBuilder<'a> {
         );
 
         for tool in closure_tools {
-            tool_server_handle.add_tool(tool).await.map_err(|e| {
-                LabeledError::new(format!("Failed to register closure tool: {}", e))
-                    .with_label(format!("{}", e), span)
-            })?;
+            tool_server_handle.add_dynamic_tool(tool).await;
         }
 
         // All tool groups are always registered. The permission system gates actual use.
@@ -413,10 +410,7 @@ impl<'a> AgentRuntimeBuilder<'a> {
         let builtin_tools = adapt_builtins(builtin_defs, cwd.clone(), max_tool_result_bytes);
 
         for tool in builtin_tools {
-            tool_server_handle.add_tool(tool).await.map_err(|e| {
-                LabeledError::new(format!("Failed to register builtin tool: {}", e))
-                    .with_label(format!("{}", e), span)
-            })?;
+            tool_server_handle.add_dynamic_tool(tool).await;
         }
 
         Ok(BuildArtifacts {

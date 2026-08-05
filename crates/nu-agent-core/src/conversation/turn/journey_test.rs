@@ -252,7 +252,11 @@ impl rig::tool::Tool for TestNuShellTool {
         serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]})
     }
 
-    async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
+    async fn call(
+        &self,
+        _context: &mut rig::tool::ToolContext,
+        _args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         Ok(self.response.to_string())
     }
 }
@@ -278,36 +282,24 @@ fn nu_shell_tool(response: &'static str) -> ToolInfra {
 
 /// A nu__shell tool that goes through `truncate_tool_output` so integration
 /// tests can verify the truncation threshold is respected end-to-end.
-struct TestTruncatingNuShellTool {
+fn build_truncating_tool(
     response: &'static str,
     max_tool_result_bytes: usize,
-}
-
-impl rig::tool::ToolDyn for TestTruncatingNuShellTool {
-    fn name(&self) -> String {
-        "nu__shell".to_string()
-    }
-
-    fn description(&self) -> String {
-        "Execute a Nushell command".to_string()
-    }
-
-    fn parameters(&self) -> serde_json::Value {
-        serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]})
-    }
-
-    fn call<'a>(
-        &'a self,
-        _args: String,
-    ) -> rig::wasm_compat::WasmBoxedFuture<'a, Result<String, rig::tool::ToolError>> {
-        let output = self.response.to_string();
-        let max_bytes = self.max_tool_result_bytes;
-        Box::pin(async move {
-            Ok(crate::tools::limits::truncate_tool_output(
-                output, max_bytes,
-            ))
-        })
-    }
+) -> rig::tool::DynamicTool {
+    rig::tool::DynamicTool::new(
+        "nu__shell",
+        "Execute a Nushell command",
+        serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}),
+        move |_context, _args| {
+            let output = response.to_string();
+            let max_bytes = max_tool_result_bytes;
+            Box::pin(async move {
+                Ok(rig::tool::ToolOutput::text(
+                    crate::tools::limits::truncate_tool_output(output, max_bytes),
+                ))
+            })
+        },
+    )
 }
 
 /// Register a nu__shell tool that applies truncation at `max_tool_result_bytes`.
@@ -316,14 +308,10 @@ async fn nu_shell_tool_truncating(
     max_tool_result_bytes: usize,
 ) -> ToolInfra {
     let handle = rig::tool::server::ToolServer::new().run();
-    // Register via add_tool since ToolDyn cannot use the .tool() builder
+    // Register via add_dynamic_tool
     handle
-        .add_tool(TestTruncatingNuShellTool {
-            response,
-            max_tool_result_bytes,
-        })
-        .await
-        .expect("add_tool must succeed");
+        .add_dynamic_tool(build_truncating_tool(response, max_tool_result_bytes))
+        .await;
     default_tool_infra(
         handle,
         vec![rig::completion::ToolDefinition {
@@ -356,7 +344,11 @@ impl rig::tool::Tool for TestEchoTool {
         serde_json::json!({"type": "object", "properties": {}})
     }
 
-    async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
+    async fn call(
+        &self,
+        _context: &mut rig::tool::ToolContext,
+        _args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         Ok(self.response.to_string())
     }
 }
@@ -408,7 +400,11 @@ impl rig::tool::Tool for TestNuShellCancellingTool {
         serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]})
     }
 
-    async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
+    async fn call(
+        &self,
+        _context: &mut rig::tool::ToolContext,
+        _args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         let result = self.output.to_string();
         // Cancel AFTER the tool result is produced. The select! in FilteredToolProxy
         // has already resolved with Ok(result). The token takes effect at the next
@@ -1417,6 +1413,7 @@ async fn journey_tool_result_truncated_at_configured_limit() {
                             .map(|tc| match tc {
                                 ToolResultContent::Text(t) => t.text.clone(),
                                 ToolResultContent::Image(_) => String::new(),
+                                ToolResultContent::Json { value } => value.to_string(),
                             })
                             .collect::<Vec<_>>()
                             .join("");
@@ -1466,10 +1463,7 @@ async fn skill_via_builtin_adapter(
     let adapter = BuiltinToolAdapter::new(tool_def.clone(), cwd.clone(), max_tool_result_bytes);
 
     let handle = rig::tool::server::ToolServer::new().run();
-    handle
-        .add_tool(adapter)
-        .await
-        .expect("add_tool must succeed");
+    handle.add_dynamic_tool(adapter.into_dynamic_tool()).await;
     default_tool_infra(
         handle,
         vec![rig::completion::ToolDefinition {
@@ -1582,6 +1576,7 @@ async fn journey_tool_result_limit_flows_from_config_to_adapter() {
                             .map(|tc| match tc {
                                 ToolResultContent::Text(t) => t.text.clone(),
                                 ToolResultContent::Image(_) => String::new(),
+                                ToolResultContent::Json { value } => value.to_string(),
                             })
                             .collect::<Vec<_>>()
                             .join("");

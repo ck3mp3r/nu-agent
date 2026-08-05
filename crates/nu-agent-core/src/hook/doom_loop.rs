@@ -5,7 +5,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use rig::agent::Flow;
+use rig::agent::ToolCallAction;
 use tokio::sync::mpsc;
 
 use crate::protocol::event::UiEvent;
@@ -52,14 +52,14 @@ pub struct DoomLoopDetector {
 impl DoomLoopDetector {
     /// Check for a doom loop and record the tool call signature.
     ///
-    /// Returns `Some(Flow::skip(...))` with a detection message if a doom loop is detected, `None` otherwise.
+    /// Returns `Some(ToolCallAction::skip(...))` with a detection message if a doom loop is detected, `None` otherwise.
     /// Using `Skip` feeds the message to the LLM as a tool result so it can change course.
     pub fn check_and_record(
         &self,
         tool_name: &str,
         args: &str,
         ui_tx: &mpsc::UnboundedSender<UiEvent>,
-    ) -> Option<Flow> {
+    ) -> Option<ToolCallAction> {
         let mut state = self.state.lock().expect("doom loop mutex poisoned");
         if let Some(tool) = state.check_and_record(tool_name, args) {
             log::warn!("Doom loop detected: tool={tool_name}");
@@ -70,7 +70,7 @@ impl DoomLoopDetector {
             let _ = ui_tx.send(UiEvent::Warning {
                 message: message.clone(),
             });
-            Some(Flow::skip(message))
+            Some(ToolCallAction::skip(message))
         } else {
             None
         }

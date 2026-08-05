@@ -1,11 +1,9 @@
 use super::*;
 use crate::types::ToolDefinition;
-use rig::tool::ToolDyn;
 
 /// Compile-time check that BuiltinToolAdapter implements Send + Sync.
 ///
-/// This test ensures that our adapter can be safely shared across threads,
-/// which is required by rig's ToolDyn trait.
+/// This test ensures that our adapter can be safely shared across threads.
 #[test]
 fn builtin_tool_adapter_is_send_sync() {
     fn assert_send<T: Send>() {}
@@ -15,16 +13,16 @@ fn builtin_tool_adapter_is_send_sync() {
     assert_sync::<BuiltinToolAdapter>();
 }
 
-/// Compile-time check that ToolDyn trait object is Send + Sync.
+/// Compile-time check that DynamicTool is Send + Sync.
 ///
-/// This ensures that boxed trait objects can be registered with rig's ToolServer.
+/// This ensures that DynamicTool instances can be registered with rig's ToolServer.
 #[test]
-fn tool_dyn_trait_object_is_send_sync() {
+fn dynamic_tool_is_send_sync() {
     fn assert_send<T: Send>() {}
     fn assert_sync<T: Sync>() {}
 
-    assert_send::<Box<dyn ToolDyn>>();
-    assert_sync::<Box<dyn ToolDyn>>();
+    assert_send::<DynamicTool>();
+    assert_sync::<DynamicTool>();
 }
 
 #[test]
@@ -43,7 +41,7 @@ fn adapter_returns_correct_name() {
 
     let adapter = BuiltinToolAdapter::new(tool_def, cwd.clone(), 20_000);
 
-    assert_eq!(adapter.name(), "test_tool");
+    assert_eq!(adapter.tool_def.name, "test_tool");
 }
 
 #[test]
@@ -63,15 +61,13 @@ fn adapter_returns_correct_description_and_parameters() {
 
     let adapter = BuiltinToolAdapter::new(tool_def.clone(), cwd.clone(), 20_000);
 
-    assert_eq!(adapter.name(), "read");
-    assert_eq!(adapter.description(), "Read a file");
-    assert_eq!(adapter.parameters(), tool_def.parameters);
+    assert_eq!(adapter.tool_def.name, "read");
+    assert_eq!(adapter.tool_def.description, "Read a file");
+    assert_eq!(adapter.tool_def.parameters, tool_def.parameters);
 }
 
 #[tokio::test]
 async fn adapter_calls_skill_tool() {
-    use rig::tool::ToolDyn;
-
     let tool_def = ToolDefinition {
         name: "skill".to_string(),
         description: "Load skill content".to_string(),
@@ -95,16 +91,24 @@ async fn adapter_calls_skill_tool() {
     let skill_file = skill_dir.join("SKILL.md");
     std::fs::write(&skill_file, "# Test Skill\n\nThis is a test skill.").unwrap();
 
+    // Convert to DynamicTool and execute via ToolSet
+    let dynamic_tool = adapter.into_dynamic_tool();
+    let mut toolset = rig::tool::ToolSet::default();
+    toolset.add_dynamic_tool(dynamic_tool);
+
     let args = serde_json::json!({
         "name": "test_skill"
     });
 
-    let result = adapter.call(args.to_string()).await;
+    let mut context = rig::tool::ToolContext::new();
+    let result = toolset
+        .execute("skill", &args.to_string(), &mut context)
+        .await;
 
     std::fs::remove_dir_all(&cwd).ok();
 
-    assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
-    let result_str = result.unwrap();
+    assert!(result.is_success(), "Expected success, got: {:?}", result);
+    let result_str = result.output().render();
     let result_json: serde_json::Value = serde_json::from_str(&result_str).unwrap();
 
     assert_eq!(result_json["name"], "test_skill");
@@ -123,7 +127,6 @@ async fn adapter_calls_skill_tool() {
 #[tokio::test]
 async fn adapter_truncates_large_output() {
     use crate::tools::limits::MAX_TOOL_OUTPUT_BYTES;
-    use rig::tool::ToolDyn;
 
     let temp_dir = std::env::temp_dir();
     let cwd = temp_dir.join("nu-agent-test-builtin-adapter-truncate");
@@ -149,13 +152,21 @@ async fn adapter_truncates_large_output() {
     };
     let adapter = BuiltinToolAdapter::new(tool_def, cwd.clone(), MAX_TOOL_OUTPUT_BYTES);
 
+    // Convert to DynamicTool and execute via ToolSet
+    let dynamic_tool = adapter.into_dynamic_tool();
+    let mut toolset = rig::tool::ToolSet::default();
+    toolset.add_dynamic_tool(dynamic_tool);
+
     let args = serde_json::json!({ "name": "big_skill" });
-    let result = adapter.call(args.to_string()).await;
+    let mut context = rig::tool::ToolContext::new();
+    let result = toolset
+        .execute("skill", &args.to_string(), &mut context)
+        .await;
 
     std::fs::remove_dir_all(&cwd).ok();
 
-    assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
-    let result_str = result.unwrap();
+    assert!(result.is_success(), "Expected success, got: {:?}", result);
+    let result_str = result.output().render();
 
     assert!(
         result_str.contains("[output truncated:"),

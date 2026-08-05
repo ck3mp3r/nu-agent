@@ -5,7 +5,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use rig::agent::Flow;
+use rig::agent::ToolCallAction;
 
 /// Enforces a per-sub-turn tool call cap.
 ///
@@ -32,8 +32,8 @@ impl SubTurnCap {
 
     /// Check and increment the counter.
     ///
-    /// Returns `Some(Flow::skip(...))` if the cap is exceeded, `None` if the call should proceed.
-    pub fn check_and_increment(&self, tool_name: &str) -> Option<Flow> {
+    /// Returns `Some(ToolCallAction::skip(...))` if the cap is exceeded, `None` if the call should proceed.
+    pub fn check_and_increment(&self, tool_name: &str) -> Option<ToolCallAction> {
         if self.max == 0 {
             return None;
         }
@@ -44,7 +44,7 @@ impl SubTurnCap {
                 *count,
                 self.max
             );
-            return Some(Flow::skip(format!(
+            return Some(ToolCallAction::skip(format!(
                 "Sub-turn tool call limit reached ({max}). No further tools will be called in this \
                  response. Please summarise what you have accomplished so far and continue in the \
                  next turn if needed.",

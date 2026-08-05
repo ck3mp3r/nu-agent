@@ -394,11 +394,6 @@ impl From<rig::agent::StreamingError> for TurnError {
                     },
                 }
             }
-
-            other => Self::CompletionFailed {
-                msg: other.to_string(),
-                kind: CompletionErrorKind::Unknown,
-            },
         }
     }
 }

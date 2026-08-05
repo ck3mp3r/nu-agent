@@ -2106,7 +2106,11 @@ impl rig::tool::Tool for SimpleEchoTool {
         serde_json::json!({"type": "object", "properties": {"x": {"type": "number"}}})
     }
 
-    async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
+    async fn call(
+        &self,
+        _context: &mut rig::tool::ToolContext,
+        _args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         Ok("real_tool_output".to_string())
     }
 }
@@ -2839,7 +2843,11 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
             serde_json::json!({"type": "object", "properties": {}})
         }
 
-        async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
+        async fn call(
+            &self,
+            _context: &mut rig::tool::ToolContext,
+            _args: Self::Args,
+        ) -> Result<Self::Output, Self::Error> {
             let result = self.output.to_string();
             if !self.fired.swap(true, Ordering::SeqCst) {
                 tokio::task::yield_now().await;

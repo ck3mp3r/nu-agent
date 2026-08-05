@@ -1,6 +1,5 @@
 //! AgentHook — transition shim.
 //!
-//! `AgentHook<P>` is now a type alias for [`HookChain<P>`].
 //! All implementation lives in the concern modules and `chain.rs`.
 
 use std::sync::{Arc, Mutex};
@@ -38,11 +37,6 @@ pub struct HookState {
     pub circuit_breaker: Arc<Mutex<McpCircuitBreaker>>,
     pub doom_state: Arc<Mutex<DoomLoopState>>,
 }
-
-/// Type alias kept for transition compatibility.
-///
-/// All callsites should be updated to use [`HookChain`] directly.
-pub type AgentHook<P> = HookChain<P>;
 
 #[cfg(test)]
 #[path = "agent_hook_test.rs"]

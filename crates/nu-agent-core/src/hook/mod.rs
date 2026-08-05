@@ -9,7 +9,7 @@ pub mod permission_resolver;
 pub mod subturn_cap;
 
 pub use adapter::{BuiltinToolAdapter, ClosureToolAdapter, adapt_builtins, adapt_closures};
-pub use agent_hook::{AgentHook, DoomLoopState, HookState};
+pub use agent_hook::{DoomLoopState, HookState};
 pub use chain::HookChain;
 pub use permission_resolver::{
     AsyncPermissionResolver, InteractivePermissionResolver, PermissionDecision,

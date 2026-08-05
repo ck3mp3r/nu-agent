@@ -166,24 +166,19 @@ where
     U: ProgressUi,
 {
     use futures::StreamExt;
-    use rig::completion::Completion;
 
     let history = format_messages_for_summary(old_messages);
     let prompt_text = COMPACTION_SUMMARY_PROMPT.replace("{history}", &history);
 
-    // Build rig agent from model
-    let agent = rig::agent::AgentBuilder::new(model).build();
-
-    let stream_result = agent
-        .completion(&prompt_text, Vec::<Message>::new())
-        .await
-        .map_err(|e| std::io::Error::other(format!("{}", e)))?
-        .tools(vec![])
+    // Use the model's raw completion_request API (no agent, no hooks needed for compaction)
+    let stream = model
+        .completion_request(&prompt_text)
+        .messages(Vec::<Message>::new())
         .stream()
         .await
         .map_err(|e| std::io::Error::other(format!("{}", e)))?;
 
-    let mut stream = std::pin::pin!(stream_result);
+    let mut stream = std::pin::pin!(stream);
     let mut aggregated = String::new();
     let mut summary_tokens: Option<u64> = None;
 

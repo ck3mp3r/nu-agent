@@ -1,5 +1,5 @@
 use super::*;
-use rig::agent::Flow;
+use rig::agent::ToolCallAction;
 
 #[test]
 fn under_limit_returns_none() {
@@ -15,7 +15,7 @@ fn at_limit_returns_skip() {
     cap.check_and_increment("tool_a");
     cap.check_and_increment("tool_a");
     let result = cap.check_and_increment("tool_a");
-    assert!(matches!(result, Some(Flow::Skip { .. })));
+    assert!(matches!(result, Some(ToolCallAction::Skip { .. })));
 }
 
 #[test]

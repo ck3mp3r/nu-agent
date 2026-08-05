@@ -389,7 +389,7 @@ fn streaming_error_from_prompt_cancelled_captures_messages() {
 // FilteredToolProxy cancellation tests
 // ---------------------------------------------------------------------------
 
-/// A cancelled token causes FilteredToolProxy::call to return Err immediately
+/// A cancelled token causes FilteredToolProxy to return Err immediately
 /// without waiting for the (potentially hanging) MCP tool server.
 #[tokio::test]
 async fn filtered_tool_proxy_call_returns_err_when_cancelled() {
@@ -409,15 +409,23 @@ async fn filtered_tool_proxy_call_returns_err_when_cancelled() {
 
     cancel_token.cancel();
 
-    let result = proxy.call("{}".to_string()).await;
+    // Convert to DynamicTool and execute via ToolSet
+    let dynamic_tool = proxy.into_dynamic_tool();
+    let mut toolset = rig::tool::ToolSet::default();
+    toolset.add_dynamic_tool(dynamic_tool);
+
+    let mut context = rig::tool::ToolContext::new();
+    let result = toolset
+        .execute("nonexistent_tool", "{}", &mut context)
+        .await;
 
     assert!(
-        result.is_err(),
-        "A cancelled token must cause call() to return Err"
+        result.is_error(),
+        "A cancelled token must cause execute to return error"
     );
 }
 
-/// A pre-cancelled token causes call() to return Err even when the tool would succeed.
+/// A pre-cancelled token causes execute to return Err even when the tool would succeed.
 #[tokio::test]
 async fn filtered_tool_proxy_cancelled_before_call_short_circuits() {
     let handle = rig::tool::server::ToolServer::new().run();
@@ -435,8 +443,15 @@ async fn filtered_tool_proxy_cancelled_before_call_short_circuits() {
         cancel_token,
     };
 
-    let result = proxy.call("{}".to_string()).await;
-    assert!(result.is_err(), "Pre-cancelled token must produce Err");
+    // Convert to DynamicTool and execute via ToolSet
+    let dynamic_tool = proxy.into_dynamic_tool();
+    let mut toolset = rig::tool::ToolSet::default();
+    toolset.add_dynamic_tool(dynamic_tool);
+
+    let mut context = rig::tool::ToolContext::new();
+    let result = toolset.execute("any_tool", "{}", &mut context).await;
+
+    assert!(result.is_error(), "Pre-cancelled token must produce error");
 }
 
 /// TurnError from PromptCancelled captures chat_history as messages.

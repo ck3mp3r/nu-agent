@@ -1,34 +1,17 @@
 use crate::tools::limits::truncate_tool_output;
 use crate::types::ToolDefinition;
-use rig::tool::{ToolDyn, ToolError};
-use rig::wasm_compat::WasmBoxedFuture;
+use rig::tool::{DynamicTool, ToolExecutionError, ToolOutput};
 use std::path::PathBuf;
 
 use crate::tools::handler::fs::dispatch_fs_tool;
 
-/// Error type for builtin tool execution failures.
-///
-/// This error is used to wrap builtin tool execution errors so they can be
-/// converted into rig's ToolError::ToolCallError.
-#[derive(Debug, thiserror::Error)]
-enum BuiltinExecError {
-    #[error("Tool execution failed: {0}")]
-    Execution(String),
-
-    #[error("Argument parsing failed: {0}")]
-    ArgumentParsing(String),
-
-    #[error("Result serialization failed: {0}")]
-    ResultSerialization(String),
-}
-
-/// Adapts a builtin tool to rig's ToolDyn interface.
+/// Adapts a builtin tool to rig's DynamicTool interface.
 ///
 /// This adapter bridges our builtin tools (read, edit, patch, skill, http) with rig's
 /// dynamic tool system. It wraps a tool definition and the current working directory,
 /// then dispatches calls to the appropriate builtin handler.
 pub struct BuiltinToolAdapter {
-    tool_def: ToolDefinition,
+    pub(crate) tool_def: ToolDefinition,
     cwd: PathBuf,
     max_tool_result_bytes: usize,
 }
@@ -48,78 +31,72 @@ impl BuiltinToolAdapter {
             max_tool_result_bytes,
         }
     }
-}
 
-impl ToolDyn for BuiltinToolAdapter {
-    fn name(&self) -> String {
-        self.tool_def.name.clone()
-    }
+    /// Convert this adapter into a DynamicTool for registration with rig.
+    pub fn into_dynamic_tool(self) -> DynamicTool {
+        let name = self.tool_def.name.clone();
+        let description = self.tool_def.description.clone();
+        let parameters = self.tool_def.parameters.clone();
+        let cwd = self.cwd;
+        let max_tool_result_bytes = self.max_tool_result_bytes;
+        let is_http = name == "http";
 
-    fn description(&self) -> String {
-        self.tool_def.description.clone()
-    }
+        DynamicTool::new(
+            name.clone(),
+            description,
+            parameters,
+            move |_context, args| {
+                let cwd = cwd.clone();
+                let name = name.clone();
+                Box::pin(async move {
+                    // Dispatch based on tool name
+                    let result = if is_http {
+                        crate::tools::handler::http::dispatch_http_tool(&args)
+                            .await
+                            .map_err(|e| {
+                                ToolExecutionError::provider(format!(
+                                    "{}: {}",
+                                    e.message,
+                                    e.details
+                                        .map(|d| d.to_string())
+                                        .unwrap_or_else(|| "no details".to_string())
+                                ))
+                            })?
+                    } else {
+                        // Call the builtin FS tool dispatcher
+                        dispatch_fs_tool(&name, &args, &cwd).map_err(|e| {
+                            ToolExecutionError::provider(format!(
+                                "{}: {}",
+                                e.message,
+                                e.details
+                                    .map(|d| d.to_string())
+                                    .unwrap_or_else(|| "no details".to_string())
+                            ))
+                        })?
+                    };
 
-    fn parameters(&self) -> serde_json::Value {
-        self.tool_def.parameters.clone()
-    }
+                    // The dispatcher returns Option<JsonValue>. If None, the tool wasn't recognized.
+                    let result_json = result.ok_or_else(|| {
+                        ToolExecutionError::not_found(format!("Unknown builtin tool: {}", name))
+                    })?;
 
-    fn call<'a>(&'a self, args: String) -> WasmBoxedFuture<'a, Result<String, ToolError>> {
-        Box::pin(async move {
-            // Parse JSON arguments to serde_json::Value
-            let args_json: serde_json::Value = serde_json::from_str(&args).map_err(|e| {
-                ToolError::ToolCallError(Box::new(BuiltinExecError::ArgumentParsing(format!(
-                    "Invalid JSON: {e}"
-                ))))
-            })?;
-
-            // Dispatch based on tool name
-            let result = if self.tool_def.name == "http" {
-                crate::tools::handler::http::dispatch_http_tool(&args_json)
-                    .await
-                    .map_err(|e| {
-                        ToolError::ToolCallError(Box::new(BuiltinExecError::Execution(format!(
-                            "{}: {}",
-                            e.message,
-                            e.details
-                                .map(|d| d.to_string())
-                                .unwrap_or_else(|| "no details".to_string())
-                        ))))
-                    })?
-            } else {
-                // Call the builtin FS tool dispatcher
-                dispatch_fs_tool(&self.tool_def.name, &args_json, &self.cwd).map_err(|e| {
-                    ToolError::ToolCallError(Box::new(BuiltinExecError::Execution(format!(
-                        "{}: {}",
-                        e.message,
-                        e.details
-                            .map(|d| d.to_string())
-                            .unwrap_or_else(|| "no details".to_string())
-                    ))))
-                })?
-            };
-
-            // The dispatcher returns Option<JsonValue>. If None, the tool wasn't recognized.
-            let result_json = result.ok_or_else(|| {
-                ToolError::ToolCallError(Box::new(BuiltinExecError::Execution(format!(
-                    "Unknown builtin tool: {}",
-                    self.tool_def.name
-                ))))
-            })?;
-
-            // Serialize result to string and cap output size before returning to rig.
-            let result_str = serde_json::to_string(&result_json).map_err(|e| {
-                ToolError::ToolCallError(Box::new(BuiltinExecError::ResultSerialization(format!(
-                    "JSON serialization failed: {e}"
-                ))))
-            })?;
-            Ok(truncate_tool_output(result_str, self.max_tool_result_bytes))
-        })
+                    // Serialize result to string and cap output size before returning to rig.
+                    let result_str = serde_json::to_string(&result_json).map_err(|e| {
+                        ToolExecutionError::other(format!("JSON serialization failed: {e}"))
+                    })?;
+                    Ok(ToolOutput::text(truncate_tool_output(
+                        result_str,
+                        max_tool_result_bytes,
+                    )))
+                })
+            },
+        )
     }
 }
 
-/// Convert all builtin tool definitions to BuiltinToolAdapter instances.
+/// Convert all builtin tool definitions to DynamicTool instances.
 ///
-/// This function creates a BuiltinToolAdapter for each builtin tool definition,
+/// This function creates a DynamicTool for each builtin tool definition,
 /// allowing them to be registered with rig's ToolServer.
 ///
 /// # Arguments
@@ -130,16 +107,19 @@ impl ToolDyn for BuiltinToolAdapter {
 ///
 /// # Returns
 ///
-/// A vector of BuiltinToolAdapter instances, one for each tool definition.
-/// These can be passed directly to ToolServerHandle::add_tool() since they implement ToolDyn.
+/// A vector of DynamicTool instances, one for each tool definition.
+/// These can be passed directly to ToolServerHandle::add_dynamic_tool().
 pub fn adapt_builtins(
     tool_definitions: Vec<ToolDefinition>,
     cwd: PathBuf,
     max_tool_result_bytes: usize,
-) -> Vec<BuiltinToolAdapter> {
+) -> Vec<DynamicTool> {
     tool_definitions
         .into_iter()
-        .map(|tool_def| BuiltinToolAdapter::new(tool_def, cwd.clone(), max_tool_result_bytes))
+        .map(|tool_def| {
+            BuiltinToolAdapter::new(tool_def, cwd.clone(), max_tool_result_bytes)
+                .into_dynamic_tool()
+        })
         .collect()
 }
 
