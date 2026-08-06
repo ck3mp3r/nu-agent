@@ -1,16 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[cfg(test)]
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
-
-#[cfg(not(test))]
 use ratatui::layout::Rect;
-
-#[cfg(test)]
-use crate::rendering::layout::INPUT_MIN_HEIGHT;
-
-#[cfg(test)]
-pub(super) const STATUS_TARGET_HEIGHT: u16 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ModalPanelKind {
@@ -59,24 +49,4 @@ pub(super) fn current_time_millis() -> u128 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis()
-}
-
-#[cfg(test)]
-pub(super) fn main_pane_rects_for_height(main_height: u16) -> (Rect, Rect, Rect, Rect) {
-    let main = Rect {
-        x: 0,
-        y: 0,
-        width: 120,
-        height: main_height,
-    };
-    let vertical = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(0),
-            Constraint::Min(1),
-            Constraint::Length(INPUT_MIN_HEIGHT),
-            Constraint::Length(STATUS_TARGET_HEIGHT),
-        ])
-        .split(main);
-    (vertical[0], vertical[1], vertical[2], vertical[3])
 }

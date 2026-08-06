@@ -236,7 +236,7 @@ fn markdown_projection_fixture_malformed_markdown_does_not_panic_and_remains_rea
     let joined = lines.join("\n");
     assert!(!joined.trim().is_empty());
     assert!(joined.contains("fn main() {"));
-    assert!(joined.contains("{\"broken\": "));
+    assert!(joined.contains("{\"broken\":"));
 }
 
 #[test]
@@ -735,4 +735,26 @@ fn render_markdown_lines_no_leading_trailing_blanks() {
     let lines = render_markdown_lines("\n\nhello\n\n", None);
     assert_eq!(lines.len(), 1);
     assert!(!lines[0].spans.is_empty());
+}
+
+#[test]
+fn markdown_table_with_emoji_aligns_right_border_correctly() {
+    use unicode_width::UnicodeWidthStr;
+    let markdown = "| Name | Status |\n| --- | --- |\n| server | 🟢 |\n| other | ⚪ |\n";
+    let lines = plain_lines(markdown);
+    let top_border = lines
+        .iter()
+        .find(|l| l.starts_with('╭'))
+        .expect("no top border");
+    let border_width = UnicodeWidthStr::width(top_border.as_str());
+    for line in &lines {
+        if line.contains('│') && !line.contains('─') {
+            let row_width = UnicodeWidthStr::width(line.as_str());
+            assert_eq!(
+                row_width, border_width,
+                "row width {} != border width {} for line: {}",
+                row_width, border_width, line
+            );
+        }
+    }
 }

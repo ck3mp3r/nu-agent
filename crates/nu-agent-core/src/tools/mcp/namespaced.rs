@@ -78,15 +78,11 @@ impl NamespacedTool {
         } else if let Some(error) = result.error() {
             Err(error.clone())
         } else {
-            // Refusal or skipped - render output
-            Ok(truncate_tool_output(
-                result.output().render(),
-                self.max_tool_result_bytes,
-            ))
+            // Refusal or skipped — no output available
+            Ok(String::new())
         }
     }
 }
-
 /// Build a DynamicTool that calls an MCP server tool via its ServerSink.
 ///
 /// This replaces the old pattern of wrapping rig's (now private) `McpTool` in a

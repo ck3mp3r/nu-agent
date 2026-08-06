@@ -705,7 +705,7 @@ const LANE_1_CASES: &[(&str, Option<&str>, usize, &str)] = &[
 #[test]
 fn lane_1_scroll() {
     for &(model, branch, width, expected) in LANE_1_CASES {
-        let line = crate::runtime::status::compact_status_line_with_branch_for_test(
+        let line = crate::runtime::status::status_test::compact_status_line_with_branch_for_test(
             model, branch, None, width,
         );
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
@@ -738,7 +738,7 @@ fn lane_1_scroll() {
 
     // Structural-only: lane_1_with_branch_appends_branch_icon
     {
-        let line = crate::runtime::status::compact_status_line_with_branch_for_test(
+        let line = crate::runtime::status::status_test::compact_status_line_with_branch_for_test(
             "m",
             Some("main"),
             None,
@@ -754,7 +754,7 @@ fn lane_1_scroll() {
 
     // Structural-only: lane_1_with_branch_ellipsizes_label_while_preserving_icon
     {
-        let line = crate::runtime::status::compact_status_line_with_branch_for_test(
+        let line = crate::runtime::status::status_test::compact_status_line_with_branch_for_test(
             "the-quick-brown-fox-jumps-over",
             Some("feature/super-long-branch-name"),
             None,
@@ -774,7 +774,7 @@ fn lane_1_scroll() {
 
     // Structural-only: lane_1_with_branch_drops_icon_when_budget_below_three_cells
     {
-        let line = crate::runtime::status::compact_status_line_with_branch_for_test(
+        let line = crate::runtime::status::status_test::compact_status_line_with_branch_for_test(
             "abc",
             Some("main"),
             None,
@@ -791,7 +791,7 @@ fn lane_1_scroll() {
 
     // Structural-only: lane_1_with_detached_head_short_sha_also_gets_icon
     {
-        let line = crate::runtime::status::compact_status_line_with_branch_for_test(
+        let line = crate::runtime::status::status_test::compact_status_line_with_branch_for_test(
             "m",
             Some("a1b2c3d"),
             None,
@@ -820,7 +820,7 @@ fn branch_resolver_prefers_explicit_caller_repo_over_process_cwd() {
     let original_cwd = std::env::current_dir().expect("current dir");
     std::env::set_current_dir(&process_repo).expect("switch cwd to process repo");
 
-    let resolved = crate::runtime::status::resolve_repo_branch_for_test(&caller_repo);
+    let resolved = crate::runtime::status::status_test::resolve_repo_branch_for_test(&caller_repo);
 
     std::env::set_current_dir(original_cwd).expect("restore cwd");
     assert_eq!(resolved.as_deref(), Some("caller-branch"));
@@ -832,7 +832,7 @@ fn branch_resolver_returns_none_for_non_git_directory() {
     let non_git = temp_dir.path().join("plain");
     fs::create_dir_all(&non_git).expect("plain dir");
 
-    let resolved = crate::runtime::status::resolve_repo_branch_for_test(&non_git);
+    let resolved = crate::runtime::status::status_test::resolve_repo_branch_for_test(&non_git);
     assert_eq!(resolved, None);
 }
 
@@ -846,7 +846,7 @@ fn branch_resolver_uses_detached_head_short_sha_fallback() {
     let expected = run_git(&repo, &["rev-parse", "--short=12", "HEAD"]);
     run_git(&repo, &["checkout", "--detach"]);
 
-    let resolved = crate::runtime::status::resolve_repo_branch_for_test(&repo);
+    let resolved = crate::runtime::status::status_test::resolve_repo_branch_for_test(&repo);
     assert_eq!(resolved.as_deref(), Some(expected.as_str()));
 }
 
@@ -869,7 +869,7 @@ fn branch_resolver_is_worktree_safe() {
         ],
     );
 
-    let resolved = crate::runtime::status::resolve_repo_branch_for_test(&worktree);
+    let resolved = crate::runtime::status::status_test::resolve_repo_branch_for_test(&worktree);
     assert_eq!(resolved.as_deref(), Some("wt-branch"));
 }
 
@@ -926,24 +926,27 @@ fn repo_branch_tracker_does_not_leak_between_repositories() {
 
 #[test]
 fn lane_1_has_no_mode_token_in_any_input_mode() {
-    let insert_line =
-        crate::runtime::status::compact_status_line_with_branch_for_test("model", None, None, 80);
+    let insert_line = crate::runtime::status::status_test::compact_status_line_with_branch_for_test(
+        "model", None, None, 80,
+    );
     let insert_text: String = insert_line
         .spans
         .iter()
         .map(|s| s.content.as_ref())
         .collect();
 
-    let normal_line =
-        crate::runtime::status::compact_status_line_with_branch_for_test("model", None, None, 80);
+    let normal_line = crate::runtime::status::status_test::compact_status_line_with_branch_for_test(
+        "model", None, None, 80,
+    );
     let normal_text: String = normal_line
         .spans
         .iter()
         .map(|s| s.content.as_ref())
         .collect();
 
-    let visual_line =
-        crate::runtime::status::compact_status_line_with_branch_for_test("model", None, None, 80);
+    let visual_line = crate::runtime::status::status_test::compact_status_line_with_branch_for_test(
+        "model", None, None, 80,
+    );
     let visual_text: String = visual_line
         .spans
         .iter()
@@ -1678,7 +1681,7 @@ fn global_abort_cancels_active_and_pending_and_new_submit_starts_fresh() {
 
 #[test]
 fn main_pane_vertical_split_has_no_overlap_or_bottom_cutoff() {
-    use crate::runtime::render_frame::STATUS_TARGET_HEIGHT;
+    use crate::runtime::render_frame_test::STATUS_TARGET_HEIGHT;
     let (_header, transcript, input, status) = RuntimeCoordinator::main_pane_rects_for_height(10);
 
     assert_eq!(_header.height, 0);
@@ -1895,12 +1898,13 @@ fn status_contract_f_narrow_layout_is_compact_and_ellipsizes_deterministically()
         None,
     );
     let compact_text: String = compact.spans.iter().map(|s| s.content.as_ref()).collect();
-    let compact_narrow = crate::runtime::status::compact_status_line_with_branch_for_test(
-        "provider/super-long-model-name-that-needs-truncation",
-        Some("feature/very-long-branch-name-that-needs-truncation"),
-        None,
-        24,
-    );
+    let compact_narrow =
+        crate::runtime::status::status_test::compact_status_line_with_branch_for_test(
+            "provider/super-long-model-name-that-needs-truncation",
+            Some("feature/very-long-branch-name-that-needs-truncation"),
+            None,
+            24,
+        );
     let compact_narrow_text: String = compact_narrow
         .spans
         .iter()
@@ -3709,8 +3713,8 @@ fn cancellation_during_shutdown_restores_terminal_and_preserves_cancel_error() {
 #[test]
 fn main_pane_rects_transcript_gets_remaining_space() {
     use crate::rendering::layout::INPUT_MIN_HEIGHT;
-    use crate::runtime::render_frame::STATUS_TARGET_HEIGHT;
-    use crate::runtime::render_frame::main_pane_rects_for_height;
+    use crate::runtime::render_frame_test::STATUS_TARGET_HEIGHT;
+    use crate::runtime::render_frame_test::main_pane_rects_for_height;
 
     let main_height = 40u16;
     let (header, transcript, input, status) = main_pane_rects_for_height(main_height);
@@ -3741,15 +3745,16 @@ fn status_indicator_busy_cycles_through_four_frames() {
 
 #[test]
 fn lane_1_idle_shows_empty_circle_prefix() {
-    let line =
-        crate::runtime::status::compact_status_line_with_branch_for_test("mymodel", None, None, 40);
+    let line = crate::runtime::status::status_test::compact_status_line_with_branch_for_test(
+        "mymodel", None, None, 40,
+    );
     let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
     assert!(text.starts_with("○ mymodel"));
 }
 
 #[test]
 fn lane_1_busy_shows_spinner_prefix() {
-    let line = crate::runtime::status::compact_status_line_with_branch_for_test(
+    let line = crate::runtime::status::status_test::compact_status_line_with_branch_for_test(
         "mymodel",
         None,
         Some(0),
@@ -3761,7 +3766,7 @@ fn lane_1_busy_shows_spinner_prefix() {
 
 #[test]
 fn lane_1_prefix_does_not_exceed_available_width() {
-    let line = crate::runtime::status::compact_status_line_with_branch_for_test(
+    let line = crate::runtime::status::status_test::compact_status_line_with_branch_for_test(
         "abcdefghijklmnop",
         Some("branchname"),
         None,
@@ -4285,7 +4290,7 @@ fn input_content_width_accounts_for_borders() {
 
 #[test]
 fn status_target_height_is_three() {
-    use crate::runtime::render_frame::STATUS_TARGET_HEIGHT;
+    use crate::runtime::render_frame_test::STATUS_TARGET_HEIGHT;
     assert_eq!(STATUS_TARGET_HEIGHT, 3);
 }
 

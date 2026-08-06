@@ -4,20 +4,17 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ratatui::symbols;
 use ratatui::{
-    Frame, Terminal,
+    Terminal,
     backend::CrosstermBackend,
-    layout::{Alignment, Constraint, Direction, Layout},
-    layout::{Margin, Position, Rect},
+    layout::{Constraint, Direction, Layout},
+    layout::{Margin, Rect},
     text::{Line, Span, Text},
-    widgets::{
-        Block, Borders, Cell, Clear, Paragraph, Row, Scrollbar, ScrollbarOrientation,
-        ScrollbarState, Table, TableState, Wrap,
-    },
+    widgets::{Block, Borders, Paragraph},
 };
 mod backend;
 mod panels;
+mod render;
 mod render_frame;
 mod renderer;
 mod session_picker;
@@ -34,21 +31,15 @@ use panels::*;
 pub use renderer::TuiRuntimeRenderer;
 use status_help::*;
 
-use render_frame::{ModalPanelKind, current_time_millis, modal_rect_for_panel};
-use status::{
-    availability_label, build_status_lines, model_activity_label, status_left_content,
-    status_right_content,
-};
+use render_frame::current_time_millis;
+use status::{availability_label, build_status_lines, status_left_content, status_right_content};
 #[cfg(test)]
-use status::{compact_status_line, lane_2_status_line};
+pub use terminal_events::CrosstermTerminalEvents;
+pub use terminal_events::{HybridTerminalEvents, InputSourceDiagnostics, TerminalEventSource};
 #[cfg(test)]
-pub use terminal_events::ScriptedTerminalEvents;
+pub use terminal_events_test::ScriptedTerminalEvents;
 #[cfg(test)]
-pub(crate) use terminal_events::map_crossterm_event_for_test;
-#[allow(unused_imports)]
-pub use terminal_events::{
-    CrosstermTerminalEvents, HybridTerminalEvents, InputSourceDiagnostics, TerminalEventSource,
-};
+pub(crate) use terminal_events_test::map_crossterm_event_for_test;
 pub use terminal_io::{TtyTerminalEvents, open_tty_reader};
 use tool_hydration::{extract_tool_name, parse_persisted_tool_status_line};
 
@@ -56,14 +47,38 @@ use tool_hydration::{extract_tool_name, parse_persisted_tool_status_line};
 mod test;
 
 #[cfg(test)]
+mod panels_test;
+
+#[cfg(test)]
+mod render_frame_test;
+
+#[cfg(test)]
+mod renderer_test;
+
+#[cfg(test)]
+mod session_picker_test;
+
+#[cfg(test)]
 mod hybrid_events_test;
+
+#[cfg(test)]
+mod status_help_test;
+
+#[cfg(test)]
+pub(crate) use status_help_test::*;
+
+#[cfg(test)]
+mod terminal_events_test;
 
 #[cfg(test)]
 mod selection_render_test;
 
 #[cfg(test)]
-use crate::rendering::layout::wrapped_input_rows;
-use crate::tui_renderer::TuiRenderer;
+mod mod_test;
+
+#[cfg(test)]
+pub(crate) use mod_test::*;
+
 use crate::{
     interaction::{
         cancel::CancelController,
@@ -85,8 +100,7 @@ use crate::{
     },
     state::{
         AppState, CompactionStatus, InfoPanel, InputMode, McpServerState, McpServerUsabilityState,
-        McpToggleRequest, ModelPickerOption, PaneFocus, PromptStatus, TranscriptLineStatus,
-        TranscriptRole,
+        McpToggleRequest, ModelPickerOption, TranscriptLineStatus, TranscriptRole,
     },
 };
 use nu_agent_core::protocol::contracts::{SharedUiAction, UiMessageSnapshot};
@@ -95,8 +109,7 @@ use nu_agent_core::protocol::event::UiEvent;
 use nu_agent_core::protocol::skills::DiscoverableSkill as ProtocolDiscoverableSkill;
 use nu_agent_core::renderer::UiRenderer;
 use nu_agent_core::tools::mcp::runtime::McpServerLifecycle;
-use nu_agent_core::transcript::items::{ProseMessage, Renderable, TranscriptEntry};
-use nu_agent_core::transcript::renderer::{BlockRenderer, RenderContext};
+use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry};
 
 #[derive(Debug)]
 pub struct RuntimeCoordinator {
@@ -262,40 +275,6 @@ impl RuntimeCoordinator {
         };
         coordinator.sync_transcript_viewport_lines_with_layout();
         coordinator
-    }
-
-    #[cfg(test)]
-    pub fn new_for_test_with_watchdog(
-        columns: u16,
-        rows: u16,
-        side_pane_visible: Option<bool>,
-        input_watchdog_timeout: Duration,
-    ) -> Self {
-        Self::new_with_watchdog(columns, rows, side_pane_visible, input_watchdog_timeout)
-    }
-
-    #[cfg(test)]
-    pub fn state(&self) -> &AppState {
-        &self.state
-    }
-
-    #[cfg(test)]
-    pub fn layout(&self) -> LayoutOutput {
-        self.layout
-    }
-
-    #[cfg(test)]
-    pub fn cancel_controller(&self) -> &CancelController {
-        &self.cancel_controller
-    }
-
-    #[cfg(test)]
-    pub fn input_diagnostics_snapshot(&self) -> (String, String, Option<String>) {
-        (
-            self.input_backend_status.clone(),
-            self.last_input_poll_status.clone(),
-            self.last_input_error.clone(),
-        )
     }
 
     pub(crate) fn display_incoming_message(&mut self, text: &str) {
@@ -780,22 +759,28 @@ impl RuntimeCoordinator {
                 let (rewritten, force_changed) = rewrite_action(&mut self.state, mapped_action);
                 match rewritten {
                     UserAction::InsertChar(ch) => {
-                        // InsertChar survived — route to TextArea
-                        self.textarea.input(ratatui_textarea::Input {
-                            key: ratatui_textarea::Key::Char(ch),
-                            ctrl: false,
-                            alt: false,
-                            shift: false,
-                        });
-                        let buffer = self.textarea.lines().join("\n");
-                        self.state.check_inline_slash(&buffer);
-                        self.mark_render_needed();
-                        true
+                        if self.state.input_locked {
+                            self.mark_render_needed();
+                            true
+                        } else {
+                            self.textarea.input(ratatui_textarea::Input {
+                                key: ratatui_textarea::Key::Char(ch),
+                                ctrl: false,
+                                alt: false,
+                                shift: false,
+                            });
+                            let buffer = self.textarea.lines().join("\n");
+                            self.state.check_inline_slash(&buffer);
+                            self.mark_render_needed();
+                            true
+                        }
                     }
                     UserAction::EnterNormalModeFromChord => {
                         // j/k chord triggered normal mode exit
                         // Remove the 'j' that was already inserted by TextArea
-                        self.textarea.delete_char();
+                        if !self.state.input_locked {
+                            self.textarea.delete_char();
+                        }
                         let _changed = reduce_with_cancel_controller(
                             &mut self.state,
                             ReducerInput::User(UserAction::EnterNormalModeFromChord),
@@ -1128,26 +1113,6 @@ impl RuntimeCoordinator {
         self.render_frame(live)
     }
 
-    #[cfg(test)]
-    pub fn render_needed(&self) -> bool {
-        self.render_needed
-    }
-
-    #[cfg(test)]
-    pub fn last_render_at(&self) -> Instant {
-        self.last_render_at
-    }
-
-    #[cfg(test)]
-    pub fn set_render_needed(&mut self, needed: bool) {
-        self.render_needed = needed;
-    }
-
-    #[cfg(test)]
-    pub fn set_last_render_at(&mut self, at: Instant) {
-        self.last_render_at = at;
-    }
-
     /// Apply selection highlight to buffer cells for the given visual row range.
     fn apply_selection_highlight(
         buffer: &mut ratatui::buffer::Buffer,
@@ -1266,413 +1231,25 @@ impl RuntimeCoordinator {
                     .split(content_main);
                 // vertical[0]=unused [1]=transcript [2]=queue [3]=input [4]=status
 
-                let entries_for_render = transcript_entries_for_render(&self.state);
-                let transcript_line_statuses =
-                    transcript_line_statuses_for_render(&self.state, entries_for_render);
                 let transcript_content_area = vertical[1];
                 let transcript_list_area = Rect {
                     width: transcript_content_area.width.saturating_sub(2),
                     ..transcript_content_area
                 };
 
-                let now_millis = current_time_millis();
-                let renderer = TuiRenderer {
-                    theme: self.theme.clone(),
-                };
-
                 if vertical[1].height > 0 {
-                    frame.render_widget(Clear, vertical[1]);
-                    if transcript_content_area.height > 0 {
-                        let width = transcript_list_area.width as usize;
-
-                        let mut all_lines: Vec<Line<'static>> = Vec::new();
-                        let mut entry_indices: Vec<usize> = Vec::new();
-
-                        for (idx, entry) in entries_for_render.iter().enumerate() {
-                            let block = entry.to_render_block();
-                            let item_status = transcript_line_statuses
-                                .get(idx)
-                                .copied()
-                                .flatten()
-                                .map(transcript_line_status_to_item_status);
-                            let ctx = RenderContext {
-                                width,
-                                cursor: false,
-                                selected: false,
-                                status: item_status,
-                                now_millis,
-                            };
-                            let entry_lines = renderer.render(&block, &ctx);
-                            for _ in 0..entry_lines.len() {
-                                entry_indices.push(idx);
-                            }
-                            all_lines.extend(entry_lines);
-                        }
-
-                        // Expand entry_indices to visual rows for cursor/selection mapping
-                        let expanded_entry_indices =
-                            expand_to_visual_rows(entry_indices.clone(), &all_lines, width);
-                        self.state.entry_indices = expanded_entry_indices.clone();
-
-                        let text = ratatui::text::Text::from(all_lines);
-                        let paragraph = Paragraph::new(text).wrap(Wrap::default());
-                        let total_visual_rows = paragraph.line_count(transcript_list_area.width);
-
-                        let viewport_height = transcript_list_area.height as usize;
-                        self.state.viewport_height = viewport_height;
-                        self.state.total_visual_rows = total_visual_rows;
-                        let max_scroll: usize = total_visual_rows.saturating_sub(viewport_height);
-                        self.state.max_scroll = max_scroll;
-                        let effective_offset: usize = if transcript_following_tail {
-                            max_scroll
-                        } else {
-                            transcript_scroll_offset.min(max_scroll)
-                        };
-                        rendered_scroll_offset = Some(effective_offset);
-                        // When following tail, keep cursor at the last visual row
-                        if transcript_following_tail {
-                            self.state.cursor_visual_row = total_visual_rows.saturating_sub(1);
-                        }
-                        // When not tailing, cursor_visual_row is user-controlled — don't touch it
-
-                        let scroll_u16 = effective_offset.min(u16::MAX as usize) as u16;
-                        frame
-                            .render_widget(paragraph.scroll((scroll_u16, 0)), transcript_list_area);
-
-                        // Store rendered text per visible viewport row for yank support
-                        let mut rendered_text: Vec<String> = Vec::with_capacity(viewport_height);
-                        for row in 0..viewport_height {
-                            let row_screen_y = transcript_list_area.y + row as u16;
-                            let mut row_text = String::new();
-                            for x in transcript_list_area.x
-                                ..transcript_list_area.x + transcript_list_area.width
-                            {
-                                if let Some(cell) = frame.buffer_mut().cell((x, row_screen_y)) {
-                                    let ch = cell.symbol().chars().next().unwrap_or(' ');
-                                    row_text.push(ch);
-                                }
-                            }
-                            rendered_text.push(row_text.trim_end().to_string());
-                        }
-                        self.state.rendered_line_text = rendered_text;
-                        self.state.rendered_line_start_row = effective_offset;
-
-                        // Post-render buffer manipulation: apply selection highlight to visual rows
-                        if self.state.input_mode == InputMode::Visual
-                            && let Some(ref sel) = self.state.transcript_selection
-                        {
-                            let (sel_start, sel_end) = sel.normalized_range();
-                            Self::apply_selection_highlight(
-                                frame.buffer_mut(),
-                                transcript_list_area,
-                                sel_start,
-                                sel_end,
-                                effective_offset,
-                                viewport_height,
-                            );
-                        }
-
-                        // Overlay > cursor indicator at the correct screen position
-                        if self.state.pane_focus == PaneFocus::Transcript
-                            && self.state.cursor_visual_row >= effective_offset
-                            && self.state.cursor_visual_row < effective_offset + viewport_height
-                            && (self.state.input_mode == InputMode::Normal
-                                || self.state.input_mode == InputMode::Visual)
-                        {
-                            let cursor_y = (self.state.cursor_visual_row - effective_offset) as u16;
-                            let cursor_screen_y = transcript_list_area.y + cursor_y;
-                            frame.render_widget(
-                                Paragraph::new("> "),
-                                Rect::new(transcript_list_area.x, cursor_screen_y, 2, 1),
-                            );
-                        }
-
-                        if total_visual_rows > viewport_height {
-                            let mut scrollbar_state =
-                                ScrollbarState::new(max_scroll).position(effective_offset);
-                            frame.render_stateful_widget(
-                                Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                                    .begin_symbol(None)
-                                    .end_symbol(None),
-                                transcript_content_area,
-                                &mut scrollbar_state,
-                            );
-                        }
-                    }
-                }
-
-                // ── Unified bottom box ──────────────────────────────────────────────
-                // Combine queue (vertical[2]), input (vertical[3]), and status
-                // (vertical[4]) into one rounded box with ├─┤ dividers.
-                let bottom_box_rect = Rect {
-                    x: vertical[2].x,
-                    y: vertical[2].y,
-                    width: vertical[2].width,
-                    height: vertical[2]
-                        .height
-                        .saturating_add(vertical[3].height)
-                        .saturating_add(vertical[4].height),
-                };
-
-                let box_border_style = if self.state.pane_focus == crate::state::PaneFocus::Input {
-                    self.theme.focus
-                } else {
-                    self.theme.subtle_meta
-                };
-                frame.render_widget(Clear, bottom_box_rect);
-                frame.render_widget(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_set(symbols::border::ROUNDED)
-                        .border_style(box_border_style),
-                    bottom_box_rect,
-                );
-                let inner = bottom_box_rect.inner(Margin {
-                    vertical: 1,
-                    horizontal: 1,
-                });
-
-                // Helper: draw ├────────────────┤ divider at absolute y
-                let draw_divider = |frame: &mut ratatui::Frame, div_y: u16| {
-                    let divider_line = Line::from(vec![
-                        Span::styled("├", box_border_style),
-                        Span::styled("─".repeat(inner.width as usize), box_border_style),
-                        Span::styled("┤", box_border_style),
-                    ]);
-                    frame.render_widget(
-                        Paragraph::new(divider_line),
-                        Rect {
-                            x: bottom_box_rect.x,
-                            y: div_y,
-                            width: bottom_box_rect.width,
-                            height: 1,
-                        },
+                    self.render_transcript_pane(
+                        frame,
+                        transcript_content_area,
+                        transcript_list_area,
+                        transcript_following_tail,
+                        transcript_scroll_offset,
+                        &mut rendered_scroll_offset,
                     );
-                };
-
-                // ── Queue section ────────────────────────────────────────────────
-                if vertical[2].height > 0 {
-                    let queue_inner = Rect {
-                        x: inner.x,
-                        y: inner.y,
-                        width: inner.width,
-                        height: vertical[2].height,
-                    };
-                    let pane_width = inner.width as usize;
-                    let queued_lines: Vec<Line> = self
-                        .state
-                        .prompt_items()
-                        .iter()
-                        .filter(|p| p.status == PromptStatus::Queued)
-                        .flat_map(|p| {
-                            let raw = format!("• {}", p.prompt_text);
-                            let display = if raw.chars().count() > pane_width {
-                                format!(
-                                    "{}…",
-                                    raw.chars()
-                                        .take(pane_width.saturating_sub(1))
-                                        .collect::<String>()
-                                )
-                            } else {
-                                raw
-                            };
-                            [Line::from(Span::styled(display, self.theme.role_user))]
-                        })
-                        .collect();
-                    frame.render_widget(Paragraph::new(Text::from(queued_lines)), queue_inner);
-
-                    // Divider after queue — drawn at the last row of the queue
-                    // region (inner.y + queue_count), so input starts one row
-                    // below the divider instead of on top of it.
-                    let div_y = inner.y.saturating_add(queue_count);
-                    draw_divider(frame, div_y);
                 }
 
-                // ── Input / Permission section ────────────────────────────────────
-                let input_inner_h = vertical[3].height.saturating_sub(2);
-                let input_inner = Rect {
-                    x: inner.x,
-                    y: inner.y.saturating_add(vertical[2].height),
-                    width: inner.width,
-                    height: input_inner_h,
-                };
-
-                // Split input rect: 2 chars for mode indicator, rest for TextArea
-                let mode_indicator_width = if input_inner.width >= 3 { 2 } else { 0 };
-                let mode_indicator_rect = Rect {
-                    x: input_inner.x,
-                    y: input_inner.y,
-                    width: mode_indicator_width,
-                    height: input_inner.height,
-                };
-                let textarea_rect = Rect {
-                    x: input_inner.x + mode_indicator_width,
-                    y: input_inner.y,
-                    width: input_inner.width.saturating_sub(mode_indicator_width),
-                    height: input_inner.height,
-                };
-
-                // Divider after input
-                let input_div_y = bottom_box_rect
-                    .y
-                    .saturating_add(1)
-                    .saturating_add(vertical[2].height)
-                    .saturating_add(input_inner_h);
-                draw_divider(frame, input_div_y);
-
-                if self.state.permission_prompt.is_some() {
-                    render_permission_controls(frame, input_inner, &self.theme);
-                } else {
-                    // Render mode indicator
-                    if mode_indicator_width > 0 && textarea_rect.height > 0 {
-                        let indicator_char = match self.state.input_mode {
-                            InputMode::Insert => "❯ ",
-                            InputMode::Normal | InputMode::Visual => "❮ ",
-                        };
-                        frame.render_widget(
-                            Paragraph::new(Line::from(Span::styled(
-                                indicator_char,
-                                self.theme.subtle_meta,
-                            ))),
-                            mode_indicator_rect,
-                        );
-                    }
-                    // Apply theme styling to TextArea
-                    self.textarea.set_style(self.theme.input_text);
-                    // Make TextArea's internal cursor invisible — the terminal cursor
-                    // (from set_cursor_position) is what the user sees.
-                    self.textarea
-                        .set_cursor_style(ratatui::style::Style::default());
-                    self.textarea
-                        .set_cursor_line_style(ratatui::style::Style::default());
-                    // Render TextArea as the input widget
-                    if textarea_rect.height > 0 {
-                        frame.render_widget(&self.textarea, textarea_rect);
-                    }
-                    // Render inline slash suggestions above TextArea
-                    if self.state.inline_slash_open {
-                        let slash_lines = inline_slash_lines_for_render(&self.state);
-                        if !slash_lines.is_empty() {
-                            let slash_height = slash_lines.len() as u16;
-                            let slash_rect = Rect {
-                                x: textarea_rect.x,
-                                y: textarea_rect.y.saturating_sub(slash_height),
-                                width: textarea_rect.width,
-                                height: slash_height,
-                            };
-                            frame.render_widget(Text::from(slash_lines), slash_rect);
-                        }
-                    }
-                    // Set cursor position in insert mode
-                    if !self.state.input_locked
-                        && !self.state.command_palette_open
-                        && self.state.info_panel.is_none()
-                        && bottom_box_rect.height >= 4
-                    {
-                        let ratatui_textarea::DataCursor(row, col) = self.textarea.cursor();
-                        let x = bottom_box_rect
-                            .x
-                            .saturating_add(1) // left border
-                            .saturating_add(mode_indicator_width)
-                            .saturating_add(col as u16);
-                        let max_x = bottom_box_rect
-                            .x
-                            .saturating_add(bottom_box_rect.width.saturating_sub(2));
-                        let y = bottom_box_rect
-                            .y
-                            .saturating_add(1) // top border
-                            .saturating_add(vertical[2].height) // queue section
-                            .saturating_add(row as u16)
-                            .min(input_div_y.saturating_sub(1)); // clamp to last input row
-                        frame.set_cursor_position(Position { x: x.min(max_x), y });
-                    }
-                }
-
-                // ── Status section ───────────────────────────────────────────────
-                let busy_millis = if model_activity_label(&self.state) == "busy" {
-                    Some(now_millis)
-                } else {
-                    None
-                };
-                let right_content = status_right_content(
-                    self.repo_branch_tracker.as_ref().and_then(|t| t.branch()),
-                    self.repo_branch_tracker
-                        .as_ref()
-                        .and_then(|t| t.caller_cwd()),
-                    &self.theme,
-                );
-                let right_width = right_content
-                    .as_ref()
-                    .map(|line| {
-                        line.spans
-                            .iter()
-                            .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
-                            .sum::<usize>()
-                    })
-                    .unwrap_or(0) as u16;
-
-                let status_inner = Rect {
-                    x: inner.x.saturating_add(1),
-                    y: input_div_y.saturating_add(1),
-                    width: inner.width.saturating_sub(2),
-                    height: 1,
-                };
-                let status_inner_2 = Rect {
-                    y: status_inner.y.saturating_add(1),
-                    ..status_inner
-                };
-
-                let left_width_needed = {
-                    let probe = status_left_content(
-                        &self.active_model_identity,
-                        busy_millis,
-                        &self.state,
-                        &self.theme,
-                        status_inner.width as usize,
-                    );
-                    probe
-                        .spans
-                        .iter()
-                        .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
-                        .sum::<usize>() as u16
-                };
-
-                let fits_on_one_line =
-                    right_width > 0 && left_width_needed + right_width <= status_inner.width;
-
-                let left_content = if fits_on_one_line {
-                    status_left_content(
-                        &self.active_model_identity,
-                        busy_millis,
-                        &self.state,
-                        &self.theme,
-                        status_inner.width.saturating_sub(right_width) as usize,
-                    )
-                } else {
-                    status_left_content(
-                        &self.active_model_identity,
-                        busy_millis,
-                        &self.state,
-                        &self.theme,
-                        status_inner.width as usize,
-                    )
-                };
-
-                frame.render_widget(Paragraph::new(left_content), status_inner);
-
-                if let Some(right_line) = right_content {
-                    if fits_on_one_line {
-                        frame.render_widget(
-                            Paragraph::new(right_line).alignment(Alignment::Right),
-                            status_inner,
-                        );
-                    } else {
-                        frame.render_widget(
-                            Paragraph::new(right_line).alignment(Alignment::Right),
-                            status_inner_2,
-                        );
-                    }
-                }
+                let now_millis = current_time_millis();
+                self.render_bottom_box(frame, &vertical, now_millis);
 
                 if has_side {
                     let side = horizontal[1];
@@ -1682,303 +1259,23 @@ impl RuntimeCoordinator {
                 }
 
                 if self.state.command_palette_open {
-                    let popup = modal_rect_for_panel(area, ModalPanelKind::CommandPalette);
-                    let popup_width = popup.width;
-                    let popup_height = popup.height;
-
-                    let model = command_palette_table_model(&self.state, popup_width, popup_height);
-
-                    let inner = render_modal_frame(
-                        frame,
-                        popup,
-                        command_palette_title(model.overflow_cue.as_deref()),
-                    );
-                    let rows = Layout::default()
-                        .direction(Direction::Vertical)
-                        .constraints([Constraint::Length(1), Constraint::Min(0)])
-                        .split(inner);
-
-                    frame.render_widget(
-                        Paragraph::new(Line::from(model.query_line.clone())),
-                        rows[0],
-                    );
-
-                    let header = Row::new(vec!["Action", "Summary"]);
-
-                    let table_rows = model.rows.iter().map(|row| {
-                        Row::new(vec![Cell::from(row[0].clone()), Cell::from(row[1].clone())])
-                    });
-
-                    let widths = vec![Constraint::Length(8), Constraint::Min(12)];
-
-                    let table = Table::new(table_rows, widths)
-                        .header(header)
-                        .column_spacing(2)
-                        .highlight_symbol("❯ ");
-                    let mut table_state = TableState::default();
-                    table_state.select(model.selected);
-                    frame.render_stateful_widget(table, rows[1], &mut table_state);
+                    self.render_command_palette(frame, area);
                 }
 
-                if let Some(panel) = self.state.info_panel {
-                    let popup = modal_rect_for_panel(
-                        area,
-                        match panel {
-                            InfoPanel::Help => ModalPanelKind::Help,
-                            InfoPanel::Status => ModalPanelKind::Status,
-                            InfoPanel::Mcps => ModalPanelKind::Mcps,
-                            InfoPanel::Skills => ModalPanelKind::Skills,
-                        },
-                    );
-
-                    match panel {
-                        InfoPanel::Mcps => {
-                            let inner = popup.inner(Margin {
-                                vertical: 1,
-                                horizontal: 1,
-                            });
-                            let details_height = mcp_details_height_for_inner_height(inner.height);
-
-                            let rows = Layout::default()
-                                .direction(Direction::Vertical)
-                                .constraints([
-                                    Constraint::Length(1),
-                                    Constraint::Min(1),
-                                    Constraint::Length(details_height),
-                                ])
-                                .split(inner);
-
-                            let model = mcp_table_model(&self.state, rows[1].height);
-                            let title = if let Some(cue) = model.overflow_cue.as_deref() {
-                                format!("MCPs ({cue})")
-                            } else {
-                                "MCPs".to_string()
-                            };
-                            render_modal_frame(frame, popup, title);
-
-                            frame.render_widget(
-                                Paragraph::new(Line::from(mcp_panel_controls_line())),
-                                rows[0],
-                            );
-
-                            let header = Row::new(model.columns.clone());
-                            let table_rows = model.rows.iter().map(|row| {
-                                Row::new(vec![
-                                    Cell::from(row[0].clone()),
-                                    Cell::from(row[1].clone()),
-                                    Cell::from(row[2].clone()),
-                                ])
-                            });
-                            let widths = [
-                                Constraint::Length(18),
-                                Constraint::Length(14),
-                                Constraint::Length(MCP_STATUS_COLUMN_WIDTH),
-                            ];
-                            let table = Table::new(table_rows, widths)
-                                .header(header)
-                                .column_spacing(1)
-                                .highlight_symbol("❯ ");
-                            let mut table_state = TableState::default();
-                            table_state.select(model.selected);
-                            frame.render_stateful_widget(table, rows[1], &mut table_state);
-
-                            if details_height > 0 {
-                                let details_lines = mcp_selected_details_lines(
-                                    &self.state,
-                                    details_height,
-                                    rows[2].width,
-                                );
-                                if !details_lines.is_empty() {
-                                    let details_widget = Paragraph::new(Text::from(details_lines))
-                                        .wrap(Wrap { trim: false });
-                                    frame.render_widget(details_widget, rows[2]);
-                                }
-                            }
-                        }
-                        _ => {
-                            let (title, lines) = match panel {
-                                InfoPanel::Help => help_panel_lines(),
-                                InfoPanel::Status => {
-                                    status_panel_lines(&self.state, &self.active_model_identity)
-                                }
-                                InfoPanel::Skills => skills_panel_lines(&self.state),
-                                InfoPanel::Mcps => unreachable!("handled above"),
-                            };
-
-                            let panel_inner_height = popup.height.saturating_sub(2);
-                            let panel_inner_width = popup.width.saturating_sub(2);
-                            let panel_scroll =
-                                self.state.info_panel_scroll.min(help_panel_max_scroll(
-                                    &lines,
-                                    panel_inner_height,
-                                    panel_inner_width,
-                                ));
-                            let panel_title = match panel {
-                                InfoPanel::Help => {
-                                    if let Some(cue) = help_panel_overflow_cue(
-                                        &lines,
-                                        panel_inner_height,
-                                        panel_inner_width,
-                                        panel_scroll,
-                                    ) {
-                                        format!("{title} ({cue})")
-                                    } else {
-                                        title.to_string()
-                                    }
-                                }
-                                _ => title.to_string(),
-                            };
-
-                            render_scroll_text_panel(
-                                frame,
-                                popup,
-                                panel_title,
-                                Text::from(lines),
-                                panel_scroll,
-                            );
-                        }
-                    }
+                if self.state.info_panel.is_some() {
+                    self.render_info_panel(frame, area);
                 }
 
                 if self.state.model_picker_open {
-                    let popup = modal_rect_for_panel(area, ModalPanelKind::Models);
-                    let inner =
-                        render_modal_frame(frame, popup, "Models (↑/↓ or Ctrl-N · Enter · Esc)");
-                    let rows = Layout::default()
-                        .direction(Direction::Vertical)
-                        .constraints([Constraint::Length(1), Constraint::Min(0)])
-                        .split(inner);
-                    frame.render_widget(
-                        Paragraph::new(Line::from(format!(
-                            "Query: {}",
-                            self.state.model_picker_query
-                        ))),
-                        rows[0],
-                    );
-
-                    let options = self.state.model_picker_filtered_options();
-                    if options.is_empty() {
-                        frame.render_widget(
-                            Paragraph::new(Line::from(MODEL_PICKER_EMPTY_STATE_MESSAGE)),
-                            rows[1],
-                        );
-                    } else {
-                        let table_rows = options.iter().map(|option| {
-                            let active = if option.active { "*" } else { "" };
-                            Row::new(vec![
-                                Cell::from(option.identity.clone()),
-                                Cell::from(active.to_string()),
-                            ])
-                        });
-                        let table =
-                            Table::new(table_rows, [Constraint::Min(12), Constraint::Length(1)])
-                                .header(Row::new(vec!["Model", "A"]))
-                                .column_spacing(1)
-                                .highlight_symbol("❯ ");
-                        let mut table_state = TableState::default();
-                        table_state.select(Some(self.state.model_picker_selection));
-                        frame.render_stateful_widget(table, rows[1], &mut table_state);
-                    }
+                    self.render_model_picker(frame, area);
                 }
 
                 if self.state.agent_picker_open {
-                    let popup = modal_rect_for_panel(area, ModalPanelKind::Agents);
-                    let inner = render_modal_frame(frame, popup, "Agent (↑/↓ · Enter · Esc)");
-                    let rows = Layout::default()
-                        .direction(Direction::Vertical)
-                        .constraints([Constraint::Length(1), Constraint::Min(0)])
-                        .split(inner);
-                    frame.render_widget(
-                        Paragraph::new(Line::from(format!(
-                            "Query: {}",
-                            self.state.agent_picker_query
-                        ))),
-                        rows[0],
-                    );
-
-                    let options = self.state.agent_picker_filtered_options();
-                    if options.is_empty() {
-                        frame.render_widget(
-                            Paragraph::new(Line::from(AGENT_PICKER_EMPTY_STATE_MESSAGE)),
-                            rows[1],
-                        );
-                    } else {
-                        let table_rows: Vec<Row> = options
-                            .iter()
-                            .map(|option| {
-                                let active = if option.active { "*" } else { "" };
-                                let desc = option.description.as_deref().unwrap_or("");
-                                Row::new(vec![
-                                    Cell::from(option.name.clone()),
-                                    Cell::from(desc.to_string()),
-                                    Cell::from(active.to_string()),
-                                ])
-                            })
-                            .collect();
-                        let table = Table::new(
-                            table_rows,
-                            [
-                                Constraint::Min(12),
-                                Constraint::Min(20),
-                                Constraint::Length(1),
-                            ],
-                        )
-                        .header(Row::new(vec!["Agent", "Description", "A"]))
-                        .column_spacing(1)
-                        .highlight_symbol("❯ ");
-                        let mut table_state = TableState::default();
-                        table_state.select(Some(self.state.agent_picker_selection));
-                        frame.render_stateful_widget(table, rows[1], &mut table_state);
-                    }
+                    self.render_agent_picker(frame, area);
                 }
 
                 if self.state.session_picker_open {
-                    let popup = modal_rect_for_panel(area, ModalPanelKind::Sessions);
-                    let model =
-                        session_picker::session_picker_table_model(&self.state, popup.height);
-                    let title = if let Some(cue) = model.overflow_cue.as_deref() {
-                        format!("Sessions ({cue}) (↑/↓ · Enter · Esc)")
-                    } else {
-                        "Sessions (↑/↓ · Enter · Esc)".to_string()
-                    };
-                    let inner = render_modal_frame(frame, popup, title);
-                    let rows = Layout::default()
-                        .direction(Direction::Vertical)
-                        .constraints([Constraint::Length(1), Constraint::Min(0)])
-                        .split(inner);
-                    frame.render_widget(Paragraph::new(model.query_line), rows[0]);
-
-                    if model.rows.is_empty() {
-                        frame.render_widget(
-                            Paragraph::new(Line::from(
-                                session_picker::SESSION_PICKER_EMPTY_STATE_MESSAGE,
-                            )),
-                            rows[1],
-                        );
-                    } else {
-                        let header = Row::new(vec!["When", "Title", "ID"]);
-                        let table_rows = model.rows.iter().map(|row| {
-                            Row::new(vec![
-                                Cell::from(row[0].clone()),
-                                Cell::from(row[1].clone()),
-                                Cell::from(row[2].clone()),
-                            ])
-                        });
-                        let table = Table::new(
-                            table_rows,
-                            [
-                                Constraint::Length(10),
-                                Constraint::Min(12),
-                                Constraint::Length(15),
-                            ],
-                        )
-                        .header(header)
-                        .column_spacing(1)
-                        .highlight_symbol("❯ ");
-                        let mut table_state = TableState::default();
-                        table_state.select(model.selected);
-                        frame.render_stateful_widget(table, rows[1], &mut table_state);
-                    }
+                    self.render_session_picker(frame, area);
                 }
             })
             .map_err(|err| format!("TUI render failed: {err}"))?;
@@ -1995,112 +1292,4 @@ impl RuntimeCoordinator {
 
         Ok(())
     }
-
-    #[cfg(test)]
-    pub(super) fn main_pane_rects_for_height(
-        main_height: u16,
-    ) -> (
-        ratatui::layout::Rect,
-        ratatui::layout::Rect,
-        ratatui::layout::Rect,
-        ratatui::layout::Rect,
-    ) {
-        render_frame::main_pane_rects_for_height(main_height)
-    }
-
-    #[cfg(test)]
-    pub fn pump_once(&mut self, event_source: &mut impl TerminalEventSource) {
-        self.poll_terminal_event(event_source);
-        self.drain_transport();
-    }
-}
-
-fn render_scroll_text_panel(
-    frame: &mut Frame,
-    area: Rect,
-    title: impl Into<Line<'static>>,
-    lines: Text<'_>,
-    scroll: usize,
-) {
-    let inner = render_modal_frame(frame, area, title);
-    frame.render_widget(
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
-            .scroll((scroll.min(u16::MAX as usize) as u16, 0)),
-        inner,
-    );
-}
-
-fn render_modal_frame(frame: &mut Frame, area: Rect, title: impl Into<Line<'static>>) -> Rect {
-    frame.render_widget(Clear, area);
-    frame.render_widget(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_set(symbols::border::ROUNDED)
-            .title(title),
-        area,
-    );
-    area.inner(Margin {
-        vertical: 1,
-        horizontal: 1,
-    })
-}
-
-#[cfg(test)]
-pub(super) fn modal_frame_uses_rounded_border_style_for_test() -> bool {
-    true
-}
-
-#[cfg(test)]
-pub(super) fn modal_open_state_applies_dimmed_backdrop_for_test(state: &AppState) -> bool {
-    state.command_palette_open
-        || state.info_panel.is_some()
-        || state.model_picker_open
-        || state.agent_picker_open
-        || state.session_picker_open
-}
-
-#[cfg(test)]
-pub(super) fn inline_model_picker_modal_respects_border_and_backdrop_policy_for_test(
-    state: &AppState,
-) -> bool {
-    state.model_picker_open && modal_frame_uses_rounded_border_style_for_test()
-}
-
-#[cfg(test)]
-pub(super) fn model_picker_empty_state_message_for_test() -> &'static str {
-    MODEL_PICKER_EMPTY_STATE_MESSAGE
-}
-
-/// Expand entry_indices from pre-wrap line count to post-wrap visual row count.
-/// Each pre-wrap line may wrap into multiple visual rows; the entry index is
-/// replicated for each resulting visual row.
-fn expand_to_visual_rows(
-    entry_indices: Vec<usize>,
-    lines: &[Line<'static>],
-    width: usize,
-) -> Vec<usize> {
-    let mut expanded = Vec::with_capacity(lines.len().max(entry_indices.len()));
-    for (i, line) in lines.iter().enumerate() {
-        let entry_idx = *entry_indices.get(i).unwrap_or(&0);
-        let visual_rows = single_line_visual_row_count(line, width);
-        for _ in 0..visual_rows {
-            expanded.push(entry_idx);
-        }
-    }
-    expanded
-}
-
-/// Count how many visual rows a single Line will occupy after wrapping at `width`.
-fn single_line_visual_row_count(line: &Line<'_>, width: usize) -> usize {
-    if width < 1 {
-        return 1;
-    }
-    let text = Paragraph::new(ratatui::text::Text::from(line.clone())).wrap(Wrap::default());
-    text.line_count(width as u16).max(1)
-}
-
-#[cfg(test)]
-pub(super) fn input_pane_content_width_for_test(inner_width: u16) -> usize {
-    inner_width.saturating_sub(2) as usize
 }

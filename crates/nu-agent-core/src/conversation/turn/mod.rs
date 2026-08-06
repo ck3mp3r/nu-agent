@@ -20,8 +20,7 @@ use crate::session::{CachedMemory, SessionStore};
 use crate::types::{Message, Text, ToolDefinition, UserContent};
 use rig::memory::ConversationMemory;
 use rig::streaming::StreamingPrompt;
-use rig::tool::{DynamicTool, ToolExecutionError};
-
+use rig::tool::{DynamicTool, ToolExecutionError, ToolOutput};
 /// Default max tool turns when config doesn't specify a limit.
 /// Matches v1 "unlimited" semantics with a practical upper bound.
 const DEFAULT_MAX_TURNS: u32 = 256;
@@ -444,10 +443,9 @@ impl FilteredToolProxy {
                         } else if let Some(error) = result.error() {
                             Err(error.clone())
                         } else {
-                            // Refusal or skipped
-                            Ok(result.output().clone())
-                        }
-                    }
+                            // Refusal or skipped — no output available
+                            Ok(ToolOutput::text(String::new()))
+                        }                    }
                     _ = cancel_token.cancelled() => {
                         Err(ToolExecutionError::cancelled("tool call cancelled"))
                     }

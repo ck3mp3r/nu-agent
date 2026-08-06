@@ -3,6 +3,7 @@ use ratatui::{
     style::{Modifier, Style},
     text::{Line, Span},
 };
+use unicode_width::UnicodeWidthStr;
 
 use crate::rendering::theme::TuiTheme;
 
@@ -155,12 +156,12 @@ impl Projector {
     fn render_table(&mut self, mut table: TableBuffer, max_width: Option<u16>) {
         let col_count = table.header_row.len();
 
-        // Measure column widths using byte length (consistent with existing behaviour).
+        // Measure column widths using display cell width (unicode_width).
         let mut widths = vec![0usize; col_count];
         for row in std::iter::once(&table.header_row).chain(table.data_rows.iter()) {
             for (i, cell) in row.iter().enumerate() {
                 if i < col_count {
-                    widths[i] = widths[i].max(cell.len());
+                    widths[i] = widths[i].max(UnicodeWidthStr::width(cell.as_str()));
                 }
             }
         }
@@ -201,7 +202,9 @@ impl Projector {
         let header_style = Style::default().add_modifier(Modifier::BOLD);
         self.push_text("│", Style::default());
         for (i, cell) in table.header_row.iter().enumerate() {
-            let padded = format!(" {:<width$} ", cell, width = widths[i]);
+            let cell_width = UnicodeWidthStr::width(cell.as_str());
+            let pad_count = widths[i].saturating_sub(cell_width);
+            let padded = format!(" {}{} ", cell, " ".repeat(pad_count));
             self.push_text(&padded, header_style);
             if i + 1 < active_cols {
                 self.push_text("│", Style::default());
@@ -226,11 +229,10 @@ impl Projector {
         for row in &table.data_rows {
             self.push_text("│", Style::default());
             for (i, cell) in row.iter().enumerate().take(active_cols) {
-                let padded = format!(
-                    " {:<width$} ",
-                    cell,
-                    width = widths.get(i).copied().unwrap_or(0)
-                );
+                let col_width = widths.get(i).copied().unwrap_or(0);
+                let cell_width = UnicodeWidthStr::width(cell.as_str());
+                let pad_count = col_width.saturating_sub(cell_width);
+                let padded = format!(" {}{} ", cell, " ".repeat(pad_count));
                 self.push_text(&padded, Style::default());
                 if i + 1 < active_cols {
                     self.push_text("│", Style::default());

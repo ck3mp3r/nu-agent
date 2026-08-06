@@ -6,7 +6,7 @@ where
     E: TerminalEventSource,
 {
     inner: R,
-    coordinator: RuntimeCoordinator,
+    pub(super) coordinator: RuntimeCoordinator,
     event_source: E,
     live_terminal: Option<LiveTerminalUi>,
     tui_active: bool,
@@ -17,7 +17,7 @@ where
     R: UiRenderer,
     E: TerminalEventSource,
 {
-    fn with_terminal_mode(
+    pub(super) fn with_terminal_mode(
         inner: R,
         event_source: E,
         columns: u16,
@@ -54,16 +54,6 @@ where
             Some(live_terminal),
             true,
         ))
-    }
-
-    #[cfg(test)]
-    pub fn new_tui_active_for_test(inner: R, event_source: E, columns: u16, rows: u16) -> Self {
-        Self::with_terminal_mode(inner, event_source, columns, rows, None, true)
-    }
-
-    #[cfg(test)]
-    pub fn coordinator(&self) -> &RuntimeCoordinator {
-        &self.coordinator
     }
 
     pub fn take_cancel_requested(&self) -> bool {

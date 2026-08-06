@@ -210,6 +210,54 @@ async fn test_register_duplicate_name() {
     let _ = daemon.shutdown();
 }
 
+/// Verify that [`peer_url_from_service`] uses the TXT `url` property when
+/// present, rather than constructing from the mDNS address list.
+///
+/// NOTE: Requires a working mDNS responder on the host.
+#[ignore]
+#[test]
+fn test_peer_url_from_txt_property() {
+    let daemon = ServiceDaemon::new().expect("ServiceDaemon");
+
+    // Register with a url TXT property that differs from the address-based URL.
+    let props: Vec<(&str, &str)> = vec![
+        ("name", "txt-url-agent"),
+        ("mesh_key", "test-mesh"),
+        ("url", "http://127.0.0.1:9999"),
+    ];
+    let info = ServiceInfo::new(
+        "_nu-agent-a2a._tcp.local.",
+        "txt-url-agent",
+        "txt-url-agent.local.",
+        "127.0.0.1",
+        9999,
+        props.as_slice(),
+    )
+    .expect("synthetic ServiceInfo");
+    daemon.register(info).expect("register");
+
+    let receiver = daemon.browse("_nu-agent-a2a._tcp.local.").expect("browse");
+
+    let mut found = false;
+    for _ in 0..30 {
+        if let Ok(ServiceEvent::ServiceResolved(resolved)) = receiver.try_recv()
+            && resolved.get_fullname().contains("txt-url-agent")
+        {
+            let url = crate::discovery::peer_url_from_service(&resolved);
+            assert_eq!(
+                url, "http://127.0.0.1:9999",
+                "peer_url_from_service should use TXT url property"
+            );
+            found = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    assert!(found, "Should discover txt-url-agent via mDNS");
+    let _ = daemon.shutdown();
+}
+
 // ---------------------------------------------------------------------------
 // DiscoveryBrowser — smoke tests
 // ---------------------------------------------------------------------------
