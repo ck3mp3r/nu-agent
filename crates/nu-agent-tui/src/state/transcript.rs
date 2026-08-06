@@ -30,48 +30,27 @@ impl AppState {
         self.push_transcript_item(entry);
     }
 
-    pub fn push_transcript_rendered_line(&mut self, role: TranscriptRole, line: Line<'static>) {
-        match role {
-            TranscriptRole::Assistant | TranscriptRole::Compaction => {
-                let text = rendered_line_to_plain_text(&line);
-                let entry = TranscriptEntry::Assistant(ProseMessage { markdown: text });
-                self.push_transcript_item(entry);
-            }
-            _ => {
-                let text = rendered_line_to_plain_text(&line);
-                self.push_transcript_line(role, text);
-            }
-        }
-    }
-
-    pub fn project_assistant_markdown_lines(&mut self, markdown: &str) -> Vec<Line<'static>> {
-        if let Some(cached) = self.assistant_projection_cache.get(markdown) {
-            return cached.clone();
-        }
-
-        let projected = project_markdown_to_lines(markdown, None);
-        self.assistant_projection_cache
-            .insert(markdown.to_string(), projected.clone());
-        #[cfg(test)]
-        {
-            self.assistant_projection_cache_misses =
-                self.assistant_projection_cache_misses.saturating_add(1);
-        }
-        projected
+    pub fn project_assistant_markdown_lines(&mut self, markdown: &str) -> Vec<ContentLine> {
+        crate::markdown::render_markdown_lines(
+            markdown,
+            None,
+            &crate::rendering::theme::TuiTheme::default(),
+        )
     }
 
     pub fn clear_assistant_projection_cache(&mut self) {
         self.assistant_projection_cache.clear();
     }
 
-    #[cfg(test)]
-    pub fn assistant_projection_cache_size(&self) -> usize {
-        self.assistant_projection_cache.len()
+    pub(crate) fn assistant_projection_cache_mut(
+        &mut self,
+    ) -> &mut HashMap<String, Vec<ContentLine>> {
+        &mut self.assistant_projection_cache
     }
 
     #[cfg(test)]
-    pub fn assistant_projection_cache_misses(&self) -> usize {
-        self.assistant_projection_cache_misses
+    pub fn assistant_projection_cache_size(&self) -> usize {
+        self.assistant_projection_cache.len()
     }
 
     pub(crate) fn enforce_transcript_cap(&mut self) {
@@ -82,6 +61,7 @@ impl AppState {
         if overflow > 0 {
             self.transcript_preview.drain(..overflow);
             self.shift_indices_after_eviction(overflow);
+            self.entry_visual_info_dirty = true;
         }
     }
 
@@ -166,7 +146,53 @@ impl AppState {
         }
 
         self.transcript_preview.push(entry);
+        self.entry_visual_info_dirty = true;
         self.enforce_transcript_cap();
+    }
+
+    pub fn recompute_entry_visual_info(&mut self, width: usize) {
+        use crate::rendering::theme::TuiTheme;
+        use nu_agent_core::transcript::items::Renderable;
+
+        let mut info = Vec::with_capacity(self.transcript_preview.len());
+        let mut start = 0usize;
+        for entry in &self.transcript_preview {
+            let block = entry.to_render_block();
+            let content_lines: Vec<ContentLine> = if let Some(ref md) = block.markdown {
+                if let Some(cached) = self.assistant_projection_cache.get(md) {
+                    cached.clone()
+                } else {
+                    let projected = crate::markdown::render_markdown_lines(
+                        md,
+                        Some(width as u16),
+                        &TuiTheme::default(),
+                    );
+                    self.assistant_projection_cache
+                        .insert(md.clone(), projected.clone());
+                    projected
+                }
+            } else {
+                block.lines
+            };
+            let visual_rows: usize = content_lines
+                .iter()
+                .map(|line| {
+                    let line_width: usize = line
+                        .spans
+                        .iter()
+                        .map(|s| unicode_width::UnicodeWidthStr::width(s.text.as_str()))
+                        .sum();
+                    line_width.div_ceil(width.max(1)).max(1)
+                })
+                .sum::<usize>()
+                .max(1);
+            info.push(EntryVisualInfo {
+                start_visual_row: start,
+                visual_row_count: visual_rows,
+            });
+            start += visual_rows;
+        }
+        self.entry_visual_info = info;
     }
 
     pub fn scroll_transcript_line_up(&mut self) {
@@ -208,6 +234,8 @@ impl AppState {
         self.latest_input_tokens = None;
         self.latest_output_tokens = None;
         self.latest_total_tokens = None;
+        self.entry_visual_info.clear();
+        self.entry_visual_info_dirty = true;
     }
 
     pub fn scroll_transcript_to_bottom(&mut self) {

@@ -1,3 +1,4 @@
+use crate::rendering::theme::TuiTheme;
 use crate::{
     interaction::reducer::{
         ESC_ABORT_CONFIRM_STATUS, ReducerInput, UserAction,
@@ -754,7 +755,9 @@ fn compaction_artifact_renders_as_single_markdown_block() {
     let projected_texts: Vec<String> = state
         .transcript_preview
         .iter()
-        .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
+        .flat_map(|line| {
+            crate::markdown::render_markdown_lines(&line.text(), None, &TuiTheme::default())
+        })
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
     assert!(
@@ -788,7 +791,9 @@ fn compaction_artifact_does_not_double_wrap_summary_heading() {
     let summary_count = state
         .transcript_preview
         .iter()
-        .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
+        .flat_map(|line| {
+            crate::markdown::render_markdown_lines(&line.text(), None, &TuiTheme::default())
+        })
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .filter(|projected| projected.trim() == "Summary")
         .count();
@@ -815,7 +820,9 @@ fn compaction_artifact_preserves_bullets_without_duplication() {
     let projected_texts: Vec<String> = state
         .transcript_preview
         .iter()
-        .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
+        .flat_map(|line| {
+            crate::markdown::render_markdown_lines(&line.text(), None, &TuiTheme::default())
+        })
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
     assert_eq!(
@@ -862,7 +869,9 @@ fn compaction_block_completion_hides_source_and_explanatory_copy() {
     let projected_texts: Vec<String> = state
         .transcript_preview
         .iter()
-        .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
+        .flat_map(|line| {
+            crate::markdown::render_markdown_lines(&line.text(), None, &TuiTheme::default())
+        })
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
 
@@ -1040,7 +1049,9 @@ fn compaction_block_summary_rendering_remains_clean_after_copy_removal() {
     let projected_texts: Vec<String> = state
         .transcript_preview
         .iter()
-        .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
+        .flat_map(|line| {
+            crate::markdown::render_markdown_lines(&line.text(), None, &TuiTheme::default())
+        })
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
     assert_eq!(
@@ -2470,6 +2481,7 @@ fn compaction_triggered_clears_streaming_state() {
 #[cfg(test)]
 mod task_4a_tests {
     use super::*;
+    use crate::rendering::theme::TuiTheme;
     use nu_agent_core::protocol::event::UiEvent;
     use nu_agent_core::transcript::ir::StyleHint;
     use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry};
@@ -2491,7 +2503,7 @@ mod task_4a_tests {
 
     /// Project a markdown string and return all (text, hint) pairs from it.
     fn project_spans(markdown: &str) -> Vec<(String, StyleHint)> {
-        crate::markdown::render_markdown_lines(markdown, None)
+        crate::markdown::render_markdown_lines(markdown, None, &TuiTheme::default())
             .into_iter()
             .flat_map(|l| l.spans.into_iter())
             .map(|s| (s.text, s.hint))

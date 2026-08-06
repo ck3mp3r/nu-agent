@@ -1,9 +1,14 @@
 use super::*;
+use crate::rendering::theme::TuiTheme;
 
 pub(crate) fn help_panel_lines() -> (&'static str, Vec<Line<'static>>) {
     (
         "Help",
-        crate::markdown::project_markdown_to_lines(help_panel_markdown_source(), None),
+        crate::markdown::project_markdown_to_lines(
+            help_panel_markdown_source(),
+            None,
+            &TuiTheme::default(),
+        ),
     )
 }
 

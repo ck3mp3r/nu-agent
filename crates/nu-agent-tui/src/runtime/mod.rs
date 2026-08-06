@@ -14,7 +14,7 @@ use ratatui::{
 };
 mod backend;
 mod panels;
-mod render;
+pub(crate) mod render;
 mod render_frame;
 mod renderer;
 mod session_picker;
@@ -510,6 +510,8 @@ impl RuntimeCoordinator {
         }
 
         if let TerminalEvent::Resize(resize) = event {
+            self.state.clear_assistant_projection_cache();
+            self.state.entry_visual_info_dirty = true;
             self.terminal_columns = resize.columns;
             self.terminal_rows = resize.rows;
             let line_count = self.textarea.lines().len() as u16;

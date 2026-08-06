@@ -6,11 +6,96 @@ use crate::tui_renderer::TuiRenderer;
 use nu_agent_core::transcript::ir::*;
 use nu_agent_core::transcript::items::*;
 use nu_agent_core::transcript::renderer::*;
+use std::collections::HashMap;
 
 fn make_renderer() -> TuiRenderer {
     TuiRenderer {
         theme: TuiTheme::default(),
     }
+}
+
+// ========== render_cached cache tests ==========
+
+#[test]
+fn render_cached_cache_hit_returns_identical_output() {
+    let r = make_renderer();
+    let mut cache: HashMap<String, Vec<ContentLine>> = HashMap::new();
+    let block = RenderBlock {
+        role: Role::Assistant,
+        lines: vec![],
+        markdown: Some("**bold**".to_string()),
+    };
+    let ctx = default_ctx(80);
+
+    let first = r.render_cached(&block, &ctx, &mut cache);
+    let second = r.render_cached(&block, &ctx, &mut cache);
+
+    assert_eq!(first, second, "cache hit must return identical output");
+    assert_eq!(
+        cache.len(),
+        1,
+        "cache must have exactly 1 entry after 2 calls"
+    );
+}
+
+#[test]
+fn render_cached_cache_miss_stores_entry_and_renders_bold() {
+    let r = make_renderer();
+    let mut cache: HashMap<String, Vec<ContentLine>> = HashMap::new();
+    let block = RenderBlock {
+        role: Role::Assistant,
+        lines: vec![],
+        markdown: Some("**bold**".to_string()),
+    };
+    let ctx = default_ctx(80);
+
+    let lines = r.render_cached(&block, &ctx, &mut cache);
+
+    assert_eq!(cache.len(), 1, "cache must have 1 entry after first call");
+    let has_bold = lines.iter().flat_map(|l| l.spans.iter()).any(|s| {
+        s.style
+            .add_modifier
+            .contains(ratatui::style::Modifier::BOLD)
+    });
+    assert!(has_bold, "output must contain bold-styled spans");
+}
+
+#[test]
+fn render_cached_non_markdown_bypasses_cache() {
+    let r = make_renderer();
+    let mut cache: HashMap<String, Vec<ContentLine>> = HashMap::new();
+    let block = RenderBlock {
+        role: Role::Assistant,
+        lines: vec![ContentLine::single("hello".to_string(), StyleHint::Normal)],
+        markdown: None,
+    };
+    let ctx = default_ctx(80);
+
+    let _ = r.render_cached(&block, &ctx, &mut cache);
+
+    assert_eq!(
+        cache.len(),
+        0,
+        "cache must not be modified for non-markdown blocks"
+    );
+}
+
+#[test]
+fn render_cached_cache_invalidation_clears_all_entries() {
+    let r = make_renderer();
+    let mut cache: HashMap<String, Vec<ContentLine>> = HashMap::new();
+    let block = RenderBlock {
+        role: Role::Assistant,
+        lines: vec![],
+        markdown: Some("**bold**".to_string()),
+    };
+    let ctx = default_ctx(80);
+
+    let _ = r.render_cached(&block, &ctx, &mut cache);
+    assert_eq!(cache.len(), 1, "cache should have 1 entry before clear");
+
+    cache.clear();
+    assert_eq!(cache.len(), 0, "cache must be empty after clear");
 }
 
 fn default_ctx(width: usize) -> RenderContext {
@@ -359,7 +444,7 @@ mod task_5_visual_diff_tests {
     #[test]
     fn render_markdown_lines_accepts_max_width_none() {
         // render_markdown_lines("# Hello", None) should produce non-empty output
-        let lines = crate::markdown::render_markdown_lines("# Hello", None);
+        let lines = crate::markdown::render_markdown_lines("# Hello", None, &TuiTheme::default());
         assert!(
             !lines.is_empty(),
             "render_markdown_lines with None width must produce non-empty output"

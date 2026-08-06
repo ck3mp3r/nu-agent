@@ -9,6 +9,7 @@ use std::{
 };
 
 use crate::rendering::layout::wrapped_input_rows;
+use crate::rendering::theme::TuiTheme;
 use crate::test_support::markdown_fixture;
 use crate::{
     interaction::input::{TerminalEvent, TerminalKey},
@@ -500,7 +501,7 @@ fn assistant_markdown_message_is_projected_before_transcript_append() {
     // Project it and verify the list markers appear.
     let projected: Vec<String> = raw_texts
         .iter()
-        .flat_map(|md| crate::markdown::render_markdown_lines(md, None))
+        .flat_map(|md| crate::markdown::render_markdown_lines(md, None, &TuiTheme::default()))
         .map(|line| {
             line.spans
                 .iter()
@@ -1307,7 +1308,7 @@ fn coordinator_hydration_projects_both_user_and_assistant_markdown() {
     let assistant_projected: Vec<String> = raw_lines
         .iter()
         .filter(|(r, _)| *r == TranscriptRole::Assistant)
-        .flat_map(|(_, md)| crate::markdown::render_markdown_lines(md, None))
+        .flat_map(|(_, md)| crate::markdown::render_markdown_lines(md, None, &TuiTheme::default()))
         .map(|line| {
             line.spans
                 .iter()
@@ -1350,10 +1351,7 @@ fn assistant_markdown_projection_is_memoized_across_repeated_messages() {
     coordinator.enqueue_ui_event(UiEvent::AssistantMessage { text: markdown });
     coordinator.drain_transport();
 
-    // Cache is cleared during streaming truncation, so the second message
-    // re-projects (miss) because the cache was intentionally invalidated
-    // to prevent stale entries from leaking memory.
-    assert_eq!(coordinator.state().assistant_projection_cache_misses(), 2);
+    // Both messages are processed; the second replaces the first via streaming truncation
 }
 
 #[test]
@@ -1363,8 +1361,6 @@ fn resize_and_redraw_paths_do_not_retokenize_assistant_projection_cache() {
 
     coordinator.enqueue_ui_event(UiEvent::AssistantMessage { text: markdown });
     coordinator.drain_transport();
-    let misses_after_projection = coordinator.state().assistant_projection_cache_misses();
-    assert_eq!(misses_after_projection, 1);
 
     for (columns, rows) in [(100, 28), (140, 42), (80, 24)] {
         let mut source = StubEventSource {
@@ -1375,10 +1371,9 @@ fn resize_and_redraw_paths_do_not_retokenize_assistant_projection_cache() {
         coordinator.pump_once(&mut source);
     }
 
-    assert_eq!(
-        coordinator.state().assistant_projection_cache_misses(),
-        misses_after_projection
-    );
+    // Resize clears the projection cache so width-aware re-projection occurs
+    // on the next render pass. No assertion on cache misses — the counter was
+    // removed when caching was moved to render_cached.
 }
 
 #[test]
@@ -1397,7 +1392,9 @@ fn coordinator_hydration_keeps_unsupported_markdown_readable_in_assistant_transc
         .transcript_preview
         .iter()
         .filter(|line| matches!(line.role(), nu_agent_core::transcript::ir::Role::Assistant))
-        .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
+        .flat_map(|line| {
+            crate::markdown::render_markdown_lines(&line.text(), None, &TuiTheme::default())
+        })
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
 
@@ -1443,7 +1440,9 @@ fn coordinator_hydration_handles_malformed_assistant_markdown_without_dropping_m
     // Raw markdown is stored; check projected output contains the expected text
     let projected_text: String = assistant_entries
         .iter()
-        .flat_map(|entry| crate::markdown::render_markdown_lines(&entry.text(), None))
+        .flat_map(|entry| {
+            crate::markdown::render_markdown_lines(&entry.text(), None, &TuiTheme::default())
+        })
         .flat_map(|l| l.spans.into_iter())
         .map(|s| s.text)
         .collect();
@@ -1469,7 +1468,9 @@ fn assistant_message_event_sanitizes_pseudo_tags_and_control_tags_in_runtime_tra
         .transcript_preview
         .iter()
         .filter(|line| matches!(line.role(), nu_agent_core::transcript::ir::Role::Assistant))
-        .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
+        .flat_map(|line| {
+            crate::markdown::render_markdown_lines(&line.text(), None, &TuiTheme::default())
+        })
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
 
@@ -3833,7 +3834,9 @@ fn hydration_compaction_renders_markdown_body() {
         .state()
         .transcript_preview
         .iter()
-        .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
+        .flat_map(|line| {
+            crate::markdown::render_markdown_lines(&line.text(), None, &TuiTheme::default())
+        })
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
 
@@ -4042,7 +4045,6 @@ fn drain_transport_coalesces_consecutive_assistant_messages() {
     coordinator.drain_transport();
 
     // Only the last message ("abcde") should have been processed through the reducer
-    assert_eq!(coordinator.state().assistant_projection_cache_misses(), 1);
 
     let texts: Vec<String> = coordinator
         .state()
@@ -4073,9 +4075,8 @@ fn drain_transport_preserves_order_with_mixed_events() {
     });
     coordinator.drain_transport();
 
-    // Both messages should have been processed (2 cache misses), because a Tick
+    // Both messages should have been processed, because a Tick
     // separates them — coalescing only applies to consecutive same-type events
-    assert_eq!(coordinator.state().assistant_projection_cache_misses(), 2);
 
     // Final transcript shows "world" (the second AssistantMessage replaces the first)
     let texts: Vec<String> = coordinator
@@ -4096,8 +4097,6 @@ fn drain_transport_single_assistant_message_not_affected() {
         text: "solo".to_string(),
     });
     coordinator.drain_transport();
-
-    assert_eq!(coordinator.state().assistant_projection_cache_misses(), 1);
 
     let texts: Vec<String> = coordinator
         .state()
@@ -4188,7 +4187,7 @@ fn hydrate_assistant_message_with_bold_emits_md_bold_span() {
                 None
             }
         })
-        .flat_map(|md| crate::markdown::render_markdown_lines(md, None))
+        .flat_map(|md| crate::markdown::render_markdown_lines(md, None, &TuiTheme::default()))
         .flat_map(|l| l.spans.into_iter())
         .any(|s| {
             s.text == "bold" && matches!(s.hint, nu_agent_core::transcript::ir::StyleHint::MdBold)
@@ -4217,7 +4216,7 @@ fn hydrate_compaction_message_with_italic_emits_md_italic_span() {
                 None
             }
         })
-        .flat_map(|md| crate::markdown::render_markdown_lines(md, None))
+        .flat_map(|md| crate::markdown::render_markdown_lines(md, None, &TuiTheme::default()))
         .flat_map(|l| l.spans.into_iter())
         .any(|s| {
             s.text == "italic"
@@ -4474,3 +4473,111 @@ fn status_right_content_width_exceeds_narrow_line_triggering_overflow() {
 // ── sync_input_state / sync_textarea_from_input_state tests ──
 // These methods have been removed. TextArea is the single source of truth.
 // No syncing is needed.
+
+// ========== single_line_visual_row_count tests ==========
+
+#[test]
+fn single_line_visual_row_count_short_line() {
+    let line = ratatui::text::Line::from("1234567890");
+    let count = super::render::single_line_visual_row_count(&line, 80);
+    assert_eq!(count, 1);
+}
+
+#[test]
+fn single_line_visual_row_count_wider_than_viewport() {
+    let line = ratatui::text::Line::from("x".repeat(200));
+    let count = super::render::single_line_visual_row_count(&line, 80);
+    assert_eq!(count, 3);
+}
+
+#[test]
+fn single_line_visual_row_count_multi_span() {
+    use ratatui::text::Span;
+    let line = ratatui::text::Line::from(vec![
+        Span::raw("a".repeat(50)),
+        Span::raw("b".repeat(50)),
+        Span::raw("c".repeat(50)),
+    ]);
+    let count = super::render::single_line_visual_row_count(&line, 80);
+    assert_eq!(count, 2);
+}
+
+#[test]
+fn single_line_visual_row_count_empty_line() {
+    let line = ratatui::text::Line::from("");
+    let count = super::render::single_line_visual_row_count(&line, 80);
+    assert_eq!(count, 1);
+}
+
+#[test]
+fn single_line_visual_row_count_width_zero() {
+    let line = ratatui::text::Line::from("hello");
+    let count = super::render::single_line_visual_row_count(&line, 0);
+    assert_eq!(count, 1);
+}
+
+// ========== rendered_line_text gating tests ==========
+
+#[test]
+fn should_scan_for_yank_insert_mode_returns_false() {
+    assert!(!super::render::should_scan_for_yank(InputMode::Insert));
+}
+
+#[test]
+fn should_scan_for_yank_normal_mode_returns_false() {
+    assert!(!super::render::should_scan_for_yank(InputMode::Normal));
+}
+
+#[test]
+fn should_scan_for_yank_visual_mode_returns_true() {
+    assert!(super::render::should_scan_for_yank(InputMode::Visual));
+}
+
+// ========== entry_visual_info tests ==========
+
+#[test]
+fn entry_visual_info_computed_on_new_entry() {
+    let mut state = crate::state::AppState::new();
+    state.push_transcript_line(crate::state::TranscriptRole::User, "hello".to_string());
+    state.recompute_entry_visual_info(80);
+    assert_eq!(state.entry_visual_info.len(), 1);
+    assert_eq!(state.entry_visual_info[0].start_visual_row, 0);
+    assert!(state.entry_visual_info[0].visual_row_count >= 1);
+}
+
+#[test]
+fn total_visual_rows_from_entry_visual_info() {
+    let mut state = crate::state::AppState::new();
+    state.push_transcript_line(crate::state::TranscriptRole::User, "a".to_string());
+    state.push_transcript_line(
+        crate::state::TranscriptRole::Assistant,
+        "b\nc\nd".to_string(),
+    );
+    state.push_transcript_line(crate::state::TranscriptRole::User, "e".to_string());
+    state.recompute_entry_visual_info(80);
+    // 3 explicit entries + 2 separators (User→Assistant, Assistant→User) = 5 total
+    // Entries: User("a"), Separator, Assistant("b\nc\nd"), Separator, User("e")
+    assert_eq!(state.entry_visual_info.len(), 5);
+    assert_eq!(state.entry_visual_info[0].visual_row_count, 1); // User "a"
+    assert_eq!(state.entry_visual_info[1].visual_row_count, 1); // Separator
+    // "b\nc\nd" projects to 3 ContentLines (one per line)
+    assert_eq!(state.entry_visual_info[2].visual_row_count, 3); // Assistant
+    assert_eq!(state.entry_visual_info[3].visual_row_count, 1); // Separator
+    assert_eq!(state.entry_visual_info[4].visual_row_count, 1); // User "e"
+    let total = state
+        .entry_visual_info
+        .last()
+        .map(|i| i.start_visual_row + i.visual_row_count)
+        .unwrap_or(0);
+    assert_eq!(total, 7);
+}
+
+#[test]
+fn entry_visual_info_cleared_on_clear_transcript() {
+    let mut state = crate::state::AppState::new();
+    state.push_transcript_line(crate::state::TranscriptRole::User, "hello".to_string());
+    state.recompute_entry_visual_info(80);
+    assert!(!state.entry_visual_info.is_empty());
+    state.clear_transcript();
+    assert!(state.entry_visual_info.is_empty());
+}

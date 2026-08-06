@@ -471,13 +471,14 @@ impl Projector {
 pub(super) fn project_markdown_to_lines_inner(
     markdown: &str,
     max_width: Option<u16>,
+    theme: &TuiTheme,
 ) -> Vec<Line<'static>> {
     let options =
         Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS | Options::ENABLE_TABLES;
     let parser = Parser::new_ext(markdown, options);
     let mut projector = Projector {
         pending_prefix: true,
-        theme: TuiTheme::default(),
+        theme: theme.clone(),
         max_width,
         ..Projector::default()
     };

@@ -18,19 +18,23 @@ mod test;
 #[cfg(test)]
 mod transcript_test;
 
-use crate::markdown::{project_markdown_to_lines, rendered_line_to_plain_text};
 use nu_agent_core::protocol::event::{PermissionDecision, PermissionDecisionSubmission};
 use nu_agent_core::protocol::slash::{SlashCommand, filter_inline_slash_suggestions};
-use nu_agent_core::transcript::ir::{DisplayLine, Role};
+use nu_agent_core::transcript::ir::{ContentLine, DisplayLine, Role};
 use nu_agent_core::transcript::items::{
     ProseMessage, Separator as TranscriptSeparator, Spacer as SpacerItem, SystemMessage,
     ToolInvocation, ToolResult as TranscriptToolResult, TranscriptEntry, annotate_diff_hint,
     parse_tool_text,
 };
-use ratatui::text::Line;
 use selection::TranscriptSelection;
 use std::collections::HashMap;
 use std::collections::VecDeque;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EntryVisualInfo {
+    pub start_visual_row: usize,
+    pub visual_row_count: usize,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiPhase {
@@ -323,7 +327,7 @@ pub struct AppState {
     pending_session_picker_launch_requests: usize,
     pending_session_switch_requests: VecDeque<String>,
     pub permission_prompt: Option<PermissionPrompt>,
-    assistant_projection_cache: HashMap<String, Vec<Line<'static>>>,
+    assistant_projection_cache: HashMap<String, Vec<ContentLine>>,
     pub(crate) prompt_items: Vec<QueuedPrompt>,
     pub(crate) tool_call_items: Vec<ToolCallLine>,
     pub(crate) compaction_items: Vec<CompactionLine>,
@@ -355,8 +359,8 @@ pub struct AppState {
     pub rendered_line_start_row: usize,
     pub(crate) streaming_message_start: Option<usize>,
     pub(crate) compaction_streaming_start: Option<usize>,
-    #[cfg(test)]
-    assistant_projection_cache_misses: usize,
+    pub entry_visual_info: Vec<EntryVisualInfo>,
+    pub entry_visual_info_dirty: bool,
 }
 
 impl Default for AppState {
@@ -445,8 +449,8 @@ impl Default for AppState {
             rendered_line_start_row: 0,
             streaming_message_start: None,
             compaction_streaming_start: None,
-            #[cfg(test)]
-            assistant_projection_cache_misses: 0,
+            entry_visual_info: Vec::new(),
+            entry_visual_info_dirty: true,
         }
     }
 }

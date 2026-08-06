@@ -11,11 +11,14 @@ use crate::rendering::theme::TuiTheme;
 ///
 /// `max_width` is threaded through to the projection layer for future width-aware
 /// table rendering; it is not yet used for clamping (that is a separate task).
-pub fn render_markdown_lines(text: &str, max_width: Option<u16>) -> Vec<ContentLine> {
-    let theme = TuiTheme::default();
-    let projected: Vec<ContentLine> = project_markdown_to_lines(text, max_width)
+pub fn render_markdown_lines(
+    text: &str,
+    max_width: Option<u16>,
+    theme: &TuiTheme,
+) -> Vec<ContentLine> {
+    let projected: Vec<ContentLine> = project_markdown_to_lines(text, max_width, theme)
         .into_iter()
-        .map(|line| line_to_content_line(&line, &theme))
+        .map(|line| line_to_content_line(&line, theme))
         .collect();
 
     // Collapse consecutive blank lines to at most one, strip leading/trailing blanks

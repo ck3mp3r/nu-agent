@@ -5,6 +5,8 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 
+use crate::state::InputMode;
+
 pub(super) fn render_scroll_text_panel(
     frame: &mut Frame,
     area: Rect,
@@ -60,14 +62,24 @@ pub(super) fn expand_to_visual_rows(
 }
 
 /// Count how many visual rows a single Line will occupy after wrapping at `width`.
-pub(super) fn single_line_visual_row_count(line: &Line<'_>, width: usize) -> usize {
+pub(crate) fn single_line_visual_row_count(line: &Line<'_>, width: usize) -> usize {
     if width < 1 {
         return 1;
     }
-    let text = Paragraph::new(ratatui::text::Text::from(line.clone())).wrap(Wrap::default());
-    text.line_count(width as u16).max(1)
+    let line_width: usize = line
+        .spans
+        .iter()
+        .map(|span| unicode_width::UnicodeWidthStr::width(span.content.as_ref()))
+        .sum();
+    line_width.div_ceil(width).max(1)
 }
 
 mod bottom_box;
 mod modals;
 mod transcript;
+
+/// Returns true when the buffer should be scanned for yank text.
+/// Only needed in Visual mode; avoids per-frame O(width*height) cost otherwise.
+pub(crate) fn should_scan_for_yank(input_mode: InputMode) -> bool {
+    input_mode == InputMode::Visual
+}

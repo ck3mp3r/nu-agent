@@ -3,6 +3,8 @@ use ratatui::{
     text::{Line, Span as RatatuiSpan},
 };
 
+use std::collections::HashMap;
+
 use crate::rendering::theme::TuiTheme;
 use nu_agent_core::transcript::{
     ir::{ContentLine, RenderBlock, Role, StyleHint},
@@ -37,7 +39,8 @@ impl BlockRenderer for TuiRenderer {
         let projected_lines: Vec<ContentLine>;
         let content_lines: &[ContentLine] = if let Some(ref md) = block.markdown {
             let canvas_width = u16::try_from(ctx.width).unwrap_or(u16::MAX);
-            projected_lines = crate::markdown::render_markdown_lines(md, Some(canvas_width));
+            projected_lines =
+                crate::markdown::render_markdown_lines(md, Some(canvas_width), &self.theme);
             &projected_lines
         } else {
             &block.lines
@@ -203,5 +206,27 @@ impl TuiRenderer {
                 RatatuiSpan::styled(span.content.into_owned(), style)
             })
             .collect()
+    }
+
+    pub fn render_cached(
+        &self,
+        block: &RenderBlock,
+        ctx: &RenderContext,
+        cache: &mut HashMap<String, Vec<ContentLine>>,
+    ) -> Vec<Line<'static>> {
+        let block = if let Some(ref md) = block.markdown {
+            let content_lines = cache.entry(md.clone()).or_insert_with(|| {
+                let canvas_width = u16::try_from(ctx.width).unwrap_or(u16::MAX);
+                crate::markdown::render_markdown_lines(md, Some(canvas_width), &self.theme)
+            });
+            RenderBlock {
+                role: block.role.clone(),
+                lines: content_lines.clone(),
+                markdown: None,
+            }
+        } else {
+            block.clone()
+        };
+        self.render(&block, ctx)
     }
 }

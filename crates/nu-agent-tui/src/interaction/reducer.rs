@@ -1,6 +1,5 @@
 use crate::{
     interaction::cancel::CancelController,
-    markdown,
     state::{
         AppState, CompactionStatus, InputMode, PaneFocus, TranscriptRole, UiPhase,
         selection::TranscriptSelection,
@@ -10,6 +9,7 @@ use nu_agent_core::protocol::event::{
     PermissionDecision, PermissionRequestContext, ToolDisplay, ToolDisplaySection, UiEvent,
 };
 use nu_agent_core::protocol::slash::{SlashParseResult, extract_session_id, parse_slash_command};
+use nu_agent_core::transcript::ir::ContentLine;
 use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry};
 
 pub const ESC_ABORT_CONFIRM_STATUS: &str = "Hit escape again to abort.";
@@ -739,11 +739,15 @@ fn append_direct_tool_display_section(
 
     let markdown = format!("```{}\n{}\n```", section.language, section_content);
     for rendered_line in state.project_assistant_markdown_lines(&markdown) {
-        let text = markdown::rendered_line_to_plain_text(&rendered_line);
+        let text: String = rendered_line
+            .spans
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect();
         if text.trim().is_empty() {
             continue;
         }
-        state.push_transcript_rendered_line(TranscriptRole::ToolDisplay, rendered_line);
+        state.push_transcript_line(TranscriptRole::ToolDisplay, text);
     }
 }
 
@@ -917,7 +921,7 @@ fn handle_compaction_summary_chunk(state: &mut AppState, source: &str, text: Str
 
 fn assistant_diff_regurgitation_is_redundant(
     state: &AppState,
-    assistant_lines: &[ratatui::text::Line<'static>],
+    assistant_lines: &[ContentLine],
 ) -> bool {
     let latest_tool_display_diff = latest_tool_display_diff_lines(state);
     let Some(latest_tool_display_diff) = latest_tool_display_diff else {
@@ -926,7 +930,7 @@ fn assistant_diff_regurgitation_is_redundant(
 
     let candidate = assistant_lines
         .iter()
-        .map(markdown::rendered_line_to_plain_text)
+        .map(|cl| cl.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .map(|line| normalize_diff_line_for_comparison(line.trim()))
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>();
