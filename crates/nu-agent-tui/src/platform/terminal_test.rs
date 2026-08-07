@@ -9,6 +9,7 @@ struct MockTerminalState {
     raw_mode_enabled: bool,
     alt_screen_enabled: bool,
     cursor_visible: bool,
+    bracketed_paste_enabled: bool,
 }
 
 impl Default for MockTerminalState {
@@ -17,6 +18,7 @@ impl Default for MockTerminalState {
             raw_mode_enabled: false,
             alt_screen_enabled: false,
             cursor_visible: true,
+            bracketed_paste_enabled: false,
         }
     }
 }
@@ -91,6 +93,18 @@ impl TerminalBackend for MockTerminalBackend {
         self.state.borrow_mut().cursor_visible = true;
         Ok(())
     }
+
+    fn enable_bracketed_paste(&mut self) -> Result<(), TerminalLifecycleError> {
+        self.run(TerminalAction::EnableBracketedPaste)?;
+        self.state.borrow_mut().bracketed_paste_enabled = true;
+        Ok(())
+    }
+
+    fn disable_bracketed_paste(&mut self) -> Result<(), TerminalLifecycleError> {
+        self.run(TerminalAction::DisableBracketedPaste)?;
+        self.state.borrow_mut().bracketed_paste_enabled = false;
+        Ok(())
+    }
 }
 
 fn assert_terminal_restored(state: &Rc<RefCell<MockTerminalState>>) {
@@ -100,6 +114,7 @@ fn assert_terminal_restored(state: &Rc<RefCell<MockTerminalState>>) {
             raw_mode_enabled: false,
             alt_screen_enabled: false,
             cursor_visible: true,
+            bracketed_paste_enabled: false,
         }
     );
 }
@@ -120,8 +135,10 @@ fn enter_then_restore_uses_required_operation_order() {
             TerminalAction::EnableRawMode,
             TerminalAction::EnterAltScreen,
             TerminalAction::HideCursor,
+            TerminalAction::EnableBracketedPaste,
             TerminalAction::ShowCursor,
             TerminalAction::LeaveAltScreen,
+            TerminalAction::DisableBracketedPaste,
             TerminalAction::DisableRawMode,
         ]
     );
@@ -145,8 +162,10 @@ fn restore_is_idempotent_and_safe_to_call_multiple_times() {
             TerminalAction::EnableRawMode,
             TerminalAction::EnterAltScreen,
             TerminalAction::HideCursor,
+            TerminalAction::EnableBracketedPaste,
             TerminalAction::ShowCursor,
             TerminalAction::LeaveAltScreen,
+            TerminalAction::DisableBracketedPaste,
             TerminalAction::DisableRawMode,
         ]
     );

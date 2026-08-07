@@ -8,6 +8,8 @@ pub enum TerminalAction {
     LeaveAltScreen,
     HideCursor,
     ShowCursor,
+    EnableBracketedPaste,
+    DisableBracketedPaste,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,6 +46,8 @@ pub trait TerminalBackend {
     fn leave_alt_screen(&mut self) -> Result<(), TerminalLifecycleError>;
     fn hide_cursor(&mut self) -> Result<(), TerminalLifecycleError>;
     fn show_cursor(&mut self) -> Result<(), TerminalLifecycleError>;
+    fn enable_bracketed_paste(&mut self) -> Result<(), TerminalLifecycleError>;
+    fn disable_bracketed_paste(&mut self) -> Result<(), TerminalLifecycleError>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -51,6 +55,7 @@ struct TerminalState {
     raw_mode_enabled: bool,
     alt_screen_enabled: bool,
     cursor_hidden: bool,
+    bracketed_paste_enabled: bool,
 }
 
 pub struct TerminalLifecycle<B>
@@ -94,6 +99,14 @@ where
             self.state.cursor_hidden = true;
         }
 
+        if !self.state.bracketed_paste_enabled {
+            if let Err(error) = self.backend.enable_bracketed_paste() {
+                let _ = self.restore();
+                return Err(error);
+            }
+            self.state.bracketed_paste_enabled = true;
+        }
+
         Ok(())
     }
 
@@ -113,6 +126,14 @@ where
                 first_error.get_or_insert(error);
             } else {
                 self.state.alt_screen_enabled = false;
+            }
+        }
+
+        if self.state.bracketed_paste_enabled {
+            if let Err(error) = self.backend.disable_bracketed_paste() {
+                first_error.get_or_insert(error);
+            } else {
+                self.state.bracketed_paste_enabled = false;
             }
         }
 

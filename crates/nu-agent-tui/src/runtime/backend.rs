@@ -107,6 +107,24 @@ where
             )
         })
     }
+
+    fn enable_bracketed_paste(&mut self) -> Result<(), TerminalLifecycleError> {
+        crossterm::execute!(self.writer, crossterm::event::EnableBracketedPaste).map_err(|err| {
+            TerminalLifecycleError::new(
+                crate::platform::terminal::TerminalAction::EnableBracketedPaste,
+                err.to_string(),
+            )
+        })
+    }
+
+    fn disable_bracketed_paste(&mut self) -> Result<(), TerminalLifecycleError> {
+        crossterm::execute!(self.writer, crossterm::event::DisableBracketedPaste).map_err(|err| {
+            TerminalLifecycleError::new(
+                crate::platform::terminal::TerminalAction::DisableBracketedPaste,
+                err.to_string(),
+            )
+        })
+    }
 }
 
 pub(super) struct LiveTerminalUi {

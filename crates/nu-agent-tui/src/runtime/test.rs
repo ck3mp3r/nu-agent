@@ -3380,6 +3380,7 @@ struct MockTerminalState {
     raw_mode_enabled: bool,
     alt_screen_enabled: bool,
     cursor_visible: bool,
+    bracketed_paste_enabled: bool,
 }
 
 impl Default for MockTerminalState {
@@ -3388,6 +3389,7 @@ impl Default for MockTerminalState {
             raw_mode_enabled: false,
             alt_screen_enabled: false,
             cursor_visible: true,
+            bracketed_paste_enabled: false,
         }
     }
 }
@@ -3455,6 +3457,18 @@ impl TerminalBackend for MockTerminalBackend {
         self.state.borrow_mut().cursor_visible = true;
         Ok(())
     }
+
+    fn enable_bracketed_paste(&mut self) -> Result<(), TerminalLifecycleError> {
+        self.run(TerminalAction::EnableBracketedPaste)?;
+        self.state.borrow_mut().bracketed_paste_enabled = true;
+        Ok(())
+    }
+
+    fn disable_bracketed_paste(&mut self) -> Result<(), TerminalLifecycleError> {
+        self.run(TerminalAction::DisableBracketedPaste)?;
+        self.state.borrow_mut().bracketed_paste_enabled = false;
+        Ok(())
+    }
 }
 
 fn assert_terminal_restored(state: &Rc<RefCell<MockTerminalState>>) {
@@ -3464,6 +3478,7 @@ fn assert_terminal_restored(state: &Rc<RefCell<MockTerminalState>>) {
             raw_mode_enabled: false,
             alt_screen_enabled: false,
             cursor_visible: true,
+            bracketed_paste_enabled: false,
         }
     );
 }
@@ -3485,8 +3500,10 @@ fn run_with_terminal_restore_sync_executes_enter_run_and_restore_in_order() {
             TerminalAction::EnableRawMode,
             TerminalAction::EnterAltScreen,
             TerminalAction::HideCursor,
+            TerminalAction::EnableBracketedPaste,
             TerminalAction::ShowCursor,
             TerminalAction::LeaveAltScreen,
+            TerminalAction::DisableBracketedPaste,
             TerminalAction::DisableRawMode,
         ]
     );
@@ -3605,8 +3622,10 @@ fn runtime_panic_restores_and_rethrows() {
             TerminalAction::EnableRawMode,
             TerminalAction::EnterAltScreen,
             TerminalAction::HideCursor,
+            TerminalAction::EnableBracketedPaste,
             TerminalAction::ShowCursor,
             TerminalAction::LeaveAltScreen,
+            TerminalAction::DisableBracketedPaste,
             TerminalAction::DisableRawMode,
         ]
     );
@@ -3634,8 +3653,10 @@ fn panic_during_busy_render_loop_still_restores_terminal_state() {
             TerminalAction::EnableRawMode,
             TerminalAction::EnterAltScreen,
             TerminalAction::HideCursor,
+            TerminalAction::EnableBracketedPaste,
             TerminalAction::ShowCursor,
             TerminalAction::LeaveAltScreen,
+            TerminalAction::DisableBracketedPaste,
             TerminalAction::DisableRawMode,
         ]
     );
@@ -3667,8 +3688,10 @@ fn cancellation_during_shutdown_restores_terminal_and_preserves_cancel_error() {
             TerminalAction::EnableRawMode,
             TerminalAction::EnterAltScreen,
             TerminalAction::HideCursor,
+            TerminalAction::EnableBracketedPaste,
             TerminalAction::ShowCursor,
             TerminalAction::LeaveAltScreen,
+            TerminalAction::DisableBracketedPaste,
             TerminalAction::DisableRawMode,
         ]
     );
