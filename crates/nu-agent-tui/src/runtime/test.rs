@@ -1201,12 +1201,11 @@ fn hydrated_tool_history_matches_live_tool_row_shape() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
     coordinator.hydrate_transcript_from_messages(
         vec![
-            UiMessageSnapshot::new("tool", "tool[k8s__list_pods] args={} · done")
-                .with_tool_details(
-                    Some("{\"namespace\":\"prod\"}".to_string()),
-                    Some("[{\"name\":\"api-0\"}]".to_string()),
-                    Some(true),
-                ),
+            UiMessageSnapshot::new("tool", "tool[k8s__list_pods] → {} · done").with_tool_details(
+                Some("{\"namespace\":\"prod\"}".to_string()),
+                Some("[{\"name\":\"api-0\"}]".to_string()),
+                Some(true),
+            ),
         ],
         None,
     );
@@ -1225,21 +1224,17 @@ fn hydrated_tool_history_matches_live_tool_row_shape() {
 
 #[test]
 fn parse_persisted_tool_status_line_supports_done_and_failed_shapes() {
-    let done = parse_persisted_tool_status_line(
-        "tool[k8s__list_pods] args={\"namespace\":\"prod\"} · done",
-    );
+    let done =
+        parse_persisted_tool_status_line("tool[k8s__list_pods] → {\"namespace\":\"prod\"} · done");
     assert_eq!(
         done,
         Some(("k8s__list_pods", "{\"namespace\":\"prod\"}", true))
     );
 
-    let failed = parse_persisted_tool_status_line("tool[gh__run] args={} · failed");
+    let failed = parse_persisted_tool_status_line("tool[gh__run] → {} · failed");
     assert_eq!(failed, Some(("gh__run", "{}", false)));
 
-    assert_eq!(
-        parse_persisted_tool_status_line("tool[gh__run] args={}"),
-        None
-    );
+    assert_eq!(parse_persisted_tool_status_line("tool[gh__run] → {}"), None);
 }
 
 #[test]
@@ -2957,7 +2952,7 @@ fn permission_prompt_does_not_open_global_dimmed_modal_backdrop() {
         scope: "nested".to_string(),
         pattern: "*".to_string(),
         target_field: Some("command".to_string()),
-        summary: "tool[nu__run] args={\"command\":\"echo hi\"}".to_string(),
+        summary: "tool[nu__run] → {\"command\":\"echo hi\"}".to_string(),
     });
 
     assert!(!super::modal_open_state_applies_dimmed_backdrop_for_test(

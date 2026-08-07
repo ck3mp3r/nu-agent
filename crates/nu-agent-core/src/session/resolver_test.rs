@@ -72,7 +72,7 @@ fn test_convert_assistant_tool_call() {
 
     assert_eq!(snapshots.len(), 1);
     assert_eq!(snapshots[0].role(), "tool");
-    assert!(snapshots[0].content().starts_with("tool[read_file] args="));
+    assert!(snapshots[0].content().starts_with("tool[read_file] → "));
     assert!(snapshots[0].tool_arguments().is_some());
     assert_eq!(snapshots[0].tool_success(), Some(true));
 }
@@ -142,11 +142,7 @@ fn test_convert_mixed_assistant_content() {
     assert_eq!(snapshots[0].role(), "assistant");
     assert_eq!(snapshots[0].content(), "Let me help you.");
     assert_eq!(snapshots[1].role(), "tool");
-    assert!(
-        snapshots[1]
-            .content()
-            .starts_with("tool[get_weather] args=")
-    );
+    assert!(snapshots[1].content().starts_with("tool[get_weather] → "));
 }
 
 #[test]
@@ -216,11 +212,11 @@ fn test_tool_call_format_matches_live_rendering() {
     assert_eq!(snapshots.len(), 1);
     assert_eq!(snapshots[0].role(), "tool");
 
-    // Content should be formatted as "tool[name] args={summary}"
+    // Content should be formatted as "tool[name] → {summary}"
     assert!(
         snapshots[0]
             .content()
-            .starts_with("tool[k8s__list_pods] args=")
+            .starts_with("tool[k8s__list_pods] → ")
     );
 
     // Tool arguments should contain the raw JSON
@@ -256,7 +252,7 @@ fn test_tool_call_argument_summarization() {
 
     // Content should be truncated with ellipsis
     let content = snapshots[0].content();
-    assert!(content.starts_with("tool[write_file] args="));
+    assert!(content.starts_with("tool[write_file] → "));
     assert!(content.len() < 200); // Should be less than content length + overhead
 
     // But raw arguments should contain full JSON

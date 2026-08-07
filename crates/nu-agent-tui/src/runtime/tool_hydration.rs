@@ -1,6 +1,6 @@
 const TOOL_PREFIX: &str = "tool[";
 const TOOL_SUFFIX_MARKER: &str = "]";
-const TOOL_ARGS_MARKER: &str = "] args=";
+const TOOL_ARGS_MARKER: &str = "] → ";
 const TOOL_DONE_SUFFIX: &str = " · done";
 const TOOL_FAILED_SUFFIX: &str = " · failed";
 

@@ -230,7 +230,7 @@ fn tool_call_lifecycle_tracks_transcript_line_status_by_same_row() {
     assert_eq!(state.transcript_preview[0].role(), Role::Tool);
     assert_eq!(state.transcript_preview[0].text(), "k8s__list_pods");
     if let TranscriptEntry::Tool(invocation) = &state.transcript_preview[0] {
-        assert!(invocation.args.contains("args="));
+        assert!(invocation.args.contains("→ "));
         assert!(invocation.args.contains("namespace"));
     } else {
         panic!("Expected Tool variant");
@@ -271,7 +271,7 @@ fn permission_prompt_open_sets_required_status_and_presence() {
         scope: "nested".to_string(),
         pattern: "*".to_string(),
         target_field: Some("command".to_string()),
-        summary: "tool[nu__run] args={\"command\":\"echo hi\"}".to_string(),
+        summary: "tool[nu__run] → {\"command\":\"echo hi\"}".to_string(),
     });
 
     assert!(state.has_permission_prompt());

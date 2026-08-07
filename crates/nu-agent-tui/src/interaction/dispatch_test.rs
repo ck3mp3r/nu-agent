@@ -23,7 +23,7 @@ fn open_permission_prompt(state: &mut AppState) {
         scope: "nested".to_string(),
         pattern: "*".to_string(),
         target_field: Some("command".to_string()),
-        summary: "tool[nu__run] args={\"command\":\"echo hi\"}".to_string(),
+        summary: "tool[nu__run] → {\"command\":\"echo hi\"}".to_string(),
     });
 }
 

@@ -191,9 +191,9 @@ fn transcript_entry_text_returns_markdown_source() {
 
 #[test]
 fn parse_tool_text_extracts_name_and_args() {
-    let (name, args) = parse_tool_text("tool[nu__run] args={}");
+    let (name, args) = parse_tool_text("tool[nu__run] → {}");
     assert_eq!(name, "nu__run");
-    assert_eq!(args, "args={}");
+    assert_eq!(args, "→ {}");
 }
 
 #[test]

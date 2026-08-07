@@ -23,7 +23,7 @@ pub fn format_tool_start(
     match verbosity {
         Verbosity::Quiet | Verbosity::Normal => format!("tool {name}"),
         Verbosity::Verbose => format!(
-            "→ tool {name} ({source}) args={}",
+            "→ tool {name} ({source}) → {}",
             truncate_with_ellipsis(arguments, VERBOSE_LIMIT)
         ),
         Verbosity::VeryVerbose => format!(
@@ -65,7 +65,7 @@ impl ToolEndView<'_> {
         match verbosity {
             Verbosity::Quiet | Verbosity::Normal => {
                 let header = format!(
-                    "{status} tool {name} args={}",
+                    "{status} tool {name} → {}",
                     truncate_with_ellipsis(arguments, NORMAL_RESULT_LIMIT)
                 );
                 if result.is_empty() {
@@ -79,7 +79,7 @@ impl ToolEndView<'_> {
             }
             Verbosity::Verbose => {
                 let header = format!(
-                    "{status} tool {name} ({source}) args={}",
+                    "{status} tool {name} ({source}) → {}",
                     truncate_with_ellipsis(arguments, VERBOSE_LIMIT)
                 );
                 if result.is_empty() {

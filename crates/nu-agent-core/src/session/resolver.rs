@@ -335,7 +335,7 @@ pub(crate) fn hydrate_single_message(
                             crate::protocol::tool_args::summarize_tool_arguments(&args_json);
 
                         let display_content =
-                            format!("tool[{}] args={}", tool_call.function.name, args_summary);
+                            format!("tool[{}] → {}", tool_call.function.name, args_summary);
 
                         snapshots.push(
                             UiMessageSnapshot::new("tool", display_content).with_tool_details(

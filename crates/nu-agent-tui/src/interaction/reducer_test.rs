@@ -735,7 +735,7 @@ fn permission_request_focuses_transcript_for_immediate_prompt_visibility() {
                 scope: "tool".to_string(),
                 target_field: None,
                 pattern: "edit".to_string(),
-                summary: "tool[edit] args={...}".to_string(),
+                summary: "tool[edit] → {...}".to_string(),
                 pre_authorize_display: None,
             },
         }),
@@ -1365,7 +1365,7 @@ fn tool_start_truncates_long_args_summary_with_ellipsis() {
     assert_eq!(state.transcript_preview.len(), 1);
     assert_eq!(state.transcript_preview[0].text(), "k8s__describe");
     if let TranscriptEntry::Tool(invocation) = &state.transcript_preview[0] {
-        assert!(invocation.args.starts_with("args="));
+        assert!(invocation.args.starts_with("→ "));
         assert!(invocation.args.ends_with('…'));
         assert!(invocation.args.chars().count() < 180);
     } else {
@@ -1856,7 +1856,7 @@ fn permission_requested_with_display_pushes_to_transcript() {
                 scope: "tool".to_string(),
                 target_field: None,
                 pattern: "edit".to_string(),
-                summary: "tool[edit] args={...}".to_string(),
+                summary: "tool[edit] → {...}".to_string(),
                 pre_authorize_display: Some(ToolDisplay {
                     title: "edit foo.rs".to_string(),
                     sections: vec![ToolDisplaySection {
@@ -1927,7 +1927,7 @@ fn tool_end_after_permission_does_not_duplicate_display() {
                 scope: "tool".to_string(),
                 target_field: None,
                 pattern: "edit".to_string(),
-                summary: "tool[edit] args={...}".to_string(),
+                summary: "tool[edit] → {...}".to_string(),
                 pre_authorize_display: Some(display.clone()),
             },
         }),
@@ -2043,7 +2043,7 @@ fn permission_requested_without_display_does_not_add_transcript_entries() {
                 scope: "tool".to_string(),
                 target_field: None,
                 pattern: "nu__run".to_string(),
-                summary: r#"tool[nu__run] args={"command":"ls"}"#.to_string(),
+                summary: r#"tool[nu__run] → {"command":"ls"}"#.to_string(),
                 pre_authorize_display: None,
             },
         }),

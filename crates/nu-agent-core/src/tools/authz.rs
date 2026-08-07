@@ -198,7 +198,7 @@ fn summarize_ask_payload(tool_name: &str, args: &JsonValue) -> String {
     } else {
         compact
     };
-    format!("tool[{tool_name}] args={trimmed}")
+    format!("tool[{tool_name}] → {trimmed}")
 }
 
 /// Format tool name with arguments for display in permission prompts.

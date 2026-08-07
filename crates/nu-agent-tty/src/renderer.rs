@@ -86,7 +86,7 @@ impl<W: Write> StderrUiRenderer<W> {
                 let args = self.active_tool_args.as_deref().unwrap_or("{}");
                 let _ = self
                     .writer
-                    .write_all(format!("[{frame}] tool {tool_name} args={args}").as_bytes());
+                    .write_all(format!("[{frame}] tool {tool_name} → {args}").as_bytes());
             } else {
                 let _ = self.writer.write_all(frame.as_bytes());
             }

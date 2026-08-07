@@ -186,7 +186,7 @@ fn spinner_pauses_for_persistent_lines_and_stops_on_completion() {
     }
 
     let out = String::from_utf8(stderr_bytes).expect("utf8");
-    assert!(out.contains("tool t args={}"), "tool spinner should render");
+    assert!(out.contains("tool t → {}"), "tool spinner should render");
     assert!(out.contains("✓ completed"), "completed line should render");
 }
 
@@ -221,7 +221,7 @@ fn default_tool_lifecycle_is_single_completion_line_with_result_block() {
     renderer.flush();
 
     let stderr_out = String::from_utf8(stderr_bytes).expect("utf8");
-    assert!(stderr_out.contains("✓ tool gh__list_prs args={}"));
+    assert!(stderr_out.contains("✓ tool gh__list_prs → {}"));
     assert!(stderr_out.contains("\n[]"));
     assert!(!stderr_out.contains("→ tool gh__list_prs"));
 }
@@ -257,7 +257,7 @@ fn default_tool_lifecycle_prints_non_empty_payloads() {
         renderer.flush();
 
         let stderr_out = String::from_utf8(stderr_bytes).expect("utf8");
-        assert!(stderr_out.contains("✓ tool gh__list_prs args={}"));
+        assert!(stderr_out.contains("✓ tool gh__list_prs → {}"));
         if payload.is_empty() {
             assert!(!stderr_out.contains("\n[]"));
             assert!(!stderr_out.contains("\n{}"));

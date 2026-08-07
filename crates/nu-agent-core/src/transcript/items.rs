@@ -194,7 +194,7 @@ impl TranscriptEntry {
     }
 }
 
-/// Parse "tool[name] args=..." format into (name, args)
+/// Parse "tool[name] → ..." format into (name, args)
 pub fn parse_tool_text(text: &str) -> (String, String) {
     if let Some(rest) = text.strip_prefix("tool[")
         && let Some((name, tail)) = rest.split_once(']')

@@ -18,7 +18,7 @@ fn default_level_shows_tool_name_and_status_only() {
 
     assert_eq!(start, "tool gh__list_prs");
     assert!(!start.contains("args:"));
-    assert_eq!(end, "✓ tool gh__list_prs args={\"q\":\"x\"}\n[]");
+    assert_eq!(end, "✓ tool gh__list_prs → {\"q\":\"x\"}\n[]");
 }
 
 #[test]
@@ -37,10 +37,10 @@ fn v_level_includes_concise_source_args_and_result() {
     .format();
 
     assert!(start.contains("(mcp)"));
-    assert!(start.contains("args="));
+    assert!(start.contains("→ "));
     assert!(end.contains("\n[]"));
     assert!(end.starts_with("✓ tool gh__list_prs (mcp)"));
-    assert!(end.contains("args={\"q\":\"x\"}"));
+    assert!(end.contains("→ {\"q\":\"x\"}"));
 }
 
 #[test]
@@ -90,7 +90,7 @@ fn default_level_uses_newline_separated_result_block() {
     .format();
 
     let lines: Vec<_> = end.lines().collect();
-    assert_eq!(lines[0], "✗ tool k8s__list_pods args={}");
+    assert_eq!(lines[0], "✗ tool k8s__list_pods → {}");
     assert_eq!(lines[1], "{\"error\":\"denied\"}");
 }
 
@@ -107,7 +107,7 @@ fn default_level_shows_non_empty_json_payloads() {
         message: None,
     }
     .format();
-    assert_eq!(empty_arr, "✓ tool gh__list_prs args={}\n[]");
+    assert_eq!(empty_arr, "✓ tool gh__list_prs → {}\n[]");
 
     let empty_obj = ToolEndView {
         verbosity: Verbosity::Normal,
@@ -120,7 +120,7 @@ fn default_level_shows_non_empty_json_payloads() {
         message: None,
     }
     .format();
-    assert_eq!(empty_obj, "✓ tool gh__get_pr args={}\n{}");
+    assert_eq!(empty_obj, "✓ tool gh__get_pr → {}\n{}");
 }
 
 #[test]
@@ -139,7 +139,7 @@ fn default_level_truncates_long_result_output() {
     .format();
 
     let lines: Vec<&str> = end.lines().collect();
-    assert_eq!(lines[0], "✓ tool gh__run_workflow args={}");
+    assert_eq!(lines[0], "✓ tool gh__run_workflow → {}");
     assert!(lines[1].ends_with('…'));
     assert!(lines[1].chars().count() <= 121);
 }
@@ -161,5 +161,5 @@ fn v_level_shows_full_result_output() {
 
     assert!(end.contains("\n"));
     assert!(end.contains(&long_result));
-    assert!(end.contains("args={}"));
+    assert!(end.contains("→ {}"));
 }
