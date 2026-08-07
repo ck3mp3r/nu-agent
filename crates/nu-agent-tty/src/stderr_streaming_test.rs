@@ -189,33 +189,32 @@ fn verbose_mode_incremental_streaming() {
 #[test]
 fn spinner_stops_when_streaming_starts_in_verbose_mode() {
     let mut stderr_bytes = Vec::<u8>::new();
-    let mut renderer = StderrUiRenderer::new(
-        &mut stderr_bytes,
-        UiPolicy {
-            quiet: false,
-            verbosity: Verbosity::Verbose,
-        },
-        true, // TTY enabled - spinner will work
-    );
+    {
+        let mut renderer = StderrUiRenderer::new(
+            &mut stderr_bytes,
+            UiPolicy {
+                quiet: false,
+                verbosity: Verbosity::Verbose,
+            },
+            true, // TTY enabled - spinner will work
+        );
 
-    // Start spinner
-    renderer.emit(&UiEvent::LlmStart);
-    assert!(renderer.spinner_active_for_test());
+        // Start spinner
+        renderer.emit(&UiEvent::LlmStart);
 
-    // First message should stop spinner
-    renderer.emit(&UiEvent::AssistantMessage {
-        text: "streaming text".to_string(),
-    });
-    assert!(!renderer.spinner_active_for_test());
+        // First message should stop spinner and stream text
+        renderer.emit(&UiEvent::AssistantMessage {
+            text: "streaming text".to_string(),
+        });
 
-    // Subsequent messages should keep spinner stopped
-    renderer.emit(&UiEvent::AssistantMessage {
-        text: "streaming text continues".to_string(),
-    });
-    assert!(!renderer.spinner_active_for_test());
+        // Subsequent messages should keep streaming
+        renderer.emit(&UiEvent::AssistantMessage {
+            text: "streaming text continues".to_string(),
+        });
 
-    renderer.emit(&UiEvent::Completed { tool_calls: 0 });
-    renderer.flush();
+        renderer.emit(&UiEvent::Completed { tool_calls: 0 });
+        renderer.flush();
+    }
 
     let stderr_out = String::from_utf8(stderr_bytes).expect("utf8");
     assert!(stderr_out.contains("streaming text continues"));

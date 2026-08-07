@@ -270,27 +270,6 @@ fn coordinator_esc_then_esc_requests_cancel_signal() {
 }
 
 #[test]
-fn coordinator_resize_recomputes_layout() {
-    let mut coordinator = RuntimeCoordinator::new(80, 20, Some(true));
-    let before = coordinator.layout();
-
-    let mut source = StubEventSource {
-        next: Some(TerminalEvent::Resize(
-            crate::interaction::input::TerminalResize {
-                columns: 160,
-                rows: 40,
-            },
-        )),
-    };
-    coordinator.pump_once(&mut source);
-
-    let after = coordinator.layout();
-    assert_ne!(before, after);
-    assert!(after.side_pane.is_none());
-    assert_eq!(after.transcript.width, 156);
-}
-
-#[test]
 fn scripted_event_parser_supports_keys_chars_and_resize() {
     let mut source =
         ScriptedTerminalEvents::from_script("char:a,enter,esc,resize:120x40,ctrlu,ctrld,ctrlc");
@@ -385,9 +364,6 @@ fn runtime_renderer_reuses_eventing_and_preserves_emit_passthrough() {
     assert!(runtime_renderer.coordinator().quit_requested());
     let state = runtime_renderer.coordinator().state();
     assert_eq!(state.phase, UiPhase::Busy);
-    let layout = runtime_renderer.coordinator().layout();
-    assert!(layout.side_pane.is_none());
-    assert_eq!(layout.transcript.width, 136);
 }
 
 #[test]
@@ -1529,27 +1505,6 @@ fn coordinator_hydrate_with_empty_message_snapshot_leaves_empty_session_behavior
     assert!(state.transcript_preview.is_empty());
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.input_locked);
-}
-
-#[test]
-fn transcript_bottom_detection_uses_effective_viewport_after_input_chrome_and_margins() {
-    let mut coordinator = RuntimeCoordinator::new(80, 20, Some(true));
-
-    for _ in 0..220 {
-        let mut source = StubEventSource {
-            next: Some(TerminalEvent::Key(TerminalKey::Char('x'))),
-        };
-        coordinator.pump_once(&mut source);
-    }
-
-    let layout = coordinator.layout();
-    let _expected_visible_rows = layout.transcript.height.saturating_sub(1) as usize;
-
-    assert!(
-        layout.input.height > 2,
-        "input chrome should expand for wrapped text"
-    );
-    // Note: transcript_viewport_lines field removed after ratatui List migration
 }
 
 #[test]

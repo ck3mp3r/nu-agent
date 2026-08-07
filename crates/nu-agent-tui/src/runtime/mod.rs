@@ -95,7 +95,7 @@ use crate::{
         transport::{TransportItem, TuiTransport},
     },
     rendering::{
-        layout::{INPUT_MAX_HEIGHT, INPUT_MIN_HEIGHT, LayoutInput, LayoutOutput, recompute_layout},
+        layout::{INPUT_MAX_HEIGHT, INPUT_MIN_HEIGHT},
         theme::TuiTheme,
     },
     state::{
@@ -116,9 +116,7 @@ pub struct RuntimeCoordinator {
     state: AppState,
     transport: TuiTransport,
     cancel_controller: CancelController,
-    layout: LayoutOutput,
-    terminal_columns: u16,
-    terminal_rows: u16,
+    input_height: u16,
     side_pane_visible: Option<bool>,
     quit_requested: bool,
     fatal_error: Option<String>,
@@ -238,26 +236,17 @@ impl RuntimeCoordinator {
     }
 
     fn new_with_watchdog(
-        columns: u16,
-        rows: u16,
+        _columns: u16,
+        _rows: u16,
         _side_pane_visible: Option<bool>,
         input_watchdog_timeout: Duration,
     ) -> Self {
         let side_pane_visible = Some(false);
-        let layout = recompute_layout(LayoutInput {
-            columns,
-            rows,
-            side_pane_visible,
-            input_height: None,
-            queue_height: 0,
-        });
         let mut coordinator = Self {
             state: AppState::new(),
             transport: TuiTransport::new(),
             cancel_controller: CancelController::new(),
-            layout,
-            terminal_columns: columns,
-            terminal_rows: rows,
+            input_height: INPUT_MIN_HEIGHT,
             side_pane_visible,
             quit_requested: false,
             fatal_error: None,
@@ -509,24 +498,10 @@ impl RuntimeCoordinator {
             self.state.status_line = "Esc pressed. Press Ctrl+C to quit.".to_string();
         }
 
-        if let TerminalEvent::Resize(resize) = event {
+        if let TerminalEvent::Resize(_) = event {
             self.state.clear_assistant_projection_cache();
             self.state.entry_visual_info_dirty = true;
-            self.terminal_columns = resize.columns;
-            self.terminal_rows = resize.rows;
-            let line_count = self.textarea.lines().len() as u16;
-            let desired = line_count.saturating_add(2);
-            let input_height = desired.clamp(INPUT_MIN_HEIGHT, INPUT_MAX_HEIGHT);
-            self.layout = recompute_layout(LayoutInput {
-                columns: resize.columns,
-                rows: resize.rows,
-                side_pane_visible: self.side_pane_visible,
-                input_height: Some(input_height),
-                queue_height: {
-                    let queue_count = self.state.pending_prompt_count() as u16;
-                    queue_count + if queue_count > 0 { 1 } else { 0 }
-                },
-            });
+            self.recompute_layout_for_current_input();
         }
 
         if let TerminalEvent::Paste(text) = &event
@@ -941,22 +916,10 @@ impl RuntimeCoordinator {
     }
 
     fn recompute_layout_for_current_input(&mut self) {
-        // Use TextArea's actual line count for height calculation.
-        // TextArea handles its own wrapping internally, so the number of
-        // logical lines is the correct measure of content height.
         let line_count = self.textarea.lines().len() as u16;
-        let desired = line_count.saturating_add(2); // top/bottom borders
-        let input_height = desired.clamp(INPUT_MIN_HEIGHT, INPUT_MAX_HEIGHT);
-        self.layout = recompute_layout(LayoutInput {
-            columns: self.terminal_columns,
-            rows: self.terminal_rows,
-            side_pane_visible: self.side_pane_visible,
-            input_height: Some(input_height),
-            queue_height: {
-                let queue_count = self.state.pending_prompt_count() as u16;
-                queue_count + if queue_count > 0 { 1 } else { 0 }
-            },
-        });
+        self.input_height = line_count
+            .saturating_add(2)
+            .clamp(INPUT_MIN_HEIGHT, INPUT_MAX_HEIGHT);
     }
 
     fn flush_clipboard_request(&mut self) {
@@ -1161,7 +1124,7 @@ impl RuntimeCoordinator {
         live.terminal
             .draw(|frame| {
                 let area = frame.area();
-                let has_side = self.layout.side_pane.is_some();
+                let has_side = self.side_pane_visible.unwrap_or(false);
                 let horizontal = if has_side {
                     Layout::default()
                         .direction(Direction::Horizontal)
@@ -1180,7 +1143,7 @@ impl RuntimeCoordinator {
                     vertical: 0,
                     horizontal: side_margin,
                 });
-                let input_h = self.layout.input.height;
+                let input_h = self.input_height;
                 let queue_count = self.state.pending_prompt_count() as u16;
                 let queue_h = queue_count + if queue_count > 0 { 1 } else { 0 };
                 let available_inner_w = content_main.width.saturating_sub(4) as usize;
@@ -1214,18 +1177,12 @@ impl RuntimeCoordinator {
                         .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
                         .sum::<usize>()
                 };
-                let status_h: u16 = if pre_right_width == 0
-                    || pre_left_width + pre_right_width <= available_inner_w
-                {
-                    2
-                } else {
-                    3
-                };
+                let status_h = compute_status_h(available_inner_w, pre_left_width, pre_right_width);
                 let vertical = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
                         Constraint::Length(0),
-                        Constraint::Min(1),
+                        Constraint::Fill(1),
                         Constraint::Length(queue_h),
                         Constraint::Length(input_h),
                         Constraint::Length(status_h),
@@ -1293,5 +1250,13 @@ impl RuntimeCoordinator {
         let _ = crossterm::execute!(std::io::stdout(), cursor_style);
 
         Ok(())
+    }
+}
+
+fn compute_status_h(available_inner_w: usize, left_width: usize, right_width: usize) -> u16 {
+    if right_width == 0 || left_width + right_width <= available_inner_w {
+        2
+    } else {
+        3
     }
 }

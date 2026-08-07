@@ -110,27 +110,14 @@ pub struct McpToolRegistry {
 }
 
 impl McpToolRegistry {
-    #[cfg(test)]
-    pub fn from_names<I, S>(names: I) -> Self
-    where
-        I: IntoIterator<Item = S>,
-        S: Into<String>,
-    {
-        let names: std::collections::HashSet<String> = names.into_iter().map(Into::into).collect();
-        let raw_name_by_exposed_name = names
-            .iter()
-            .map(|name| (name.clone(), name.clone()))
-            .collect::<std::collections::HashMap<_, _>>();
-        let server_by_exposed_name = names
-            .iter()
-            .map(|name| (name.clone(), name.clone()))
-            .collect::<std::collections::HashMap<_, _>>();
-        let enabled_servers = names.iter().cloned().collect();
+    pub fn empty() -> Self {
         Self {
-            raw_name_by_exposed_name,
-            server_by_exposed_name,
-            enabled_servers: std::sync::Arc::new(std::sync::RwLock::new(enabled_servers)),
-            names,
+            names: std::collections::HashSet::new(),
+            raw_name_by_exposed_name: std::collections::HashMap::new(),
+            server_by_exposed_name: std::collections::HashMap::new(),
+            enabled_servers: std::sync::Arc::new(std::sync::RwLock::new(
+                std::collections::HashSet::new(),
+            )),
         }
     }
 

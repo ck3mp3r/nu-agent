@@ -40,10 +40,20 @@ fn spinner_suspend_resume_lifecycle_is_safe() {
     let mut s = SpinnerState::new(true);
     s.start();
     s.suspend();
-    assert!(s.is_suspended());
+    let suspended_frame = s.current_frame().to_string();
+    s.tick();
+    assert_eq!(
+        suspended_frame,
+        s.current_frame(),
+        "suspended spinner must not advance"
+    );
     s.resume();
-    assert!(!s.is_suspended());
+    s.tick();
+    assert_ne!(
+        suspended_frame,
+        s.current_frame(),
+        "resumed spinner should advance"
+    );
     s.stop();
     assert!(!s.is_active());
-    assert!(!s.is_suspended());
 }

@@ -5,8 +5,8 @@ use crate::{
         VISUAL_REQUIRES_TRANSCRIPT_FOCUS_STATUS, reduce_with_cancel_controller,
     },
     state::{
-        AppState, CompactionStatus, InputMode, PaneFocus, ToolCallStatus, TranscriptLineStatus,
-        UiPhase,
+        AppState, CompactionStatus, InputMode, PaneFocus, PromptStatus, ToolCallStatus,
+        TranscriptLineStatus, UiPhase,
     },
 };
 use nu_agent_core::protocol::event::{
@@ -39,6 +39,25 @@ fn assert_reducer_invariants(state: &AppState) {
     if state.phase == UiPhase::Idle {
         assert!(!state.is_active_cycle());
     }
+}
+
+/// The active prompt is the one currently in `InProgress` status.
+fn active_prompt_id(state: &AppState) -> Option<u64> {
+    state
+        .prompt_items()
+        .iter()
+        .find(|p| p.status == PromptStatus::InProgress)
+        .map(|p| p.id)
+}
+
+/// Pending prompts are those still in `Queued` status.
+fn pending_prompt_ids(state: &AppState) -> Vec<u64> {
+    state
+        .prompt_items()
+        .iter()
+        .filter(|p| p.status == PromptStatus::Queued)
+        .map(|p| p.id)
+        .collect()
 }
 
 fn busy_state_with_clean_transcript() -> AppState {
@@ -2177,7 +2196,7 @@ fn turn_error_leaves_ui_in_recoverable_state() {
 
     // Preconditions: busy state with active prompt
     assert_eq!(state.phase, UiPhase::Busy);
-    assert!(state.active_prompt_id().is_some());
+    assert!(active_prompt_id(&state).is_some());
     assert!(state.is_active_cycle());
 
     // Dispatch TurnError
@@ -2190,7 +2209,7 @@ fn turn_error_leaves_ui_in_recoverable_state() {
     );
 
     // All stale state must be cleared (same as Completed handler)
-    assert_eq!(state.active_prompt_id(), None);
+    assert_eq!(active_prompt_id(&state), None);
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.is_active_cycle());
     assert!(!state.abort.pending);
@@ -2583,8 +2602,8 @@ mod task_4a_tests {
         reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::EscConfirm), None);
 
         assert_eq!(state.phase, UiPhase::Idle);
-        assert!(state.pending_prompt_ids().is_empty());
-        assert_eq!(state.active_prompt_id(), None);
+        assert!(pending_prompt_ids(&state).is_empty());
+        assert_eq!(active_prompt_id(&state), None);
     }
 
     #[test]
@@ -2598,8 +2617,8 @@ mod task_4a_tests {
         reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::EscConfirm), None);
 
         assert_eq!(state.phase, UiPhase::Idle);
-        assert!(state.pending_prompt_ids().is_empty());
-        assert_eq!(state.active_prompt_id(), None);
+        assert!(pending_prompt_ids(&state).is_empty());
+        assert_eq!(active_prompt_id(&state), None);
     }
 }
 

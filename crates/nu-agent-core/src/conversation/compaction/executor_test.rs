@@ -52,37 +52,3 @@ fn compaction_executor_new_constructs_without_panic() {
     );
     // Construction succeeded — no panic.
 }
-
-#[test]
-fn compaction_executor_session_id_accessor() {
-    let config = test_config();
-    let temp_dir = tempfile::tempdir().unwrap();
-    let store = Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
-    let memory = CachedMemory::<FsSessionStore>::new(Arc::clone(&store));
-
-    let executor = CompactionExecutor::new(
-        &config,
-        &memory,
-        "my-session-id",
-        CompactionParams::default(),
-    );
-
-    assert_eq!(executor.session_id(), "my-session-id");
-}
-
-#[test]
-fn compaction_executor_empty_session_id() {
-    let config = test_config();
-    let temp_dir = tempfile::tempdir().unwrap();
-    let store = Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
-    let memory = CachedMemory::<FsSessionStore>::new(Arc::clone(&store));
-
-    let executor = CompactionExecutor::new(
-        &config,
-        &memory,
-        "session-no-tokens",
-        CompactionParams::default(),
-    );
-
-    assert_eq!(executor.session_id(), "session-no-tokens");
-}

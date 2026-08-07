@@ -19,6 +19,9 @@ pub use impl_enum::PeerDiscoveryImpl;
 #[cfg(test)]
 mod filter_test;
 
+#[cfg(test)]
+mod test;
+
 /// Ensure the rustls crypto provider is installed before creating a reqwest
 /// [`Client`] that uses `rustls-no-provider`.  Safe to call multiple times.
 fn ensure_crypto_provider() {
@@ -236,15 +239,6 @@ impl DiscoveryService {
         Ok(Self {
             _daemon: Some(daemon),
         })
-    }
-
-    /// Create a no-op instance (no mDNS registration).
-    ///
-    /// Use when registration fails and the caller wants to continue running
-    /// without mDNS discoverability.
-    #[cfg(test)]
-    pub fn noop() -> Self {
-        Self { _daemon: None }
     }
 }
 

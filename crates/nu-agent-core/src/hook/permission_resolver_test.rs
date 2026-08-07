@@ -34,7 +34,7 @@ fn make_interactive(
         permissions: Arc::new(permissions),
         session_grants: Arc::new(StdMutex::new(SessionGrantCache::default())),
         closure_registry: Arc::new(ClosureRegistry::new()),
-        mcp_registry: Arc::new(McpToolRegistry::from_names::<[&str; 0], &str>([])),
+        mcp_registry: Arc::new(McpToolRegistry::empty()),
     };
     (resolver, ui_rx, ui_tx)
 }
@@ -44,7 +44,7 @@ fn make_policy(permissions: PermissionsConfig) -> PolicyPermissionResolver {
         permissions: Arc::new(permissions),
         session_grants: Arc::new(StdMutex::new(SessionGrantCache::default())),
         closure_registry: Arc::new(ClosureRegistry::new()),
-        mcp_registry: Arc::new(McpToolRegistry::from_names::<[&str; 0], &str>([])),
+        mcp_registry: Arc::new(McpToolRegistry::empty()),
     }
 }
 
@@ -268,13 +268,13 @@ async fn session_grant_arc_is_shared_across_resolver_instances() {
         permissions: Arc::new(ask_global_with_read_allowed_config()),
         session_grants: Arc::clone(&session_grants),
         closure_registry: Arc::new(ClosureRegistry::new()),
-        mcp_registry: Arc::new(McpToolRegistry::from_names::<[&str; 0], &str>([])),
+        mcp_registry: Arc::new(McpToolRegistry::empty()),
     };
     let resolver2 = PolicyPermissionResolver {
         permissions: Arc::new(ask_global_with_read_allowed_config()),
         session_grants: Arc::clone(&session_grants),
         closure_registry: Arc::new(ClosureRegistry::new()),
-        mcp_registry: Arc::new(McpToolRegistry::from_names::<[&str; 0], &str>([])),
+        mcp_registry: Arc::new(McpToolRegistry::empty()),
     };
 
     // Before any grant: resolver1 sees Deny (global Ask → NoOpAskHook → Deny).

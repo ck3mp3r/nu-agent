@@ -11,7 +11,7 @@ fn make_guard() -> CircuitBreakerGuard {
 }
 
 fn make_registry_empty() -> Arc<McpToolRegistry> {
-    Arc::new(McpToolRegistry::from_names(std::iter::empty::<String>()))
+    Arc::new(McpToolRegistry::empty())
 }
 
 fn make_ui_tx() -> (

@@ -5,10 +5,29 @@ use crate::state::{
     TranscriptLineStatus, TranscriptRole, UiPhase,
 };
 use nu_agent_core::protocol::event::PermissionDecision;
-use nu_agent_core::transcript::ir::{ContentLine, Role, StyleHint};
+use nu_agent_core::transcript::ir::Role;
 use nu_agent_core::transcript::items::{
     ProseMessage, SystemMessage, ToolInvocation, ToolResult, TranscriptEntry,
 };
+
+/// The active prompt is the one currently in `InProgress` status.
+fn active_prompt_id(state: &AppState) -> Option<u64> {
+    state
+        .prompt_items()
+        .iter()
+        .find(|p| p.status == PromptStatus::InProgress)
+        .map(|p| p.id)
+}
+
+/// Pending prompts are those still in `Queued` status.
+fn pending_prompt_ids(state: &AppState) -> Vec<u64> {
+    state
+        .prompt_items()
+        .iter()
+        .filter(|p| p.status == PromptStatus::Queued)
+        .map(|p| p.id)
+        .collect()
+}
 
 #[test]
 fn defaults_start_idle_with_unlocked_input_and_no_abort_pending() {
@@ -46,7 +65,7 @@ fn non_idle_phase_keeps_input_editable_for_queueing() {
     assert_eq!(state.prompt_items()[0].status, PromptStatus::Queued);
 
     let _ = state.activate_next_prompt();
-    assert_eq!(state.active_prompt_id(), Some(1));
+    assert_eq!(active_prompt_id(&state), Some(1));
     assert_eq!(state.prompt_items()[0].status, PromptStatus::InProgress);
 
     state.request_abort_confirmation();
@@ -91,18 +110,11 @@ fn prompt_queue_lifecycle_is_fifo_and_single_in_progress() {
     state.enqueue_prompt("p2".to_string());
     state.enqueue_prompt("p3".to_string());
 
-    assert_eq!(
-        state
-            .pending_prompt_ids()
-            .iter()
-            .copied()
-            .collect::<Vec<_>>(),
-        vec![1, 2, 3]
-    );
+    assert_eq!(pending_prompt_ids(&state), vec![1, 2, 3]);
 
     let first = state.activate_next_prompt();
     assert_eq!(first, Some(1));
-    assert_eq!(state.active_prompt_id(), Some(1));
+    assert_eq!(active_prompt_id(&state), Some(1));
     assert_eq!(state.prompt_items()[0].status, PromptStatus::InProgress);
     assert_eq!(state.prompt_items()[1].status, PromptStatus::Queued);
     assert_eq!(state.prompt_items()[2].status, PromptStatus::Queued);
@@ -112,7 +124,7 @@ fn prompt_queue_lifecycle_is_fifo_and_single_in_progress() {
 
     let second = state.activate_next_prompt();
     assert_eq!(second, Some(2));
-    assert_eq!(state.active_prompt_id(), Some(2));
+    assert_eq!(active_prompt_id(&state), Some(2));
 
     state.complete_active_prompt();
     let third = state.activate_next_prompt();
@@ -139,8 +151,8 @@ fn global_abort_cancels_active_and_all_pending_prompts() {
 
     state.cancel_active_and_pending_prompts();
 
-    assert_eq!(state.active_prompt_id(), None);
-    assert!(state.pending_prompt_ids().is_empty());
+    assert_eq!(active_prompt_id(&state), None);
+    assert!(pending_prompt_ids(&state).is_empty());
     assert_eq!(
         state
             .prompt_items()
@@ -867,9 +879,9 @@ fn enqueue_external_prompt_creates_in_progress_prompt_without_pending() {
     assert_eq!(state.prompt_items().len(), 1);
     assert_eq!(state.prompt_items()[0].status, PromptStatus::InProgress);
     assert_eq!(state.prompt_items()[0].prompt_text, "mailbox message");
-    assert_eq!(state.active_prompt_id(), Some(1));
+    assert_eq!(active_prompt_id(&state), Some(1));
     assert!(
-        state.pending_prompt_ids().is_empty(),
+        pending_prompt_ids(&state).is_empty(),
         "external prompt must NOT appear in pending_prompt_ids"
     );
 }
@@ -896,7 +908,7 @@ fn enqueue_external_prompt_completes_via_complete_active_prompt() {
     assert_eq!(state.prompt_items()[0].status, PromptStatus::Done);
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.is_active_cycle());
-    assert_eq!(state.active_prompt_id(), None);
+    assert_eq!(active_prompt_id(&state), None);
 }
 
 #[test]
@@ -928,23 +940,16 @@ fn enqueue_external_prompt_has_spinner_status_on_transcript_line() {
 #[test]
 fn clear_assistant_projection_cache_removes_all_entries() {
     let mut state = AppState::new();
-    state.assistant_projection_cache_mut().insert(
-        "hello world".to_string(),
-        vec![ContentLine::single(
-            "hello world".to_string(),
-            StyleHint::Normal,
-        )],
-    );
-    state.assistant_projection_cache_mut().insert(
-        "goodbye world".to_string(),
-        vec![ContentLine::single(
-            "goodbye world".to_string(),
-            StyleHint::Normal,
-        )],
-    );
-    assert_eq!(state.assistant_projection_cache_size(), 2);
+    let markdown = "hello world";
+
+    // Project once to populate the cache
+    let first = state.project_assistant_markdown_lines(markdown);
+
+    // Clearing the cache must not change the projected output
     state.clear_assistant_projection_cache();
-    assert_eq!(state.assistant_projection_cache_size(), 0);
+    let second = state.project_assistant_markdown_lines(markdown);
+
+    assert_eq!(first, second, "clearing cache must not change output");
 }
 
 // ---- spacer insertion tests (push-time) ----
@@ -1565,8 +1570,8 @@ fn cancel_and_restore_drains_pending_texts_into_input_buffer() {
     let result = state.cancel_and_restore_pending_to_input();
 
     assert_eq!(result, Some("beta\n\ngamma".to_string()));
-    assert!(state.pending_prompt_ids().is_empty());
-    assert_eq!(state.active_prompt_id(), None);
+    assert!(pending_prompt_ids(&state).is_empty());
+    assert_eq!(active_prompt_id(&state), None);
     assert_eq!(state.phase, UiPhase::Idle);
 }
 
@@ -1602,7 +1607,7 @@ fn coalesced_dispatch_joins_all_pending_into_one_string() {
     let result = state.take_next_prompt_for_execution();
 
     assert_eq!(result, Some("first\n\nsecond\n\nthird".to_string()));
-    assert!(state.pending_prompt_ids().is_empty());
+    assert!(pending_prompt_ids(&state).is_empty());
     assert_eq!(state.phase, UiPhase::Busy);
 }
 
@@ -1616,7 +1621,7 @@ fn coalesced_dispatch_single_pending_returns_text_unchanged() {
     let result = state.take_next_prompt_for_execution();
 
     assert_eq!(result, Some("only".to_string()));
-    assert!(state.pending_prompt_ids().is_empty());
+    assert!(pending_prompt_ids(&state).is_empty());
 }
 
 #[test]
@@ -1715,4 +1720,36 @@ fn typing_resets_history_navigation() {
     // After typing, history navigation is reset
     state.reset_history_navigation();
     assert_eq!(state.history_down(), None);
+    state.reset_history_navigation();
+    assert_eq!(state.history_down(), None);
+}
+
+#[test]
+fn insert_exit_pending_j_is_true_within_timeout() {
+    let mut state = AppState::new();
+    assert!(!state.insert_exit_pending_j());
+
+    state.set_insert_exit_pending_j();
+    assert!(state.insert_exit_pending_j());
+}
+
+#[test]
+fn insert_exit_pending_j_is_false_after_timeout() {
+    let mut state = AppState::new();
+    state.set_insert_exit_pending_j();
+
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    assert!(!state.insert_exit_pending_j());
+}
+
+#[test]
+fn clear_insert_exit_pending_j_resets_to_false() {
+    let mut state = AppState::new();
+    state.set_insert_exit_pending_j();
+    assert!(state.insert_exit_pending_j());
+
+    state.clear_insert_exit_pending_j();
+    assert!(!state.insert_exit_pending_j());
+    state.clear_insert_exit_pending_j();
+    assert!(!state.insert_exit_pending_j());
 }

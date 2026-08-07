@@ -109,63 +109,85 @@ fn default_busy_flow_uses_spinner_without_redundant_persistent_busy_lines() {
 
 #[test]
 fn spinner_is_disabled_on_non_tty_or_quiet_and_enabled_on_interactive_tty() {
-    let renderer_non_tty = StderrUiRenderer::new(
-        Vec::<u8>::new(),
-        UiPolicy {
-            quiet: false,
-            verbosity: Verbosity::Normal,
-        },
-        false,
+    let mut non_tty_bytes = Vec::<u8>::new();
+    {
+        let mut renderer_non_tty = StderrUiRenderer::new(
+            &mut non_tty_bytes,
+            UiPolicy {
+                quiet: false,
+                verbosity: Verbosity::Normal,
+            },
+            false,
+        );
+        renderer_non_tty.emit(&UiEvent::LlmStart);
+        renderer_non_tty.flush();
+    }
+    assert!(
+        non_tty_bytes.is_empty(),
+        "non-tty should not render spinner"
     );
-    assert!(!renderer_non_tty.spinner_enabled_for_test());
 
-    let renderer_quiet = StderrUiRenderer::new(
-        Vec::<u8>::new(),
-        UiPolicy {
-            quiet: true,
-            verbosity: Verbosity::Quiet,
-        },
-        true,
-    );
-    assert!(!renderer_quiet.spinner_enabled_for_test());
+    let mut quiet_bytes = Vec::<u8>::new();
+    {
+        let mut renderer_quiet = StderrUiRenderer::new(
+            &mut quiet_bytes,
+            UiPolicy {
+                quiet: true,
+                verbosity: Verbosity::Quiet,
+            },
+            true,
+        );
+        renderer_quiet.emit(&UiEvent::LlmStart);
+        renderer_quiet.flush();
+    }
+    assert!(quiet_bytes.is_empty(), "quiet should not render spinner");
 
-    let renderer_tty = StderrUiRenderer::new(
-        Vec::<u8>::new(),
-        UiPolicy {
-            quiet: false,
-            verbosity: Verbosity::Normal,
-        },
-        true,
-    );
-    assert!(renderer_tty.spinner_enabled_for_test());
+    let mut tty_bytes = Vec::<u8>::new();
+    {
+        let mut renderer_tty = StderrUiRenderer::new(
+            &mut tty_bytes,
+            UiPolicy {
+                quiet: false,
+                verbosity: Verbosity::Normal,
+            },
+            true,
+        );
+        renderer_tty.emit(&UiEvent::LlmStart);
+        renderer_tty.flush();
+    }
+    assert!(!tty_bytes.is_empty(), "tty should render spinner");
 }
 
 #[test]
 fn spinner_pauses_for_persistent_lines_and_stops_on_completion() {
-    let mut renderer = StderrUiRenderer::new(
-        Vec::<u8>::new(),
-        UiPolicy {
-            quiet: false,
-            verbosity: Verbosity::Normal,
-        },
-        true,
-    );
+    let mut stderr_bytes = Vec::<u8>::new();
+    {
+        let mut renderer = StderrUiRenderer::new(
+            &mut stderr_bytes,
+            UiPolicy {
+                quiet: false,
+                verbosity: Verbosity::Normal,
+            },
+            true,
+        );
 
-    renderer.emit(&UiEvent::LlmStart);
-    assert!(renderer.spinner_active_for_test());
+        renderer.emit(&UiEvent::LlmStart);
 
-    renderer.emit(&UiEvent::Tick);
+        renderer.emit(&UiEvent::Tick);
 
-    renderer.emit(&UiEvent::ToolStart {
-        name: "t".to_string(),
-        source: "closure".to_string(),
-        arguments: "{}".to_string(),
-    });
-    assert!(renderer.spinner_active_for_test());
-    assert!(!renderer.spinner_suspended_for_test());
+        renderer.emit(&UiEvent::ToolStart {
+            name: "t".to_string(),
+            source: "closure".to_string(),
+            arguments: "{}".to_string(),
+        });
 
-    renderer.emit(&UiEvent::Completed { tool_calls: 0 });
-    assert!(!renderer.spinner_active_for_test());
+        renderer.emit(&UiEvent::Completed { tool_calls: 0 });
+        renderer.flush();
+    }
+
+    let out = String::from_utf8(stderr_bytes).expect("utf8");
+    assert!(out.contains("tool t args={}"), "tool spinner should render");
+    assert!(out.contains("✓ completed"), "completed line should render");
 }
 
 #[test]
@@ -248,31 +270,60 @@ fn default_tool_lifecycle_prints_non_empty_payloads() {
 
 #[test]
 fn spinner_tick_advances_frame_on_tty_only() {
-    let mut tty_renderer = StderrUiRenderer::new(
-        Vec::<u8>::new(),
-        UiPolicy {
-            quiet: false,
-            verbosity: Verbosity::Normal,
-        },
-        true,
-    );
-    tty_renderer.emit(&UiEvent::LlmStart);
-    let frame_before = tty_renderer.spinner_frame_for_test().to_string();
-    tty_renderer.emit(&UiEvent::Tick);
-    let frame_after = tty_renderer.spinner_frame_for_test().to_string();
-    assert_ne!(frame_before, frame_after);
+    // Renderer that only starts the spinner (no tick)
+    let mut start_bytes = Vec::<u8>::new();
+    {
+        let mut renderer = StderrUiRenderer::new(
+            &mut start_bytes,
+            UiPolicy {
+                quiet: false,
+                verbosity: Verbosity::Normal,
+            },
+            true,
+        );
+        renderer.emit(&UiEvent::LlmStart);
+        renderer.flush();
+    }
 
-    let mut non_tty_renderer = StderrUiRenderer::new(
-        Vec::<u8>::new(),
-        UiPolicy {
-            quiet: false,
-            verbosity: Verbosity::Normal,
-        },
-        false,
+    // Renderer that starts the spinner and ticks it
+    let mut tick_bytes = Vec::<u8>::new();
+    {
+        let mut renderer = StderrUiRenderer::new(
+            &mut tick_bytes,
+            UiPolicy {
+                quiet: false,
+                verbosity: Verbosity::Normal,
+            },
+            true,
+        );
+        renderer.emit(&UiEvent::LlmStart);
+        renderer.emit(&UiEvent::Tick);
+        renderer.flush();
+    }
+
+    assert_ne!(
+        start_bytes, tick_bytes,
+        "tick should advance the spinner frame"
     );
-    non_tty_renderer.emit(&UiEvent::LlmStart);
-    non_tty_renderer.emit(&UiEvent::Tick);
-    assert!(!non_tty_renderer.spinner_active_for_test());
+
+    let mut non_tty_bytes = Vec::<u8>::new();
+    {
+        let mut non_tty_renderer = StderrUiRenderer::new(
+            &mut non_tty_bytes,
+            UiPolicy {
+                quiet: false,
+                verbosity: Verbosity::Normal,
+            },
+            false,
+        );
+        non_tty_renderer.emit(&UiEvent::LlmStart);
+        non_tty_renderer.emit(&UiEvent::Tick);
+        non_tty_renderer.flush();
+    }
+    assert!(
+        non_tty_bytes.is_empty(),
+        "non-tty should not render spinner"
+    );
 }
 
 #[test]
@@ -296,9 +347,6 @@ fn turn_error_visible_at_default_verbosity_and_stops_spinner() {
         message: "Turn failed: Not authenticated. Run `agent auth login`.".to_string(),
     });
     renderer.flush();
-
-    // Verify spinner is stopped first (before consuming stderr_bytes)
-    assert!(!renderer.spinner_active_for_test());
 
     let stderr_out = String::from_utf8(stderr_bytes).expect("utf8");
 

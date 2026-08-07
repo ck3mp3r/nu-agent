@@ -29,7 +29,6 @@ impl SpinnerState {
         }
     }
 
-    #[cfg(test)]
     pub fn new_with_charset(enabled: bool, unicode: bool) -> Self {
         Self {
             enabled,
@@ -54,11 +53,6 @@ impl SpinnerState {
 
     pub fn current_frame(&self) -> &str {
         self.frames[self.frame_index]
-    }
-
-    #[cfg(test)]
-    pub fn is_suspended(&self) -> bool {
-        self.suspended
     }
 
     pub fn start(&mut self) {

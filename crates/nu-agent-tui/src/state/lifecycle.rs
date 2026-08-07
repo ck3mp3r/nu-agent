@@ -13,16 +13,6 @@ impl AppState {
         &self.prompt_items
     }
 
-    #[cfg(test)]
-    pub fn active_prompt_id(&self) -> Option<u64> {
-        self.active_prompt_id
-    }
-
-    #[cfg(test)]
-    pub fn pending_prompt_ids(&self) -> &VecDeque<u64> {
-        &self.pending_prompt_ids
-    }
-
     pub fn pending_prompt_count(&self) -> usize {
         self.pending_prompt_ids.len()
     }

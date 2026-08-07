@@ -15,20 +15,10 @@ pub fn load_agents_chain_for_cwd(cwd: &Path) -> AgentsLoadResult {
         .ok()
         .map(|base| base.join("nu-agent"));
     let home = std::env::var_os("HOME").map(PathBuf::from);
-    load_agents_chain_internal(cwd, config_dir.as_deref(), None, home.as_deref())
+    load_agents_chain(cwd, config_dir.as_deref(), None, home.as_deref())
 }
 
-#[cfg(test)]
-pub fn load_agents_chain_for_cwd_for_tests(
-    cwd: &Path,
-    config_dir: Option<&Path>,
-    stop_at: Option<&Path>,
-    home: Option<&Path>,
-) -> AgentsLoadResult {
-    load_agents_chain_internal(cwd, config_dir, stop_at, home)
-}
-
-fn load_agents_chain_internal(
+pub(crate) fn load_agents_chain(
     cwd: &Path,
     config_dir: Option<&Path>,
     stop_at: Option<&Path>,

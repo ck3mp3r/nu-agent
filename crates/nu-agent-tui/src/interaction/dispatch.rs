@@ -288,7 +288,7 @@ pub(crate) fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserA
     if state.phase == UiPhase::Idle {
         match state.input_mode {
             InputMode::Normal => {
-                state.set_insert_exit_pending_j(false);
+                state.clear_insert_exit_pending_j();
                 return (
                     match action {
                         UserAction::ToggleCommandPalette => {
@@ -414,35 +414,35 @@ pub(crate) fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserA
                 return (
                     match action {
                         UserAction::ToggleCommandPalette => {
-                            state.set_insert_exit_pending_j(false);
+                            state.clear_insert_exit_pending_j();
                             state.clear_normal_pending_key();
                             UserAction::ToggleCommandPalette
                         }
                         UserAction::InsertChar('j') => {
                             if state.insert_exit_pending_j() {
-                                state.set_insert_exit_pending_j(false);
+                                state.clear_insert_exit_pending_j();
                                 UserAction::EnterNormalModeFromChord
                             } else {
-                                state.set_insert_exit_pending_j(true);
+                                state.set_insert_exit_pending_j();
                                 UserAction::InsertChar('j')
                             }
                         }
                         UserAction::InsertChar('k') => {
                             if state.insert_exit_pending_j() {
-                                state.set_insert_exit_pending_j(false);
+                                state.clear_insert_exit_pending_j();
                                 UserAction::EnterNormalModeFromChord
                             } else {
-                                state.set_insert_exit_pending_j(false);
+                                state.clear_insert_exit_pending_j();
                                 UserAction::InsertChar('k')
                             }
                         }
                         UserAction::Esc => {
-                            state.set_insert_exit_pending_j(false);
+                            state.clear_insert_exit_pending_j();
                             state.clear_normal_pending_key();
                             UserAction::Esc
                         }
                         other => {
-                            state.set_insert_exit_pending_j(false);
+                            state.clear_insert_exit_pending_j();
                             state.clear_normal_pending_key();
                             other
                         }
@@ -457,33 +457,33 @@ pub(crate) fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserA
         return match action {
             UserAction::InsertChar('j') => {
                 if state.insert_exit_pending_j() {
-                    state.set_insert_exit_pending_j(false);
+                    state.clear_insert_exit_pending_j();
                     state.enter_normal_mode();
                     (UserAction::Noop, true)
                 } else {
-                    state.set_insert_exit_pending_j(true);
+                    state.set_insert_exit_pending_j();
                     (UserAction::InsertChar('j'), true) // force_changed: j/k chord tracking modifies state
                 }
             }
             UserAction::InsertChar('k') => {
                 if state.insert_exit_pending_j() {
-                    state.set_insert_exit_pending_j(false);
+                    state.clear_insert_exit_pending_j();
                     state.enter_normal_mode();
                     (UserAction::Noop, true)
                 } else {
-                    state.set_insert_exit_pending_j(false);
+                    state.clear_insert_exit_pending_j();
                     (UserAction::InsertChar('k'), true) // force_changed: j/k chord tracking modifies state
                 }
             }
             UserAction::Esc => {
-                state.set_insert_exit_pending_j(false);
+                state.clear_insert_exit_pending_j();
                 state.clear_normal_pending_key();
                 state.enter_normal_mode();
-                state.set_insert_exit_pending_j(true);
+                state.set_insert_exit_pending_j();
                 (UserAction::Noop, true)
             }
             other => {
-                state.set_insert_exit_pending_j(false);
+                state.clear_insert_exit_pending_j();
                 state.clear_normal_pending_key();
                 (other, false)
             }
@@ -530,12 +530,12 @@ pub(crate) fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserA
                 }
             }
             UserAction::InsertChar('G') => {
-                state.set_insert_exit_pending_j(false);
+                state.clear_insert_exit_pending_j();
                 state.clear_normal_pending_key();
                 (UserAction::ScrollToBottom, false)
             }
             UserAction::ScrollPageUp | UserAction::ScrollPageDown => {
-                state.set_insert_exit_pending_j(false);
+                state.clear_insert_exit_pending_j();
                 state.clear_normal_pending_key();
                 (action, false)
             }
@@ -544,25 +544,25 @@ pub(crate) fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserA
                 state.clear_normal_pending_key();
 
                 if state.phase == UiPhase::AbortPending && state.abort.pending {
-                    state.set_insert_exit_pending_j(false);
+                    state.clear_insert_exit_pending_j();
                     (UserAction::EscConfirm, false)
                 } else if state.phase == UiPhase::Busy && fast_confirm_after_mode_switch {
-                    state.set_insert_exit_pending_j(false);
+                    state.clear_insert_exit_pending_j();
                     state.enter_insert_mode();
                     state.request_abort_confirmation();
                     (UserAction::EscConfirm, true)
                 } else {
-                    state.set_insert_exit_pending_j(false);
+                    state.clear_insert_exit_pending_j();
                     (UserAction::Esc, false)
                 }
             }
             UserAction::InsertChar(_) | UserAction::InsertNewline => {
-                state.set_insert_exit_pending_j(false);
+                state.clear_insert_exit_pending_j();
                 state.clear_normal_pending_key();
                 (UserAction::Noop, false)
             }
             other => {
-                state.set_insert_exit_pending_j(false);
+                state.clear_insert_exit_pending_j();
                 state.clear_normal_pending_key();
                 (other, false)
             }
@@ -573,7 +573,7 @@ pub(crate) fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserA
 
     let fast_confirm_after_mode_switch = state.insert_exit_pending_j();
     if !matches!(action, UserAction::Esc) {
-        state.set_insert_exit_pending_j(false);
+        state.clear_insert_exit_pending_j();
     }
     state.clear_normal_pending_key();
 
@@ -581,15 +581,15 @@ pub(crate) fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserA
         match action {
             UserAction::Esc => {
                 if state.phase == UiPhase::AbortPending && state.abort.pending {
-                    state.set_insert_exit_pending_j(false);
+                    state.clear_insert_exit_pending_j();
                     UserAction::EscConfirm
                 } else if state.phase == UiPhase::Busy && fast_confirm_after_mode_switch {
-                    state.set_insert_exit_pending_j(false);
+                    state.clear_insert_exit_pending_j();
                     state.enter_insert_mode();
                     state.request_abort_confirmation();
                     UserAction::EscConfirm
                 } else {
-                    state.set_insert_exit_pending_j(false);
+                    state.clear_insert_exit_pending_j();
                     UserAction::Esc
                 }
             }

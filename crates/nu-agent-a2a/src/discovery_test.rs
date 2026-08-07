@@ -164,17 +164,6 @@ async fn test_peer_event_roundtrip_lost() {
 }
 
 // ---------------------------------------------------------------------------
-// DiscoveryService — noop
-// ---------------------------------------------------------------------------
-
-/// Verify that the no-op instance can be created and dropped without errors.
-#[test]
-fn test_discovery_service_noop_does_not_crash() {
-    let service = DiscoveryService::noop();
-    drop(service);
-}
-
-// ---------------------------------------------------------------------------
 // DiscoveryService — registration (smoke tests)
 // ---------------------------------------------------------------------------
 

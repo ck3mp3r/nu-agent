@@ -1,9 +1,7 @@
 use std::time::{Duration, Instant};
 
 use super::*;
-use crate::{
-    interaction::cancel::CancelController, rendering::layout::LayoutOutput, state::AppState,
-};
+use crate::{interaction::cancel::CancelController, state::AppState};
 
 impl RuntimeCoordinator {
     pub(crate) fn new_for_test_with_watchdog(
@@ -17,10 +15,6 @@ impl RuntimeCoordinator {
 
     pub(crate) fn state(&self) -> &AppState {
         &self.state
-    }
-
-    pub(crate) fn layout(&self) -> LayoutOutput {
-        self.layout
     }
 
     pub(crate) fn cancel_controller(&self) -> &CancelController {

@@ -36,11 +36,6 @@ impl<'a, S: SessionStore + Clone + Send + Sync> CompactionExecutor<'a, S> {
         }
     }
 
-    #[cfg(test)]
-    pub fn session_id(&self) -> &str {
-        self.final_session_id
-    }
-
     /// Execute compaction. Returns `Ok(Some(summary_total_tokens))` when
     /// compaction was triggered, or `Ok(None)` when compaction was skipped.
     /// Caller is responsible for setting `last_total_tokens` to

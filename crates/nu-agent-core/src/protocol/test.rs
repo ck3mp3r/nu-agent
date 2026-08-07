@@ -4,15 +4,15 @@ use std::time::Duration;
 
 use tempfile::tempdir;
 
-use super::agents::load_agents_chain_for_cwd_for_tests;
+use super::agents::load_agents_chain;
 use super::compaction::{
     CompactionTriggerDecision, CompactionTriggerPolicy, CompactionTriggerSource,
     TokenCompactionPolicy,
 };
 use super::skills::{
-    SkillResolveError, SkillSource, discover_skill_catalog_for_cwd_for_tests,
-    extract_skill_description, is_higher_precedence_for_tests,
-    render_available_skills_preamble_for_tests, resolve_explicit_skill_request_for_cwd_for_tests,
+    SkillResolveError, SkillSource, discover_skill_catalog, extract_skill_description,
+    is_higher_precedence, render_available_skills_preamble_from_catalog,
+    resolve_explicit_skill_request,
 };
 use super::slash::{
     SLASH_COMMAND_ORDER, SlashCommand, SlashParseResult, extract_session_id,
@@ -38,7 +38,7 @@ fn loads_home_agents_when_present() {
     fs::create_dir_all(&cwd).expect("cwd");
     fs::write(config.join("agents/AGENTS.md"), "CONFIG\n").expect("write config agents");
 
-    let loaded = load_agents_chain_for_cwd_for_tests(&cwd, Some(&config), Some(tmp.path()), None);
+    let loaded = load_agents_chain(&cwd, Some(&config), Some(tmp.path()), None);
 
     assert_eq!(loaded.merged_chain.as_deref(), Some("CONFIG\n"));
     assert!(loaded.warnings.is_empty());
@@ -51,7 +51,7 @@ fn loads_cwd_agents_when_present() {
     fs::create_dir_all(&cwd).expect("cwd");
     fs::write(cwd.join("AGENTS.md"), "CWD\n").expect("write cwd agents");
 
-    let loaded = load_agents_chain_for_cwd_for_tests(&cwd, None, Some(tmp.path()), None);
+    let loaded = load_agents_chain(&cwd, None, Some(tmp.path()), None);
 
     assert_eq!(loaded.merged_chain.as_deref(), Some("CWD\n"));
     assert!(loaded.warnings.is_empty());
@@ -67,7 +67,7 @@ fn loads_ancestor_agents_in_root_to_leaf_order() {
     fs::write(root.join("AGENTS.md"), "ROOT\n").expect("root agents");
     fs::write(parent.join("AGENTS.md"), "PARENT\n").expect("parent agents");
 
-    let loaded = load_agents_chain_for_cwd_for_tests(&cwd, None, Some(&root), None);
+    let loaded = load_agents_chain(&cwd, None, Some(&root), None);
 
     assert_eq!(loaded.merged_chain.as_deref(), Some("ROOT\n\nPARENT\n"));
     assert!(loaded.warnings.is_empty());
@@ -82,7 +82,7 @@ fn nearest_agents_has_highest_precedence_position() {
     fs::write(root.join("AGENTS.md"), "ROOT\n").expect("root agents");
     fs::write(cwd.join("AGENTS.md"), "CWD\n").expect("cwd agents");
 
-    let loaded = load_agents_chain_for_cwd_for_tests(&cwd, None, Some(&root), None);
+    let loaded = load_agents_chain(&cwd, None, Some(&root), None);
     let merged = loaded.merged_chain.expect("merged chain");
 
     assert!(merged.ends_with("CWD\n"));
@@ -95,7 +95,7 @@ fn missing_home_or_agents_files_is_noop() {
     let cwd = tmp.path().join("cwd");
     fs::create_dir_all(&cwd).expect("cwd");
 
-    let loaded = load_agents_chain_for_cwd_for_tests(&cwd, None, Some(tmp.path()), None);
+    let loaded = load_agents_chain(&cwd, None, Some(tmp.path()), None);
 
     assert_eq!(loaded.merged_chain, None);
     assert!(loaded.warnings.is_empty());
@@ -108,7 +108,7 @@ fn unreadable_agents_is_non_fatal() {
     let agents = cwd.join("AGENTS.md");
     fs::create_dir_all(&agents).expect("create AGENTS.md directory to force read error");
 
-    let loaded = load_agents_chain_for_cwd_for_tests(&cwd, None, Some(tmp.path()), None);
+    let loaded = load_agents_chain(&cwd, None, Some(tmp.path()), None);
 
     assert!(loaded.warnings.iter().any(|w| w.contains("AGENTS.md")));
     assert_eq!(loaded.merged_chain, None);
@@ -132,7 +132,7 @@ fn canonical_path_dedup_prevents_duplicate_load() {
     let cwd = alias.join("child");
     fs::create_dir_all(&cwd).expect("cwd");
 
-    let loaded = load_agents_chain_for_cwd_for_tests(&cwd, None, Some(&root), None);
+    let loaded = load_agents_chain(&cwd, None, Some(&root), None);
     let merged = loaded.merged_chain.expect("merged chain");
 
     assert_eq!(merged.matches("REAL").count(), 1);
@@ -147,7 +147,7 @@ fn loads_from_home_dot_agents() {
     fs::create_dir_all(&cwd).expect("create cwd");
     fs::write(home.join(".agents/AGENTS.md"), "HOME_AGENTS\n").expect("write");
 
-    let result = load_agents_chain_for_cwd_for_tests(&cwd, None, Some(tmp.path()), Some(&home));
+    let result = load_agents_chain(&cwd, None, Some(tmp.path()), Some(&home));
     assert!(result.merged_chain.unwrap().contains("HOME_AGENTS"));
 }
 
@@ -504,7 +504,7 @@ fn discovers_home_skills_in_catalog() {
     .expect("home skill");
     fs::create_dir_all(&cwd).expect("cwd");
 
-    let catalog = discover_skill_catalog_for_cwd_for_tests(&cwd, Some(&home), Some(tmp.path()));
+    let catalog = discover_skill_catalog(&cwd, Some(&home), Some(tmp.path()));
 
     assert!(
         catalog
@@ -527,14 +527,9 @@ fn resolves_explicit_skill_request_from_home_source() {
     .expect("home skill");
     fs::create_dir_all(&cwd).expect("cwd");
 
-    let resolved = resolve_explicit_skill_request_for_cwd_for_tests(
-        &cwd,
-        Some(&home),
-        Some(tmp.path()),
-        "context",
-    )
-    .expect("resolve should succeed")
-    .expect("skill must resolve");
+    let resolved = resolve_explicit_skill_request(&cwd, Some(&home), Some(tmp.path()), "context")
+        .expect("resolve should succeed")
+        .expect("skill must resolve");
 
     assert_eq!(resolved.source, SkillSource::Home);
     assert_eq!(resolved.content, "home context skill\n");
@@ -552,14 +547,9 @@ fn local_source_wins_on_skill_name_collision() {
     fs::create_dir_all(repo.join(".agents/skills/context")).expect("local skill dir");
     fs::write(repo.join(".agents/skills/context/SKILL.md"), "local\n").expect("local skill");
 
-    let resolved = resolve_explicit_skill_request_for_cwd_for_tests(
-        &repo,
-        Some(&home),
-        Some(tmp.path()),
-        "context",
-    )
-    .expect("resolve should succeed")
-    .expect("skill must resolve");
+    let resolved = resolve_explicit_skill_request(&repo, Some(&home), Some(tmp.path()), "context")
+        .expect("resolve should succeed")
+        .expect("skill must resolve");
 
     assert_eq!(resolved.source, SkillSource::Local);
     assert_eq!(resolved.content, "local\n");
@@ -574,13 +564,8 @@ fn rejects_path_traversal_skill_lookup() {
     fs::write(home.join(".agents/skills/context/SKILL.md"), "home\n").expect("home skill");
     fs::create_dir_all(&cwd).expect("cwd");
 
-    let err = resolve_explicit_skill_request_for_cwd_for_tests(
-        &cwd,
-        Some(&home),
-        Some(tmp.path()),
-        "../context",
-    )
-    .expect_err("traversal must be rejected");
+    let err = resolve_explicit_skill_request(&cwd, Some(&home), Some(tmp.path()), "../context")
+        .expect_err("traversal must be rejected");
 
     assert!(matches!(err, SkillResolveError::InvalidSkillName(_)));
 }
@@ -605,13 +590,8 @@ fn rejects_symlink_escape_outside_home_skills_root() {
     std::os::windows::fs::symlink_dir(&outside, home.join(".agents/skills/escaped"))
         .expect("symlink");
 
-    let err = resolve_explicit_skill_request_for_cwd_for_tests(
-        &cwd,
-        Some(&home),
-        Some(tmp.path()),
-        "escaped",
-    )
-    .expect_err("symlink escape must be rejected");
+    let err = resolve_explicit_skill_request(&cwd, Some(&home), Some(tmp.path()), "escaped")
+        .expect_err("symlink escape must be rejected");
 
     assert!(matches!(
         err,
@@ -627,13 +607,9 @@ fn missing_skill_preserves_not_found_semantics() {
     fs::create_dir_all(home.join(".agents/skills")).expect("home skills root");
     fs::create_dir_all(&cwd).expect("cwd");
 
-    let resolved = resolve_explicit_skill_request_for_cwd_for_tests(
-        &cwd,
-        Some(&home),
-        Some(tmp.path()),
-        "does-not-exist",
-    )
-    .expect("missing skill should not error");
+    let resolved =
+        resolve_explicit_skill_request(&cwd, Some(&home), Some(tmp.path()), "does-not-exist")
+            .expect("missing skill should not error");
 
     assert_eq!(resolved, None);
 }
@@ -644,11 +620,11 @@ fn precedence_ordering_handles_deep_ancestry_rank_without_packing_collision() {
     let home = (SkillSource::Home.priority(), 0);
 
     assert!(
-        is_higher_precedence_for_tests(local_deep, home),
+        is_higher_precedence(local_deep, home),
         "local source precedence must remain stable even when ancestry rank >= 16"
     );
     assert!(
-        !is_higher_precedence_for_tests(home, local_deep),
+        !is_higher_precedence(home, local_deep),
         "distinct precedence tuples must not collapse into an equal rank"
     );
 }
@@ -660,8 +636,12 @@ fn available_skills_preamble_renders_catalog_entries() {
     fs::create_dir_all(repo.join(".agents/skills/context")).expect("local skills dir");
     fs::write(repo.join(".agents/skills/context/SKILL.md"), "context\n").expect("skill file");
 
-    let preamble = render_available_skills_preamble_for_tests(&repo, None, Some(tmp.path()))
-        .expect("preamble should render");
+    let preamble = render_available_skills_preamble_from_catalog(discover_skill_catalog(
+        &repo,
+        None,
+        Some(tmp.path()),
+    ))
+    .expect("preamble should render");
 
     assert!(preamble.contains("<available_skills>"));
     assert!(preamble.contains("<name>context</name>"));
@@ -674,7 +654,11 @@ fn available_skills_preamble_absent_when_catalog_empty() {
     let repo = tmp.path().join("repo");
     fs::create_dir_all(&repo).expect("repo dir");
 
-    let preamble = render_available_skills_preamble_for_tests(&repo, None, Some(tmp.path()));
+    let preamble = render_available_skills_preamble_from_catalog(discover_skill_catalog(
+        &repo,
+        None,
+        Some(tmp.path()),
+    ));
     assert!(preamble.is_none());
 }
 
@@ -689,8 +673,12 @@ fn skill_preamble_xml_structure_with_description() {
     )
     .expect("skill file");
 
-    let preamble = render_available_skills_preamble_for_tests(&repo, None, Some(tmp.path()))
-        .expect("preamble should render");
+    let preamble = render_available_skills_preamble_from_catalog(discover_skill_catalog(
+        &repo,
+        None,
+        Some(tmp.path()),
+    ))
+    .expect("preamble should render");
 
     // Verify the XML structure includes description between name and source
     let expected_structure = r#"  <skill>
@@ -753,8 +741,12 @@ fn available_skills_preamble_includes_descriptions() {
     )
     .expect("skill file");
 
-    let preamble = render_available_skills_preamble_for_tests(&repo, None, Some(tmp.path()))
-        .expect("preamble should render");
+    let preamble = render_available_skills_preamble_from_catalog(discover_skill_catalog(
+        &repo,
+        None,
+        Some(tmp.path()),
+    ))
+    .expect("preamble should render");
 
     assert!(preamble.contains("<available_skills>"));
     assert!(preamble.contains("<name>context</name>"));
@@ -773,8 +765,12 @@ fn available_skills_preamble_works_without_descriptions() {
     )
     .expect("skill file");
 
-    let preamble = render_available_skills_preamble_for_tests(&repo, None, Some(tmp.path()))
-        .expect("preamble should render");
+    let preamble = render_available_skills_preamble_from_catalog(discover_skill_catalog(
+        &repo,
+        None,
+        Some(tmp.path()),
+    ))
+    .expect("preamble should render");
 
     assert!(preamble.contains("<name>empty</name>"));
     assert!(!preamble.contains("<description>"));

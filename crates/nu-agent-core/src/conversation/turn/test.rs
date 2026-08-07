@@ -132,7 +132,7 @@ fn make_turn_context<'a>(
     };
     let tool_infra = executor::ToolInfra {
         closure_registry: Arc::new(ClosureRegistry::new()),
-        mcp_registry: Arc::new(McpToolRegistry::from_names::<[&str; 0], &str>([])),
+        mcp_registry: Arc::new(McpToolRegistry::empty()),
         tool_server_handle: rig::tool::server::ToolServer::new().run(),
         visible_tool_definitions: vec![],
         circuit_breaker: default_circuit_breaker(),
@@ -847,7 +847,7 @@ async fn transient_turn_does_not_write_jsonl() {
     };
     let tool_infra = executor::ToolInfra {
         closure_registry: Arc::new(ClosureRegistry::new()),
-        mcp_registry: Arc::new(McpToolRegistry::from_names::<[&str; 0], &str>([])),
+        mcp_registry: Arc::new(McpToolRegistry::empty()),
         tool_server_handle: rig::tool::server::ToolServer::new().run(),
         visible_tool_definitions: vec![],
         circuit_breaker: default_circuit_breaker(),
@@ -904,7 +904,7 @@ async fn persistent_turn_writes_jsonl() {
     };
     let tool_infra = executor::ToolInfra {
         closure_registry: Arc::new(ClosureRegistry::new()),
-        mcp_registry: Arc::new(McpToolRegistry::from_names::<[&str; 0], &str>([])),
+        mcp_registry: Arc::new(McpToolRegistry::empty()),
         tool_server_handle: rig::tool::server::ToolServer::new().run(),
         visible_tool_definitions: vec![],
         circuit_breaker: default_circuit_breaker(),

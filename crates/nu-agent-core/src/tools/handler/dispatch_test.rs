@@ -14,7 +14,7 @@ fn tool_def(name: &str) -> ToolDefinition {
 
 /// An empty MCP registry (no MCP tools).
 fn empty_mcp_registry() -> McpToolRegistry {
-    McpToolRegistry::from_names(Vec::<String>::new())
+    McpToolRegistry::empty()
 }
 
 #[test]

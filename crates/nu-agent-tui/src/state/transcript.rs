@@ -48,11 +48,6 @@ impl AppState {
         &mut self.assistant_projection_cache
     }
 
-    #[cfg(test)]
-    pub fn assistant_projection_cache_size(&self) -> usize {
-        self.assistant_projection_cache.len()
-    }
-
     pub(crate) fn enforce_transcript_cap(&mut self) {
         let overflow = self
             .transcript_preview

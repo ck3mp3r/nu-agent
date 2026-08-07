@@ -259,26 +259,6 @@ impl<W: Write> StderrUiRenderer<W> {
             }
         }
     }
-
-    #[cfg(test)]
-    pub(crate) fn spinner_enabled_for_test(&self) -> bool {
-        self.spinner.is_enabled()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn spinner_active_for_test(&self) -> bool {
-        self.spinner.is_active()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn spinner_suspended_for_test(&self) -> bool {
-        self.spinner.is_suspended()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn spinner_frame_for_test(&self) -> &str {
-        self.spinner.current_frame()
-    }
 }
 
 impl<W: Write> UiRenderer for StderrUiRenderer<W> {

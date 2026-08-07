@@ -27,7 +27,7 @@ fn default_tool_infra(
 ) -> ToolInfra {
     ToolInfra {
         closure_registry: Arc::new(ClosureRegistry::new()),
-        mcp_registry: Arc::new(McpToolRegistry::from_names(Vec::<String>::new())),
+        mcp_registry: Arc::new(McpToolRegistry::empty()),
         tool_server_handle: handle,
         visible_tool_definitions: definitions,
         circuit_breaker: default_circuit_breaker(),

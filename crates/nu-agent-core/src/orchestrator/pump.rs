@@ -12,18 +12,6 @@ impl EventPump {
         Self { event_rx }
     }
 
-    /// Forward all pending events from the worker channel to the UI.
-    /// Returns the number of events forwarded.
-    #[cfg(test)]
-    pub fn drain<U: ProgressUi>(&mut self, ui: &mut U) -> usize {
-        let mut count = 0;
-        while let Ok(event) = self.event_rx.try_recv() {
-            ui.emit(&event);
-            count += 1;
-        }
-        count
-    }
-
     /// Collect all pending events and forward them as a batch via
     /// [`ProgressUi::emit_batch`]. Returns the number of events forwarded.
     pub fn drain_batch<U: ProgressUi>(&mut self, ui: &mut U) -> usize {

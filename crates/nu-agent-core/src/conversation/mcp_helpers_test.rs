@@ -43,7 +43,7 @@ fn enabling_startup_disabled_server_registers_all_discovered_mcp_tools() {
 #[test]
 fn enabling_startup_disabled_server_registers_dispatch_raw_name_mapping() {
     let mut tool_definitions = vec![tool_definition_named("read")];
-    let mut registry = McpToolRegistry::from_names(Vec::<String>::new());
+    let mut registry = McpToolRegistry::empty();
 
     let discovered = vec![mcp_tool("k8s", "k8s__list_pods", "list_pods")];
 

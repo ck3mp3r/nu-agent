@@ -26,7 +26,7 @@ fn turn_executor_new_constructs_without_panic() {
         FsSessionStore::new(temp_dir.path().to_path_buf()),
     ));
     let closure_registry = ClosureRegistry::new();
-    let mcp_registry = McpToolRegistry::from_names(Vec::<String>::new());
+    let mcp_registry = McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
     let _executor = TurnExecutor::new(
@@ -52,7 +52,7 @@ fn turn_executor_exposes_memory_state() {
         FsSessionStore::new(temp_dir.path().to_path_buf()),
     ));
     let closure_registry = ClosureRegistry::new();
-    let mcp_registry = McpToolRegistry::from_names(Vec::<String>::new());
+    let mcp_registry = McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
     let executor = TurnExecutor::new(
@@ -80,7 +80,7 @@ fn turn_executor_take_response_data_returns_none_before_execute() {
         FsSessionStore::new(temp_dir.path().to_path_buf()),
     ));
     let closure_registry = ClosureRegistry::new();
-    let mcp_registry = McpToolRegistry::from_names(Vec::<String>::new());
+    let mcp_registry = McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
     let mut executor = TurnExecutor::new(
@@ -138,7 +138,7 @@ async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_comp
     let mut ui = MockUi::immediately_cancelled();
 
     let closure_registry = ClosureRegistry::new();
-    let mcp_registry = McpToolRegistry::from_names(Vec::<String>::new());
+    let mcp_registry = McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
     let mut executor = TurnExecutor::new(
@@ -258,7 +258,7 @@ async fn completed_turn_no_explicit_store_append_needed() {
     let mut ui = MockUi::new();
 
     let closure_registry = crate::tools::closure::ClosureRegistry::new();
-    let mcp_registry = crate::tools::handler::McpToolRegistry::from_names(Vec::<String>::new());
+    let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
     let mut executor = TurnExecutor::new(
@@ -353,7 +353,7 @@ async fn cancelled_turn_writes_via_single_memory_append() {
     let mut ui = MockUi::immediately_cancelled();
 
     let closure_registry = crate::tools::closure::ClosureRegistry::new();
-    let mcp_registry = crate::tools::handler::McpToolRegistry::from_names(Vec::<String>::new());
+    let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
     let mut executor = TurnExecutor::new(
@@ -447,7 +447,7 @@ async fn last_total_tokens_updated_on_completed_turn() {
     let mut ui = MockUi::new();
 
     let closure_registry = crate::tools::closure::ClosureRegistry::new();
-    let mcp_registry = crate::tools::handler::McpToolRegistry::from_names(Vec::<String>::new());
+    let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
     let mut executor = TurnExecutor::new(
@@ -524,7 +524,7 @@ async fn max_turns_error_persists_full_history() {
     let mut ui = MockUi::new();
 
     let closure_registry = crate::tools::closure::ClosureRegistry::new();
-    let mcp_registry = crate::tools::handler::McpToolRegistry::from_names(Vec::<String>::new());
+    let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
     let mut executor = TurnExecutor::new(
@@ -609,7 +609,7 @@ async fn unknown_tool_error_persists_full_history() {
     let mut ui = MockUi::new();
 
     let closure_registry = crate::tools::closure::ClosureRegistry::new();
-    let mcp_registry = crate::tools::handler::McpToolRegistry::from_names(Vec::<String>::new());
+    let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
     let mut executor = TurnExecutor::new(
@@ -690,7 +690,7 @@ async fn network_error_on_fresh_session_persists_user_message() {
     let mut ui = MockUi::new();
 
     let closure_registry = crate::tools::closure::ClosureRegistry::new();
-    let mcp_registry = crate::tools::handler::McpToolRegistry::from_names(Vec::<String>::new());
+    let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
     let mut executor = TurnExecutor::new(
@@ -787,7 +787,7 @@ async fn hard_error_on_first_llm_call_persists_user_message() {
     let mut ui = MockUi::new();
 
     let closure_registry = crate::tools::closure::ClosureRegistry::new();
-    let mcp_registry = crate::tools::handler::McpToolRegistry::from_names(Vec::<String>::new());
+    let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
     let mut executor = TurnExecutor::new(
@@ -871,7 +871,7 @@ async fn hard_error_no_session_persists_nothing() {
     let mut ui = MockUi::new();
 
     let closure_registry = crate::tools::closure::ClosureRegistry::new();
-    let mcp_registry = crate::tools::handler::McpToolRegistry::from_names(Vec::<String>::new());
+    let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
     let mut executor = TurnExecutor::new(
@@ -956,7 +956,7 @@ async fn prompt_cancelled_with_unpaired_tool_call_injects_synthetic_result() {
     let mut ui = MockUi::immediately_cancelled();
 
     let closure_registry = crate::tools::closure::ClosureRegistry::new();
-    let mcp_registry = crate::tools::handler::McpToolRegistry::from_names(Vec::<String>::new());
+    let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
     let mut executor = TurnExecutor::new(
@@ -1069,7 +1069,7 @@ async fn unknown_tool_error_with_unpaired_tool_call_injects_synthetic_result() {
     let mut ui = MockUi::new();
 
     let closure_registry = crate::tools::closure::ClosureRegistry::new();
-    let mcp_registry = crate::tools::handler::McpToolRegistry::from_names(Vec::<String>::new());
+    let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
     let mut executor = TurnExecutor::new(
@@ -1458,7 +1458,7 @@ async fn hard_error_after_prior_history_persists_user_message() {
     let mut ui = MockUi::new();
 
     let closure_registry = crate::tools::closure::ClosureRegistry::new();
-    let mcp_registry = crate::tools::handler::McpToolRegistry::from_names(Vec::<String>::new());
+    let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
     let mut executor = TurnExecutor::new(
@@ -1622,7 +1622,7 @@ async fn hard_error_after_prior_history_persists_only_delta() {
     let cached_client = CachedProviderClient::Mock(model);
     let mut ui = MockUi::new();
     let closure_registry = ClosureRegistry::new();
-    let mcp_registry = McpToolRegistry::from_names(Vec::<String>::new());
+    let mcp_registry = McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
     let mut executor = TurnExecutor::new(
@@ -1712,7 +1712,7 @@ async fn hard_error_twice_does_not_double_history() {
         let cached_client = CachedProviderClient::Mock(model);
         let mut ui = MockUi::new();
         let closure_registry = ClosureRegistry::new();
-        let mcp_registry = McpToolRegistry::from_names(Vec::<String>::new());
+        let mcp_registry = McpToolRegistry::empty();
         let tool_server_handle = rig::tool::server::ToolServer::new().run();
         let mut executor = TurnExecutor::new(
             &config,
@@ -1753,7 +1753,7 @@ async fn hard_error_twice_does_not_double_history() {
         let cached_client = CachedProviderClient::Mock(model);
         let mut ui = MockUi::new();
         let closure_registry = ClosureRegistry::new();
-        let mcp_registry = McpToolRegistry::from_names(Vec::<String>::new());
+        let mcp_registry = McpToolRegistry::empty();
         let tool_server_handle = rig::tool::server::ToolServer::new().run();
         let mut executor = TurnExecutor::new(
             &config,
@@ -1793,7 +1793,7 @@ async fn hard_error_twice_does_not_double_history() {
         let cached_client = CachedProviderClient::Mock(model);
         let mut ui = MockUi::new();
         let closure_registry = ClosureRegistry::new();
-        let mcp_registry = McpToolRegistry::from_names(Vec::<String>::new());
+        let mcp_registry = McpToolRegistry::empty();
         let tool_server_handle = rig::tool::server::ToolServer::new().run();
         let mut executor = TurnExecutor::new(
             &config,
@@ -1898,7 +1898,7 @@ async fn cancelled_turn_after_prior_history_persists_only_delta() {
     let cached_client = CachedProviderClient::Mock(model);
     let mut ui = MockUi::immediately_cancelled();
     let closure_registry = ClosureRegistry::new();
-    let mcp_registry = McpToolRegistry::from_names(Vec::<String>::new());
+    let mcp_registry = McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
     let mut executor = TurnExecutor::new(
@@ -1988,7 +1988,7 @@ async fn hard_error_on_first_llm_call_no_prior_history_persists_user_message() {
     let mut ui = MockUi::new();
 
     let closure_registry = crate::tools::closure::ClosureRegistry::new();
-    let mcp_registry = crate::tools::handler::McpToolRegistry::from_names(Vec::<String>::new());
+    let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
     let mut executor = TurnExecutor::new(
@@ -2138,7 +2138,7 @@ async fn hard_error_mid_tool_loop_preserves_real_tool_results() {
     let mut ui = MockUi::new();
 
     let closure_registry = crate::tools::closure::ClosureRegistry::new();
-    let mcp_registry = crate::tools::handler::McpToolRegistry::from_names(Vec::<String>::new());
+    let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new()
         .tool(SimpleEchoTool)
         .run();
@@ -2437,7 +2437,7 @@ async fn retry_succeeds_on_second_attempt() {
     let mut ui = MockUi::new();
 
     let closure_registry = ClosureRegistry::new();
-    let mcp_registry = McpToolRegistry::from_names(Vec::<String>::new());
+    let mcp_registry = McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
     let mut executor = TurnExecutor::new(
@@ -2521,7 +2521,7 @@ async fn retry_exhausted_surfaces_attempt_count() {
     let mut ui = MockUi::new();
 
     let closure_registry = ClosureRegistry::new();
-    let mcp_registry = McpToolRegistry::from_names(Vec::<String>::new());
+    let mcp_registry = McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
     let mut executor = TurnExecutor::new(
@@ -2585,7 +2585,7 @@ async fn non_retryable_error_not_retried() {
     let mut ui = MockUi::new();
 
     let closure_registry = ClosureRegistry::new();
-    let mcp_registry = McpToolRegistry::from_names(Vec::<String>::new());
+    let mcp_registry = McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
     let mut executor = TurnExecutor::new(
@@ -2652,7 +2652,7 @@ async fn retry_disabled_when_max_retries_is_zero() {
     let mut ui = MockUi::new();
 
     let closure_registry = ClosureRegistry::new();
-    let mcp_registry = McpToolRegistry::from_names(Vec::<String>::new());
+    let mcp_registry = McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
     let mut executor = TurnExecutor::new(
@@ -2889,7 +2889,7 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
         .run();
     let tool_infra = ToolInfra {
         closure_registry: Arc::new(ClosureRegistry::new()),
-        mcp_registry: Arc::new(McpToolRegistry::from_names(Vec::<String>::new())),
+        mcp_registry: Arc::new(McpToolRegistry::empty()),
         tool_server_handle: handle,
         visible_tool_definitions: vec![rig::completion::ToolDefinition {
             name: "test_cancel_tool".to_string(),

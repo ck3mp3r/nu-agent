@@ -69,7 +69,7 @@ impl std::error::Error for SkillResolveError {}
 
 pub fn discover_skill_catalog_for_cwd(cwd: &Path) -> Vec<DiscoverableSkill> {
     let home = std::env::var_os("HOME").map(PathBuf::from);
-    discover_skill_catalog_internal(cwd, home.as_deref(), None)
+    discover_skill_catalog(cwd, home.as_deref(), None)
 }
 
 pub fn render_available_skills_preamble(cwd: &Path) -> Option<String> {
@@ -77,17 +77,7 @@ pub fn render_available_skills_preamble(cwd: &Path) -> Option<String> {
     render_available_skills_preamble_from_catalog(catalog)
 }
 
-#[cfg(test)]
-pub fn render_available_skills_preamble_for_tests(
-    cwd: &Path,
-    home: Option<&Path>,
-    stop_at: Option<&Path>,
-) -> Option<String> {
-    let catalog = discover_skill_catalog_internal(cwd, home, stop_at);
-    render_available_skills_preamble_from_catalog(catalog)
-}
-
-fn render_available_skills_preamble_from_catalog(
+pub(crate) fn render_available_skills_preamble_from_catalog(
     catalog: Vec<DiscoverableSkill>,
 ) -> Option<String> {
     if catalog.is_empty() {
@@ -117,12 +107,7 @@ fn render_available_skills_preamble_from_catalog(
     Some(lines.join("\n"))
 }
 
-#[cfg(test)]
-pub fn extract_skill_description(content: &str) -> Option<String> {
-    extract_skill_description_internal(content)
-}
-
-fn extract_skill_description_internal(content: &str) -> Option<String> {
+pub(crate) fn extract_skill_description(content: &str) -> Option<String> {
     let mut lines = content.lines().peekable();
 
     // Check for YAML frontmatter (first non-empty line is `---`)
@@ -188,29 +173,10 @@ pub fn resolve_explicit_skill_request_for_cwd(
     skill_name: &str,
 ) -> Result<Option<ResolvedSkill>, SkillResolveError> {
     let home = std::env::var_os("HOME").map(PathBuf::from);
-    resolve_explicit_skill_request_internal(cwd, home.as_deref(), None, skill_name)
+    resolve_explicit_skill_request(cwd, home.as_deref(), None, skill_name)
 }
 
-#[cfg(test)]
-pub fn discover_skill_catalog_for_cwd_for_tests(
-    cwd: &Path,
-    home: Option<&Path>,
-    stop_at: Option<&Path>,
-) -> Vec<DiscoverableSkill> {
-    discover_skill_catalog_internal(cwd, home, stop_at)
-}
-
-#[cfg(test)]
-pub fn resolve_explicit_skill_request_for_cwd_for_tests(
-    cwd: &Path,
-    home: Option<&Path>,
-    stop_at: Option<&Path>,
-    skill_name: &str,
-) -> Result<Option<ResolvedSkill>, SkillResolveError> {
-    resolve_explicit_skill_request_internal(cwd, home, stop_at, skill_name)
-}
-
-fn discover_skill_catalog_internal(
+pub(crate) fn discover_skill_catalog(
     cwd: &Path,
     home: Option<&Path>,
     stop_at: Option<&Path>,
@@ -266,7 +232,7 @@ fn discover_skill_catalog_internal(
     catalog
 }
 
-fn resolve_explicit_skill_request_internal(
+pub(crate) fn resolve_explicit_skill_request(
     cwd: &Path,
     home: Option<&Path>,
     stop_at: Option<&Path>,
@@ -343,13 +309,8 @@ fn upsert_skill_by_precedence(
     }
 }
 
-fn is_higher_precedence(candidate: (u8, usize), existing: (u8, usize)) -> bool {
+pub(crate) fn is_higher_precedence(candidate: (u8, usize), existing: (u8, usize)) -> bool {
     candidate < existing
-}
-
-#[cfg(test)]
-pub fn is_higher_precedence_for_tests(candidate: (u8, usize), existing: (u8, usize)) -> bool {
-    is_higher_precedence(candidate, existing)
 }
 
 fn normalize_skill_name(skill_name: &str) -> Result<&str, SkillResolveError> {
@@ -464,7 +425,7 @@ fn read_skill_description(skill_path: &Path) -> Option<String> {
         &content
     };
     let text = String::from_utf8_lossy(preview);
-    extract_skill_description_internal(&text)
+    extract_skill_description(&text)
 }
 
 fn passes_canonical_guard(path: &Path, canonical_guard_root: Option<&PathBuf>) -> bool {

@@ -412,7 +412,7 @@ fn active_tool_definitions_returns_empty_when_no_tools() {
     };
 
     let tool_definitions: Vec<ToolDefinition> = vec![];
-    let mcp_registry = McpToolRegistry::from_names(std::iter::empty::<String>());
+    let mcp_registry = McpToolRegistry::empty();
     let permissions = PermissionsConfig::safe_defaults(true);
 
     let result =
@@ -434,7 +434,7 @@ fn mcp_state_initial_tool_count_is_zero() {
     use crate::tools::{authz::PermissionsConfig, handler::McpToolRegistry};
 
     let tool_definitions: Vec<ToolDefinition> = vec![];
-    let mcp_registry = McpToolRegistry::from_names(std::iter::empty::<String>());
+    let mcp_registry = McpToolRegistry::empty();
     let permissions = PermissionsConfig::safe_defaults(true);
 
     // Replicate the method body: filter active_tool_definitions by registry
@@ -458,7 +458,7 @@ fn mcp_state_tool_count_by_server_returns_zero_for_unknown() {
     use crate::tools::{authz::PermissionsConfig, handler::McpToolRegistry};
 
     let tool_definitions: Vec<ToolDefinition> = vec![];
-    let mcp_registry = McpToolRegistry::from_names(std::iter::empty::<String>());
+    let mcp_registry = McpToolRegistry::empty();
     let permissions = PermissionsConfig::safe_defaults(true);
 
     let active = super::super::super::tools::handler::llm_visible_tool_definitions(
@@ -731,7 +731,7 @@ fn tool_state_active_definitions_empty_when_no_tools() {
     };
 
     let tool_definitions: Vec<ToolDefinition> = vec![];
-    let mcp_registry = McpToolRegistry::from_names(std::iter::empty::<String>());
+    let mcp_registry = McpToolRegistry::empty();
     let permissions = PermissionsConfig::safe_defaults(true);
 
     let result =

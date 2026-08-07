@@ -25,7 +25,6 @@ impl CancelController {
         !self.requested.swap(true, Ordering::SeqCst)
     }
 
-    #[cfg(test)]
     pub fn is_cancel_requested(&self) -> bool {
         self.requested.load(Ordering::SeqCst)
     }

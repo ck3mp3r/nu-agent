@@ -21,7 +21,6 @@ impl PendingOps {
         }
     }
 
-    #[cfg(test)]
     pub fn has_pending(&self) -> bool {
         self.queued_model_switch.is_some() || self.queued_agent_switch.is_some()
     }

@@ -43,6 +43,28 @@ src/
   - Forbidden: mixed `foo.rs` + `foo/test.rs`
 - Keep test files focused and organized by module
 
+### No test-only code in production
+
+**`#[cfg(test)]` on `fn` in production files is banned.**
+
+- ❌ NO: `#[cfg(test)]` on any `fn` in production code (`.rs` files that are not `*_test.rs` / `test.rs`)
+- ✅ YES: `#[cfg(test)]` on `mod` declarations for test modules (e.g. `#[cfg(test)] mod foo_test;`)
+- ❌ NO: Test-only accessor methods that expose private fields solely for tests
+- ✅ YES: Design public API so tests use the same methods as production code
+- ✅ YES: Test through behavior — if the public API doesn't expose enough to verify a behavior, the API is missing a method, not the test missing a backdoor
+- ❌ NO: Making a field `pub(crate)` just so tests can peek at internal state — this is the same code smell as `#[cfg(test)]` accessors
+
+**If a test needs to inspect private state, one of these is wrong:**
+1. The public API is incomplete — add a public method that exposes the observable behavior
+2. The test is testing implementation details — rewrite it to assert outcomes through the public API
+3. The design is wrong — the internal state shouldn't matter, only its observable effects
+
+**Pre-existing violations are still violations.** If you encounter `#[cfg(test)]` accessor methods while working on an unrelated task, do NOT fix them inline — create a separate task for the cleanup. But they ARE a code smell that must be addressed.
+
+### What counts as production code
+
+Any `.rs` file that is NOT a test file (`*_test.rs`, `test.rs`) is production code. This includes `mod.rs`, `input.rs`, `lifecycle.rs`, `dispatch.rs`, etc. The `#[cfg(test)]` attribute on `fn` in these files is the violation.
+
 ### Mocking
 
 **Use mocks wherever available:**

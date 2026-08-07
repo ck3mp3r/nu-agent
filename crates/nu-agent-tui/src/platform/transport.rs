@@ -47,7 +47,6 @@ impl TuiTransport {
         }
     }
 
-    #[cfg(test)]
     pub fn enqueue_user_action(&mut self, action: UserAction) {
         self.user_actions.push_back(action);
     }
@@ -83,7 +82,6 @@ impl TuiTransport {
         }
     }
 
-    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.user_actions.is_empty() && self.ui_events.is_empty()
     }
