@@ -29,6 +29,7 @@ pub enum SharedUiAction {
 pub struct UiMessageSnapshot {
     role: String,
     content: String,
+    tool_name: Option<String>,
     tool_arguments: Option<String>,
     tool_result: Option<String>,
     tool_success: Option<bool>,
@@ -48,6 +49,7 @@ impl UiMessageSnapshot {
         Self {
             role: role.into(),
             content: content.into(),
+            tool_name: None,
             tool_arguments: None,
             tool_result: None,
             tool_success: None,
@@ -68,6 +70,11 @@ impl UiMessageSnapshot {
         self
     }
 
+    pub fn with_tool_name(mut self, name: String) -> Self {
+        self.tool_name = Some(name);
+        self
+    }
+
     pub fn with_tool_display(mut self, display: ToolDisplay) -> Self {
         self.tool_display = Some(display);
         self
@@ -79,6 +86,10 @@ impl UiMessageSnapshot {
 
     pub fn content(&self) -> &str {
         &self.content
+    }
+
+    pub fn tool_name(&self) -> Option<&str> {
+        self.tool_name.as_deref()
     }
 
     pub fn tool_arguments(&self) -> Option<&str> {

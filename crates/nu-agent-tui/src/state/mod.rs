@@ -24,7 +24,6 @@ use nu_agent_core::transcript::ir::{ContentLine, DisplayLine, Role};
 use nu_agent_core::transcript::items::{
     ProseMessage, Separator as TranscriptSeparator, Spacer as SpacerItem, SystemMessage,
     ToolInvocation, ToolResult as TranscriptToolResult, TranscriptEntry, annotate_diff_hint,
-    parse_tool_text,
 };
 use selection::TranscriptSelection;
 use std::collections::HashMap;

@@ -102,7 +102,7 @@ impl AskApprovalHook for NoOpAskHook {
 // ---------------------------------------------------------------------------
 
 /// Summarize tool call payload for display in permission prompts.
-fn summarize_ask_payload(tool_name: &str, args: &JsonValue) -> String {
+fn summarize_ask_payload(args: &JsonValue) -> String {
     let compact = serde_json::to_string(args).unwrap_or_else(|_| "{}".to_string());
     let trimmed = if compact.chars().count() > 240 {
         let mut prefix = compact.chars().take(240).collect::<String>();
@@ -111,7 +111,7 @@ fn summarize_ask_payload(tool_name: &str, args: &JsonValue) -> String {
     } else {
         compact
     };
-    format!("tool[{tool_name}] → {trimmed}")
+    format!("→ {trimmed}")
 }
 
 // ---------------------------------------------------------------------------
@@ -237,7 +237,7 @@ impl AskApprovalHook for AskContextCapture {
             scope: decision.matched_rule.scope.to_string(),
             target_field: decision.matched_rule.target_field.clone(),
             pattern: decision.matched_rule.pattern.clone(),
-            summary: summarize_ask_payload(tool_name, args),
+            summary: summarize_ask_payload(args),
             pre_authorize_display: ask_context.pre_authorize_display.clone(),
         });
         self.captured_auth_decision = Some(decision.clone());
@@ -383,7 +383,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                             scope: "unknown".to_string(),
                             target_field: None,
                             pattern: "*".to_string(),
-                            summary: format!("tool[{tool_name}]"),
+                            summary: "→".to_string(),
                             pre_authorize_display: None,
                         });
 

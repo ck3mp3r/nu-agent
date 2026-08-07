@@ -93,6 +93,11 @@ impl BlockRenderer for TuiRenderer {
     }
 }
 
+pub fn lane_prefix_width() -> usize {
+    // cursor_str (2 chars: "> " or "  ") + label (2 chars: role icon + space)
+    4
+}
+
 impl TuiRenderer {
     fn lane_prefix(&self, role: Role, cursor: bool) -> Vec<RatatuiSpan<'static>> {
         let cursor_str = if cursor { "> " } else { "  " };

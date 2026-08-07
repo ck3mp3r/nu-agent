@@ -101,8 +101,11 @@ impl AppState {
 
     pub fn start_tool_call(&mut self, name: &str, arguments: &str) {
         let args_summary = nu_agent_core::protocol::tool_args::summarize_tool_arguments(arguments);
-        let line_text = format!("tool[{name}] → {args_summary}");
-        self.push_transcript_line(TranscriptRole::Tool, line_text);
+        self.push_transcript_item(TranscriptEntry::Tool(ToolInvocation {
+            name: name.to_string(),
+            source: String::new(),
+            args: format!("→ {args_summary}"),
+        }));
 
         let transcript_line_index = self.transcript_preview.len().saturating_sub(1);
         tool_calls::ToolCallBookkeeping::new(

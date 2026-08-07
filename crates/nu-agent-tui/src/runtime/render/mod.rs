@@ -66,12 +66,10 @@ pub(crate) fn single_line_visual_row_count(line: &Line<'_>, width: usize) -> usi
     if width < 1 {
         return 1;
     }
-    let line_width: usize = line
-        .spans
-        .iter()
-        .map(|span| unicode_width::UnicodeWidthStr::width(span.content.as_ref()))
-        .sum();
-    line_width.div_ceil(width).max(1)
+    Paragraph::new(line.clone())
+        .wrap(Wrap::default())
+        .line_count(width as u16)
+        .max(1)
 }
 
 mod bottom_box;

@@ -106,6 +106,6 @@ fn session_picker_table_model_overflow_cue() {
 
     // popup_height=5 → inner_height=3 → query=1, header=1 → available_rows=1
     let model = session_picker_table_model(&state, 5);
-    assert_eq!(model.rows.len(), 1);
+    assert_eq!(model.rows.len(), 5);
     assert_eq!(model.overflow_cue, Some("1 of 5".to_string()));
 }

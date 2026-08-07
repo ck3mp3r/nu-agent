@@ -206,10 +206,11 @@ impl RuntimeCoordinator {
                 let persisted = message_content.trim();
                 if let Some(arguments) = message.tool_arguments() {
                     let success = message.tool_success().unwrap_or(true);
-                    self.state
-                        .start_tool_call(extract_tool_name(persisted), arguments);
-                    self.state
-                        .finish_tool_call(extract_tool_name(persisted), arguments, success);
+                    let name = message
+                        .tool_name()
+                        .unwrap_or_else(|| extract_tool_name(persisted));
+                    self.state.start_tool_call(name, arguments);
+                    self.state.finish_tool_call(name, arguments, success);
                     continue;
                 }
                 if let Some((name, arguments, success)) =
@@ -756,7 +757,12 @@ impl RuntimeCoordinator {
                         // j/k chord triggered normal mode exit
                         // Remove the 'j' that was already inserted by TextArea
                         if !self.state.input_locked {
-                            self.textarea.delete_char();
+                            self.textarea.input(ratatui_textarea::Input {
+                                key: ratatui_textarea::Key::Backspace,
+                                ctrl: false,
+                                alt: false,
+                                shift: false,
+                            });
                         }
                         let _changed = reduce_with_cancel_controller(
                             &mut self.state,
@@ -917,9 +923,7 @@ impl RuntimeCoordinator {
 
     fn recompute_layout_for_current_input(&mut self) {
         let line_count = self.textarea.lines().len() as u16;
-        self.input_height = line_count
-            .saturating_add(2)
-            .clamp(INPUT_MIN_HEIGHT, INPUT_MAX_HEIGHT);
+        self.input_height = line_count.clamp(INPUT_MIN_HEIGHT, INPUT_MAX_HEIGHT);
     }
 
     fn flush_clipboard_request(&mut self) {
@@ -1143,7 +1147,6 @@ impl RuntimeCoordinator {
                     vertical: 0,
                     horizontal: side_margin,
                 });
-                let input_h = self.input_height;
                 let queue_count = self.state.pending_prompt_count() as u16;
                 let queue_h = queue_count + if queue_count > 0 { 1 } else { 0 };
                 let available_inner_w = content_main.width.saturating_sub(4) as usize;
@@ -1178,17 +1181,16 @@ impl RuntimeCoordinator {
                         .sum::<usize>()
                 };
                 let status_h = compute_status_h(available_inner_w, pre_left_width, pre_right_width);
+                let bottom_box_h = compute_bottom_box_height(queue_h, self.input_height, status_h);
                 let vertical = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
                         Constraint::Length(0),
                         Constraint::Fill(1),
-                        Constraint::Length(queue_h),
-                        Constraint::Length(input_h),
-                        Constraint::Length(status_h),
+                        Constraint::Length(bottom_box_h),
                     ])
                     .split(content_main);
-                // vertical[0]=unused [1]=transcript [2]=queue [3]=input [4]=status
+                // vertical[0]=unused [1]=transcript [2]=entire bottom box
 
                 let transcript_content_area = vertical[1];
                 let transcript_list_area = Rect {
@@ -1208,7 +1210,14 @@ impl RuntimeCoordinator {
                 }
 
                 let now_millis = current_time_millis();
-                self.render_bottom_box(frame, &vertical, now_millis);
+                self.render_bottom_box(
+                    frame,
+                    vertical[2],
+                    queue_h,
+                    self.input_height,
+                    status_h,
+                    now_millis,
+                );
 
                 if has_side {
                     let side = horizontal[1];
@@ -1255,8 +1264,13 @@ impl RuntimeCoordinator {
 
 fn compute_status_h(available_inner_w: usize, left_width: usize, right_width: usize) -> u16 {
     if right_width == 0 || left_width + right_width <= available_inner_w {
-        2
+        1
     } else {
-        3
+        2
     }
+}
+fn compute_bottom_box_height(queue_content: u16, input_content: u16, status_content: u16) -> u16 {
+    let borders = 2u16;
+    let dividers = 1u16;
+    borders + dividers + queue_content + input_content + status_content
 }

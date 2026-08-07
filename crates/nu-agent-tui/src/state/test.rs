@@ -271,7 +271,7 @@ fn permission_prompt_open_sets_required_status_and_presence() {
         scope: "nested".to_string(),
         pattern: "*".to_string(),
         target_field: Some("command".to_string()),
-        summary: "tool[nu__run] → {\"command\":\"echo hi\"}".to_string(),
+        summary: "→ {\"command\":\"echo hi\"}".to_string(),
     });
 
     assert!(state.has_permission_prompt());

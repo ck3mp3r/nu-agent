@@ -6,7 +6,7 @@ use crate::rendering::layout::{
 #[test]
 fn input_height_grows_with_newlines_and_wrap_and_is_clamped() {
     let h_short = input_pane_height_for_content("x", 80);
-    assert_eq!(h_short, 3);
+    assert_eq!(h_short, 1);
 
     let h_multiline = input_pane_height_for_content("a\nb\nc", 80);
     assert!(h_multiline > h_short);
@@ -15,7 +15,7 @@ fn input_height_grows_with_newlines_and_wrap_and_is_clamped() {
     assert!(h_wrapped > h_short);
 
     let h_clamped = input_pane_height_for_content(&"x".repeat(300), 4);
-    assert_eq!(h_clamped, 8);
+    assert_eq!(h_clamped, 6);
 }
 
 #[test]
@@ -35,13 +35,13 @@ fn wrapped_rows_and_cursor_mapping_handle_mixed_newline_and_wrap() {
 }
 
 #[test]
-fn input_pane_height_includes_both_borders() {
+fn input_pane_height_is_content_rows_clamped_to_min() {
     let h = input_pane_height_for_content("hello", 80);
-    assert_eq!(h, 3);
+    assert_eq!(h, 1);
 }
 
 #[test]
-fn input_pane_min_height_is_three() {
+fn input_pane_min_height_is_one() {
     let h = input_pane_height_for_content("", 80);
-    assert_eq!(h, 3);
+    assert_eq!(h, 1);
 }

@@ -290,7 +290,8 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
             .map(|e| e.kind().as_str().to_string());
 
         // 4. Emit ToolEnd
-        let success = !super::agent_hook::is_tool_failure(&result_text);
+        let success =
+            event.raw_result.error().is_none() && !super::agent_hook::is_tool_failure(&result_text);
 
         let _ = self.ui_tx.send(UiEvent::ToolEnd {
             name: tool_name.to_string(),

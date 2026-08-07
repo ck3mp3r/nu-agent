@@ -334,15 +334,16 @@ pub(crate) fn hydrate_single_message(
                         let args_summary =
                             crate::protocol::tool_args::summarize_tool_arguments(&args_json);
 
-                        let display_content =
-                            format!("tool[{}] → {}", tool_call.function.name, args_summary);
+                        let display_content = format!("→ {args_summary}");
 
                         snapshots.push(
-                            UiMessageSnapshot::new("tool", display_content).with_tool_details(
-                                Some(args_json),
-                                None,
-                                Some(*tool_success_map.get(&tool_call.id).unwrap_or(&true)),
-                            ),
+                            UiMessageSnapshot::new("tool", display_content)
+                                .with_tool_name(tool_call.function.name.clone())
+                                .with_tool_details(
+                                    Some(args_json),
+                                    None,
+                                    Some(*tool_success_map.get(&tool_call.id).unwrap_or(&true)),
+                                ),
                         );
                     }
                     _ => {} // Reasoning, Image, etc.

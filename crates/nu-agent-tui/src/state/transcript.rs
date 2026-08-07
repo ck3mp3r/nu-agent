@@ -11,9 +11,9 @@ impl AppState {
                 TranscriptEntry::Assistant(ProseMessage { markdown: text })
             }
             TranscriptRole::Tool => {
-                let (name, args) = parse_tool_text(&text);
+                let args = text.trim_start_matches("→ ").to_string();
                 TranscriptEntry::Tool(ToolInvocation {
-                    name,
+                    name: String::new(),
                     source: String::new(),
                     args,
                 })
@@ -169,15 +169,21 @@ impl AppState {
             } else {
                 block.lines
             };
+            let prefix_width = crate::tui_renderer::lane_prefix_width();
+            let effective_width = width.saturating_sub(prefix_width).max(1);
             let visual_rows: usize = content_lines
                 .iter()
                 .map(|line| {
-                    let line_width: usize = line
-                        .spans
-                        .iter()
-                        .map(|s| unicode_width::UnicodeWidthStr::width(s.text.as_str()))
-                        .sum();
-                    line_width.div_ceil(width.max(1)).max(1)
+                    let ratatui_line = ratatui::text::Line::from(
+                        line.spans
+                            .iter()
+                            .map(|s| ratatui::text::Span::raw(s.text.clone()))
+                            .collect::<Vec<_>>(),
+                    );
+                    ratatui::widgets::Paragraph::new(ratatui_line)
+                        .wrap(ratatui::widgets::Wrap::default())
+                        .line_count(effective_width as u16)
+                        .max(1)
                 })
                 .sum::<usize>()
                 .max(1);

@@ -217,7 +217,7 @@ impl CoreRuntime for PermissionGateRuntime {
                     scope: "nested".to_string(),
                     target_field: Some("command".to_string()),
                     pattern: "*".to_string(),
-                    summary: "tool[nu__run] → {\"command\":\"echo hi\"}".to_string(),
+                    summary: "→ {\"command\":\"echo hi\"}".to_string(),
                     pre_authorize_display: None,
                 },
             })

@@ -190,20 +190,6 @@ fn transcript_entry_text_returns_markdown_source() {
 }
 
 #[test]
-fn parse_tool_text_extracts_name_and_args() {
-    let (name, args) = parse_tool_text("tool[nu__run] → {}");
-    assert_eq!(name, "nu__run");
-    assert_eq!(args, "→ {}");
-}
-
-#[test]
-fn parse_tool_text_handles_no_prefix() {
-    let (name, args) = parse_tool_text("plain text");
-    assert_eq!(name, "plain text");
-    assert_eq!(args, "");
-}
-
-#[test]
 fn annotate_diff_hint_identifies_plus_lines() {
     assert_eq!(annotate_diff_hint("+added"), StyleHint::DiffAdd);
 }

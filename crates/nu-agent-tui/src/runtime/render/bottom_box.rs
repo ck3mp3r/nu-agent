@@ -17,22 +17,15 @@ impl RuntimeCoordinator {
     pub(crate) fn render_bottom_box(
         &mut self,
         frame: &mut Frame,
-        vertical: &[Rect],
+        bottom_box_rect: Rect,
+        queue_h: u16,
+        input_h: u16,
+        status_h: u16,
         now_millis: u128,
     ) {
         // ── Unified bottom box ──────────────────────────────────────────────
-        // Combine queue (vertical[2]), input (vertical[3]), and status
-        // (vertical[4]) into one rounded box with ├─┤ dividers.
-        let bottom_box_rect = Rect {
-            x: vertical[2].x,
-            y: vertical[2].y,
-            width: vertical[2].width,
-            height: vertical[2]
-                .height
-                .saturating_add(vertical[3].height)
-                .saturating_add(vertical[4].height),
-        };
-
+        // Combine queue, input, and status into one rounded box with ├─┤
+        // dividers.
         let box_border_style = if self.state.pane_focus == crate::state::PaneFocus::Input {
             self.theme.focus
         } else {
@@ -71,12 +64,12 @@ impl RuntimeCoordinator {
 
         // ── Queue section ────────────────────────────────────────────────
         let queue_count = self.state.pending_prompt_count() as u16;
-        if vertical[2].height > 0 {
+        if queue_h > 0 {
             let queue_inner = Rect {
                 x: inner.x,
                 y: inner.y,
                 width: inner.width,
-                height: vertical[2].height,
+                height: queue_h,
             };
             let pane_width = inner.width as usize;
             let queued_lines: Vec<Line> = self
@@ -109,10 +102,10 @@ impl RuntimeCoordinator {
         }
 
         // ── Input / Permission section ────────────────────────────────────
-        let input_inner_h = vertical[3].height.saturating_sub(2);
+        let input_inner_h = input_h;
         let input_inner = Rect {
             x: inner.x,
-            y: inner.y.saturating_add(vertical[2].height),
+            y: inner.y.saturating_add(queue_h),
             width: inner.width,
             height: input_inner_h,
         };
@@ -136,7 +129,7 @@ impl RuntimeCoordinator {
         let input_div_y = bottom_box_rect
             .y
             .saturating_add(1)
-            .saturating_add(vertical[2].height)
+            .saturating_add(queue_h)
             .saturating_add(input_inner_h);
         draw_divider(frame, input_div_y);
 
@@ -210,7 +203,7 @@ impl RuntimeCoordinator {
                 let y = bottom_box_rect
                     .y
                     .saturating_add(1) // top border
-                    .saturating_add(vertical[2].height) // queue section
+                    .saturating_add(queue_h) // queue section
                     .saturating_add(row as u16)
                     .min(input_div_y.saturating_sub(1)); // clamp to last input row
                 frame.set_cursor_position(ratatui::layout::Position { x: x.min(max_x), y });
@@ -244,7 +237,7 @@ impl RuntimeCoordinator {
             x: inner.x.saturating_add(1),
             y: input_div_y.saturating_add(1),
             width: inner.width.saturating_sub(2),
-            height: 1,
+            height: status_h,
         };
         let status_inner_2 = Rect {
             y: status_inner.y.saturating_add(1),

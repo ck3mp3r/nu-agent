@@ -459,7 +459,7 @@ pub(crate) fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserA
                 if state.insert_exit_pending_j() {
                     state.clear_insert_exit_pending_j();
                     state.enter_normal_mode();
-                    (UserAction::Noop, true)
+                    (UserAction::EnterNormalModeFromChord, true)
                 } else {
                     state.set_insert_exit_pending_j();
                     (UserAction::InsertChar('j'), true) // force_changed: j/k chord tracking modifies state
@@ -469,7 +469,7 @@ pub(crate) fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserA
                 if state.insert_exit_pending_j() {
                     state.clear_insert_exit_pending_j();
                     state.enter_normal_mode();
-                    (UserAction::Noop, true)
+                    (UserAction::EnterNormalModeFromChord, true)
                 } else {
                     state.clear_insert_exit_pending_j();
                     (UserAction::InsertChar('k'), true) // force_changed: j/k chord tracking modifies state

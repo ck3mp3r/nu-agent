@@ -2952,7 +2952,7 @@ fn permission_prompt_does_not_open_global_dimmed_modal_backdrop() {
         scope: "nested".to_string(),
         pattern: "*".to_string(),
         target_field: Some("command".to_string()),
-        summary: "tool[nu__run] → {\"command\":\"echo hi\"}".to_string(),
+        summary: "→ {\"command\":\"echo hi\"}".to_string(),
     });
 
     assert!(!super::modal_open_state_applies_dimmed_backdrop_for_test(

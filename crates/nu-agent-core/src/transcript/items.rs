@@ -194,17 +194,6 @@ impl TranscriptEntry {
     }
 }
 
-/// Parse "tool[name] → ..." format into (name, args)
-pub fn parse_tool_text(text: &str) -> (String, String) {
-    if let Some(rest) = text.strip_prefix("tool[")
-        && let Some((name, tail)) = rest.split_once(']')
-    {
-        return (name.to_string(), tail.trim().to_string());
-    }
-    (text.to_string(), String::new())
-}
-
-/// Annotate a line of text with diff-style StyleHint
 pub fn annotate_diff_hint(text: &str) -> StyleHint {
     let trimmed = text.trim_start();
     if trimmed.starts_with("@@ ") {

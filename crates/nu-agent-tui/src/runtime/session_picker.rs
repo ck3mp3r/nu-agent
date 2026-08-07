@@ -25,7 +25,6 @@ pub(super) fn session_picker_table_model(
     let now = chrono::Utc::now();
     let rows: Vec<Vec<String>> = options
         .iter()
-        .take(available_rows)
         .map(|option| {
             let relative = relative_timestamp(option.created_at, now);
             let title = option.title.as_deref().unwrap_or("(untitled)").to_string();

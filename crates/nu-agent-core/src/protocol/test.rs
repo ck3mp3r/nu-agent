@@ -263,7 +263,7 @@ fn ui_event_contract_exposes_required_variants() {
                 scope: "nested".to_string(),
                 target_field: Some("command".to_string()),
                 pattern: "*".to_string(),
-                summary: "tool[nu__run] → {\"command\":\"echo hi\"}".to_string(),
+                summary: "→ {\"command\":\"echo hi\"}".to_string(),
                 pre_authorize_display: None,
             },
         },
@@ -322,7 +322,7 @@ fn permission_event_field_shape_is_explicit_and_stable() {
             scope: "nested".to_string(),
             target_field: Some("command".to_string()),
             pattern: "*".to_string(),
-            summary: "tool[nu__run] → {\"command\":\"echo hi\"}".to_string(),
+            summary: "→ {\"command\":\"echo hi\"}".to_string(),
             pre_authorize_display: None,
         },
     };
@@ -339,7 +339,7 @@ fn permission_event_field_shape_is_explicit_and_stable() {
             assert_eq!(context.scope, "nested");
             assert_eq!(context.target_field.as_deref(), Some("command"));
             assert_eq!(context.pattern, "*");
-            assert!(context.summary.starts_with("tool[nu__run] → "));
+            assert!(context.summary.starts_with("→ "));
             assert!(context.pre_authorize_display.is_none());
         }
         other => panic!("unexpected variant: {other:?}"),
@@ -399,7 +399,7 @@ fn request_with_id(request_id: &str) -> PermissionRequest {
             scope: "nested".to_string(),
             target_field: Some("command".to_string()),
             pattern: "*".to_string(),
-            summary: "tool[nu__run] → {\"command\":\"echo hi\"}".to_string(),
+            summary: "→ {\"command\":\"echo hi\"}".to_string(),
             pre_authorize_display: None,
         },
     }

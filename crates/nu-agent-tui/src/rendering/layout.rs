@@ -1,7 +1,7 @@
 pub const SIDE_PANE_COLLAPSE_COLUMNS: u16 = 120;
 pub const INPUT_PROMPT_WIDTH: u16 = 2;
-pub const INPUT_MIN_HEIGHT: u16 = 3;
-pub const INPUT_MAX_HEIGHT: u16 = 8;
+pub const INPUT_MIN_HEIGHT: u16 = 1;
+pub const INPUT_MAX_HEIGHT: u16 = 6;
 pub const MAIN_SIDE_MARGIN: u16 = 2;
 
 const MIN_MAIN_COLUMNS: u16 = 72;
@@ -74,8 +74,7 @@ pub fn input_content_row_count(input: &str, content_width: usize) -> u16 {
 pub fn input_pane_height_for_content(input: &str, pane_width: u16) -> u16 {
     let content_width = pane_width.saturating_sub(4).max(1) as usize;
     let content_rows = input_content_row_count(input, content_width);
-    let desired = content_rows.saturating_add(2);
-    desired.clamp(INPUT_MIN_HEIGHT, INPUT_MAX_HEIGHT)
+    content_rows.clamp(INPUT_MIN_HEIGHT, INPUT_MAX_HEIGHT)
 }
 
 pub fn input_cursor_row_col(input: &str, cursor: usize, content_width: usize) -> (u16, u16) {
