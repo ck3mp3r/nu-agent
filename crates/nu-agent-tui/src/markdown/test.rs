@@ -763,3 +763,74 @@ fn render_markdown_lines_tags_code_keyword() {
     });
     assert!(has_keyword, "should contain MdCodeKeyword span");
 }
+#[test]
+fn inline_math_renders_latex_arrow_as_unicode() {
+    let lines = project_markdown_to_lines("model $\\rightarrow$ model", None);
+    let text: String = lines
+        .iter()
+        .flat_map(|l| l.spans.iter())
+        .map(|s| s.text.as_str())
+        .collect();
+    assert!(text.contains("→"));
+    assert!(!text.contains("\\rightarrow"));
+}
+
+#[test]
+fn inline_math_renders_leq_as_unicode() {
+    let lines = project_markdown_to_lines("$x \\leq y$", None);
+    let text: String = lines
+        .iter()
+        .flat_map(|l| l.spans.iter())
+        .map(|s| s.text.as_str())
+        .collect();
+    assert!(text.contains("≤"));
+}
+
+#[test]
+fn display_math_renders_on_own_line() {
+    let lines = project_markdown_to_lines("$$\\sum_{i=0}^{n} x_i$$", None);
+    let text: String = lines
+        .iter()
+        .flat_map(|l| l.spans.iter())
+        .map(|s| s.text.as_str())
+        .collect();
+    assert!(text.contains("∑"));
+}
+
+#[test]
+fn unknown_latex_passes_through() {
+    let lines = project_markdown_to_lines("$\\foobar$", None);
+    let text: String = lines
+        .iter()
+        .flat_map(|l| l.spans.iter())
+        .map(|s| s.text.as_str())
+        .collect();
+    assert!(text.contains("\\foobar"));
+}
+
+#[test]
+fn plain_math_renders_as_text() {
+    let lines = project_markdown_to_lines("$5$", None);
+    let text: String = lines
+        .iter()
+        .flat_map(|l| l.spans.iter())
+        .map(|s| s.text.as_str())
+        .collect();
+    assert!(text.contains("5"));
+    assert!(!text.contains("$"));
+}
+
+#[test]
+fn inline_math_int_not_corrupted_by_in() {
+    let lines = project_markdown_to_lines("$\\int_0^1 x \\, dx$", None);
+    let text: String = lines
+        .iter()
+        .flat_map(|l| l.spans.iter())
+        .map(|s| s.text.as_str())
+        .collect();
+    assert!(
+        text.contains("∫"),
+        "integral should render as ∫, got: {text}"
+    );
+    assert!(!text.contains("∈t"), "int was corrupted by in prefix match");
+}
