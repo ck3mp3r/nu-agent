@@ -106,6 +106,11 @@ impl SlashStage {
                     handled = true;
                     continue;
                 }
+                SlashParseResult::Command(SlashCommand::Theme) => {
+                    let _ = ctx.ui.execute_shared_ui_action(SharedUiAction::Themes);
+                    handled = true;
+                    continue;
+                }
                 SlashParseResult::Unknown(command) => {
                     ctx.ui.emit(&UiEvent::Warning {
                         message: format!("Unknown slash command: {command}"),

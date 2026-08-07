@@ -500,6 +500,84 @@ impl AppState {
     }
 }
 
+impl AppState {
+    pub fn set_theme_picker_options(&mut self, options: Vec<ThemePickerOption>) {
+        self.theme_picker_options = options;
+        self.ensure_invariants();
+    }
+
+    pub fn open_theme_picker(&mut self) {
+        self.close_command_palette();
+        self.close_info_panel();
+        self.theme_picker_open = true;
+        self.theme_picker_selection = 0;
+        self.ensure_invariants();
+    }
+
+    pub fn close_theme_picker(&mut self) {
+        self.theme_picker_open = false;
+        self.theme_picker_selection = 0;
+        self.ensure_invariants();
+    }
+
+    pub fn theme_picker_close_on_escape(&mut self) {
+        self.close_theme_picker();
+    }
+
+    pub fn theme_picker_move_up(&mut self) {
+        let count = self.theme_picker_options.len();
+        if count == 0 {
+            return;
+        }
+        if self.theme_picker_selection == 0 {
+            self.theme_picker_selection = count - 1;
+        } else {
+            self.theme_picker_selection -= 1;
+        }
+    }
+
+    pub fn theme_picker_move_down(&mut self) {
+        let count = self.theme_picker_options.len();
+        if count == 0 {
+            return;
+        }
+        self.theme_picker_selection = (self.theme_picker_selection + 1) % count;
+    }
+
+    pub fn selected_theme_picker_option(&self) -> Option<&ThemePickerOption> {
+        self.theme_picker_options.get(self.theme_picker_selection)
+    }
+
+    pub fn queue_theme_picker_launch_request(&mut self) {
+        self.pending_theme_picker_launch_requests =
+            self.pending_theme_picker_launch_requests.saturating_add(1);
+        self.abort.pending = false;
+        self.ensure_invariants();
+    }
+
+    pub fn take_next_theme_picker_launch_request(&mut self) -> bool {
+        if self.pending_theme_picker_launch_requests > 0 {
+            self.pending_theme_picker_launch_requests -= 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn queue_selected_theme_switch_request(&mut self) -> bool {
+        let Some(option) = self.selected_theme_picker_option() else {
+            return false;
+        };
+        self.pending_theme_switch_requests
+            .push_back(option.name.clone());
+        true
+    }
+
+    pub fn take_next_theme_switch_request(&mut self) -> Option<String> {
+        self.pending_theme_switch_requests.pop_front()
+    }
+}
+
 fn fuzzy_matches(query: &str, candidate: &str) -> bool {
     if query.is_empty() {
         return true;

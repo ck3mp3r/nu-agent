@@ -95,12 +95,13 @@ use crate::{
         transport::{TransportItem, TuiTransport},
     },
     rendering::{
-        layout::{INPUT_MAX_HEIGHT, INPUT_MIN_HEIGHT},
-        theme::TuiTheme,
+        layout::{INPUT_MAX_HEIGHT, INPUT_MIN_HEIGHT, MAIN_SIDE_MARGIN},
+        theme::{ThemeName, TuiTheme},
     },
     state::{
         AppState, CompactionStatus, InfoPanel, InputMode, McpServerState, McpServerUsabilityState,
-        McpToggleRequest, ModelPickerOption, TranscriptLineStatus, TranscriptRole,
+        McpToggleRequest, ModelPickerOption, ThemePickerOption, TranscriptLineStatus,
+        TranscriptRole,
     },
 };
 use nu_agent_core::protocol::contracts::{SharedUiAction, UiMessageSnapshot};
@@ -128,6 +129,7 @@ pub struct RuntimeCoordinator {
     input_watchdog_timeout: Duration,
     repo_branch_tracker: Option<status::RepoBranchTracker>,
     theme: TuiTheme,
+    theme_name: ThemeName,
     render_needed: bool,
     last_render_at: Instant,
     textarea: ratatui_textarea::TextArea<'static>,
@@ -235,7 +237,6 @@ impl RuntimeCoordinator {
             self.state.hydrate_latest_total_tokens(tokens);
         }
     }
-
     fn new_with_watchdog(
         _columns: u16,
         _rows: u16,
@@ -243,6 +244,7 @@ impl RuntimeCoordinator {
         input_watchdog_timeout: Duration,
     ) -> Self {
         let side_pane_visible = Some(false);
+        let theme = TuiTheme::default();
         let mut coordinator = Self {
             state: AppState::new(),
             transport: TuiTransport::new(),
@@ -258,15 +260,16 @@ impl RuntimeCoordinator {
             input_watchdog_started_at: Instant::now(),
             input_watchdog_timeout,
             repo_branch_tracker: None,
-            theme: TuiTheme::default(),
+            theme: theme.clone(),
+            theme_name: ThemeName::default(),
             render_needed: true,
             last_render_at: Instant::now() - Duration::from_millis(100),
             textarea: ratatui_textarea::TextArea::default(),
         };
+        coordinator.state.theme = theme;
         coordinator.sync_transcript_viewport_lines_with_layout();
         coordinator
     }
-
     pub(crate) fn display_incoming_message(&mut self, text: &str) {
         self.state.enqueue_external_prompt(text.to_string());
     }
@@ -285,6 +288,14 @@ impl RuntimeCoordinator {
 
     pub(crate) fn take_next_session_picker_launch_request(&mut self) -> bool {
         self.state.take_next_session_picker_launch_request()
+    }
+
+    pub(crate) fn take_next_theme_picker_launch_request(&mut self) -> bool {
+        self.state.take_next_theme_picker_launch_request()
+    }
+
+    pub(crate) fn take_next_theme_switch_request(&mut self) -> Option<String> {
+        self.state.take_next_theme_switch_request()
     }
 
     pub(crate) fn take_next_agent_switch_request(&mut self) -> Option<String> {
@@ -918,6 +929,26 @@ impl RuntimeCoordinator {
                 self.state.open_session_picker();
                 true
             }
+            SharedUiAction::Themes => {
+                let current = ThemeName::all()
+                    .into_iter()
+                    .find(|name| name.resolve() == self.state.theme)
+                    .unwrap_or_default();
+                let options = ThemeName::all()
+                    .into_iter()
+                    .map(|name| ThemePickerOption {
+                        name: format!("{name:?}"),
+                        display_name: match name {
+                            ThemeName::CatppuccinMocha => "Catppuccin Mocha".to_string(),
+                            ThemeName::CatppuccinLatte => "Catppuccin Latte".to_string(),
+                        },
+                        active: name == current,
+                    })
+                    .collect();
+                self.state.set_theme_picker_options(options);
+                self.state.open_theme_picker();
+                true
+            }
         }
     }
 
@@ -1063,6 +1094,17 @@ impl RuntimeCoordinator {
             );
         }
 
+        // Apply any queued theme switch requests
+        while let Some(name) = self.take_next_theme_switch_request() {
+            if let Some(theme_name) = ThemeName::from_name(&name) {
+                self.theme_name = theme_name;
+                self.theme = theme_name.resolve();
+                self.state.theme = self.theme.clone();
+                self.state.clear_assistant_projection_cache();
+                self.state.entry_visual_info_dirty = true;
+            }
+        }
+
         self.mark_render_needed();
     }
 
@@ -1090,11 +1132,8 @@ impl RuntimeCoordinator {
         sel_end: usize,
         effective_offset: usize,
         viewport_height: usize,
+        selection_style: ratatui::style::Style,
     ) {
-        let highlight_style = ratatui::style::Style::default()
-            .bg(ratatui::style::Color::DarkGray)
-            .add_modifier(ratatui::style::Modifier::REVERSED);
-
         for vis_row in sel_start..=sel_end {
             if vis_row >= effective_offset && vis_row < effective_offset + viewport_height {
                 let row_y = (vis_row - effective_offset) as u16;
@@ -1103,7 +1142,7 @@ impl RuntimeCoordinator {
                     if let Some(cell) =
                         buffer.cell_mut(ratatui::layout::Position { x, y: row_screen_y })
                     {
-                        cell.set_style(highlight_style);
+                        cell.set_style(selection_style);
                     }
                 }
             }
@@ -1142,7 +1181,7 @@ impl RuntimeCoordinator {
                 };
 
                 let main = horizontal[0];
-                let side_margin = if main.width >= 8 { 2 } else { 0 };
+                let side_margin = if main.width >= 8 { MAIN_SIDE_MARGIN } else { 0 };
                 let content_main = main.inner(Margin {
                     vertical: 0,
                     horizontal: side_margin,
@@ -1244,6 +1283,10 @@ impl RuntimeCoordinator {
 
                 if self.state.session_picker_open {
                     self.render_session_picker(frame, area);
+                }
+
+                if self.state.theme_picker_open {
+                    self.render_theme_picker(frame, area);
                 }
             })
             .map_err(|err| format!("TUI render failed: {err}"))?;

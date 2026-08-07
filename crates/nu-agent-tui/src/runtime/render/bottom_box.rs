@@ -164,7 +164,7 @@ impl RuntimeCoordinator {
             }
             // Render inline slash suggestions above TextArea
             if self.state.inline_slash_open {
-                let slash_lines = inline_slash_lines_for_render(&self.state);
+                let slash_lines = inline_slash_lines_for_render(&self.state, &self.theme);
                 if !slash_lines.is_empty() {
                     let content_height = slash_lines.len() as u16;
                     let total_height = content_height + 2;

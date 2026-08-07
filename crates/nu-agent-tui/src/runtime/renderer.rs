@@ -234,6 +234,10 @@ where
         self.coordinator.take_next_session_picker_launch_request()
     }
 
+    pub(crate) fn take_next_theme_picker_launch_request(&mut self) -> bool {
+        self.coordinator.take_next_theme_picker_launch_request()
+    }
+
     pub(crate) fn take_next_agent_switch_request(&mut self) -> Option<String> {
         self.coordinator.take_next_agent_switch_request()
     }

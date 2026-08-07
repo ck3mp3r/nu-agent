@@ -206,6 +206,10 @@ fn handle_submit(state: &mut AppState) -> bool {
             }
             return true;
         }
+        SlashParseResult::Command(nu_agent_core::protocol::slash::SlashCommand::Theme) => {
+            state.queue_theme_picker_launch_request();
+            return true;
+        }
         SlashParseResult::Command(_) | SlashParseResult::Unknown(_) => {
             state.enqueue_immediate_submission(submitted_text);
             return true;
@@ -403,6 +407,12 @@ fn handle_command_palette_select(state: &mut AppState) -> bool {
         if action == crate::state::CommandPaletteAction::Sessions {
             state.close_command_palette();
             state.queue_session_picker_launch_request();
+            return true;
+        }
+
+        if action == crate::state::CommandPaletteAction::Theme {
+            state.close_command_palette();
+            state.queue_theme_picker_launch_request();
             return true;
         }
 

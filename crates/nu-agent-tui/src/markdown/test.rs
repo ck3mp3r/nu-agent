@@ -1,7 +1,4 @@
-use ratatui::{
-    style::{Color, Modifier},
-    text::Line,
-};
+use nu_agent_core::transcript::ir::StyleHint;
 
 use crate::{
     markdown::project_markdown_to_lines,
@@ -9,34 +6,29 @@ use crate::{
     test_support::markdown_fixture,
 };
 
-const CTP_MOCHA_YELLOW: Color = Color::Rgb(249, 226, 175);
-const CTP_MOCHA_GREEN: Color = Color::Rgb(166, 227, 161);
-const CTP_MOCHA_BLUE: Color = Color::Rgb(137, 180, 250);
-const CTP_MOCHA_MAUVE: Color = Color::Rgb(203, 166, 247);
-
-fn plain_line(line: &Line<'_>) -> String {
+fn plain_line(line: &nu_agent_core::transcript::ir::ContentLine) -> String {
     line.spans
         .iter()
-        .map(|span| span.content.as_ref())
+        .map(|span| span.text.as_str())
         .collect::<String>()
 }
 
 fn plain_lines(markdown: &str) -> Vec<String> {
-    project_markdown_to_lines(markdown, None, &TuiTheme::default())
+    project_markdown_to_lines(markdown, None)
         .into_iter()
         .map(|line| plain_line(&line))
         .collect::<Vec<_>>()
 }
 
-fn line_has_color(line: &Line<'_>, color: Color) -> bool {
-    line.spans.iter().any(|span| span.style.fg == Some(color))
+fn line_has_code_hint(line: &nu_agent_core::transcript::ir::ContentLine, hint: StyleHint) -> bool {
+    line.spans.iter().any(|span| span.hint == hint)
 }
 
-fn line_has_non_default_token_style(line: &Line<'_>) -> bool {
+fn line_has_non_default_token_style(line: &nu_agent_core::transcript::ir::ContentLine) -> bool {
     line.spans
         .iter()
-        .skip_while(|span| span.content.as_ref() == "    ")
-        .any(|span| span.style != Default::default())
+        .skip_while(|span| span.text == "    ")
+        .any(|span| span.hint != StyleHint::Normal)
 }
 
 fn adapter_supports_colored_tokens(language: &str, source: &str) -> bool {
@@ -54,7 +46,7 @@ fn adapter_supports_colored_tokens(language: &str, source: &str) -> bool {
 #[test]
 fn markdown_projection_fixture_supported_basics_renders_lines_and_inline_styles() {
     let markdown = markdown_fixture("supported_basics.md");
-    let lines = project_markdown_to_lines(&markdown, None, &TuiTheme::default());
+    let lines = project_markdown_to_lines(&markdown, None);
     let rendered = lines.iter().map(plain_line).collect::<Vec<_>>();
 
     assert_eq!(rendered, vec!["Title", "", "Paragraph with em strong code"]);
@@ -62,21 +54,22 @@ fn markdown_projection_fixture_supported_basics_renders_lines_and_inline_styles(
         lines[0]
             .spans
             .iter()
-            .all(|span| span.style.add_modifier.contains(Modifier::BOLD))
+            .all(|span| span.hint == StyleHint::MdBold)
     );
 
     let body = &lines[2].spans;
     assert!(
-        body.iter().any(|span| span.content.as_ref() == "em"
-            && span.style.add_modifier.contains(Modifier::ITALIC))
+        body.iter()
+            .any(|span| span.text == "em" && span.hint == StyleHint::MdItalic)
     );
-    assert!(body.iter().any(|span| span.content.as_ref() == "strong"
-        && span.style.add_modifier.contains(Modifier::BOLD)));
-    assert!(body.iter().any(|span| {
-        span.content.as_ref() == "code"
-            && span.style.fg == Some(CTP_MOCHA_YELLOW)
-            && span.style.add_modifier.contains(Modifier::DIM)
-    }));
+    assert!(
+        body.iter()
+            .any(|span| span.text == "strong" && span.hint == StyleHint::MdBold)
+    );
+    assert!(
+        body.iter()
+            .any(|span| { span.text == "code" && span.hint == StyleHint::MdInlineCode })
+    );
 }
 
 #[test]
@@ -102,7 +95,7 @@ fn markdown_projection_fixture_lists_and_blockquote_render_deterministically() {
 #[test]
 fn markdown_projection_fixture_fenced_code_blocks_render_with_and_without_language() {
     let markdown = markdown_fixture("fenced_code_blocks.md");
-    let lines = project_markdown_to_lines(&markdown, None, &TuiTheme::default());
+    let lines = project_markdown_to_lines(&markdown, None);
     let rendered = lines.iter().map(plain_line).collect::<Vec<_>>();
 
     assert!(rendered.contains(&"    fn main() {".to_string()));
@@ -124,8 +117,8 @@ fn markdown_projection_fixture_fenced_code_blocks_render_with_and_without_langua
         .find(|line| plain_line(line) == "    fn main() {")
         .expect("rust line should be present");
     assert!(
-        line_has_color(rust_signature, CTP_MOCHA_MAUVE),
-        "rust keyword should map to syntax keyword color"
+        line_has_code_hint(rust_signature, StyleHint::MdCodeKeyword),
+        "rust keyword should map to syntax keyword hint"
     );
 
     let json_line = lines
@@ -133,8 +126,8 @@ fn markdown_projection_fixture_fenced_code_blocks_render_with_and_without_langua
         .find(|line| plain_line(line).contains("\"nu-agent\""))
         .expect("json line should be present");
     assert!(
-        line_has_color(json_line, CTP_MOCHA_GREEN),
-        "json string token should map to syntax string color"
+        line_has_code_hint(json_line, StyleHint::MdCodeString),
+        "json string token should map to syntax string hint"
     );
 
     let bash_line = lines
@@ -166,8 +159,8 @@ fn markdown_projection_fixture_fenced_code_blocks_render_with_and_without_langua
             toml_line
                 .spans
                 .iter()
-                .all(|span| span.style == Default::default()),
-            "unsupported adapter language should fallback to plain code style"
+                .all(|span| matches!(span.hint, StyleHint::Normal | StyleHint::MdCodePlain)),
+            "unsupported adapter language should fallback to plain code hint"
         );
     }
 
@@ -176,8 +169,8 @@ fn markdown_projection_fixture_fenced_code_blocks_render_with_and_without_langua
         .find(|line| plain_line(line) == "    def greet(name):")
         .expect("python line should be present");
     assert!(
-        line_has_color(python_line, CTP_MOCHA_BLUE),
-        "python function token should map to syntax function color"
+        line_has_code_hint(python_line, StyleHint::MdCodeFunction),
+        "python function token should map to syntax function hint"
     );
 
     let unknown_line = lines
@@ -188,8 +181,8 @@ fn markdown_projection_fixture_fenced_code_blocks_render_with_and_without_langua
         unknown_line
             .spans
             .iter()
-            .all(|span| span.style == Default::default()),
-        "unknown language fences should fallback to plain code style"
+            .all(|span| matches!(span.hint, StyleHint::Normal | StyleHint::MdCodePlain)),
+        "unknown language fences should fallback to plain code hint"
     );
 }
 
@@ -299,8 +292,8 @@ fn markdown_projection_preserves_valid_markdown_fences_while_sanitizing_control_
 fn markdown_projection_renders_table_with_separator_and_bold_header() {
     let markdown =
         "| Commit | Message |\n|--------|--------|\n| abc123 | fix bug |\n| def456 | add feature |";
-    let lines = project_markdown_to_lines(markdown, None, &TuiTheme::default());
-    let plain: Vec<String> = lines.iter().map(|l| plain_line(l)).collect();
+    let lines = project_markdown_to_lines(markdown, None);
+    let plain: Vec<String> = lines.iter().map(plain_line).collect();
 
     assert!(
         plain
@@ -330,15 +323,15 @@ fn markdown_projection_renders_table_with_separator_and_bold_header() {
     let has_bold = header_line
         .spans
         .iter()
-        .any(|s| s.style.add_modifier.contains(Modifier::BOLD));
+        .any(|s| s.hint == StyleHint::MdBold);
     assert!(has_bold, "header cells should be bold");
 }
 
 #[test]
 fn markdown_projection_renders_table_with_aligned_columns() {
     let markdown = "| A | Long Header |\n|---|---|\n| x | y |\n| longer text | z |";
-    let lines = project_markdown_to_lines(markdown, None, &TuiTheme::default());
-    let plain: Vec<String> = lines.iter().map(|l| plain_line(l)).collect();
+    let lines = project_markdown_to_lines(markdown, None);
+    let plain: Vec<String> = lines.iter().map(plain_line).collect();
 
     // Find separator line
     let sep = plain
@@ -364,8 +357,8 @@ fn markdown_projection_table_separator_intersections_align_with_header_bars() {
     let markdown = "| # | Hash    | Date         | Author             | Message |\n\
                     |---|---------|--------------|--------------------|---------|\n\
                     | 0 | 66f1401 | 2026-06-18   | Christian Kemper   | feat(tui): branch icon |";
-    let lines = project_markdown_to_lines(markdown, None, &TuiTheme::default());
-    let plain: Vec<String> = lines.iter().map(|l| plain_line(l)).collect();
+    let lines = project_markdown_to_lines(markdown, None);
+    let plain: Vec<String> = lines.iter().map(plain_line).collect();
 
     let header = plain
         .iter()
@@ -473,8 +466,8 @@ fn table_clamped_when_over_max_width() {
     // 3 cols → 1 + 4*3 = 13 chars. 4 cols → 1 + 4*4 = 17 chars.
     // Use max_width = 16: fits 3 cols (13 ≤ 16) but not 4 (17 > 16).
     let markdown = "| A | B | C | D | E |\n|---|---|---|---|---|\n| 1 | 2 | 3 | 4 | 5 |";
-    let lines = project_markdown_to_lines(markdown, Some(16), &TuiTheme::default());
-    let plain: Vec<String> = lines.iter().map(|l| plain_line(l)).collect();
+    let lines = project_markdown_to_lines(markdown, Some(16));
+    let plain: Vec<String> = lines.iter().map(plain_line).collect();
 
     // Every line must be ≤ max_width characters
     for line in &plain {
@@ -509,8 +502,8 @@ fn table_clamped_when_over_max_width() {
 fn table_always_renders_at_least_one_column() {
     // Even with an impossibly small max_width, at least 1 column must be kept.
     let markdown = "| Alpha | Beta | Gamma |\n|-------|------|-------|\n| a | b | c |";
-    let lines = project_markdown_to_lines(markdown, Some(1), &TuiTheme::default());
-    let plain: Vec<String> = lines.iter().map(|l| plain_line(l)).collect();
+    let lines = project_markdown_to_lines(markdown, Some(1));
+    let plain: Vec<String> = lines.iter().map(plain_line).collect();
 
     // Should still have a top border
     assert!(
@@ -530,8 +523,8 @@ fn table_clamped_columns_have_correct_right_border() {
     // After clamping, the rightmost border chars should be ╮/┤/╯, not ┬/┼/┴.
     let markdown = "| A | B | C | D | E |\n|---|---|---|---|---|\n| 1 | 2 | 3 | 4 | 5 |";
     // max_width=16 → 3 columns
-    let lines = project_markdown_to_lines(markdown, Some(16), &TuiTheme::default());
-    let plain: Vec<String> = lines.iter().map(|l| plain_line(l)).collect();
+    let lines = project_markdown_to_lines(markdown, Some(16));
+    let plain: Vec<String> = lines.iter().map(plain_line).collect();
 
     let top = plain.first().expect("has top border");
     assert!(
@@ -567,8 +560,8 @@ fn markdown_projection_renders_table_with_code_in_cells_correctly() {
 | `README.md` | file | Project readme |
 
 It's a **Rust project** using **Nix flakes** for development/build environment management."#;
-    let lines = project_markdown_to_lines(markdown, None, &TuiTheme::default());
-    let plain: Vec<String> = lines.iter().map(|l| plain_line(l)).collect();
+    let lines = project_markdown_to_lines(markdown, None);
+    let plain: Vec<String> = lines.iter().map(plain_line).collect();
 
     // First column values should NOT appear as a concatenated line before the table
     let first_col_values = ["AGENTS.md", "Cargo.lock", "Formula/", "README.md"];
@@ -639,17 +632,16 @@ It's a **Rust project** using **Nix flakes** for development/build environment m
 // === render_markdown_lines tests ===
 
 use crate::markdown::render_markdown_lines;
-use crate::rendering::theme::TuiTheme;
 use nu_agent_core::transcript::ir::StyleHint as IrStyleHint;
 
 #[test]
 fn render_markdown_lines_empty_input_returns_empty_vec() {
-    assert!(render_markdown_lines("", None, &TuiTheme::default()).is_empty());
+    assert!(render_markdown_lines("", None).is_empty());
 }
 
 #[test]
 fn render_markdown_lines_plain_text_yields_normal_spans() {
-    let lines = render_markdown_lines("hello", None, &TuiTheme::default());
+    let lines = render_markdown_lines("hello", None);
     assert_eq!(lines.len(), 1);
     assert!(
         lines[0]
@@ -663,7 +655,7 @@ fn render_markdown_lines_plain_text_yields_normal_spans() {
 
 #[test]
 fn render_markdown_lines_bold() {
-    let lines = render_markdown_lines("**bold**", None, &TuiTheme::default());
+    let lines = render_markdown_lines("**bold**", None);
     let bold = lines
         .iter()
         .flat_map(|l| l.spans.iter())
@@ -674,7 +666,7 @@ fn render_markdown_lines_bold() {
 
 #[test]
 fn render_markdown_lines_italic() {
-    let lines = render_markdown_lines("*italic*", None, &TuiTheme::default());
+    let lines = render_markdown_lines("*italic*", None);
     let italic = lines
         .iter()
         .flat_map(|l| l.spans.iter())
@@ -685,7 +677,7 @@ fn render_markdown_lines_italic() {
 
 #[test]
 fn render_markdown_lines_inline_code() {
-    let lines = render_markdown_lines("a `code` b", None, &TuiTheme::default());
+    let lines = render_markdown_lines("a `code` b", None);
     let code = lines
         .iter()
         .flat_map(|l| l.spans.iter())
@@ -696,7 +688,7 @@ fn render_markdown_lines_inline_code() {
 
 #[test]
 fn render_markdown_lines_fenced_code_block() {
-    let lines = render_markdown_lines("```rust\nfn x() {}\n```", None, &TuiTheme::default());
+    let lines = render_markdown_lines("```rust\nfn x() {}\n```", None);
     assert!(!lines.is_empty());
     let has_code = lines.iter().flat_map(|l| l.spans.iter()).any(|s| {
         matches!(
@@ -723,7 +715,7 @@ fn render_markdown_lines_fenced_code_block() {
 
 #[test]
 fn render_markdown_lines_collapses_consecutive_blank_lines() {
-    let lines = render_markdown_lines("first\n\n\nlast", None, &TuiTheme::default());
+    let lines = render_markdown_lines("first\n\n\nlast", None);
     // Should have: "first", blank, "last" (consecutive blanks collapsed to one)
     assert_eq!(lines.len(), 3);
     assert!(!lines[0].spans.is_empty()); // "first"
@@ -733,7 +725,7 @@ fn render_markdown_lines_collapses_consecutive_blank_lines() {
 
 #[test]
 fn render_markdown_lines_no_leading_trailing_blanks() {
-    let lines = render_markdown_lines("\n\nhello\n\n", None, &TuiTheme::default());
+    let lines = render_markdown_lines("\n\nhello\n\n", None);
     assert_eq!(lines.len(), 1);
     assert!(!lines[0].spans.is_empty());
 }
@@ -761,22 +753,13 @@ fn markdown_table_with_emoji_aligns_right_border_correctly() {
 }
 
 #[test]
-fn render_markdown_lines_uses_passed_theme() {
-    use ratatui::style::{Color, Style};
-
-    let theme = TuiTheme {
-        syntax_keyword: Style::default().fg(Color::Red),
-        ..TuiTheme::default()
-    };
-    let lines = render_markdown_lines("```rust\nfn x() {}\n```", None, &theme);
+fn render_markdown_lines_tags_code_keyword() {
+    let lines = render_markdown_lines("```rust\nfn x() {}\n```", None);
     let has_keyword = lines.iter().flat_map(|l| l.spans.iter()).any(|s| {
         matches!(
             s.hint,
             nu_agent_core::transcript::ir::StyleHint::MdCodeKeyword
         )
     });
-    assert!(
-        has_keyword,
-        "should contain MdCodeKeyword span with custom theme"
-    );
+    assert!(has_keyword, "should contain MdCodeKeyword span");
 }

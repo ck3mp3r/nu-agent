@@ -1,18 +1,34 @@
 use ratatui::style::{Color, Modifier, Style};
 
-const CTP_MOCHA_RED: Color = Color::Rgb(243, 139, 168);
-const CTP_MOCHA_YELLOW: Color = Color::Rgb(249, 226, 175);
-const CTP_MOCHA_GREEN: Color = Color::Rgb(166, 227, 161);
-const CTP_MOCHA_BLUE: Color = Color::Rgb(137, 180, 250);
-const CTP_MOCHA_SAPPHIRE: Color = Color::Rgb(116, 199, 236);
-const CTP_MOCHA_LAVENDER: Color = Color::Rgb(180, 190, 254);
-const CTP_MOCHA_MAUVE: Color = Color::Rgb(203, 166, 247);
-const CTP_MOCHA_PEACH: Color = Color::Rgb(250, 179, 135);
-const CTP_MOCHA_OVERLAY0: Color = Color::Rgb(108, 112, 134);
-const CTP_MOCHA_OVERLAY1: Color = Color::Rgb(127, 132, 156);
-const CTP_MOCHA_SURFACE1: Color = Color::Rgb(69, 71, 90);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ThemeName {
+    #[default]
+    CatppuccinMocha,
+    CatppuccinLatte,
+}
 
-#[derive(Debug, Clone)]
+impl ThemeName {
+    pub fn resolve(&self) -> TuiTheme {
+        match self {
+            ThemeName::CatppuccinMocha => TuiTheme::catppuccin_mocha(),
+            ThemeName::CatppuccinLatte => TuiTheme::catppuccin_latte(),
+        }
+    }
+
+    pub fn all() -> [ThemeName; 2] {
+        [ThemeName::CatppuccinMocha, ThemeName::CatppuccinLatte]
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "CatppuccinMocha" | "catppuccin-mocha" => Some(Self::CatppuccinMocha),
+            "CatppuccinLatte" | "catppuccin-latte" => Some(Self::CatppuccinLatte),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TuiTheme {
     pub focus: Style,
     pub subtle_meta: Style,
@@ -33,6 +49,7 @@ pub struct TuiTheme {
     pub lane_prefix_tool: Style,
     pub lane_prefix_system: Style,
     pub row_user: Style,
+    pub row_user_bg: Color,
     pub row_assistant: Style,
     pub row_tool: Style,
     pub row_system: Style,
@@ -63,48 +80,129 @@ fn fg_dim(color: Color) -> Style {
     fg(color).add_modifier(Modifier::DIM)
 }
 
-impl Default for TuiTheme {
-    fn default() -> Self {
+impl TuiTheme {
+    pub fn catppuccin_mocha() -> Self {
+        const RED: Color = Color::Rgb(243, 139, 168);
+        const YELLOW: Color = Color::Rgb(249, 226, 175);
+        const GREEN: Color = Color::Rgb(166, 227, 161);
+        const BLUE: Color = Color::Rgb(137, 180, 250);
+        const SAPPHIRE: Color = Color::Rgb(116, 199, 236);
+        const LAVENDER: Color = Color::Rgb(180, 190, 254);
+        const MAUVE: Color = Color::Rgb(203, 166, 247);
+        const PEACH: Color = Color::Rgb(250, 179, 135);
+        const OVERLAY0: Color = Color::Rgb(108, 112, 134);
+        const OVERLAY1: Color = Color::Rgb(127, 132, 156);
+        #[expect(dead_code)]
+        const SURFACE0: Color = Color::Rgb(57, 58, 73);
+        const SURFACE1: Color = Color::Rgb(69, 71, 90);
+        const USER_BG: Color = Color::Rgb(38, 38, 55);
         Self {
-            focus: fg(CTP_MOCHA_SAPPHIRE),
-            subtle_meta: fg(CTP_MOCHA_OVERLAY1),
-            input_prompt: fg(CTP_MOCHA_BLUE),
+            focus: fg(SAPPHIRE),
+            subtle_meta: fg(OVERLAY1),
+            input_prompt: fg(BLUE),
             input_text: Style::default(),
-            selection_bg: Style::default().bg(CTP_MOCHA_SURFACE1),
+            selection_bg: Style::default().bg(SURFACE1),
             cancelled_modifier: Modifier::CROSSED_OUT,
-            role_user: fg(CTP_MOCHA_BLUE),
-            role_assistant: fg(CTP_MOCHA_LAVENDER),
-            role_system: fg(CTP_MOCHA_YELLOW),
-            role_compaction: fg(CTP_MOCHA_OVERLAY1),
-            lane_prefix_compaction: fg_dim(CTP_MOCHA_OVERLAY1),
+            role_user: fg(LAVENDER),
+            role_assistant: fg(LAVENDER),
+            role_system: fg(YELLOW),
+            role_compaction: fg(OVERLAY1),
+            lane_prefix_compaction: fg_dim(OVERLAY1),
             row_compaction: Style::default(),
-            role_tool: fg(CTP_MOCHA_MAUVE),
-            role_separator: fg(CTP_MOCHA_OVERLAY0),
-            lane_prefix_user: fg_dim(CTP_MOCHA_BLUE),
-            lane_prefix_assistant: fg_dim(CTP_MOCHA_LAVENDER),
-            lane_prefix_tool: fg_dim(CTP_MOCHA_MAUVE),
-            lane_prefix_system: fg_dim(CTP_MOCHA_YELLOW),
+            role_tool: fg(MAUVE),
+            role_separator: fg(OVERLAY0),
+            lane_prefix_user: fg_dim(BLUE),
+            lane_prefix_assistant: fg_dim(LAVENDER),
+            lane_prefix_tool: fg_dim(MAUVE),
+            lane_prefix_system: fg_dim(YELLOW),
             row_user: Style::default(),
+            row_user_bg: USER_BG,
             row_assistant: Style::default(),
             row_tool: Style::default(),
             row_system: Style::default(),
-            tool_meta: fg_dim(CTP_MOCHA_OVERLAY1),
-            status_queued: fg(CTP_MOCHA_OVERLAY0),
-            status_running: fg(CTP_MOCHA_SAPPHIRE),
-            status_done: fg(CTP_MOCHA_GREEN),
-            status_failed: fg(CTP_MOCHA_RED),
-            status_cancelled: fg(CTP_MOCHA_OVERLAY0),
-            inline_code: fg_dim(CTP_MOCHA_YELLOW),
-            syntax_keyword: fg(CTP_MOCHA_MAUVE),
-            syntax_type: fg(CTP_MOCHA_YELLOW),
-            syntax_function: fg(CTP_MOCHA_BLUE),
-            syntax_variable: fg(CTP_MOCHA_LAVENDER),
-            syntax_constant: fg(CTP_MOCHA_RED),
-            syntax_string: fg(CTP_MOCHA_GREEN),
-            syntax_number: fg(CTP_MOCHA_PEACH),
-            syntax_operator: fg(CTP_MOCHA_SAPPHIRE),
-            syntax_punctuation: fg(CTP_MOCHA_OVERLAY1),
-            syntax_comment: fg_dim(CTP_MOCHA_OVERLAY0),
+            tool_meta: fg_dim(OVERLAY1),
+            status_queued: fg(OVERLAY0),
+            status_running: fg(SAPPHIRE),
+            status_done: fg(GREEN),
+            status_failed: fg(RED),
+            status_cancelled: fg(OVERLAY0),
+            inline_code: fg_dim(YELLOW),
+            syntax_keyword: fg(MAUVE),
+            syntax_type: fg(YELLOW),
+            syntax_function: fg(BLUE),
+            syntax_variable: fg(LAVENDER),
+            syntax_constant: fg(RED),
+            syntax_string: fg(GREEN),
+            syntax_number: fg(PEACH),
+            syntax_operator: fg(SAPPHIRE),
+            syntax_punctuation: fg(OVERLAY1),
+            syntax_comment: fg_dim(OVERLAY0),
         }
+    }
+
+    pub fn catppuccin_latte() -> Self {
+        const RED: Color = Color::Rgb(210, 15, 57);
+        const YELLOW: Color = Color::Rgb(223, 142, 29);
+        const GREEN: Color = Color::Rgb(64, 160, 43);
+        const BLUE: Color = Color::Rgb(30, 102, 245);
+        const SAPPHIRE: Color = Color::Rgb(32, 159, 181);
+        const LAVENDER: Color = Color::Rgb(114, 135, 253);
+        const MAUVE: Color = Color::Rgb(136, 57, 239);
+        const PEACH: Color = Color::Rgb(254, 100, 11);
+        const OVERLAY0: Color = Color::Rgb(156, 160, 176);
+        const OVERLAY1: Color = Color::Rgb(140, 143, 161);
+        #[expect(dead_code)]
+        const SURFACE0: Color = Color::Rgb(204, 208, 218);
+        const SURFACE1: Color = Color::Rgb(188, 192, 204);
+        const USER_BG: Color = Color::Rgb(228, 230, 236);
+
+        Self {
+            focus: fg(SAPPHIRE),
+            subtle_meta: fg(OVERLAY1),
+            input_prompt: fg(BLUE),
+            input_text: Style::default(),
+            selection_bg: Style::default().bg(SURFACE1),
+            cancelled_modifier: Modifier::CROSSED_OUT,
+            role_user: fg(LAVENDER),
+            role_assistant: fg(LAVENDER),
+            role_system: fg(YELLOW),
+            role_compaction: fg(OVERLAY1),
+            lane_prefix_compaction: fg_dim(OVERLAY1),
+            row_compaction: Style::default(),
+            role_tool: fg(MAUVE),
+            role_separator: fg(OVERLAY0),
+            lane_prefix_user: fg_dim(BLUE),
+            lane_prefix_assistant: fg_dim(LAVENDER),
+            lane_prefix_tool: fg_dim(MAUVE),
+            lane_prefix_system: fg_dim(YELLOW),
+            row_user: Style::default(),
+            row_user_bg: USER_BG,
+            row_assistant: Style::default(),
+            row_tool: Style::default(),
+            row_system: Style::default(),
+            tool_meta: fg_dim(OVERLAY1),
+            status_queued: fg(OVERLAY0),
+            status_running: fg(SAPPHIRE),
+            status_done: fg(GREEN),
+            status_failed: fg(RED),
+            status_cancelled: fg(OVERLAY0),
+            inline_code: fg_dim(YELLOW),
+            syntax_keyword: fg(MAUVE),
+            syntax_type: fg(YELLOW),
+            syntax_function: fg(BLUE),
+            syntax_variable: fg(LAVENDER),
+            syntax_constant: fg(RED),
+            syntax_string: fg(GREEN),
+            syntax_number: fg(PEACH),
+            syntax_operator: fg(SAPPHIRE),
+            syntax_punctuation: fg(OVERLAY1),
+            syntax_comment: fg_dim(OVERLAY0),
+        }
+    }
+}
+
+impl Default for TuiTheme {
+    fn default() -> Self {
+        Self::catppuccin_mocha()
     }
 }

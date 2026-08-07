@@ -2,7 +2,7 @@ pub const SIDE_PANE_COLLAPSE_COLUMNS: u16 = 120;
 pub const INPUT_PROMPT_WIDTH: u16 = 2;
 pub const INPUT_MIN_HEIGHT: u16 = 1;
 pub const INPUT_MAX_HEIGHT: u16 = 6;
-pub const MAIN_SIDE_MARGIN: u16 = 2;
+pub const MAIN_SIDE_MARGIN: u16 = 1;
 
 const MIN_MAIN_COLUMNS: u16 = 72;
 const MIN_SIDE_COLUMNS: u16 = 24;

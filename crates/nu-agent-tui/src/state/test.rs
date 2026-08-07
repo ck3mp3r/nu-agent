@@ -1,4 +1,3 @@
-use crate::rendering::theme::TuiTheme;
 use crate::state::{
     AgentPickerOption, AppState, CommandPaletteAction, InputMode, McpServerUsabilityState,
     ModelPickerOption, PaneFocus, PermissionPrompt, PromptStatus, ToolCallStatus,
@@ -174,20 +173,22 @@ fn input_cursor_and_edit_operations_handle_middle_insert_delete_and_backspace() 
 }
 
 #[test]
-fn turn_separator_is_inserted_between_user_and_assistant_turns() {
+fn no_turn_separator_between_user_and_assistant() {
     let mut state = AppState::new();
 
     state.push_transcript_line(TranscriptRole::User, "prompt one");
     state.push_transcript_line(TranscriptRole::Assistant, "response one");
 
-    assert_eq!(state.transcript_preview.len(), 3);
+    // No ruler separator; two spacers (blank lines) separate the turns
+    assert_eq!(state.transcript_preview.len(), 4);
     assert_eq!(state.transcript_preview[0].role(), Role::User);
-    assert_eq!(state.transcript_preview[1].role(), Role::Separator);
-    assert_eq!(state.transcript_preview[2].role(), Role::Assistant);
+    assert_eq!(state.transcript_preview[1].role(), Role::Separator); // spacer 1
+    assert_eq!(state.transcript_preview[2].role(), Role::Separator); // spacer 2
+    assert_eq!(state.transcript_preview[3].role(), Role::Assistant);
 }
 
 #[test]
-fn turn_separator_is_not_repeated_for_same_role_sequences() {
+fn no_turn_separator_for_same_role_sequences() {
     let mut state = AppState::new();
 
     state.push_transcript_line(TranscriptRole::Assistant, "line one");
@@ -387,6 +388,7 @@ fn command_palette_empty_query_returns_canonical_help_status_order_only() {
             CommandPaletteAction::Models,
             CommandPaletteAction::Agents,
             CommandPaletteAction::Sessions,
+            CommandPaletteAction::Theme,
         ]
     );
 }
@@ -406,6 +408,7 @@ fn command_palette_empty_query_returns_canonical_help_status_mcps_skills_order()
             CommandPaletteAction::Models,
             CommandPaletteAction::Agents,
             CommandPaletteAction::Sessions,
+            CommandPaletteAction::Theme,
         ]
     );
 }
@@ -494,6 +497,7 @@ fn inline_slash_suggestions_open_on_leading_slash() {
             nu_agent_core::protocol::slash::SlashCommand::Agent,
             nu_agent_core::protocol::slash::SlashCommand::New,
             nu_agent_core::protocol::slash::SlashCommand::Session,
+            nu_agent_core::protocol::slash::SlashCommand::Theme,
         ]
     );
 }
@@ -503,7 +507,7 @@ fn inline_slash_suggestions_filter_incrementally_as_input_grows() {
     let mut state = AppState::new();
 
     state.check_inline_slash("/");
-    assert_eq!(state.inline_slash_suggestions().len(), 8);
+    assert_eq!(state.inline_slash_suggestions().len(), 9);
 
     state.check_inline_slash("/c");
     assert_eq!(
@@ -994,7 +998,7 @@ fn spacer_not_inserted_for_same_role() {
 }
 
 #[test]
-fn spacer_not_inserted_for_user_then_assistant() {
+fn spacer_inserted_for_user_then_assistant() {
     let mut state = AppState::new();
     state.push_transcript_item(TranscriptEntry::User(ProseMessage {
         markdown: "hi".to_string(),
@@ -1002,18 +1006,22 @@ fn spacer_not_inserted_for_user_then_assistant() {
     state.push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
         markdown: "hello".to_string(),
     }));
-    // User -> Assistant triggers turn separator, which blocks spacer
-    assert_eq!(state.transcript_preview.len(), 3);
+    // User -> Assistant: two spacers replace the removed turn separator
+    assert_eq!(state.transcript_preview.len(), 4);
     assert!(matches!(
         state.transcript_preview[0],
         TranscriptEntry::User(_)
     ));
     assert!(matches!(
         state.transcript_preview[1],
-        TranscriptEntry::Separator(_)
+        TranscriptEntry::Spacer(_)
     ));
     assert!(matches!(
         state.transcript_preview[2],
+        TranscriptEntry::Spacer(_)
+    ));
+    assert!(matches!(
+        state.transcript_preview[3],
         TranscriptEntry::Assistant(_)
     ));
 }
@@ -1069,7 +1077,7 @@ fn spacer_inserted_for_assistant_then_system() {
 }
 
 #[test]
-fn spacer_not_inserted_when_turn_separator_blocks() {
+fn spacer_inserted_for_user_then_tool() {
     let mut state = AppState::new();
     state.push_transcript_item(TranscriptEntry::User(ProseMessage {
         markdown: "hi".to_string(),
@@ -1079,18 +1087,22 @@ fn spacer_not_inserted_when_turn_separator_blocks() {
         source: "test".to_string(),
         args: "{}".to_string(),
     }));
-    // User -> Tool: turn separator inserted (both are turn roles), spacer blocked by separator
-    assert_eq!(state.transcript_preview.len(), 3);
+    // User -> Tool: no turn separator (removed), two spacers inserted for different roles
+    assert_eq!(state.transcript_preview.len(), 4);
     assert!(matches!(
         state.transcript_preview[0],
         TranscriptEntry::User(_)
     ));
     assert!(matches!(
         state.transcript_preview[1],
-        TranscriptEntry::Separator(_)
+        TranscriptEntry::Spacer(_)
     ));
     assert!(matches!(
         state.transcript_preview[2],
+        TranscriptEntry::Spacer(_)
+    ));
+    assert!(matches!(
+        state.transcript_preview[3],
         TranscriptEntry::Tool(_)
     ));
 }
@@ -1102,8 +1114,8 @@ const NEEDS_SPACER_CASES: &[(Option<Role>, Role, bool)] = &[
     (Some(Role::User), Role::User, false),
     (Some(Role::Separator), Role::User, false),
     (Some(Role::User), Role::Separator, false),
-    (Some(Role::User), Role::Assistant, false),
-    (Some(Role::Assistant), Role::User, false),
+    (Some(Role::User), Role::Assistant, true),
+    (Some(Role::Assistant), Role::User, true),
     (Some(Role::Tool), Role::ToolDisplay, false),
     (Some(Role::ToolDisplay), Role::Tool, false),
     (Some(Role::User), Role::Tool, true),
@@ -1117,6 +1129,35 @@ fn needs_spacer() {
             super::transcript::needs_spacer(prev.as_ref(), current),
             *expected,
             "needs_spacer(prev={prev:?}, current={current:?})"
+        );
+    }
+}
+
+const NEEDS_DOUBLE_SPACER_CASES: &[(Option<Role>, Role, bool)] = &[
+    (None, Role::User, false),
+    (Some(Role::User), Role::User, false),
+    (Some(Role::Separator), Role::User, false),
+    (Some(Role::User), Role::Separator, false),
+    (Some(Role::User), Role::Assistant, true),
+    (Some(Role::Assistant), Role::User, true),
+    (Some(Role::User), Role::Tool, true),
+    (Some(Role::Tool), Role::User, true),
+    (Some(Role::User), Role::System, true),
+    (Some(Role::System), Role::User, true),
+    (Some(Role::Tool), Role::ToolDisplay, false),
+    (Some(Role::ToolDisplay), Role::Tool, false),
+    (Some(Role::Assistant), Role::System, false),
+    (Some(Role::Assistant), Role::Tool, false),
+    (Some(Role::Tool), Role::Assistant, false),
+];
+
+#[test]
+fn needs_double_spacer() {
+    for (prev, current, expected) in NEEDS_DOUBLE_SPACER_CASES {
+        assert_eq!(
+            super::transcript::needs_double_spacer(prev.as_ref(), current),
+            *expected,
+            "needs_double_spacer(prev={prev:?}, current={current:?})"
         );
     }
 }
@@ -1438,7 +1479,7 @@ fn push_transcript_line_user_bold_markdown_emits_md_bold_span() {
         panic!("expected User");
     };
     // Raw markdown is stored; verify it projects to MdBold at render time
-    let bold = crate::markdown::render_markdown_lines(&m.markdown, None, &TuiTheme::default())
+    let bold = crate::markdown::render_markdown_lines(&m.markdown, None)
         .into_iter()
         .flat_map(|l| l.spans.into_iter())
         .find(|s| matches!(s.hint, nu_agent_core::transcript::ir::StyleHint::MdBold))
@@ -1453,7 +1494,7 @@ fn push_transcript_line_assistant_bold_markdown_emits_md_bold_span() {
     let TranscriptEntry::Assistant(m) = state.transcript_preview.last().expect("entry") else {
         panic!("expected Assistant");
     };
-    let bold = crate::markdown::render_markdown_lines(&m.markdown, None, &TuiTheme::default())
+    let bold = crate::markdown::render_markdown_lines(&m.markdown, None)
         .into_iter()
         .flat_map(|l| l.spans.into_iter())
         .find(|s| matches!(s.hint, nu_agent_core::transcript::ir::StyleHint::MdBold))
@@ -1491,7 +1532,7 @@ fn push_transcript_line_user_fenced_code_block_produces_multiple_lines() {
         panic!();
     };
     // Verify projection of the stored raw markdown yields multiple lines
-    let projected = crate::markdown::render_markdown_lines(&m.markdown, None, &TuiTheme::default());
+    let projected = crate::markdown::render_markdown_lines(&m.markdown, None);
     assert!(projected.len() >= 2);
 }
 

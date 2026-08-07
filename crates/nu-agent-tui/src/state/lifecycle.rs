@@ -442,6 +442,17 @@ impl AppState {
             }
         }
 
+        if !self.theme_picker_open {
+            self.theme_picker_selection = 0;
+        } else {
+            let theme_count = self.theme_picker_options.len();
+            if theme_count == 0 {
+                self.theme_picker_selection = 0;
+            } else if self.theme_picker_selection >= theme_count {
+                self.theme_picker_selection = theme_count.saturating_sub(1);
+            }
+        }
+
         // With ListState, viewport invariants are managed by ratatui automatically
 
         prompt_queue::PromptQueueLifecycle::new(

@@ -857,6 +857,7 @@ fn inline_slash_filter_is_prefix_based_and_deterministic() {
             SlashCommand::Agent,
             SlashCommand::New,
             SlashCommand::Session,
+            SlashCommand::Theme,
         ]
     );
     assert_eq!(
@@ -888,6 +889,7 @@ fn slash_command_catalog_exports_expected_labels_and_order() {
             SlashCommand::Agent,
             SlashCommand::New,
             SlashCommand::Session,
+            SlashCommand::Theme,
         ]
     );
 
@@ -899,6 +901,7 @@ fn slash_command_catalog_exports_expected_labels_and_order() {
     assert_eq!(SlashCommand::Agent.label(), "/agent");
     assert_eq!(SlashCommand::New.label(), "/new");
     assert_eq!(SlashCommand::Session.label(), "/session");
+    assert_eq!(SlashCommand::Theme.label(), "/theme");
 
     assert!(!SlashCommand::Compact.summary().is_empty());
     assert!(!SlashCommand::Mcp.summary().is_empty());
@@ -908,6 +911,7 @@ fn slash_command_catalog_exports_expected_labels_and_order() {
     assert!(!SlashCommand::Agent.summary().is_empty());
     assert!(!SlashCommand::New.summary().is_empty());
     assert!(!SlashCommand::Session.summary().is_empty());
+    assert!(!SlashCommand::Theme.summary().is_empty());
 }
 
 #[test]

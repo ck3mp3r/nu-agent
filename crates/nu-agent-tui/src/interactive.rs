@@ -143,6 +143,10 @@ where
         self.renderer.take_next_session_picker_launch_request()
     }
 
+    fn take_next_theme_picker_launch_request(&mut self) -> bool {
+        self.renderer.take_next_theme_picker_launch_request()
+    }
+
     fn take_next_agent_switch_request(&mut self) -> Option<String> {
         self.renderer.take_next_agent_switch_request()
     }

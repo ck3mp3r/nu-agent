@@ -18,6 +18,7 @@ mod test;
 #[cfg(test)]
 mod transcript_test;
 
+use crate::rendering::theme::TuiTheme;
 use nu_agent_core::protocol::event::{PermissionDecision, PermissionDecisionSubmission};
 use nu_agent_core::protocol::slash::{SlashCommand, filter_inline_slash_suggestions};
 use nu_agent_core::transcript::ir::{ContentLine, DisplayLine, Role};
@@ -121,6 +122,7 @@ pub enum CommandPaletteAction {
     Models,
     Agents,
     Sessions,
+    Theme,
 }
 
 impl CommandPaletteAction {
@@ -132,6 +134,7 @@ impl CommandPaletteAction {
         Self::Models,
         Self::Agents,
         Self::Sessions,
+        Self::Theme,
     ];
 
     pub fn label(&self) -> &'static str {
@@ -144,6 +147,7 @@ impl CommandPaletteAction {
             Self::Models => "Models",
             Self::Agents => "Agents",
             Self::Sessions => "Sessions",
+            Self::Theme => "Theme",
         }
     }
 
@@ -157,6 +161,7 @@ impl CommandPaletteAction {
             Self::Models => "Open model picker",
             Self::Agents => "Open agent picker",
             Self::Sessions => "Switch to an existing session",
+            Self::Theme => "Open theme picker",
         }
     }
 
@@ -170,6 +175,7 @@ impl CommandPaletteAction {
             Self::Models => None,
             Self::Agents => None,
             Self::Sessions => None,
+            Self::Theme => None,
         }
     }
 }
@@ -197,6 +203,13 @@ pub struct SessionPickerOption {
     pub title: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub display: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThemePickerOption {
+    pub name: String,
+    pub display_name: String,
+    pub active: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -305,6 +318,9 @@ pub struct AppState {
     pub session_picker_query: String,
     pub session_picker_selection: usize,
     pub session_picker_options: Vec<SessionPickerOption>,
+    pub theme_picker_open: bool,
+    pub theme_picker_selection: usize,
+    pub theme_picker_options: Vec<ThemePickerOption>,
     pending_agent_picker_launch_requests: usize,
     pending_agent_switch_requests: VecDeque<String>,
     active_agent_identity: Option<String>,
@@ -325,6 +341,8 @@ pub struct AppState {
     pending_model_picker_launch_requests: usize,
     pending_session_picker_launch_requests: usize,
     pending_session_switch_requests: VecDeque<String>,
+    pending_theme_picker_launch_requests: usize,
+    pending_theme_switch_requests: VecDeque<String>,
     pub permission_prompt: Option<PermissionPrompt>,
     assistant_projection_cache: HashMap<String, Vec<ContentLine>>,
     pub(crate) prompt_items: Vec<QueuedPrompt>,
@@ -360,6 +378,7 @@ pub struct AppState {
     pub(crate) compaction_streaming_start: Option<usize>,
     pub entry_visual_info: Vec<EntryVisualInfo>,
     pub entry_visual_info_dirty: bool,
+    pub theme: TuiTheme,
 }
 
 impl Default for AppState {
@@ -397,6 +416,9 @@ impl Default for AppState {
             session_picker_query: String::new(),
             session_picker_selection: 0,
             session_picker_options: Vec::new(),
+            theme_picker_open: false,
+            theme_picker_selection: 0,
+            theme_picker_options: Vec::new(),
             pending_agent_picker_launch_requests: 0,
             pending_agent_switch_requests: VecDeque::new(),
             active_agent_identity: None,
@@ -417,6 +439,8 @@ impl Default for AppState {
             pending_model_picker_launch_requests: 0,
             pending_session_picker_launch_requests: 0,
             pending_session_switch_requests: VecDeque::new(),
+            pending_theme_picker_launch_requests: 0,
+            pending_theme_switch_requests: VecDeque::new(),
             permission_prompt: None,
             assistant_projection_cache: HashMap::new(),
             prompt_items: Vec::new(),
@@ -450,6 +474,7 @@ impl Default for AppState {
             compaction_streaming_start: None,
             entry_visual_info: Vec::new(),
             entry_visual_info_dirty: true,
+            theme: TuiTheme::default(),
         }
     }
 }

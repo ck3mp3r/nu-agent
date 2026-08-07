@@ -1,11 +1,6 @@
+use nu_agent_core::transcript::ir::{ContentLine, Span as IrSpan, StyleHint};
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
-use ratatui::{
-    style::{Modifier, Style},
-    text::{Line, Span},
-};
 use unicode_width::UnicodeWidthStr;
-
-use crate::rendering::theme::TuiTheme;
 
 use super::code_blocks::{CodeBlockState, fence_language_hint, highlighted_code_lines};
 
@@ -25,15 +20,15 @@ struct StyleState {
 }
 
 impl StyleState {
-    fn current(&self) -> Style {
-        let mut style = Style::default();
-        if self.emphasis_depth > 0 {
-            style = style.add_modifier(Modifier::ITALIC);
+    fn current(&self) -> StyleHint {
+        let strong = self.strong_depth > 0;
+        let italic = self.emphasis_depth > 0;
+        match (strong, italic) {
+            (true, true) => StyleHint::MdBoldItalic,
+            (true, false) => StyleHint::MdBold,
+            (false, true) => StyleHint::MdItalic,
+            (false, false) => StyleHint::Normal,
         }
-        if self.strong_depth > 0 {
-            style = style.add_modifier(Modifier::BOLD);
-        }
-        style
     }
 }
 
@@ -44,8 +39,8 @@ struct ListState {
 
 #[derive(Debug, Default)]
 struct Projector {
-    lines: Vec<Line<'static>>,
-    current_spans: Vec<Span<'static>>,
+    lines: Vec<ContentLine>,
+    current_spans: Vec<IrSpan>,
     style_state: StyleState,
     list_stack: Vec<ListState>,
     blockquote_depth: usize,
@@ -54,7 +49,6 @@ struct Projector {
     image_destinations: Vec<String>,
     code_block: Option<CodeBlockState>,
     pending_prefix: bool,
-    theme: TuiTheme,
     table: Option<TableBuffer>,
     /// Maximum canvas width threaded from the render context.
     /// Passed to `render_table`; clamping logic is a separate task.
@@ -65,28 +59,27 @@ struct Projector {
 
 impl Projector {
     fn push_unsupported_fallback_text(&mut self, text: &str) {
-        self.push_wrapped_text(text, Style::default());
+        self.push_wrapped_text(text, StyleHint::Normal);
     }
 
     fn emit_link_suffix(&mut self) {
         if let Some(dest) = self.link_destinations.pop() {
-            self.push_text(&format!(" ({dest})"), Style::default());
+            self.push_text(&format!(" ({dest})"), StyleHint::Normal);
         }
     }
 
     fn emit_image_suffix(&mut self) {
         if let Some(dest) = self.image_destinations.pop() {
-            self.push_text(&format!(" (image: {dest})"), Style::default());
+            self.push_text(&format!(" (image: {dest})"), StyleHint::Normal);
         }
     }
 
-    fn push_text(&mut self, text: &str, style: Style) {
+    fn push_text(&mut self, text: &str, hint: StyleHint) {
         if text.is_empty() {
             return;
         }
         self.ensure_prefix();
-        self.current_spans
-            .push(Span::styled(text.to_string(), style));
+        self.current_spans.push(IrSpan::new(text.to_string(), hint));
     }
 
     fn ensure_prefix(&mut self) {
@@ -103,7 +96,7 @@ impl Projector {
             }
         }
         if !prefix.is_empty() {
-            self.current_spans.push(Span::raw(prefix));
+            self.current_spans.push(IrSpan::normal(prefix));
         }
     }
 
@@ -113,7 +106,7 @@ impl Projector {
             return;
         }
         let spans = std::mem::take(&mut self.current_spans);
-        self.lines.push(Line::from(spans));
+        self.lines.push(ContentLine::from_spans(spans));
         self.pending_prefix = true;
         self.has_content = true;
     }
@@ -125,17 +118,17 @@ impl Projector {
             return;
         }
         // Avoid consecutive blank lines: if the last line is already empty, skip.
-        if self.lines.last().is_some_and(|l| l.width() == 0) {
+        if self.lines.last().is_some_and(|l| l.spans.is_empty()) {
             return;
         }
-        self.lines.push(Line::from(Vec::<Span<'static>>::new()));
+        self.lines.push(ContentLine::empty());
     }
 
-    fn push_wrapped_text(&mut self, text: &str, style: Style) {
+    fn push_wrapped_text(&mut self, text: &str, hint: StyleHint) {
         let mut parts = text.split('\n').peekable();
         while let Some(part) = parts.next() {
             if !part.is_empty() {
-                self.push_text(part, style);
+                self.push_text(part, hint.clone());
             }
             if parts.peek().is_some() {
                 self.flush_line();
@@ -144,10 +137,10 @@ impl Projector {
     }
 
     fn render_code_block(&mut self, block: CodeBlockState) {
-        for token_line in highlighted_code_lines(&block, &self.theme) {
-            self.push_text("    ", Style::default());
-            for (text, style) in token_line {
-                self.push_text(&text, style);
+        for token_line in highlighted_code_lines(&block) {
+            self.push_text("    ", StyleHint::Normal);
+            for (text, hint) in token_line {
+                self.push_text(&text, hint);
             }
             self.flush_line();
         }
@@ -195,22 +188,22 @@ impl Projector {
                 .collect::<Vec<_>>()
                 .join("┬")
         );
-        self.push_text(&top, Style::default());
+        self.push_text(&top, StyleHint::Normal);
         self.flush_line();
 
         // Header row: │ cell │ cell │
-        let header_style = Style::default().add_modifier(Modifier::BOLD);
-        self.push_text("│", Style::default());
+        let header_hint = StyleHint::MdBold;
+        self.push_text("│", StyleHint::Normal);
         for (i, cell) in table.header_row.iter().enumerate() {
             let cell_width = UnicodeWidthStr::width(cell.as_str());
             let pad_count = widths[i].saturating_sub(cell_width);
             let padded = format!(" {}{} ", cell, " ".repeat(pad_count));
-            self.push_text(&padded, header_style);
+            self.push_text(&padded, header_hint.clone());
             if i + 1 < active_cols {
-                self.push_text("│", Style::default());
+                self.push_text("│", StyleHint::Normal);
             }
         }
-        self.push_text("│", Style::default());
+        self.push_text("│", StyleHint::Normal);
         self.flush_line();
 
         // Separator: ├──...──┼──...──┤
@@ -222,23 +215,23 @@ impl Projector {
                 .collect::<Vec<_>>()
                 .join("┼")
         );
-        self.push_text(&sep, Style::default());
+        self.push_text(&sep, StyleHint::Normal);
         self.flush_line();
 
         // Data rows: │ cell │ cell │
         for row in &table.data_rows {
-            self.push_text("│", Style::default());
+            self.push_text("│", StyleHint::Normal);
             for (i, cell) in row.iter().enumerate().take(active_cols) {
                 let col_width = widths.get(i).copied().unwrap_or(0);
                 let cell_width = UnicodeWidthStr::width(cell.as_str());
                 let pad_count = col_width.saturating_sub(cell_width);
                 let padded = format!(" {}{} ", cell, " ".repeat(pad_count));
-                self.push_text(&padded, Style::default());
+                self.push_text(&padded, StyleHint::Normal);
                 if i + 1 < active_cols {
-                    self.push_text("│", Style::default());
+                    self.push_text("│", StyleHint::Normal);
                 }
             }
-            self.push_text("│", Style::default());
+            self.push_text("│", StyleHint::Normal);
             self.flush_line();
         }
 
@@ -251,7 +244,7 @@ impl Projector {
                 .collect::<Vec<_>>()
                 .join("┴")
         );
-        self.push_text(&bottom, Style::default());
+        self.push_text(&bottom, StyleHint::Normal);
         self.flush_line();
     }
 
@@ -295,7 +288,7 @@ impl Projector {
                     } else {
                         "• ".to_string()
                     };
-                    self.push_text(&(indent + &marker), Style::default());
+                    self.push_text(&(indent + &marker), StyleHint::Normal);
                 }
             }
             Tag::CodeBlock(kind) => {
@@ -417,11 +410,12 @@ impl Projector {
                     return;
                 }
 
-                let mut style = self.style_state.current();
-                if self.heading_depth > 0 {
-                    style = style.add_modifier(Modifier::BOLD);
-                }
-                self.push_wrapped_text(&text, style);
+                let hint = if self.heading_depth > 0 {
+                    StyleHint::MdBold
+                } else {
+                    self.style_state.current()
+                };
+                self.push_wrapped_text(&text, hint);
             }
             Event::Code(text) => {
                 if let Some(t) = self.table.as_mut() {
@@ -429,7 +423,7 @@ impl Projector {
                     return;
                 }
 
-                self.push_text(&text, self.theme.inline_code);
+                self.push_text(&text, StyleHint::MdInlineCode);
             }
             Event::Html(html) => {
                 self.push_unsupported_fallback_text(&html);
@@ -438,15 +432,15 @@ impl Projector {
                 self.push_unsupported_fallback_text(&html);
             }
             Event::FootnoteReference(label) => {
-                self.push_text(&format!("[^{}]", label), Style::default());
+                self.push_text(&format!("[^{}]", label), StyleHint::Normal);
             }
             Event::InlineMath(math) => {
-                self.push_text(&math, self.theme.inline_code);
+                self.push_text(&math, StyleHint::MdInlineCode);
             }
             Event::DisplayMath(math) => {
                 self.insert_block_separator();
                 self.flush_line();
-                self.push_text(&math, self.theme.inline_code);
+                self.push_text(&math, StyleHint::MdInlineCode);
                 self.flush_line();
             }
             Event::SoftBreak | Event::HardBreak => {
@@ -455,14 +449,14 @@ impl Projector {
             Event::Rule => {
                 self.insert_block_separator();
                 self.flush_line();
-                self.push_text("────────────────", Style::default());
+                self.push_text("────────────────", StyleHint::Normal);
                 self.flush_line();
             }
             _ => {}
         }
     }
 
-    fn finish(mut self) -> Vec<Line<'static>> {
+    fn finish(mut self) -> Vec<ContentLine> {
         self.flush_line();
         self.lines
     }
@@ -471,14 +465,12 @@ impl Projector {
 pub(super) fn project_markdown_to_lines_inner(
     markdown: &str,
     max_width: Option<u16>,
-    theme: &TuiTheme,
-) -> Vec<Line<'static>> {
+) -> Vec<ContentLine> {
     let options =
         Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS | Options::ENABLE_TABLES;
     let parser = Parser::new_ext(markdown, options);
     let mut projector = Projector {
         pending_prefix: true,
-        theme: theme.clone(),
         max_width,
         ..Projector::default()
     };

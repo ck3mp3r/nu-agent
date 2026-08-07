@@ -195,6 +195,40 @@ pub(crate) fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserA
         );
     }
 
+    if state.theme_picker_open {
+        return (
+            match action {
+                UserAction::Esc => {
+                    state.theme_picker_close_on_escape();
+                    UserAction::Noop
+                }
+                UserAction::Submit => {
+                    let _ = state.queue_selected_theme_switch_request();
+                    state.close_theme_picker();
+                    UserAction::Noop
+                }
+                UserAction::ScrollLineUp | UserAction::HistoryUp => {
+                    state.theme_picker_move_up();
+                    UserAction::Noop
+                }
+                UserAction::ScrollLineDown | UserAction::HistoryDown => {
+                    state.theme_picker_move_down();
+                    UserAction::Noop
+                }
+                UserAction::QueryNext => {
+                    state.theme_picker_move_down();
+                    UserAction::Noop
+                }
+                UserAction::ToggleCommandPalette => {
+                    state.theme_picker_move_up();
+                    UserAction::Noop
+                }
+                _ => UserAction::Noop,
+            },
+            true,
+        );
+    }
+
     if state.session_picker_open {
         return (
             match action {

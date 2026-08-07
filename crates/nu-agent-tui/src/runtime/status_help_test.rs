@@ -38,7 +38,9 @@ pub(crate) fn help_panel_scroll_offset_for_test(
     viewport_width: u16,
     requested_scroll: usize,
 ) -> usize {
-    let (_title, lines) = crate::runtime::status_help::help_panel_lines();
+    let (_title, lines) = crate::runtime::status_help::help_panel_lines(
+        &crate::rendering::theme::TuiTheme::default(),
+    );
     requested_scroll.min(crate::runtime::panels::help_panel_max_scroll(
         &lines,
         viewport_height,
@@ -151,10 +153,13 @@ pub(crate) fn command_palette_table_model_for_test(
 }
 
 pub(crate) fn inline_slash_lines_for_test(state: &AppState) -> Vec<String> {
-    crate::runtime::status_help::inline_slash_lines_for_render(state)
-        .into_iter()
-        .map(|line| line.to_string())
-        .collect()
+    crate::runtime::status_help::inline_slash_lines_for_render(
+        state,
+        &crate::rendering::theme::TuiTheme::default(),
+    )
+    .into_iter()
+    .map(|line| line.to_string())
+    .collect()
 }
 
 pub(crate) fn compact_status_line_for_test(

@@ -9,7 +9,6 @@ use std::{
 };
 
 use crate::rendering::layout::wrapped_input_rows;
-use crate::rendering::theme::TuiTheme;
 use crate::test_support::markdown_fixture;
 use crate::{
     interaction::input::{TerminalEvent, TerminalKey},
@@ -477,7 +476,7 @@ fn assistant_markdown_message_is_projected_before_transcript_append() {
     // Project it and verify the list markers appear.
     let projected: Vec<String> = raw_texts
         .iter()
-        .flat_map(|md| crate::markdown::render_markdown_lines(md, None, &TuiTheme::default()))
+        .flat_map(|md| crate::markdown::render_markdown_lines(md, None))
         .map(|line| {
             line.spans
                 .iter()
@@ -507,7 +506,7 @@ fn assistant_markdown_message_preserves_inline_span_styles_in_transcript_state()
 }
 
 #[test]
-fn user_then_assistant_inserts_turn_separator_in_runtime_transcript() {
+fn user_then_assistant_flows_without_turn_separator() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
     let mut source = StubEventSource {
         next: Some(TerminalEvent::Key(TerminalKey::Char('h'))),
@@ -546,7 +545,8 @@ fn user_then_assistant_inserts_turn_separator_in_runtime_transcript() {
             .collect::<Vec<_>>(),
         vec![
             (TranscriptRole::User, "h".to_string()),
-            (TranscriptRole::Separator, "────────────────".to_string()),
+            (TranscriptRole::Separator, "".to_string()), // spacer 1 between turns
+            (TranscriptRole::Separator, "".to_string()), // spacer 2 between turns
             (TranscriptRole::Assistant, "world".to_string()),
         ]
     );
@@ -1188,7 +1188,8 @@ fn coordinator_hydration_skips_blank_lines_and_maps_unknown_role_to_system() {
         vec![
             (TranscriptRole::User, "line1".to_string()),
             (TranscriptRole::User, "line2".to_string()),
-            (TranscriptRole::Separator, "────────────────".to_string()),
+            (TranscriptRole::Separator, "".to_string()), // spacer 1 between User and Assistant
+            (TranscriptRole::Separator, "".to_string()), // spacer 2 between User and Assistant
             (TranscriptRole::Assistant, "reply".to_string()),
             (TranscriptRole::Separator, "".to_string()), // spacer between Assistant and System
             (TranscriptRole::System, "system fallback".to_string()),
@@ -1279,7 +1280,7 @@ fn coordinator_hydration_projects_both_user_and_assistant_markdown() {
     let assistant_projected: Vec<String> = raw_lines
         .iter()
         .filter(|(r, _)| *r == TranscriptRole::Assistant)
-        .flat_map(|(_, md)| crate::markdown::render_markdown_lines(md, None, &TuiTheme::default()))
+        .flat_map(|(_, md)| crate::markdown::render_markdown_lines(md, None))
         .map(|line| {
             line.spans
                 .iter()
@@ -1363,9 +1364,7 @@ fn coordinator_hydration_keeps_unsupported_markdown_readable_in_assistant_transc
         .transcript_preview
         .iter()
         .filter(|line| matches!(line.role(), nu_agent_core::transcript::ir::Role::Assistant))
-        .flat_map(|line| {
-            crate::markdown::render_markdown_lines(&line.text(), None, &TuiTheme::default())
-        })
+        .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
 
@@ -1411,9 +1410,7 @@ fn coordinator_hydration_handles_malformed_assistant_markdown_without_dropping_m
     // Raw markdown is stored; check projected output contains the expected text
     let projected_text: String = assistant_entries
         .iter()
-        .flat_map(|entry| {
-            crate::markdown::render_markdown_lines(&entry.text(), None, &TuiTheme::default())
-        })
+        .flat_map(|entry| crate::markdown::render_markdown_lines(&entry.text(), None))
         .flat_map(|l| l.spans.into_iter())
         .map(|s| s.text)
         .collect();
@@ -1439,9 +1436,7 @@ fn assistant_message_event_sanitizes_pseudo_tags_and_control_tags_in_runtime_tra
         .transcript_preview
         .iter()
         .filter(|line| matches!(line.role(), nu_agent_core::transcript::ir::Role::Assistant))
-        .flat_map(|line| {
-            crate::markdown::render_markdown_lines(&line.text(), None, &TuiTheme::default())
-        })
+        .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
 
@@ -1521,11 +1516,11 @@ fn transition_spacing_matrix_is_deterministic_for_role_changes() {
         TranscriptRole::Tool
     ));
 
-    assert!(!transition_spacer_for_roles_for_test(
+    assert!(transition_spacer_for_roles_for_test(
         Some(TranscriptRole::User),
         TranscriptRole::Assistant
     ));
-    assert!(!transition_spacer_for_roles_for_test(
+    assert!(transition_spacer_for_roles_for_test(
         Some(TranscriptRole::Assistant),
         TranscriptRole::User
     ));
@@ -1569,7 +1564,7 @@ fn transition_spacing_remains_legible_for_mixed_sequences() {
         .windows(2)
         .map(|roles| transition_spacer_for_roles_for_test(Some(roles[0]), roles[1]))
         .collect::<Vec<_>>();
-    assert_eq!(uas_transitions, vec![false, true, true]);
+    assert_eq!(uas_transitions, vec![true, true, true]);
 
     let user_tool_assistant_tool = [
         TranscriptRole::User,
@@ -1912,7 +1907,7 @@ fn status_lines_include_stable_active_model_identity_line() {
 
 #[test]
 fn help_panel_renders_required_sections_in_contract_order() {
-    let (title, lines) = help_panel_lines();
+    let (title, lines) = help_panel_lines(&crate::rendering::theme::TuiTheme::default());
     assert_eq!(title, "Help");
     let rendered_lines = lines
         .iter()
@@ -1945,7 +1940,7 @@ fn help_panel_renders_required_sections_in_contract_order() {
 
 #[test]
 fn help_panel_copy_is_plain_language_and_includes_ctrl_p_and_mcp_basics() {
-    let (_title, lines) = help_panel_lines();
+    let (_title, lines) = help_panel_lines(&crate::rendering::theme::TuiTheme::default());
     let rendered = lines
         .iter()
         .map(|line| line.to_string())
@@ -1977,7 +1972,7 @@ fn help_panel_copy_is_plain_language_and_includes_ctrl_p_and_mcp_basics() {
 
 #[test]
 fn help_panel_markdown_projection_preserves_supported_formatting() {
-    let (_title, lines) = help_panel_lines();
+    let (_title, lines) = help_panel_lines(&crate::rendering::theme::TuiTheme::default());
     let rendered = lines
         .iter()
         .map(|line| line.to_string())
@@ -2001,7 +1996,7 @@ fn help_panel_markdown_projection_preserves_supported_formatting() {
 
 #[test]
 fn help_panel_scroll_can_reach_final_content_line_with_keyboard_scroll_model() {
-    let (_title, lines) = help_panel_lines();
+    let (_title, lines) = help_panel_lines(&crate::rendering::theme::TuiTheme::default());
     let viewport_inner_height = 8u16;
     let max_scroll = help_panel_max_scroll_for_test(&lines, viewport_inner_height);
     let window = help_panel_visible_window_for_test(&lines, viewport_inner_height, max_scroll);
@@ -2019,7 +2014,7 @@ fn help_panel_scroll_can_reach_final_content_line_with_keyboard_scroll_model() {
 
 #[test]
 fn help_panel_shows_overflow_position_cue_when_content_exceeds_viewport() {
-    let (_title, lines) = help_panel_lines();
+    let (_title, lines) = help_panel_lines(&crate::rendering::theme::TuiTheme::default());
     let viewport_inner_height = 8u16;
     let cue = help_panel_overflow_cue_for_test(&lines, viewport_inner_height, 3)
         .expect("overflow cue should appear when help exceeds viewport");
@@ -2742,8 +2737,10 @@ fn help_panel_scroll_offset_applied() {
 
     let huge_scroll =
         super::help_panel_scroll_offset_for_test(viewport_height, viewport_width, usize::MAX);
-    let max_scroll =
-        super::help_panel_max_scroll_for_test(&super::help_panel_lines().1, viewport_height);
+    let max_scroll = super::help_panel_max_scroll_for_test(
+        &super::help_panel_lines(&crate::rendering::theme::TuiTheme::default()).1,
+        viewport_height,
+    );
     assert_eq!(
         huge_scroll, max_scroll,
         "scroll offset above max must be clamped to max"
@@ -2915,6 +2912,22 @@ fn models_modal_uses_layout_policy_defaults() {
 
     assert_eq!(models.width, skills.width);
     assert_eq!(models.height, skills.height);
+}
+
+#[test]
+fn themes_modal_uses_layout_policy_defaults() {
+    let area = ratatui::layout::Rect::new(0, 0, 120, 40);
+    let themes = super::render_frame::modal_rect_for_panel(
+        area,
+        super::render_frame::ModalPanelKind::Themes,
+    );
+    let models = super::render_frame::modal_rect_for_panel(
+        area,
+        super::render_frame::ModalPanelKind::Models,
+    );
+
+    assert_eq!(themes.width, models.width);
+    assert_eq!(themes.height, models.height);
 }
 
 #[test]
@@ -3784,9 +3797,7 @@ fn hydration_compaction_renders_markdown_body() {
         .state()
         .transcript_preview
         .iter()
-        .flat_map(|line| {
-            crate::markdown::render_markdown_lines(&line.text(), None, &TuiTheme::default())
-        })
+        .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
 
@@ -4137,7 +4148,7 @@ fn hydrate_assistant_message_with_bold_emits_md_bold_span() {
                 None
             }
         })
-        .flat_map(|md| crate::markdown::render_markdown_lines(md, None, &TuiTheme::default()))
+        .flat_map(|md| crate::markdown::render_markdown_lines(md, None))
         .flat_map(|l| l.spans.into_iter())
         .any(|s| {
             s.text == "bold" && matches!(s.hint, nu_agent_core::transcript::ir::StyleHint::MdBold)
@@ -4166,7 +4177,7 @@ fn hydrate_compaction_message_with_italic_emits_md_italic_span() {
                 None
             }
         })
-        .flat_map(|md| crate::markdown::render_markdown_lines(md, None, &TuiTheme::default()))
+        .flat_map(|md| crate::markdown::render_markdown_lines(md, None))
         .flat_map(|l| l.spans.into_iter())
         .any(|s| {
             s.text == "italic"
@@ -4505,21 +4516,22 @@ fn total_visual_rows_from_entry_visual_info() {
     );
     state.push_transcript_line(crate::state::TranscriptRole::User, "e".to_string());
     state.recompute_entry_visual_info(80);
-    // 3 explicit entries + 2 separators (User→Assistant, Assistant→User) = 5 total
-    // Entries: User("a"), Separator, Assistant("b\nc\nd"), Separator, User("e")
-    assert_eq!(state.entry_visual_info.len(), 5);
+    // User→Assistant and Assistant→User now get double spacers: 7 entries
+    assert_eq!(state.entry_visual_info.len(), 7);
     assert_eq!(state.entry_visual_info[0].visual_row_count, 1); // User "a"
-    assert_eq!(state.entry_visual_info[1].visual_row_count, 1); // Separator
+    assert_eq!(state.entry_visual_info[1].visual_row_count, 1); // Spacer 1
+    assert_eq!(state.entry_visual_info[2].visual_row_count, 1); // Spacer 2
     // "b\nc\nd" projects to 3 ContentLines (one per line)
-    assert_eq!(state.entry_visual_info[2].visual_row_count, 3); // Assistant
-    assert_eq!(state.entry_visual_info[3].visual_row_count, 1); // Separator
-    assert_eq!(state.entry_visual_info[4].visual_row_count, 1); // User "e"
+    assert_eq!(state.entry_visual_info[3].visual_row_count, 3); // Assistant
+    assert_eq!(state.entry_visual_info[4].visual_row_count, 1); // Spacer 1
+    assert_eq!(state.entry_visual_info[5].visual_row_count, 1); // Spacer 2
+    assert_eq!(state.entry_visual_info[6].visual_row_count, 1); // User "e"
     let total = state
         .entry_visual_info
         .last()
         .map(|i| i.start_visual_row + i.visual_row_count)
         .unwrap_or(0);
-    assert_eq!(total, 7);
+    assert_eq!(total, 9);
 }
 
 #[test]

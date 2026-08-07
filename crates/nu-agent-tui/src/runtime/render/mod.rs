@@ -5,6 +5,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 
+use crate::rendering::theme::TuiTheme;
 use crate::state::InputMode;
 
 pub(super) fn render_scroll_text_panel(
@@ -13,8 +14,9 @@ pub(super) fn render_scroll_text_panel(
     title: impl Into<Line<'static>>,
     lines: Text<'_>,
     scroll: usize,
+    theme: &TuiTheme,
 ) {
-    let inner = render_modal_frame(frame, area, title);
+    let inner = render_modal_frame(frame, area, title, theme);
     frame.render_widget(
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })
@@ -27,12 +29,14 @@ pub(super) fn render_modal_frame(
     frame: &mut Frame,
     area: Rect,
     title: impl Into<Line<'static>>,
+    theme: &TuiTheme,
 ) -> Rect {
     frame.render_widget(Clear, area);
     frame.render_widget(
         Block::default()
             .borders(Borders::ALL)
             .border_set(ratatui::symbols::border::ROUNDED)
+            .border_style(theme.subtle_meta)
             .title(title),
         area,
     );
@@ -75,6 +79,9 @@ pub(crate) fn single_line_visual_row_count(line: &Line<'_>, width: usize) -> usi
 mod bottom_box;
 mod modals;
 mod transcript;
+
+#[cfg(test)]
+mod transcript_test;
 
 /// Returns true when the buffer should be scanned for yank text.
 /// Only needed in Visual mode; avoids per-frame O(width*height) cost otherwise.

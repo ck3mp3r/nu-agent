@@ -21,26 +21,13 @@ impl BlockRenderer for TuiRenderer {
     type Output = Vec<Line<'static>>;
 
     fn render(&self, block: &RenderBlock, ctx: &RenderContext) -> Self::Output {
-        // Special case: Separator role with empty lines (horizontal rule)
-        if block.role == Role::Separator && block.lines.is_empty() && block.markdown.is_none() {
-            let width = ctx.width.saturating_sub(4).max(1);
-            let mut spans = self.lane_prefix(Role::Separator, ctx.cursor);
-            spans.push(RatatuiSpan::styled(
-                "─".repeat(width),
-                self.theme.role_separator,
-            ));
-            let spans = self.apply_row_overlays(spans, Style::default(), ctx.selected);
-            return vec![Line::from(spans)];
-        }
-
         // Project markdown at render time using the available canvas width.
         // This ensures tables and other width-sensitive constructs can use the
         // actual terminal width rather than a fixed size baked in at construction.
         let projected_lines: Vec<ContentLine>;
         let content_lines: &[ContentLine] = if let Some(ref md) = block.markdown {
             let canvas_width = u16::try_from(ctx.width).unwrap_or(u16::MAX);
-            projected_lines =
-                crate::markdown::render_markdown_lines(md, Some(canvas_width), &self.theme);
+            projected_lines = crate::markdown::render_markdown_lines(md, Some(canvas_width));
             &projected_lines
         } else {
             &block.lines
@@ -130,7 +117,7 @@ impl TuiRenderer {
 
     fn row_style(&self, role: &Role) -> Style {
         match role {
-            Role::User => self.theme.row_user,
+            Role::User => self.theme.row_user.bg(self.theme.row_user_bg),
             Role::Assistant => self.theme.row_assistant,
             Role::Tool => self.theme.row_tool,
             Role::ToolDisplay => self.theme.row_assistant,
@@ -222,7 +209,7 @@ impl TuiRenderer {
         let block = if let Some(ref md) = block.markdown {
             let content_lines = cache.entry(md.clone()).or_insert_with(|| {
                 let canvas_width = u16::try_from(ctx.width).unwrap_or(u16::MAX);
-                crate::markdown::render_markdown_lines(md, Some(canvas_width), &self.theme)
+                crate::markdown::render_markdown_lines(md, Some(canvas_width))
             });
             RenderBlock {
                 role: block.role.clone(),

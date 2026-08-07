@@ -248,6 +248,11 @@ impl ModelSwitchStage {
             handled = true;
         }
 
+        while ctx.ui.take_next_theme_picker_launch_request() {
+            let _ = ctx.ui.execute_shared_ui_action(SharedUiAction::Themes);
+            handled = true;
+        }
+
         // --- Model switch requests from UI ---
         while let Some(model_spec) = ctx.ui.take_next_model_switch_request() {
             handled = true;

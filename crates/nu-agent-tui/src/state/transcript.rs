@@ -31,11 +31,7 @@ impl AppState {
     }
 
     pub fn project_assistant_markdown_lines(&mut self, markdown: &str) -> Vec<ContentLine> {
-        crate::markdown::render_markdown_lines(
-            markdown,
-            None,
-            &crate::rendering::theme::TuiTheme::default(),
-        )
+        crate::markdown::render_markdown_lines(markdown, None)
     }
 
     pub fn clear_assistant_projection_cache(&mut self) {
@@ -123,19 +119,16 @@ impl AppState {
 
     pub fn push_transcript_item(&mut self, entry: TranscriptEntry) {
         let entry_role = entry.role();
-        if should_insert_turn_separator(
-            self.transcript_preview.last().map(|e| e.role()).as_ref(),
-            &entry_role,
-        ) {
-            self.transcript_preview
-                .push(TranscriptEntry::Separator(TranscriptSeparator));
-        }
-
-        // Visual spacer between different roles (checks previous role AFTER separator may have been inserted)
-        if needs_spacer(
-            self.transcript_preview.last().map(|e| e.role()).as_ref(),
-            &entry_role,
-        ) {
+        // Visual spacer between different roles
+        let prev = self.transcript_preview.last().map(|e| e.role());
+        let spacer_count = if needs_double_spacer(prev.as_ref(), &entry_role) {
+            2
+        } else if needs_spacer(prev.as_ref(), &entry_role) {
+            1
+        } else {
+            0
+        };
+        for _ in 0..spacer_count {
             self.transcript_preview
                 .push(TranscriptEntry::Spacer(SpacerItem));
         }
@@ -146,7 +139,6 @@ impl AppState {
     }
 
     pub fn recompute_entry_visual_info(&mut self, width: usize) {
-        use crate::rendering::theme::TuiTheme;
         use nu_agent_core::transcript::items::Renderable;
 
         let mut info = Vec::with_capacity(self.transcript_preview.len());
@@ -157,11 +149,7 @@ impl AppState {
                 if let Some(cached) = self.assistant_projection_cache.get(md) {
                     cached.clone()
                 } else {
-                    let projected = crate::markdown::render_markdown_lines(
-                        md,
-                        Some(width as u16),
-                        &TuiTheme::default(),
-                    );
+                    let projected = crate::markdown::render_markdown_lines(md, Some(width as u16));
                     self.assistant_projection_cache
                         .insert(md.clone(), projected.clone());
                     projected
@@ -258,17 +246,6 @@ impl AppState {
     }
 }
 
-fn should_insert_turn_separator(previous: Option<&Role>, next: &Role) -> bool {
-    matches!(
-        (previous, next),
-        (Some(prev), next) if is_turn_role(prev) && is_turn_role(next) && prev != next
-    )
-}
-
-fn is_turn_role(role: &Role) -> bool {
-    matches!(role, Role::User | Role::Assistant | Role::Tool)
-}
-
 pub(crate) fn needs_spacer(previous: Option<&Role>, next: &Role) -> bool {
     let Some(previous) = previous else {
         return false;
@@ -281,9 +258,26 @@ pub(crate) fn needs_spacer(previous: Option<&Role>, next: &Role) -> bool {
     }
     !matches!(
         (previous, next),
-        (Role::User, Role::Assistant)
-            | (Role::Assistant, Role::User)
-            | (Role::Tool, Role::ToolDisplay)
-            | (Role::ToolDisplay, Role::Tool)
+        (Role::Tool, Role::ToolDisplay) | (Role::ToolDisplay, Role::Tool)
     )
+}
+
+pub(crate) fn needs_double_spacer(previous: Option<&Role>, next: &Role) -> bool {
+    let Some(prev) = previous else {
+        return false;
+    };
+    if prev == next {
+        return false;
+    }
+    if *prev == Role::Separator || *next == Role::Separator {
+        return false;
+    }
+    if matches!(
+        (prev, next),
+        (Role::Tool, Role::ToolDisplay) | (Role::ToolDisplay, Role::Tool)
+    ) {
+        return false;
+    }
+    // Double spacer only when transitioning between User and non-User
+    (*prev == Role::User) != (*next == Role::User)
 }

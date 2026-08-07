@@ -63,15 +63,15 @@ fn transcript_cap_empty_transcript_no_panic() {
 }
 
 // ---------------------------------------------------------------------------
-// Separator/spacer counting
+// Cap enforcement with mixed roles
 // ---------------------------------------------------------------------------
 
 #[test]
-fn transcript_cap_counts_separator_and_spacer_entries() {
+fn transcript_cap_enforced_with_alternating_turn_roles() {
     let mut state = AppState::new();
 
-    // Push alternating roles to trigger separators and spacers
-    // Each pair (User -> Assistant) inserts a separator + spacer between them
+    // Push alternating turn roles (User/Assistant are excluded spacer pairs,
+    // so no separators/spacers are inserted)
     for i in 0..MAX_TRANSCRIPT_ENTRIES / 2 {
         state.push_transcript_line(TranscriptRole::User, format!("user {i}"));
         state.push_transcript_line(TranscriptRole::Assistant, format!("assistant {i}"));
@@ -80,8 +80,7 @@ fn transcript_cap_counts_separator_and_spacer_entries() {
     // Push one more to exceed cap
     state.push_transcript_line(TranscriptRole::User, "overflow");
 
-    // RED: This will fail because transcript_preview grows unbounded
-    // (2000 user/assistant + ~1000 separators + ~1000 spacers + 1 overflow >> 2000)
+    // 2001 entries exceed the 2000 cap; oldest is evicted
     assert_eq!(state.transcript_preview.len(), MAX_TRANSCRIPT_ENTRIES);
 }
 

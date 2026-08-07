@@ -1,7 +1,6 @@
-use ratatui::style::Style;
+use nu_agent_core::transcript::ir::StyleHint;
 
 use crate::rendering::highlight::{HighlightRequest, SyntaxTokenChannel, highlight_source_tokens};
-use crate::rendering::theme::TuiTheme;
 
 #[derive(Debug, Clone)]
 pub(super) struct CodeBlockState {
@@ -27,10 +26,7 @@ pub(super) fn fence_language_hint(kind: pulldown_cmark::CodeBlockKind<'_>) -> Op
     }
 }
 
-pub(super) fn highlighted_code_lines(
-    block: &CodeBlockState,
-    theme: &TuiTheme,
-) -> Vec<Vec<(String, Style)>> {
+pub(super) fn highlighted_code_lines(block: &CodeBlockState) -> Vec<Vec<(String, StyleHint)>> {
     if block.source.is_empty() {
         return Vec::new();
     }
@@ -43,27 +39,24 @@ pub(super) fn highlighted_code_lines(
     .map(|token_line| {
         token_line
             .into_iter()
-            .map(|token| {
-                let style = style_for_channel(theme, token.channel);
-                (token.text, style)
-            })
+            .map(|token| (token.text, channel_to_hint(token.channel)))
             .collect::<Vec<_>>()
     })
     .collect::<Vec<_>>()
 }
 
-fn style_for_channel(theme: &TuiTheme, channel: SyntaxTokenChannel) -> Style {
+fn channel_to_hint(channel: SyntaxTokenChannel) -> StyleHint {
     match channel {
-        SyntaxTokenChannel::Keyword => theme.syntax_keyword,
-        SyntaxTokenChannel::Type => theme.syntax_type,
-        SyntaxTokenChannel::Function => theme.syntax_function,
-        SyntaxTokenChannel::Variable => theme.syntax_variable,
-        SyntaxTokenChannel::Constant => theme.syntax_constant,
-        SyntaxTokenChannel::String => theme.syntax_string,
-        SyntaxTokenChannel::Number => theme.syntax_number,
-        SyntaxTokenChannel::Operator => theme.syntax_operator,
-        SyntaxTokenChannel::Punctuation => theme.syntax_punctuation,
-        SyntaxTokenChannel::Comment => theme.syntax_comment,
-        SyntaxTokenChannel::Plain => Style::default(),
+        SyntaxTokenChannel::Keyword => StyleHint::MdCodeKeyword,
+        SyntaxTokenChannel::Type => StyleHint::MdCodeType,
+        SyntaxTokenChannel::Function => StyleHint::MdCodeFunction,
+        SyntaxTokenChannel::Variable => StyleHint::MdCodeVariable,
+        SyntaxTokenChannel::Constant => StyleHint::MdCodeConstant,
+        SyntaxTokenChannel::String => StyleHint::MdCodeString,
+        SyntaxTokenChannel::Number => StyleHint::MdCodeNumber,
+        SyntaxTokenChannel::Operator => StyleHint::MdCodeOperator,
+        SyntaxTokenChannel::Punctuation => StyleHint::MdCodePunctuation,
+        SyntaxTokenChannel::Comment => StyleHint::MdCodeComment,
+        SyntaxTokenChannel::Plain => StyleHint::MdCodePlain,
     }
 }

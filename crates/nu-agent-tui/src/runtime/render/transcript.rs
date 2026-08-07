@@ -1,7 +1,7 @@
 use ratatui::{
     Frame,
     layout::Rect,
-    text::Line,
+    text::{Line, Span},
     widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
 };
 
@@ -14,7 +14,8 @@ use crate::{
     runtime::{render::expand_to_visual_rows, render_frame::current_time_millis},
     state::{InputMode, PaneFocus},
 };
-use nu_agent_core::transcript::items::Renderable;
+use nu_agent_core::transcript::ir::Role;
+use nu_agent_core::transcript::items::{Renderable, TranscriptEntry};
 use nu_agent_core::transcript::renderer::RenderContext;
 
 use crate::runtime::RuntimeCoordinator;
@@ -132,6 +133,27 @@ impl RuntimeCoordinator {
                 .scroll((partial_offset.min(u16::MAX as usize) as u16, 0));
             frame.render_widget(paragraph, transcript_list_area);
 
+            // Fill user prompt rows (and adjacent spacers) with full-width background
+            let user_bg = self.theme.row_user_bg;
+            for row in 0..viewport_height {
+                if let Some(&entry_idx) = self.state.entry_indices.get(partial_offset + row)
+                    && row_needs_user_bg(&entries_for_render, entry_idx)
+                {
+                    let row_screen_y = transcript_list_area.y + row as u16;
+                    for x in
+                        transcript_list_area.x..transcript_list_area.x + transcript_list_area.width
+                    {
+                        if let Some(cell) = frame
+                            .buffer_mut()
+                            .cell_mut(ratatui::layout::Position { x, y: row_screen_y })
+                        {
+                            let current_style = cell.style();
+                            cell.set_style(current_style.bg(user_bg));
+                        }
+                    }
+                }
+            }
+
             // Store rendered text per visible viewport row for yank support
             // Only scan the buffer in Visual mode to avoid per-frame O(width*height) cost.
             if super::should_scan_for_yank(self.state.input_mode) {
@@ -165,6 +187,7 @@ impl RuntimeCoordinator {
                     sel_end,
                     effective_offset,
                     viewport_height,
+                    self.theme.selection_bg,
                 );
             }
 
@@ -178,7 +201,7 @@ impl RuntimeCoordinator {
                 let cursor_y = (self.state.cursor_visual_row - effective_offset) as u16;
                 let cursor_screen_y = transcript_list_area.y + cursor_y;
                 frame.render_widget(
-                    Paragraph::new("> "),
+                    Paragraph::new(Line::from(Span::styled("> ", self.theme.focus))),
                     Rect::new(transcript_list_area.x, cursor_screen_y, 2, 1),
                 );
             }
@@ -189,11 +212,37 @@ impl RuntimeCoordinator {
                 frame.render_stateful_widget(
                     Scrollbar::new(ScrollbarOrientation::VerticalRight)
                         .begin_symbol(None)
-                        .end_symbol(None),
+                        .end_symbol(None)
+                        .thumb_style(self.theme.focus)
+                        .track_style(self.theme.subtle_meta),
                     transcript_content_area,
                     &mut scrollbar_state,
                 );
             }
         }
     }
+}
+
+/// Whether the entry at `entry_idx` should receive the user-row background.
+/// True when the entry itself is a User turn, or when it is a Separator
+/// (Spacer) adjacent to a User turn.
+pub(super) fn row_needs_user_bg(entries: &[TranscriptEntry], entry_idx: usize) -> bool {
+    let Some(entry) = entries.get(entry_idx) else {
+        return false;
+    };
+    if entry.role() == Role::User {
+        return true;
+    }
+    if entry.role() != Role::Separator {
+        return false;
+    }
+    // Spacer: check neighboring entries for a User turn.
+    let prev_is_user = entry_idx
+        .checked_sub(1)
+        .and_then(|i| entries.get(i))
+        .is_some_and(|e| e.role() == Role::User);
+    let next_is_user = entries
+        .get(entry_idx + 1)
+        .is_some_and(|e| e.role() == Role::User);
+    prev_is_user || next_is_user
 }

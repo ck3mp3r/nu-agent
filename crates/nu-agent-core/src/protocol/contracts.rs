@@ -23,6 +23,7 @@ pub enum SharedUiAction {
     Models,
     Agents,
     Sessions,
+    Themes,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -162,6 +163,9 @@ pub trait UserInputUi {
         None
     }
     fn take_next_session_picker_launch_request(&mut self) -> bool {
+        false
+    }
+    fn take_next_theme_picker_launch_request(&mut self) -> bool {
         false
     }
     fn take_next_session_switch_request(&mut self) -> Option<String> {

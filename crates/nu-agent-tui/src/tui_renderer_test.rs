@@ -251,14 +251,19 @@ fn diff_hunk_line_has_bold_modifier() {
 }
 
 #[test]
-fn separator_renders_repeated_dash_char() {
+fn separator_renders_as_blank_line() {
     let r = make_renderer();
     let block = Separator.to_render_block();
     let lines = r.render(&block, &default_ctx(40));
     let text = concat_spans(&lines);
-    assert!(text.contains("─"), "should contain horizontal rule char");
-    let dash_count = text.chars().filter(|&c| c == '─').count();
-    assert_eq!(dash_count, 36, "should be width-4 dashes");
+    assert!(
+        !text.contains('─'),
+        "separator should not render a horizontal rule; got: {text:?}"
+    );
+    assert!(
+        text.trim().is_empty(),
+        "separator should render as blank; got: {text:?}"
+    );
 }
 
 #[test]
@@ -385,12 +390,14 @@ mod task_5_visual_diff_tests {
     }
 
     #[test]
-    fn user_prose_has_no_row_background() {
+    fn user_prose_has_row_background() {
         let lines = render_block_for(true, "hi");
+        let bg = crate::rendering::theme::TuiTheme::default().row_user_bg;
         for span in &lines[0].spans {
             assert_eq!(
-                span.style.bg, None,
-                "user prose rows must have no background color; got {:?}",
+                span.style.bg,
+                Some(bg),
+                "user prose rows must have the USER_BG background color; got {:?}",
                 span.style.bg
             );
         }
@@ -444,7 +451,7 @@ mod task_5_visual_diff_tests {
     #[test]
     fn render_markdown_lines_accepts_max_width_none() {
         // render_markdown_lines("# Hello", None) should produce non-empty output
-        let lines = crate::markdown::render_markdown_lines("# Hello", None, &TuiTheme::default());
+        let lines = crate::markdown::render_markdown_lines("# Hello", None);
         assert!(
             !lines.is_empty(),
             "render_markdown_lines with None width must produce non-empty output"

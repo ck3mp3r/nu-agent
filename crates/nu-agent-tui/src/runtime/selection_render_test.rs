@@ -1,7 +1,11 @@
 use super::RuntimeCoordinator;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Style};
+
+/// The selection style used in tests — mirrors the theme's `selection_bg`
+/// (a background-only style, no REVERSED modifier).
+const TEST_SELECTION_STYLE: Style = Style::new().bg(Color::Blue);
 
 /// Create a test buffer with distinct foreground colors per cell so we can
 /// verify that the highlight style does NOT overwrite them.
@@ -28,12 +32,8 @@ fn assert_row_highlighted(buf: &Buffer, area: Rect, row_y: u16) {
         let cell = buf.cell((x, row_y)).expect("cell in range");
         assert_eq!(
             cell.bg,
-            Color::DarkGray,
-            "row {row_y} col {x}: expected DarkGray background"
-        );
-        assert!(
-            cell.modifier.contains(Modifier::REVERSED),
-            "row {row_y} col {x}: expected REVERSED modifier"
+            Color::Blue,
+            "row {row_y} col {x}: expected selection background"
         );
     }
 }
@@ -44,12 +44,8 @@ fn assert_row_not_highlighted(buf: &Buffer, area: Rect, row_y: u16) {
         let cell = buf.cell((x, row_y)).expect("cell in range");
         assert_ne!(
             cell.bg,
-            Color::DarkGray,
-            "row {row_y} col {x}: should not have DarkGray background"
-        );
-        assert!(
-            !cell.modifier.contains(Modifier::REVERSED),
-            "row {row_y} col {x}: should not have REVERSED modifier"
+            Color::Blue,
+            "row {row_y} col {x}: should not have selection background"
         );
     }
 }
@@ -64,10 +60,13 @@ fn apply_selection_highlight_highlights_selected_rows() {
     let mut buf = make_test_buffer(5, 5);
 
     RuntimeCoordinator::apply_selection_highlight(
-        &mut buf, area, 1, // sel_start
+        &mut buf,
+        area,
+        1, // sel_start
         3, // sel_end
         0, // effective_offset
         5, // viewport_height
+        TEST_SELECTION_STYLE,
     );
 
     // Rows 0 and 4 should NOT be highlighted
@@ -87,10 +86,13 @@ fn apply_selection_highlight_skips_rows_above_viewport() {
 
     // Selection starts at row 0 but viewport starts at offset 3 — nothing visible
     RuntimeCoordinator::apply_selection_highlight(
-        &mut buf, area, 0, // sel_start
+        &mut buf,
+        area,
+        0, // sel_start
         1, // sel_end
         3, // effective_offset
         5, // viewport_height
+        TEST_SELECTION_STYLE,
     );
 
     // No rows should be highlighted
@@ -106,10 +108,13 @@ fn apply_selection_highlight_skips_rows_below_viewport() {
 
     // Selection is at rows 5-6, viewport shows rows 0-4 — nothing visible
     RuntimeCoordinator::apply_selection_highlight(
-        &mut buf, area, 5, // sel_start
+        &mut buf,
+        area,
+        5, // sel_start
         6, // sel_end
         0, // effective_offset
         5, // viewport_height
+        TEST_SELECTION_STYLE,
     );
 
     for y in 0..5 {
@@ -123,10 +128,13 @@ fn apply_selection_highlight_single_row() {
     let mut buf = make_test_buffer(5, 5);
 
     RuntimeCoordinator::apply_selection_highlight(
-        &mut buf, area, 2, // sel_start
+        &mut buf,
+        area,
+        2, // sel_start
         2, // sel_end
         0, // effective_offset
         5, // viewport_height
+        TEST_SELECTION_STYLE,
     );
 
     // Only row 2 should be highlighted
@@ -157,10 +165,13 @@ fn apply_selection_highlight_preserves_non_highlighted_cells() {
         .collect();
 
     RuntimeCoordinator::apply_selection_highlight(
-        &mut buf, area, 1, // sel_start
+        &mut buf,
+        area,
+        1, // sel_start
         3, // sel_end
         0, // effective_offset
         5, // viewport_height
+        TEST_SELECTION_STYLE,
     );
 
     // Row 0 should be completely unchanged
