@@ -12,6 +12,7 @@ unicode-width = { workspace = true }
 syntect = { workspace = true }
 arboard = { workspace = true }
 pulldown-cmark = { workspace = true }
+unicodeit = { workspace = true }
 libc = { workspace = true }
 tokio = { workspace = true }
 log = { workspace = true }

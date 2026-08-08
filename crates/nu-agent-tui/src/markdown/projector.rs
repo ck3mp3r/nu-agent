@@ -1,68 +1,30 @@
 use nu_agent_core::transcript::ir::{ContentLine, Span as IrSpan, StyleHint};
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use unicode_width::UnicodeWidthStr;
+use unicodeit;
 
 use super::code_blocks::{CodeBlockState, fence_language_hint, highlighted_code_lines};
 
+/// Convert LaTeX math to Unicode. Delegates to `unicodeit` for symbol/subscript/
+/// superscript/blackboard-bold conversion, and additionally unwraps `\text{...}`
+/// (which `unicodeit` leaves as raw LaTeX) to its inner content.
 fn latex_to_unicode(latex: &str) -> String {
-    const REPLACEMENTS: &[(&str, &str)] = &[
-        ("\\rightarrow", "→"),
-        ("\\leftarrow", "←"),
-        ("\\Rightarrow", "⇒"),
-        ("\\Leftarrow", "⇐"),
-        ("\\leftrightarrow", "↔"),
-        ("\\Leftrightarrow", "⇔"),
-        ("\\notin", "∉"),
-        ("\\infty", "∞"),
-        ("\\mapsto", "↦"),
-        ("\\approx", "≈"),
-        ("\\equiv", "≡"),
-        ("\\subset", "⊂"),
-        ("\\supset", "⊃"),
-        ("\\emptyset", "∅"),
-        ("\\partial", "∂"),
-        ("\\nabla", "∇"),
-        ("\\forall", "∀"),
-        ("\\exists", "∃"),
-        ("\\implies", "⟹"),
-        ("\\cdot", "·"),
-        ("\\sum", "∑"),
-        ("\\prod", "∏"),
-        ("\\int", "∫"),
-        ("\\sqrt", "√"),
-        ("\\alpha", "α"),
-        ("\\beta", "β"),
-        ("\\gamma", "γ"),
-        ("\\delta", "δ"),
-        ("\\epsilon", "ε"),
-        ("\\theta", "θ"),
-        ("\\lambda", "λ"),
-        ("\\mu", "μ"),
-        ("\\pi", "π"),
-        ("\\sigma", "σ"),
-        ("\\phi", "φ"),
-        ("\\omega", "ω"),
-        ("\\times", "×"),
-        ("\\div", "÷"),
-        ("\\pm", "±"),
-        ("\\mp", "∓"),
-        ("\\leq", "≤"),
-        ("\\geq", "≥"),
-        ("\\neq", "≠"),
-        ("\\land", "∧"),
-        ("\\lor", "∨"),
-        ("\\neg", "¬"),
-        ("\\cup", "∪"),
-        ("\\cap", "∩"),
-        ("\\to", "→"),
-        ("\\in", "∈"),
-    ];
     let mut result = latex.to_string();
-    for (cmd, unicode) in REPLACEMENTS {
-        result = result.replace(cmd, unicode);
+    while let Some(start) = result.find("\\text{") {
+        let Some(open) = result[start..].find('{') else {
+            break;
+        };
+        let open = start + open;
+        let Some(close) = result[open..].find('}') else {
+            break;
+        };
+        let close = open + close;
+        let inner = result[open + 1..close].to_string();
+        result.replace_range(start..=close, &inner);
     }
-    result
+    unicodeit::replace(&result)
 }
+
 #[derive(Debug, Default)]
 struct TableBuffer {
     header_row: Vec<String>,

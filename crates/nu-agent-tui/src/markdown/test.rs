@@ -834,3 +834,15 @@ fn inline_math_int_not_corrupted_by_in() {
     );
     assert!(!text.contains("∈t"), "int was corrupted by in prefix match");
 }
+
+#[test]
+fn inline_math_text_command_renders_inner_content() {
+    let lines = project_markdown_to_lines("$\\text{Plugin Config}$", None);
+    let text: String = lines
+        .iter()
+        .flat_map(|l| l.spans.iter())
+        .map(|s| s.text.as_str())
+        .collect();
+    assert!(text.contains("Plugin Config"));
+    assert!(!text.contains("\\text"));
+}
