@@ -33,7 +33,7 @@ pub(super) fn resolve_default_agent(
 
 pub(super) fn resolve_effective_permissions_config(
     call: &EvaluatedCall,
-    plugin_config: Option<&Value>,
+    plugin_config: &nu_agent_core::config::PluginConfig,
     agent_overlay: Option<&PermissionsOverlay>,
     interactive: bool,
 ) -> Result<
@@ -45,7 +45,7 @@ pub(super) fn resolve_effective_permissions_config(
     ),
     LabeledError,
 > {
-    let base = PermissionsConfig::parse_from_plugin_config(plugin_config, interactive);
+    let base = PermissionsConfig::from_plugin_config(plugin_config, interactive);
     let cli_permissions: Option<Value> = call.get_flag("permissions").ok().flatten();
 
     // Parse CLI overlay separately so it can be re-applied during persona switches

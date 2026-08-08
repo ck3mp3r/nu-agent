@@ -392,21 +392,17 @@ impl PermissionsConfig {
         let decision = self.evaluate(tool_name, &serde_json::json!({}));
         decision.action != PermissionAction::Deny
     }
+    pub fn from_plugin_config(config: &crate::config::PluginConfig, interactive: bool) -> Self {
+        match &config.permissions {
+            Some(value) => Self::from_toml(value, interactive),
+            None => Self::safe_defaults(interactive),
+        }
+    }
 
-    pub fn parse_from_plugin_config(
-        plugin_config: Option<&nu_protocol::Value>,
-        interactive: bool,
-    ) -> Self {
-        let Some(value) = plugin_config else {
+    pub fn from_toml(value: &toml::Value, interactive: bool) -> Self {
+        let Some(table) = value.as_table() else {
             return Self::safe_defaults(interactive);
         };
-        let Ok(record) = value.as_record() else {
-            return Self::safe_defaults(interactive);
-        };
-        let Some(permissions_value) = record.get("permissions") else {
-            return Self::safe_defaults(interactive);
-        };
-
         let mut diagnostics = Vec::new();
         let mut global = PermissionAction::Ask;
         let mut tool_rules_map = BTreeMap::<String, PermissionAction>::new();
@@ -414,14 +410,9 @@ impl PermissionsConfig {
             String,
             HashMap<String, Vec<(String, PermissionAction)>>,
         > = HashMap::new();
-
-        let Ok(permissions_record) = permissions_value.as_record() else {
-            return Self::safe_defaults(interactive);
-        };
-
-        for (tool_key, tool_value) in permissions_record.iter() {
+        for (tool_key, tool_value) in table.iter() {
             if tool_key == "*" {
-                match value_to_action(tool_value) {
+                match toml_value_to_action(tool_value) {
                     Ok(action) => global = action,
                     Err(message) => diagnostics.push(PermissionDiagnostic {
                         code: "permissions.invalid.global_action",
@@ -430,23 +421,15 @@ impl PermissionsConfig {
                 }
                 continue;
             }
-
             let resolved_key = tool_key.as_str();
-
-            // If value is a record, treat as nested field → pattern → action rules
-            if let Ok(field_record) = tool_value.as_record() {
-                for (field_name, field_value) in field_record.iter() {
-                    let Ok(pattern_record) = field_value.as_record() else {
-                        diagnostics.push(PermissionDiagnostic {
-                            code: "permissions.invalid.nested_field_map",
-                            message: format!(
-                                "permissions.{resolved_key}.{field_name} must be a map of pattern -> action"
-                            ),
-                        });
+            if let Some(field_table) = tool_value.as_table() {
+                for (field_name, field_value) in field_table.iter() {
+                    let Some(pattern_table) = field_value.as_table() else {
+                        diagnostics.push(PermissionDiagnostic { code: "permissions.invalid.nested_field_map", message: format!("permissions.{resolved_key}.{field_name} must be a map of pattern -> action") });
                         continue;
                     };
-                    for (pattern, action_value) in pattern_record.iter() {
-                        match value_to_action(action_value) {
+                    for (pattern, action_value) in pattern_table.iter() {
+                        match toml_value_to_action(action_value) {
                             Ok(action) => {
                                 nested_field_rules_map
                                     .entry(resolved_key.to_string())
@@ -464,8 +447,7 @@ impl PermissionsConfig {
                 }
                 continue;
             }
-
-            match value_to_action(tool_value) {
+            match toml_value_to_action(tool_value) {
                 Ok(action) => {
                     tool_rules_map.insert(resolved_key.to_string(), action);
                 }
@@ -475,7 +457,6 @@ impl PermissionsConfig {
                 }),
             }
         }
-
         Self {
             global,
             tool_rules: tool_rules_map.into_iter().collect(),
@@ -483,9 +464,9 @@ impl PermissionsConfig {
             diagnostics,
         }
     }
+
     pub fn evaluate(&self, tool_name: &str, args: &JsonValue) -> PermissionDecision {
         let mut diagnostics = self.diagnostics.clone();
-
         let mut matched_rule = PermissionRuleMatch {
             identity: "global:*".to_string(),
             scope: "global",
@@ -846,6 +827,14 @@ fn value_to_action(value: &nu_protocol::Value) -> Result<PermissionAction, Strin
     let action_str = value
         .as_str()
         .map_err(|_| "permission action must be a string".to_string())?;
+    PermissionAction::from_str(action_str)
+        .ok_or_else(|| format!("invalid permission action '{}'", action_str))
+}
+
+fn toml_value_to_action(value: &toml::Value) -> Result<PermissionAction, String> {
+    let action_str = value
+        .as_str()
+        .ok_or_else(|| "permission action must be a string".to_string())?;
     PermissionAction::from_str(action_str)
         .ok_or_else(|| format!("invalid permission action '{}'", action_str))
 }

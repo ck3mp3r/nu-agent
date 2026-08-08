@@ -1,6 +1,6 @@
 # Configuration
 
-`nu-agent` uses a **TOML config file** as its sole source of configuration. The Nushell plugin config record is no longer supported — all configuration lives in `config.toml`.
+`nu-agent` uses a **TOML config file** as its sole source of configuration. The Nushell plugin record is no longer supported — all configuration lives in `config.toml`.
 
 Configuration is organised around three files, all located under the XDG base directories:
 
@@ -212,66 +212,113 @@ a2a_enabled = true
 
 Enable A2A (agent-to-agent) JSON-RPC 2.0 over HTTP. Default is `false`.
 
-### MCP servers
+## Permissions
 
-MCP servers are configured as a TOML array of tables. Each entry must have a `name` and a `transport` (`stdio`, `sse`, or `http`).
+The `[permissions]` table controls tool execution policy.
 
 ```toml
-[[mcp]]
-name = "filesystem"
-transport = "stdio"
-command = "npx"
-args = ["-y", "@modelcontextprotocol/server-filesystem"]
-enabled = true
-
-[[mcp]]
-name = "remote"
-transport = "sse"
-url = "http://localhost:8080/mcp"
+[permissions]
+"*" = "ask"           # global default
+read = "allow"
+glob = "allow"
+grep = "allow"
+edit = "ask"
+patch = "ask"
+http = "ask"
+skill = "ask"
 ```
 
-#### McpServerConfig fields
+### Actions
+
+- `"allow"` — execute without prompting
+- `"deny"` — block execution silently
+- `"ask"` — prompt the user for approval (TUI mode); deny in non-interactive mode
+
+### Global policy
+
+`"*"` sets the default action for any tool not explicitly listed. Defaults to `"ask"` (TUI) or `"deny"` (pipeline) if omitted.
+
+### Nested field rules
+
+```toml
+[permissions.nu__run.command]
+"rm*" = "deny"
+"git push*" = "deny"
+"*" = "ask"
+```
+
+### Precedence
+
+1. Base config (`[permissions]` in `config.toml`)
+2. Agent persona overlay (from persona front matter)
+3. CLI `--permissions` flag (highest priority)
+
+### Safe defaults
+
+When no `[permissions]` section exists: `read`, `glob`, `grep` → `allow`; `c5t_get*`, `c5t_list*` → `allow`; everything else → `ask` (TUI) or `deny` (pipeline).
+
+## MCP Servers
+
+The `[mcp]` table configures MCP servers. Each server is a sub-table keyed by name.
+
+```toml
+[mcp.context7]
+transport = "http"
+url = "https://mcp.context7.com/mcp"
+
+[mcp.c5t]
+transport = "sse"
+url = "http://0.0.0.0:3737/mcp"
+enabled = true
+
+[mcp.nu]
+transport = "stdio"
+command = "nu-mcp"
+args = ["--add-path", "/tmp"]
+enabled = false
+
+[mcp.nu.env]
+GIT_PAGER = ""
+```
+
+### Transports
+
+- `"stdio"` — spawns a local process, requires `command`
+- `"sse"` — Server-Sent Events, requires `url`
+- `"http"` — HTTP streaming, requires `url`
+
+### Fields
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `name` | String | **yes** | Unique server name |
 | `transport` | String | **yes** | `stdio`, `sse`, or `http` |
-| `enabled` | Bool | no | Default `true` |
 | `url` | String | for `sse`/`http` | Server URL |
 | `command` | String | for `stdio` | Command to launch |
-| `cwd` | String | no | Working directory for stdio |
 | `args` | Array | no | Command arguments |
+| `cwd` | String | no | Working directory for stdio |
 | `env` | Table | no | Extra environment variables |
-| `headers` | Table | no | Extra HTTP headers (legacy; see [MCP auth](#mcp-authentication)) |
-| `auth` | Table | no | Authentication config |
+| `headers` | Table | no | Extra HTTP headers (sse/http) |
+| `enabled` | Bool | no | Default `true` |
 
-#### MCP authentication
+### Auth (optional)
 
 ```toml
-[[mcp]]
-name = "my-server"
-transport = "sse"
-url = "http://localhost:8080/mcp"
+[mcp.api]
+transport = "http"
+url = "https://api.example.com/mcp"
 
-[mcp.auth]
-type = "oauth"             # none (default) | bearer | oauth
-# client-id = "my-client"  # OAuth: omit for dynamic client registration
-# client-secret = "..."    # OAuth: optional, for confidential clients
-# scope = "read write"     # OAuth: space-separated scopes
-# redirect-uri = "http://127.0.0.1:19876/mcp/oauth/callback"
+[mcp.api.auth]
+type = "bearer"
+token = "your-token"
 ```
 
-| Auth type | Fields | Description |
-|-----------|--------|-------------|
-| `none` | — | No authentication (default) |
-| `bearer` | `token` | Static bearer token |
-| `oauth` | `client-id`, `client-secret`, `scope`, `redirect-uri` | OAuth 2.0 authorization-code flow with PKCE |
+Auth types: `none` (default), `bearer` (requires `token`), `oauth` (requires http/sse transport; supports `client-id`, `client-secret`, `scope`, `redirect-uri`).
 
-When `client-id` is omitted for OAuth, the agent performs dynamic client registration. The redirect URI defaults to `http://127.0.0.1:<random-port>/mcp/oauth/callback`.
+### Auth commands
 
-The legacy `headers.Authorization` field still works, but if both `auth` and `headers.Authorization` are set, `auth` takes precedence and a warning is logged.
-
-Validation rules: OAuth requires HTTP/SSE transport (not stdio); a `bearer` token must not be empty; unknown auth types are rejected at parse time.
+- `agent mcp auth login <server>` — start OAuth flow
+- `agent mcp auth logout <server>` — clear credentials
+- `agent mcp auth status` — show auth status for all servers
 
 ## 2. secrets.json
 

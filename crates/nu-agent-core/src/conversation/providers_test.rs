@@ -380,6 +380,8 @@ fn plugin_config_read_timeout_secs_propagates_to_resolved_config() {
         session_store: None,
         secret_store: None,
         models_cache: None,
+        permissions: None,
+        mcp: None,
     };
 
     let role_config = ModelRoleConfig {
@@ -436,6 +438,8 @@ fn plugin_config_without_read_timeout_secs_resolves_to_none() {
         session_store: None,
         secret_store: None,
         models_cache: None,
+        permissions: None,
+        mcp: None,
     };
 
     let role_config = ModelRoleConfig {

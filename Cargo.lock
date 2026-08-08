@@ -2988,6 +2988,7 @@ dependencies = [
  "serial_test",
  "tempfile",
  "tokio",
+ "toml",
  "url",
 ]
 

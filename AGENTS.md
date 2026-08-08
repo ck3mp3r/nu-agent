@@ -197,11 +197,11 @@ When working with LLM streaming responses:
 
 See `docs/configuration.md` for the full field reference and provider examples.
 
-### Two-path parsing
+### Loading from config.toml
 
-`PluginConfig::from_plugin_config()` (`crates/nu-agent-core/src/config/mod.rs`) is tried first. The legacy flat `Config::from_plugin_config()` is the fallback for configs without a `providers` key. **All new features go in the new path only** — never add fields to the legacy parser.
+`PluginConfig` is loaded via `toml_config::load()` (`crates/nu-agent-core/src/config/toml_config.rs`) from `config.toml`. All new features go through this single path.
 
-In the new path, model-level parameters (temperature, max_tokens, etc.) are no longer top-level `PluginConfig` fields. They live inside `ModelRoleConfig` records under `models.<role>`. The `PluginConfig` struct only holds top-level blocks: `models`, `providers`, `compaction`, `mcp`, `agents`, `preamble`, `a2a_enabled`, `session_store`.
+The `PluginConfig` struct holds top-level blocks: `models`, `providers`, `compaction`, `mcp`, `permissions`, `agents`, `preamble`, `a2a_enabled`, `session_store`.
 
 ### Precedence chain (highest → lowest)
 
@@ -214,14 +214,14 @@ In the new path, model-level parameters (temperature, max_tokens, etc.) are no l
 
 ### The `None` rule
 
-Every `Option` field on the runtime `Config` struct must have at least one real input path (env var, plugin config key, or CLI flag). **Hardcoding `None` in a parsing function is a bug.** This applies to `ModelRoleConfig` fields too — every optional field must be settable via the role config record, a model-level override, an env var, or a CLI flag. Intentional exceptions — fields resolved separately at runtime and not user-configurable:
+Every `Option` field on the runtime `Config` struct must have at least one real input path (env var, config.toml key, or CLI flag). **Hardcoding `None` in a parsing function is a bug.** This applies to `ModelRoleConfig` fields too — every optional field must be settable via the role config record, a model-level override, an env var, or a CLI flag. Intentional exceptions — fields resolved separately at runtime and not user-configurable:
 - `preamble` — resolved via `resolve_preamble()` from provider/model preamble config
 - `provider_impl` — resolved from the `provider` key inside the provider config block
 
 ### Adding a new config field
 
 ```
-1. Add field to `ModelRoleConfig` struct + parse in `from_plugin_config()` models sub-record parsing
+1. Add field to `ModelRoleConfig` struct + parse in `toml_config::load()` models sub-record parsing
 2. Apply in `resolve_model()` role-level block (`if config.field.is_none()`)
 3. Add env var `AGENT_<FIELD_UPPER>` to `Config::from_env()`
 4. Add CLI flag in `crates/nu-agent/src/command/agent/mod.rs` + apply in `apply_cli_flags()`

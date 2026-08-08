@@ -7,7 +7,7 @@ use nu_agent_core::config::{
     Config, ModelConfig, ModelLimits, ModelRoleConfig, PluginConfig, ProviderConfig,
 };
 use nu_plugin::{EvaluatedCall, SimplePluginCommand};
-use nu_protocol::{ParseError, Span, Spanned, SyntaxShape, Value, record};
+use nu_protocol::{ParseError, Span, Spanned, SyntaxShape, Value};
 use serial_test::serial;
 use std::collections::HashMap;
 
@@ -900,33 +900,28 @@ mod new_plugin_config_tests {
 
     #[test]
     #[serial]
-    fn resolve_config_accepts_mcp_from_plugin_env_config() {
+    fn resolve_config_accepts_mcp_from_toml_config() {
         use std::collections::HashMap;
 
-        // MCP config is still parsed from a Nushell Value (separate subsystem).
-        // from_plugin_config expects a top-level record with an `mcp` key.
-        let mcp_value = Value::test_record(record! {
-            "mcp" => Value::test_record(record! {
-                "c5t" => Value::test_record(record! {
-                    "transport" => Value::test_string("sse"),
-                    "url" => Value::test_string("http://0.0.0.0:3737/mcp"),
-                }),
-                "nu" => Value::test_record(record! {
-                    "transport" => Value::test_string("stdio"),
-                    "command" => Value::test_string("nu-mcp"),
-                    "args" => Value::test_list(vec![
-                        Value::test_string("--add-path"),
-                        Value::test_string("/tmp"),
-                    ]),
-                    "env" => Value::test_record(record! {
-                        "GIT_PAGER" => Value::test_string(""),
-                    }),
-                }),
-            }),
-        });
+        // MCP config is parsed from raw TOML.
+        let mcp_value: toml::Value = toml::from_str(
+            r#"
+[c5t]
+transport = "sse"
+url = "http://0.0.0.0:3737/mcp"
 
-        let parsed = nu_agent_core::tools::mcp::config::McpConfig::from_plugin_config(&mcp_value)
-            .expect("mcp parse");
+[nu]
+transport = "stdio"
+command = "nu-mcp"
+args = ["--add-path", "/tmp"]
+
+[nu.env]
+GIT_PAGER = ""
+"#,
+        )
+        .unwrap();
+        let parsed =
+            nu_agent_core::tools::mcp::config::McpConfig::from_toml(&mcp_value).expect("mcp parse");
         assert_eq!(parsed.mcp.len(), 2);
 
         let mut models = HashMap::new();
@@ -1658,6 +1653,8 @@ fn apply_persona_model_overrides_plugin_config() {
         session_store: None,
         secret_store: None,
         models_cache: None,
+        permissions: None,
+        mcp: None,
     };
 
     let applied = runtime_build::apply_persona_model(
@@ -1775,6 +1772,8 @@ fn apply_persona_model_clears_provider_impl() {
         session_store: None,
         secret_store: None,
         models_cache: None,
+        permissions: None,
+        mcp: None,
     };
 
     let applied = runtime_build::apply_persona_model(

@@ -178,6 +178,8 @@ fn make_plugin_config(models: HashMap<String, ModelRoleConfig>) -> PluginConfig 
         session_store: None,
         secret_store: None,
         models_cache: None,
+        permissions: None,
+        mcp: None,
     }
 }
 
@@ -399,6 +401,8 @@ fn make_plugin_config_with_providers(
         session_store: None,
         secret_store: None,
         models_cache: None,
+        permissions: None,
+        mcp: None,
     }
 }
 

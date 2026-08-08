@@ -98,17 +98,16 @@ impl SimplePluginCommand for AgentAuthMcpStatus {
     fn run(
         &self,
         _plugin: &AgentPlugin,
-        engine: &EngineInterface,
+        _engine: &EngineInterface,
         call: &EvaluatedCall,
         _input: &Value,
     ) -> Result<Value, LabeledError> {
         // 1. Load MCP config
-        let plugin_config_value = engine.get_plugin_config()?.ok_or_else(|| {
-            LabeledError::new("No plugin configuration found")
-                .with_label("Configure MCP servers in your plugin config", call.head)
+        let plugin_config = nu_agent_core::config::toml_config::load()
+            .map_err(|e| LabeledError::new(format!("Failed to load config.toml: {e}")))?;
+        let mcp_config = McpConfig::from_toml_config(&plugin_config).map_err(|msg| {
+            LabeledError::new("Failed to load MCP config").with_label(msg, call.head)
         })?;
-
-        let mcp_config = McpConfig::from_plugin_config(&plugin_config_value)?;
 
         // 2. Load credential store
         let credential_store = McpCredentialsStore::load()

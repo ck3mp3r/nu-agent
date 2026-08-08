@@ -10,24 +10,21 @@ plugin add target/release/nu_plugin_agent
 plugin use nu_plugin_agent
 ```
 
-Set plugin config in Nushell:
+Generate a starter config:
+```bash
+agent config init
+```
+Then edit `~/.config/nu-agent/config.toml`:
+```toml
+[models.default]
+model = "ollama/gemma4:31b"
 
-```nu
-$env.config.plugins.agent = {
-  model: "ollama/gemma4:31b"
-  providers: {
-    ollama: {
-      base_url: "http://127.0.0.1:11434"
-      models: {
-        "gemma4:31b": {}
-      }
-    }
-  }
-  compaction: {               # optional
-    strategy: "sliding_summary"
-    keep_recent: 10
-  }
-}
+[providers.ollama]
+base_url = "http://127.0.0.1:11434"
+
+[compaction]
+strategy = "sliding_summary"
+keep_recent = 10
 ```
 
 Use it:

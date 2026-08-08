@@ -42,25 +42,24 @@ impl PermissionEventSink for RecordingPermissionSink {
     }
 }
 
-fn permissions_value() -> nu_protocol::Value {
-    Value::test_record(record! {
-        "permissions" => Value::test_record(record! {
-            "*" => Value::test_string("ask"),
-            "read" => Value::test_string("allow"),
-            "c5t_get*" => Value::test_string("allow"),
-            "shell" => Value::test_record(record! {
-                "command" => Value::test_record(record! {
-                    "kubectl delete *" => Value::test_string("deny"),
-                    "*" => Value::test_string("ask"),
-                })
-            })
-        })
-    })
+fn permissions_toml() -> toml::Value {
+    toml::from_str(
+        r#"
+"*" = "ask"
+read = "allow"
+"c5t_get*" = "allow"
+
+[shell.command]
+"kubectl delete *" = "deny"
+"*" = "ask"
+"#,
+    )
+    .expect("valid toml")
 }
 
 #[test]
 fn parser_accepts_canonical_permissions_shape() {
-    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()), true);
+    let parsed = PermissionsConfig::from_toml(&permissions_toml(), true);
     let deny = parsed.evaluate(
         "shell",
         &serde_json::json!({"command": "kubectl delete pod x"}),
@@ -72,7 +71,7 @@ fn parser_accepts_canonical_permissions_shape() {
 
 #[test]
 fn precedence_is_global_then_tool_then_nested_command() {
-    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()), true);
+    let parsed = PermissionsConfig::from_toml(&permissions_toml(), true);
 
     let global = parsed.evaluate("unknown_tool", &serde_json::json!({}));
     assert_eq!(global.action, PermissionAction::Ask);
@@ -92,7 +91,7 @@ fn precedence_is_global_then_tool_then_nested_command() {
 
 #[test]
 fn command_matching_normalizes_whitespace() {
-    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()), true);
+    let parsed = PermissionsConfig::from_toml(&permissions_toml(), true);
     let decision = parsed.evaluate(
         "shell",
         &serde_json::json!({"command": "   kubectl    delete   pod   foo   "}),
@@ -102,7 +101,7 @@ fn command_matching_normalizes_whitespace() {
 
 #[test]
 fn missing_command_uses_deterministic_safe_fallback_with_diagnostics() {
-    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()), true);
+    let parsed = PermissionsConfig::from_toml(&permissions_toml(), true);
     let decision = parsed.evaluate("shell", &serde_json::json!({}));
     assert_eq!(decision.action, PermissionAction::Ask);
     assert!(
@@ -115,18 +114,15 @@ fn missing_command_uses_deterministic_safe_fallback_with_diagnostics() {
 
 #[test]
 fn redundant_nested_star_equal_to_inherited_is_valid_noop_with_diagnostic() {
-    let value = Value::test_record(record! {
-        "permissions" => Value::test_record(record! {
-            "*" => Value::test_string("ask"),
-            "shell" => Value::test_record(record! {
-                "command" => Value::test_record(record! {
-                    "*" => Value::test_string("ask")
-                })
-            })
-        })
-    });
-
-    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
+    let value: toml::Value = toml::from_str(
+        r#"
+"*" = "ask"
+[shell.command]
+"*" = "ask"
+"#,
+    )
+    .expect("valid toml");
+    let parsed = PermissionsConfig::from_toml(&value, true);
     let decision = parsed.evaluate("shell", &serde_json::json!({"command": "echo hi"}));
 
     assert_eq!(decision.action, PermissionAction::Ask);
@@ -140,7 +136,7 @@ fn redundant_nested_star_equal_to_inherited_is_valid_noop_with_diagnostic() {
 
 #[test]
 fn ask_choices_apply_once_always_and_deny() {
-    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()), true);
+    let parsed = PermissionsConfig::from_toml(&permissions_toml(), true);
     let mut cache = SessionGrantCache::default();
     let args = serde_json::json!({"command": "echo hi"});
 
@@ -185,7 +181,7 @@ fn ask_choices_apply_once_always_and_deny() {
 
 #[test]
 fn session_grants_are_keyed_by_scoped_request_context_not_call_arguments() {
-    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()), true);
+    let parsed = PermissionsConfig::from_toml(&permissions_toml(), true);
     let mut cache = SessionGrantCache::default();
     let first_args = serde_json::json!({"command": "echo one"});
     let second_args = serde_json::json!({"command": "echo two"});
@@ -209,12 +205,13 @@ fn session_grants_are_keyed_by_scoped_request_context_not_call_arguments() {
 
 #[test]
 fn allow_always_for_shell_does_not_leak_to_read_under_global_ask() {
-    let value = Value::test_record(record! {
-        "permissions" => Value::test_record(record! {
-            "*" => Value::test_string("ask")
-        })
-    });
-    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
+    let value: toml::Value = toml::from_str(
+        r#"
+"*" = "ask"
+"#,
+    )
+    .expect("valid toml");
+    let parsed = PermissionsConfig::from_toml(&value, true);
     let mut cache = SessionGrantCache::default();
 
     let shell_args = serde_json::json!({"command": "echo one"});
@@ -237,12 +234,13 @@ fn allow_always_for_shell_does_not_leak_to_read_under_global_ask() {
 
 #[test]
 fn same_rule_identity_different_tool_name_does_not_share_session_grant() {
-    let value = Value::test_record(record! {
-        "permissions" => Value::test_record(record! {
-            "*" => Value::test_string("ask")
-        })
-    });
-    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
+    let value: toml::Value = toml::from_str(
+        r#"
+"*" = "ask"
+"#,
+    )
+    .expect("valid toml");
+    let parsed = PermissionsConfig::from_toml(&value, true);
     let mut cache = SessionGrantCache::default();
 
     let glob_args = serde_json::json!({"pattern": "**/*.rs"});
@@ -265,13 +263,14 @@ fn same_rule_identity_different_tool_name_does_not_share_session_grant() {
 
 #[test]
 fn same_tool_name_different_mode_does_not_share_session_grant() {
-    let value = Value::test_record(record! {
-        "permissions" => Value::test_record(record! {
-            "*" => Value::test_string("ask"),
-            "edit" => Value::test_string("ask")
-        })
-    });
-    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
+    let value: toml::Value = toml::from_str(
+        r#"
+"*" = "ask"
+"edit" = "ask"
+"#,
+    )
+    .expect("valid toml");
+    let parsed = PermissionsConfig::from_toml(&value, true);
     let mut cache = SessionGrantCache::default();
 
     let preview_args = serde_json::json!({
@@ -299,13 +298,14 @@ fn same_tool_name_different_mode_does_not_share_session_grant() {
 
 #[test]
 fn same_tool_name_same_mode_different_source_does_not_share_session_grant() {
-    let value = Value::test_record(record! {
-        "permissions" => Value::test_record(record! {
-            "*" => Value::test_string("ask"),
-            "edit" => Value::test_string("ask")
-        })
-    });
-    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
+    let value: toml::Value = toml::from_str(
+        r#"
+"*" = "ask"
+"edit" = "ask"
+"#,
+    )
+    .expect("valid toml");
+    let parsed = PermissionsConfig::from_toml(&value, true);
     let mut cache = SessionGrantCache::default();
 
     let args = serde_json::json!({
@@ -329,18 +329,16 @@ fn same_tool_name_same_mode_different_source_does_not_share_session_grant() {
 
 #[test]
 fn same_tool_source_mode_different_rule_identity_does_not_share_session_grant() {
-    let value = Value::test_record(record! {
-        "permissions" => Value::test_record(record! {
-            "*" => Value::test_string("ask"),
-            "shell" => Value::test_record(record! {
-                "command" => Value::test_record(record! {
-                    "echo *" => Value::test_string("ask"),
-                    "ls *" => Value::test_string("ask")
-                })
-            })
-        })
-    });
-    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
+    let value: toml::Value = toml::from_str(
+        r#"
+"*" = "ask"
+[shell.command]
+"echo *" = "ask"
+"ls *" = "ask"
+"#,
+    )
+    .expect("valid toml");
+    let parsed = PermissionsConfig::from_toml(&value, true);
     let mut cache = SessionGrantCache::default();
 
     let echo_args = serde_json::json!({"command": "echo one"});
@@ -371,7 +369,7 @@ fn same_tool_source_mode_different_rule_identity_does_not_share_session_grant() 
 
 #[test]
 fn defaults_apply_when_permissions_block_is_missing() {
-    let parsed = PermissionsConfig::parse_from_plugin_config(None, true);
+    let parsed = PermissionsConfig::safe_defaults(true);
     assert_eq!(
         parsed.evaluate("read", &serde_json::json!({})).action,
         PermissionAction::Allow
@@ -621,7 +619,7 @@ async fn non_interactive_ask_allow_override_returns_allow_once() {
 
 #[test]
 fn allow_always_grant_is_session_only_and_resets_with_new_cache() {
-    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()), true);
+    let parsed = PermissionsConfig::from_toml(&permissions_toml(), true);
 
     let mut first_session_cache = SessionGrantCache::default();
     let first_args = serde_json::json!({"command": "echo one"});
@@ -757,14 +755,15 @@ fn cli_permissions_overlay_rejects_invalid_action_with_explicit_leaf_path() {
 
 #[test]
 fn additive_overlay_cli_wins_on_overlap_and_retains_non_overlapping() {
-    let base = PermissionsConfig::parse_from_plugin_config(
-        Some(&Value::test_record(record! {
-            "permissions" => Value::test_record(record! {
-                "*" => Value::test_string("ask"),
-                "read" => Value::test_string("allow"),
-                "glob" => Value::test_string("deny")
-            })
-        })),
+    let base = PermissionsConfig::from_toml(
+        &toml::from_str::<toml::Value>(
+            r#"
+"*" = "ask"
+read = "allow"
+glob = "deny"
+"#,
+        )
+        .expect("valid toml"),
         true,
     );
 
@@ -792,18 +791,16 @@ fn additive_overlay_cli_wins_on_overlap_and_retains_non_overlapping() {
 
 #[test]
 fn additive_overlay_merges_nested_command_deterministically() {
-    let base = PermissionsConfig::parse_from_plugin_config(
-        Some(&Value::test_record(record! {
-            "permissions" => Value::test_record(record! {
-                "*" => Value::test_string("ask"),
-                "shell" => Value::test_record(record! {
-                    "command" => Value::test_record(record! {
-                        "kubectl get *" => Value::test_string("allow"),
-                        "*" => Value::test_string("ask")
-                    })
-                })
-            })
-        })),
+    let base = PermissionsConfig::from_toml(
+        &toml::from_str::<toml::Value>(
+            r#"
+"*" = "ask"
+[shell.command]
+"kubectl get *" = "allow"
+"*" = "ask"
+"#,
+        )
+        .expect("valid toml"),
         true,
     );
 
@@ -1144,78 +1141,81 @@ fn parse_from_yaml_mixed() {
 
 #[test]
 fn is_tool_visible_returns_true_for_global_ask() {
-    let value = Value::test_record(record! {
-        "permissions" => Value::test_record(record! {
-            "*" => Value::test_string("ask"),
-        })
-    });
-    let config = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
+    let value: toml::Value = toml::from_str(
+        r#"
+"*" = "ask"
+"#,
+    )
+    .expect("valid toml");
+    let config = PermissionsConfig::from_toml(&value, true);
     assert!(config.is_tool_visible("shell"));
     assert!(config.is_tool_visible("read"));
 }
 
 #[test]
 fn is_tool_visible_returns_true_for_global_allow() {
-    let value = Value::test_record(record! {
-        "permissions" => Value::test_record(record! {
-            "*" => Value::test_string("allow"),
-        })
-    });
-    let config = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
+    let value: toml::Value = toml::from_str(
+        r#"
+"*" = "allow"
+"#,
+    )
+    .expect("valid toml");
+    let config = PermissionsConfig::from_toml(&value, true);
     assert!(config.is_tool_visible("shell"));
 }
 
 #[test]
 fn is_tool_visible_returns_false_for_global_deny() {
-    let value = Value::test_record(record! {
-        "permissions" => Value::test_record(record! {
-            "*" => Value::test_string("deny"),
-        })
-    });
-    let config = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
+    let value: toml::Value = toml::from_str(
+        r#"
+"*" = "deny"
+"#,
+    )
+    .expect("valid toml");
+    let config = PermissionsConfig::from_toml(&value, true);
     assert!(!config.is_tool_visible("shell"));
     assert!(!config.is_tool_visible("read"));
 }
 
 #[test]
 fn is_tool_visible_returns_false_for_tool_level_deny() {
-    let value = Value::test_record(record! {
-        "permissions" => Value::test_record(record! {
-            "*" => Value::test_string("ask"),
-            "shell" => Value::test_string("deny"),
-        })
-    });
-    let config = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
+    let value: toml::Value = toml::from_str(
+        r#"
+"*" = "ask"
+shell = "deny"
+"#,
+    )
+    .expect("valid toml");
+    let config = PermissionsConfig::from_toml(&value, true);
     assert!(!config.is_tool_visible("shell"));
     assert!(config.is_tool_visible("read"));
 }
 
 #[test]
 fn is_tool_visible_returns_true_for_granular_deny_with_tool_level_ask() {
-    let value = Value::test_record(record! {
-        "permissions" => Value::test_record(record! {
-            "*" => Value::test_string("ask"),
-            "shell" => Value::test_record(record! {
-                "command" => Value::test_record(record! {
-                    "kubectl delete *" => Value::test_string("deny"),
-                    "*" => Value::test_string("ask"),
-                })
-            })
-        })
-    });
-    let config = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
+    let value: toml::Value = toml::from_str(
+        r#"
+"*" = "ask"
+[shell.command]
+"kubectl delete *" = "deny"
+"*" = "ask"
+"#,
+    )
+    .expect("valid toml");
+    let config = PermissionsConfig::from_toml(&value, true);
     assert!(config.is_tool_visible("shell"));
 }
 
 #[test]
 fn is_tool_visible_respects_specificity_over_global() {
-    let value = Value::test_record(record! {
-        "permissions" => Value::test_record(record! {
-            "*" => Value::test_string("deny"),
-            "read" => Value::test_string("allow"),
-        })
-    });
-    let config = PermissionsConfig::parse_from_plugin_config(Some(&value), true);
+    let value: toml::Value = toml::from_str(
+        r#"
+"*" = "deny"
+read = "allow"
+"#,
+    )
+    .expect("valid toml");
+    let config = PermissionsConfig::from_toml(&value, true);
     assert!(config.is_tool_visible("read"));
     assert!(!config.is_tool_visible("shell"));
     assert!(!config.is_tool_visible("edit"));
@@ -1257,7 +1257,7 @@ fn safe_defaults_tty_mode_hides_unknown_tools() {
 
 #[test]
 fn clear_empties_all_grants() {
-    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()), true);
+    let parsed = PermissionsConfig::from_toml(&permissions_toml(), true);
     let mut cache = SessionGrantCache::default();
 
     // Insert grants for multiple tools
@@ -1334,7 +1334,7 @@ fn clear_on_empty_cache() {
     cache.clear();
 
     // Verify still empty
-    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()), true);
+    let parsed = PermissionsConfig::from_toml(&permissions_toml(), true);
     let args = serde_json::json!({"command": "echo test"});
     let decision = parsed.evaluate("shell", &args);
     assert_eq!(
@@ -1347,7 +1347,7 @@ fn clear_on_empty_cache() {
 
 #[test]
 fn clear_for_server_removes_only_matching_prefix() {
-    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()), true);
+    let parsed = PermissionsConfig::from_toml(&permissions_toml(), true);
     let mut cache = SessionGrantCache::default();
 
     // Insert grants for context7__* tools, gh__* tool, and a local tool
@@ -1494,7 +1494,7 @@ fn clear_for_server_removes_only_matching_prefix() {
 
 #[test]
 fn clear_for_server_with_no_matching_grants() {
-    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()), true);
+    let parsed = PermissionsConfig::from_toml(&permissions_toml(), true);
     let mut cache = SessionGrantCache::default();
 
     // Insert grants for gh__* tools only
@@ -1559,7 +1559,7 @@ fn clear_for_server_empty_cache() {
     cache.clear_for_server("context7");
 
     // Verify still empty
-    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()), true);
+    let parsed = PermissionsConfig::from_toml(&permissions_toml(), true);
     let args = serde_json::json!({"command": "echo test"});
     let decision = parsed.evaluate("shell", &args);
     assert_eq!(
@@ -1570,7 +1570,7 @@ fn clear_for_server_empty_cache() {
 
 #[test]
 fn clear_for_server_exact_prefix_match_only() {
-    let parsed = PermissionsConfig::parse_from_plugin_config(Some(&permissions_value()), true);
+    let parsed = PermissionsConfig::from_toml(&permissions_toml(), true);
     let mut cache = SessionGrantCache::default();
 
     // Insert context7__search and context7x__search

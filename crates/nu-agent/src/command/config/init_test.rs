@@ -11,10 +11,22 @@ fn generate_config_content_has_header() {
 #[test]
 fn generate_config_content_has_templates() {
     let content = generate_config_content();
-    assert!(content.contains("store:openai"), "should have OpenAI template");
-    assert!(content.contains("store:anthropic"), "should have Anthropic template");
-    assert!(content.contains("ollama-cloud"), "should have Ollama Cloud template");
-    assert!(content.contains("github-copilot"), "should have Copilot template");
+    assert!(
+        content.contains("store:openai"),
+        "should have OpenAI template"
+    );
+    assert!(
+        content.contains("store:anthropic"),
+        "should have Anthropic template"
+    );
+    assert!(
+        content.contains("ollama-cloud"),
+        "should have Ollama Cloud template"
+    );
+    assert!(
+        content.contains("github-copilot"),
+        "should have Copilot template"
+    );
 }
 
 #[test]

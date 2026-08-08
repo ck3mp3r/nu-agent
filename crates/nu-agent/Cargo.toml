@@ -32,3 +32,4 @@ tempfile = { workspace = true }
 nu-parser = { workspace = true }
 serial_test = { workspace = true }
 reqwest = { workspace = true }
+toml = { workspace = true }

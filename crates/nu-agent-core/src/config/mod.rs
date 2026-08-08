@@ -136,10 +136,15 @@ pub struct PluginConfig {
     /// Local models.dev cache (not serialized). Populated at runtime.
     #[serde(skip)]
     pub models_cache: Option<ModelsCache>,
-}
 
-/// Configuration for conversation compaction behavior.
-///
+    /// Tool permissions configuration (raw TOML table, parsed at runtime)
+    #[serde(default)]
+    pub permissions: Option<toml::Value>,
+
+    /// MCP server configurations (raw TOML table, parsed at runtime)
+    #[serde(default)]
+    pub mcp: Option<toml::Value>,
+}
 /// All fields are `Option` — `None` means "use default".
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CompactionConfig {

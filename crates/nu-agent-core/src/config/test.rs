@@ -615,6 +615,8 @@ fn test_resolve_model_basic() {
         session_store: None,
         secret_store: None,
         models_cache: None,
+        permissions: None,
+        mcp: None,
     };
 
     let role_config = ModelRoleConfig {
@@ -669,6 +671,8 @@ fn test_resolve_model_with_env_fallback() {
         session_store: None,
         secret_store: None,
         models_cache: None,
+        permissions: None,
+        mcp: None,
     };
 
     let role_config = ModelRoleConfig {
@@ -707,6 +711,8 @@ fn test_resolve_model_invalid_format() {
         session_store: None,
         secret_store: None,
         models_cache: None,
+        permissions: None,
+        mcp: None,
     };
 
     // No slash separator
@@ -754,6 +760,8 @@ fn test_resolve_model_provider_not_found() {
         session_store: None,
         secret_store: None,
         models_cache: None,
+        permissions: None,
+        mcp: None,
     };
 
     let result = plugin_config.resolve_model(&ModelRoleConfig {
@@ -803,6 +811,8 @@ fn test_resolve_model_model_not_in_config() {
         session_store: None,
         secret_store: None,
         models_cache: None,
+        permissions: None,
+        mcp: None,
     };
 
     let role_config = ModelRoleConfig {
@@ -856,6 +866,8 @@ fn test_resolve_model_with_provider_field() {
         session_store: None,
         secret_store: None,
         models_cache: None,
+        permissions: None,
+        mcp: None,
     };
 
     let role_config = ModelRoleConfig {
@@ -928,6 +940,8 @@ fn test_resolve_model_merges_limits() {
         session_store: None,
         secret_store: None,
         models_cache: None,
+        permissions: None,
+        mcp: None,
     };
 
     let role_config = ModelRoleConfig {
@@ -997,6 +1011,8 @@ fn test_plugin_config_resolve_model_role_level_overrides() {
             session_store: None,
             secret_store: None,
             models_cache: None,
+            permissions: None,
+            mcp: None,
         }
     };
 
@@ -1077,6 +1093,8 @@ fn resolve_model_handles_two_part_format() {
         session_store: None,
         secret_store: None,
         models_cache: None,
+        permissions: None,
+        mcp: None,
     };
 
     let role_config = ModelRoleConfig {
@@ -1114,6 +1132,8 @@ fn resolve_model_validates_empty_parts() {
         session_store: None,
         secret_store: None,
         models_cache: None,
+        permissions: None,
+        mcp: None,
     };
 
     // Empty provider
@@ -1179,6 +1199,8 @@ fn resolve_model_uses_split_once_for_multi_part_models() {
         session_store: None,
         secret_store: None,
         models_cache: None,
+        permissions: None,
+        mcp: None,
     };
 
     let role_config = ModelRoleConfig {
@@ -1234,6 +1256,8 @@ fn resolve_model_works_with_simple_two_part() {
         session_store: None,
         secret_store: None,
         models_cache: None,
+        permissions: None,
+        mcp: None,
     };
 
     let role_config = ModelRoleConfig {
@@ -1296,6 +1320,8 @@ fn integration_github_copilot_with_backend_in_model() {
         session_store: None,
         secret_store: None,
         models_cache: None,
+        permissions: None,
+        mcp: None,
     };
 
     // Test default model

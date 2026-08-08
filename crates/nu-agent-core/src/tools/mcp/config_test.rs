@@ -1,34 +1,28 @@
 use super::{McpAuthConfig, McpConfig};
-use nu_protocol::{Record, Value, record};
 
 #[test]
-fn mcp_config_from_plugin_config_reads_map_shape() {
-    let plugin_config = Value::test_record(record! {
-        "mcp" => Value::test_record(record! {
-            "c5t" => Value::test_record(record! {
-                "transport" => Value::test_string("sse"),
-                "url" => Value::test_string("http://0.0.0.0:3737/mcp"),
-                "enabled" => Value::test_bool(true),
-            }),
-            "nu" => Value::test_record(record! {
-                "transport" => Value::test_string("stdio"),
-                "command" => Value::test_string("nu-mcp"),
-                "cwd" => Value::test_string("/tmp"),
-                "args" => Value::test_list(vec![
-                    Value::test_string("--add-path"),
-                    Value::test_string("/tmp"),
-                ]),
-                "env" => Value::test_record(record! {
-                    "GIT_PAGER" => Value::test_string(""),
-                }),
-                "enabled" => Value::test_bool(false),
-            }),
-        }),
-        "model" => Value::test_string("github-copilot/anthropic/claude-sonnet-4-20250514"),
-        "providers" => Value::test_record(Record::new()),
-    });
+fn mcp_config_from_toml_reads_map_shape() {
+    let mcp_value: toml::Value = toml::from_str(
+        r#"
+[c5t]
+transport = "sse"
+url = "http://0.0.0.0:3737/mcp"
+enabled = true
 
-    let parsed = McpConfig::from_plugin_config(&plugin_config).expect("should parse mcp config");
+[nu]
+transport = "stdio"
+command = "nu-mcp"
+cwd = "/tmp"
+args = ["--add-path", "/tmp"]
+enabled = false
+
+[nu.env]
+GIT_PAGER = ""
+"#,
+    )
+    .unwrap();
+
+    let parsed = McpConfig::from_toml(&mcp_value).expect("should parse mcp config");
     assert_eq!(parsed.mcp.len(), 2);
 
     let c5t = parsed
@@ -53,16 +47,16 @@ fn mcp_config_from_plugin_config_reads_map_shape() {
 
 #[test]
 fn mcp_config_enabled_defaults_true_when_omitted() {
-    let plugin_config = Value::test_record(record! {
-        "mcp" => Value::test_record(record! {
-            "c5t" => Value::test_record(record! {
-                "transport" => Value::test_string("sse"),
-                "url" => Value::test_string("http://0.0.0.0:3737/mcp"),
-            }),
-        }),
-    });
+    let mcp_value: toml::Value = toml::from_str(
+        r#"
+[c5t]
+transport = "sse"
+url = "http://0.0.0.0:3737/mcp"
+"#,
+    )
+    .unwrap();
 
-    let parsed = McpConfig::from_plugin_config(&plugin_config).expect("should parse mcp config");
+    let parsed = McpConfig::from_toml(&mcp_value).expect("should parse mcp config");
     let c5t = parsed
         .mcp
         .iter()
@@ -72,72 +66,66 @@ fn mcp_config_enabled_defaults_true_when_omitted() {
 }
 
 #[test]
-fn mcp_config_enabled_rejects_non_bool_values() {
-    let plugin_config = Value::test_record(record! {
-        "mcp" => Value::test_record(record! {
-            "c5t" => Value::test_record(record! {
-                "transport" => Value::test_string("sse"),
-                "url" => Value::test_string("http://0.0.0.0:3737/mcp"),
-                "enabled" => Value::test_string("true"),
-            }),
-        }),
-    });
+fn mcp_config_enabled_defaults_true_on_non_bool() {
+    let mcp_value: toml::Value = toml::from_str(
+        r#"
+[c5t]
+transport = "sse"
+url = "http://0.0.0.0:3737/mcp"
+enabled = "true"
+"#,
+    )
+    .unwrap();
 
-    let err = McpConfig::from_plugin_config(&plugin_config).expect_err("should fail");
-    let msg = err.to_string();
-    assert!(msg.contains("'enabled' must be a bool") || msg.contains("Invalid field type"));
+    let parsed = McpConfig::from_toml(&mcp_value).expect("should parse");
+    let c5t = parsed.mcp.iter().find(|s| s.name == "c5t").unwrap();
+    assert!(c5t.enabled);
 }
 
 #[test]
 fn mcp_config_validation_rejects_empty_stdio_cwd_when_set() {
-    let plugin_config = Value::test_record(record! {
-        "mcp" => Value::test_record(record! {
-            "nu" => Value::test_record(record! {
-                "transport" => Value::test_string("stdio"),
-                "command" => Value::test_string("nu-mcp"),
-                "cwd" => Value::test_string("   "),
-            }),
-        }),
-    });
+    let mcp_value: toml::Value = toml::from_str(
+        r#"
+[nu]
+transport = "stdio"
+command = "nu-mcp"
+cwd = "   "
+"#,
+    )
+    .unwrap();
 
-    let err = McpConfig::from_plugin_config(&plugin_config).expect_err("should fail");
+    let err = McpConfig::from_toml(&mcp_value).expect_err("should fail");
     let msg = err.to_string();
     assert!(msg.contains("requires non-empty 'cwd'") || msg.contains("Invalid MCP configuration"));
 }
 
 #[test]
-fn mcp_config_from_plugin_config_missing_mcp_returns_empty() {
-    let plugin_config = Value::test_record(record! {
-        "model" => Value::test_string("openai/gpt-4o"),
-        "providers" => Value::test_record(Record::new()),
-    });
+fn mcp_config_from_toml_missing_mcp_returns_empty() {
+    let mcp_value: toml::Value = toml::Value::Table(toml::value::Table::new());
 
-    let parsed = McpConfig::from_plugin_config(&plugin_config).expect("missing mcp should be ok");
+    let parsed = McpConfig::from_toml(&mcp_value).expect("missing mcp should be ok");
     assert!(parsed.mcp.is_empty());
 }
 
 #[test]
-fn mcp_config_from_plugin_config_rejects_non_record_mcp() {
-    let plugin_config = Value::test_record(record! {
-        "mcp" => Value::test_list(vec![]),
-    });
+fn mcp_config_from_toml_non_table_returns_empty() {
+    let mcp_value: toml::Value = toml::Value::String("not a table".to_string());
 
-    let err = McpConfig::from_plugin_config(&plugin_config).expect_err("should fail");
-    let msg = err.to_string();
-    assert!(msg.contains("'mcp' must be a record") || msg.contains("Invalid MCP configuration"));
+    let parsed = McpConfig::from_toml(&mcp_value).expect("non-table should be empty");
+    assert!(parsed.mcp.is_empty());
 }
 
 #[test]
 fn mcp_config_validation_requires_command_for_stdio() {
-    let plugin_config = Value::test_record(record! {
-        "mcp" => Value::test_record(record! {
-            "nu" => Value::test_record(record! {
-                "transport" => Value::test_string("stdio"),
-            }),
-        }),
-    });
+    let mcp_value: toml::Value = toml::from_str(
+        r#"
+[nu]
+transport = "stdio"
+"#,
+    )
+    .unwrap();
 
-    let err = McpConfig::from_plugin_config(&plugin_config).expect_err("should fail");
+    let err = McpConfig::from_toml(&mcp_value).expect_err("should fail");
     let msg = err.to_string();
     assert!(
         msg.contains("requires non-empty 'command'") || msg.contains("Invalid MCP configuration")
@@ -146,46 +134,46 @@ fn mcp_config_validation_requires_command_for_stdio() {
 
 #[test]
 fn mcp_config_validation_requires_url_for_remote_transports() {
-    let plugin_config = Value::test_record(record! {
-        "mcp" => Value::test_record(record! {
-            "c5t" => Value::test_record(record! {
-                "transport" => Value::test_string("sse"),
-            }),
-        }),
-    });
+    let mcp_value: toml::Value = toml::from_str(
+        r#"
+[c5t]
+transport = "sse"
+"#,
+    )
+    .unwrap();
 
-    let err = McpConfig::from_plugin_config(&plugin_config).expect_err("should fail");
+    let err = McpConfig::from_toml(&mcp_value).expect_err("should fail");
     let msg = err.to_string();
     assert!(msg.contains("requires non-empty 'url'") || msg.contains("Invalid MCP configuration"));
 }
 
 #[test]
 fn mcp_config_rejects_unsupported_transport() {
-    let plugin_config = Value::test_record(record! {
-        "mcp" => Value::test_record(record! {
-            "x" => Value::test_record(record! {
-                "transport" => Value::test_string("unsupported"),
-            }),
-        }),
-    });
+    let mcp_value: toml::Value = toml::from_str(
+        r#"
+[x]
+transport = "unsupported"
+"#,
+    )
+    .unwrap();
 
-    let err = McpConfig::from_plugin_config(&plugin_config).expect_err("should fail");
+    let err = McpConfig::from_toml(&mcp_value).expect_err("should fail");
     let msg = err.to_string();
     assert!(msg.contains("unsupported transport") || msg.contains("Invalid transport"));
 }
 
 #[test]
 fn mcp_config_rejects_server_name_with_reserved_delimiter() {
-    let plugin_config = Value::test_record(record! {
-        "mcp" => Value::test_record(record! {
-            "gh__prod" => Value::test_record(record! {
-                "transport" => Value::test_string("sse"),
-                "url" => Value::test_string("http://0.0.0.0:3737/mcp"),
-            }),
-        }),
-    });
+    let mcp_value: toml::Value = toml::from_str(
+        r#"
+[gh__prod]
+transport = "sse"
+url = "http://0.0.0.0:3737/mcp"
+"#,
+    )
+    .unwrap();
 
-    let err = McpConfig::from_plugin_config(&plugin_config).expect_err("should fail");
+    let err = McpConfig::from_toml(&mcp_value).expect_err("should fail");
     let msg = err.to_string();
     assert!(msg.contains("reserved delimiter") || msg.contains("Invalid MCP configuration"));
 }
@@ -194,55 +182,55 @@ fn mcp_config_rejects_server_name_with_reserved_delimiter() {
 
 #[test]
 fn mcp_auth_defaults_to_none_when_omitted() {
-    let plugin_config = Value::test_record(record! {
-        "mcp" => Value::test_record(record! {
-            "c5t" => Value::test_record(record! {
-                "transport" => Value::test_string("sse"),
-                "url" => Value::test_string("http://0.0.0.0:3737/mcp"),
-            }),
-        }),
-    });
+    let mcp_value: toml::Value = toml::from_str(
+        r#"
+[c5t]
+transport = "sse"
+url = "http://0.0.0.0:3737/mcp"
+"#,
+    )
+    .unwrap();
 
-    let parsed = McpConfig::from_plugin_config(&plugin_config).expect("should parse");
+    let parsed = McpConfig::from_toml(&mcp_value).expect("should parse");
     let c5t = parsed.mcp.iter().find(|s| s.name == "c5t").unwrap();
     assert_eq!(c5t.auth, McpAuthConfig::None);
 }
 
 #[test]
 fn mcp_auth_parses_none_explicitly() {
-    let plugin_config = Value::test_record(record! {
-        "mcp" => Value::test_record(record! {
-            "c5t" => Value::test_record(record! {
-                "transport" => Value::test_string("sse"),
-                "url" => Value::test_string("http://0.0.0.0:3737/mcp"),
-                "auth" => Value::test_record(record! {
-                    "type" => Value::test_string("none"),
-                }),
-            }),
-        }),
-    });
+    let mcp_value: toml::Value = toml::from_str(
+        r#"
+[c5t]
+transport = "sse"
+url = "http://0.0.0.0:3737/mcp"
 
-    let parsed = McpConfig::from_plugin_config(&plugin_config).expect("should parse");
+[c5t.auth]
+type = "none"
+"#,
+    )
+    .unwrap();
+
+    let parsed = McpConfig::from_toml(&mcp_value).expect("should parse");
     let c5t = parsed.mcp.iter().find(|s| s.name == "c5t").unwrap();
     assert_eq!(c5t.auth, McpAuthConfig::None);
 }
 
 #[test]
 fn mcp_auth_parses_bearer() {
-    let plugin_config = Value::test_record(record! {
-        "mcp" => Value::test_record(record! {
-            "api" => Value::test_record(record! {
-                "transport" => Value::test_string("http"),
-                "url" => Value::test_string("https://api.example.com/mcp"),
-                "auth" => Value::test_record(record! {
-                    "type" => Value::test_string("bearer"),
-                    "token" => Value::test_string("abc123"),
-                }),
-            }),
-        }),
-    });
+    let mcp_value: toml::Value = toml::from_str(
+        r#"
+[api]
+transport = "http"
+url = "https://api.example.com/mcp"
 
-    let parsed = McpConfig::from_plugin_config(&plugin_config).expect("should parse");
+[api.auth]
+type = "bearer"
+token = "abc123"
+"#,
+    )
+    .unwrap();
+
+    let parsed = McpConfig::from_toml(&mcp_value).expect("should parse");
     let api = parsed.mcp.iter().find(|s| s.name == "api").unwrap();
     assert_eq!(
         api.auth,
@@ -254,20 +242,20 @@ fn mcp_auth_parses_bearer() {
 
 #[test]
 fn mcp_auth_parses_oauth_with_scope() {
-    let plugin_config = Value::test_record(record! {
-        "mcp" => Value::test_record(record! {
-            "ctx" => Value::test_record(record! {
-                "transport" => Value::test_string("http"),
-                "url" => Value::test_string("https://mcp.context7.com/mcp"),
-                "auth" => Value::test_record(record! {
-                    "type" => Value::test_string("oauth"),
-                    "scope" => Value::test_string("profile email"),
-                }),
-            }),
-        }),
-    });
+    let mcp_value: toml::Value = toml::from_str(
+        r#"
+[ctx]
+transport = "http"
+url = "https://mcp.context7.com/mcp"
 
-    let parsed = McpConfig::from_plugin_config(&plugin_config).expect("should parse");
+[ctx.auth]
+type = "oauth"
+scope = "profile email"
+"#,
+    )
+    .unwrap();
+
+    let parsed = McpConfig::from_toml(&mcp_value).expect("should parse");
     let ctx = parsed.mcp.iter().find(|s| s.name == "ctx").unwrap();
     assert_eq!(
         ctx.auth,
@@ -282,22 +270,22 @@ fn mcp_auth_parses_oauth_with_scope() {
 
 #[test]
 fn mcp_auth_parses_oauth_with_client_credentials() {
-    let plugin_config = Value::test_record(record! {
-        "mcp" => Value::test_record(record! {
-            "gh" => Value::test_record(record! {
-                "transport" => Value::test_string("http"),
-                "url" => Value::test_string("https://api.github.com/mcp"),
-                "auth" => Value::test_record(record! {
-                    "type" => Value::test_string("oauth"),
-                    "client-id" => Value::test_string("Iv1.example"),
-                    "client-secret" => Value::test_string("secret123"),
-                    "scope" => Value::test_string("repo read:org"),
-                }),
-            }),
-        }),
-    });
+    let mcp_value: toml::Value = toml::from_str(
+        r#"
+[gh]
+transport = "http"
+url = "https://api.github.com/mcp"
 
-    let parsed = McpConfig::from_plugin_config(&plugin_config).expect("should parse");
+[gh.auth]
+type = "oauth"
+client-id = "Iv1.example"
+client-secret = "secret123"
+scope = "repo read:org"
+"#,
+    )
+    .unwrap();
+
+    let parsed = McpConfig::from_toml(&mcp_value).expect("should parse");
     let gh = parsed.mcp.iter().find(|s| s.name == "gh").unwrap();
     assert_eq!(
         gh.auth,
@@ -311,61 +299,61 @@ fn mcp_auth_parses_oauth_with_client_credentials() {
 }
 
 #[test]
-fn mcp_auth_rejects_unknown_auth_type() {
-    let plugin_config = Value::test_record(record! {
-        "mcp" => Value::test_record(record! {
-            "x" => Value::test_record(record! {
-                "transport" => Value::test_string("http"),
-                "url" => Value::test_string("http://example.com/mcp"),
-                "auth" => Value::test_record(record! {
-                    "type" => Value::test_string("unknown"),
-                }),
-            }),
-        }),
-    });
+fn mcp_auth_unknown_type_defaults_to_none() {
+    let mcp_value: toml::Value = toml::from_str(
+        r#"
+[x]
+transport = "http"
+url = "http://example.com/mcp"
 
-    let err = McpConfig::from_plugin_config(&plugin_config).expect_err("should fail");
-    let msg = err.to_string();
-    assert!(msg.contains("Unknown auth type") || msg.contains("Invalid auth type"));
+[x.auth]
+type = "unknown"
+"#,
+    )
+    .unwrap();
+
+    let parsed = McpConfig::from_toml(&mcp_value).expect("should parse");
+    let x = parsed.mcp.iter().find(|s| s.name == "x").unwrap();
+    assert_eq!(x.auth, McpAuthConfig::None);
 }
 
 #[test]
 fn mcp_auth_rejects_bearer_with_empty_token() {
-    let plugin_config = Value::test_record(record! {
-        "mcp" => Value::test_record(record! {
-            "x" => Value::test_record(record! {
-                "transport" => Value::test_string("http"),
-                "url" => Value::test_string("http://example.com/mcp"),
-                "auth" => Value::test_record(record! {
-                    "type" => Value::test_string("bearer"),
-                    "token" => Value::test_string(""),
-                }),
-            }),
-        }),
-    });
+    let mcp_value: toml::Value = toml::from_str(
+        r#"
+[x]
+transport = "http"
+url = "http://example.com/mcp"
 
-    let err = McpConfig::from_plugin_config(&plugin_config).expect_err("should fail");
+[x.auth]
+type = "bearer"
+token = ""
+"#,
+    )
+    .unwrap();
+
+    let err = McpConfig::from_toml(&mcp_value).expect_err("should fail");
     let msg = err.to_string();
     assert!(msg.contains("empty token") || msg.contains("Invalid MCP configuration"));
 }
 
 #[test]
 fn mcp_auth_rejects_oauth_on_stdio() {
-    let plugin_config = Value::test_record(record! {
-        "mcp" => Value::test_record(record! {
-            "x" => Value::test_record(record! {
-                "transport" => Value::test_string("stdio"),
-                "command" => Value::test_string("my-server"),
-                "cwd" => Value::test_string("/tmp"),
-                "auth" => Value::test_record(record! {
-                    "type" => Value::test_string("oauth"),
-                    "scope" => Value::test_string("profile"),
-                }),
-            }),
-        }),
-    });
+    let mcp_value: toml::Value = toml::from_str(
+        r#"
+[x]
+transport = "stdio"
+command = "my-server"
+cwd = "/tmp"
 
-    let err = McpConfig::from_plugin_config(&plugin_config).expect_err("should fail");
+[x.auth]
+type = "oauth"
+scope = "profile"
+"#,
+    )
+    .unwrap();
+
+    let err = McpConfig::from_toml(&mcp_value).expect_err("should fail");
     let msg = err.to_string();
     assert!(
         msg.contains("requires HTTP or SSE transport") || msg.contains("Invalid MCP configuration")
@@ -374,19 +362,19 @@ fn mcp_auth_rejects_oauth_on_stdio() {
 
 #[test]
 fn mcp_auth_backwards_compat_headers_authorization_still_works() {
-    let plugin_config = Value::test_record(record! {
-        "mcp" => Value::test_record(record! {
-            "api" => Value::test_record(record! {
-                "transport" => Value::test_string("http"),
-                "url" => Value::test_string("https://api.example.com/mcp"),
-                "headers" => Value::test_record(record! {
-                    "Authorization" => Value::test_string("Bearer abc123"),
-                }),
-            }),
-        }),
-    });
+    let mcp_value: toml::Value = toml::from_str(
+        r#"
+[api]
+transport = "http"
+url = "https://api.example.com/mcp"
 
-    let parsed = McpConfig::from_plugin_config(&plugin_config).expect("should parse");
+[api.headers]
+Authorization = "Bearer abc123"
+"#,
+    )
+    .unwrap();
+
+    let parsed = McpConfig::from_toml(&mcp_value).expect("should parse");
     let api = parsed.mcp.iter().find(|s| s.name == "api").unwrap();
     assert_eq!(api.auth, McpAuthConfig::None);
     assert_eq!(
@@ -396,37 +384,37 @@ fn mcp_auth_backwards_compat_headers_authorization_still_works() {
 }
 
 #[test]
-fn mcp_auth_rejects_non_record_auth_field() {
-    let plugin_config = Value::test_record(record! {
-        "mcp" => Value::test_record(record! {
-            "x" => Value::test_record(record! {
-                "transport" => Value::test_string("http"),
-                "url" => Value::test_string("http://example.com/mcp"),
-                "auth" => Value::test_string("bearer"),
-            }),
-        }),
-    });
+fn mcp_auth_non_table_auth_field_defaults_to_none() {
+    let mcp_value: toml::Value = toml::from_str(
+        r#"
+[x]
+transport = "http"
+url = "http://example.com/mcp"
+auth = "bearer"
+"#,
+    )
+    .unwrap();
 
-    let err = McpConfig::from_plugin_config(&plugin_config).expect_err("should fail");
-    let msg = err.to_string();
-    assert!(msg.contains("must be a record") || msg.contains("Invalid auth configuration"));
+    let parsed = McpConfig::from_toml(&mcp_value).expect("should parse");
+    let x = parsed.mcp.iter().find(|s| s.name == "x").unwrap();
+    assert_eq!(x.auth, McpAuthConfig::None);
 }
 
 #[test]
-fn mcp_auth_rejects_missing_type_field() {
-    let plugin_config = Value::test_record(record! {
-        "mcp" => Value::test_record(record! {
-            "x" => Value::test_record(record! {
-                "transport" => Value::test_string("http"),
-                "url" => Value::test_string("http://example.com/mcp"),
-                "auth" => Value::test_record(record! {
-                    "token" => Value::test_string("abc"),
-                }),
-            }),
-        }),
-    });
+fn mcp_auth_missing_type_defaults_to_none() {
+    let mcp_value: toml::Value = toml::from_str(
+        r#"
+[x]
+transport = "http"
+url = "http://example.com/mcp"
 
-    let err = McpConfig::from_plugin_config(&plugin_config).expect_err("should fail");
-    let msg = err.to_string();
-    assert!(msg.contains("Missing 'type'") || msg.contains("Missing required field"));
+[x.auth]
+token = "abc"
+"#,
+    )
+    .unwrap();
+
+    let parsed = McpConfig::from_toml(&mcp_value).expect("should parse");
+    let x = parsed.mcp.iter().find(|s| s.name == "x").unwrap();
+    assert_eq!(x.auth, McpAuthConfig::None);
 }

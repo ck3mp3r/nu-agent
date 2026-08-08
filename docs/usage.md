@@ -87,7 +87,7 @@ All front matter keys are optional:
 - `additional_params` — provider-specific parameters (e.g. `thinking: disabled` for Anthropic)
 - `permissions` — authorization overlay (overridden by `--permissions` flag)
 
-**Precedence:** CLI flags > front matter > plugin config
+**Precedence:** CLI flags > front matter > config.toml
 
 ### Examples
 
@@ -105,17 +105,17 @@ agent --agent coder --name "bob"
 
 ## Model roles
 
-Configure named model roles in plugin config:
+Configure named model roles in config.toml:
 
-```nu
-$env.config.plugins.agent = {
-  models: {
-    default: "openai/gpt-4o"
-    heavy: "anthropic/claude-sonnet-4-6"
-    light: "ollama/gemma4:31b"
-  }
-  providers: { ... }
-}
+```toml
+[models.default]
+model = "openai/gpt-4o"
+
+[models.heavy]
+model = "anthropic/claude-sonnet-4-6"
+
+[models.light]
+model = "ollama/gemma4:31b"
 ```
 
 Then reference roles by name in agent persona front matter:
@@ -126,7 +126,7 @@ model: light
 ---
 ```
 
-When a persona has `model: light`, it resolves to `models.light` from plugin config. If your persona needs a specific model that isn't in the map, use the full `provider/model` identifier instead:
+When a persona has `model: light`, it resolves to `models.light` from config.toml. If your persona needs a specific model that isn't in the map, use the full `provider/model` identifier instead:
 
 ```yaml
 ---
@@ -165,21 +165,15 @@ let permissions = {
 
 Canonical shape:
 
-```nu
-$env.config.plugins.agent = {
-  # ...existing config...
-  permissions: {
-    "*": "ask"
-    "read": "allow"
-    "c5t_get*": "allow"
-    "nu__run": {
-      "command": {
-        "kubectl delete *": "deny"
-        "*": "ask"
-      }
-    }
-  }
-}
+```toml
+[permissions]
+"*" = "ask"
+read = "allow"
+"c5t_get*" = "allow"
+
+[permissions.nu__run.command]
+"kubectl delete *" = "deny"
+"*" = "ask"
 ```
 
 ### Supported values
@@ -287,13 +281,11 @@ Lifecycle events emitted by runtime/UI path:
 
 In non-interactive mode (`stderr` mode), `ask` defaults to secure deny.
 
-Optional override in plugin config:
+Optional override in config.toml:
 
-```nu
-$env.config.plugins.agent = {
-  # ...
-  non_interactive_ask: "allow"  # or "deny" (default)
-}
+```toml
+[permissions]
+non_interactive_ask = "allow"
 ```
 
 - default (missing): `deny`
@@ -527,7 +519,7 @@ Compaction uses a two-tier policy:
 1. **Proactive compaction** fires when context usage reaches `proactive_threshold_pct` (default: 0.80 = 80%) of the context window. Uses the configured primary strategy.
 2. **Fallback compaction** fires at 95% of the context window using the ordered `fallback_strategies` list (default: `["sliding_window"]`). This is a safety net if the primary strategy is unavailable or insufficient.
 
-CLI flags override plugin config, which overrides built-in defaults.
+CLI flags override config.toml, which overrides built-in defaults.
 
 ### Inline slash suggestions and slash commands
 
@@ -600,17 +592,14 @@ hidden from the LLM entirely — they never appear in the tool list.
 In non-interactive (TTY/pipe) mode, deny everything by default and allow only
 the tools you need:
 
-```nu
-$env.config.plugins.agent = {
-  permissions: {
-    "*": "deny"
-    "read": "allow"
-    "grep": "allow"
-    "glob": "allow"
-    "c5t_get*": "allow"
-    "c5t_list*": "allow"
-  }
-}
+```toml
+[permissions]
+"*" = "deny"
+read = "allow"
+grep = "allow"
+glob = "allow"
+"c5t_get*" = "allow"
+"c5t_list*" = "allow"
 ```
 
 ### TUI denylist example
@@ -618,15 +607,12 @@ $env.config.plugins.agent = {
 In interactive (TUI) mode, ask for everything by default and deny tools that
 should never be available:
 
-```nu
-$env.config.plugins.agent = {
-  permissions: {
-    "*": "ask"
-    "nu__run": "deny"
-    "edit": "deny"
-    "patch": "deny"
-  }
-}
+```toml
+[permissions]
+"*" = "ask"
+"nu__run" = "deny"
+edit = "deny"
+patch = "deny"
 ```
 
 ## Flag reference
@@ -653,7 +639,7 @@ $env.config.plugins.agent = {
 
 ## MCP Authentication Commands
 
-Manage OAuth credentials for MCP servers. These commands operate on the credential store (not the plugin config).
+Manage OAuth credentials for MCP servers. These commands operate on the credential store (not config.toml).
 
 ### `agent mcp auth login`
 
@@ -663,7 +649,7 @@ Triggers the OAuth authorization-code flow with PKCE for a configured MCP server
 agent mcp auth login my-server
 ```
 
-The MCP server must be configured with `auth: { type: "oauth" }` in the plugin config. On success, tokens are saved to the credential store and automatically refreshed on expiry.
+The MCP server must be configured with `auth.type = "oauth"` in config.toml. On success, tokens are saved to the credential store and automatically refreshed on expiry.
 
 Example output (stderr):
 
@@ -678,7 +664,7 @@ Successfully authenticated with MCP server 'my-server'
 
 The OAuth authorization-code flow with PKCE proceeds as follows:
 
-1. **Load config** — reads the MCP server configuration from plugin config.
+1. **Load config** — reads the MCP server configuration from config.toml.
 2. **Start callback server** — binds a local HTTP server to `127.0.0.1` on a random port to receive the OAuth redirect.
 3. **Discover OAuth metadata** — fetches `/.well-known/oauth-authorization-server` from the server URL to find authorization, token, and registration endpoints.
 4. **Register client** — if no `client-id` is configured, performs dynamic client registration via the discovered registration endpoint. If `client-id` is configured, uses it directly.
@@ -696,7 +682,7 @@ On subsequent agent runs, the stored access token is used automatically. If expi
 
 ### `agent mcp auth logout`
 
-Clears stored OAuth tokens and client registration data for a server. Does not modify the plugin config.
+Clears stored OAuth tokens and client registration data for a server. Does not modify config.toml.
 
 ```nu
 agent mcp auth logout my-server
@@ -756,7 +742,7 @@ Status values:
 | `403 Forbidden` | Insufficient OAuth scopes | Re-login with additional scopes in the `auth.scope` config field |
 | `Callback port in use` | Another process is using the callback port. Stop it or configure a different `redirect-uri`. |
 | `Token expired` | Refresh token also expired | Run `agent mcp auth login <name>` to re-authenticate |
-| `OAuth requires HTTP or SSE transport` | OAuth configured on stdio server | Change transport to `sse` or `http` in plugin config |
+| `OAuth requires HTTP or SSE transport` | OAuth configured on stdio server | Change transport to `sse` or `http` in config.toml |
 
 ## Output contract
 

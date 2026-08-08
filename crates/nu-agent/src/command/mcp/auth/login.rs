@@ -113,12 +113,10 @@ async fn run_inner(
     server_name: &str,
 ) -> Result<Value, LabeledError> {
     // 1. Load MCP config from plugin config
-    let plugin_config_value = engine.get_plugin_config()?.ok_or_else(|| {
-        LabeledError::new("No plugin configuration found")
-            .with_label("Configure MCP servers in your plugin config", call.head)
-    })?;
-
-    let mcp_config = McpConfig::from_plugin_config(&plugin_config_value)?;
+    let plugin_config = nu_agent_core::config::toml_config::load()
+        .map_err(|e| LabeledError::new(format!("Failed to load config.toml: {e}")))?;
+    let mcp_config = McpConfig::from_toml_config(&plugin_config)
+        .map_err(|msg| LabeledError::new("Failed to load MCP config").with_label(msg, call.head))?;
 
     // 2. Find the server by name
     let server = mcp_config

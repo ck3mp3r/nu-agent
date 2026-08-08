@@ -1,36 +1,30 @@
 # MCP
 
-MCP server configuration is optional and lives in plugin config under `mcp`.
+MCP server configuration is optional and lives in config.toml under `[mcp]`.
 
 ## Example
 
-```nu
-$env.config.plugins.agent = {
-  mcp: {
-    c5t: {
-      transport: "sse"
-      url: "http://0.0.0.0:3737/mcp"
-    }
-    nu: {
-      transport: "stdio"
-      command: "nu-mcp"
-      cwd: "/path/to/workspace" # optional stdio cwd override
-      args: ["--add-path" "/tmp"]
-      env: { GIT_PAGER: "" }
-    }
-  }
-  model: "github-copilot/claude-opus-4.6"
-  providers: {
-    "github-copilot": {
-      provider: "openai"
-      api_key: $env.GITHUB_TOKEN
-      base_url: "https://api.individual.githubcopilot.com"
-      models: {
-        "claude-opus-4.6": {}
-      }
-    }
-  }
-}
+```toml
+[mcp.c5t]
+transport = "sse"
+url = "http://0.0.0.0:3737/mcp"
+
+[mcp.nu]
+transport = "stdio"
+command = "nu-mcp"
+cwd = "/path/to/workspace"
+args = ["--add-path", "/tmp"]
+
+[mcp.nu.env]
+GIT_PAGER = ""
+
+[models.default]
+model = "github-copilot/claude-opus-4.6"
+
+[providers.github-copilot]
+provider = "openai"
+api_key = "store:github-copilot"
+base_url = "https://api.individual.githubcopilot.com"
 ```
 
 ## Behavior
@@ -38,7 +32,7 @@ $env.config.plugins.agent = {
 - If `mcp` is missing or empty, agent runs without MCP.
 - Tools are discovered from connected MCP servers at runtime.
 - Exposed/callable MCP tool names are namespaced as `<server_key>__<raw_tool_name>`.
-  - `server_key` is the key under `mcp.<server_key>` in plugin config.
+  - `server_key` is the key under `[mcp.<server_key>]` in config.toml.
 
 ## Transport Rules
 
@@ -106,13 +100,13 @@ If a closure tool and an MCP tool share the same exposed name, closure tools tak
 
 MCP servers can require authentication. The agent supports three auth types: `none`, `bearer`, and `oauth`.
 
-Configure auth under `mcp.<server>.auth` in plugin config. See [configuration.md](./configuration.md#mcp-authentication) for config examples.
+Configure auth under `[mcp.<server>.auth]` in config.toml. See [configuration.md](./configuration.md#mcp-authentication) for config examples.
 
 ### OAuth flow (step-by-step)
 
 When you run `agent mcp auth login <name>`, the following happens:
 
-1. **Load config** — reads the MCP server configuration from plugin config.
+1. **Load config** — reads the MCP server configuration from config.toml.
 2. **Start callback server** — binds a local HTTP server to `127.0.0.1` on a random port to receive the OAuth redirect.
 3. **Discover OAuth metadata** — fetches `/.well-known/oauth-authorization-server` from the server URL to find authorization, token, and registration endpoints.
 4. **Register client** — if no `client-id` is configured, performs dynamic client registration via the discovered registration endpoint. If `client-id` is configured, uses it directly.

@@ -152,17 +152,10 @@ pub(super) fn run_command(
         );
     }
 
-    let plugin_config_value = engine.get_plugin_config()?;
-
     let agents_config = plugin_config.agents.clone();
 
-    let mcp_config = plugin_config_value
-        .as_ref()
-        .map(nu_agent_core::tools::mcp::config::McpConfig::from_plugin_config)
-        .transpose()
-        .map_err(|err| {
-            LabeledError::new("Failed to load MCP config").with_label(err.to_string(), call.head)
-        })?;
+    let mcp_config = nu_agent_core::tools::mcp::config::McpConfig::from_toml_config(&plugin_config)
+        .map_err(|err| LabeledError::new("Failed to load MCP config").with_label(err, call.head))?;
 
     // Load agent persona and resolve identity
     let (agent_name, cli_name) = super::args::extract_agent_flags(call);
@@ -207,7 +200,7 @@ pub(super) fn run_command(
         permissions_startup_summary,
     ) = resolve_effective_permissions_config(
         call,
-        plugin_config_value.as_ref(),
+        &plugin_config,
         agent_permissions_overlay.as_ref(),
         mode.is_tui(),
     )?;
@@ -272,30 +265,25 @@ pub(super) fn run_command(
         // Create the tool server handle ONCE — both builtins and MCP servers register into it
         let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
-        let mcp_runtime = if let Some(cfg) = mcp_config.as_ref() {
-            if cfg.mcp.is_empty() {
-                None
-            } else {
-                let caller_cwd_path = cwd.as_path();
-
-                Some(
-                    nu_agent_core::tools::mcp::runtime::connect_servers(
-                        &tool_server_handle,
-                        &cfg.mcp,
-                        Some(caller_cwd_path),
-                        config
-                            .max_tool_result_bytes
-                            .unwrap_or(defaults::MAX_TOOL_RESULT_BYTES),
-                    )
-                    .await
-                    .map_err(|msg| {
-                        LabeledError::new("Failed to connect MCP runtime")
-                            .with_label(msg, call.head)
-                    })?,
-                )
-            }
-        } else {
+        let mcp_runtime = if mcp_config.mcp.is_empty() {
             None
+        } else {
+            let caller_cwd_path = cwd.as_path();
+
+            Some(
+                nu_agent_core::tools::mcp::runtime::connect_servers(
+                    &tool_server_handle,
+                    &mcp_config.mcp,
+                    Some(caller_cwd_path),
+                    config
+                        .max_tool_result_bytes
+                        .unwrap_or(defaults::MAX_TOOL_RESULT_BYTES),
+                )
+                .await
+                .map_err(|msg| {
+                    LabeledError::new("Failed to connect MCP runtime").with_label(msg, call.head)
+                })?,
+            )
         };
 
         let discovered_mcp_tools = if let Some(mcp_runtime) = mcp_runtime.as_ref() {
@@ -304,12 +292,11 @@ pub(super) fn run_command(
             Vec::new()
         };
 
-        let mcp_lifecycle_projection =
-            if let (Some(runtime), Some(cfg)) = (mcp_runtime.as_ref(), mcp_config.as_ref()) {
-                runtime.lifecycle_projection(&cfg.mcp)
-            } else {
-                Vec::new()
-            };
+        let mcp_lifecycle_projection = if let Some(runtime) = mcp_runtime.as_ref() {
+            runtime.lifecycle_projection(&mcp_config.mcp)
+        } else {
+            Vec::new()
+        };
 
         let mcp_registry =
             McpToolRegistry::from_tools(discovered_mcp_tools.clone()).map_err(|msg| {
@@ -344,7 +331,6 @@ pub(super) fn run_command(
             compaction_params,
         } = super::setup::register_tools(
             call,
-            plugin_config_value.as_ref(),
             BuildInput {
                 tool_server_handle: &tool_server_handle,
                 closure_registry: &closure_registry,
@@ -392,10 +378,7 @@ pub(super) fn run_command(
                 mcp_runtime,
                 tool_server_handle,
                 mcp_lifecycle_projection,
-                mcp_server_configs: mcp_config
-                    .as_ref()
-                    .map(|cfg| cfg.mcp.clone())
-                    .unwrap_or_default(),
+                mcp_server_configs: mcp_config.mcp.clone(),
                 mcp_caller_cwd: Some(mcp_caller_cwd),
                 mcp_registry,
                 engine: engine.clone(),

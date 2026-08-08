@@ -13,7 +13,7 @@ fn format_active_model_identity_avoids_duplicate_provider_prefix() {
 }
 
 #[test]
-fn model_picker_catalog_projection_from_plugin_config_is_sorted_and_marks_active() {
+fn model_picker_catalog_projection_is_sorted_and_marks_active() {
     use std::collections::HashMap;
 
     let mut providers = HashMap::new();
@@ -80,9 +80,10 @@ fn model_picker_catalog_projection_from_plugin_config_is_sorted_and_marks_active
         session_store: None,
         secret_store: None,
         models_cache: None,
+        permissions: None,
+        mcp: None,
     };
-    let projected =
-        build_model_picker_catalog(None, &plugin_config, "a-provider/a-model");
+    let projected = build_model_picker_catalog(None, &plugin_config, "a-provider/a-model");
 
     assert_eq!(projected.len(), 2);
     assert_eq!(projected[0].identity, "a-provider/a-model");
@@ -92,7 +93,7 @@ fn model_picker_catalog_projection_from_plugin_config_is_sorted_and_marks_active
 }
 
 #[test]
-fn tui_startup_hydrates_model_picker_catalog_from_cached_plugin_config() {
+fn tui_startup_hydrates_model_picker_catalog_from_cached_config() {
     use std::collections::HashMap;
 
     let mut providers = HashMap::new();
@@ -136,6 +137,8 @@ fn tui_startup_hydrates_model_picker_catalog_from_cached_plugin_config() {
         session_store: None,
         secret_store: None,
         models_cache: None,
+        permissions: None,
+        mcp: None,
     };
 
     let catalog = model_picker_catalog_from_cached_startup_plugin_config(
@@ -239,13 +242,18 @@ fn build_model_picker_catalog_with_cache_shows_all_models_for_configured_provide
         session_store: None,
         secret_store: None,
         models_cache: None,
+        permissions: None,
+        mcp: None,
     };
 
-    let catalog =
-        build_model_picker_catalog(Some(&cache), &plugin_config, "openai/gpt-4o-mini");
+    let catalog = build_model_picker_catalog(Some(&cache), &plugin_config, "openai/gpt-4o-mini");
 
     // Both models from the cache should appear (configured + unconfigured)
-    assert_eq!(catalog.len(), 2, "should show both models from the configured provider");
+    assert_eq!(
+        catalog.len(),
+        2,
+        "should show both models from the configured provider"
+    );
 
     // gpt-4o-mini is configured and active
     let mini = catalog
@@ -254,10 +262,20 @@ fn build_model_picker_catalog_with_cache_shows_all_models_for_configured_provide
         .expect("gpt-4o-mini should be present");
     assert!(mini.configured, "gpt-4o-mini should be marked configured");
     assert!(mini.active, "gpt-4o-mini should be the active model");
-    assert_eq!(mini.context_window, Some(128000), "context_window from cache");
+    assert_eq!(
+        mini.context_window,
+        Some(128000),
+        "context_window from cache"
+    );
     assert_eq!(mini.max_output, Some(16384), "max_output from cache");
-    assert_eq!(mini.provider_display_name, "OpenAI", "provider_display_name from cache spec");
-    assert_eq!(mini.display, "OpenAI / GPT-4o Mini", "display uses cache names");
+    assert_eq!(
+        mini.provider_display_name, "OpenAI",
+        "provider_display_name from cache spec"
+    );
+    assert_eq!(
+        mini.display, "OpenAI / GPT-4o Mini",
+        "display uses cache names"
+    );
 
     // gpt-4o is NOT configured but still shown (cache enrichment)
     let four = catalog
@@ -266,8 +284,15 @@ fn build_model_picker_catalog_with_cache_shows_all_models_for_configured_provide
         .expect("gpt-4o should be present from cache");
     assert!(!four.configured, "gpt-4o should NOT be marked configured");
     assert!(!four.active, "gpt-4o should not be active");
-    assert_eq!(four.context_window, Some(128000), "context_window from cache");
+    assert_eq!(
+        four.context_window,
+        Some(128000),
+        "context_window from cache"
+    );
     assert_eq!(four.max_output, Some(16384), "max_output from cache");
-    assert_eq!(four.provider_display_name, "OpenAI", "provider_display_name from cache spec");
+    assert_eq!(
+        four.provider_display_name, "OpenAI",
+        "provider_display_name from cache spec"
+    );
     assert_eq!(four.display, "OpenAI / GPT-4o", "display uses cache names");
 }

@@ -10,10 +10,9 @@ use nu_agent_core::conversation::builder::{
 /// plugin config, then delegates all registration work to `AgentRuntimeBuilder`.
 ///
 /// `input.merged_compaction` is ignored on entry — this function computes the
-/// merged value from `call` and `plugin_config_value` and injects it before build.
+/// merged value from `call` and injects it before build.
 pub(crate) async fn register_tools(
     call: &EvaluatedCall,
-    _plugin_config_value: Option<&nu_protocol::Value>,
     input: BuildInput<'_>,
 ) -> Result<BuildArtifacts, LabeledError> {
     let plugin_compaction = config::toml_config::load().ok().and_then(|c| c.compaction);
