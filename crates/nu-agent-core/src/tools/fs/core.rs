@@ -264,7 +264,7 @@ pub fn apply_line_range_patch_batch(
 
     validate_patch_operations(&operations, previous_lines)?;
 
-    let patched_content = apply_patch_operations_in_reverse(&current_content, &operations);
+    let patched_content = apply_patch_operations_in_reverse(&current_content, &operations)?;
     let new_version = version_token(&patched_content);
     let changed = patched_content != current_content;
     let new_lines = split_lines_preserving_terminators(&patched_content).len();
@@ -576,15 +576,28 @@ fn compute_edit_result(
     }
 }
 
-fn apply_patch_operations_in_reverse(content: &str, operations: &[PatchOp]) -> String {
+fn apply_patch_operations_in_reverse(
+    content: &str,
+    operations: &[PatchOp],
+) -> Result<String, MutateError> {
     let mut lines = split_lines_preserving_terminators(content)
         .into_iter()
         .map(str::to_owned)
         .collect::<Vec<_>>();
 
-    for op in operations.iter().rev() {
+    let mut sorted_ops: Vec<&PatchOp> = operations.iter().collect();
+    sorted_ops.sort_by_key(|b| std::cmp::Reverse(b.range.start));
+
+    for op in sorted_ops {
         let start_index = op.range.start - 1;
         let end_exclusive = op.range.end;
+        if end_exclusive > lines.len() {
+            return Err(MutateError::PatchRangeOutOfBounds {
+                start: op.range.start,
+                end: op.range.end,
+                total_lines: lines.len(),
+            });
+        }
         let replacement_lines = split_lines_preserving_terminators(&op.replacement)
             .into_iter()
             .map(str::to_owned)
@@ -592,7 +605,7 @@ fn apply_patch_operations_in_reverse(content: &str, operations: &[PatchOp]) -> S
         lines.splice(start_index..end_exclusive, replacement_lines);
     }
 
-    lines.into_iter().collect()
+    Ok(lines.into_iter().collect())
 }
 
 fn split_lines_preserving_terminators(content: &str) -> Vec<&str> {

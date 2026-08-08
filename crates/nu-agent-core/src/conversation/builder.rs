@@ -75,7 +75,7 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "edit".to_string(),
-            description: "Edit or create files with explicit mode (preview/apply), CAS guard for existing files, and search_replace/create operations".to_string(),
+            description: "Edit or create files. Use operation.type = 'search_replace' with 'search' and 'replacement' string fields (no line numbers needed). Or use operation.type = 'create' with 'content' field. Requires expected_version from a prior read for existing files.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -100,7 +100,7 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "patch".to_string(),
-            description: "Apply line-range patch operations with compare-and-swap guard".to_string(),
+            description: "Apply line-range patch operations with compare-and-swap guard. Lines are 1-indexed: range {start: 5, end: 10} replaces lines 5 through 10 inclusive. The replacement string replaces the entire range.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -114,8 +114,8 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
                                 "range": {
                                     "type": "object",
                                     "properties": {
-                                        "start": { "type": "integer", "minimum": 1 },
-                                        "end": { "type": "integer", "minimum": 1 }
+                                        "start": { "type": "integer", "minimum": 1, "description": "First line to replace (1-indexed, inclusive)" },
+                                        "end": { "type": "integer", "minimum": 1, "description": "Last line to replace (1-indexed, inclusive)" }
                                     },
                                     "required": ["start", "end"]
                                 },
