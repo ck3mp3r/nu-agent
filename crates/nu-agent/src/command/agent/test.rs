@@ -1,12 +1,53 @@
 use super::test_helpers::{
-    MockEngineInterface, create_test_agent, create_test_call, parse_agent_invocation_with_signature,
+    create_test_agent, create_test_call, parse_agent_invocation_with_signature,
 };
-use super::{EngineConfigInterface, extract_tool_timeout, extract_tools_from_call, runtime_build};
+use super::{extract_tool_timeout, extract_tools_from_call, runtime_build};
 
-use nu_agent_core::config::Config;
+use nu_agent_core::config::{
+    Config, ModelConfig, ModelLimits, ModelRoleConfig, PluginConfig, ProviderConfig,
+};
 use nu_plugin::{EvaluatedCall, SimplePluginCommand};
 use nu_protocol::{ParseError, Span, Spanned, SyntaxShape, Value, record};
 use serial_test::serial;
+use std::collections::HashMap;
+
+// Helpers to build PluginConfig structures for resolve_with_new_config tests.
+fn test_model() -> ModelConfig {
+    ModelConfig::default()
+}
+
+fn test_provider(api_key: Option<&str>, models: Vec<(&str, ModelConfig)>) -> ProviderConfig {
+    ProviderConfig {
+        name: None,
+        api_key: api_key.map(str::to_string),
+        base_url: None,
+        provider: None,
+        preamble: None,
+        models: models
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect(),
+    }
+}
+
+fn test_plugin_config(default_model: &str, providers: Vec<(&str, ProviderConfig)>) -> PluginConfig {
+    let mut models = HashMap::new();
+    models.insert(
+        "default".to_string(),
+        ModelRoleConfig {
+            model: default_model.to_string(),
+            ..Default::default()
+        },
+    );
+    PluginConfig {
+        models,
+        providers: providers
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect(),
+        ..Default::default()
+    }
+}
 
 fn first_unknown_flag_error(parse_errors: &[ParseError]) -> Option<(String, String, String)> {
     parse_errors.iter().find_map(|err| match err {
@@ -97,7 +138,7 @@ mod max_tool_turns_mode_defaults {
             retry_base_delay_ms: None,
             max_tool_calls_per_subturn: None,
             additional_params: None,
-            a2a_enabled: false,
+            a2a_enabled: None,
             a2a_port: None,
             session_store_type: None,
         };
@@ -135,7 +176,7 @@ mod max_tool_turns_mode_defaults {
             retry_base_delay_ms: None,
             max_tool_calls_per_subturn: None,
             additional_params: None,
-            a2a_enabled: false,
+            a2a_enabled: None,
             a2a_port: None,
             session_store_type: None,
         };
@@ -173,7 +214,7 @@ mod max_tool_turns_mode_defaults {
                 retry_base_delay_ms: None,
                 max_tool_calls_per_subturn: None,
                 additional_params: None,
-                a2a_enabled: false,
+                a2a_enabled: None,
                 a2a_port: None,
                 session_store_type: None,
             };
@@ -537,58 +578,6 @@ fn agent_command_signature_quiet_and_verbose_help_text_describes_stderr_ux_behav
 // Config Resolution Tests - Verify precedence and merging
 // ============================================================================
 
-#[test]
-fn mock_engine_returns_none_by_default() {
-    let mock = MockEngineInterface::new();
-    let result = mock.get_plugin_config();
-
-    assert!(result.is_ok());
-    assert_eq!(result.unwrap(), None);
-}
-
-#[test]
-fn mock_engine_returns_set_config() {
-    let config_value = Value::test_record(
-        vec![
-            ("provider".to_string(), Value::test_string("openai")),
-            ("model".to_string(), Value::test_string("gpt-4")),
-        ]
-        .into_iter()
-        .collect(),
-    );
-
-    let mock = MockEngineInterface::with_config(config_value.clone());
-    let result = mock.get_plugin_config();
-
-    assert!(result.is_ok());
-    assert_eq!(result.unwrap(), Some(config_value));
-}
-
-#[test]
-fn mock_engine_can_update_config() {
-    let mock = MockEngineInterface::new();
-
-    // Initially None
-    assert_eq!(mock.get_plugin_config().unwrap(), None);
-
-    // Set config
-    let config = Value::test_record(
-        vec![
-            ("provider".to_string(), Value::test_string("anthropic")),
-            ("model".to_string(), Value::test_string("claude-3")),
-        ]
-        .into_iter()
-        .collect(),
-    );
-
-    mock.set_config(Some(config.clone()));
-    assert_eq!(mock.get_plugin_config().unwrap(), Some(config));
-
-    // Clear config
-    mock.set_config(None);
-    assert_eq!(mock.get_plugin_config().unwrap(), None);
-}
-
 // ============================================================================
 // Config Resolution Pipeline Tests - Test full config resolution with precedence
 // ============================================================================
@@ -615,7 +604,7 @@ fn create_minimal_flag_config() -> Config {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
-        a2a_enabled: false,
+        a2a_enabled: None,
         a2a_port: None,
         session_store_type: None,
     }
@@ -641,65 +630,25 @@ fn config_resolution_uses_defaults_when_no_other_sources() {
     assert!(config.max_tool_turns.is_none()); // Default is None
 }
 
-#[test]
-fn config_merge_respects_precedence() {
-    // Test that Config::merge works correctly for the resolution pipeline
-    // Precedence: default < env < plugin < flags
-
-    let default_config = Config::default();
-    assert_eq!(default_config.provider, "");
-    assert_eq!(default_config.model, "");
-
-    let env_config = Config {
-        provider: "from_env".to_string(),
-        model: "model_env".to_string(),
-        api_key: Some("env_key".to_string()),
-        ..Default::default()
-    };
-
-    let plugin_config = Config {
-        provider: "from_plugin".to_string(),
-        model: "model_plugin".to_string(),
-        temperature: Some(0.8),
-        ..Default::default()
-    };
-
-    let flag_config = Config {
-        provider: "from_flags".to_string(),
-        model: "model_flags".to_string(),
-        max_output_tokens: Some(2000),
-        ..Default::default()
-    };
-
-    // Merge: default < env < plugin < flags
-    let result = default_config
-        .merge(env_config)
-        .merge(plugin_config)
-        .merge(flag_config);
-
-    // Flags win for provider/model (required fields)
-    assert_eq!(result.provider, "from_flags");
-    assert_eq!(result.model, "model_flags");
-
-    // Optional fields: last non-None value wins
-    assert_eq!(result.api_key, Some("env_key".to_string())); // Only set in env
-    assert_eq!(result.temperature, Some(0.8)); // Only set in plugin
-    assert_eq!(result.max_output_tokens, Some(2000)); // Only set in flags
-    assert!(result.max_tool_turns.is_none()); // Default is None
-}
-
 // These integration tests will use a helper function from agent.rs
 // that performs the full config resolution pipeline
 mod config_resolution_integration {
     use super::*;
-    use crate::command::agent::resolve_config;
 
     #[test]
     fn resolve_config_with_no_plugin_config() {
-        let mock = MockEngineInterface::new();
+        // Literal --model flag + minimal provider config. resolve_with_new_config
+        // uses the literal provider/model from the flag.
+        let plugin_config = test_plugin_config(
+            "openai/gpt-4",
+            vec![(
+                "openai",
+                test_provider(Some("sk-test"), vec![("gpt-4", test_model())]),
+            )],
+        );
         let call = create_test_call(vec![("model", Value::test_string("openai/gpt-4"))]);
 
-        let result = resolve_config(&mock, &call);
+        let result = runtime_build::resolve_with_new_config(plugin_config, &call);
         assert!(result.is_ok());
 
         let config = result.unwrap();
@@ -718,28 +667,26 @@ mod config_resolution_integration {
         }
 
         // New-format config: providers block required for resolve_config() to succeed
-        let plugin_config = Value::test_record(record! {
-            "models" => Value::test_record(record! {
-                "default" => Value::test_record(record! {
-                    "model" => Value::test_string("openai/gpt-4"),
-                }),
-            }),
-            "providers" => Value::test_record(record! {
-                "openai" => Value::test_record(record! {
-                    "models" => Value::test_record(record! {
-                        "gpt-4" => Value::test_record(record! {
-                            "temperature" => Value::test_float(0.9),
-                        }),
-                    }),
-                }),
-            }),
-        });
-
-        let mock = MockEngineInterface::with_config(plugin_config);
+        let plugin_config = test_plugin_config(
+            "openai/gpt-4",
+            vec![(
+                "openai",
+                test_provider(
+                    None,
+                    vec![(
+                        "gpt-4",
+                        ModelConfig {
+                            temperature: Some(0.9),
+                            ..Default::default()
+                        },
+                    )],
+                ),
+            )],
+        );
         let call = create_test_call(vec![]);
 
-        let result = resolve_config(&mock, &call);
-        assert!(result.is_ok(), "resolve_config failed: {:?}", result);
+        let result = runtime_build::resolve_with_new_config(plugin_config, &call);
+        assert!(result.is_ok(), "resolve failed: {:?}", result);
 
         let config = result.unwrap();
         assert_eq!(config.temperature, Some(0.9)); // Plugin wins over env
@@ -762,44 +709,69 @@ mod config_resolution_integration {
         }
 
         // New-format config: both providers present so --model openai/gpt-4 can override
-        let plugin_config = Value::test_record(record! {
-            "models" => Value::test_record(record! {
-                "default" => Value::test_record(record! {
-                    "model" => Value::test_string("anthropic/claude-3"),
+        let mut openai_models = HashMap::new();
+        openai_models.insert(
+            "gpt-4".to_string(),
+            ModelConfig {
+                temperature: Some(0.8),
+                limit: Some(ModelLimits {
+                    context: None,
+                    output: Some(1000),
                 }),
-            }),
-            "providers" => Value::test_record(record! {
-                "anthropic" => Value::test_record(record! {
-                    "models" => Value::test_record(record! {
-                        "claude-3" => Value::test_record(record! {
-                            "temperature" => Value::test_float(0.8),
-                            "limit" => Value::test_record(record! {
-                                "output" => Value::test_int(1000),
-                            }),
-                        }),
-                    }),
+                ..Default::default()
+            },
+        );
+        let mut claude_models = HashMap::new();
+        claude_models.insert(
+            "claude-3".to_string(),
+            ModelConfig {
+                temperature: Some(0.8),
+                limit: Some(ModelLimits {
+                    context: None,
+                    output: Some(1000),
                 }),
-                "openai" => Value::test_record(record! {
-                    "models" => Value::test_record(record! {
-                        "gpt-4" => Value::test_record(record! {
-                            "temperature" => Value::test_float(0.8),
-                            "limit" => Value::test_record(record! {
-                                "output" => Value::test_int(1000),
-                            }),
-                        }),
-                    }),
-                }),
-            }),
-        });
-
-        let mock = MockEngineInterface::with_config(plugin_config);
+                ..Default::default()
+            },
+        );
+        let plugin_config = PluginConfig {
+            models: {
+                let mut m = HashMap::new();
+                m.insert(
+                    "default".to_string(),
+                    ModelRoleConfig {
+                        model: "anthropic/claude-3".to_string(),
+                        ..Default::default()
+                    },
+                );
+                m
+            },
+            providers: {
+                let mut p = HashMap::new();
+                p.insert(
+                    "anthropic".to_string(),
+                    ProviderConfig {
+                        models: claude_models,
+                        ..Default::default()
+                    },
+                );
+                p.insert(
+                    "openai".to_string(),
+                    ProviderConfig {
+                        models: openai_models,
+                        ..Default::default()
+                    },
+                );
+                p
+            },
+            ..Default::default()
+        };
         let call = create_test_call(vec![
             ("model", Value::test_string("openai/gpt-4")), // Canonical override
             ("temperature", Value::test_float(1.2)),       // Override temperature
         ]);
 
-        let result = resolve_config(&mock, &call);
-        assert!(result.is_ok(), "resolve_config failed: {:?}", result);
+        let result = runtime_build::resolve_with_new_config(plugin_config, &call);
+        assert!(result.is_ok(), "resolve failed: {:?}", result);
 
         let config = result.unwrap();
         assert_eq!(config.provider, "openai"); // Flag wins
@@ -816,127 +788,27 @@ mod config_resolution_integration {
     }
 
     #[test]
-    fn resolve_config_validates_final_config() {
-        // Test validation with conflicting token limits
-        let plugin_config = Value::test_record(
-            vec![
-                (
-                    "models".to_string(),
-                    Value::test_record(
-                        vec![(
-                            "default".to_string(),
-                            Value::test_record(
-                                vec![("model".to_string(), Value::test_string("openai/gpt-4"))]
-                                    .into_iter()
-                                    .collect(),
-                            ),
-                        )]
-                        .into_iter()
-                        .collect(),
-                    ),
-                ),
-                (
-                    "providers".to_string(),
-                    Value::test_record(
-                        vec![(
-                            "openai".to_string(),
-                            Value::test_record(
-                                vec![(
-                                    "models".to_string(),
-                                    Value::test_record(
-                                        vec![(
-                                            "gpt-4".to_string(),
-                                            Value::test_record(
-                                                vec![(
-                                                    "limit".to_string(),
-                                                    Value::test_record(
-                                                        vec![
-                                                            (
-                                                                "output".to_string(),
-                                                                Value::test_int(5000),
-                                                            ),
-                                                            (
-                                                                "context".to_string(),
-                                                                Value::test_int(1000),
-                                                            ),
-                                                        ]
-                                                        .into_iter()
-                                                        .collect(),
-                                                    ),
-                                                )]
-                                                .into_iter()
-                                                .collect(),
-                                            ),
-                                        )]
-                                        .into_iter()
-                                        .collect(),
-                                    ),
-                                )]
-                                .into_iter()
-                                .collect(),
-                            ),
-                        )]
-                        .into_iter()
-                        .collect(),
-                    ),
-                ),
-            ]
-            .into_iter()
-            .collect(),
+    fn resolve_config_succeeds_without_providers() {
+        // A plugin config that has models but no providers block should succeed
+        // (provider block is optional)
+        let mut models = HashMap::new();
+        models.insert(
+            "default".to_string(),
+            ModelRoleConfig {
+                model: "openai/gpt-4".to_string(),
+                ..Default::default()
+            },
         );
-
-        let mock = MockEngineInterface::with_config(plugin_config);
+        let plugin_config = PluginConfig {
+            models,
+            ..Default::default()
+        };
         let call = create_test_call(vec![]);
 
-        let result = resolve_config(&mock, &call);
-        assert!(result.is_err()); // Should fail validation
-
-        // Just verify we got an error - the exact error message structure may vary
-        let _err = result.unwrap_err();
-        // Error should be about validation failure (max_output_tokens > max_context_tokens)
-    }
-
-    #[test]
-    fn resolve_config_handles_invalid_plugin_config() {
-        // Plugin config is not a record
-        let invalid_config = Value::test_string("not a record");
-        let mock = MockEngineInterface::with_config(invalid_config);
-
-        let call = create_test_call(vec![("model", Value::test_string("openai/gpt-4"))]);
-
-        let result = resolve_config(&mock, &call);
-        assert!(result.is_err());
-
-        // Just verify we got an error - the exact error message structure may vary
-        let _err = result.unwrap_err();
-        // Error should be about invalid config format
-    }
-
-    #[test]
-    fn resolve_config_errors_on_missing_providers() {
-        // A plugin config that has models but no providers block must error
-        let plugin_config = Value::test_record(record! {
-            "models" => Value::test_record(record! {
-                "default" => Value::test_record(record! {
-                    "model" => Value::test_string("openai/gpt-4"),
-                }),
-            }),
-        });
-
-        let mock = MockEngineInterface::with_config(plugin_config);
-        let call = create_test_call(vec![]);
-
-        let result = resolve_config(&mock, &call);
+        let result = runtime_build::resolve_with_new_config(plugin_config, &call);
         assert!(
-            result.is_err(),
-            "expected Err for config without providers, got: {result:?}"
-        );
-
-        let err = result.unwrap_err();
-        let msg = format!("{err:?}");
-        assert!(
-            msg.contains("providers"),
-            "error message should mention 'providers', got: {msg}"
+            result.is_ok(),
+            "expected Ok for config without providers (provider block is optional), got: {result:?}"
         );
     }
 }
@@ -947,7 +819,7 @@ mod config_resolution_integration {
 
 mod new_plugin_config_tests {
     use super::*;
-    use crate::command::agent::{picker::format_active_model_identity, resolve_config};
+    use crate::command::agent::{picker::format_active_model_identity, runtime_build};
 
     #[test]
     fn signature_has_model_flag_for_provider_model_format() {
@@ -988,80 +860,33 @@ mod new_plugin_config_tests {
     #[test]
     #[serial]
     fn resolve_config_with_new_plugin_config_structure() {
-        use std::collections::HashMap;
-
         // Create NEW plugin config structure with provider/model format
-        let mut providers_map = HashMap::new();
-
-        // OpenAI provider with gpt-4 model
         let mut openai_models = HashMap::new();
         openai_models.insert(
             "gpt-4".to_string(),
-            Value::test_record(
-                vec![
-                    ("temperature".to_string(), Value::test_float(0.7)),
-                    (
-                        "limit".to_string(),
-                        Value::test_record(
-                            vec![
-                                ("context".to_string(), Value::test_int(128000)),
-                                ("output".to_string(), Value::test_int(4096)),
-                            ]
-                            .into_iter()
-                            .collect(),
-                        ),
-                    ),
-                ]
-                .into_iter()
-                .collect(),
-            ),
+            ModelConfig {
+                temperature: Some(0.7),
+                limit: Some(ModelLimits {
+                    context: Some(128000),
+                    output: Some(4096),
+                }),
+                ..Default::default()
+            },
         );
-
-        providers_map.insert(
-            "openai".to_string(),
-            Value::test_record(
-                vec![
-                    ("api_key".to_string(), Value::test_string("test_key")),
-                    (
-                        "models".to_string(),
-                        Value::test_record(openai_models.into_iter().collect()),
-                    ),
-                ]
-                .into_iter()
-                .collect(),
-            ),
+        let plugin_config = test_plugin_config(
+            "openai/gpt-4",
+            vec![(
+                "openai",
+                ProviderConfig {
+                    api_key: Some("test_key".to_string()),
+                    models: openai_models,
+                    ..Default::default()
+                },
+            )],
         );
-
-        let plugin_config = Value::test_record(
-            vec![
-                (
-                    "models".to_string(),
-                    Value::test_record(
-                        vec![(
-                            "default".to_string(),
-                            Value::test_record(
-                                vec![("model".to_string(), Value::test_string("openai/gpt-4"))]
-                                    .into_iter()
-                                    .collect(),
-                            ),
-                        )]
-                        .into_iter()
-                        .collect(),
-                    ),
-                ),
-                (
-                    "providers".to_string(),
-                    Value::test_record(providers_map.into_iter().collect()),
-                ),
-            ]
-            .into_iter()
-            .collect(),
-        );
-
-        let mock = MockEngineInterface::with_config(plugin_config);
         let call = create_test_call(vec![]);
 
-        let result = resolve_config(&mock, &call);
+        let result = runtime_build::resolve_with_new_config(plugin_config, &call);
         assert!(result.is_ok(), "Failed to resolve config: {:?}", result);
 
         let config = result.unwrap();
@@ -1078,23 +903,9 @@ mod new_plugin_config_tests {
     fn resolve_config_accepts_mcp_from_plugin_env_config() {
         use std::collections::HashMap;
 
-        let mut providers_map = HashMap::new();
-        let mut models = HashMap::new();
-        models.insert(
-            "claude-sonnet-4-20250514".to_string(),
-            Value::test_record(record! {}),
-        );
-
-        providers_map.insert(
-            "github-copilot".to_string(),
-            Value::test_record(record! {
-                "api_key" => Value::test_string("token"),
-                "base_url" => Value::test_string("https://api.individual.githubcopilot.com"),
-                "models" => Value::test_record(models.into_iter().collect()),
-            }),
-        );
-
-        let plugin_config = Value::test_record(record! {
+        // MCP config is still parsed from a Nushell Value (separate subsystem).
+        // from_plugin_config expects a top-level record with an `mcp` key.
+        let mcp_value = Value::test_record(record! {
             "mcp" => Value::test_record(record! {
                 "c5t" => Value::test_record(record! {
                     "transport" => Value::test_string("sse"),
@@ -1112,23 +923,32 @@ mod new_plugin_config_tests {
                     }),
                 }),
             }),
-            "models" => Value::test_record(record! {
-                "default" => Value::test_record(record! {
-                    "model" => Value::test_string("github-copilot/anthropic/claude-sonnet-4-20250514"),
-                }),
-            }),
-            "providers" => Value::test_record(providers_map.into_iter().collect()),
         });
 
-        let parsed =
-            nu_agent_core::tools::mcp::config::McpConfig::from_plugin_config(&plugin_config)
-                .expect("mcp parse from plugin config");
+        let parsed = nu_agent_core::tools::mcp::config::McpConfig::from_plugin_config(&mcp_value)
+            .expect("mcp parse");
         assert_eq!(parsed.mcp.len(), 2);
 
-        let resolved = resolve_config(
-            &MockEngineInterface::with_config(plugin_config),
-            &create_test_call(vec![]),
+        let mut models = HashMap::new();
+        models.insert(
+            "claude-sonnet-4-20250514".to_string(),
+            ModelConfig::default(),
         );
+        let plugin_config = test_plugin_config(
+            "github-copilot/anthropic/claude-sonnet-4-20250514",
+            vec![(
+                "github-copilot",
+                ProviderConfig {
+                    api_key: Some("token".to_string()),
+                    base_url: Some("https://api.individual.githubcopilot.com".to_string()),
+                    models,
+                    ..Default::default()
+                },
+            )],
+        );
+
+        let resolved =
+            runtime_build::resolve_with_new_config(plugin_config, &create_test_call(vec![]));
         assert!(
             resolved.is_ok(),
             "config resolve should still succeed with mcp present"
@@ -1141,74 +961,38 @@ mod new_plugin_config_tests {
         use std::collections::HashMap;
 
         // Create plugin config with multiple providers and models
-        let mut providers_map = HashMap::new();
-
-        // OpenAI provider
         let mut openai_models = HashMap::new();
         openai_models.insert(
             "gpt-4".to_string(),
-            Value::test_record(
-                vec![("temperature".to_string(), Value::test_float(0.7))]
-                    .into_iter()
-                    .collect(),
-            ),
+            ModelConfig {
+                temperature: Some(0.7),
+                ..Default::default()
+            },
         );
         openai_models.insert(
             "gpt-3.5-turbo".to_string(),
-            Value::test_record(
-                vec![("temperature".to_string(), Value::test_float(0.9))]
-                    .into_iter()
-                    .collect(),
-            ),
+            ModelConfig {
+                temperature: Some(0.9),
+                ..Default::default()
+            },
         );
 
-        providers_map.insert(
-            "openai".to_string(),
-            Value::test_record(
-                vec![
-                    ("api_key".to_string(), Value::test_string("openai_key")),
-                    (
-                        "models".to_string(),
-                        Value::test_record(openai_models.into_iter().collect()),
-                    ),
-                ]
-                .into_iter()
-                .collect(),
-            ),
+        let plugin_config = test_plugin_config(
+            "openai/gpt-4",
+            vec![(
+                "openai",
+                ProviderConfig {
+                    api_key: Some("openai_key".to_string()),
+                    models: openai_models,
+                    ..Default::default()
+                },
+            )],
         );
-
-        let plugin_config = Value::test_record(
-            vec![
-                (
-                    "models".to_string(),
-                    Value::test_record(
-                        vec![(
-                            "default".to_string(),
-                            Value::test_record(
-                                vec![("model".to_string(), Value::test_string("openai/gpt-4"))]
-                                    .into_iter()
-                                    .collect(),
-                            ),
-                        )]
-                        .into_iter()
-                        .collect(),
-                    ),
-                ),
-                (
-                    "providers".to_string(),
-                    Value::test_record(providers_map.into_iter().collect()),
-                ),
-            ]
-            .into_iter()
-            .collect(),
-        );
-
-        let mock = MockEngineInterface::with_config(plugin_config);
 
         // Override with --model flag to use gpt-3.5-turbo instead
         let call = create_test_call(vec![("model", Value::test_string("openai/gpt-3.5-turbo"))]);
 
-        let result = resolve_config(&mock, &call);
+        let result = runtime_build::resolve_with_new_config(plugin_config, &call);
         assert!(result.is_ok(), "Failed to resolve config: {:?}", result);
 
         let config = result.unwrap();
@@ -1222,66 +1006,28 @@ mod new_plugin_config_tests {
     fn resolve_config_with_model_flag_override_for_tui_path_uses_flag_precedence() {
         use std::collections::HashMap;
 
-        let mut providers_map = HashMap::new();
-
         let mut openai_models = HashMap::new();
-        openai_models.insert(
-            "gpt-4".to_string(),
-            Value::test_record(vec![].into_iter().collect()),
-        );
-        openai_models.insert(
-            "gpt-4o-mini".to_string(),
-            Value::test_record(vec![].into_iter().collect()),
-        );
+        openai_models.insert("gpt-4".to_string(), ModelConfig::default());
+        openai_models.insert("gpt-4o-mini".to_string(), ModelConfig::default());
 
-        providers_map.insert(
-            "openai".to_string(),
-            Value::test_record(
-                vec![
-                    ("api_key".to_string(), Value::test_string("openai_key")),
-                    (
-                        "models".to_string(),
-                        Value::test_record(openai_models.into_iter().collect()),
-                    ),
-                ]
-                .into_iter()
-                .collect(),
-            ),
+        let plugin_config = test_plugin_config(
+            "openai/gpt-4",
+            vec![(
+                "openai",
+                ProviderConfig {
+                    api_key: Some("openai_key".to_string()),
+                    models: openai_models,
+                    ..Default::default()
+                },
+            )],
         );
-
-        let plugin_config = Value::test_record(
-            vec![
-                (
-                    "models".to_string(),
-                    Value::test_record(
-                        vec![(
-                            "default".to_string(),
-                            Value::test_record(
-                                vec![("model".to_string(), Value::test_string("openai/gpt-4"))]
-                                    .into_iter()
-                                    .collect(),
-                            ),
-                        )]
-                        .into_iter()
-                        .collect(),
-                    ),
-                ),
-                (
-                    "providers".to_string(),
-                    Value::test_record(providers_map.into_iter().collect()),
-                ),
-            ]
-            .into_iter()
-            .collect(),
-        );
-
-        let mock = MockEngineInterface::with_config(plugin_config);
         let call = create_test_call(vec![
             ("tui", Value::test_bool(true)),
             ("model", Value::test_string("openai/gpt-4o-mini")),
         ]);
 
-        let config = resolve_config(&mock, &call).expect("resolve config for tui");
+        let config = runtime_build::resolve_with_new_config(plugin_config, &call)
+            .expect("resolve config for tui");
         assert_eq!(config.provider, "openai");
         assert_eq!(config.model, "gpt-4o-mini");
         assert_eq!(
@@ -1296,72 +1042,32 @@ mod new_plugin_config_tests {
         use std::collections::HashMap;
 
         // Create plugin config with models.default
-        let mut providers_map = HashMap::new();
-
         let mut openai_models = HashMap::new();
-        openai_models.insert(
-            "gpt-4".to_string(),
-            Value::test_record(vec![].into_iter().collect()),
-        );
+        openai_models.insert("gpt-4".to_string(), ModelConfig::default());
         openai_models.insert(
             "gpt-3.5-turbo".to_string(),
-            Value::test_record(
-                vec![("temperature".to_string(), Value::test_float(1.0))]
-                    .into_iter()
-                    .collect(),
-            ),
+            ModelConfig {
+                temperature: Some(1.0),
+                ..Default::default()
+            },
         );
 
-        providers_map.insert(
-            "openai".to_string(),
-            Value::test_record(
-                vec![
-                    ("api_key".to_string(), Value::test_string("test_key")),
-                    (
-                        "models".to_string(),
-                        Value::test_record(openai_models.into_iter().collect()),
-                    ),
-                ]
-                .into_iter()
-                .collect(),
-            ),
+        let plugin_config = test_plugin_config(
+            "openai/gpt-3.5-turbo",
+            vec![(
+                "openai",
+                ProviderConfig {
+                    api_key: Some("test_key".to_string()),
+                    models: openai_models,
+                    ..Default::default()
+                },
+            )],
         );
-
-        let plugin_config = Value::test_record(
-            vec![
-                (
-                    "models".to_string(),
-                    Value::test_record(
-                        vec![(
-                            "default".to_string(),
-                            Value::test_record(
-                                vec![(
-                                    "model".to_string(),
-                                    Value::test_string("openai/gpt-3.5-turbo"),
-                                )]
-                                .into_iter()
-                                .collect(),
-                            ),
-                        )]
-                        .into_iter()
-                        .collect(),
-                    ),
-                ),
-                (
-                    "providers".to_string(),
-                    Value::test_record(providers_map.into_iter().collect()),
-                ),
-            ]
-            .into_iter()
-            .collect(),
-        );
-
-        let mock = MockEngineInterface::with_config(plugin_config);
 
         // No --model flag — should use models.default
         let call = create_test_call(vec![]);
 
-        let result = resolve_config(&mock, &call);
+        let result = runtime_build::resolve_with_new_config(plugin_config, &call);
         assert!(result.is_ok(), "Failed to resolve config: {:?}", result);
 
         let config = result.unwrap();
@@ -1374,37 +1080,30 @@ mod new_plugin_config_tests {
     fn resolve_config_new_flow_resolves_model_preamble_over_provider_preamble() {
         use std::collections::HashMap;
 
-        let mut providers_map = HashMap::new();
         let mut openai_models = HashMap::new();
         openai_models.insert(
             "gpt-5-mini".to_string(),
-            Value::test_record(record! {
-                "preamble" => Value::test_string("model preamble"),
-            }),
+            ModelConfig {
+                preamble: Some("model preamble".to_string()),
+                ..Default::default()
+            },
         );
 
-        providers_map.insert(
-            "openai".to_string(),
-            Value::test_record(record! {
-                "preamble" => Value::test_string("provider preamble"),
-                "models" => Value::test_record(openai_models.into_iter().collect()),
-            }),
+        let plugin_config = test_plugin_config(
+            "openai/gpt-5-mini",
+            vec![(
+                "openai",
+                ProviderConfig {
+                    preamble: Some("provider preamble".to_string()),
+                    models: openai_models,
+                    ..Default::default()
+                },
+            )],
         );
 
-        let plugin_config = Value::test_record(record! {
-            "models" => Value::test_record(record! {
-                "default" => Value::test_record(record! {
-                    "model" => Value::test_string("openai/gpt-5-mini"),
-                }),
-            }),
-            "providers" => Value::test_record(providers_map.into_iter().collect()),
-        });
-
-        let config = resolve_config(
-            &MockEngineInterface::with_config(plugin_config),
-            &create_test_call(vec![]),
-        )
-        .expect("resolve config");
+        let config =
+            runtime_build::resolve_with_new_config(plugin_config, &create_test_call(vec![]))
+                .expect("resolve config");
 
         assert_eq!(config.preamble.as_deref(), Some("model preamble"));
     }
@@ -1414,30 +1113,22 @@ mod new_plugin_config_tests {
         use nu_agent_core::protocol::preamble::PreambleDefaults;
         use std::collections::HashMap;
 
-        let mut providers_map = HashMap::new();
-        providers_map.insert(
-            "custom".to_string(),
-            Value::test_record(record! {
-                "models" => Value::test_record(record! {
-                    "unknown-model" => Value::test_record(record! {}),
-                }),
-            }),
+        let mut models = HashMap::new();
+        models.insert("unknown-model".to_string(), ModelConfig::default());
+        let plugin_config = test_plugin_config(
+            "custom/unknown-model",
+            vec![(
+                "custom",
+                ProviderConfig {
+                    models,
+                    ..Default::default()
+                },
+            )],
         );
 
-        let plugin_config = Value::test_record(record! {
-            "models" => Value::test_record(record! {
-                "default" => Value::test_record(record! {
-                    "model" => Value::test_string("custom/unknown-model"),
-                }),
-            }),
-            "providers" => Value::test_record(providers_map.into_iter().collect()),
-        });
-
-        let config = resolve_config(
-            &MockEngineInterface::with_config(plugin_config),
-            &create_test_call(vec![]),
-        )
-        .expect("resolve config");
+        let config =
+            runtime_build::resolve_with_new_config(plugin_config, &create_test_call(vec![]))
+                .expect("resolve config");
 
         let defaults = PreambleDefaults::builtin();
         let expected_global_fallback = defaults
@@ -1453,68 +1144,26 @@ mod new_plugin_config_tests {
         use std::collections::HashMap;
 
         // Create plugin config
-        let mut providers_map = HashMap::new();
-
         let mut openai_models = HashMap::new();
-        openai_models.insert(
-            "gpt-4".to_string(),
-            Value::test_record(vec![].into_iter().collect()),
-        );
-        openai_models.insert(
-            "gpt-3.5-turbo".to_string(),
-            Value::test_record(vec![].into_iter().collect()),
-        );
+        openai_models.insert("gpt-4".to_string(), ModelConfig::default());
+        openai_models.insert("gpt-3.5-turbo".to_string(), ModelConfig::default());
 
-        providers_map.insert(
-            "openai".to_string(),
-            Value::test_record(
-                vec![
-                    ("api_key".to_string(), Value::test_string("test_key")),
-                    (
-                        "models".to_string(),
-                        Value::test_record(openai_models.into_iter().collect()),
-                    ),
-                ]
-                .into_iter()
-                .collect(),
-            ),
+        let plugin_config = test_plugin_config(
+            "openai/gpt-3.5-turbo",
+            vec![(
+                "openai",
+                ProviderConfig {
+                    api_key: Some("test_key".to_string()),
+                    models: openai_models,
+                    ..Default::default()
+                },
+            )],
         );
-
-        let plugin_config = Value::test_record(
-            vec![
-                (
-                    "models".to_string(),
-                    Value::test_record(
-                        vec![(
-                            "default".to_string(),
-                            Value::test_record(
-                                vec![(
-                                    "model".to_string(),
-                                    Value::test_string("openai/gpt-3.5-turbo"),
-                                )]
-                                .into_iter()
-                                .collect(),
-                            ),
-                        )]
-                        .into_iter()
-                        .collect(),
-                    ),
-                ),
-                (
-                    "providers".to_string(),
-                    Value::test_record(providers_map.into_iter().collect()),
-                ),
-            ]
-            .into_iter()
-            .collect(),
-        );
-
-        let mock = MockEngineInterface::with_config(plugin_config);
 
         // --model flag provided, should override models.default
         let call = create_test_call(vec![("model", Value::test_string("openai/gpt-4"))]);
 
-        let result = resolve_config(&mock, &call);
+        let result = runtime_build::resolve_with_new_config(plugin_config, &call);
         assert!(result.is_ok(), "Failed to resolve config: {:?}", result);
 
         let config = result.unwrap();
@@ -1524,11 +1173,17 @@ mod new_plugin_config_tests {
     #[test]
     #[serial]
     fn resolve_config_no_plugin_config_requires_model_flag() {
-        let mock = MockEngineInterface::new();
-
+        // Literal --model flag with a minimal provider config.
+        let plugin_config = test_plugin_config(
+            "openai/gpt-4",
+            vec![(
+                "openai",
+                test_provider(Some("sk-test"), vec![("gpt-4", test_model())]),
+            )],
+        );
         let call = create_test_call(vec![("model", Value::test_string("openai/gpt-4"))]);
 
-        let result = resolve_config(&mock, &call);
+        let result = runtime_build::resolve_with_new_config(plugin_config, &call);
         assert!(result.is_ok(), "Failed to resolve config: {:?}", result);
 
         let config = result.unwrap();
@@ -1999,8 +1654,10 @@ fn apply_persona_model_overrides_plugin_config() {
         providers,
         compaction: None,
         agents: Default::default(),
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store: None,
+        secret_store: None,
+        models_cache: None,
     };
 
     let applied = runtime_build::apply_persona_model(
@@ -2114,8 +1771,10 @@ fn apply_persona_model_clears_provider_impl() {
         providers,
         compaction: None,
         agents: Default::default(),
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store: None,
+        secret_store: None,
+        models_cache: None,
     };
 
     let applied = runtime_build::apply_persona_model(

@@ -1,4 +1,4 @@
-use nu_agent_core::config::PluginConfig;
+use nu_agent_core::config::{ModelsCache, PluginConfig};
 use nu_agent_core::protocol::persona::PersonaSummary;
 use nu_agent_core::protocol::picker::{AgentPickerOption, ModelPickerOption};
 
@@ -10,37 +10,74 @@ pub(crate) fn format_active_model_identity(provider: &str, model: &str) -> Strin
     }
 }
 
-pub(crate) fn build_model_picker_catalog_from_plugin_config(
+pub(crate) fn build_model_picker_catalog(
+    models_cache: Option<&ModelsCache>,
     plugin_config: &PluginConfig,
     active_model_identity: &str,
 ) -> Vec<ModelPickerOption> {
-    let mut options = plugin_config
-        .providers
-        .iter()
-        .flat_map(|(provider, provider_config)| {
-            provider_config.models.keys().map(move |model| {
-                let identity = format!("{provider}/{model}");
-                ModelPickerOption {
-                    provider: provider.clone(),
-                    model: model.clone(),
-                    identity: identity.clone(),
-                    display: format!("{provider} / {model}"),
-                    active: identity == active_model_identity,
-                }
-            })
-        })
-        .collect::<Vec<_>>();
+    let mut options: Vec<ModelPickerOption> = Vec::new();
 
-    options.sort_by(|left, right| {
-        left.provider
+    // Only show models from providers that have a provider block in config.toml
+    for (provider_id, provider_cfg) in &plugin_config.providers {
+        let provider_display_name = if let Some(cache) = models_cache
+            && let Some(spec) = cache.providers.get(provider_id)
+        {
+            spec.name.clone()
+        } else {
+            provider_id.clone()
+        };
+
+        // If cache is available, show ALL models for this provider (not just configured ones)
+        if let Some(cache) = models_cache
+            && let Some(provider_spec) = cache.providers.get(provider_id)
+        {
+            for (model_id, model_spec) in &provider_spec.models {
+                let identity = format!("{provider_id}/{model_id}");
+                let configured = provider_cfg.models.contains_key(model_id);
+                options.push(ModelPickerOption {
+                    provider: provider_id.clone(),
+                    model: model_id.clone(),
+                    identity: identity.clone(),
+                    display: format!("{} / {}", provider_spec.name, model_spec.name),
+                    active: identity == active_model_identity,
+                    context_window: Some(model_spec.limit.context),
+                    max_output: Some(model_spec.limit.output),
+                    configured,
+                    provider_display_name: provider_spec.name.clone(),
+                });
+            }
+        } else {
+            // No cache — show only configured models for this provider
+            for model_id in provider_cfg.models.keys() {
+                let identity = format!("{provider_id}/{model_id}");
+                options.push(ModelPickerOption {
+                    provider: provider_id.clone(),
+                    model: model_id.clone(),
+                    identity: identity.clone(),
+                    display: format!("{} / {}", provider_id, model_id),
+                    active: identity == active_model_identity,
+                    context_window: None,
+                    max_output: None,
+                    configured: true,
+                    provider_display_name: provider_display_name.clone(),
+                });
+            }
+        }
+    }
+
+    // Sort: by provider, then configured first, then alphabetical
+    options.sort_by(|a, b| {
+        a.provider
             .to_ascii_lowercase()
-            .cmp(&right.provider.to_ascii_lowercase())
+            .cmp(&b.provider.to_ascii_lowercase())
+            .then_with(|| b.configured.cmp(&a.configured))
             .then_with(|| {
-                left.model
+                a.model
                     .to_ascii_lowercase()
-                    .cmp(&right.model.to_ascii_lowercase())
+                    .cmp(&b.model.to_ascii_lowercase())
             })
     });
+
     options
 }
 
@@ -48,9 +85,10 @@ pub(crate) fn model_picker_catalog_from_cached_startup_plugin_config(
     startup_plugin_config: Option<&PluginConfig>,
     active_model_identity: &str,
 ) -> Vec<ModelPickerOption> {
-    startup_plugin_config
-        .map(|config| build_model_picker_catalog_from_plugin_config(config, active_model_identity))
-        .unwrap_or_default()
+    let Some(config) = startup_plugin_config else {
+        return Vec::new();
+    };
+    build_model_picker_catalog(config.models_cache.as_ref(), config, active_model_identity)
 }
 
 pub(crate) fn build_agent_picker_catalog(

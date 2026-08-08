@@ -32,7 +32,7 @@ fn test_config() -> Config {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store_type: None,
     }
 }

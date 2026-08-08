@@ -749,6 +749,10 @@ fn model_picker_query_accepts_j_and_k_characters() {
             identity: "jk-provider-a/jk-model-a".to_string(),
             display: "jk-provider-a / jk-model-a".to_string(),
             active: true,
+            context_window: None,
+            max_output: None,
+            configured: false,
+            provider_display_name: String::new(),
         },
         ModelPickerOption {
             provider: "jk-provider-b".to_string(),
@@ -756,6 +760,10 @@ fn model_picker_query_accepts_j_and_k_characters() {
             identity: "jk-provider-b/jk-model-b".to_string(),
             display: "jk-provider-b / jk-model-b".to_string(),
             active: false,
+            context_window: None,
+            max_output: None,
+            configured: false,
+            provider_display_name: String::new(),
         },
     ]);
     state.open_model_picker();
@@ -787,6 +795,10 @@ fn model_picker_navigation_does_not_consume_query_jk_input() {
             identity: "jk-provider-a/jk-model-a".to_string(),
             display: "jk-provider-a / jk-model-a".to_string(),
             active: true,
+            context_window: None,
+            max_output: None,
+            configured: false,
+            provider_display_name: String::new(),
         },
         ModelPickerOption {
             provider: "jk-provider-b".to_string(),
@@ -794,6 +806,10 @@ fn model_picker_navigation_does_not_consume_query_jk_input() {
             identity: "jk-provider-b/jk-model-b".to_string(),
             display: "jk-provider-b / jk-model-b".to_string(),
             active: false,
+            context_window: None,
+            max_output: None,
+            configured: false,
+            provider_display_name: String::new(),
         },
         ModelPickerOption {
             provider: "jk-provider-c".to_string(),
@@ -801,6 +817,10 @@ fn model_picker_navigation_does_not_consume_query_jk_input() {
             identity: "jk-provider-c/jk-model-c".to_string(),
             display: "jk-provider-c / jk-model-c".to_string(),
             active: false,
+            context_window: None,
+            max_output: None,
+            configured: false,
+            provider_display_name: String::new(),
         },
     ]);
     state.open_model_picker();
@@ -849,6 +869,10 @@ fn model_picker_ctrl_n_moves_to_next_item() {
             identity: "openai/gpt-4o-mini".to_string(),
             display: "openai / gpt-4o-mini".to_string(),
             active: true,
+            context_window: None,
+            max_output: None,
+            configured: false,
+            provider_display_name: String::new(),
         },
         ModelPickerOption {
             provider: "anthropic".to_string(),
@@ -856,6 +880,10 @@ fn model_picker_ctrl_n_moves_to_next_item() {
             identity: "anthropic/claude-3-5-sonnet".to_string(),
             display: "anthropic / claude-3-5-sonnet".to_string(),
             active: false,
+            context_window: None,
+            max_output: None,
+            configured: false,
+            provider_display_name: String::new(),
         },
     ]);
     state.open_model_picker();
@@ -893,6 +921,10 @@ fn query_picker_ctrl_n_moves_to_next_item_consistently() {
             identity: "openai/gpt-4o-mini".to_string(),
             display: "openai / gpt-4o-mini".to_string(),
             active: true,
+            context_window: None,
+            max_output: None,
+            configured: false,
+            provider_display_name: String::new(),
         },
         ModelPickerOption {
             provider: "anthropic".to_string(),
@@ -900,6 +932,10 @@ fn query_picker_ctrl_n_moves_to_next_item_consistently() {
             identity: "anthropic/claude-3-5-sonnet".to_string(),
             display: "anthropic / claude-3-5-sonnet".to_string(),
             active: false,
+            context_window: None,
+            max_output: None,
+            configured: false,
+            provider_display_name: String::new(),
         },
     ]);
     model_state.open_model_picker();
@@ -1424,6 +1460,10 @@ fn model_picker_ctrl_p_moves_selection_up() {
             identity: "openai/gpt-4o-mini".to_string(),
             display: "openai / gpt-4o-mini".to_string(),
             active: true,
+            context_window: None,
+            max_output: None,
+            configured: false,
+            provider_display_name: String::new(),
         },
         ModelPickerOption {
             provider: "anthropic".to_string(),
@@ -1431,6 +1471,10 @@ fn model_picker_ctrl_p_moves_selection_up() {
             identity: "anthropic/claude-3-5-sonnet".to_string(),
             display: "anthropic / claude-3-5-sonnet".to_string(),
             active: false,
+            context_window: None,
+            max_output: None,
+            configured: false,
+            provider_display_name: String::new(),
         },
     ]);
     state.open_model_picker();

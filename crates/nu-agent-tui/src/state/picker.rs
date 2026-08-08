@@ -173,6 +173,10 @@ impl AppState {
                     .to_ascii_lowercase()
                     .contains(query.as_str())
                     || option.display.to_ascii_lowercase().contains(query.as_str())
+                    || option
+                        .provider_display_name
+                        .to_ascii_lowercase()
+                        .contains(query.as_str())
             })
             .cloned()
             .collect()

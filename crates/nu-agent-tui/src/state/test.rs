@@ -648,6 +648,10 @@ fn inline_model_picker_opens_with_available_models() {
             identity: "openai/gpt-4o-mini".to_string(),
             display: "openai / gpt-4o-mini".to_string(),
             active: true,
+            context_window: None,
+            max_output: None,
+            configured: false,
+            provider_display_name: String::new(),
         },
         ModelPickerOption {
             provider: "anthropic".to_string(),
@@ -655,6 +659,10 @@ fn inline_model_picker_opens_with_available_models() {
             identity: "anthropic/claude-3-5-sonnet".to_string(),
             display: "anthropic / claude-3-5-sonnet".to_string(),
             active: false,
+            context_window: None,
+            max_output: None,
+            configured: false,
+            provider_display_name: String::new(),
         },
     ]);
 
@@ -676,6 +684,10 @@ fn inline_model_picker_filters_incrementally() {
             identity: "openai/gpt-4o-mini".to_string(),
             display: "openai / gpt-4o-mini".to_string(),
             active: true,
+            context_window: None,
+            max_output: None,
+            configured: false,
+            provider_display_name: String::new(),
         },
         ModelPickerOption {
             provider: "anthropic".to_string(),
@@ -683,6 +695,10 @@ fn inline_model_picker_filters_incrementally() {
             identity: "anthropic/claude-3-5-sonnet".to_string(),
             display: "anthropic / claude-3-5-sonnet".to_string(),
             active: false,
+            context_window: None,
+            max_output: None,
+            configured: false,
+            provider_display_name: String::new(),
         },
     ]);
     state.open_model_picker();
@@ -706,6 +722,10 @@ fn inline_model_picker_moves_selection_deterministically() {
             identity: "openai/gpt-4o-mini".to_string(),
             display: "openai / gpt-4o-mini".to_string(),
             active: true,
+            context_window: None,
+            max_output: None,
+            configured: false,
+            provider_display_name: String::new(),
         },
         ModelPickerOption {
             provider: "anthropic".to_string(),
@@ -713,6 +733,10 @@ fn inline_model_picker_moves_selection_deterministically() {
             identity: "anthropic/claude-3-5-sonnet".to_string(),
             display: "anthropic / claude-3-5-sonnet".to_string(),
             active: false,
+            context_window: None,
+            max_output: None,
+            configured: false,
+            provider_display_name: String::new(),
         },
     ]);
     state.open_model_picker();
@@ -736,6 +760,10 @@ fn inline_model_picker_closes_on_escape() {
         identity: "openai/gpt-4o-mini".to_string(),
         display: "openai / gpt-4o-mini".to_string(),
         active: true,
+        context_window: None,
+        max_output: None,
+        configured: false,
+        provider_display_name: String::new(),
     }]);
     state.open_model_picker();
 
@@ -756,6 +784,10 @@ fn inline_model_picker_uses_cached_startup_plugin_config_catalog() {
             identity: "z-provider/z-model".to_string(),
             display: "z-provider / z-model".to_string(),
             active: false,
+            context_window: None,
+            max_output: None,
+            configured: false,
+            provider_display_name: String::new(),
         },
         ModelPickerOption {
             provider: "a-provider".to_string(),
@@ -763,6 +795,10 @@ fn inline_model_picker_uses_cached_startup_plugin_config_catalog() {
             identity: "a-provider/a-model".to_string(),
             display: "a-provider / a-model".to_string(),
             active: true,
+            context_window: None,
+            max_output: None,
+            configured: false,
+            provider_display_name: String::new(),
         },
     ]);
     state.open_model_picker();
@@ -782,6 +818,10 @@ fn model_picker_query_changes_results_with_hydrated_catalog() {
             identity: "openai/gpt-4o-mini".to_string(),
             display: "openai / gpt-4o-mini".to_string(),
             active: true,
+            context_window: None,
+            max_output: None,
+            configured: false,
+            provider_display_name: String::new(),
         },
         ModelPickerOption {
             provider: "anthropic".to_string(),
@@ -789,6 +829,10 @@ fn model_picker_query_changes_results_with_hydrated_catalog() {
             identity: "anthropic/claude-3-5-sonnet".to_string(),
             display: "anthropic / claude-3-5-sonnet".to_string(),
             active: false,
+            context_window: None,
+            max_output: None,
+            configured: false,
+            provider_display_name: String::new(),
         },
     ]);
     state.open_model_picker();

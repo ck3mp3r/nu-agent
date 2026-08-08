@@ -195,7 +195,7 @@ pub struct DiscoverableSkill {
     pub name: String,
 }
 
-pub use nu_agent_core::protocol::picker::{AgentPickerOption, ModelPickerOption};
+pub use nu_agent_core::protocol::picker::{AgentPickerOption, ModelPickerOption, ModelPickerRow};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionPickerOption {

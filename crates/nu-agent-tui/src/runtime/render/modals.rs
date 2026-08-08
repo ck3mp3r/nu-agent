@@ -217,20 +217,71 @@ impl RuntimeCoordinator {
                 rows[1],
             );
         } else {
-            let table_rows = options.iter().map(|option| {
-                let active = if option.active { "*" } else { "" };
-                Row::new(vec![
-                    Cell::from(option.identity.clone()),
-                    Cell::from(active.to_string()),
-                ])
-            });
-            let table = Table::new(table_rows, [Constraint::Min(12), Constraint::Length(1)])
-                .header(Row::new(vec!["Model", "A"]).style(self.theme.subtle_meta))
-                .column_spacing(1)
-                .highlight_symbol("❯ ")
-                .row_highlight_style(self.theme.focus);
+            // Build rows with provider headers
+            use nu_agent_core::protocol::picker::ModelPickerRow;
+            let mut picker_rows: Vec<ModelPickerRow> = Vec::new();
+            let mut current_provider: Option<String> = None;
+            for option in &options {
+                if current_provider.as_deref() != Some(&option.provider) {
+                    picker_rows.push(ModelPickerRow::ProviderHeader {
+                        name: option.provider.clone(),
+                        display_name: option.provider_display_name.clone(),
+                    });
+                    current_provider = Some(option.provider.clone());
+                }
+                picker_rows.push(ModelPickerRow::Model {
+                    option: option.clone(),
+                });
+            }
+
+            // Render rows — provider headers are styled, not selectable
+            // Map selection index to row position by counting only Model rows
+            let mut table_rows: Vec<Row> = Vec::new();
+            let mut model_idx = 0;
+            let mut selected_row = 0;
+            for row in &picker_rows {
+                match row {
+                    ModelPickerRow::ProviderHeader { display_name, .. } => {
+                        table_rows.push(
+                            Row::new(vec![Cell::from(format!("  {display_name}"))])
+                                .style(self.theme.subtle_meta),
+                        );
+                    }
+                    ModelPickerRow::Model { option } => {
+                        let active = if option.active { "*" } else { "" };
+                        let configured = if option.configured { "◆" } else { "" };
+                        let ctx = option
+                            .context_window
+                            .map(|c| format!("{}k", c / 1000))
+                            .unwrap_or_default();
+                        table_rows.push(Row::new(vec![
+                            Cell::from(format!("  {}", option.identity)),
+                            Cell::from(ctx),
+                            Cell::from(active.to_string()),
+                            Cell::from(configured.to_string()),
+                        ]));
+                        if model_idx == self.state.model_picker_selection {
+                            selected_row = table_rows.len() - 1;
+                        }
+                        model_idx += 1;
+                    }
+                }
+            }
+
+            let table = Table::new(
+                table_rows,
+                [
+                    Constraint::Min(20),
+                    Constraint::Length(8),
+                    Constraint::Length(1),
+                    Constraint::Length(1),
+                ],
+            )
+            .column_spacing(1)
+            .highlight_symbol("❯ ")
+            .row_highlight_style(self.theme.focus);
             let mut table_state = TableState::default();
-            table_state.select(Some(self.state.model_picker_selection));
+            table_state.select(Some(selected_row));
             frame.render_stateful_widget(table, rows[1], &mut table_state);
         }
     }

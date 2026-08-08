@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use nu_agent_core::tools::mcp::credentials::McpCredentialsStore;
 
-use super::mcp_logout::perform_logout;
+use super::logout::perform_logout;
 
 fn make_store_with_entry(server_name: &str) -> McpCredentialsStore {
     let mut store = McpCredentialsStore::default();

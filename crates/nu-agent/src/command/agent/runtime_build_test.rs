@@ -174,8 +174,10 @@ fn make_plugin_config(models: HashMap<String, ModelRoleConfig>) -> PluginConfig 
         providers,
         compaction: None,
         agents: Default::default(),
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store: None,
+        secret_store: None,
+        models_cache: None,
     }
 }
 
@@ -393,8 +395,10 @@ fn make_plugin_config_with_providers(
         providers,
         compaction: None,
         agents: Default::default(),
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store: None,
+        secret_store: None,
+        models_cache: None,
     }
 }
 

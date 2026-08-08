@@ -1,6 +1,6 @@
 use nu_agent_core::tools::mcp::config::{McpAuthConfig, McpServerConfig, McpTransportType};
 
-use super::mcp_login::validate_login_config;
+use super::login::validate_login_config;
 
 fn make_oauth_server(name: &str, url: Option<&str>) -> McpServerConfig {
     McpServerConfig {

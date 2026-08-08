@@ -6,16 +6,23 @@ use crate::compaction::CompactionStrategy;
 use crate::session::StoreType;
 
 pub mod defaults;
+pub mod models_cache;
+pub mod secrets;
+pub mod toml_config;
+
+pub use models_cache::{ModelSpec, ModelsCache, ProviderSpec};
+pub use secrets::{Credential, SecretStore, SecretStoreError};
+pub use toml_config::{TomlConfigError, config_path, load};
 
 /// Model limits (context and output token limits)
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct ModelLimits {
     pub context: Option<u32>,
     pub output: Option<u32>,
 }
 
 /// Model-specific configuration
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct ModelConfig {
     /// Model limits
     pub limit: Option<ModelLimits>,
@@ -34,7 +41,7 @@ pub struct ModelConfig {
 }
 
 /// Provider-specific configuration
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct ProviderConfig {
     /// Provider display name
     pub name: Option<String>,
@@ -52,6 +59,7 @@ pub struct ProviderConfig {
     pub preamble: Option<String>,
 
     /// Models available for this provider
+    #[serde(default)]
     pub models: HashMap<String, ModelConfig>,
 }
 
@@ -60,9 +68,10 @@ pub struct ProviderConfig {
 /// Each entry in `PluginConfig.models` maps a role label (e.g. "default", "heavy", "light")
 /// to a `ModelRoleConfig` that specifies the model string and optional overrides for
 /// that role's runtime behavior.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct ModelRoleConfig {
     /// Model specification in `provider/model` format (e.g. "openai/gpt-4").
+    #[serde(default)]
     pub model: String,
 
     /// Temperature for response generation (0.0 to 2.0).
@@ -94,32 +103,44 @@ pub struct ModelRoleConfig {
 }
 
 /// Top-level plugin configuration (provider-centric)
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct PluginConfig {
     /// Model role map — maps role labels (e.g. "default", "heavy", "light")
     /// to per-role model configuration. At minimum must contain a "default" entry.
+    #[serde(default)]
     pub models: HashMap<String, ModelRoleConfig>,
 
     /// Provider configurations
+    #[serde(default)]
     pub providers: HashMap<String, ProviderConfig>,
 
     /// Compaction configuration (optional, uses defaults if not set)
+    #[serde(default)]
     pub compaction: Option<CompactionConfig>,
 
     /// Agent persona configuration
+    #[serde(default)]
     pub agents: AgentsConfig,
 
     /// Enable A2A agent-to-agent protocol support (experimental, default: false).
-    pub a2a_enabled: bool,
+    pub a2a_enabled: Option<bool>,
 
     /// Session store backend configuration (optional, defaults to SQLite).
+    #[serde(default)]
     pub session_store: Option<StoreTypeConfig>,
+
+    /// Secret store for API keys and OAuth tokens (not serialized).
+    #[serde(skip)]
+    pub secret_store: Option<SecretStore>,
+
+    /// Local models.dev cache (not serialized). Populated at runtime.
+    #[serde(skip)]
+    pub models_cache: Option<ModelsCache>,
 }
 
 /// Configuration for conversation compaction behavior.
 ///
-/// All fields are `Option` — `None` means "use default". This follows
-/// the merge pattern from `Config::merge()`.
+/// All fields are `Option` — `None` means "use default".
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CompactionConfig {
     /// Primary compaction strategy: "sliding_summary", "sliding_window", "token_truncate"
@@ -133,9 +154,10 @@ pub struct CompactionConfig {
 }
 
 /// Configuration for session store backend selection.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct StoreTypeConfig {
     /// Session store backend type: sqlite or jsonl
+    #[serde(default)]
     pub store_type: StoreType,
     /// Optional custom path for the session store
     pub path: Option<String>,
@@ -144,16 +166,23 @@ pub struct StoreTypeConfig {
 /// Configuration for agent personas (planner/maker).
 ///
 /// Controls which built-in personas are available and which is the default.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentsConfig {
     /// Whether the planner persona is enabled
+    #[serde(default = "default_true")]
     pub planner_enabled: bool,
     /// Whether the maker persona is enabled
+    #[serde(default = "default_true")]
     pub maker_enabled: bool,
     /// Default persona at startup (e.g., "planner" or "maker")
+    #[serde(default)]
     pub default: String,
     /// Fallback persona name (an .agents/*.md file) when default is disabled
     pub fallback: Option<String>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for AgentsConfig {
@@ -200,603 +229,6 @@ impl CompactionConfig {
 }
 
 impl PluginConfig {
-    /// Parse PluginConfig from Nushell record
-    ///
-    /// Expected structure:
-    /// ```nushell
-    /// {
-    ///   models: {
-    ///     default: {
-    ///       model: "openai/gpt-4"
-    ///       temperature: 0.7          # optional
-    ///       max_tokens: 2048          # optional
-    ///       max_context_tokens: 32000 # optional
-    ///       max_output_tokens: 1024   # optional
-    ///       max_tool_turns: 5         # optional
-    ///       read_timeout_secs: 60     # optional
-    ///     }
-    ///     heavy: { model: "openai/gpt-4-turbo" }   # optional
-    ///     light: { model: "openai/gpt-3.5-turbo" } # optional
-    ///   }
-    ///   providers: {
-    ///     openai: {
-    ///       name: "OpenAI"  # optional
-    ///       api_key: "sk-..."  # optional
-    ///       base_url: "https://..."  # optional
-    ///       provider: "openai"  # optional, for custom providers
-    ///       models: {
-    ///         "gpt-4": {
-    ///           name: "GPT-4"  # optional
-    ///           temperature: 0.7  # optional
-    ///           tool_call: true  # optional
-    ///           limit: {  # optional
-    ///             context: 128000
-    ///             output: 4096
-    ///           }
-    ///         }
-    ///       }
-    ///     }
-    ///   }
-    /// }
-    /// ```
-    pub fn from_plugin_config(
-        value: &nu_protocol::Value,
-    ) -> Result<Self, nu_protocol::LabeledError> {
-        use nu_protocol::LabeledError;
-
-        // Helper to create labeled error
-        fn labeled_error(msg: &str, label: &str, span: nu_protocol::Span) -> LabeledError {
-            LabeledError::new(msg).with_label(label, span)
-        }
-
-        // Ensure value is a record
-        let record = value.as_record().map_err(|_| {
-            labeled_error(
-                "Invalid plugin configuration",
-                "Expected a record for plugin configuration",
-                value.span(),
-            )
-        })?;
-
-        let span = value.span();
-
-        // Extract required 'models' field — a record mapping role labels to model role configs
-        let models_record = record
-            .get("models")
-            .ok_or_else(|| {
-                labeled_error(
-                    "Missing required field 'models'",
-                    "Missing 'models' field",
-                    span,
-                )
-            })?
-            .as_record()
-            .map_err(|_| {
-                labeled_error(
-                    "'models' must be a record",
-                    "'models' must be a record",
-                    span,
-                )
-            })?;
-
-        let mut models = HashMap::new();
-        for (key, value) in models_record.iter() {
-            let role_record = value.as_record().map_err(|_| {
-                labeled_error(
-                    &format!("'models.{key}' must be a record"),
-                    &format!("'models.{key}' must be a record"),
-                    span,
-                )
-            })?;
-
-            // Extract required 'model' field
-            let model_str = role_record
-                .get("model")
-                .ok_or_else(|| {
-                    labeled_error(
-                        &format!("'models.{key}.model' is required"),
-                        &format!("'models.{key}.model' is required"),
-                        span,
-                    )
-                })?
-                .as_str()
-                .map_err(|_| {
-                    labeled_error(
-                        &format!("'models.{key}.model' must be a string"),
-                        &format!("'models.{key}.model' must be a string"),
-                        span,
-                    )
-                })?;
-
-            // Validate provider/model format (must contain '/')
-            if !model_str.contains('/') {
-                return Err(labeled_error(
-                    &format!(
-                        "models.{key}.model must be in provider/model format, got '{model_str}'"
-                    ),
-                    &format!(
-                        "models.{key}.model must be in provider/model format, got '{model_str}'"
-                    ),
-                    span,
-                ));
-            }
-
-            // Parse optional fields
-            let temperature = role_record
-                .get("temperature")
-                .and_then(|v| v.as_float().ok());
-            let max_tokens = role_record.get("max_tokens").and_then(|v| {
-                v.as_int()
-                    .ok()
-                    .and_then(|i| if i >= 0 { Some(i as u32) } else { None })
-            });
-            let max_context_tokens = role_record.get("max_context_tokens").and_then(|v| {
-                v.as_int()
-                    .ok()
-                    .and_then(|i| if i >= 0 { Some(i as u32) } else { None })
-            });
-            let max_output_tokens = role_record.get("max_output_tokens").and_then(|v| {
-                v.as_int()
-                    .ok()
-                    .and_then(|i| if i >= 0 { Some(i as u32) } else { None })
-            });
-            let max_tool_turns = role_record.get("max_tool_turns").and_then(|v| {
-                v.as_int()
-                    .ok()
-                    .and_then(|i| if i >= 0 { Some(i as u32) } else { None })
-            });
-            let max_tool_result_bytes = role_record.get("max_tool_result_bytes").and_then(|v| {
-                v.as_int()
-                    .ok()
-                    .and_then(|i| if i >= 0 { Some(i as usize) } else { None })
-            });
-            let max_tool_calls_per_subturn =
-                role_record.get("max_tool_calls_per_subturn").and_then(|v| {
-                    v.as_int()
-                        .ok()
-                        .and_then(|i| if i >= 0 { Some(i as usize) } else { None })
-                });
-            let model_context_tokens = role_record.get("model_context_tokens").and_then(|v| {
-                v.as_int()
-                    .ok()
-                    .and_then(|i| if i >= 0 { Some(i as usize) } else { None })
-            });
-            let context_warning_threshold = role_record
-                .get("context_warning_threshold")
-                .and_then(|v| v.as_float().ok())
-                .map(|f| f as f32);
-            let additional_params = role_record
-                .get("additional_params")
-                .map(nu_value_to_json)
-                .transpose()
-                .map_err(|e| {
-                    nu_protocol::LabeledError::new(format!(
-                        "Invalid models.{key}.additional_params: {e}"
-                    ))
-                    .with_label("expected a record", span)
-                })?;
-            let read_timeout_secs = role_record.get("read_timeout_secs").and_then(|v| {
-                v.as_int()
-                    .ok()
-                    .and_then(|i| if i >= 0 { Some(i as u64) } else { None })
-            });
-            let max_retries = role_record.get("max_retries").and_then(|v| {
-                v.as_int()
-                    .ok()
-                    .and_then(|i| if i >= 0 { Some(i as u8) } else { None })
-            });
-            let retry_base_delay_ms = role_record.get("retry_base_delay_ms").and_then(|v| {
-                v.as_int()
-                    .ok()
-                    .and_then(|i| if i >= 0 { Some(i as u64) } else { None })
-            });
-
-            models.insert(
-                key.clone(),
-                ModelRoleConfig {
-                    model: model_str.to_string(),
-                    temperature,
-                    max_tokens,
-                    max_context_tokens,
-                    max_output_tokens,
-                    max_tool_turns,
-                    max_tool_result_bytes,
-                    max_tool_calls_per_subturn,
-                    model_context_tokens,
-                    context_warning_threshold,
-                    additional_params,
-                    read_timeout_secs,
-                    max_retries,
-                    retry_base_delay_ms,
-                },
-            );
-        }
-
-        // Validate that 'default' role exists
-        if !models.contains_key("default") {
-            return Err(labeled_error(
-                "models.default is required",
-                "models.default is required",
-                span,
-            ));
-        }
-
-        // Extract required 'providers' field
-        let providers_record = record
-            .get("providers")
-            .ok_or_else(|| {
-                labeled_error("Missing required field", "Missing 'providers' field", span)
-            })?
-            .as_record()
-            .map_err(|_| {
-                labeled_error("Invalid field type", "'providers' must be a record", span)
-            })?;
-
-        // Parse each provider
-        let mut providers = HashMap::new();
-        for (provider_name, provider_value) in providers_record.iter() {
-            let provider_config = Self::parse_provider_config(provider_value)?;
-            providers.insert(provider_name.clone(), provider_config);
-        }
-
-        // Extract optional 'compaction' config
-        let compaction = if let Some(compaction_value) = record.get("compaction") {
-            Some(Self::parse_compaction_config(compaction_value)?)
-        } else {
-            None
-        };
-
-        // Extract optional 'agents' config
-        let agents = if let Some(agents_value) = record.get("agents") {
-            Self::parse_agents_config(agents_value)?
-        } else {
-            AgentsConfig::default()
-        };
-
-        let a2a_enabled = record
-            .get("a2a_enabled")
-            .and_then(|v| v.as_bool().ok())
-            .unwrap_or(false);
-
-        // Extract optional 'session_store' config
-        let session_store = if let Some(store_value) = record.get("session_store") {
-            Some(Self::parse_session_store_config(store_value)?)
-        } else {
-            None
-        };
-
-        Ok(Self {
-            models,
-            providers,
-            compaction,
-            agents,
-            a2a_enabled,
-            session_store,
-        })
-    }
-
-    /// Parse a single provider configuration
-    fn parse_provider_config(
-        value: &nu_protocol::Value,
-    ) -> Result<ProviderConfig, nu_protocol::LabeledError> {
-        use nu_protocol::LabeledError;
-
-        fn parse_optional_preamble(
-            record: &nu_protocol::Record,
-            span: nu_protocol::Span,
-        ) -> Result<Option<String>, LabeledError> {
-            let Some(preamble_value) = record.get("preamble") else {
-                return Ok(None);
-            };
-
-            let preamble = preamble_value
-                .as_str()
-                .map_err(|_| {
-                    LabeledError::new("Invalid field type")
-                        .with_label("'preamble' must be a string", span)
-                })?
-                .trim()
-                .to_string();
-
-            if preamble.is_empty() {
-                Ok(None)
-            } else {
-                Ok(Some(preamble))
-            }
-        }
-
-        let record = value.as_record().map_err(|_| {
-            LabeledError::new("Invalid provider configuration")
-                .with_label("Provider configuration must be a record", value.span())
-        })?;
-
-        // Extract optional fields
-        let name = record
-            .get("name")
-            .and_then(|v| v.as_str().ok())
-            .map(|s| s.to_string());
-
-        let api_key = record
-            .get("api_key")
-            .and_then(|v| v.as_str().ok())
-            .map(|s| s.to_string());
-
-        let base_url = record
-            .get("base_url")
-            .and_then(|v| v.as_str().ok())
-            .map(|s| s.to_string());
-
-        let provider = record
-            .get("provider")
-            .and_then(|v| v.as_str().ok())
-            .map(|s| s.to_string());
-
-        let preamble = parse_optional_preamble(record, value.span())?;
-
-        // Extract 'models' record (optional, defaults to empty)
-        let models = if let Some(models_value) = record.get("models") {
-            if let Ok(models_record) = models_value.as_record() {
-                let mut models_map = HashMap::new();
-                for (model_name, model_value) in models_record.iter() {
-                    let model_config = Self::parse_model_config(model_value)?;
-                    models_map.insert(model_name.clone(), model_config);
-                }
-                models_map
-            } else {
-                HashMap::new()
-            }
-        } else {
-            HashMap::new()
-        };
-
-        Ok(ProviderConfig {
-            name,
-            api_key,
-            base_url,
-            provider,
-            preamble,
-            models,
-        })
-    }
-
-    /// Parse a single model configuration
-    fn parse_model_config(
-        value: &nu_protocol::Value,
-    ) -> Result<ModelConfig, nu_protocol::LabeledError> {
-        use nu_protocol::LabeledError;
-
-        fn parse_optional_preamble(
-            record: &nu_protocol::Record,
-            span: nu_protocol::Span,
-        ) -> Result<Option<String>, LabeledError> {
-            let Some(preamble_value) = record.get("preamble") else {
-                return Ok(None);
-            };
-
-            let preamble = preamble_value
-                .as_str()
-                .map_err(|_| {
-                    LabeledError::new("Invalid field type")
-                        .with_label("'preamble' must be a string", span)
-                })?
-                .trim()
-                .to_string();
-
-            if preamble.is_empty() {
-                Ok(None)
-            } else {
-                Ok(Some(preamble))
-            }
-        }
-
-        let record = value.as_record().map_err(|_| {
-            LabeledError::new("Invalid model configuration")
-                .with_label("Model configuration must be a record", value.span())
-        })?;
-
-        // Extract optional 'name' field
-        let name = record
-            .get("name")
-            .and_then(|v| v.as_str().ok())
-            .map(|s| s.to_string());
-
-        // Extract optional 'temperature' field
-        let temperature = record.get("temperature").and_then(|v| v.as_float().ok());
-
-        // Extract optional 'tool_call' field
-        let tool_call = record.get("tool_call").and_then(|v| v.as_bool().ok());
-
-        // Extract optional 'preamble' field with strict type handling
-        let preamble = parse_optional_preamble(record, value.span())?;
-
-        // Extract optional 'limit' field
-        let limit = if let Some(limit_value) = record.get("limit") {
-            if let Ok(limit_record) = limit_value.as_record() {
-                Some(Self::parse_model_limits(limit_record)?)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        Ok(ModelConfig {
-            limit,
-            name,
-            temperature,
-            preamble,
-            tool_call,
-        })
-    }
-
-    /// Parse model limits from record
-    fn parse_model_limits(
-        record: &nu_protocol::Record,
-    ) -> Result<ModelLimits, nu_protocol::LabeledError> {
-        // Helper to extract optional u32 field
-        fn get_optional_u32(record: &nu_protocol::Record, key: &str) -> Option<u32> {
-            record.get(key).and_then(|v| {
-                v.as_int()
-                    .ok()
-                    .and_then(|i| if i >= 0 { Some(i as u32) } else { None })
-            })
-        }
-
-        let context = get_optional_u32(record, "context");
-        let output = get_optional_u32(record, "output");
-
-        Ok(ModelLimits { context, output })
-    }
-
-    /// Parse compaction configuration from a Nushell record
-    fn parse_compaction_config(
-        value: &nu_protocol::Value,
-    ) -> Result<CompactionConfig, nu_protocol::LabeledError> {
-        use nu_protocol::LabeledError;
-
-        let record = value.as_record().map_err(|_| {
-            LabeledError::new("Invalid compaction configuration")
-                .with_label("Compaction configuration must be a record", value.span())
-        })?;
-
-        let span = value.span();
-
-        // Parse optional 'strategy' field
-        let strategy = if let Some(strategy_value) = record.get("strategy") {
-            let s = strategy_value.as_str().map_err(|_| {
-                LabeledError::new("Invalid field type")
-                    .with_label("'strategy' must be a string", span)
-            })?;
-            let parsed: CompactionStrategy =
-                serde_json::from_value(serde_json::Value::String(s.to_string())).map_err(
-                    |_| {
-                        LabeledError::new("Invalid compaction strategy").with_label(
-                            format!(
-                            "Unknown strategy '{}'. Valid: sliding_summary, sliding_window, token_truncate",
-                            s
-                        ),
-                            span,
-                        )
-                    },
-                )?;
-            Some(parsed)
-        } else {
-            None
-        };
-
-        // Helper to extract optional usize field
-        fn get_optional_usize(record: &nu_protocol::Record, key: &str) -> Option<usize> {
-            record.get(key).and_then(|v| {
-                v.as_int()
-                    .ok()
-                    .and_then(|i| if i >= 0 { Some(i as usize) } else { None })
-            })
-        }
-
-        let keep_recent = get_optional_usize(record, "keep_recent");
-        let token_budget = get_optional_usize(record, "token_budget");
-
-        // Parse optional 'proactive_threshold_pct' field
-        let proactive_threshold_pct = record
-            .get("proactive_threshold_pct")
-            .and_then(|v| v.as_float().ok());
-
-        Ok(CompactionConfig {
-            strategy,
-            keep_recent,
-            token_budget,
-            proactive_threshold_pct,
-        })
-    }
-
-    /// Parse agents configuration from a Nushell record
-    fn parse_agents_config(
-        value: &nu_protocol::Value,
-    ) -> Result<AgentsConfig, nu_protocol::LabeledError> {
-        use nu_protocol::LabeledError;
-
-        let record = value.as_record().map_err(|_| {
-            LabeledError::new("Invalid agents config").with_label("expected a record", value.span())
-        })?;
-
-        let planner_enabled = record
-            .get("planner")
-            .and_then(|v| v.as_str().ok())
-            .map(|s| s != "disabled")
-            .unwrap_or(true);
-
-        let maker_enabled = record
-            .get("maker")
-            .and_then(|v| v.as_str().ok())
-            .map(|s| s != "disabled")
-            .unwrap_or(true);
-
-        let default = record
-            .get("default")
-            .and_then(|v| v.as_str().ok())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| "planner".to_string());
-
-        let fallback = record
-            .get("fallback")
-            .and_then(|v| v.as_str().ok())
-            .map(|s| s.to_string());
-
-        Ok(AgentsConfig {
-            planner_enabled,
-            maker_enabled,
-            default,
-            fallback,
-        })
-    }
-
-    /// Parse session store configuration from a Nushell record.
-    ///
-    /// Expected structure:
-    /// ```nushell
-    /// {
-    ///   type: "sqlite" | "jsonl"
-    ///   path: "/custom/path"  # optional
-    /// }
-    /// ```
-    fn parse_session_store_config(
-        value: &nu_protocol::Value,
-    ) -> Result<StoreTypeConfig, nu_protocol::LabeledError> {
-        use nu_protocol::LabeledError;
-
-        let record = value.as_record().map_err(|_| {
-            LabeledError::new("Invalid session_store configuration")
-                .with_label("session_store must be a record", value.span())
-        })?;
-
-        let span = value.span();
-
-        // Parse required 'type' field
-        let type_str = record
-            .get("type")
-            .ok_or_else(|| {
-                LabeledError::new("Missing required field")
-                    .with_label("session_store must have a 'type' field", span)
-            })?
-            .as_str()
-            .map_err(|_| {
-                LabeledError::new("Invalid field type").with_label("'type' must be a string", span)
-            })?;
-
-        let store_type: StoreType = type_str.parse().map_err(|e: String| {
-            LabeledError::new(format!("Invalid session_store type: {e}"))
-                .with_label("expected 'sqlite' or 'jsonl'", span)
-        })?;
-
-        // Parse optional 'path' field
-        let path = record
-            .get("path")
-            .and_then(|v| v.as_str().ok())
-            .map(|s| s.to_string());
-
-        Ok(StoreTypeConfig { store_type, path })
-    }
-
     /// Resolve a model role configuration to runtime Config.
     ///
     /// The `role_config.model` field must be in `"provider/model"` format:
@@ -822,7 +254,6 @@ impl PluginConfig {
     /// # Errors
     /// - Missing `/` separator in model spec
     /// - Empty provider or model name
-    /// - Provider not found in configuration
     pub fn resolve_model(&self, role_config: &ModelRoleConfig) -> Result<Config, String> {
         let model_spec = &role_config.model;
 
@@ -842,14 +273,9 @@ impl PluginConfig {
             return Err("Model name cannot be empty".to_string());
         }
 
-        // Look up provider configuration
-        let provider_config = self
-            .providers
-            .get(provider_name)
-            .ok_or_else(|| format!("Provider '{}' not found in configuration", provider_name))?;
-
-        // Look up model-specific configuration (optional)
-        let model_config = provider_config.models.get(model_name);
+        // Look up provider configuration (optional — provider block not required)
+        let provider_config = self.providers.get(provider_name);
+        let model_config = provider_config.and_then(|pc| pc.models.get(model_name));
 
         log::debug!(
             "resolve_model: spec={model_spec} provider={provider_name} model={model_name} config_found={}",
@@ -859,14 +285,20 @@ impl PluginConfig {
         // Step 1: Start with env-based config for this provider/model (lowest priority)
         let mut config = Config::from_env(provider_name, model_name);
 
-        // Step 2: Merge provider-level settings
-        if let Some(impl_name) = &provider_config.provider {
+        // Step 2: Merge provider-level settings (if provider block exists)
+        if let Some(pc) = provider_config
+            && let Some(impl_name) = &pc.provider
+        {
             config.provider_impl = Some(impl_name.clone());
         }
-        if let Some(api_key) = &provider_config.api_key {
+        if let Some(pc) = provider_config
+            && let Some(api_key) = &pc.api_key
+        {
             config.api_key = Some(api_key.clone());
         }
-        if let Some(base_url) = &provider_config.base_url {
+        if let Some(pc) = provider_config
+            && let Some(base_url) = &pc.base_url
+        {
             config.base_url = Some(base_url.clone());
         }
 
@@ -926,12 +358,32 @@ impl PluginConfig {
             config.retry_base_delay_ms = Some(r);
         }
 
+        // Resolve secret store references (e.g. "store:openai" → actual key)
+        if let Some(ref store) = self.secret_store
+            && let Some(ref key) = config.api_key
+            && let Some(resolved) = store.resolve(key)
+        {
+            config.api_key = Some(resolved);
+        }
+
+        // Apply models.json cache specs (fill missing values only)
+        if let Some(ref cache) = self.models_cache
+            && let Some(spec) = cache.get_spec(provider_name, model_name)
+        {
+            if config.max_context_tokens.is_none() {
+                config.max_context_tokens = Some(spec.limit.context);
+            }
+            if config.max_output_tokens.is_none() {
+                config.max_output_tokens = Some(spec.limit.output);
+            }
+            if config.model_context_tokens.is_none() {
+                config.model_context_tokens = Some(spec.limit.context as usize);
+            }
+        }
+
         // Forward global plugin config fields (not model-specific).
-        // a2a_enabled is a bool, not Option<T> — this means "if env var didn't
-        // set it to true, use the plugin config value". The edge case where an
-        // env var is explicitly set to `false` (overridden by plugin's `true`)
-        // is accepted for simplicity. Most users set this via plugin config.
-        if !config.a2a_enabled {
+        // Only apply plugin config value when env var didn't set it.
+        if config.a2a_enabled.is_none() {
             config.a2a_enabled = self.a2a_enabled;
         }
 
@@ -1020,43 +472,13 @@ pub struct Config {
     pub additional_params: Option<serde_json::Value>,
 
     /// Enable A2A agent-to-agent protocol support (experimental, default: false).
-    pub a2a_enabled: bool,
+    pub a2a_enabled: Option<bool>,
 
     /// A2A agent port (CLI-only). Some(0) = random, Some(n>0) = fixed, None = not set.
     pub a2a_port: Option<u16>,
 
     /// Session store backend type. None = use default (SQLite).
     pub session_store_type: Option<StoreType>,
-}
-
-/// Convert a `nu_protocol::Value` to a `serde_json::Value` without including
-/// span metadata. `serde_json::to_value(&nu_value)` would include internal span
-/// fields, so we convert manually.
-fn nu_value_to_json(value: &nu_protocol::Value) -> Result<serde_json::Value, String> {
-    match value {
-        nu_protocol::Value::Int { val, .. } => Ok(serde_json::Value::Number((*val).into())),
-        nu_protocol::Value::Float { val, .. } => serde_json::Number::from_f64(*val)
-            .map(serde_json::Value::Number)
-            .ok_or_else(|| format!("non-finite float: {val}")),
-        nu_protocol::Value::String { val, .. } => Ok(serde_json::Value::String(val.clone())),
-        nu_protocol::Value::Bool { val, .. } => Ok(serde_json::Value::Bool(*val)),
-        nu_protocol::Value::Nothing { .. } => Ok(serde_json::Value::Null),
-        nu_protocol::Value::List { vals, .. } => {
-            let arr = vals
-                .iter()
-                .map(nu_value_to_json)
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(serde_json::Value::Array(arr))
-        }
-        nu_protocol::Value::Record { val, .. } => {
-            let obj = val
-                .iter()
-                .map(|(k, v)| nu_value_to_json(v).map(|j| (k.clone(), j)))
-                .collect::<Result<serde_json::Map<_, _>, _>>()?;
-            Ok(serde_json::Value::Object(obj))
-        }
-        other => Err(format!("unsupported nu value type: {:?}", other.get_type())),
-    }
 }
 
 impl Config {
@@ -1111,10 +533,7 @@ impl Config {
         let max_retries: Option<u8> = parse_env_var("AGENT_MAX_RETRIES");
         let retry_base_delay_ms: Option<u64> = parse_env_var("AGENT_RETRY_BASE_DELAY_MS");
         let read_timeout_secs: Option<u64> = parse_env_var("AGENT_READ_TIMEOUT_SECS");
-        let a2a_enabled: bool = env::var("AGENT_A2A_ENABLED")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(false);
+        let a2a_enabled: Option<bool> = parse_env_var("AGENT_A2A_ENABLED");
 
         let a2a_port: Option<u16> = parse_env_var("AGENT_A2A_PORT");
 
@@ -1150,52 +569,6 @@ impl Config {
             a2a_enabled,
             a2a_port,
             session_store_type,
-        }
-    }
-
-    /// Merge this config with another, with the other taking precedence.
-    ///
-    /// For each field:
-    /// - Required fields (provider, model): always take from `other`
-    /// - Optional fields: use `other`'s value if Some, otherwise keep `self`'s value
-    ///
-    /// This allows layering configs: base.merge(override).merge(cli_args)
-    pub fn merge(self, other: Self) -> Self {
-        log::debug!(
-            "Config.merge: provider={} model={}",
-            other.provider,
-            other.model
-        );
-        Self {
-            // Required fields always from other
-            provider: other.provider,
-            provider_impl: other.provider_impl.or(self.provider_impl),
-            model: other.model,
-
-            // Optional fields: other if Some, else self
-            api_key: other.api_key.or(self.api_key),
-            base_url: other.base_url.or(self.base_url),
-            temperature: other.temperature.or(self.temperature),
-            max_tokens: other.max_tokens.or(self.max_tokens),
-            max_context_tokens: other.max_context_tokens.or(self.max_context_tokens),
-            max_output_tokens: other.max_output_tokens.or(self.max_output_tokens),
-            max_tool_turns: other.max_tool_turns.or(self.max_tool_turns),
-            preamble: other.preamble.or(self.preamble),
-            read_timeout_secs: other.read_timeout_secs.or(self.read_timeout_secs),
-            max_tool_result_bytes: other.max_tool_result_bytes.or(self.max_tool_result_bytes),
-            model_context_tokens: other.model_context_tokens.or(self.model_context_tokens),
-            context_warning_threshold: other
-                .context_warning_threshold
-                .or(self.context_warning_threshold),
-            max_retries: other.max_retries.or(self.max_retries),
-            retry_base_delay_ms: other.retry_base_delay_ms.or(self.retry_base_delay_ms),
-            max_tool_calls_per_subturn: other
-                .max_tool_calls_per_subturn
-                .or(self.max_tool_calls_per_subturn),
-            additional_params: other.additional_params.or(self.additional_params),
-            a2a_enabled: other.a2a_enabled || self.a2a_enabled,
-            a2a_port: other.a2a_port.or(self.a2a_port),
-            session_store_type: other.session_store_type.or(self.session_store_type),
         }
     }
 

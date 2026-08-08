@@ -17,7 +17,7 @@ use super::{
 use crate::plugin::AgentPlugin;
 use nu_agent_a2a::{AgentBuilder, AgentHandle, Skill};
 use nu_agent_core::{
-    config::{PluginConfig, defaults},
+    config::defaults,
     conversation::{builder::BuildInput, runtime::AgentConversationRuntime},
     policy::UiPolicy,
     session::resolver::{DefaultSessionResolver, SessionResolutionInput, SessionResolver},
@@ -122,7 +122,7 @@ pub(super) fn run_command(
 
     // Resolve configuration from all sources with proper precedence:
     // 1. Resolve default role config (--model flag handled here)
-    let mut config = resolve_config(engine, call)?;
+    let (mut config, plugin_config) = resolve_config(call)?;
 
     // Resolve session store type with CLI > env > config > default precedence
     let store_type = plugin.resolve_store_type(call)?;
@@ -154,21 +154,7 @@ pub(super) fn run_command(
 
     let plugin_config_value = engine.get_plugin_config()?;
 
-    let plugin_config = match plugin_config_value.as_ref() {
-        Some(v) => match PluginConfig::from_plugin_config(v) {
-            Ok(c) => Some(c),
-            Err(e) => {
-                log::warn!("failed to parse plugin config: {e}");
-                None
-            }
-        },
-        None => None,
-    };
-
-    let agents_config = match plugin_config.as_ref() {
-        Some(c) => c.agents.clone(),
-        None => Default::default(),
-    };
+    let agents_config = plugin_config.agents.clone();
 
     let mcp_config = plugin_config_value
         .as_ref()
@@ -200,7 +186,7 @@ pub(super) fn run_command(
     // 3. Apply persona model (resolves heavy/light role, replaces config)
     super::runtime_build::apply_persona_model(
         &mut config,
-        plugin_config.as_ref(),
+        Some(&plugin_config),
         persona.as_ref().and_then(|p| p.model.as_deref()),
         call_has_model_flag,
     )?;
@@ -232,7 +218,7 @@ pub(super) fn run_command(
     let handle = plugin.runtime.handle().clone();
     handle.clone().block_on(async move {
         // ── A2A agent startup (optional, experimental) ───────────────────────
-        let mut a2a_handle: Option<AgentHandle> = if config.a2a_enabled {
+        let mut a2a_handle: Option<AgentHandle> = if config.a2a_enabled.unwrap_or(false) {
             let agent_name = messaging_identity.as_deref().unwrap_or("agent");
             let description = persona.as_ref().and_then(|p| p.description.as_deref());
             let a2a_port = config.a2a_port.unwrap_or(0);
@@ -399,7 +385,7 @@ pub(super) fn run_command(
             super::runtime_build::build_runtime(super::runtime_build::RuntimeBuildParams {
                 runtime: handle.clone(),
                 config,
-                plugin_config_value,
+                plugin_config: Some(plugin_config.clone()),
                 tool_definitions,
                 baseline_tool_definitions,
                 closure_registry,

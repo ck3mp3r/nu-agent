@@ -1,11 +1,10 @@
-use super::{Agent, EngineConfigInterface};
+use super::Agent;
 use nu_parser::parse;
 use nu_plugin::EvaluatedCall;
 use nu_protocol::{
-    LabeledError, ParseError, PipelineData, ShellError, Span, Spanned, Value,
+    ParseError, PipelineData, ShellError, Span, Spanned, Value,
     engine::{Call, Command, EngineState, Stack, StateWorkingSet},
 };
-use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
 /// Helper to create an Agent for testing. The Agent no longer holds a store;
@@ -83,44 +82,5 @@ pub(super) fn create_test_call(flags: Vec<(&str, Value)>) -> EvaluatedCall {
         head: span,
         positional: vec![],
         named,
-    }
-}
-
-// ============================================================================
-// MockEngineInterface - Test helper for config resolution tests
-// ============================================================================
-
-/// Mock implementation of EngineConfigInterface for testing config resolution
-///
-/// Allows setting a predetermined return value for get_plugin_config()
-/// to test various config scenarios without requiring a real Nushell engine.
-pub(super) struct MockEngineInterface {
-    plugin_config: Arc<Mutex<Option<Value>>>,
-}
-
-impl MockEngineInterface {
-    /// Create a new mock with no plugin config
-    pub(super) fn new() -> Self {
-        Self {
-            plugin_config: Arc::new(Mutex::new(None)),
-        }
-    }
-
-    /// Create a mock that returns the given plugin config
-    pub(super) fn with_config(config: Value) -> Self {
-        Self {
-            plugin_config: Arc::new(Mutex::new(Some(config))),
-        }
-    }
-
-    /// Set the plugin config to return
-    pub(super) fn set_config(&self, config: Option<Value>) {
-        *self.plugin_config.lock().unwrap() = config;
-    }
-}
-
-impl EngineConfigInterface for MockEngineInterface {
-    fn get_plugin_config(&self) -> Result<Option<Value>, LabeledError> {
-        Ok(self.plugin_config.lock().unwrap().clone())
     }
 }

@@ -1,7 +1,6 @@
 use super::*;
 use crate::compaction::CompactionStrategy;
 use crate::session::StoreType;
-use nu_protocol::{Value, record};
 use serial_test::serial;
 use std::env;
 
@@ -167,348 +166,6 @@ fn test_from_env_read_timeout_secs() {
 }
 
 #[test]
-fn test_merge_full_configs() {
-    // Test merging two full configs - other should completely override self
-    let base = Config {
-        a2a_port: None,
-        provider: "openai".to_string(),
-        provider_impl: None,
-        model: "gpt-3.5-turbo".to_string(),
-        api_key: Some("base-key".to_string()),
-        base_url: Some("https://base.com".to_string()),
-        temperature: Some(0.5),
-        max_tokens: Some(1000),
-        max_context_tokens: Some(4000),
-        max_output_tokens: Some(2000),
-        max_tool_turns: Some(10),
-        preamble: None,
-        read_timeout_secs: None,
-        max_tool_result_bytes: None,
-        model_context_tokens: None,
-        context_warning_threshold: None,
-        max_retries: None,
-        retry_base_delay_ms: None,
-        max_tool_calls_per_subturn: None,
-        additional_params: None,
-        a2a_enabled: false,
-        session_store_type: None,
-    };
-
-    let override_config = Config {
-        a2a_port: None,
-        provider: "anthropic".to_string(),
-        provider_impl: None,
-        model: "claude-3-opus".to_string(),
-        api_key: Some("override-key".to_string()),
-        base_url: Some("https://override.com".to_string()),
-        temperature: Some(0.8),
-        max_tokens: Some(2000),
-        max_context_tokens: Some(8000),
-        max_output_tokens: Some(4000),
-        max_tool_turns: Some(25),
-        preamble: None,
-        read_timeout_secs: None,
-        max_tool_result_bytes: None,
-        model_context_tokens: None,
-        context_warning_threshold: None,
-        max_retries: None,
-        retry_base_delay_ms: None,
-        max_tool_calls_per_subturn: None,
-        additional_params: None,
-        a2a_enabled: false,
-        session_store_type: None,
-    };
-
-    let merged = base.merge(override_config);
-
-    // All fields should come from override
-    assert_eq!(merged.provider, "anthropic");
-    assert_eq!(merged.model, "claude-3-opus");
-    assert_eq!(merged.api_key, Some("override-key".to_string()));
-    assert_eq!(merged.base_url, Some("https://override.com".to_string()));
-    assert_eq!(merged.temperature, Some(0.8));
-    assert_eq!(merged.max_tokens, Some(2000));
-    assert_eq!(merged.max_context_tokens, Some(8000));
-    assert_eq!(merged.max_output_tokens, Some(4000));
-    assert_eq!(merged.max_tool_turns, Some(25));
-}
-
-#[test]
-fn test_merge_with_partial_override() {
-    // Test merging where override only has some fields
-    let base = Config {
-        a2a_port: None,
-        provider: "openai".to_string(),
-        provider_impl: None,
-        model: "gpt-4".to_string(),
-        api_key: Some("base-key".to_string()),
-        base_url: Some("https://base.com".to_string()),
-        temperature: Some(0.5),
-        max_tokens: Some(1000),
-        max_context_tokens: Some(4000),
-        max_output_tokens: Some(2000),
-        max_tool_turns: Some(10),
-        preamble: None,
-        read_timeout_secs: None,
-        max_tool_result_bytes: None,
-        model_context_tokens: None,
-        context_warning_threshold: None,
-        max_retries: None,
-        retry_base_delay_ms: None,
-        max_tool_calls_per_subturn: None,
-        additional_params: None,
-        a2a_enabled: false,
-        session_store_type: None,
-    };
-
-    let override_config = Config {
-        a2a_port: None,
-        provider: "openai".to_string(), // Required, but same
-        provider_impl: None,
-        model: "gpt-4".to_string(), // Required, but same
-        api_key: None,
-        base_url: None,
-        temperature: Some(0.9), // Override this
-        max_tokens: Some(3000), // Override this
-        max_context_tokens: None,
-        max_output_tokens: None,
-        max_tool_turns: None,
-        preamble: None,
-        read_timeout_secs: None,
-        max_tool_result_bytes: None,
-        model_context_tokens: None,
-        context_warning_threshold: None,
-        max_retries: None,
-        retry_base_delay_ms: None,
-        max_tool_calls_per_subturn: None,
-        additional_params: None,
-        a2a_enabled: false,
-        session_store_type: None,
-    };
-
-    let merged = base.merge(override_config);
-
-    // Overridden fields
-    assert_eq!(merged.temperature, Some(0.9));
-    assert_eq!(merged.max_tokens, Some(3000));
-
-    // Non-overridden fields from base
-    assert_eq!(merged.api_key, Some("base-key".to_string()));
-    assert_eq!(merged.base_url, Some("https://base.com".to_string()));
-    assert_eq!(merged.max_context_tokens, Some(4000));
-    assert_eq!(merged.max_output_tokens, Some(2000));
-    assert_eq!(merged.max_tool_turns, Some(10));
-}
-
-#[test]
-fn test_merge_with_empty_override() {
-    // Test merging with default/empty override - base should remain unchanged
-    let base = Config {
-        a2a_port: None,
-        provider: "openai".to_string(),
-        provider_impl: None,
-        model: "gpt-4".to_string(),
-        api_key: Some("base-key".to_string()),
-        base_url: Some("https://base.com".to_string()),
-        temperature: Some(0.5),
-        max_tokens: Some(1000),
-        max_context_tokens: Some(4000),
-        max_output_tokens: Some(2000),
-        max_tool_turns: Some(10),
-        preamble: None,
-        read_timeout_secs: None,
-        max_tool_result_bytes: None,
-        model_context_tokens: None,
-        context_warning_threshold: None,
-        max_retries: None,
-        retry_base_delay_ms: None,
-        max_tool_calls_per_subturn: None,
-        additional_params: None,
-        a2a_enabled: false,
-        session_store_type: None,
-    };
-
-    let empty_override = Config {
-        a2a_port: None,
-        provider: "openai".to_string(),
-        provider_impl: None,
-        model: "gpt-4".to_string(),
-        api_key: None,
-        base_url: None,
-        temperature: None,
-        max_tokens: None,
-        max_context_tokens: None,
-        max_output_tokens: None,
-        max_tool_turns: None,
-        preamble: None,
-        read_timeout_secs: None,
-        max_tool_result_bytes: None,
-        model_context_tokens: None,
-        context_warning_threshold: None,
-        max_retries: None,
-        retry_base_delay_ms: None,
-        max_tool_calls_per_subturn: None,
-        additional_params: None,
-        a2a_enabled: false,
-        session_store_type: None,
-    };
-
-    let merged = base.clone().merge(empty_override);
-
-    // Should be identical to base
-    assert_eq!(merged, base);
-}
-
-#[test]
-fn test_merge_chain() {
-    // Test chaining multiple merges
-    let base = Config {
-        a2a_port: None,
-        provider: "openai".to_string(),
-        provider_impl: None,
-        model: "gpt-3.5-turbo".to_string(),
-        api_key: Some("key1".to_string()),
-        base_url: None,
-        temperature: Some(0.5),
-        max_tokens: None,
-        max_context_tokens: None,
-        max_output_tokens: None,
-        max_tool_turns: Some(20),
-        preamble: None,
-        read_timeout_secs: None,
-        max_tool_result_bytes: None,
-        model_context_tokens: None,
-        context_warning_threshold: None,
-        max_retries: None,
-        retry_base_delay_ms: None,
-        max_tool_calls_per_subturn: None,
-        additional_params: None,
-        a2a_enabled: false,
-        session_store_type: None,
-    };
-
-    let override1 = Config {
-        a2a_port: None,
-        provider: "openai".to_string(),
-        provider_impl: None,
-        model: "gpt-4".to_string(), // Override model
-        api_key: None,
-        base_url: Some("https://override1.com".to_string()), // Add base_url
-        temperature: None,
-        max_tokens: Some(2000), // Add max_tokens
-        max_context_tokens: None,
-        max_output_tokens: None,
-        max_tool_turns: None,
-        preamble: None,
-        read_timeout_secs: None,
-        max_tool_result_bytes: None,
-        model_context_tokens: None,
-        context_warning_threshold: None,
-        max_retries: None,
-        retry_base_delay_ms: None,
-        max_tool_calls_per_subturn: None,
-        additional_params: None,
-        a2a_enabled: false,
-        session_store_type: None,
-    };
-
-    let override2 = Config {
-        a2a_port: None,
-        provider: "openai".to_string(),
-        provider_impl: None,
-        model: "gpt-4".to_string(),
-        api_key: Some("key2".to_string()), // Override api_key
-        base_url: None,
-        temperature: Some(0.8), // Override temperature
-        max_tokens: None,
-        max_context_tokens: None,
-        max_output_tokens: None,
-        max_tool_turns: None,
-        preamble: None,
-        read_timeout_secs: None,
-        max_tool_result_bytes: None,
-        model_context_tokens: None,
-        context_warning_threshold: None,
-        max_retries: None,
-        retry_base_delay_ms: None,
-        max_tool_calls_per_subturn: None,
-        additional_params: None,
-        a2a_enabled: false,
-        session_store_type: None,
-    };
-
-    let merged = base.merge(override1).merge(override2);
-
-    // Final state should reflect all overrides
-    assert_eq!(merged.model, "gpt-4"); // From override1
-    assert_eq!(merged.api_key, Some("key2".to_string())); // From override2
-    assert_eq!(merged.base_url, Some("https://override1.com".to_string())); // From override1
-    assert_eq!(merged.temperature, Some(0.8)); // From override2
-    assert_eq!(merged.max_tokens, Some(2000)); // From override1
-    assert_eq!(merged.max_tool_turns, Some(20)); // From base
-}
-
-#[test]
-fn test_merge_required_fields() {
-    // Test that required fields are always taken from override
-    let base = Config {
-        a2a_port: None,
-        provider: "openai".to_string(),
-        provider_impl: None,
-        model: "gpt-3.5-turbo".to_string(),
-        api_key: None,
-        base_url: None,
-        temperature: None,
-        max_tokens: None,
-        max_context_tokens: None,
-        max_output_tokens: None,
-        max_tool_turns: None,
-        preamble: None,
-        read_timeout_secs: None,
-        max_tool_result_bytes: None,
-        model_context_tokens: None,
-        context_warning_threshold: None,
-        max_retries: None,
-        retry_base_delay_ms: None,
-        max_tool_calls_per_subturn: None,
-        additional_params: None,
-        a2a_enabled: false,
-        session_store_type: None,
-    };
-
-    let override_config = Config {
-        a2a_port: None,
-        provider: "anthropic".to_string(),
-        provider_impl: None,
-        model: "claude-3-opus".to_string(),
-        api_key: None,
-        base_url: None,
-        temperature: None,
-        max_tokens: None,
-        max_context_tokens: None,
-        max_output_tokens: None,
-        max_tool_turns: None,
-        preamble: None,
-        read_timeout_secs: None,
-        max_tool_result_bytes: None,
-        model_context_tokens: None,
-        context_warning_threshold: None,
-        max_retries: None,
-        retry_base_delay_ms: None,
-        max_tool_calls_per_subturn: None,
-        additional_params: None,
-        a2a_enabled: false,
-        session_store_type: None,
-    };
-
-    let merged = base.merge(override_config);
-
-    // Required fields always come from override
-    assert_eq!(merged.provider, "anthropic");
-    assert_eq!(merged.model, "claude-3-opus");
-}
-
-#[test]
 fn test_validate_valid_config() {
     // Test that a valid config passes validation
     let config = Config {
@@ -532,7 +189,7 @@ fn test_validate_valid_config() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store_type: None,
     };
 
@@ -563,7 +220,7 @@ fn test_validate_minimal_config() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store_type: None,
     };
 
@@ -594,7 +251,7 @@ fn test_validate_empty_provider() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store_type: None,
     };
 
@@ -628,7 +285,7 @@ fn test_validate_empty_model() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store_type: None,
     };
 
@@ -662,7 +319,7 @@ fn test_validate_max_output_exceeds_context() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store_type: None,
     };
 
@@ -697,7 +354,7 @@ fn test_validate_max_output_equals_context() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store_type: None,
     };
 
@@ -728,7 +385,7 @@ fn test_validate_zero_max_tool_turns() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store_type: None,
     };
 
@@ -762,7 +419,7 @@ fn test_validate_only_context_tokens_set() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store_type: None,
     };
 
@@ -793,7 +450,7 @@ fn test_validate_only_output_tokens_set() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store_type: None,
     };
 
@@ -903,426 +560,6 @@ fn test_model_role_config_default() {
 }
 
 // ============================================================================
-// PluginConfig Tests
-// ============================================================================
-
-/// Helper to build a model role record with a `model` string and optional fields.
-fn model_role_record(model: &str) -> Value {
-    Value::test_record(record! {
-        "model" => Value::test_string(model),
-    })
-}
-
-/// Helper to build a model role record from a ModelRoleConfig.
-fn model_role_from_config(cfg: &ModelRoleConfig) -> Value {
-    let mut rec = record! {
-        "model" => Value::test_string(&cfg.model),
-    };
-    if let Some(v) = cfg.temperature {
-        rec.push("temperature", Value::test_float(v));
-    }
-    if let Some(v) = cfg.max_tokens {
-        rec.push("max_tokens", Value::test_int(v as i64));
-    }
-    if let Some(v) = cfg.max_context_tokens {
-        rec.push("max_context_tokens", Value::test_int(v as i64));
-    }
-    if let Some(v) = cfg.max_output_tokens {
-        rec.push("max_output_tokens", Value::test_int(v as i64));
-    }
-    if let Some(v) = cfg.max_tool_turns {
-        rec.push("max_tool_turns", Value::test_int(v as i64));
-    }
-    if let Some(v) = cfg.max_tool_result_bytes {
-        rec.push("max_tool_result_bytes", Value::test_int(v as i64));
-    }
-    if let Some(v) = cfg.max_tool_calls_per_subturn {
-        rec.push("max_tool_calls_per_subturn", Value::test_int(v as i64));
-    }
-    if let Some(v) = cfg.model_context_tokens {
-        rec.push("model_context_tokens", Value::test_int(v as i64));
-    }
-    if let Some(v) = cfg.context_warning_threshold {
-        rec.push("context_warning_threshold", Value::test_float(v as f64));
-    }
-    if let Some(v) = cfg.read_timeout_secs {
-        rec.push("read_timeout_secs", Value::test_int(v as i64));
-    }
-    if let Some(v) = cfg.max_retries {
-        rec.push("max_retries", Value::test_int(v as i64));
-    }
-    if let Some(v) = cfg.retry_base_delay_ms {
-        rec.push("retry_base_delay_ms", Value::test_int(v as i64));
-    }
-    Value::test_record(rec)
-}
-
-#[test]
-fn test_plugin_config_full_structure() {
-    // Test parsing a full PluginConfig structure from Nushell record
-    let value = Value::test_record(record! {
-        "models" => Value::test_record(record! {
-            "default" => model_role_record("openai/gpt-4"),
-            "light" => model_role_record("openai/gpt-3.5-turbo"),
-        }),
-        "providers" => Value::test_record(record! {
-            "openai" => Value::test_record(record! {
-                "name" => Value::test_string("OpenAI"),
-                "api_key" => Value::test_string("sk-test123"),
-                "base_url" => Value::test_string("https://api.openai.com/v1"),
-                "preamble" => Value::test_string("  provider preamble  "),
-                "models" => Value::test_record(record! {
-                    "gpt-4" => Value::test_record(record! {
-                        "name" => Value::test_string("GPT-4"),
-                        "temperature" => Value::test_float(0.7),
-                        "preamble" => Value::test_string("  model preamble  "),
-                        "tool_call" => Value::test_bool(true),
-                        "limit" => Value::test_record(record! {
-                            "context" => Value::test_int(128000),
-                            "output" => Value::test_int(4096),
-                        }),
-                    }),
-                    "gpt-3.5-turbo" => Value::test_record(record! {
-                        "limit" => Value::test_record(record! {
-                            "context" => Value::test_int(16385),
-                            "output" => Value::test_int(4096),
-                        }),
-                    }),
-                }),
-            }),
-            "anthropic" => Value::test_record(record! {
-                "api_key" => Value::test_string("sk-ant-test456"),
-                "models" => Value::test_record(record! {
-                    "claude-3-5-sonnet-20241022" => Value::test_record(record! {
-                        "limit" => Value::test_record(record! {
-                            "context" => Value::test_int(200000),
-                            "output" => Value::test_int(8192),
-                        }),
-                    }),
-                }),
-            }),
-        }),
-    });
-
-    let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
-
-    // Verify top-level fields
-    assert_eq!(
-        plugin_config.models.get("default").map(|r| &r.model),
-        Some(&"openai/gpt-4".to_string())
-    );
-    assert_eq!(
-        plugin_config.models.get("light").map(|r| &r.model),
-        Some(&"openai/gpt-3.5-turbo".to_string())
-    );
-
-    // Verify OpenAI provider
-    let openai = plugin_config
-        .providers
-        .get("openai")
-        .expect("openai provider");
-    assert_eq!(openai.name, Some("OpenAI".to_string()));
-    assert_eq!(openai.api_key, Some("sk-test123".to_string()));
-    assert_eq!(
-        openai.base_url,
-        Some("https://api.openai.com/v1".to_string())
-    );
-    assert_eq!(openai.preamble, Some("provider preamble".to_string()));
-
-    // Verify OpenAI models
-    let gpt4 = openai.models.get("gpt-4").expect("gpt-4 model");
-    assert_eq!(gpt4.name, Some("GPT-4".to_string()));
-    assert_eq!(gpt4.temperature, Some(0.7));
-    assert_eq!(gpt4.preamble, Some("model preamble".to_string()));
-    assert_eq!(gpt4.tool_call, Some(true));
-    assert!(gpt4.limit.is_some());
-    let gpt4_limit = gpt4.limit.as_ref().unwrap();
-    assert_eq!(gpt4_limit.context, Some(128000));
-    assert_eq!(gpt4_limit.output, Some(4096));
-
-    let gpt35 = openai
-        .models
-        .get("gpt-3.5-turbo")
-        .expect("gpt-3.5-turbo model");
-    assert!(gpt35.limit.is_some());
-    let gpt35_limit = gpt35.limit.as_ref().unwrap();
-    assert_eq!(gpt35_limit.context, Some(16385));
-    assert_eq!(gpt35_limit.output, Some(4096));
-
-    // Verify Anthropic provider
-    let anthropic = plugin_config
-        .providers
-        .get("anthropic")
-        .expect("anthropic provider");
-    assert_eq!(anthropic.api_key, Some("sk-ant-test456".to_string()));
-
-    let claude = anthropic
-        .models
-        .get("claude-3-5-sonnet-20241022")
-        .expect("claude model");
-    assert!(claude.limit.is_some());
-    let claude_limit = claude.limit.as_ref().unwrap();
-    assert_eq!(claude_limit.context, Some(200000));
-    assert_eq!(claude_limit.output, Some(8192));
-}
-
-#[test]
-fn test_plugin_config_parses_role_level_fields() {
-    // Test parsing role-level fields from model records
-    let value = Value::test_record(record! {
-        "models" => Value::test_record(record! {
-            "default" => model_role_from_config(&ModelRoleConfig {
-                model: "openai/gpt-4".to_string(),
-                temperature: Some(0.5),
-                max_tokens: Some(2048),
-                max_context_tokens: Some(32000),
-                max_output_tokens: Some(1024),
-                max_tool_turns: Some(5),
-                max_tool_result_bytes: Some(10000),
-                max_tool_calls_per_subturn: Some(15),
-                model_context_tokens: Some(128000),
-                context_warning_threshold: Some(0.75f32),
-                read_timeout_secs: Some(60),
-                max_retries: Some(5),
-                retry_base_delay_ms: Some(2000),
-                ..ModelRoleConfig::default()
-            }),
-        }),
-        "providers" => Value::test_record(record! {
-            "openai" => Value::test_record(record! {
-                "models" => Value::test_record(record! {
-                    "gpt-4" => Value::test_record(record! {}),
-                }),
-            }),
-        }),
-    });
-
-    let cfg = PluginConfig::from_plugin_config(&value).expect("should parse");
-
-    let default_role = cfg.models.get("default").expect("default role");
-    assert_eq!(default_role.model, "openai/gpt-4");
-    assert_eq!(default_role.temperature, Some(0.5));
-    assert_eq!(default_role.max_tokens, Some(2048));
-    assert_eq!(default_role.max_context_tokens, Some(32000));
-    assert_eq!(default_role.max_output_tokens, Some(1024));
-    assert_eq!(default_role.max_tool_turns, Some(5));
-    assert_eq!(default_role.max_tool_result_bytes, Some(10000));
-    assert_eq!(default_role.max_tool_calls_per_subturn, Some(15));
-    assert_eq!(default_role.model_context_tokens, Some(128000));
-    assert_eq!(default_role.context_warning_threshold, Some(0.75f32));
-    assert_eq!(default_role.read_timeout_secs, Some(60));
-    assert_eq!(default_role.max_retries, Some(5));
-    assert_eq!(default_role.retry_base_delay_ms, Some(2000));
-}
-
-#[test]
-fn test_plugin_config_minimal() {
-    // Test parsing minimal PluginConfig (only required fields)
-    let value = Value::test_record(record! {
-        "models" => Value::test_record(record! {
-            "default" => model_role_record("openai/gpt-4"),
-        }),
-        "providers" => Value::test_record(record! {
-            "openai" => Value::test_record(record! {
-                "models" => Value::test_record(record! {
-                    "gpt-4" => Value::test_record(record! {}),
-                }),
-            }),
-        }),
-    });
-
-    let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
-
-    assert_eq!(
-        plugin_config.models.get("default").map(|r| &r.model),
-        Some(&"openai/gpt-4".to_string())
-    );
-    assert_eq!(plugin_config.models.len(), 1);
-    assert!(plugin_config.providers.contains_key("openai"));
-}
-
-#[test]
-fn test_plugin_config_missing_models() {
-    // Test that missing 'models' field returns error
-    let value = Value::test_record(record! {
-        "providers" => Value::test_record(record! {}),
-    });
-
-    let result = PluginConfig::from_plugin_config(&value);
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    // LabeledError's main message doesn't include field names, just check it's a meaningful error
-    assert!(err.to_string().contains("Missing required field"));
-}
-
-#[test]
-fn test_plugin_config_missing_providers() {
-    // Test that missing 'providers' field returns error
-    let value = Value::test_record(record! {
-        "models" => Value::test_record(record! {
-            "default" => model_role_record("openai/gpt-4"),
-        }),
-    });
-
-    let result = PluginConfig::from_plugin_config(&value);
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(err.to_string().contains("Missing required field"));
-}
-
-#[test]
-fn test_plugin_config_invalid_models_type() {
-    // Test that invalid 'models' type returns error
-    let value = Value::test_record(record! {
-        "models" => Value::test_int(123),
-        "providers" => Value::test_record(record! {}),
-    });
-
-    let result = PluginConfig::from_plugin_config(&value);
-    assert!(result.is_err());
-}
-
-#[test]
-fn test_plugin_config_not_record() {
-    // Test that non-record value returns error
-    let value = Value::test_string("not a record");
-
-    let result = PluginConfig::from_plugin_config(&value);
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(err.to_string().contains("Invalid plugin configuration"));
-}
-
-#[test]
-fn test_plugin_config_provider_field() {
-    // Test parsing provider field (for custom providers like github-copilot)
-    let value = Value::test_record(record! {
-        "models" => Value::test_record(record! {
-            "default" => model_role_record("copilot/claude"),
-        }),
-        "providers" => Value::test_record(record! {
-            "copilot" => Value::test_record(record! {
-                "provider" => Value::test_string("openai"),
-                "base_url" => Value::test_string("https://api.githubcopilot.com"),
-                "models" => Value::test_record(record! {
-                    "claude" => Value::test_record(record! {}),
-                }),
-            }),
-        }),
-    });
-
-    let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
-    let copilot = plugin_config
-        .providers
-        .get("copilot")
-        .expect("copilot provider");
-    assert_eq!(copilot.provider, Some("openai".to_string()));
-    assert_eq!(
-        copilot.base_url,
-        Some("https://api.githubcopilot.com".to_string())
-    );
-}
-
-#[test]
-fn test_plugin_config_provider_preamble_whitespace_normalized_to_none() {
-    let value = Value::test_record(record! {
-        "models" => Value::test_record(record! {
-            "default" => model_role_record("openai/gpt-4"),
-        }),
-        "providers" => Value::test_record(record! {
-            "openai" => Value::test_record(record! {
-                "preamble" => Value::test_string("   \n\t   "),
-                "models" => Value::test_record(record! {
-                    "gpt-4" => Value::test_record(record! {}),
-                }),
-            }),
-        }),
-    });
-
-    let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
-    let openai = plugin_config
-        .providers
-        .get("openai")
-        .expect("openai provider");
-    assert_eq!(openai.preamble, None);
-}
-
-#[test]
-fn test_plugin_config_model_preamble_whitespace_normalized_to_none() {
-    let value = Value::test_record(record! {
-        "models" => Value::test_record(record! {
-            "default" => model_role_record("openai/gpt-4"),
-        }),
-        "providers" => Value::test_record(record! {
-            "openai" => Value::test_record(record! {
-                "models" => Value::test_record(record! {
-                    "gpt-4" => Value::test_record(record! {
-                        "preamble" => Value::test_string("   \n\t  "),
-                    }),
-                }),
-            }),
-        }),
-    });
-
-    let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
-    let openai = plugin_config
-        .providers
-        .get("openai")
-        .expect("openai provider");
-    let gpt4 = openai.models.get("gpt-4").expect("gpt-4 model");
-    assert_eq!(gpt4.preamble, None);
-}
-
-#[test]
-fn test_plugin_config_provider_preamble_invalid_type_errors() {
-    let value = Value::test_record(record! {
-        "models" => Value::test_record(record! {
-            "default" => model_role_record("openai/gpt-4"),
-        }),
-        "providers" => Value::test_record(record! {
-            "openai" => Value::test_record(record! {
-                "preamble" => Value::test_int(42),
-                "models" => Value::test_record(record! {
-                    "gpt-4" => Value::test_record(record! {}),
-                }),
-            }),
-        }),
-    });
-
-    let err = PluginConfig::from_plugin_config(&value).expect_err("must fail");
-    let err_text = err.to_string();
-    assert!(
-        err_text.contains("Invalid field type") || err_text.contains("preamble"),
-        "unexpected error text: {err_text}"
-    );
-}
-
-#[test]
-fn test_plugin_config_model_preamble_invalid_type_errors() {
-    let value = Value::test_record(record! {
-        "models" => Value::test_record(record! {
-            "default" => model_role_record("openai/gpt-4"),
-        }),
-        "providers" => Value::test_record(record! {
-            "openai" => Value::test_record(record! {
-                "models" => Value::test_record(record! {
-                    "gpt-4" => Value::test_record(record! {
-                        "preamble" => Value::test_bool(true),
-                    }),
-                }),
-            }),
-        }),
-    });
-
-    let err = PluginConfig::from_plugin_config(&value).expect_err("must fail");
-    let err_text = err.to_string();
-    assert!(
-        err_text.contains("Invalid field type") || err_text.contains("preamble"),
-        "unexpected error text: {err_text}"
-    );
-}
-
-// ============================================================================
 // PluginConfig::resolve_model() Tests
 // ============================================================================
 
@@ -1374,8 +611,10 @@ fn test_resolve_model_basic() {
         },
         compaction: None,
         agents: AgentsConfig::default(),
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store: None,
+        secret_store: None,
+        models_cache: None,
     };
 
     let role_config = ModelRoleConfig {
@@ -1426,8 +665,10 @@ fn test_resolve_model_with_env_fallback() {
         },
         compaction: None,
         agents: AgentsConfig::default(),
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store: None,
+        secret_store: None,
+        models_cache: None,
     };
 
     let role_config = ModelRoleConfig {
@@ -1462,8 +703,10 @@ fn test_resolve_model_invalid_format() {
         providers: HashMap::new(),
         compaction: None,
         agents: AgentsConfig::default(),
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store: None,
+        secret_store: None,
+        models_cache: None,
     };
 
     // No slash separator
@@ -1491,7 +734,7 @@ fn test_resolve_model_invalid_format() {
 
 #[test]
 fn test_resolve_model_provider_not_found() {
-    // Test that unknown provider returns error
+    // Test that unknown provider resolves successfully (provider block is optional)
     let plugin_config = PluginConfig {
         models: {
             let mut m = HashMap::new();
@@ -1507,17 +750,21 @@ fn test_resolve_model_provider_not_found() {
         providers: HashMap::new(),
         compaction: None,
         agents: AgentsConfig::default(),
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store: None,
+        secret_store: None,
+        models_cache: None,
     };
 
     let result = plugin_config.resolve_model(&ModelRoleConfig {
         model: "unknown/model".to_string(),
         ..ModelRoleConfig::default()
     });
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(err.contains("provider") || err.contains("not found"));
+    // Provider block is optional — should resolve with env-based config only
+    assert!(result.is_ok());
+    let config = result.unwrap();
+    assert_eq!(config.provider, "unknown");
+    assert_eq!(config.model, "model");
 }
 
 #[test]
@@ -1552,8 +799,10 @@ fn test_resolve_model_model_not_in_config() {
         },
         compaction: None,
         agents: AgentsConfig::default(),
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store: None,
+        secret_store: None,
+        models_cache: None,
     };
 
     let role_config = ModelRoleConfig {
@@ -1603,8 +852,10 @@ fn test_resolve_model_with_provider_field() {
         },
         compaction: None,
         agents: AgentsConfig::default(),
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store: None,
+        secret_store: None,
+        models_cache: None,
     };
 
     let role_config = ModelRoleConfig {
@@ -1673,8 +924,10 @@ fn test_resolve_model_merges_limits() {
         },
         compaction: None,
         agents: AgentsConfig::default(),
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store: None,
+        secret_store: None,
+        models_cache: None,
     };
 
     let role_config = ModelRoleConfig {
@@ -1740,8 +993,10 @@ fn test_plugin_config_resolve_model_role_level_overrides() {
             providers,
             compaction: None,
             agents: AgentsConfig::default(),
-            a2a_enabled: false,
+            a2a_enabled: None,
             session_store: None,
+            secret_store: None,
+            models_cache: None,
         }
     };
 
@@ -1782,7 +1037,6 @@ fn test_plugin_config_resolve_model_role_level_overrides() {
         .expect("resolve");
     assert_eq!(cfg.temperature, Some(0.5));
 }
-
 // ============================================================================
 // 3-Part Format Tests (github-copilot/backend/model)
 // ============================================================================
@@ -1819,8 +1073,10 @@ fn resolve_model_handles_two_part_format() {
         },
         compaction: None,
         agents: AgentsConfig::default(),
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store: None,
+        secret_store: None,
+        models_cache: None,
     };
 
     let role_config = ModelRoleConfig {
@@ -1854,8 +1110,10 @@ fn resolve_model_validates_empty_parts() {
         providers: HashMap::new(),
         compaction: None,
         agents: AgentsConfig::default(),
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store: None,
+        secret_store: None,
+        models_cache: None,
     };
 
     // Empty provider
@@ -1917,8 +1175,10 @@ fn resolve_model_uses_split_once_for_multi_part_models() {
         },
         compaction: None,
         agents: AgentsConfig::default(),
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store: None,
+        secret_store: None,
+        models_cache: None,
     };
 
     let role_config = ModelRoleConfig {
@@ -1970,8 +1230,10 @@ fn resolve_model_works_with_simple_two_part() {
         },
         compaction: None,
         agents: AgentsConfig::default(),
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store: None,
+        secret_store: None,
+        models_cache: None,
     };
 
     let role_config = ModelRoleConfig {
@@ -2030,8 +1292,10 @@ fn integration_github_copilot_with_backend_in_model() {
         },
         compaction: None,
         agents: AgentsConfig::default(),
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store: None,
+        secret_store: None,
+        models_cache: None,
     };
 
     // Test default model
@@ -2097,7 +1361,7 @@ fn test_validate_none_max_tool_turns_is_valid() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store_type: None,
     };
 
@@ -2128,7 +1392,7 @@ fn test_validate_zero_max_tool_turns_still_invalid() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store_type: None,
     };
 
@@ -2379,319 +1643,14 @@ fn non_copilot_provider_sets_api_key_from_env() {
     });
 }
 
-// ============================================================================
-// AgentsConfig Parsing Tests
-// ============================================================================
-
-/// Build a base PluginConfig Value with standard model/provider setup.
-/// The `agents` block is injected as a parameter for per-test customization.
-fn base_config_record(agents_record: Value) -> Value {
-    Value::test_record(record! {
-        "models" => Value::test_record(record! {
-            "default" => model_role_record("openai/gpt-4"),
-        }),
-        "providers" => Value::test_record(record! {
-            "openai" => Value::test_record(record! {
-                "models" => Value::test_record(record! {
-                    "gpt-4" => Value::test_record(record! {}),
-                }),
-            }),
-        }),
-        "agents" => agents_record,
-    })
-}
-
-#[test]
-fn test_parse_agents_config_defaults() {
-    // Missing "agents" section → AgentsConfig::default()
-    let value = Value::test_record(record! {
-        "models" => Value::test_record(record! {
-            "default" => model_role_record("openai/gpt-4"),
-        }),
-        "providers" => Value::test_record(record! {
-            "openai" => Value::test_record(record! {
-                "models" => Value::test_record(record! {
-                    "gpt-4" => Value::test_record(record! {}),
-                }),
-            }),
-        }),
-    });
-
-    let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
-    let expected = AgentsConfig::default();
-    assert_eq!(plugin_config.agents, expected);
-    assert!(plugin_config.agents.planner_enabled);
-    assert!(plugin_config.agents.maker_enabled);
-    assert_eq!(plugin_config.agents.default, "planner");
-    assert_eq!(plugin_config.agents.fallback, None);
-}
-
-#[test]
-fn test_parse_agents_config_planner_disabled() {
-    let value = base_config_record(Value::test_record(record! {
-        "planner" => Value::test_string("disabled"),
-    }));
-
-    let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
-    assert!(!plugin_config.agents.planner_enabled);
-    // maker defaults to enabled when not specified
-    assert!(plugin_config.agents.maker_enabled);
-}
-
-#[test]
-fn test_parse_agents_config_custom_default() {
-    let value = base_config_record(Value::test_record(record! {
-        "default" => Value::test_string("maker"),
-    }));
-
-    let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
-    assert_eq!(plugin_config.agents.default, "maker");
-}
-
-#[test]
-fn test_parse_agents_config_with_fallback() {
-    let value = base_config_record(Value::test_record(record! {
-        "fallback" => Value::test_string("my-agent"),
-    }));
-
-    let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
-    assert_eq!(plugin_config.agents.fallback, Some("my-agent".to_string()));
-}
-
-// ---------------------------------------------------------------------------
-// max_tool_result_bytes merge regression test (Gap 2B)
-// ---------------------------------------------------------------------------
-
-#[test]
-fn merge_preserves_custom_max_tool_result_bytes_when_other_is_default() {
-    let base = Config {
-        max_tool_result_bytes: Some(5_000),
-        ..Config::default()
-    };
-    let merged = base.merge(Config::default());
-    assert_eq!(merged.max_tool_result_bytes, Some(5_000));
-}
-
 // ---------------------------------------------------------------------------
 // additional_params tests
 // ---------------------------------------------------------------------------
 
 #[test]
-fn parse_additional_params_from_record() {
-    let value = Value::test_record(record! {
-        "models" => Value::test_record(record! {
-            "default" => Value::test_record(record! {
-                "model" => Value::test_string("openai/gpt-4"),
-                "additional_params" => Value::test_record(record! {
-                    "thinking" => Value::test_record(record! {
-                        "type" => Value::test_string("disabled"),
-                    })
-                }),
-            }),
-        }),
-        "providers" => Value::test_record(record! {
-            "openai" => Value::test_record(record! {
-                "models" => Value::test_record(record! {
-                    "gpt-4" => Value::test_record(record! {}),
-                }),
-            }),
-        }),
-    });
-    // The role config must include additional_params for them to survive resolve_model
-    let role_config = ModelRoleConfig {
-        model: "openai/gpt-4".to_string(),
-        additional_params: Some(serde_json::json!({"thinking": {"type": "disabled"}})),
-        ..ModelRoleConfig::default()
-    };
-    let config = PluginConfig::from_plugin_config(&value)
-        .expect("parse")
-        .resolve_model(&role_config)
-        .expect("resolve");
-    let params = config.additional_params.expect("should have params");
-    assert_eq!(params["thinking"]["type"], "disabled");
-}
-
-#[test]
 fn additional_params_defaults_to_none() {
     let config = Config::default();
     assert!(config.additional_params.is_none());
-}
-
-#[test]
-fn additional_params_merge_other_wins() {
-    let base = Config {
-        additional_params: Some(serde_json::json!({"a": 1})),
-        ..Default::default()
-    };
-    let other = Config {
-        additional_params: Some(serde_json::json!({"b": 2})),
-        ..Default::default()
-    };
-    let merged = base.merge(other);
-    assert_eq!(merged.additional_params, Some(serde_json::json!({"b": 2})));
-}
-
-#[test]
-fn additional_params_merge_falls_back_to_base() {
-    let base = Config {
-        additional_params: Some(serde_json::json!({"a": 1})),
-        ..Default::default()
-    };
-    let other = Config {
-        additional_params: None,
-        ..Default::default()
-    };
-    let merged = base.merge(other);
-    assert_eq!(merged.additional_params, Some(serde_json::json!({"a": 1})));
-}
-
-// ============================================================================
-// Session Store Config Tests
-// ============================================================================
-
-#[test]
-fn test_session_store_config_parses_sqlite() {
-    let value = Value::test_record(record! {
-        "models" => Value::test_record(record! {
-            "default" => model_role_record("openai/gpt-4"),
-        }),
-        "providers" => Value::test_record(record! {
-            "openai" => Value::test_record(record! {
-                "models" => Value::test_record(record! {
-                    "gpt-4" => Value::test_record(record! {}),
-                }),
-            }),
-        }),
-        "session_store" => Value::test_record(record! {
-            "type" => Value::test_string("sqlite"),
-        }),
-    });
-
-    let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
-    let store = plugin_config
-        .session_store
-        .expect("should have session_store");
-    assert_eq!(store.store_type, StoreType::Sqlite);
-    assert_eq!(store.path, None);
-}
-
-#[test]
-fn test_session_store_config_parses_jsonl() {
-    let value = Value::test_record(record! {
-        "models" => Value::test_record(record! {
-            "default" => model_role_record("openai/gpt-4"),
-        }),
-        "providers" => Value::test_record(record! {
-            "openai" => Value::test_record(record! {
-                "models" => Value::test_record(record! {
-                    "gpt-4" => Value::test_record(record! {}),
-                }),
-            }),
-        }),
-        "session_store" => Value::test_record(record! {
-            "type" => Value::test_string("jsonl"),
-        }),
-    });
-
-    let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
-    let store = plugin_config
-        .session_store
-        .expect("should have session_store");
-    assert_eq!(store.store_type, StoreType::Jsonl);
-}
-
-#[test]
-fn test_session_store_config_with_path() {
-    let value = Value::test_record(record! {
-        "models" => Value::test_record(record! {
-            "default" => model_role_record("openai/gpt-4"),
-        }),
-        "providers" => Value::test_record(record! {
-            "openai" => Value::test_record(record! {
-                "models" => Value::test_record(record! {
-                    "gpt-4" => Value::test_record(record! {}),
-                }),
-            }),
-        }),
-        "session_store" => Value::test_record(record! {
-            "type" => Value::test_string("sqlite"),
-            "path" => Value::test_string("/custom/path/sessions.db"),
-        }),
-    });
-
-    let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
-    let store = plugin_config
-        .session_store
-        .expect("should have session_store");
-    assert_eq!(store.store_type, StoreType::Sqlite);
-    assert_eq!(store.path, Some("/custom/path/sessions.db".to_string()));
-}
-
-#[test]
-fn test_session_store_config_unknown_type_errors() {
-    let value = Value::test_record(record! {
-        "models" => Value::test_record(record! {
-            "default" => model_role_record("openai/gpt-4"),
-        }),
-        "providers" => Value::test_record(record! {
-            "openai" => Value::test_record(record! {
-                "models" => Value::test_record(record! {
-                    "gpt-4" => Value::test_record(record! {}),
-                }),
-            }),
-        }),
-        "session_store" => Value::test_record(record! {
-            "type" => Value::test_string("unknown"),
-        }),
-    });
-
-    let result = PluginConfig::from_plugin_config(&value);
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(err.to_string().contains("Invalid session_store type"));
-}
-
-#[test]
-fn test_session_store_config_missing_type_errors() {
-    let value = Value::test_record(record! {
-        "models" => Value::test_record(record! {
-            "default" => model_role_record("openai/gpt-4"),
-        }),
-        "providers" => Value::test_record(record! {
-            "openai" => Value::test_record(record! {
-                "models" => Value::test_record(record! {
-                    "gpt-4" => Value::test_record(record! {}),
-                }),
-            }),
-        }),
-        "session_store" => Value::test_record(record! {
-            "path" => Value::test_string("/custom/path"),
-        }),
-    });
-
-    let result = PluginConfig::from_plugin_config(&value);
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(err.to_string().contains("Missing required field"));
-}
-
-#[test]
-fn test_session_store_config_defaults_to_none() {
-    let value = Value::test_record(record! {
-        "models" => Value::test_record(record! {
-            "default" => model_role_record("openai/gpt-4"),
-        }),
-        "providers" => Value::test_record(record! {
-            "openai" => Value::test_record(record! {
-                "models" => Value::test_record(record! {
-                    "gpt-4" => Value::test_record(record! {}),
-                }),
-            }),
-        }),
-    });
-
-    let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
-    assert!(plugin_config.session_store.is_none());
 }
 
 #[test]
@@ -2728,341 +1687,4 @@ fn test_session_store_env_var_not_set() {
     // When env var is not set, session_store_type should be None
     let config = Config::from_env("openai", "gpt-4");
     assert_eq!(config.session_store_type, None);
-}
-
-#[test]
-fn test_session_store_merge_other_wins() {
-    let base = Config {
-        session_store_type: Some(StoreType::Sqlite),
-        ..Config::default()
-    };
-    let other = Config {
-        session_store_type: Some(StoreType::Jsonl),
-        ..Config::default()
-    };
-    let merged = base.merge(other);
-    assert_eq!(merged.session_store_type, Some(StoreType::Jsonl));
-}
-
-#[test]
-fn test_session_store_merge_falls_back_to_base() {
-    let base = Config {
-        session_store_type: Some(StoreType::Sqlite),
-        ..Config::default()
-    };
-    let other = Config {
-        session_store_type: None,
-        ..Config::default()
-    };
-    let merged = base.merge(other);
-    assert_eq!(merged.session_store_type, Some(StoreType::Sqlite));
-}
-
-#[test]
-#[serial]
-fn test_session_store_resolve_model_forwards_config() {
-    // Clear any session store env var that might leak from serial tests
-    unsafe {
-        std::env::remove_var("AGENT_SESSION_STORE_TYPE");
-    }
-    let plugin_config = PluginConfig {
-        models: {
-            let mut m = HashMap::new();
-            m.insert(
-                "default".to_string(),
-                ModelRoleConfig {
-                    model: "openai/gpt-4".to_string(),
-                    ..ModelRoleConfig::default()
-                },
-            );
-            m
-        },
-        providers: {
-            let mut providers = HashMap::new();
-            providers.insert(
-                "openai".to_string(),
-                ProviderConfig {
-                    name: None,
-                    api_key: Some("sk-test".to_string()),
-                    base_url: None,
-                    provider: None,
-                    preamble: None,
-                    models: HashMap::new(),
-                },
-            );
-            providers
-        },
-        compaction: None,
-        agents: AgentsConfig::default(),
-        a2a_enabled: false,
-        session_store: Some(StoreTypeConfig {
-            store_type: StoreType::Jsonl,
-            path: None,
-        }),
-    };
-
-    let role_config = ModelRoleConfig {
-        model: "openai/gpt-4".to_string(),
-        ..ModelRoleConfig::default()
-    };
-    let config = plugin_config
-        .resolve_model(&role_config)
-        .expect("should resolve");
-    assert_eq!(config.session_store_type, Some(StoreType::Jsonl));
-}
-
-// ============================================================================
-// PluginConfig models HashMap Tests
-// ============================================================================
-
-#[test]
-fn test_plugin_config_models_parsed_correctly() {
-    // Test parsing models map with default + optional roles
-    let value = Value::test_record(record! {
-        "models" => Value::test_record(record! {
-            "default" => model_role_record("openai/gpt-4"),
-            "heavy" => model_role_record("openai/gpt-4-turbo"),
-            "light" => model_role_record("openai/gpt-3.5-turbo"),
-        }),
-        "providers" => Value::test_record(record! {
-            "openai" => Value::test_record(record! {
-                "models" => Value::test_record(record! {
-                    "gpt-4" => Value::test_record(record! {}),
-                    "gpt-4-turbo" => Value::test_record(record! {}),
-                    "gpt-3.5-turbo" => Value::test_record(record! {}),
-                }),
-            }),
-        }),
-    });
-
-    let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
-
-    assert_eq!(
-        plugin_config.models.get("default").map(|r| &r.model),
-        Some(&"openai/gpt-4".to_string())
-    );
-    assert_eq!(
-        plugin_config.models.get("heavy").map(|r| &r.model),
-        Some(&"openai/gpt-4-turbo".to_string())
-    );
-    assert_eq!(
-        plugin_config.models.get("light").map(|r| &r.model),
-        Some(&"openai/gpt-3.5-turbo".to_string())
-    );
-    assert_eq!(plugin_config.models.len(), 3);
-}
-
-#[test]
-fn test_plugin_config_models_missing_key() {
-    // Test that missing 'models' key returns error
-    let value = Value::test_record(record! {
-        "providers" => Value::test_record(record! {}),
-    });
-
-    let result = PluginConfig::from_plugin_config(&value);
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(err.to_string().contains("Missing required field 'models'"));
-}
-
-#[test]
-fn test_plugin_config_models_missing_default() {
-    // Test that models without 'default' key returns error
-    let value = Value::test_record(record! {
-        "models" => Value::test_record(record! {
-            "heavy" => model_role_record("openai/gpt-4"),
-        }),
-        "providers" => Value::test_record(record! {
-            "openai" => Value::test_record(record! {
-                "models" => Value::test_record(record! {
-                    "gpt-4" => Value::test_record(record! {}),
-                }),
-            }),
-        }),
-    });
-
-    let result = PluginConfig::from_plugin_config(&value);
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(err.to_string().contains("models.default"));
-}
-
-#[test]
-fn test_plugin_config_models_value_without_slash() {
-    // Test that model value without '/' returns error
-    let value = Value::test_record(record! {
-        "models" => Value::test_record(record! {
-            "default" => model_role_record("invalid-format"),
-        }),
-        "providers" => Value::test_record(record! {
-            "openai" => Value::test_record(record! {
-                "models" => Value::test_record(record! {}),
-            }),
-        }),
-    });
-
-    let result = PluginConfig::from_plugin_config(&value);
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(err.to_string().contains("provider/model format"));
-}
-
-#[test]
-fn test_plugin_config_models_empty_map() {
-    // Test that empty models map returns error
-    let value = Value::test_record(record! {
-        "models" => Value::test_record(record! {}),
-        "providers" => Value::test_record(record! {
-            "openai" => Value::test_record(record! {
-                "models" => Value::test_record(record! {}),
-            }),
-        }),
-    });
-
-    let result = PluginConfig::from_plugin_config(&value);
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(err.to_string().contains("models.default"));
-}
-
-#[test]
-fn test_plugin_config_models_with_only_default() {
-    // Test that models with only 'default' works
-    let value = Value::test_record(record! {
-        "models" => Value::test_record(record! {
-            "default" => model_role_record("openai/gpt-4"),
-        }),
-        "providers" => Value::test_record(record! {
-            "openai" => Value::test_record(record! {
-                "models" => Value::test_record(record! {
-                    "gpt-4" => Value::test_record(record! {}),
-                }),
-            }),
-        }),
-    });
-
-    let plugin_config = PluginConfig::from_plugin_config(&value).expect("should parse");
-    assert_eq!(plugin_config.models.len(), 1);
-    assert_eq!(
-        plugin_config.models.get("default").map(|r| &r.model),
-        Some(&"openai/gpt-4".to_string())
-    );
-}
-
-#[test]
-fn test_plugin_config_models_invalid_type() {
-    // Test that non-record 'models' value returns error
-    let value = Value::test_record(record! {
-        "models" => Value::test_string("not-a-record"),
-        "providers" => Value::test_record(record! {}),
-    });
-
-    let result = PluginConfig::from_plugin_config(&value);
-    assert!(result.is_err());
-}
-
-// ============================================================================
-// ModelRoleConfig Validation Tests
-// ============================================================================
-
-#[test]
-fn test_plugin_config_models_value_missing_model_field() {
-    // Test that model role record without 'model' field returns error
-    let value = Value::test_record(record! {
-        "models" => Value::test_record(record! {
-            "default" => Value::test_record(record! {
-                "temperature" => Value::test_float(0.5),
-            }),
-        }),
-        "providers" => Value::test_record(record! {
-            "openai" => Value::test_record(record! {
-                "models" => Value::test_record(record! {}),
-            }),
-        }),
-    });
-
-    let result = PluginConfig::from_plugin_config(&value);
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(err.to_string().contains("models.default.model"));
-}
-
-#[test]
-fn test_plugin_config_models_value_not_a_record() {
-    // Test that model role value that is not a record returns error
-    let value = Value::test_record(record! {
-        "models" => Value::test_record(record! {
-            "default" => Value::test_string("openai/gpt-4"),
-        }),
-        "providers" => Value::test_record(record! {
-            "openai" => Value::test_record(record! {
-                "models" => Value::test_record(record! {}),
-            }),
-        }),
-    });
-
-    let result = PluginConfig::from_plugin_config(&value);
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(err.to_string().contains("must be a record"));
-}
-
-#[test]
-fn test_plugin_config_models_default_missing_model_field() {
-    // Test that models.default without 'model' field returns error
-    let value = Value::test_record(record! {
-        "models" => Value::test_record(record! {
-            "default" => Value::test_record(record! {
-                "temperature" => Value::test_float(0.5),
-            }),
-        }),
-        "providers" => Value::test_record(record! {
-            "openai" => Value::test_record(record! {
-                "models" => Value::test_record(record! {}),
-            }),
-        }),
-    });
-
-    let result = PluginConfig::from_plugin_config(&value);
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(err.to_string().contains("models.default.model"));
-}
-
-#[test]
-fn test_plugin_config_models_default_model_without_slash() {
-    // Test that models.default.model without '/' returns error
-    let value = Value::test_record(record! {
-        "models" => Value::test_record(record! {
-            "default" => model_role_record("invalid-format"),
-        }),
-        "providers" => Value::test_record(record! {
-            "openai" => Value::test_record(record! {
-                "models" => Value::test_record(record! {}),
-            }),
-        }),
-    });
-
-    let result = PluginConfig::from_plugin_config(&value);
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(err.to_string().contains("provider/model format"));
-}
-
-#[test]
-fn test_plugin_config_models_empty_map_errors() {
-    // Test that empty models map returns error
-    let value = Value::test_record(record! {
-        "models" => Value::test_record(record! {}),
-        "providers" => Value::test_record(record! {
-            "openai" => Value::test_record(record! {
-                "models" => Value::test_record(record! {}),
-            }),
-        }),
-    });
-
-    let result = PluginConfig::from_plugin_config(&value);
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(err.to_string().contains("models.default"));
 }

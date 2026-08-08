@@ -1,16 +1,21 @@
 use std::str::FromStr;
 
+use serde::{Deserialize, Serialize};
+
 use super::store::{SessionStore, StoreEntry};
 use super::{FsSessionStore, SessionInfo, SessionMetadata};
 use crate::session::sqlite_store::SqliteSessionStore;
 use crate::types::Message;
 
 /// The type of session store backend to use.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum StoreType {
     /// SQLite-backed session store.
+    #[default]
+    #[serde(rename = "sqlite")]
     Sqlite,
     /// JSONL file-backed session store.
+    #[serde(rename = "jsonl")]
     Jsonl,
 }
 

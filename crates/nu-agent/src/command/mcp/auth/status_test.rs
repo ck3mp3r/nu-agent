@@ -4,7 +4,7 @@ use rmcp::transport::auth::{OAuthTokenResponse, StoredCredentials, VendorExtraTo
 use nu_agent_core::tools::mcp::config::McpAuthConfig;
 use nu_agent_core::tools::mcp::credentials::McpCredentialsEntry;
 
-use super::mcp_status::determine_status;
+use super::status::determine_status;
 
 fn make_entry_with_token(
     expires_in_secs: Option<u64>,

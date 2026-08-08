@@ -264,7 +264,7 @@ fn provider_dispatch_unsupported_provider_returns_error() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store_type: None,
     };
 
@@ -330,7 +330,7 @@ fn client_cache_key_contains_provider_and_model() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store_type: None,
     };
 
@@ -379,7 +379,7 @@ fn client_cache_key_includes_base_url_when_set() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store_type: None,
     };
 
@@ -559,7 +559,7 @@ fn active_model_identity_returns_provider_slash_model() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store_type: None,
     };
 
@@ -698,7 +698,7 @@ fn provider_state_client_cache_key_contains_provider_and_api_key() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store_type: None,
     };
 
@@ -835,7 +835,7 @@ fn accessor_provider_returns_provider_string() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store_type: None,
     };
 
@@ -870,7 +870,7 @@ fn accessor_model_returns_model_string() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store_type: None,
     };
 
@@ -903,7 +903,7 @@ fn accessor_max_context_tokens_returns_none_when_unset() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store_type: None,
     };
 
@@ -939,7 +939,7 @@ fn accessor_max_context_tokens_returns_value_when_set() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store_type: None,
     };
 
@@ -975,7 +975,7 @@ fn accessor_startup_plugin_config_returns_none_when_default() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store_type: None,
     };
 

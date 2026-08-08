@@ -4357,6 +4357,10 @@ fn model_picker_rows_do_not_contain_selection_prefix() {
             identity: "openai/gpt-4o".to_string(),
             display: "openai/gpt-4o".to_string(),
             active: true,
+            context_window: None,
+            max_output: None,
+            configured: false,
+            provider_display_name: String::new(),
         },
         crate::state::ModelPickerOption {
             provider: "anthropic".to_string(),
@@ -4364,6 +4368,10 @@ fn model_picker_rows_do_not_contain_selection_prefix() {
             identity: "anthropic/claude-3-5-sonnet".to_string(),
             display: "anthropic/claude-3-5-sonnet".to_string(),
             active: false,
+            context_window: None,
+            max_output: None,
+            configured: false,
+            provider_display_name: String::new(),
         },
         crate::state::ModelPickerOption {
             provider: "openai".to_string(),
@@ -4371,6 +4379,10 @@ fn model_picker_rows_do_not_contain_selection_prefix() {
             identity: "openai/gpt-4o-mini".to_string(),
             display: "openai/gpt-4o-mini".to_string(),
             active: false,
+            context_window: None,
+            max_output: None,
+            configured: false,
+            provider_display_name: String::new(),
         },
     ]);
     state.model_picker_selection = 1;

@@ -59,7 +59,7 @@ fn build_copilot_client_no_auth_returns_ok() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store_type: None,
     };
 
@@ -127,7 +127,7 @@ fn build_copilot_client_oauth_path_succeeds_at_build_time() {
         retry_base_delay_ms: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store_type: None,
     };
 
@@ -376,8 +376,10 @@ fn plugin_config_read_timeout_secs_propagates_to_resolved_config() {
         providers,
         compaction: None,
         agents: AgentsConfig::default(),
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store: None,
+        secret_store: None,
+        models_cache: None,
     };
 
     let role_config = ModelRoleConfig {
@@ -430,8 +432,10 @@ fn plugin_config_without_read_timeout_secs_resolves_to_none() {
         providers,
         compaction: None,
         agents: AgentsConfig::default(),
-        a2a_enabled: false,
+        a2a_enabled: None,
         session_store: None,
+        secret_store: None,
+        models_cache: None,
     };
 
     let role_config = ModelRoleConfig {

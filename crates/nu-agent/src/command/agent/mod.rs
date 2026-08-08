@@ -17,8 +17,6 @@ use crate::plugin::AgentPlugin;
 
 pub(crate) use mode_execute::{AgentMode, resolve_agent_mode, should_enter_foreground};
 
-pub use runtime_build::EngineConfigInterface;
-
 pub use args::{extract_and_validate_session_flags, extract_tool_timeout, extract_tools_from_call};
 pub use runtime_build::resolve_config;
 

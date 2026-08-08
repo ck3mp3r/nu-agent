@@ -1,9 +1,13 @@
 use std::sync::{Arc, Mutex};
 
-use nu_plugin::{EngineInterface, EvaluatedCall};
+use nu_plugin::EvaluatedCall;
 use nu_protocol::{LabeledError, Value};
 
-use nu_agent_core::config::{Config, ModelRoleConfig, PluginConfig, defaults};
+use nu_agent_core::config::{
+    self, Config, ModelRoleConfig, PluginConfig, defaults,
+    models_cache::{ModelsCache, ModelsCacheError},
+    secrets::{SecretStore, SecretStoreError},
+};
 use nu_agent_core::conversation::runtime::AgentConversationRuntime;
 use nu_agent_core::protocol::preamble::{
     PreambleDefaults, UserPreambleInput, classify_model_family, resolve_preamble,
@@ -11,26 +15,17 @@ use nu_agent_core::protocol::preamble::{
 use nu_agent_core::session::SessionStoreImpl;
 use nu_agent_core::tools::mcp::circuit_breaker::McpCircuitBreaker;
 
-/// Trait abstracting the engine interface functionality needed for config resolution.
-///
-/// This allows us to mock the EngineInterface for testing without needing
-/// a real Nushell engine instance.
-pub trait EngineConfigInterface {
-    fn get_plugin_config(&self) -> Result<Option<Value>, LabeledError>;
-}
-
-impl EngineConfigInterface for EngineInterface {
-    fn get_plugin_config(&self) -> Result<Option<Value>, LabeledError> {
-        // Convert ShellError to LabeledError
-        self.get_plugin_config()
-            .map_err(|e| LabeledError::new(format!("Failed to get plugin config: {}", e)))
-    }
+fn get_string_flag(call: &EvaluatedCall, name: &str) -> Option<String> {
+    call.get_flag(name)
+        .ok()
+        .flatten()
+        .and_then(|v: Value| v.as_str().map(|s| s.to_string()).ok())
 }
 
 /// Resolve configuration from all sources with proper precedence.
 ///
 /// Resolution pipeline:
-/// 1. Parse PluginConfig from $env.config.plugins.agent (if present)
+/// 1. Parse PluginConfig from config.toml (if present)
 /// 2. Determine active model:
 ///    - If --model flag provided: use it (provider/model format)
 ///    - Else use models.default from PluginConfig
@@ -40,111 +35,28 @@ impl EngineConfigInterface for EngineInterface {
 ///
 /// When no plugin config is present, --model is required. Config is built
 /// directly from env vars and CLI flags without going through PluginConfig.
-///
-/// # Arguments
-/// * `engine` - Engine interface for accessing plugin config
-/// * `call` - The EvaluatedCall containing command flags
-///
-/// # Returns
-/// Fully resolved and validated Config, or error if validation fails
-pub fn resolve_config<E: EngineConfigInterface>(
-    engine: &E,
-    call: &EvaluatedCall,
-) -> Result<Config, LabeledError> {
-    let plugin_config_opt = engine.get_plugin_config()?;
-
-    if let Some(ref plugin_value) = plugin_config_opt {
-        let plugin_config = PluginConfig::from_plugin_config(plugin_value)?;
-        return resolve_with_new_config(plugin_config, call);
+pub fn resolve_config(call: &EvaluatedCall) -> Result<(Config, PluginConfig), LabeledError> {
+    let config_path = config::toml_config::config_path()
+        .map_err(|e| LabeledError::new(format!("Cannot determine config path: {e}")))?;
+    if !config_path.exists() {
+        return Err(LabeledError::new("No configuration found")
+            .with_label("Run `agent config init` to generate a starter config.toml, or create one manually at ~/.config/nu-agent/config.toml", call.head));
     }
-
-    // No plugin config — require --model flag; build Config from env + flags
-    let model_str = call
-        .get_flag::<Value>("model")
-        .ok()
-        .flatten()
-        .and_then(|v| v.as_str().ok().map(|s| s.to_string()))
-        .ok_or_else(|| {
-            LabeledError::new("No configuration found").with_label(
-                "Provide $env.config.plugins.agent or --model flag",
-                call.head,
-            )
-        })?;
-
-    let (provider, model) = model_str.split_once('/').ok_or_else(|| {
-        LabeledError::new("Invalid --model format")
-            .with_label("Expected provider/model (e.g. openai/gpt-4)", call.head)
-    })?;
-
-    if provider.is_empty() || model.is_empty() {
-        return Err(LabeledError::new("Invalid --model format")
-            .with_label("Provider and model must both be non-empty", call.head));
+    let mut plugin_config = config::toml_config::load()
+        .map_err(|e| LabeledError::new(format!("Failed to load config.toml: {e}")))?;
+    match SecretStore::load() {
+        Ok(store) => plugin_config.secret_store = Some(store),
+        Err(SecretStoreError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => log::warn!("Failed to load secret store: {e}"),
     }
-
-    let mut config = Config::from_env(provider, model);
-    config.provider = provider.to_string();
-    config.model = model.to_string();
-
-    // Apply CLI flag overrides (same fields as resolve_with_new_config)
-    if let Some(api_key) = call
-        .get_flag::<Value>("api-key")
-        .ok()
-        .flatten()
-        .and_then(|v| v.as_str().ok().map(|s| s.to_string()))
-    {
-        config.api_key = Some(api_key);
+    match ModelsCache::load() {
+        Ok(cache) => plugin_config.models_cache = Some(cache),
+        Err(ModelsCacheError::NotFound(_)) => {}
+        Err(e) => log::warn!("Failed to load models cache: {e}"),
     }
-    if let Some(base_url) = call
-        .get_flag::<Value>("base-url")
-        .ok()
-        .flatten()
-        .and_then(|v| v.as_str().ok().map(|s| s.to_string()))
-    {
-        config.base_url = Some(base_url);
-    }
-    if let Some(temperature) = call
-        .get_flag::<Value>("temperature")
-        .ok()
-        .flatten()
-        .and_then(|v| v.as_float().ok())
-    {
-        config.temperature = Some(temperature);
-    }
-    if let Some(max_context) = call
-        .get_flag::<Value>("max-context-tokens")
-        .ok()
-        .flatten()
-        .and_then(|v| v.as_int().ok())
-        .and_then(|i| if i >= 0 { Some(i as u32) } else { None })
-    {
-        config.max_context_tokens = Some(max_context);
-    }
-    if let Some(max_output) = call
-        .get_flag::<Value>("max-output-tokens")
-        .ok()
-        .flatten()
-        .and_then(|v| v.as_int().ok())
-        .and_then(|i| if i >= 0 { Some(i as u32) } else { None })
-    {
-        config.max_output_tokens = Some(max_output);
-    }
-    if let Some(max_turns) = call
-        .get_flag::<Value>("max-turns")
-        .ok()
-        .flatten()
-        .and_then(|v| v.as_int().ok())
-        .and_then(|i| if i >= 0 { Some(i as u32) } else { None })
-    {
-        config.max_tool_turns = Some(max_turns);
-    }
-
-    config
-        .validate()
-        .map_err(|msg| LabeledError::new("Config validation failed").with_label(msg, call.head))?;
-
-    Ok(config)
+    let config = resolve_with_new_config(plugin_config.clone(), call)?;
+    Ok((config, plugin_config))
 }
-
 /// Resolve preamble for a specific provider/model pair.
 ///
 /// Looks up the provider config and model config from `plugin_config` and
@@ -174,14 +86,6 @@ pub fn resolve_with_new_config(
     plugin_config: PluginConfig,
     call: &EvaluatedCall,
 ) -> Result<Config, LabeledError> {
-    // Helper to get string flag
-    fn get_string_flag(call: &EvaluatedCall, name: &str) -> Option<String> {
-        call.get_flag(name)
-            .ok()
-            .flatten()
-            .and_then(|v: Value| v.as_str().map(|s| s.to_string()).ok())
-    }
-
     // Determine which model role to use (priority: --model flag > models.default)
     let role_config = if let Some(model_flag) = get_string_flag(call, "model") {
         if model_flag.contains('/') {
@@ -197,7 +101,7 @@ pub fn resolve_with_new_config(
                 .get(&model_flag)
                 .ok_or_else(|| {
                     LabeledError::new(format!("Unknown model role: '{model_flag}'"))
-                        .with_label("Available roles: see models in plugin config", call.head)
+                        .with_label("Available roles: see models in config.toml", call.head)
                 })?
                 .clone()
         }
@@ -207,8 +111,8 @@ pub fn resolve_with_new_config(
             .models
             .get("default")
             .ok_or_else(|| {
-                LabeledError::new("No default model configured")
-                    .with_label("Set models.default in plugin config", call.head)
+                LabeledError::new("No model configured")
+                    .with_label("Edit config.toml to add a model:\n  [models.default]\n  model = \"ollama-cloud/glm-5.2\"\n\nRun `agent models sync && agent models list` to see available models.", call.head)
             })?
             .clone()
     };
@@ -240,14 +144,6 @@ pub fn resolve_with_new_config(
 /// Fields: --api-key, --base-url, --temperature, --max-context-tokens,
 /// --max-output-tokens, --max-turns
 pub(crate) fn apply_cli_flags(config: &mut Config, call: &EvaluatedCall) {
-    // Helper to get string flag
-    fn get_string_flag(call: &EvaluatedCall, name: &str) -> Option<String> {
-        call.get_flag(name)
-            .ok()
-            .flatten()
-            .and_then(|v: Value| v.as_str().map(|s| s.to_string()).ok())
-    }
-
     if let Some(api_key) = get_string_flag(call, "api-key") {
         config.api_key = Some(api_key);
     }
@@ -296,7 +192,7 @@ pub(crate) fn apply_cli_flags(config: &mut Config, call: &EvaluatedCall) {
     if let Some(port_val) = call.get_flag::<i64>("a2a-port").ok().flatten()
         && (0..=65535).contains(&port_val)
     {
-        config.a2a_enabled = true;
+        config.a2a_enabled = Some(true);
         config.a2a_port = Some(port_val as u16);
     }
 }
@@ -442,7 +338,7 @@ pub(crate) fn build_preamble_cache(
 pub(crate) struct RuntimeBuildParams {
     pub(crate) runtime: tokio::runtime::Handle,
     pub(crate) config: Config,
-    pub(crate) plugin_config_value: Option<nu_protocol::Value>,
+    pub(crate) plugin_config: Option<PluginConfig>,
     pub(crate) tool_definitions: Vec<nu_agent_core::types::ToolDefinition>,
     pub(crate) baseline_tool_definitions: Vec<nu_agent_core::types::ToolDefinition>,
     pub(crate) closure_registry: nu_agent_core::tools::closure::ClosureRegistry,
@@ -476,7 +372,6 @@ pub(crate) struct RuntimeBuildParams {
 }
 
 pub(crate) fn build_runtime(params: RuntimeBuildParams) -> AgentConversationRuntime {
-    use nu_agent_core::config::PluginConfig;
     use nu_agent_core::conversation::{
         compaction::state::CompactionState, state::mcp::McpState, state::memory::MemoryState,
         state::multi_agent::MultiAgentState, state::permission::PermissionState,
@@ -495,13 +390,7 @@ pub(crate) fn build_runtime(params: RuntimeBuildParams) -> AgentConversationRunt
     AgentConversationRuntime {
         runtime: params.runtime,
         tool_server_handle: params.tool_server_handle,
-        provider: ProviderState::new(
-            params.config,
-            params
-                .plugin_config_value
-                .as_ref()
-                .and_then(|value| PluginConfig::from_plugin_config(value).ok()),
-        ),
+        provider: ProviderState::new(params.config, params.plugin_config),
         tools: ToolState::new(
             params.tool_definitions,
             params.baseline_tool_definitions,
