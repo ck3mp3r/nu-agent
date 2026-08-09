@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 use crate::agent::AgentHandle;
 use crate::discovery::{PeerDiscoveryImpl, PeerEvent};
@@ -20,6 +22,7 @@ pub struct AgentBuilder {
     port: u16,
     mesh_key: String,
     card: Option<AgentCard>,
+    discovery_impl: Option<PeerDiscoveryImpl>,
 }
 
 impl AgentBuilder {
@@ -33,6 +36,7 @@ impl AgentBuilder {
             port: 0,
             mesh_key: String::new(),
             card: None,
+            discovery_impl: None,
         }
     }
 
@@ -75,6 +79,15 @@ impl AgentBuilder {
         self
     }
 
+    /// Inject a custom `PeerDiscoveryImpl`. Defaults to `Mdns` when not set.
+    ///
+    /// Use `PeerDiscoveryImpl::Noop` to run without mDNS (e.g. behind a load
+    /// balancer, in CI, or in tests).
+    pub fn discovery(mut self, impl_: PeerDiscoveryImpl) -> Self {
+        self.discovery_impl = Some(impl_);
+        self
+    }
+
     /// Build and start the agent.
     ///
     /// Starts the HTTP server, peer discovery, and returns a fully
@@ -84,7 +97,7 @@ impl AgentBuilder {
     ///
     /// Returns an error tuple with the [`A2aError`] and an optional
     /// [`A2aServer`] that the caller may choose to shut down.
-    pub async fn build(self) -> Result<AgentHandle, (A2aError, Option<A2aServer>)> {
+    pub async fn build(mut self) -> Result<AgentHandle, (A2aError, Option<A2aServer>)> {
         let mut card = match self.card {
             Some(c) => c,
             None => AgentCard {
@@ -135,8 +148,10 @@ impl AgentBuilder {
         }
 
         // ── mDNS discovery ────────────────────────────────────────────────
-        let mut discovery =
-            PeerDiscoveryImpl::Mdns(crate::discovery::mdns_discovery::MdnsPeerDiscovery::new());
+        let mut discovery = self
+            .discovery_impl
+            .take()
+            .unwrap_or_else(|| PeerDiscoveryImpl::Mdns(Box::default()));
         discovery.start(&card.name, actual_port, &card, &self.mesh_key);
 
         // Feed peer events into the cache.
@@ -173,13 +188,39 @@ impl AgentBuilder {
         };
         cache.add_or_update(own_peer);
 
-        // ── No background eviction ─────────────────────────────────────────────
+        // ── Peer eviction ──────────────────────────────────────────────────────
         // Peers are only removed on connection failure (task.send/get/cancel fails
         // with ConnectionRefused/Timeout). mDNS's 75s TTL + ServiceRemoved goodbye
         // packets handle the crash-detection path via PeerLost → cache.remove().
 
         let client = A2aClient::new().map_err(|e| (e, None))?;
         let card_handle = Some(server.agent_card_handle());
+
+        // ── Periodic mDNS re-registration ──────────────────────────────────────
+        let reregister_token = CancellationToken::new();
+        let reregister_token_clone = reregister_token.clone();
+        let discovery_clone = discovery.clone();
+        let card_handle_clone = card_handle.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(30));
+            interval.tick().await;
+            loop {
+                tokio::select! {
+                    _ = reregister_token_clone.cancelled() => {
+                        log::debug!("mDNS re-registration task cancelled");
+                        break;
+                    }
+                    _ = interval.tick() => {
+                        let card = match &card_handle_clone {
+                            Some(handle) => handle.read().expect("card lock").clone(),
+                            None => return,
+                        };
+                        let mut discovery = discovery_clone.lock().expect("discovery lock");
+                        discovery.reregister(&card);
+                    }
+                }
+            }
+        });
         Ok(AgentHandle {
             server,
             client,
@@ -190,6 +231,7 @@ impl AgentBuilder {
             completion_rx: Some(completion_rx),
             discovery,
             mesh_key: self.mesh_key,
+            reregister_token: Some(reregister_token),
         })
     }
 }

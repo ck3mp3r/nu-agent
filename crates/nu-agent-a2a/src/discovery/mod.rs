@@ -22,6 +22,12 @@ mod filter_test;
 #[cfg(test)]
 mod test;
 
+#[cfg(test)]
+mod mdns_discovery_test;
+
+#[cfg(test)]
+mod impl_enum_test;
+
 /// Ensure the rustls crypto provider is installed before creating a reqwest
 /// [`Client`] that uses `rustls-no-provider`.  Safe to call multiple times.
 fn ensure_crypto_provider() {

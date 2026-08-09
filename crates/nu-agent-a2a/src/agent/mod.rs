@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 use crate::discovery::PeerDiscoveryImpl;
 use crate::*;
@@ -30,6 +31,8 @@ pub struct AgentHandle {
     cache: Arc<PeerCache>,
     /// The mesh key used for discovery isolation.
     mesh_key: String,
+    /// Token to cancel the periodic mDNS re-registration task.
+    reregister_token: Option<CancellationToken>,
 }
 
 impl AgentHandle {
@@ -59,6 +62,11 @@ impl AgentHandle {
     /// The mesh key used for discovery isolation.
     pub fn mesh_key(&self) -> &str {
         &self.mesh_key
+    }
+
+    /// The token used to cancel the periodic mDNS re-registration task.
+    pub fn reregister_token(&self) -> Option<&CancellationToken> {
+        self.reregister_token.as_ref()
     }
 
     /// Build an [`A2aToolContext`] for registering A2A tools on the
@@ -99,6 +107,12 @@ impl AgentHandle {
     ///
     /// Consumes `self` so it cannot be called twice.
     pub async fn shutdown_with_timeout(self, timeout: Duration) {
+        // Cancel the periodic mDNS re-registration task first, so it stops
+        // touching the discovery lock before we shut down discovery.
+        if let Some(token) = &self.reregister_token {
+            token.cancel();
+        }
+
         // Graceful HTTP server shutdown.
         tokio::time::timeout(timeout, self.server.shutdown())
             .await

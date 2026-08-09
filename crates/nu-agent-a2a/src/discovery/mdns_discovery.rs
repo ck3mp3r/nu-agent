@@ -20,6 +20,13 @@ pub struct MdnsPeerDiscovery {
     /// The full mDNS service name (e.g. `researcher-12345._nu-agent-a2a._tcp.local.`)
     /// set during [`start`](Self::start) and updated by [`rename`](Self::rename).
     fullname: Option<String>,
+    /// The instance name (without `._nu-agent-a2a._tcp.local.` suffix).
+    /// Stored at `start()` time for use by `reregister()`.
+    instance_name: Option<String>,
+    /// The port the agent is listening on.
+    port: Option<u16>,
+    /// The mesh key for discovery isolation.
+    mesh_key: Option<String>,
 }
 
 impl MdnsPeerDiscovery {
@@ -33,6 +40,9 @@ impl MdnsPeerDiscovery {
             browser: None,
             peer_rx: None,
             fullname: None,
+            instance_name: None,
+            port: None,
+            mesh_key: None,
         }
     }
 }
@@ -83,6 +93,9 @@ impl MdnsPeerDiscovery {
         // The fullname is: <instance>.<service_type>.<domain>
         if service.is_some() {
             self.fullname = Some(format!("{agent_name}._nu-agent-a2a._tcp.local."));
+            self.instance_name = Some(agent_name.to_string());
+            self.port = Some(port);
+            self.mesh_key = Some(mesh_key.to_string());
         }
 
         // ── mDNS discovery browser ────────────────────────────────────────
@@ -178,9 +191,68 @@ impl MdnsPeerDiscovery {
             Ok(_) => {
                 log::info!("mDNS service re-registered as '{new_name}' on port {port}");
                 self.fullname = Some(format!("{new_name}._nu-agent-a2a._tcp.local."));
+                self.instance_name = Some(new_name.to_string());
+                self.port = Some(port);
+                self.mesh_key = Some(mesh_key.to_string());
             }
             Err(e) => {
                 log::warn!("mDNS rename: registration failed for '{new_name}': {e}");
+            }
+        }
+    }
+
+    /// Re-announce the mDNS service with the current name.
+    ///
+    /// Rebuilds `ServiceInfo` from the stored instance name, port, mesh key,
+    /// and the provided (possibly updated) card, then calls `daemon.register()`
+    /// again.  The `mdns-sd` docs say: "To re-announce a service with an updated
+    /// service_info, just call `register` again. No need to call `unregister` first."
+    ///
+    /// This is a no-op if mDNS was never started or the daemon is gone.
+    pub fn reregister(&mut self, card: &AgentCard) {
+        let daemon = match self.daemon.as_ref() {
+            Some(d) => d,
+            None => {
+                log::debug!("MdnsPeerDiscovery::reregister: no daemon, skipping");
+                return;
+            }
+        };
+        let instance_name = match &self.instance_name {
+            Some(n) => n,
+            None => {
+                log::debug!("MdnsPeerDiscovery::reregister: no instance name, skipping");
+                return;
+            }
+        };
+        let port = match self.port {
+            Some(p) => p,
+            None => {
+                log::debug!("MdnsPeerDiscovery::reregister: no port, skipping");
+                return;
+            }
+        };
+        let mesh_key = match &self.mesh_key {
+            Some(k) => k,
+            None => {
+                log::debug!("MdnsPeerDiscovery::reregister: no mesh key, skipping");
+                return;
+            }
+        };
+
+        let info = match build_service_info(instance_name, port, card, mesh_key) {
+            Ok(i) => i,
+            Err(e) => {
+                log::warn!("mDNS reregister: failed to build ServiceInfo: {e}");
+                return;
+            }
+        };
+
+        match daemon.register(info) {
+            Ok(_) => {
+                log::debug!("mDNS service re-announced as '{instance_name}' on port {port}");
+            }
+            Err(e) => {
+                log::warn!("mDNS reregister: registration failed for '{instance_name}': {e}");
             }
         }
     }

@@ -358,3 +358,52 @@ async fn test_mdns_name_uses_exact_name_when_explicit() {
     );
     handle.shutdown().await;
 }
+
+// ---------------------------------------------------------------------------
+// Periodic mDNS re-registration
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn reregister_token_is_set_after_build() {
+    ensure_crypto_provider();
+    let handle = AgentBuilder::new("test-rereg-token")
+        .discovery(PeerDiscoveryImpl::Noop)
+        .port(0)
+        .mesh_key("test".into())
+        .build()
+        .await
+        .unwrap();
+    assert!(handle.reregister_token().is_some());
+    handle.shutdown().await;
+}
+
+#[tokio::test]
+async fn reregister_task_does_not_block_startup() {
+    ensure_crypto_provider();
+    let handle = AgentBuilder::new("test-rereg-noblock")
+        .discovery(PeerDiscoveryImpl::Noop)
+        .port(0)
+        .mesh_key("test".into())
+        .build()
+        .await
+        .unwrap();
+    assert!(handle.server.port > 0);
+    let resp = reqwest::get(&format!("{}/health", handle.server.local_url))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    handle.shutdown().await;
+}
+
+#[tokio::test]
+async fn shutdown_cancels_reregister_without_panic() {
+    ensure_crypto_provider();
+    let handle = AgentBuilder::new("test-rereg-cancel")
+        .discovery(PeerDiscoveryImpl::Noop)
+        .port(0)
+        .mesh_key("test".into())
+        .build()
+        .await
+        .unwrap();
+    handle.shutdown().await;
+}

@@ -11,7 +11,7 @@ use crate::discovery::static_discovery::StaticPeerDiscovery;
 /// discovery backends (e.g., Kubernetes API, file-based, etc.).
 pub enum PeerDiscoveryImpl {
     /// mDNS-based discovery (advertise + browse).
-    Mdns(MdnsPeerDiscovery),
+    Mdns(Box<MdnsPeerDiscovery>),
     /// Static list of pre-configured peers.
     Static(StaticPeerDiscovery),
     /// No-op — no discovery.
@@ -72,6 +72,21 @@ impl PeerDiscoveryImpl {
             }
             PeerDiscoveryImpl::Noop => {
                 log::debug!("PeerDiscoveryImpl::rename: noop discovery, no-op");
+            }
+        }
+    }
+
+    /// Re-announce the mDNS service with the current name and an updated card.
+    ///
+    /// For non-mDNS variants this is a no-op (logged at debug level).
+    pub fn reregister(&mut self, card: &AgentCard) {
+        match self {
+            PeerDiscoveryImpl::Mdns(m) => m.reregister(card),
+            PeerDiscoveryImpl::Static(_) => {
+                log::debug!("PeerDiscoveryImpl::reregister: static discovery, no-op");
+            }
+            PeerDiscoveryImpl::Noop => {
+                log::debug!("PeerDiscoveryImpl::reregister: noop discovery, no-op");
             }
         }
     }
