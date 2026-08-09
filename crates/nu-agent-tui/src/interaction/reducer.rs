@@ -9,7 +9,7 @@ use nu_agent_core::protocol::event::{
     PermissionDecision, PermissionRequestContext, ToolDisplay, ToolDisplaySection, UiEvent,
 };
 use nu_agent_core::protocol::slash::{SlashParseResult, extract_session_id, parse_slash_command};
-use nu_agent_core::transcript::ir::ContentLine;
+use nu_agent_core::transcript::ir::{ContentLine, Role};
 use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry};
 
 pub const ESC_ABORT_CONFIRM_STATUS: &str = "Hit escape again to abort.";
@@ -533,6 +533,7 @@ fn handle_escape_confirm(
             controller.request_cancel();
         }
         state.cancel_and_restore_pending_to_input();
+        state.push_spacer();
         state.status_line = ABORT_REQUESTED_STATUS.to_string();
         return true;
     }
@@ -575,6 +576,14 @@ fn reduce_ui_event(state: &mut AppState, event: UiEvent) -> bool {
         ),
         UiEvent::Warning { message } => handle_warning(state, message),
         UiEvent::TurnError { message } => {
+            let prev_is_spacer = state
+                .transcript_preview
+                .last()
+                .is_some_and(|last| matches!(last, TranscriptEntry::Spacer(_)));
+            if !prev_is_spacer && !state.transcript_preview.is_empty() {
+                state.push_spacer();
+            }
+            state.push_spacer();
             state.push_transcript_line(TranscriptRole::System, format!("Error: {}", message));
             state.status_line = message.clone();
             finalize(state);
@@ -613,7 +622,7 @@ fn reduce_ui_event(state: &mut AppState, event: UiEvent) -> bool {
                 }));
             }
             state.compaction_streaming_start = None;
-            state.push_transcript_line(TranscriptRole::Separator, String::new());
+            state.push_spacer();
             state.status_line.clear();
             // Reset displayed token % — context was freed; wait for next LlmEnd to update.
             state.latest_total_tokens = None;
@@ -659,6 +668,48 @@ fn handle_tick(state: &mut AppState) -> bool {
 }
 
 fn handle_tool_start(state: &mut AppState, name: &str, arguments: &str) -> bool {
+    // Push closing spacer for previous block (if not already a Spacer) + starting
+    // spacer, but only when starting a new tool block (not continuing from a
+    // previous tool call in the same block). Tool calls within a block have no
+    // spacers between them.
+    let is_continuing_tool_block = state.transcript_preview.last().is_some_and(|last| {
+        matches!(
+            last,
+            TranscriptEntry::Tool(_) | TranscriptEntry::ToolResult(_)
+        )
+    });
+    if !is_continuing_tool_block {
+        let last_content = state
+            .transcript_preview
+            .iter()
+            .rev()
+            .find(|e| !matches!(e, TranscriptEntry::Spacer(_)))
+            .map(|e| e.role());
+        let prev_is_assistant = matches!(last_content, Some(Role::Assistant));
+
+        if prev_is_assistant {
+            // Only ONE spacer between assistant and tool block
+            // If finalize() already pushed a closing spacer, don't add another
+            let prev_is_spacer = state
+                .transcript_preview
+                .last()
+                .is_some_and(|last| matches!(last, TranscriptEntry::Spacer(_)));
+            if !prev_is_spacer {
+                state.push_spacer();
+            }
+        } else {
+            // Two spacers (closing + starting) for all other transitions
+            let prev_is_spacer = state
+                .transcript_preview
+                .last()
+                .is_some_and(|last| matches!(last, TranscriptEntry::Spacer(_)));
+            // Only push a closing spacer if there is a previous block to close.
+            if !state.transcript_preview.is_empty() && !prev_is_spacer {
+                state.push_spacer(); // closing spacer for previous block
+            }
+            state.push_spacer(); // starting spacer for tool block
+        }
+    }
     state.start_tool_call(name, arguments);
     state.status_line = format!("Tool: {name}");
     true
@@ -777,6 +828,7 @@ fn handle_tool_end(
         append_direct_tool_display(state, display);
     }
 
+    // NO push_spacer() here — tool calls within the same block have no spacers between them
     state.status_line = "Thinking...".to_string();
     true
 }
@@ -876,8 +928,33 @@ fn handle_assistant_message(state: &mut AppState, text: String) -> bool {
         return false;
     }
 
-    // If this is the first delta, record where the message starts in transcript
+    // If this is the first delta, push closing spacer for previous block (if not
+    // already a Spacer) + starting spacer, and record where the message starts.
     if state.streaming_message_start.is_none() {
+        // Check if previous block was a tool block (skip spacers to find last content)
+        let last_content = state
+            .transcript_preview
+            .iter()
+            .rev()
+            .find(|e| !matches!(e, TranscriptEntry::Spacer(_)))
+            .map(|e| e.role());
+        let prev_is_tool_block = matches!(last_content, Some(Role::Tool) | Some(Role::ToolDisplay));
+
+        if prev_is_tool_block {
+            // Only ONE spacer between tool block and assistant
+            state.push_spacer();
+        } else {
+            // Two spacers (closing + starting) for all other transitions
+            let prev_is_spacer = state
+                .transcript_preview
+                .last()
+                .is_some_and(|last| matches!(last, TranscriptEntry::Spacer(_)));
+            // Only push a closing spacer if there is a previous block to close.
+            if !state.transcript_preview.is_empty() && !prev_is_spacer {
+                state.push_spacer(); // closing spacer for previous block
+            }
+            state.push_spacer(); // starting spacer for assistant block
+        }
         state.streaming_message_start = Some(state.transcript_preview.len());
     }
 
@@ -1021,6 +1098,7 @@ fn latest_tool_display_diff_lines(state: &AppState) -> Option<Vec<String>> {
 
 fn finalize(state: &mut AppState) -> bool {
     state.finalize_cycle();
+    state.push_spacer();
     state.input_locked = false;
     state.status_line.clear();
     // Reset streaming state when the LLM response is complete

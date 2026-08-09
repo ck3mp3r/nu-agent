@@ -253,7 +253,7 @@ fn diff_hunk_line_has_bold_modifier() {
 #[test]
 fn separator_renders_as_blank_line() {
     let r = make_renderer();
-    let block = Separator.to_render_block();
+    let block = Spacer.to_render_block();
     let lines = r.render(&block, &default_ctx(40));
     let text = concat_spans(&lines);
     assert!(

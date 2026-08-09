@@ -66,11 +66,11 @@ fn tool_shows_tool_prefix() {
 }
 
 #[test]
-fn separator_renders_dashes() {
+fn separator_renders_empty_string() {
     let r = plain();
-    let block = Separator.to_render_block();
+    let block = Spacer.to_render_block();
     let out = r.render(&block, &ctx());
-    assert_eq!(out, "---");
+    assert_eq!(out, "");
 }
 
 #[test]

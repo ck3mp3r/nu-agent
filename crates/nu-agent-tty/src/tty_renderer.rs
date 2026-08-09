@@ -11,7 +11,7 @@ impl BlockRenderer for TtyRenderer {
     fn render(&self, block: &RenderBlock, ctx: &RenderContext) -> String {
         // Handle separator special case first
         if block.role == Role::Separator {
-            return "---".to_string();
+            return String::new();
         }
 
         // 1. Role prefix

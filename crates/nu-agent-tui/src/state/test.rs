@@ -5,9 +5,7 @@ use crate::state::{
 };
 use nu_agent_core::protocol::event::PermissionDecision;
 use nu_agent_core::transcript::ir::Role;
-use nu_agent_core::transcript::items::{
-    ProseMessage, SystemMessage, ToolInvocation, ToolResult, TranscriptEntry,
-};
+use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry};
 
 /// The active prompt is the one currently in `InProgress` status.
 fn active_prompt_id(state: &AppState) -> Option<u64> {
@@ -176,15 +174,13 @@ fn input_cursor_and_edit_operations_handle_middle_insert_delete_and_backspace() 
 fn no_turn_separator_between_user_and_assistant() {
     let mut state = AppState::new();
 
+    // push_transcript_line pushes no reactive spacers — just the entries
     state.push_transcript_line(TranscriptRole::User, "prompt one");
     state.push_transcript_line(TranscriptRole::Assistant, "response one");
 
-    // No ruler separator; two spacers (blank lines) separate the turns
-    assert_eq!(state.transcript_preview.len(), 4);
+    assert_eq!(state.transcript_preview.len(), 2);
     assert_eq!(state.transcript_preview[0].role(), Role::User);
-    assert_eq!(state.transcript_preview[1].role(), Role::Separator); // spacer 1
-    assert_eq!(state.transcript_preview[2].role(), Role::Separator); // spacer 2
-    assert_eq!(state.transcript_preview[3].role(), Role::Assistant);
+    assert_eq!(state.transcript_preview[1].role(), Role::Assistant);
 }
 
 #[test]
@@ -940,8 +936,17 @@ fn enqueue_external_prompt_adds_user_transcript_line() {
 
     state.enqueue_external_prompt("hello from parent".to_string());
 
+    // starting spacer + user + closing spacer
     assert!(!state.transcript_preview.is_empty());
-    assert_eq!(state.transcript_preview.last().unwrap().role(), Role::User);
+    assert!(matches!(
+        state.transcript_preview[0],
+        TranscriptEntry::Spacer(_)
+    ));
+    assert_eq!(state.transcript_preview[1].role(), Role::User);
+    assert!(matches!(
+        state.transcript_preview.last().unwrap(),
+        TranscriptEntry::Spacer(_)
+    ));
 }
 
 #[test]
@@ -998,212 +1003,6 @@ fn clear_assistant_projection_cache_removes_all_entries() {
     let second = state.project_assistant_markdown_lines(markdown);
 
     assert_eq!(first, second, "clearing cache must not change output");
-}
-
-// ---- spacer insertion tests (push-time) ----
-
-#[test]
-fn spacer_not_inserted_for_empty_transcript() {
-    let state = AppState::new();
-    assert!(state.transcript_preview.is_empty());
-}
-
-#[test]
-fn spacer_not_inserted_for_single_entry() {
-    let mut state = AppState::new();
-    state.push_transcript_item(TranscriptEntry::User(ProseMessage {
-        markdown: "hi".to_string(),
-    }));
-    assert_eq!(state.transcript_preview.len(), 1);
-    assert!(matches!(
-        state.transcript_preview[0],
-        TranscriptEntry::User(_)
-    ));
-}
-
-#[test]
-fn spacer_not_inserted_for_same_role() {
-    let mut state = AppState::new();
-    state.push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
-        markdown: "first".to_string(),
-    }));
-    state.push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
-        markdown: "second".to_string(),
-    }));
-    assert_eq!(state.transcript_preview.len(), 2);
-    assert!(matches!(
-        state.transcript_preview[0],
-        TranscriptEntry::Assistant(_)
-    ));
-    assert!(matches!(
-        state.transcript_preview[1],
-        TranscriptEntry::Assistant(_)
-    ));
-}
-
-#[test]
-fn spacer_inserted_for_user_then_assistant() {
-    let mut state = AppState::new();
-    state.push_transcript_item(TranscriptEntry::User(ProseMessage {
-        markdown: "hi".to_string(),
-    }));
-    state.push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
-        markdown: "hello".to_string(),
-    }));
-    // User -> Assistant: two spacers replace the removed turn separator
-    assert_eq!(state.transcript_preview.len(), 4);
-    assert!(matches!(
-        state.transcript_preview[0],
-        TranscriptEntry::User(_)
-    ));
-    assert!(matches!(
-        state.transcript_preview[1],
-        TranscriptEntry::Spacer(_)
-    ));
-    assert!(matches!(
-        state.transcript_preview[2],
-        TranscriptEntry::Spacer(_)
-    ));
-    assert!(matches!(
-        state.transcript_preview[3],
-        TranscriptEntry::Assistant(_)
-    ));
-}
-
-#[test]
-fn spacer_not_inserted_for_tool_then_tool_display() {
-    let mut state = AppState::new();
-    state.push_transcript_item(TranscriptEntry::Tool(ToolInvocation {
-        name: "read".to_string(),
-        source: "test".to_string(),
-        args: "{}".to_string(),
-    }));
-    state.push_transcript_item(TranscriptEntry::ToolResult(ToolResult {
-        name: "read".to_string(),
-        success: true,
-        lines: vec![],
-    }));
-    // Tool -> ToolResult: no turn separator (ToolDisplay not a turn role), no spacer (excluded pair)
-    assert_eq!(state.transcript_preview.len(), 2);
-    assert!(matches!(
-        state.transcript_preview[0],
-        TranscriptEntry::Tool(_)
-    ));
-    assert!(matches!(
-        state.transcript_preview[1],
-        TranscriptEntry::ToolResult(_)
-    ));
-}
-
-#[test]
-fn spacer_inserted_for_assistant_then_system() {
-    let mut state = AppState::new();
-    state.push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
-        markdown: "done".to_string(),
-    }));
-    state.push_transcript_item(TranscriptEntry::System(SystemMessage {
-        text: "system".to_string(),
-    }));
-    // Assistant -> System: no turn separator (System not a turn role), spacer inserted
-    assert_eq!(state.transcript_preview.len(), 3);
-    assert!(matches!(
-        state.transcript_preview[0],
-        TranscriptEntry::Assistant(_)
-    ));
-    assert!(matches!(
-        state.transcript_preview[1],
-        TranscriptEntry::Spacer(_)
-    ));
-    assert!(matches!(
-        state.transcript_preview[2],
-        TranscriptEntry::System(_)
-    ));
-}
-
-#[test]
-fn spacer_inserted_for_user_then_tool() {
-    let mut state = AppState::new();
-    state.push_transcript_item(TranscriptEntry::User(ProseMessage {
-        markdown: "hi".to_string(),
-    }));
-    state.push_transcript_item(TranscriptEntry::Tool(ToolInvocation {
-        name: "read".to_string(),
-        source: "test".to_string(),
-        args: "{}".to_string(),
-    }));
-    // User -> Tool: no turn separator (removed), two spacers inserted for different roles
-    assert_eq!(state.transcript_preview.len(), 4);
-    assert!(matches!(
-        state.transcript_preview[0],
-        TranscriptEntry::User(_)
-    ));
-    assert!(matches!(
-        state.transcript_preview[1],
-        TranscriptEntry::Spacer(_)
-    ));
-    assert!(matches!(
-        state.transcript_preview[2],
-        TranscriptEntry::Spacer(_)
-    ));
-    assert!(matches!(
-        state.transcript_preview[3],
-        TranscriptEntry::Tool(_)
-    ));
-}
-
-// ---- needs_spacer unit tests ----
-
-const NEEDS_SPACER_CASES: &[(Option<Role>, Role, bool)] = &[
-    (None, Role::User, false),
-    (Some(Role::User), Role::User, false),
-    (Some(Role::Separator), Role::User, false),
-    (Some(Role::User), Role::Separator, false),
-    (Some(Role::User), Role::Assistant, true),
-    (Some(Role::Assistant), Role::User, true),
-    (Some(Role::Tool), Role::ToolDisplay, false),
-    (Some(Role::ToolDisplay), Role::Tool, false),
-    (Some(Role::User), Role::Tool, true),
-    (Some(Role::Assistant), Role::System, true),
-];
-
-#[test]
-fn needs_spacer() {
-    for (prev, current, expected) in NEEDS_SPACER_CASES {
-        assert_eq!(
-            super::transcript::needs_spacer(prev.as_ref(), current),
-            *expected,
-            "needs_spacer(prev={prev:?}, current={current:?})"
-        );
-    }
-}
-
-const NEEDS_DOUBLE_SPACER_CASES: &[(Option<Role>, Role, bool)] = &[
-    (None, Role::User, false),
-    (Some(Role::User), Role::User, false),
-    (Some(Role::Separator), Role::User, false),
-    (Some(Role::User), Role::Separator, false),
-    (Some(Role::User), Role::Assistant, true),
-    (Some(Role::Assistant), Role::User, true),
-    (Some(Role::User), Role::Tool, true),
-    (Some(Role::Tool), Role::User, true),
-    (Some(Role::User), Role::System, true),
-    (Some(Role::System), Role::User, true),
-    (Some(Role::Tool), Role::ToolDisplay, false),
-    (Some(Role::ToolDisplay), Role::Tool, false),
-    (Some(Role::Assistant), Role::System, false),
-    (Some(Role::Assistant), Role::Tool, false),
-    (Some(Role::Tool), Role::Assistant, false),
-];
-
-#[test]
-fn needs_double_spacer() {
-    for (prev, current, expected) in NEEDS_DOUBLE_SPACER_CASES {
-        assert_eq!(
-            super::transcript::needs_double_spacer(prev.as_ref(), current),
-            *expected,
-            "needs_double_spacer(prev={prev:?}, current={current:?})"
-        );
-    }
 }
 
 // ---- agent picker state tests ----
@@ -1622,10 +1421,19 @@ fn activate_next_prompt_adds_user_entry_to_transcript() {
     state.complete_active_prompt();
     let before = state.transcript_preview.len();
     state.activate_next_prompt();
-    assert_eq!(state.transcript_preview.len(), before + 1);
+    // starting spacer + user + closing spacer
+    assert_eq!(state.transcript_preview.len(), before + 3);
+    assert!(matches!(
+        state.transcript_preview.get(before),
+        Some(TranscriptEntry::Spacer(_))
+    ));
+    assert!(matches!(
+        state.transcript_preview.get(before + 1),
+        Some(TranscriptEntry::User(_))
+    ));
     assert!(matches!(
         state.transcript_preview.last().unwrap(),
-        TranscriptEntry::User(_)
+        TranscriptEntry::Spacer(_)
     ));
 }
 
@@ -1837,4 +1645,148 @@ fn clear_insert_exit_pending_j_resets_to_false() {
     assert!(!state.insert_exit_pending_j());
     state.clear_insert_exit_pending_j();
     assert!(!state.insert_exit_pending_j());
+}
+
+#[test]
+fn push_spacer_adds_spacer_when_last_is_not_spacer() {
+    let mut state = AppState::new();
+    state.push_transcript_item(TranscriptEntry::User(ProseMessage {
+        markdown: "hi".into(),
+    }));
+    state.push_spacer();
+    assert_eq!(state.transcript_preview.len(), 2);
+    assert!(matches!(
+        state.transcript_preview[1],
+        TranscriptEntry::Spacer(_)
+    ));
+}
+
+#[test]
+fn push_spacer_adds_when_last_is_already_spacer() {
+    let mut state = AppState::new();
+    state.push_transcript_item(TranscriptEntry::User(ProseMessage {
+        markdown: "hi".into(),
+    }));
+    state.push_spacer();
+    state.push_spacer();
+    // Unconditional — both spacers pushed
+    assert_eq!(state.transcript_preview.len(), 3);
+}
+
+#[test]
+fn push_spacer_adds_when_transcript_is_empty() {
+    let mut state = AppState::new();
+    state.push_spacer();
+    assert!(matches!(
+        state.transcript_preview[0],
+        TranscriptEntry::Spacer(_)
+    ));
+}
+
+#[test]
+fn take_next_prompt_pushes_closing_spacer() {
+    let mut state = AppState::new();
+    state.enqueue_prompt("hello".to_string());
+    let _ = state.take_next_prompt_for_execution();
+    let last = state.transcript_preview.last().unwrap();
+    assert!(matches!(last, TranscriptEntry::Spacer(_)));
+}
+
+#[test]
+fn activate_next_prompt_pushes_closing_spacer() {
+    let mut state = AppState::new();
+    state.enqueue_external_prompt("first".to_string());
+    state.complete_active_prompt();
+    state.enqueue_prompt("second".to_string());
+    state.activate_next_prompt();
+    let last = state.transcript_preview.last().unwrap();
+    assert!(matches!(last, TranscriptEntry::Spacer(_)));
+}
+
+#[test]
+fn enqueue_external_prompt_pushes_closing_spacer() {
+    let mut state = AppState::new();
+    state.enqueue_external_prompt("external".to_string());
+    let last = state.transcript_preview.last().unwrap();
+    assert!(matches!(last, TranscriptEntry::Spacer(_)));
+}
+
+#[test]
+fn take_next_prompt_pushes_starting_and_closing_spacer() {
+    let mut state = AppState::new();
+    state.enqueue_prompt("hello".to_string());
+    let _ = state.take_next_prompt_for_execution();
+    // transcript: [Spacer, User, Spacer]
+    assert_eq!(state.transcript_preview.len(), 3);
+    assert!(matches!(
+        state.transcript_preview[0],
+        TranscriptEntry::Spacer(_)
+    ));
+    assert!(matches!(
+        state.transcript_preview[1],
+        TranscriptEntry::User(_)
+    ));
+    assert!(matches!(
+        state.transcript_preview[2],
+        TranscriptEntry::Spacer(_)
+    ));
+}
+
+#[test]
+fn enqueue_external_prompt_pushes_starting_and_closing_spacer() {
+    let mut state = AppState::new();
+    state.enqueue_external_prompt("external".to_string());
+    assert!(matches!(
+        state.transcript_preview[0],
+        TranscriptEntry::Spacer(_)
+    ));
+    assert!(matches!(
+        state.transcript_preview[1],
+        TranscriptEntry::User(_)
+    ));
+    assert!(matches!(
+        state.transcript_preview.last().unwrap(),
+        TranscriptEntry::Spacer(_)
+    ));
+}
+
+#[test]
+fn push_spacer_pushes_unconditionally() {
+    let mut state = AppState::new();
+    state.push_transcript_item(TranscriptEntry::User(ProseMessage {
+        markdown: "hi".into(),
+    }));
+    state.push_spacer();
+    state.push_spacer();
+    // No guard — both spacers pushed
+    assert_eq!(state.transcript_preview.len(), 3);
+    assert!(matches!(
+        state.transcript_preview[1],
+        TranscriptEntry::Spacer(_)
+    ));
+    assert!(matches!(
+        state.transcript_preview[2],
+        TranscriptEntry::Spacer(_)
+    ));
+}
+
+#[test]
+fn push_transcript_item_does_not_push_reactive_spacers() {
+    let mut state = AppState::new();
+    state.push_transcript_item(TranscriptEntry::User(ProseMessage {
+        markdown: "hi".into(),
+    }));
+    state.push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
+        markdown: "hello".into(),
+    }));
+    // No reactive spacers — just [User, Assistant]
+    assert_eq!(state.transcript_preview.len(), 2);
+    assert!(matches!(
+        state.transcript_preview[0],
+        TranscriptEntry::User(_)
+    ));
+    assert!(matches!(
+        state.transcript_preview[1],
+        TranscriptEntry::Assistant(_)
+    ));
 }

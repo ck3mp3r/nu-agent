@@ -126,9 +126,10 @@ fn typing_remains_available_while_prompt_is_active() {
     );
 
     assert!(!changed);
-    assert_eq!(state.transcript_preview.len(), 1);
-    assert_eq!(state.transcript_preview[0].role(), Role::User);
-    assert_eq!(state.transcript_preview[0].text(), "f");
+    // starting spacer + user + closing spacer
+    assert_eq!(state.transcript_preview.len(), 3);
+    assert_eq!(state.transcript_preview[1].role(), Role::User);
+    assert_eq!(state.transcript_preview[1].text(), "f");
 }
 
 #[test]
@@ -143,9 +144,10 @@ fn submit_path_appends_prompt_and_keeps_input_editable() {
     assert_eq!(state.phase, UiPhase::Busy);
     assert!(!state.input_locked);
     let _ = state.take_next_prompt_for_execution();
-    assert_eq!(state.transcript_preview.len(), 1);
-    assert_eq!(state.transcript_preview[0].role(), Role::User);
-    assert_eq!(state.transcript_preview[0].text(), "s");
+    // starting spacer + user + closing spacer
+    assert_eq!(state.transcript_preview.len(), 3);
+    assert_eq!(state.transcript_preview[1].role(), Role::User);
+    assert_eq!(state.transcript_preview[1].text(), "s");
 }
 
 #[test]
@@ -503,8 +505,9 @@ fn insert_mode_alt_and_shift_enter_insert_newline_while_enter_submits() {
     assert!(changed);
     assert_eq!(state.phase, UiPhase::Busy);
     let _ = state.take_next_prompt_for_execution();
-    assert_eq!(state.transcript_preview.len(), 1);
-    assert_eq!(state.transcript_preview[0].text().trim(), "h");
+    // starting spacer + user + closing spacer
+    assert_eq!(state.transcript_preview.len(), 3);
+    assert_eq!(state.transcript_preview[1].text().trim(), "h");
 }
 
 #[test]

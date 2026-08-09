@@ -12,7 +12,7 @@ use nu_agent_core::protocol::event::{
     PermissionRequestContext, ToolDisplay, ToolDisplaySection, UiEvent,
 };
 use nu_agent_core::transcript::ir::Role;
-use nu_agent_core::transcript::items::TranscriptEntry;
+use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry};
 
 // Helper to extract all text content from transcript entries
 fn extract_all_text_from_entry(entry: &TranscriptEntry) -> Vec<String> {
@@ -79,9 +79,10 @@ fn submit_transition_is_deterministic_and_keeps_input_editable() {
     assert_eq!(state.phase, UiPhase::Busy);
     assert!(!state.input_locked);
     let _ = state.take_next_prompt_for_execution();
-    assert_eq!(state.transcript_preview.len(), 1);
-    assert_eq!(state.transcript_preview[0].role(), Role::User);
-    assert_eq!(state.transcript_preview[0].text(), "status pods");
+    // starting spacer + user + closing spacer
+    assert_eq!(state.transcript_preview.len(), 3);
+    assert_eq!(state.transcript_preview[1].role(), Role::User);
+    assert_eq!(state.transcript_preview[1].text(), "status pods");
 }
 
 #[test]
@@ -155,7 +156,8 @@ fn esc_then_esc_confirm_moves_into_abort_requested_without_unlocking() {
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.abort.pending);
     assert_eq!(state.status_line, "Abort requested.");
-    assert_eq!(state.transcript_preview.len(), before_markers);
+    // cancel pushes a closing spacer
+    assert_eq!(state.transcript_preview.len(), before_markers + 1);
 }
 
 #[test]
@@ -190,9 +192,10 @@ fn locked_input_prevents_typing_and_submission() {
     // Activate both prompts coalesced
     let result = state.take_next_prompt_for_execution();
     assert_eq!(result, Some("first\n\nsecond".to_string()));
-    assert_eq!(state.transcript_preview.len(), 1);
-    assert_eq!(state.transcript_preview[0].role(), Role::User);
-    assert_eq!(state.transcript_preview[0].text(), "first\n\nsecond");
+    // starting spacer + user + closing spacer
+    assert_eq!(state.transcript_preview.len(), 3);
+    assert_eq!(state.transcript_preview[1].role(), Role::User);
+    assert_eq!(state.transcript_preview[1].text(), "first\n\nsecond");
     // Complete first (active) prompt — other prompt is already Done
     state.complete_active_prompt();
     let result = state.take_next_prompt_for_execution();
@@ -314,18 +317,20 @@ fn assistant_message_is_appended_to_transcript_before_completed_unlock() {
     );
 
     assert!(!state.input_locked);
+    // Transcript: [Spacer, User, Spacer, Spacer, Assistant]
     assert_eq!(
         state
             .transcript_preview
             .iter()
             .map(|entry| entry.text())
             .collect::<Vec<_>>(),
-        vec!["ping", "", "", "pong"]
+        vec!["", "ping", "", "", "pong"]
     );
-    assert_eq!(state.transcript_preview[0].role(), Role::User);
-    assert_eq!(state.transcript_preview[1].role(), Role::Separator); // spacer 1 between turns
-    assert_eq!(state.transcript_preview[2].role(), Role::Separator); // spacer 2 between turns
-    assert_eq!(state.transcript_preview[3].role(), Role::Assistant);
+    assert_eq!(state.transcript_preview[0].role(), Role::Separator); // starting spacer before prompt
+    assert_eq!(state.transcript_preview[1].role(), Role::User);
+    assert_eq!(state.transcript_preview[2].role(), Role::Separator); // closing spacer after prompt
+    assert_eq!(state.transcript_preview[3].role(), Role::Separator); // starting spacer before assistant
+    assert_eq!(state.transcript_preview[4].role(), Role::Assistant);
 
     reduce_with_cancel_controller(
         &mut state,
@@ -364,8 +369,13 @@ fn tool_end_transcript_line_shows_args_summary_without_result_payload_dump() {
         None,
     );
 
-    assert_eq!(state.transcript_preview.len(), 1);
-    let entry = &state.transcript_preview[0];
+    // [Spacer, Tool] — ToolStart pushed a starting spacer, ToolEnd pushed no display
+    assert_eq!(state.transcript_preview.len(), 2);
+    assert!(matches!(
+        state.transcript_preview[0],
+        TranscriptEntry::Spacer(_)
+    ));
+    let entry = &state.transcript_preview[1];
     assert_eq!(entry.role(), Role::Tool);
     assert_eq!(entry.text(), "k8s__list_pods");
     // Check the args field for status and content
@@ -392,8 +402,13 @@ fn tool_row_materializes_immediately_on_tool_start_with_args_and_running_status(
         None,
     );
 
-    assert_eq!(state.transcript_preview.len(), 1);
-    let entry = &state.transcript_preview[0];
+    // handle_tool_start pushes a starting spacer before the tool
+    assert_eq!(state.transcript_preview.len(), 2);
+    assert!(matches!(
+        state.transcript_preview[0],
+        TranscriptEntry::Spacer(_)
+    ));
+    let entry = &state.transcript_preview[1];
     assert_eq!(entry.role(), Role::Tool);
     assert_eq!(entry.text(), "k8s__list_pods");
     if let TranscriptEntry::Tool(invocation) = entry {
@@ -402,7 +417,7 @@ fn tool_row_materializes_immediately_on_tool_start_with_args_and_running_status(
         panic!("Expected Tool variant");
     }
     assert_eq!(
-        state.transcript_line_status_for_index(0),
+        state.transcript_line_status_for_index(1),
         Some(TranscriptLineStatus::Tool(ToolCallStatus::InProgress))
     );
 }
@@ -435,10 +450,15 @@ fn tool_end_transitions_same_row_to_done_or_failed_status() {
         None,
     );
 
-    assert_eq!(state.transcript_preview.len(), 1);
-    assert_eq!(state.transcript_preview[0].text(), "gh__get_pr");
+    // [Spacer, Tool] — starting spacer then the tool
+    assert_eq!(state.transcript_preview.len(), 2);
+    assert!(matches!(
+        state.transcript_preview[0],
+        TranscriptEntry::Spacer(_)
+    ));
+    assert_eq!(state.transcript_preview[1].text(), "gh__get_pr");
     assert_eq!(
-        state.transcript_line_status_for_index(0),
+        state.transcript_line_status_for_index(1),
         Some(TranscriptLineStatus::Tool(ToolCallStatus::Done))
     );
 
@@ -466,9 +486,13 @@ fn tool_end_transitions_same_row_to_done_or_failed_status() {
         }),
         None,
     );
-    assert_eq!(failed.transcript_preview.len(), 1);
+    assert_eq!(failed.transcript_preview.len(), 2);
+    assert!(matches!(
+        failed.transcript_preview[0],
+        TranscriptEntry::Spacer(_)
+    ));
     assert_eq!(
-        failed.transcript_line_status_for_index(0),
+        failed.transcript_line_status_for_index(1),
         Some(TranscriptLineStatus::Tool(ToolCallStatus::Failed))
     );
 }
@@ -650,9 +674,14 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
                 assert_eq!(state.status_line, "Tool: k8s__list_pods");
             }
             "tool_end_updates_existing_tool_line_and_thinking" => {
-                assert_eq!(state.transcript_preview.len(), 1);
-                assert_eq!(state.transcript_preview[0].role(), Role::Tool);
-                assert_eq!(state.transcript_preview[0].text(), "k8s__list_pods");
+                // [Spacer, Tool] — starting spacer then the tool, no closing spacer
+                assert_eq!(state.transcript_preview.len(), 2);
+                assert!(matches!(
+                    state.transcript_preview[0],
+                    TranscriptEntry::Spacer(_)
+                ));
+                assert_eq!(state.transcript_preview[1].role(), Role::Tool);
+                assert_eq!(state.transcript_preview[1].text(), "k8s__list_pods");
                 assert_eq!(state.status_line, "Thinking...");
             }
             "llm_end_records_tokens_and_sets_ready_status" => {
@@ -1352,9 +1381,14 @@ fn tool_start_truncates_long_args_summary_with_ellipsis() {
         None,
     );
 
-    assert_eq!(state.transcript_preview.len(), 1);
-    assert_eq!(state.transcript_preview[0].text(), "k8s__describe");
-    if let TranscriptEntry::Tool(invocation) = &state.transcript_preview[0] {
+    // [Spacer, Tool] — starting spacer then the tool
+    assert_eq!(state.transcript_preview.len(), 2);
+    assert!(matches!(
+        state.transcript_preview[0],
+        TranscriptEntry::Spacer(_)
+    ));
+    assert_eq!(state.transcript_preview[1].text(), "k8s__describe");
+    if let TranscriptEntry::Tool(invocation) = &state.transcript_preview[1] {
         assert!(invocation.args.starts_with("→ "));
         assert!(invocation.args.ends_with('…'));
         assert!(invocation.args.chars().count() < 180);
@@ -3115,4 +3149,146 @@ mod visual_selection_tests {
         assert_eq!(state.cursor_visual_row, 8);
         assert_eq!(sel.cursor(), 8);
     }
+}
+
+#[test]
+fn finalize_pushes_closing_spacer() {
+    let mut state = AppState::new();
+    state.pending_submit_text = Some("prompt".to_string());
+    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
+    let _ = state.activate_next_prompt();
+    state.push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
+        markdown: "response".to_string(),
+    }));
+
+    // Dispatch Completed event which calls finalize
+    reduce_with_cancel_controller(
+        &mut state,
+        event_input(UiEvent::Completed { tool_calls: 0 }),
+        None,
+    );
+
+    let last = state.transcript_preview.last().unwrap();
+    assert!(matches!(last, TranscriptEntry::Spacer(_)));
+}
+
+#[test]
+fn handle_tool_start_pushes_starting_spacer() {
+    let mut state = AppState::new();
+    reduce_with_cancel_controller(
+        &mut state,
+        event_input(UiEvent::ToolStart {
+            name: "read".to_string(),
+            source: "builtin".to_string(),
+            arguments: "{}".to_string(),
+        }),
+        None,
+    );
+    assert!(matches!(
+        state.transcript_preview[0],
+        TranscriptEntry::Spacer(_)
+    ));
+    assert!(matches!(
+        state.transcript_preview[1],
+        TranscriptEntry::Tool(_)
+    ));
+}
+
+#[test]
+fn handle_assistant_message_pushes_starting_spacer() {
+    let mut state = AppState::new();
+    reduce_with_cancel_controller(
+        &mut state,
+        event_input(UiEvent::AssistantMessage {
+            text: "hello".to_string(),
+        }),
+        None,
+    );
+    assert!(matches!(
+        state.transcript_preview[0],
+        TranscriptEntry::Spacer(_)
+    ));
+    assert!(matches!(
+        state.transcript_preview[1],
+        TranscriptEntry::Assistant(_)
+    ));
+}
+
+#[test]
+fn handle_tool_end_does_not_push_spacer_between_tool_calls() {
+    let mut state = AppState::new();
+    // Two tool calls within the same block
+    for name in ["read", "write"] {
+        reduce_with_cancel_controller(
+            &mut state,
+            event_input(UiEvent::ToolStart {
+                name: name.to_string(),
+                source: "builtin".to_string(),
+                arguments: "{}".to_string(),
+            }),
+            None,
+        );
+        reduce_with_cancel_controller(
+            &mut state,
+            event_input(UiEvent::ToolEnd {
+                name: name.to_string(),
+                source: "builtin".to_string(),
+                arguments: "{}".to_string(),
+                success: true,
+                result: "ok".to_string(),
+                display: None,
+                error_kind: None,
+                message: None,
+            }),
+            None,
+        );
+    }
+
+    // transcript: [Spacer, Tool, Tool] — no spacer between the two tool calls
+    assert_eq!(state.transcript_preview.len(), 3);
+    assert!(matches!(
+        state.transcript_preview[0],
+        TranscriptEntry::Spacer(_)
+    ));
+    assert!(matches!(
+        state.transcript_preview[1],
+        TranscriptEntry::Tool(_)
+    ));
+    assert!(matches!(
+        state.transcript_preview[2],
+        TranscriptEntry::Tool(_)
+    ));
+}
+
+#[test]
+fn cancel_pushes_closing_spacer() {
+    use crate::interaction::cancel::CancelController;
+
+    let cancel_controller = CancelController::new();
+    let mut state = AppState::new();
+    state.pending_submit_text = Some("hello".to_string());
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::User(UserAction::Submit),
+        Some(&cancel_controller),
+    );
+    let _ = state.take_next_prompt_for_execution();
+    state.push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
+        markdown: "partial".to_string(),
+    }));
+
+    // First Esc enters AbortPending, second confirms the cancel
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::User(UserAction::Esc),
+        Some(&cancel_controller),
+    );
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::User(UserAction::EscConfirm),
+        Some(&cancel_controller),
+    );
+
+    let last = state.transcript_preview.last().unwrap();
+    assert!(matches!(last, TranscriptEntry::Spacer(_)));
 }

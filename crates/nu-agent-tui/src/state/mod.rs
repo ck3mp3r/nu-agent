@@ -21,10 +21,10 @@ mod transcript_test;
 use crate::rendering::theme::TuiTheme;
 use nu_agent_core::protocol::event::{PermissionDecision, PermissionDecisionSubmission};
 use nu_agent_core::protocol::slash::{SlashCommand, filter_inline_slash_suggestions};
-use nu_agent_core::transcript::ir::{ContentLine, DisplayLine, Role};
+use nu_agent_core::transcript::ir::{ContentLine, DisplayLine};
 use nu_agent_core::transcript::items::{
-    ProseMessage, Separator as TranscriptSeparator, Spacer as SpacerItem, SystemMessage,
-    ToolInvocation, ToolResult as TranscriptToolResult, TranscriptEntry, annotate_diff_hint,
+    ProseMessage, Spacer as SpacerItem, SystemMessage, ToolInvocation,
+    ToolResult as TranscriptToolResult, TranscriptEntry, annotate_diff_hint,
 };
 use selection::TranscriptSelection;
 use std::collections::HashMap;
@@ -73,7 +73,6 @@ pub enum TranscriptRole {
     Compaction,
     Tool,
     ToolDisplay,
-    Separator,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

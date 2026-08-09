@@ -110,6 +110,7 @@ use nu_agent_core::protocol::event::UiEvent;
 use nu_agent_core::protocol::skills::DiscoverableSkill as ProtocolDiscoverableSkill;
 use nu_agent_core::renderer::UiRenderer;
 use nu_agent_core::tools::mcp::runtime::McpServerLifecycle;
+use nu_agent_core::transcript::ir::Role;
 use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry};
 
 #[derive(Debug)]
@@ -188,8 +189,7 @@ impl RuntimeCoordinator {
                             markdown: message_content.to_string(),
                         }));
                 }
-                self.state
-                    .push_transcript_line(TranscriptRole::Separator, String::new());
+                self.state.push_spacer();
                 continue;
             }
 
@@ -197,10 +197,12 @@ impl RuntimeCoordinator {
                 continue;
             }
             if role == TranscriptRole::Assistant {
+                self.push_block_start_spacers(role);
                 self.state
                     .push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
                         markdown: message_content.trim().to_string(),
                     }));
+                self.state.push_spacer(); // closing spacer for assistant block
                 continue;
             }
 
@@ -211,6 +213,7 @@ impl RuntimeCoordinator {
                     let name = message
                         .tool_name()
                         .unwrap_or_else(|| extract_tool_name(persisted));
+                    self.push_tool_block_start_spacers();
                     self.state.start_tool_call(name, arguments);
                     self.state.finish_tool_call(name, arguments, success);
                     continue;
@@ -218,6 +221,7 @@ impl RuntimeCoordinator {
                 if let Some((name, arguments, success)) =
                     parse_persisted_tool_status_line(persisted)
                 {
+                    self.push_tool_block_start_spacers();
                     self.state.start_tool_call(name, arguments);
                     self.state.finish_tool_call(name, arguments, success);
                     continue;
@@ -226,16 +230,102 @@ impl RuntimeCoordinator {
                 continue;
             }
 
+            // User and System messages
+            self.push_block_start_spacers(role);
             for line in message_content.lines() {
                 if !line.trim().is_empty() {
                     self.state.push_transcript_line(role, line.to_string());
                 }
             }
+            self.state.push_spacer(); // closing spacer for user/system block
+        }
+
+        // If the transcript ends with an open tool block, close it with a
+        // trailing spacer (mirrors the live `finalize` behaviour).
+        if self.tool_block_is_open() {
+            self.state.push_spacer();
         }
 
         if let Some(tokens) = last_total_tokens {
             self.state.hydrate_latest_total_tokens(tokens);
         }
+    }
+
+    /// Push the closing spacer for the previous block (if not already a Spacer)
+    /// followed by the starting spacer for a new block. Tool blocks are treated
+    /// as closed when this runs — tool calls within a block never get spacers
+    /// between them.
+    fn push_block_start_spacers(&mut self, role: TranscriptRole) {
+        // Check if previous block was a tool block (skip spacers to find last content)
+        let last_content = self
+            .state
+            .transcript_preview
+            .iter()
+            .rev()
+            .find(|e| !matches!(e, TranscriptEntry::Spacer(_)))
+            .map(|e| e.role());
+        let prev_is_tool_block = matches!(last_content, Some(Role::Tool) | Some(Role::ToolDisplay));
+
+        if role == TranscriptRole::Assistant && prev_is_tool_block {
+            // Only ONE spacer between tool block and assistant
+            self.state.push_spacer();
+            return;
+        }
+
+        let prev_is_spacer = self
+            .state
+            .transcript_preview
+            .last()
+            .is_some_and(|last| matches!(last, TranscriptEntry::Spacer(_)));
+        // Only push a closing spacer if there is a previous block to close.
+        if !self.state.transcript_preview.is_empty() && !prev_is_spacer {
+            self.state.push_spacer(); // closing spacer for previous block
+        }
+        self.state.push_spacer(); // starting spacer for new block
+    }
+
+    /// Push the closing spacer (if not already a Spacer) + starting spacer when
+    /// starting a new tool block, and nothing when continuing an open tool block.
+    fn push_tool_block_start_spacers(&mut self) {
+        if self.tool_block_is_open() {
+            return;
+        }
+        // Check if previous block was an assistant block (skip spacers to find last content)
+        let last_content = self
+            .state
+            .transcript_preview
+            .iter()
+            .rev()
+            .find(|e| !matches!(e, TranscriptEntry::Spacer(_)))
+            .map(|e| e.role());
+        let prev_is_assistant = matches!(last_content, Some(Role::Assistant));
+
+        if prev_is_assistant {
+            // Only ONE spacer between assistant and tool block
+            // If the assistant block's closing spacer is already there, don't add another
+            let prev_is_spacer = self
+                .state
+                .transcript_preview
+                .last()
+                .is_some_and(|last| matches!(last, TranscriptEntry::Spacer(_)));
+            if !prev_is_spacer {
+                self.state.push_spacer();
+            }
+            return;
+        }
+
+        self.push_block_start_spacers(TranscriptRole::Tool);
+    }
+
+    /// Whether the last hydrated entry is a tool call, meaning a tool block is
+    /// currently open and awaiting its closing spacer.
+    fn tool_block_is_open(&self) -> bool {
+        self.state.transcript_preview.last().is_some_and(|last| {
+            matches!(
+                last,
+                TranscriptEntry::Tool(_) | TranscriptEntry::ToolResult(_)
+            )
+        })
     }
     fn new_with_watchdog(
         _columns: u16,

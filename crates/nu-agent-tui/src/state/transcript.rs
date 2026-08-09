@@ -25,7 +25,6 @@ impl AppState {
             }),
             TranscriptRole::Compaction => TranscriptEntry::System(SystemMessage { text }),
             TranscriptRole::System => TranscriptEntry::System(SystemMessage { text }),
-            TranscriptRole::Separator => TranscriptEntry::Separator(TranscriptSeparator),
         };
         self.push_transcript_item(entry);
     }
@@ -118,22 +117,17 @@ impl AppState {
     }
 
     pub fn push_transcript_item(&mut self, entry: TranscriptEntry) {
-        let entry_role = entry.role();
-        // Visual spacer between different roles
-        let prev = self.transcript_preview.last().map(|e| e.role());
-        let spacer_count = if needs_double_spacer(prev.as_ref(), &entry_role) {
-            2
-        } else if needs_spacer(prev.as_ref(), &entry_role) {
-            1
-        } else {
-            0
-        };
-        for _ in 0..spacer_count {
-            self.transcript_preview
-                .push(TranscriptEntry::Spacer(SpacerItem));
-        }
-
         self.transcript_preview.push(entry);
+        self.entry_visual_info_dirty = true;
+        self.enforce_transcript_cap();
+    }
+
+    /// Push a spacer (empty line) unconditionally.
+    /// Used to explicitly start and close transcript blocks.
+    /// Two adjacent blocks have two spacers between them (closing + starting).
+    pub fn push_spacer(&mut self) {
+        self.transcript_preview
+            .push(TranscriptEntry::Spacer(SpacerItem));
         self.entry_visual_info_dirty = true;
         self.enforce_transcript_cap();
     }
@@ -244,40 +238,4 @@ impl AppState {
             PaneFocus::Input => PaneFocus::Transcript,
         };
     }
-}
-
-pub(crate) fn needs_spacer(previous: Option<&Role>, next: &Role) -> bool {
-    let Some(previous) = previous else {
-        return false;
-    };
-    if previous == next {
-        return false;
-    }
-    if *previous == Role::Separator || *next == Role::Separator {
-        return false;
-    }
-    !matches!(
-        (previous, next),
-        (Role::Tool, Role::ToolDisplay) | (Role::ToolDisplay, Role::Tool)
-    )
-}
-
-pub(crate) fn needs_double_spacer(previous: Option<&Role>, next: &Role) -> bool {
-    let Some(prev) = previous else {
-        return false;
-    };
-    if prev == next {
-        return false;
-    }
-    if *prev == Role::Separator || *next == Role::Separator {
-        return false;
-    }
-    if matches!(
-        (prev, next),
-        (Role::Tool, Role::ToolDisplay) | (Role::ToolDisplay, Role::Tool)
-    ) {
-        return false;
-    }
-    // Double spacer only when transitioning between User and non-User
-    (*prev == Role::User) != (*next == Role::User)
 }

@@ -130,14 +130,6 @@ fn compaction_notice_has_four_spans() {
 }
 
 #[test]
-fn separator_has_empty_lines_vec_and_no_markdown() {
-    let block = Separator.to_render_block();
-    assert_eq!(block.role, Role::Separator);
-    assert!(block.lines.is_empty());
-    assert!(block.markdown.is_none());
-}
-
-#[test]
 fn transcript_entry_user_delegates_correctly() {
     let direct = TranscriptEntry::User(ProseMessage {
         markdown: "z".to_string(),
@@ -168,10 +160,6 @@ fn transcript_entry_role_returns_correct_role() {
         .role(),
         Role::Tool
     );
-    assert_eq!(
-        TranscriptEntry::Separator(Separator).role(),
-        Role::Separator
-    );
 }
 
 #[test]
@@ -182,10 +170,6 @@ fn transcript_entry_text_returns_markdown_source() {
         })
         .text(),
         "hello world"
-    );
-    assert_eq!(
-        TranscriptEntry::Separator(Separator).text(),
-        "────────────────"
     );
 }
 

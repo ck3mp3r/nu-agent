@@ -43,9 +43,6 @@ pub struct SystemMessage {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Separator;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Spacer;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,7 +53,6 @@ pub enum TranscriptEntry {
     ToolResult(ToolResult),
     Compaction(CompactionNotice),
     System(SystemMessage),
-    Separator(Separator),
     Spacer(Spacer),
 }
 
@@ -123,17 +119,6 @@ impl Renderable for SystemMessage {
         }
     }
 }
-
-impl Renderable for Separator {
-    fn to_render_block(&self) -> RenderBlock {
-        RenderBlock {
-            role: Role::Separator,
-            lines: vec![],
-            markdown: None,
-        }
-    }
-}
-
 impl Renderable for Spacer {
     fn to_render_block(&self) -> RenderBlock {
         RenderBlock {
@@ -161,7 +146,6 @@ impl Renderable for TranscriptEntry {
             Self::ToolResult(r) => r.to_render_block(),
             Self::Compaction(c) => c.to_render_block(),
             Self::System(s) => s.to_render_block(),
-            Self::Separator(s) => s.to_render_block(),
             Self::Spacer(s) => s.to_render_block(),
         }
     }
@@ -176,7 +160,6 @@ impl TranscriptEntry {
             Self::ToolResult(_) => Role::ToolDisplay,
             Self::Compaction(_) => Role::Compaction,
             Self::System(_) => Role::System,
-            Self::Separator(_) => Role::Separator,
             Self::Spacer(_) => Role::Separator,
         }
     }
@@ -188,7 +171,6 @@ impl TranscriptEntry {
             Self::ToolResult(r) => r.name.clone(),
             Self::Compaction(c) => c.summary.clone(),
             Self::System(s) => s.text.clone(),
-            Self::Separator(_) => "────────────────".to_string(),
             Self::Spacer(_) => String::new(),
         }
     }

@@ -67,7 +67,14 @@ impl AppState {
             return;
         }
         if !self.transcript_preview.is_empty() {
-            self.push_transcript_line(TranscriptRole::Separator, String::new());
+            let prev_is_spacer = self
+                .transcript_preview
+                .last()
+                .is_some_and(|last| matches!(last, TranscriptEntry::Spacer(_)));
+            if !prev_is_spacer {
+                self.push_spacer(); // closing spacer for previous block
+            }
+            self.push_spacer(); // starting spacer for compaction block
         }
         self.push_transcript_line(TranscriptRole::System, "Compaction".to_string());
         let transcript_line_index = self.transcript_preview.len().saturating_sub(1);
@@ -133,8 +140,10 @@ impl AppState {
     }
 
     pub fn enqueue_external_prompt(&mut self, text: String) {
+        self.push_user_block_start_spacers();
         self.push_transcript_line(TranscriptRole::User, text.clone());
-        let transcript_line_index = self.transcript_preview.len().saturating_sub(1);
+        self.push_spacer(); // closing spacer for user block
+        let transcript_line_index = self.transcript_preview.len().saturating_sub(2);
         let id = self.next_prompt_id;
         self.next_prompt_id = self.next_prompt_id.saturating_add(1);
         self.prompt_items.push(QueuedPrompt {
@@ -146,6 +155,21 @@ impl AppState {
         self.active_prompt_id = Some(id);
         self.phase = UiPhase::Busy;
         self.active_cycle = true;
+    }
+
+    /// Push the closing spacer for the previous block (if not already a Spacer)
+    /// followed by the starting spacer for a new user block. Two adjacent blocks
+    /// get two spacers between them (closing + starting).
+    fn push_user_block_start_spacers(&mut self) {
+        let prev_is_spacer = self
+            .transcript_preview
+            .last()
+            .is_some_and(|last| matches!(last, TranscriptEntry::Spacer(_)));
+        // Only push a closing spacer if there is a previous block to close.
+        if !self.transcript_preview.is_empty() && !prev_is_spacer {
+            self.push_spacer(); // closing spacer for previous block
+        }
+        self.push_spacer(); // starting spacer for user block
     }
 
     pub fn enqueue_prompt(&mut self, submitted_text: String) -> u64 {
@@ -187,8 +211,10 @@ impl AppState {
             .find(|p| p.id == active_id)
             .map(|p| p.prompt_text.clone())
             .unwrap_or_default();
+        self.push_user_block_start_spacers();
         self.push_transcript_line(TranscriptRole::User, prompt_text);
-        let real_index = self.transcript_preview.len().saturating_sub(1);
+        self.push_spacer(); // closing spacer for user block
+        let real_index = self.transcript_preview.len().saturating_sub(2);
         if let Some(prompt) = self.prompt_items.iter_mut().find(|p| p.id == active_id) {
             prompt.transcript_line_index = real_index;
         }
@@ -220,8 +246,10 @@ impl AppState {
         }
 
         let combined = texts.join("\n\n");
+        self.push_user_block_start_spacers();
         self.push_transcript_line(TranscriptRole::User, combined.clone());
-        let real_index = self.transcript_preview.len().saturating_sub(1);
+        self.push_spacer(); // closing spacer for user block
+        let real_index = self.transcript_preview.len().saturating_sub(2);
         if let Some(active_id) = self.active_prompt_id
             && let Some(prompt) = self.prompt_items.iter_mut().find(|p| p.id == active_id)
         {

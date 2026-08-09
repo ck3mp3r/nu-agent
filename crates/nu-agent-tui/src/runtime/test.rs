@@ -24,7 +24,7 @@ use crate::{
         inline_slash_lines_for_test, input_line_for_test, input_line_for_test_at_millis,
         input_pane_content_width_for_test, input_rows_with_prompt_for_test,
         mcp_table_model_for_test, parse_persisted_tool_status_line, run_with_terminal_restore_sync,
-        status_panel_lines, transition_spacer_for_roles_for_test,
+        status_panel_lines,
     },
     state::{
         AppState, InputMode, McpServerUsabilityState, PromptStatus, ToolCallStatus,
@@ -135,9 +135,10 @@ fn coordinator_submit_handoff_keeps_input_editable_and_preserves_transcript_prev
     assert!(!coordinator.state().input_locked);
     assert_eq!(coordinator.take_submitted_prompt(), Some("x".to_string()));
     assert_eq!(coordinator.take_submitted_prompt(), None);
-    assert_eq!(coordinator.state().transcript_preview.len(), 1);
-    assert_eq!(coordinator.state().transcript_preview[0].role(), Role::User);
-    assert_eq!(coordinator.state().transcript_preview[0].text(), "x");
+    // starting spacer + user + closing spacer
+    assert_eq!(coordinator.state().transcript_preview.len(), 3);
+    assert_eq!(coordinator.state().transcript_preview[1].role(), Role::User);
+    assert_eq!(coordinator.state().transcript_preview[1].text(), "x");
 }
 
 #[test]
@@ -538,15 +539,16 @@ fn user_then_assistant_flows_without_turn_separator() {
                     nu_agent_core::transcript::ir::Role::ToolDisplay => TranscriptRole::ToolDisplay,
                     nu_agent_core::transcript::ir::Role::System => TranscriptRole::System,
                     nu_agent_core::transcript::ir::Role::Compaction => TranscriptRole::Compaction,
-                    nu_agent_core::transcript::ir::Role::Separator => TranscriptRole::Separator,
+                    nu_agent_core::transcript::ir::Role::Separator => TranscriptRole::System,
                 };
                 (role, line.text())
             })
             .collect::<Vec<_>>(),
         vec![
+            (TranscriptRole::System, "".to_string()), // starting spacer before prompt
             (TranscriptRole::User, "h".to_string()),
-            (TranscriptRole::Separator, "".to_string()), // spacer 1 between turns
-            (TranscriptRole::Separator, "".to_string()), // spacer 2 between turns
+            (TranscriptRole::System, "".to_string()), // closing spacer after prompt
+            (TranscriptRole::System, "".to_string()), // starting spacer before assistant
             (TranscriptRole::Assistant, "world".to_string()),
         ]
     );
@@ -1180,19 +1182,25 @@ fn coordinator_hydration_skips_blank_lines_and_maps_unknown_role_to_system() {
                     nu_agent_core::transcript::ir::Role::ToolDisplay => TranscriptRole::ToolDisplay,
                     nu_agent_core::transcript::ir::Role::System => TranscriptRole::System,
                     nu_agent_core::transcript::ir::Role::Compaction => TranscriptRole::Compaction,
-                    nu_agent_core::transcript::ir::Role::Separator => TranscriptRole::Separator,
+                    nu_agent_core::transcript::ir::Role::Separator => TranscriptRole::System,
                 };
                 (role, line.text())
             })
             .collect::<Vec<_>>(),
         vec![
+            // user block: starting spacer + line1 + line2 + closing spacer
+            (TranscriptRole::System, String::new()),
             (TranscriptRole::User, "line1".to_string()),
             (TranscriptRole::User, "line2".to_string()),
-            (TranscriptRole::Separator, "".to_string()), // spacer 1 between User and Assistant
-            (TranscriptRole::Separator, "".to_string()), // spacer 2 between User and Assistant
+            (TranscriptRole::System, String::new()),
+            // assistant block: starting spacer + reply + closing spacer
+            (TranscriptRole::System, String::new()),
             (TranscriptRole::Assistant, "reply".to_string()),
-            (TranscriptRole::Separator, "".to_string()), // spacer between Assistant and System
+            (TranscriptRole::System, String::new()),
+            // system block: starting spacer + fallback + closing spacer
+            (TranscriptRole::System, String::new()),
             (TranscriptRole::System, "system fallback".to_string()),
+            (TranscriptRole::System, String::new()),
         ]
     );
 }
@@ -1211,14 +1219,15 @@ fn hydrated_tool_history_matches_live_tool_row_shape() {
         None,
     );
 
-    assert_eq!(coordinator.state().transcript_preview.len(), 1);
-    assert_eq!(coordinator.state().transcript_preview[0].role(), Role::Tool);
+    // Tool block: starting spacer + tool + closing spacer (block is open at end)
+    assert_eq!(coordinator.state().transcript_preview.len(), 3);
+    assert_eq!(coordinator.state().transcript_preview[1].role(), Role::Tool);
     assert_eq!(
-        coordinator.state().transcript_preview[0].text(),
+        coordinator.state().transcript_preview[1].text(),
         "k8s__list_pods"
     );
     assert_eq!(
-        coordinator.state().transcript_line_status_for_index(0),
+        coordinator.state().transcript_line_status_for_index(1),
         Some(TranscriptLineStatus::Tool(ToolCallStatus::Done))
     );
 }
@@ -1263,7 +1272,7 @@ fn coordinator_hydration_projects_both_user_and_assistant_markdown() {
                 nu_agent_core::transcript::ir::Role::ToolDisplay => TranscriptRole::ToolDisplay,
                 nu_agent_core::transcript::ir::Role::System => TranscriptRole::System,
                 nu_agent_core::transcript::ir::Role::Compaction => TranscriptRole::Compaction,
-                nu_agent_core::transcript::ir::Role::Separator => TranscriptRole::Separator,
+                nu_agent_core::transcript::ir::Role::Separator => TranscriptRole::System,
             };
             (role, line.text())
         })
@@ -1495,88 +1504,6 @@ fn coordinator_hydrate_with_empty_message_snapshot_leaves_empty_session_behavior
     assert!(state.transcript_preview.is_empty());
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.input_locked);
-}
-
-#[test]
-fn transition_spacing_matrix_is_deterministic_for_role_changes() {
-    assert!(!transition_spacer_for_roles_for_test(
-        None,
-        TranscriptRole::User
-    ));
-    assert!(!transition_spacer_for_roles_for_test(
-        Some(TranscriptRole::User),
-        TranscriptRole::User
-    ));
-    assert!(!transition_spacer_for_roles_for_test(
-        Some(TranscriptRole::Assistant),
-        TranscriptRole::Assistant
-    ));
-    assert!(!transition_spacer_for_roles_for_test(
-        Some(TranscriptRole::Tool),
-        TranscriptRole::Tool
-    ));
-
-    assert!(transition_spacer_for_roles_for_test(
-        Some(TranscriptRole::User),
-        TranscriptRole::Assistant
-    ));
-    assert!(transition_spacer_for_roles_for_test(
-        Some(TranscriptRole::Assistant),
-        TranscriptRole::User
-    ));
-
-    assert!(transition_spacer_for_roles_for_test(
-        Some(TranscriptRole::Assistant),
-        TranscriptRole::Tool
-    ));
-    assert!(transition_spacer_for_roles_for_test(
-        Some(TranscriptRole::Tool),
-        TranscriptRole::Assistant
-    ));
-    assert!(transition_spacer_for_roles_for_test(
-        Some(TranscriptRole::User),
-        TranscriptRole::Tool
-    ));
-    assert!(transition_spacer_for_roles_for_test(
-        Some(TranscriptRole::Tool),
-        TranscriptRole::User
-    ));
-
-    assert!(!transition_spacer_for_roles_for_test(
-        Some(TranscriptRole::Separator),
-        TranscriptRole::Assistant
-    ));
-    assert!(!transition_spacer_for_roles_for_test(
-        Some(TranscriptRole::Assistant),
-        TranscriptRole::Separator
-    ));
-}
-
-#[test]
-fn transition_spacing_remains_legible_for_mixed_sequences() {
-    let user_assistant_tool_assistant = [
-        TranscriptRole::User,
-        TranscriptRole::Assistant,
-        TranscriptRole::Tool,
-        TranscriptRole::Assistant,
-    ];
-    let uas_transitions = user_assistant_tool_assistant
-        .windows(2)
-        .map(|roles| transition_spacer_for_roles_for_test(Some(roles[0]), roles[1]))
-        .collect::<Vec<_>>();
-    assert_eq!(uas_transitions, vec![true, true, true]);
-
-    let user_tool_assistant_tool = [
-        TranscriptRole::User,
-        TranscriptRole::Tool,
-        TranscriptRole::Assistant,
-        TranscriptRole::Tool,
-    ];
-    let uta_transitions = user_tool_assistant_tool
-        .windows(2)
-        .map(|roles| transition_spacer_for_roles_for_test(Some(roles[0]), roles[1]))
-        .collect::<Vec<_>>();
-    assert_eq!(uta_transitions, vec![true, true, true]);
 }
 
 #[test]
@@ -4551,22 +4478,18 @@ fn total_visual_rows_from_entry_visual_info() {
     );
     state.push_transcript_line(crate::state::TranscriptRole::User, "e".to_string());
     state.recompute_entry_visual_info(80);
-    // User→Assistant and Assistant→User now get double spacers: 7 entries
-    assert_eq!(state.entry_visual_info.len(), 7);
+    // No reactive spacers — just the 3 entries
+    assert_eq!(state.entry_visual_info.len(), 3);
     assert_eq!(state.entry_visual_info[0].visual_row_count, 1); // User "a"
-    assert_eq!(state.entry_visual_info[1].visual_row_count, 1); // Spacer 1
-    assert_eq!(state.entry_visual_info[2].visual_row_count, 1); // Spacer 2
     // "b\nc\nd" projects to 3 ContentLines (one per line)
-    assert_eq!(state.entry_visual_info[3].visual_row_count, 3); // Assistant
-    assert_eq!(state.entry_visual_info[4].visual_row_count, 1); // Spacer 1
-    assert_eq!(state.entry_visual_info[5].visual_row_count, 1); // Spacer 2
-    assert_eq!(state.entry_visual_info[6].visual_row_count, 1); // User "e"
+    assert_eq!(state.entry_visual_info[1].visual_row_count, 3); // Assistant
+    assert_eq!(state.entry_visual_info[2].visual_row_count, 1); // User "e"
     let total = state
         .entry_visual_info
         .last()
         .map(|i| i.start_visual_row + i.visual_row_count)
         .unwrap_or(0);
-    assert_eq!(total, 9);
+    assert_eq!(total, 5);
 }
 
 #[test]

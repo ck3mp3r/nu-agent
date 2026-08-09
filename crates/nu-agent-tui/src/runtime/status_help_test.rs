@@ -223,32 +223,6 @@ pub(crate) fn status_indicator_for_test(now_millis: Option<u128>) -> &'static st
     crate::runtime::status::status_test::status_indicator_for_test(now_millis)
 }
 
-pub(crate) fn transition_spacer_for_roles_for_test(
-    previous: Option<TranscriptRole>,
-    next: TranscriptRole,
-) -> bool {
-    use nu_agent_core::transcript::ir::Role;
-    let prev_role = previous.map(|r| match r {
-        TranscriptRole::User => Role::User,
-        TranscriptRole::Assistant => Role::Assistant,
-        TranscriptRole::System => Role::System,
-        TranscriptRole::Compaction => Role::Compaction,
-        TranscriptRole::Tool => Role::Tool,
-        TranscriptRole::ToolDisplay => Role::ToolDisplay,
-        TranscriptRole::Separator => Role::Separator,
-    });
-    let next_role = match next {
-        TranscriptRole::User => Role::User,
-        TranscriptRole::Assistant => Role::Assistant,
-        TranscriptRole::System => Role::System,
-        TranscriptRole::Compaction => Role::Compaction,
-        TranscriptRole::Tool => Role::Tool,
-        TranscriptRole::ToolDisplay => Role::ToolDisplay,
-        TranscriptRole::Separator => Role::Separator,
-    };
-    crate::state::transcript::needs_spacer(prev_role.as_ref(), &next_role)
-}
-
 pub(crate) fn input_line_for_test(state: &AppState) -> String {
     let _ = state;
     let _ = crate::runtime::render_frame::current_time_millis();
