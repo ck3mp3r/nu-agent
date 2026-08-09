@@ -6,6 +6,7 @@ pub struct PersonaState {
     agent_persona_body: Option<String>,
     agent_identity: Option<String>,
     agent_description: Option<String>,
+    agent_icon: Option<String>,
     cached_agents_chain: Option<String>,
     cached_available_skills: Option<String>,
     cached_sub_agent_instruction: Option<String>,
@@ -29,6 +30,7 @@ impl PersonaState {
         agent_persona_body: Option<String>,
         agent_identity: Option<String>,
         agent_description: Option<String>,
+        agent_icon: Option<String>,
         cached_agents_chain: Option<String>,
         cached_available_skills: Option<String>,
         cached_sub_agent_instruction: Option<String>,
@@ -37,6 +39,7 @@ impl PersonaState {
             agent_persona_body,
             agent_identity,
             agent_description,
+            agent_icon,
             cached_agents_chain,
             cached_available_skills,
             cached_sub_agent_instruction,
@@ -51,6 +54,9 @@ impl PersonaState {
     }
     pub fn agent_description(&self) -> Option<&str> {
         self.agent_description.as_deref()
+    }
+    pub fn agent_icon(&self) -> Option<&str> {
+        self.agent_icon.as_deref()
     }
     pub fn cached_agents_chain(&self) -> Option<&str> {
         self.cached_agents_chain.as_deref()
@@ -100,6 +106,7 @@ impl PersonaState {
         let identity = parsed.name.unwrap_or_else(|| agent_name.to_string());
         self.agent_identity = Some(identity.clone());
         self.agent_description = parsed.description;
+        self.agent_icon = parsed.icon;
 
         // Convert frontmatter permissions to PermissionsOverlay
         let permissions_overlay = match parsed.permissions.as_ref() {
@@ -164,6 +171,10 @@ impl PersonaManager for PersonaState {
 
     fn agent_description(&self) -> Option<&str> {
         self.agent_description.as_deref()
+    }
+
+    fn agent_icon(&self) -> Option<&str> {
+        self.agent_icon.as_deref()
     }
 
     fn active_model_identity(&self, config: &Config) -> String {

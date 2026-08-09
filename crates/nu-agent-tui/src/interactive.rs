@@ -11,6 +11,10 @@ use nu_agent_core::renderer::UiRenderer;
 use crate::runtime::{HybridTerminalEvents, TuiRuntimeRenderer};
 use crate::state::SessionPickerOption;
 
+#[cfg(test)]
+#[path = "interactive_test.rs"]
+mod interactive_test;
+
 pub struct TuiInteractiveUi<R>
 where
     R: UiRenderer,
@@ -29,6 +33,10 @@ where
     pub fn set_active_model_identity(&mut self, active_model_identity: String) {
         self.renderer
             .set_active_model_identity(active_model_identity);
+    }
+
+    pub fn set_active_persona_icon(&mut self, icon: Option<String>) {
+        self.renderer.set_active_persona_icon(icon);
     }
 
     pub fn set_mcp_lifecycle_projection(
@@ -82,6 +90,10 @@ where
 
     pub fn set_repo_branch_caller_cwd(&mut self, caller_cwd: Option<std::path::PathBuf>) {
         self.renderer.set_repo_branch_caller_cwd(caller_cwd);
+    }
+
+    pub fn push_startup_logo(&mut self) {
+        self.renderer.push_startup_logo();
     }
 }
 
@@ -210,6 +222,10 @@ where
 
     fn set_active_agent_identity(&mut self, name: &str) {
         self.renderer.set_active_agent_identity(name);
+    }
+
+    fn set_active_persona_icon(&mut self, icon: Option<String>) {
+        self.renderer.set_active_persona_icon(icon);
     }
 
     fn set_context_window_max_tokens(&mut self, max_tokens: Option<u64>) {

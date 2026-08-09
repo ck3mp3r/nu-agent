@@ -886,3 +886,30 @@ fn list_available_deduplicates_builtin_over_filesystem() {
     assert_eq!(planner_entries.len(), 1);
     assert!(planner_entries[0].builtin);
 }
+
+#[test]
+fn icon_parsed_from_front_matter() {
+    let mut mapping = noyalib::Mapping::new();
+    mapping.insert("icon", noyalib::Value::String("🧠".to_string()));
+    let result = interpret_front_matter(Some(&mapping), "body".to_string());
+    assert!(result.is_ok());
+    let persona = result.unwrap();
+    assert_eq!(persona.icon.as_deref(), Some("🧠"));
+}
+
+#[test]
+fn no_icon_defaults_to_none() {
+    let mapping = noyalib::Mapping::new();
+    let result = interpret_front_matter(Some(&mapping), "body".to_string());
+    assert!(result.is_ok());
+    let persona = result.unwrap();
+    assert_eq!(persona.icon, None);
+}
+
+#[test]
+fn icon_must_be_string() {
+    let mut mapping = noyalib::Mapping::new();
+    mapping.insert("icon", noyalib::Value::Number(noyalib::Number::from(42)));
+    let result = interpret_front_matter(Some(&mapping), "body".to_string());
+    assert!(result.is_err());
+}

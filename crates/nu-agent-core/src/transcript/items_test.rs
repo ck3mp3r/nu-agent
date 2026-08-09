@@ -215,3 +215,24 @@ fn user_message_text_accessor_returns_raw_markdown() {
     });
     assert_eq!(entry.text(), "hello **world**\nagain");
 }
+
+#[test]
+fn logo_entry_has_system_role_with_center_and_suppress_prefix() {
+    let block = TranscriptEntry::Logo("test".to_string()).to_render_block();
+    assert_eq!(block.role, Role::System);
+    assert!(block.center, "logo must be centered");
+    assert!(block.suppress_prefix, "logo must suppress lane prefix");
+    assert!(block.markdown.is_none());
+    assert!(!block.lines.is_empty());
+}
+
+#[test]
+fn logo_entry_text_returns_raw_text() {
+    let entry = TranscriptEntry::Logo("line1\nline2".to_string());
+    assert_eq!(entry.text(), "line1\nline2");
+}
+
+#[test]
+fn logo_entry_role_is_system() {
+    assert_eq!(TranscriptEntry::Logo("x".to_string()).role(), Role::System);
+}

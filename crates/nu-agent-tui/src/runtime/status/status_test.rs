@@ -63,8 +63,11 @@ pub(crate) fn lane_2_status_line(
     };
     match state.active_agent_identity().filter(|a| !a.is_empty()) {
         Some(agent) => {
-            let emoji = super::emoji_for_agent(agent);
-            let left = format!("{emoji} {agent}");
+            let left = if let Some(ref icon) = state.active_persona_icon {
+                format!("{icon} {agent}")
+            } else {
+                agent.to_string()
+            };
             let left_cells = 2 + 1 + agent.len();
             let right = &token_str;
             let padding = available_width.saturating_sub(left_cells + right.len());
@@ -198,4 +201,50 @@ pub(crate) fn format_branch_segment(branch: &str, branch_max: usize) -> String {
 
 pub(crate) fn status_indicator_for_test(now_millis: Option<u128>) -> &'static str {
     super::status_indicator(now_millis)
+}
+
+#[test]
+fn status_bar_uses_persona_icon_when_set() {
+    let mut state = AppState::new();
+    state.active_persona_icon = Some("🧠".to_string());
+    state.set_active_agent_identity("test-agent");
+    let line = super::status_left_content(
+        "openai/gpt-4o-mini",
+        None,
+        &state,
+        &TuiTheme::default(),
+        120,
+    );
+    let joined: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert!(
+        joined.contains("🧠"),
+        "status bar must use persona icon when set, got: {joined:?}"
+    );
+    assert!(
+        !joined.contains("🪸"),
+        "status bar must NOT use hardcoded emoji pool"
+    );
+}
+
+#[test]
+fn status_bar_no_icon_when_persona_icon_none() {
+    let mut state = AppState::new();
+    state.active_persona_icon = None;
+    state.set_active_agent_identity("test-agent");
+    let line = super::status_left_content(
+        "openai/gpt-4o-mini",
+        None,
+        &state,
+        &TuiTheme::default(),
+        120,
+    );
+    let joined: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert!(
+        !joined.contains("🧠"),
+        "status bar must not show icon when none set"
+    );
+    assert!(
+        !joined.contains("🪸"),
+        "status bar must not use hardcoded emoji pool"
+    );
 }

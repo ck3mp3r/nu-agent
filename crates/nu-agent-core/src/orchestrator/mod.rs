@@ -148,7 +148,7 @@ pub type McpToggleResult = (
 );
 pub(crate) type PendingMcpToggle = (String, std_mpsc::Receiver<McpToggleResult>);
 pub type ModelSwitchResult = Result<(String, Option<u64>), String>;
-pub type AgentSwitchResult = Result<(String, String, Option<u64>), String>;
+pub type AgentSwitchResult = Result<(String, String, Option<u64>, Option<String>), String>;
 pub type SessionSwitchResult = Result<Vec<UiMessageSnapshot>, String>;
 pub(crate) type PendingModelSwitch = std_mpsc::Receiver<ModelSwitchResult>;
 pub(crate) type PendingAgentSwitch = std_mpsc::Receiver<AgentSwitchResult>;
@@ -157,8 +157,8 @@ pub(crate) type PendingAutoCompaction = std_mpsc::Receiver<Option<String>>;
 pub(crate) type PendingCompactionTrigger = std_mpsc::Receiver<Option<String>>;
 
 /// Callback invoked after a successful agent switch.
-/// Receives the new agent's identity (name) and optional description.
-pub type OnAgentSwitch = Arc<dyn Fn(String, Option<String>) + Send + Sync>;
+/// Receives the new agent's identity (name), optional description, and optional icon.
+pub type OnAgentSwitch = Arc<dyn Fn(String, Option<String>, Option<String>) + Send + Sync>;
 
 pub enum WorkerCommand {
     ExecuteTurn {

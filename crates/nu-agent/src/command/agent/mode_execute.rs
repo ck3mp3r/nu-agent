@@ -198,6 +198,7 @@ pub(crate) async fn run_tui_mode(
     if let Some(identity) = runtime_impl.agent_identity() {
         tui_ui.set_active_agent_identity(identity);
     }
+    tui_ui.set_active_persona_icon(runtime_impl.agent_icon().map(|s| s.to_string()));
     let caller_cwd = runtime_impl.mcp_caller_cwd().map(|p| p.to_path_buf());
     tui_ui.set_repo_branch_caller_cwd(caller_cwd.clone());
     match caller_cwd {
@@ -210,6 +211,10 @@ pub(crate) async fn run_tui_mode(
     tui_ui.set_mcp_lifecycle_projection(runtime_impl.mcp_lifecycle_projection().to_vec());
     tui_ui.set_llm_visible_mcp_tool_count(runtime_impl.llm_visible_mcp_tool_count());
     tui_ui.set_context_window_max_tokens(runtime_impl.max_context_tokens());
+
+    if !hydration.should_hydrate {
+        tui_ui.push_startup_logo();
+    }
 
     // Bridge A2A channels (incoming tasks + completion events) into a single
     // std channel of formatted prompt strings that the orchestrator can poll
@@ -290,12 +295,19 @@ pub(crate) async fn run_tui_mode(
         };
 
     // Build the on_agent_switch callback for A2A card updates.
-    let on_agent_switch: Option<OnAgentSwitch> = a2a.card_handle.map(|card_handle| {
-        let cache = a2a.cache.clone();
-        let self_port = a2a.self_port;
-        let discovery = a2a.discovery.clone();
-        let mesh_key = a2a.mesh_key.clone();
-        Arc::new(move |name: String, description: Option<String>| {
+    // Always built (regardless of A2A status) so the persona icon can be
+    // updated on agent switch even when A2A is disabled.
+    let card_handle = a2a.card_handle;
+    let cache = a2a.cache.clone();
+    let self_port = a2a.self_port;
+    let discovery = a2a.discovery.clone();
+    let mesh_key = a2a.mesh_key.clone();
+    let on_agent_switch: Option<OnAgentSwitch> = Some(Arc::new(
+        move |name: String, description: Option<String>, _icon: Option<String>| {
+            let Some(card_handle) = card_handle.as_ref() else {
+                // No A2A card to update; nothing further to do here.
+                return;
+            };
             let mut card = card_handle.write().expect("agent_card lock");
             let old_name = card.name.clone();
             let skill = skill_from_persona(&name, description.as_deref());
@@ -324,8 +336,8 @@ pub(crate) async fn run_tui_mode(
                     d.rename(old_fullname, &new_mdns_name, port, &card, mesh_key);
                 }
             }
-        }) as OnAgentSwitch
-    });
+        },
+    ) as OnAgentSwitch);
 
     terminal_lifecycle
         .enter()

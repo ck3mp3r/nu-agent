@@ -48,7 +48,8 @@ impl BlockRenderer for TuiRenderer {
 
             // Build prefix for first line
             let mut spans = if is_first {
-                let mut spans = self.lane_prefix(block.role.clone(), ctx.cursor);
+                let mut spans =
+                    self.lane_prefix(block.role.clone(), ctx.cursor, block.suppress_prefix);
 
                 // Add status indicator if present
                 if let Some(ref status) = ctx.status {
@@ -60,13 +61,25 @@ impl BlockRenderer for TuiRenderer {
                 spans
             } else {
                 // Subsequent lines: no cursor, no status indicator
-                self.lane_prefix(block.role.clone(), false)
+                self.lane_prefix(block.role.clone(), false, block.suppress_prefix)
             };
 
             // Add content spans
             for span in &content_line.spans {
                 let style = self.hint_to_style(&span.hint, &block.role);
                 spans.push(RatatuiSpan::styled(span.text.clone(), style));
+            }
+
+            // Center the line if requested
+            if block.center {
+                let line_char_width: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+                let padding = ctx.width.saturating_sub(line_char_width) / 2;
+                if padding > 0 {
+                    let mut padded =
+                        vec![RatatuiSpan::styled(" ".repeat(padding), Style::default())];
+                    padded.append(&mut spans);
+                    spans = padded;
+                }
             }
 
             // Apply row overlays (selection highlighting, etc.)
@@ -86,16 +99,25 @@ pub fn lane_prefix_width() -> usize {
 }
 
 impl TuiRenderer {
-    fn lane_prefix(&self, role: Role, cursor: bool) -> Vec<RatatuiSpan<'static>> {
+    fn lane_prefix(
+        &self,
+        role: Role,
+        cursor: bool,
+        suppress_prefix: bool,
+    ) -> Vec<RatatuiSpan<'static>> {
         let cursor_str = if cursor { "> " } else { "  " };
-        let (label, style) = match role {
-            Role::User => ("▏ ", self.theme.lane_prefix_user),
-            Role::Assistant => ("  ", self.theme.lane_prefix_assistant),
-            Role::Tool => ("⚙ ", self.theme.lane_prefix_tool),
-            Role::ToolDisplay => ("  ", self.theme.lane_prefix_assistant),
-            Role::Compaction => ("~ ", self.theme.lane_prefix_compaction),
-            Role::System => ("· ", self.theme.lane_prefix_system),
-            Role::Separator => ("  ", self.theme.role_separator),
+        let (label, style) = if suppress_prefix {
+            ("  ", self.theme.role_system)
+        } else {
+            match role {
+                Role::User => ("▏ ", self.theme.lane_prefix_user),
+                Role::Assistant => ("  ", self.theme.lane_prefix_assistant),
+                Role::Tool => ("⚙ ", self.theme.lane_prefix_tool),
+                Role::ToolDisplay => ("  ", self.theme.lane_prefix_assistant),
+                Role::Compaction => ("~ ", self.theme.lane_prefix_compaction),
+                Role::System => ("· ", self.theme.lane_prefix_system),
+                Role::Separator => ("  ", self.theme.role_separator),
+            }
         };
         vec![
             RatatuiSpan::styled(cursor_str.to_string(), Style::default()),
@@ -215,6 +237,8 @@ impl TuiRenderer {
                 role: block.role.clone(),
                 lines: content_lines.clone(),
                 markdown: None,
+                center: block.center,
+                suppress_prefix: block.suppress_prefix,
             }
         } else {
             block.clone()

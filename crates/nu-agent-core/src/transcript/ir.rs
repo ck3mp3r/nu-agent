@@ -107,6 +107,8 @@ pub struct RenderBlock {
     /// When `Some`, the renderer should project at render time using the
     /// available canvas width rather than consuming `lines` directly.
     pub markdown: Option<String>,
+    pub center: bool,
+    pub suppress_prefix: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

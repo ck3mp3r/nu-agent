@@ -14,4 +14,11 @@ pub trait ModelSwitching {
     fn agent_description(&self) -> Option<&str> {
         None
     }
+
+    /// The current agent's icon, if any.
+    ///
+    /// Defaults to `None` for runtimes that do not track agent icons.
+    fn agent_icon(&self) -> Option<&str> {
+        None
+    }
 }

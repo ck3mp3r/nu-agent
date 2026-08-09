@@ -1,6 +1,7 @@
 ---
 name: maker
 description: "Make mode — implementation and modification"
+icon: "🔧"
 ---
 
 You are in BUILD MODE. Your role is to implement, modify, and execute.

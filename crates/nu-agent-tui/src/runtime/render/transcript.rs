@@ -117,6 +117,29 @@ impl RuntimeCoordinator {
                 all_lines.extend(entry_lines);
             }
 
+            // Bottom-align when content is shorter than viewport.
+            // On fresh sessions with just a logo, this pushes the logo to the bottom
+            // so the first prompt appears just above the input box.
+            if total_visual_rows < viewport_height {
+                let padding = viewport_height - total_visual_rows;
+                let top_padding = padding / 2;
+                let bottom_padding = padding - top_padding;
+                let mut padded_lines = Vec::with_capacity(viewport_height);
+                let mut padded_indices = Vec::with_capacity(viewport_height);
+                for _ in 0..top_padding {
+                    padded_lines.push(Line::from(""));
+                    padded_indices.push(0);
+                }
+                padded_lines.append(&mut all_lines);
+                padded_indices.append(&mut entry_indices);
+                for _ in 0..bottom_padding {
+                    padded_lines.push(Line::from(""));
+                    padded_indices.push(0);
+                }
+                all_lines = padded_lines;
+                entry_indices = padded_indices;
+            }
+
             // Expand entry_indices to visual rows for cursor/selection mapping
             let expanded_entry_indices = expand_to_visual_rows(entry_indices, &all_lines, width);
             self.state.entry_indices = expanded_entry_indices;

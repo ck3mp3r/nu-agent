@@ -1,4 +1,4 @@
-use super::{BUILTIN_MAKER_CONTENT, BUILTIN_PLANNER_CONTENT, is_builtin_persona};
+use super::{BUILTIN_MAKER_CONTENT, BUILTIN_PERSONAS, BUILTIN_PLANNER_CONTENT, is_builtin_persona};
 use crate::protocol::persona::{
     FrontMatterParser, PulldownCmarkFrontMatterParser, interpret_front_matter,
 };
@@ -68,4 +68,19 @@ fn test_builtin_content_has_valid_front_matter() {
         maker_parsed.description.is_some(),
         "maker front matter must contain a description"
     );
+}
+
+#[test]
+fn builtin_personas_have_icon() {
+    let parser = PulldownCmarkFrontMatterParser;
+    for builtin in BUILTIN_PERSONAS {
+        let raw = parser.parse(builtin.content).expect("builtin must parse");
+        let persona = interpret_front_matter(raw.front_matter.as_ref(), raw.body)
+            .expect("builtin front matter must be valid");
+        assert!(
+            persona.icon.is_some(),
+            "builtin '{}' must have an icon",
+            builtin.name
+        );
+    }
 }

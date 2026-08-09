@@ -54,6 +54,7 @@ pub enum TranscriptEntry {
     Compaction(CompactionNotice),
     System(SystemMessage),
     Spacer(Spacer),
+    Logo(String),
 }
 
 impl Renderable for ToolInvocation {
@@ -66,6 +67,8 @@ impl Renderable for ToolInvocation {
                 Span::muted(format!(" {}", self.args)),
             ])],
             markdown: None,
+            center: false,
+            suppress_prefix: false,
         }
     }
 }
@@ -91,6 +94,8 @@ impl Renderable for ToolResult {
             role: Role::ToolDisplay,
             lines,
             markdown: None,
+            center: false,
+            suppress_prefix: false,
         }
     }
 }
@@ -106,6 +111,8 @@ impl Renderable for CompactionNotice {
                 Span::normal(self.summary.clone()),
             ])],
             markdown: None,
+            center: false,
+            suppress_prefix: false,
         }
     }
 }
@@ -116,6 +123,8 @@ impl Renderable for SystemMessage {
             role: Role::System,
             lines: vec![ContentLine::single(self.text.clone(), StyleHint::Normal)],
             markdown: None,
+            center: false,
+            suppress_prefix: false,
         }
     }
 }
@@ -125,6 +134,8 @@ impl Renderable for Spacer {
             role: Role::Separator,
             lines: vec![ContentLine::single(String::new(), StyleHint::Normal)],
             markdown: None,
+            center: false,
+            suppress_prefix: false,
         }
     }
 }
@@ -136,17 +147,31 @@ impl Renderable for TranscriptEntry {
                 role: Role::User,
                 lines: vec![],
                 markdown: Some(m.markdown.clone()),
+                center: false,
+                suppress_prefix: false,
             },
             Self::Assistant(m) => RenderBlock {
                 role: Role::Assistant,
                 lines: vec![],
                 markdown: Some(m.markdown.clone()),
+                center: false,
+                suppress_prefix: false,
             },
             Self::Tool(t) => t.to_render_block(),
             Self::ToolResult(r) => r.to_render_block(),
             Self::Compaction(c) => c.to_render_block(),
             Self::System(s) => s.to_render_block(),
             Self::Spacer(s) => s.to_render_block(),
+            Self::Logo(text) => RenderBlock {
+                role: Role::System,
+                lines: text
+                    .lines()
+                    .map(|line| ContentLine::single(line.to_string(), StyleHint::Normal))
+                    .collect(),
+                markdown: None,
+                center: true,
+                suppress_prefix: true,
+            },
         }
     }
 }
@@ -161,6 +186,7 @@ impl TranscriptEntry {
             Self::Compaction(_) => Role::Compaction,
             Self::System(_) => Role::System,
             Self::Spacer(_) => Role::Separator,
+            Self::Logo(_) => Role::System,
         }
     }
 
@@ -172,6 +198,7 @@ impl TranscriptEntry {
             Self::Compaction(c) => c.summary.clone(),
             Self::System(s) => s.text.clone(),
             Self::Spacer(_) => String::new(),
+            Self::Logo(text) => text.clone(),
         }
     }
 }

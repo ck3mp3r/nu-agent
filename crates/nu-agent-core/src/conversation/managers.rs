@@ -127,6 +127,9 @@ pub trait PersonaManager {
     /// Return the agent description string, if present.
     fn agent_description(&self) -> Option<&str>;
 
+    /// Return the agent icon string, if present.
+    fn agent_icon(&self) -> Option<&str>;
+
     /// Return the formatted `"provider/model"` identity using `config`.
     fn active_model_identity(&self, config: &Config) -> String;
 

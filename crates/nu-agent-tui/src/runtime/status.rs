@@ -314,51 +314,6 @@ fn file_stamp(path: &Path) -> FileStamp {
     }
 }
 
-fn emoji_for_agent(name: &str) -> &'static str {
-    match name {
-        "planner" => "\u{1f9ed}",       // 🧭
-        "maker" => "\u{1f6e0}\u{fe0f}", // 🛠️
-        _ => {
-            const POOL: &[&str] = &[
-                "\u{1f98a}",
-                "\u{1f419}",
-                "\u{1f989}",
-                "\u{1f41d}",
-                "\u{1f988}",
-                "\u{1f40b}",
-                "\u{1f98e}",
-                "\u{1fab6}",
-                "\u{1f335}",
-                "\u{1f344}",
-                "\u{1f3b2}",
-                "\u{1f9f2}",
-                "\u{1f52e}",
-                "\u{1fa69}",
-                "\u{1f9ca}",
-                "\u{1fae7}",
-                "\u{1fa90}",
-                "\u{1f30b}",
-                "\u{1f3aa}",
-                "\u{1f9ff}",
-                "\u{1fac0}",
-                "\u{1f9ec}",
-                "\u{1fab8}",
-                "\u{1f9a0}",
-                "\u{1f531}",
-                "\u{1f9ea}",
-                "\u{1fa84}",
-                "\u{1f3ad}",
-                "\u{1f95d}",
-                "\u{1f9a9}",
-            ];
-            let hash = name
-                .bytes()
-                .fold(0u64, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u64));
-            POOL[(hash as usize) % POOL.len()]
-        }
-    }
-}
-
 fn token_string_for_state(state: &AppState) -> Option<String> {
     let current = state.latest_total_tokens.unwrap_or(0);
     let s = match state.context_window_max_tokens() {
@@ -393,8 +348,11 @@ pub(super) fn status_left_content(
 
     let agent_opt = state.active_agent_identity().filter(|a| !a.is_empty());
     let agent_str: Option<String> = agent_opt.map(|agent| {
-        let emoji = emoji_for_agent(agent);
-        format!("{emoji} {agent}")
+        if let Some(ref icon) = state.active_persona_icon {
+            format!("{icon} {agent}")
+        } else {
+            agent.to_string()
+        }
     });
 
     let token_str = token_string_for_state(state).unwrap_or_default();

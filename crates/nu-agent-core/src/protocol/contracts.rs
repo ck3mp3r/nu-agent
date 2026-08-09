@@ -196,6 +196,7 @@ pub trait DisplayStateUi {
     }
     fn set_active_model_identity(&mut self, _active_model_identity: &str) {}
     fn set_active_agent_identity(&mut self, _name: &str) {}
+    fn set_active_persona_icon(&mut self, _icon: Option<String>) {}
     fn set_context_window_max_tokens(&mut self, _max_tokens: Option<u64>) {}
     fn display_incoming_message(&mut self, _text: &str) {}
 }

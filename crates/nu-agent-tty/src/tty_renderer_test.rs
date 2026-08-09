@@ -98,6 +98,8 @@ fn no_ansi_when_color_false() {
             StyleHint::DiffAdd,
         )],
         markdown: None,
+        center: false,
+        suppress_prefix: false,
     };
     let out = r.render(&block, &ctx());
     assert!(
@@ -116,6 +118,8 @@ fn ansi_green_for_diff_add_when_color_true() {
             StyleHint::DiffAdd,
         )],
         markdown: None,
+        center: false,
+        suppress_prefix: false,
     };
     let out = r.render(&block, &ctx());
     assert!(
@@ -135,6 +139,8 @@ fn multi_line_separated_by_newlines() {
             ContentLine::single("line2".to_string(), StyleHint::Normal),
         ],
         markdown: None,
+        center: false,
+        suppress_prefix: false,
     };
     let out = r.render(&block, &ctx());
     assert!(

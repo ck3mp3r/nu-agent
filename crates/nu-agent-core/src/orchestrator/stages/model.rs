@@ -111,9 +111,10 @@ impl ModelSwitchStage {
         // --- Poll pending agent switch result ---
         if let Some(response_rx) = self.pending_agent_switch.take() {
             match poll_pending(response_rx) {
-                PollOutcome::Ready(Ok((agent_identity, model_identity, max_tokens))) => {
+                PollOutcome::Ready(Ok((agent_identity, model_identity, max_tokens, icon))) => {
                     log::debug!("Agent switch succeeded: {agent_identity}");
                     ctx.ui.set_active_agent_identity(&agent_identity);
+                    ctx.ui.set_active_persona_icon(icon);
                     ctx.ui.set_active_model_identity(&model_identity);
                     ctx.ui.set_context_window_max_tokens(max_tokens);
                     ctx.ui.emit(&UiEvent::Warning {

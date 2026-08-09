@@ -49,6 +49,8 @@ fn render_block_stores_role_and_lines() {
         role: Role::Tool,
         lines: vec![ContentLine::single("test".to_string(), StyleHint::Normal)],
         markdown: None,
+        center: false,
+        suppress_prefix: false,
     };
     assert_eq!(block.role, Role::Tool);
     assert_eq!(block.lines.len(), 1);

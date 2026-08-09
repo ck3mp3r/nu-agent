@@ -395,6 +395,7 @@ pub(super) fn run_command(
                 persona_body: persona.as_ref().map(|p| p.body.clone()),
                 agent_identity,
                 agent_description: persona.as_ref().and_then(|p| p.description.clone()),
+                agent_icon: persona.as_ref().and_then(|p| p.icon.clone()),
                 cached_agents_chain,
                 cached_available_skills,
                 cached_sub_agent_instruction,

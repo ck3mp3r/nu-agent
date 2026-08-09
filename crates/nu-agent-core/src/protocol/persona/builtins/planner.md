@@ -1,6 +1,7 @@
 ---
 name: planner
 description: "Plan mode — read-only research and planning"
+icon: "🔍"
 ---
 
 You are in PLAN MODE. Your role is to research, analyze, and plan.

@@ -24,6 +24,8 @@ fn render_cached_cache_hit_returns_identical_output() {
         role: Role::Assistant,
         lines: vec![],
         markdown: Some("**bold**".to_string()),
+        center: false,
+        suppress_prefix: false,
     };
     let ctx = default_ctx(80);
 
@@ -46,6 +48,8 @@ fn render_cached_cache_miss_stores_entry_and_renders_bold() {
         role: Role::Assistant,
         lines: vec![],
         markdown: Some("**bold**".to_string()),
+        center: false,
+        suppress_prefix: false,
     };
     let ctx = default_ctx(80);
 
@@ -68,6 +72,8 @@ fn render_cached_non_markdown_bypasses_cache() {
         role: Role::Assistant,
         lines: vec![ContentLine::single("hello".to_string(), StyleHint::Normal)],
         markdown: None,
+        center: false,
+        suppress_prefix: false,
     };
     let ctx = default_ctx(80);
 
@@ -88,6 +94,8 @@ fn render_cached_cache_invalidation_clears_all_entries() {
         role: Role::Assistant,
         lines: vec![],
         markdown: Some("**bold**".to_string()),
+        center: false,
+        suppress_prefix: false,
     };
     let ctx = default_ctx(80);
 
@@ -197,6 +205,8 @@ fn diff_add_line_uses_done_fg_color() {
             StyleHint::DiffAdd,
         )],
         markdown: None,
+        center: false,
+        suppress_prefix: false,
     };
     let lines = r.render(&block, &default_ctx(80));
     let span = lines[0]
@@ -217,6 +227,8 @@ fn diff_remove_line_uses_failed_fg_color() {
             StyleHint::DiffRemove,
         )],
         markdown: None,
+        center: false,
+        suppress_prefix: false,
     };
     let lines = r.render(&block, &default_ctx(80));
     let span = lines[0]
@@ -237,6 +249,8 @@ fn diff_hunk_line_has_bold_modifier() {
             StyleHint::DiffHunk,
         )],
         markdown: None,
+        center: false,
+        suppress_prefix: false,
     };
     let lines = r.render(&block, &default_ctx(80));
     let span = lines[0]
@@ -483,4 +497,35 @@ mod task_5_visual_diff_tests {
             "rendered output must contain the markdown text; got: {all_text:?}"
         );
     }
+}
+
+#[test]
+fn logo_entry_renders_without_lane_prefix() {
+    let r = make_renderer();
+    let block = TranscriptEntry::Logo("test".to_string()).to_render_block();
+    let lines = r.render(&block, &default_ctx(80));
+    let prefix: String = lines[0]
+        .spans
+        .iter()
+        .skip(1)
+        .take(2)
+        .map(|s| s.content.as_ref())
+        .collect();
+    assert_eq!(
+        prefix, "    ",
+        "logo must have no role prefix, got: {prefix:?}"
+    );
+}
+
+#[test]
+fn logo_entry_centered_adds_padding() {
+    let r = make_renderer();
+    let block = TranscriptEntry::Logo("x".to_string()).to_render_block();
+    let lines = r.render(&block, &default_ctx(80));
+    let text: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+    assert!(
+        text.starts_with(" "),
+        "centered logo must have leading padding"
+    );
+    assert!(text.contains("x"), "centered logo must contain the text");
 }

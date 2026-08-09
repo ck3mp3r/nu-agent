@@ -132,12 +132,13 @@ impl CommandRouter {
                 let response = result.map(|agent_identity| {
                     let model_identity = runtime.active_model_identity();
                     let max_tokens = runtime.max_context_tokens();
+                    let icon = runtime.agent_icon().map(|s| s.to_string());
                     // Notify the binary layer that the agent card should be updated.
                     if let Some(ref cb) = on_agent_switch {
                         let description = runtime.agent_description().map(|s| s.to_string());
-                        cb(agent_identity.clone(), description);
+                        cb(agent_identity.clone(), description, icon.clone());
                     }
-                    (agent_identity, model_identity, max_tokens)
+                    (agent_identity, model_identity, max_tokens, icon)
                 });
                 let _ = response_tx.send(response);
                 true

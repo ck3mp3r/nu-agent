@@ -987,7 +987,7 @@ fn accessor_startup_plugin_config_returns_none_when_default() {
 fn accessor_agent_identity_returns_none_when_default() {
     // PersonaState with no agent_identity set must return None
     let persona_state =
-        super::super::state::persona::PersonaState::new(None, None, None, None, None, None);
+        super::super::state::persona::PersonaState::new(None, None, None, None, None, None, None);
     assert_eq!(persona_state.agent_identity(), None);
 }
 
@@ -996,6 +996,7 @@ fn accessor_agent_identity_returns_some_when_set() {
     let persona_state = super::super::state::persona::PersonaState::new(
         None,
         Some("developer".to_string()),
+        None,
         None,
         None,
         None,
@@ -1076,14 +1077,14 @@ fn memory_state_last_total_tokens_none_on_construction() {
 #[test]
 fn persona_state_agent_identity_none_by_default() {
     let persona_state =
-        super::super::state::persona::PersonaState::new(None, None, None, None, None, None);
+        super::super::state::persona::PersonaState::new(None, None, None, None, None, None, None);
     assert!(persona_state.agent_identity().is_none());
 }
 
 #[test]
 fn persona_state_agent_description_none_by_default() {
     let persona_state =
-        super::super::state::persona::PersonaState::new(None, None, None, None, None, None);
+        super::super::state::persona::PersonaState::new(None, None, None, None, None, None, None);
     assert!(persona_state.agent_description().is_none());
 }
 

@@ -17,6 +17,7 @@ libc = { workspace = true }
 tokio = { workspace = true }
 log = { workspace = true }
 chrono = { workspace = true }
+rand = { workspace = true }
 
 [dev-dependencies]
 serial_test = { workspace = true }

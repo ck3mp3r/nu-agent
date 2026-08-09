@@ -447,6 +447,10 @@ where
     fn agent_description(&self) -> Option<&str> {
         self.persona.agent_description()
     }
+
+    fn agent_icon(&self) -> Option<&str> {
+        self.persona.agent_icon()
+    }
 }
 
 impl<Prov, Tools, Sess, Comp, Persona, Multi> Compaction
@@ -627,6 +631,10 @@ where
 
     pub fn agent_description(&self) -> Option<&str> {
         self.persona.agent_description()
+    }
+
+    pub fn agent_icon(&self) -> Option<&str> {
+        self.persona.agent_icon()
     }
 
     pub fn mcp_caller_cwd(&self) -> Option<&std::path::Path> {

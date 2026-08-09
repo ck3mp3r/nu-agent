@@ -16,6 +16,7 @@ fn apply_persona_config_all_fields_when_config_empty() {
         max_tool_calls_per_subturn: Some(3),
         max_tool_result_bytes: Some(5000),
         additional_params: Some(serde_json::json!({"thinking": "disabled"})),
+        icon: None,
         body: String::new(),
     };
 
@@ -50,6 +51,7 @@ fn apply_persona_config_cli_wins_over_persona() {
         max_tool_calls_per_subturn: Some(1),
         max_tool_result_bytes: Some(100),
         additional_params: Some(serde_json::json!({"from": "persona"})),
+        icon: None,
         body: String::new(),
     };
 
@@ -86,6 +88,7 @@ fn apply_persona_config_max_turns_cli_flag_wins() {
         max_tool_calls_per_subturn: None,
         max_tool_result_bytes: None,
         additional_params: None,
+        icon: None,
         body: String::new(),
     };
 
@@ -111,6 +114,7 @@ fn apply_persona_config_max_turns_persona_overrides_default() {
         max_tool_calls_per_subturn: None,
         max_tool_result_bytes: None,
         additional_params: None,
+        icon: None,
         body: String::new(),
     };
 
@@ -137,6 +141,7 @@ fn apply_persona_config_partial_persona_leaves_others_unchanged() {
         max_tool_calls_per_subturn: None,
         max_tool_result_bytes: None,
         additional_params: None,
+        icon: None,
         body: String::new(),
     };
 

@@ -113,6 +113,7 @@ pub struct ParsedPersona {
     pub max_tool_calls_per_subturn: Option<usize>,
     pub max_tool_result_bytes: Option<usize>,
     pub additional_params: Option<JsonValue>,
+    pub icon: Option<String>,
     pub body: String,
 }
 
@@ -137,6 +138,7 @@ pub fn interpret_front_matter(
             max_tool_calls_per_subturn: None,
             max_tool_result_bytes: None,
             additional_params: None,
+            icon: None,
             body,
         });
     };
@@ -151,6 +153,7 @@ pub fn interpret_front_matter(
     let mut max_tool_calls_per_subturn = None;
     let mut max_tool_result_bytes = None;
     let mut additional_params = None;
+    let mut icon = None;
 
     for (key, value) in mapping.iter() {
         match key.as_str() {
@@ -192,6 +195,19 @@ pub fn interpret_front_matter(
                         .to_string(),
                 );
                 log::trace!("interpret_front_matter: model={model:?}");
+            }
+            "icon" => {
+                icon = Some(
+                    value
+                        .as_str()
+                        .ok_or_else(|| FrontMatterError::InvalidField {
+                            key: "icon".to_string(),
+                            expected: "string".to_string(),
+                            got: value_type_name(value),
+                        })?
+                        .to_string(),
+                );
+                log::trace!("interpret_front_matter: icon={icon:?}");
             }
             "permissions" => {
                 permissions = Some(
@@ -329,6 +345,7 @@ pub fn interpret_front_matter(
         max_tool_calls_per_subturn,
         max_tool_result_bytes,
         additional_params,
+        icon,
         body,
     })
 }

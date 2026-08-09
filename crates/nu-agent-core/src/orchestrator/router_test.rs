@@ -730,13 +730,18 @@ async fn switch_session_dispatches_async_load_without_panic() {
 async fn on_agent_switch_callback_invoked_after_successful_switch() {
     let switched_name = Arc::new(std::sync::Mutex::new(None::<String>));
     let switched_desc = Arc::new(std::sync::Mutex::new(None::<Option<String>>));
+    let switched_icon = Arc::new(std::sync::Mutex::new(None::<Option<String>>));
     let cb_name = Arc::clone(&switched_name);
     let cb_desc = Arc::clone(&switched_desc);
+    let cb_icon = Arc::clone(&switched_icon);
 
-    let callback: OnAgentSwitch = Arc::new(move |name: String, description: Option<String>| {
-        *cb_name.lock().expect("name lock") = Some(name);
-        *cb_desc.lock().expect("desc lock") = Some(description);
-    });
+    let callback: OnAgentSwitch = Arc::new(
+        move |name: String, description: Option<String>, icon: Option<String>| {
+            *cb_name.lock().expect("name lock") = Some(name);
+            *cb_desc.lock().expect("desc lock") = Some(description);
+            *cb_icon.lock().expect("icon lock") = Some(icon);
+        },
+    );
 
     let runtime = AgentSwitchRuntime {
         switch_agent_result: Some(Ok("research-agent".to_string())),
@@ -753,8 +758,12 @@ async fn on_agent_switch_callback_invoked_after_successful_switch() {
     // Verify the callback was invoked with the correct values
     let name = switched_name.lock().expect("name lock").take();
     let desc = switched_desc.lock().expect("desc lock").take();
+    let icon = switched_icon.lock().expect("icon lock").take();
     assert_eq!(name.as_deref(), Some("research-agent"));
     // The AgentSwitchRuntime doesn't implement agent_description(), so it
     // returns None (the default trait method).
     assert_eq!(desc, Some(None));
+    // The AgentSwitchRuntime doesn't implement agent_icon(), so it
+    // returns None (the default trait method).
+    assert_eq!(icon, Some(None));
 }

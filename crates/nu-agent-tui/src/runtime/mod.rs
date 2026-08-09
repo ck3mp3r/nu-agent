@@ -113,6 +113,13 @@ use nu_agent_core::tools::mcp::runtime::McpServerLifecycle;
 use nu_agent_core::transcript::ir::Role;
 use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry};
 
+const STARTUP_LOGOS: &[&str] = &[
+    include_str!("../logos/00.txt"),
+    include_str!("../logos/01.txt"),
+    include_str!("../logos/02.txt"),
+    include_str!("../logos/03.txt"),
+];
+
 #[derive(Debug)]
 pub struct RuntimeCoordinator {
     state: AppState,
@@ -400,6 +407,16 @@ impl RuntimeCoordinator {
         self.state.clear_transcript();
     }
 
+    pub(crate) fn push_startup_logo(&mut self) {
+        use rand::RngExt;
+        let idx = rand::rng().random_range(0..STARTUP_LOGOS.len());
+        let logo = STARTUP_LOGOS[idx];
+        self.state
+            .push_transcript_item(nu_agent_core::transcript::items::TranscriptEntry::Logo(
+                logo.to_string(),
+            ));
+    }
+
     pub(crate) fn set_active_model_identity(&mut self, active_model_identity: String) {
         self.active_model_identity = active_model_identity;
     }
@@ -488,6 +505,10 @@ impl RuntimeCoordinator {
 
     pub(crate) fn set_active_agent_identity(&mut self, name: &str) {
         self.state.set_active_agent_identity(name);
+    }
+
+    pub(crate) fn set_active_persona_icon(&mut self, icon: Option<String>) {
+        self.state.active_persona_icon = icon;
     }
 
     pub(crate) fn set_agent_cycle_names(&mut self, names: Vec<String>) {

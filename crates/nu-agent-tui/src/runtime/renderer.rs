@@ -65,6 +65,10 @@ where
             .set_active_model_identity(active_model_identity);
     }
 
+    pub(crate) fn set_active_persona_icon(&mut self, icon: Option<String>) {
+        self.coordinator.set_active_persona_icon(icon);
+    }
+
     pub(crate) fn set_mcp_lifecycle_projection(&mut self, projection: Vec<McpServerLifecycle>) {
         self.coordinator.set_mcp_lifecycle_projection(projection);
     }
@@ -185,6 +189,10 @@ where
 
     pub(crate) fn clear_transcript(&mut self) {
         self.coordinator.clear_transcript();
+    }
+
+    pub(crate) fn push_startup_logo(&mut self) {
+        self.coordinator.push_startup_logo();
     }
 
     pub fn pump_terminal_once(&mut self) {
