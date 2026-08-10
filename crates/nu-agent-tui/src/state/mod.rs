@@ -13,10 +13,25 @@ pub(super) mod transcript;
 mod selection_test;
 
 #[cfg(test)]
-mod test;
+mod transcript_test;
 
 #[cfg(test)]
-mod transcript_test;
+mod lifecycle_test;
+
+#[cfg(test)]
+mod permissions_test;
+
+#[cfg(test)]
+mod mcp_test;
+
+#[cfg(test)]
+mod picker_test;
+
+#[cfg(test)]
+mod tool_calls_test;
+
+#[cfg(test)]
+mod mod_test;
 
 use crate::rendering::theme::TuiTheme;
 use nu_agent_core::protocol::event::{PermissionDecision, PermissionDecisionSubmission};

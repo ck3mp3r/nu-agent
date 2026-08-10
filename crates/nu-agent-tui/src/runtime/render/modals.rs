@@ -15,8 +15,8 @@ use crate::runtime::{
 };
 use crate::{
     runtime::{
+        render::frame::{ModalPanelKind, modal_rect_for_panel},
         render::{render_modal_frame, render_scroll_text_panel},
-        render_frame::{ModalPanelKind, modal_rect_for_panel},
     },
     state::InfoPanel,
 };

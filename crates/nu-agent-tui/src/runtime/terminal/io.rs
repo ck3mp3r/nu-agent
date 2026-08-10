@@ -2,7 +2,7 @@ use std::{fs::File, io::Read, os::fd::AsRawFd, time::Duration};
 
 use crate::interaction::input::{TerminalEvent, TerminalKey};
 
-use super::terminal_events::TerminalEventSource;
+use super::TerminalEventSource;
 
 #[derive(Debug)]
 pub struct TtyTerminalEvents {

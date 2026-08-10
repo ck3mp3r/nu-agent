@@ -2,7 +2,7 @@ use nu_agent_core::policy::{UiPolicy, Verbosity};
 use nu_agent_core::protocol::event::UiEvent;
 use nu_agent_core::renderer::UiRenderer;
 
-use crate::renderer::StderrUiRenderer;
+use super::StderrUiRenderer;
 
 #[test]
 fn default_mode_suppresses_streaming() {

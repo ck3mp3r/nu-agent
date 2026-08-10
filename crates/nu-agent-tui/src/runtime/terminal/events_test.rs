@@ -1,7 +1,7 @@
 use crate::interaction::input::{TerminalEvent, TerminalKey, TerminalResize};
 
 use super::TerminalEventSource;
-use super::terminal_events::{InputSourceDiagnostics, map_crossterm_event, poll_hybrid_event};
+use super::{InputSourceDiagnostics, map_crossterm_event, poll_hybrid_event};
 
 #[derive(Debug, Clone)]
 pub struct ScriptedTerminalEvents {
@@ -137,4 +137,63 @@ fn parse_script_token(token: &str) -> Option<TerminalEvent> {
     }
 
     None
+}
+
+#[test]
+fn scripted_event_parser_supports_keys_chars_and_resize() {
+    let mut source =
+        ScriptedTerminalEvents::from_script("char:a,enter,esc,resize:120x40,ctrlu,ctrld,ctrlc");
+
+    assert_eq!(
+        source.poll_event(),
+        Ok(Some(TerminalEvent::Key(TerminalKey::Char('a'))))
+    );
+    assert_eq!(
+        source.poll_event(),
+        Ok(Some(TerminalEvent::Key(TerminalKey::Enter)))
+    );
+    assert_eq!(
+        source.poll_event(),
+        Ok(Some(TerminalEvent::Key(TerminalKey::Esc)))
+    );
+    assert_eq!(
+        source.poll_event(),
+        Ok(Some(TerminalEvent::Resize(
+            crate::interaction::input::TerminalResize {
+                columns: 120,
+                rows: 40,
+            }
+        )))
+    );
+    assert_eq!(
+        source.poll_event(),
+        Ok(Some(TerminalEvent::Key(TerminalKey::CtrlU)))
+    );
+    assert_eq!(
+        source.poll_event(),
+        Ok(Some(TerminalEvent::Key(TerminalKey::CtrlD)))
+    );
+    assert_eq!(
+        source.poll_event(),
+        Ok(Some(TerminalEvent::Key(TerminalKey::CtrlC)))
+    );
+    assert_eq!(source.poll_event(), Ok(None));
+}
+
+#[test]
+fn scripted_event_parser_supports_ctrlp_for_palette_toggle() {
+    let mut source = ScriptedTerminalEvents::from_script("ctrlp");
+    assert_eq!(
+        source.poll_event(),
+        Ok(Some(TerminalEvent::Key(TerminalKey::CtrlP)))
+    );
+}
+
+#[test]
+fn scripted_event_parser_supports_ctrln_for_query_picker_navigation() {
+    let mut source = ScriptedTerminalEvents::from_script("ctrln");
+    assert_eq!(
+        source.poll_event(),
+        Ok(Some(TerminalEvent::Key(TerminalKey::CtrlN)))
+    );
 }

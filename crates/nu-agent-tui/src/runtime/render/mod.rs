@@ -77,8 +77,15 @@ pub(crate) fn single_line_visual_row_count(line: &Line<'_>, width: usize) -> usi
 }
 
 mod bottom_box;
+pub(super) mod frame;
 mod modals;
 mod transcript;
+
+#[cfg(test)]
+pub(super) mod frame_test;
+
+#[cfg(test)]
+pub(super) mod selection_render_test;
 
 #[cfg(test)]
 mod transcript_test;

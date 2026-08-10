@@ -15,42 +15,35 @@ use ratatui::{
 mod backend;
 mod panels;
 pub(crate) mod render;
-mod render_frame;
 mod renderer;
 mod session_picker;
 mod status;
-mod status_help;
-mod terminal_events;
-mod terminal_io;
+mod terminal;
 mod tool_hydration;
 use backend::LiveTerminalUi;
 pub use backend::{
     AnsiTerminalBackend, RuntimeRunError, run_with_terminal_restore, run_with_terminal_restore_sync,
 };
 use panels::*;
+use render::frame::current_time_millis;
 pub use renderer::TuiRuntimeRenderer;
-use status_help::*;
-
-use render_frame::current_time_millis;
-use status::{availability_label, build_status_lines, status_left_content, status_right_content};
+use status::help::*;
+use status::{availability_label, status_left_content, status_right_content};
 #[cfg(test)]
-pub use terminal_events::CrosstermTerminalEvents;
-pub use terminal_events::{HybridTerminalEvents, InputSourceDiagnostics, TerminalEventSource};
+pub use terminal::CrosstermTerminalEvents;
 #[cfg(test)]
-pub use terminal_events_test::ScriptedTerminalEvents;
+pub use terminal::events_test::ScriptedTerminalEvents;
 #[cfg(test)]
-pub(crate) use terminal_events_test::map_crossterm_event_for_test;
-pub use terminal_io::{TtyTerminalEvents, open_tty_reader};
+pub(crate) use terminal::events_test::map_crossterm_event_for_test;
+pub use terminal::{HybridTerminalEvents, InputSourceDiagnostics, TerminalEventSource};
+pub use terminal::{TtyTerminalEvents, open_tty_reader};
 use tool_hydration::{extract_tool_name, parse_persisted_tool_status_line};
 
 #[cfg(test)]
-mod test;
+pub(super) mod test;
 
 #[cfg(test)]
 mod panels_test;
-
-#[cfg(test)]
-mod render_frame_test;
 
 #[cfg(test)]
 mod renderer_test;
@@ -59,25 +52,7 @@ mod renderer_test;
 mod session_picker_test;
 
 #[cfg(test)]
-mod hybrid_events_test;
-
-#[cfg(test)]
-mod status_help_test;
-
-#[cfg(test)]
-pub(crate) use status_help_test::*;
-
-#[cfg(test)]
-mod terminal_events_test;
-
-#[cfg(test)]
-mod selection_render_test;
-
-#[cfg(test)]
-mod mod_test;
-
-#[cfg(test)]
-pub(crate) use mod_test::*;
+pub(crate) use status::help_test::*;
 
 use crate::{
     interaction::{

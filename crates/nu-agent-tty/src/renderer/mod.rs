@@ -1,3 +1,11 @@
+#[cfg(test)]
+mod contract_test;
+#[cfg(test)]
+mod streaming_test;
+pub mod tty;
+#[cfg(test)]
+mod tty_test;
+
 use nu_agent_core::policy::{UiPolicy, Verbosity};
 use nu_agent_core::protocol::event::UiEvent;
 use nu_agent_core::renderer::UiRenderer;

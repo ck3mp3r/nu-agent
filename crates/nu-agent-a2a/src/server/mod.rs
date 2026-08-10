@@ -16,6 +16,9 @@ pub mod handlers;
 mod middleware;
 mod response;
 
+#[cfg(test)]
+mod test;
+
 use middleware::a2a_version_middleware;
 
 // ---------------------------------------------------------------------------

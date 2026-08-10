@@ -54,7 +54,7 @@ fn hint_to_style(hint: &StyleHint, theme: &TuiTheme) -> Style {
 }
 
 pub(super) fn help_panel_markdown_source() -> &'static str {
-    include_str!("help/help.md")
+    include_str!("../help/help.md")
 }
 
 pub(crate) fn status_panel_lines(

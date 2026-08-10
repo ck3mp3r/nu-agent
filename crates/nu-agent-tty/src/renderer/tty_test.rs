@@ -2,7 +2,7 @@ use nu_agent_core::transcript::ir::*;
 use nu_agent_core::transcript::items::*;
 use nu_agent_core::transcript::renderer::*;
 
-use crate::tty_renderer::TtyRenderer;
+use super::tty::TtyRenderer;
 
 fn plain() -> TtyRenderer {
     TtyRenderer { use_color: false }

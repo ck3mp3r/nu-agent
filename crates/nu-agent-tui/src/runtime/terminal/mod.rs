@@ -2,7 +2,15 @@ use std::time::Duration;
 
 use crate::interaction::input::{TerminalEvent, TerminalKey};
 
-use super::terminal_io::TtyTerminalEvents;
+pub use self::io::{TtyTerminalEvents, open_tty_reader};
+
+mod io;
+
+#[cfg(test)]
+pub(crate) mod events_test;
+
+#[cfg(test)]
+mod hybrid_events_test;
 
 pub trait TerminalEventSource {
     fn poll_event(&mut self) -> Result<Option<TerminalEvent>, String>;

@@ -1,3 +1,5 @@
+pub(crate) mod help;
+
 use std::{
     collections::BTreeSet,
     fs,
@@ -44,7 +46,10 @@ pub(super) fn build_status_lines(state: &AppState, active_model_identity: &str) 
 }
 
 #[cfg(test)]
-pub(crate) mod status_test;
+pub(crate) mod test;
+
+#[cfg(test)]
+pub(crate) mod help_test;
 #[derive(Debug, Clone)]
 struct GitRepoContext {
     git_dir: PathBuf,

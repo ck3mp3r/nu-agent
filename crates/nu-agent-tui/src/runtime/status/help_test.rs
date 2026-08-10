@@ -38,7 +38,7 @@ pub(crate) fn help_panel_scroll_offset_for_test(
     viewport_width: u16,
     requested_scroll: usize,
 ) -> usize {
-    let (_title, lines) = crate::runtime::status_help::help_panel_lines(
+    let (_title, lines) = crate::runtime::status::help::help_panel_lines(
         &crate::rendering::theme::TuiTheme::default(),
     );
     requested_scroll.min(crate::runtime::panels::help_panel_max_scroll(
@@ -56,7 +56,7 @@ pub(crate) fn status_panel_scroll_offset_for_test(
     requested_scroll: usize,
 ) -> usize {
     let (_title, lines) =
-        crate::runtime::status_help::status_panel_lines(state, active_model_identity);
+        crate::runtime::status::help::status_panel_lines(state, active_model_identity);
     requested_scroll.min(crate::runtime::panels::help_panel_max_scroll(
         &lines,
         viewport_height,
@@ -153,7 +153,7 @@ pub(crate) fn command_palette_table_model_for_test(
 }
 
 pub(crate) fn inline_slash_lines_for_test(state: &AppState) -> Vec<String> {
-    crate::runtime::status_help::inline_slash_lines_for_render(
+    crate::runtime::status::help::inline_slash_lines_for_render(
         state,
         &crate::rendering::theme::TuiTheme::default(),
     )
@@ -166,7 +166,7 @@ pub(crate) fn compact_status_line_for_test(
     active_model_identity: &str,
     now_millis: Option<u128>,
 ) -> Line<'static> {
-    crate::runtime::status::status_test::compact_status_line(
+    crate::runtime::status::test::compact_status_line(
         active_model_identity,
         None,
         now_millis,
@@ -176,7 +176,7 @@ pub(crate) fn compact_status_line_for_test(
 }
 
 pub(crate) fn lane_2_status_line_for_test(state: &AppState, width: usize) -> Line<'static> {
-    crate::runtime::status::status_test::lane_2_status_line(
+    crate::runtime::status::test::lane_2_status_line(
         state,
         width,
         &crate::rendering::theme::TuiTheme::default(),
@@ -220,12 +220,12 @@ pub(crate) fn cursor_style_for_test(
 }
 
 pub(crate) fn status_indicator_for_test(now_millis: Option<u128>) -> &'static str {
-    crate::runtime::status::status_test::status_indicator_for_test(now_millis)
+    crate::runtime::status::test::status_indicator_for_test(now_millis)
 }
 
 pub(crate) fn input_line_for_test(state: &AppState) -> String {
     let _ = state;
-    let _ = crate::runtime::render_frame::current_time_millis();
+    let _ = crate::runtime::render::frame::current_time_millis();
     String::new()
 }
 

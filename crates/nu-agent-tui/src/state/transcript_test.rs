@@ -2,6 +2,8 @@ use crate::state::{
     AppState, CompactionLine, CompactionStatus, PromptStatus, QueuedPrompt, ToolCallLine,
     ToolCallStatus, TranscriptRole,
 };
+use nu_agent_core::transcript::ir::Role;
+use nu_agent_core::transcript::items::TranscriptEntry;
 
 /// The cap constant that will be defined in production code.
 /// Tests reference this to avoid magic numbers.
@@ -348,4 +350,183 @@ fn transcript_line_status_works_after_eviction() {
         status.is_some(),
         "status should still be findable after eviction"
     );
+}
+
+#[test]
+fn no_turn_separator_between_user_and_assistant() {
+    let mut state = AppState::new();
+
+    // push_transcript_line pushes no reactive spacers — just the entries
+    state.push_transcript_line(TranscriptRole::User, "prompt one");
+    state.push_transcript_line(TranscriptRole::Assistant, "response one");
+
+    assert_eq!(state.transcript_preview.len(), 2);
+    assert_eq!(state.transcript_preview[0].role(), Role::User);
+    assert_eq!(state.transcript_preview[1].role(), Role::Assistant);
+}
+
+#[test]
+fn no_turn_separator_for_same_role_sequences() {
+    let mut state = AppState::new();
+
+    state.push_transcript_line(TranscriptRole::Assistant, "line one");
+    state.push_transcript_line(TranscriptRole::Assistant, "line two");
+
+    assert_eq!(
+        state
+            .transcript_preview
+            .iter()
+            .filter(|entry| entry.role() == Role::Separator)
+            .count(),
+        0
+    );
+}
+
+#[test]
+fn assistant_projection_cache_reuses_projected_markdown_for_same_input() {
+    let mut state = AppState::new();
+    let markdown = "```rust\nfn main() {\n    let x = 42;\n}\n```";
+
+    let first = state.project_assistant_markdown_lines(markdown);
+    let second = state.project_assistant_markdown_lines(markdown);
+
+    assert_eq!(first, second);
+}
+
+#[test]
+fn push_transcript_item_follows_tail_when_at_last_item() {
+    let mut state = AppState::new();
+
+    // Push first item — following_tail starts true, stays true
+    state.push_transcript_line(TranscriptRole::User, "first");
+    assert!(state.transcript_following_tail);
+
+    // Push second item — should still follow
+    state.push_transcript_line(TranscriptRole::Assistant, "second");
+    assert!(state.transcript_following_tail);
+
+    // Push third item — should still follow
+    state.push_transcript_line(TranscriptRole::User, "third");
+    assert!(state.transcript_following_tail);
+}
+
+#[test]
+fn push_transcript_item_stays_put_when_scrolled_up() {
+    let mut state = AppState::new();
+
+    // Push some items
+    state.push_transcript_line(TranscriptRole::User, "first");
+    state.push_transcript_line(TranscriptRole::Assistant, "second");
+    state.push_transcript_line(TranscriptRole::User, "third");
+
+    // Scroll to top (user has scrolled up — disables following)
+    state.scroll_transcript_to_top();
+    assert!(!state.transcript_following_tail);
+    assert_eq!(state.transcript_scroll_offset, 0);
+
+    // Push new item — should NOT re-enable following, offset stays at 0
+    state.push_transcript_line(TranscriptRole::Assistant, "fourth");
+    assert!(
+        !state.transcript_following_tail,
+        "following_tail should stay false when user has scrolled up"
+    );
+    assert_eq!(
+        state.transcript_scroll_offset, 0,
+        "scroll offset should stay at top when user has scrolled up"
+    );
+}
+
+#[test]
+fn push_transcript_item_follows_when_nothing_selected() {
+    let mut state = AppState::new();
+
+    // Initially following_tail is true (default)
+    assert!(state.transcript_following_tail);
+
+    // Push first item — following_tail stays true
+    state.push_transcript_line(TranscriptRole::User, "first");
+    assert!(
+        state.transcript_following_tail,
+        "first push should keep following_tail true"
+    );
+}
+
+#[test]
+fn clear_assistant_projection_cache_removes_all_entries() {
+    let mut state = AppState::new();
+    let markdown = "hello world";
+
+    // Project once to populate the cache
+    let first = state.project_assistant_markdown_lines(markdown);
+
+    // Clearing the cache must not change the projected output
+    state.clear_assistant_projection_cache();
+    let second = state.project_assistant_markdown_lines(markdown);
+
+    assert_eq!(first, second, "clearing cache must not change output");
+}
+
+#[test]
+fn push_transcript_line_user_bold_markdown_emits_md_bold_span() {
+    let mut state = AppState::new();
+    state.push_transcript_line(TranscriptRole::User, "hello **world**".to_string());
+    let TranscriptEntry::User(m) = state.transcript_preview.last().expect("entry") else {
+        panic!("expected User");
+    };
+    // Raw markdown is stored; verify it projects to MdBold at render time
+    let bold = crate::markdown::render_markdown_lines(&m.markdown, None)
+        .into_iter()
+        .flat_map(|l| l.spans.into_iter())
+        .find(|s| matches!(s.hint, nu_agent_core::transcript::ir::StyleHint::MdBold))
+        .expect("expected MdBold span");
+    assert_eq!(bold.text, "world");
+}
+
+#[test]
+fn push_transcript_line_assistant_bold_markdown_emits_md_bold_span() {
+    let mut state = AppState::new();
+    state.push_transcript_line(TranscriptRole::Assistant, "hello **world**".to_string());
+    let TranscriptEntry::Assistant(m) = state.transcript_preview.last().expect("entry") else {
+        panic!("expected Assistant");
+    };
+    let bold = crate::markdown::render_markdown_lines(&m.markdown, None)
+        .into_iter()
+        .flat_map(|l| l.spans.into_iter())
+        .find(|s| matches!(s.hint, nu_agent_core::transcript::ir::StyleHint::MdBold))
+        .expect("expected MdBold span");
+    assert_eq!(bold.text, "world");
+}
+
+#[test]
+fn push_transcript_line_user_and_assistant_produce_identical_lines_for_same_text() {
+    let mut s1 = AppState::new();
+    let mut s2 = AppState::new();
+    let text = "**bold** and *italic* and `code`".to_string();
+    s1.push_transcript_line(TranscriptRole::User, text.clone());
+    s2.push_transcript_line(TranscriptRole::Assistant, text);
+    let TranscriptEntry::User(u) = s1.transcript_preview.last().expect("u") else {
+        panic!();
+    };
+    let TranscriptEntry::Assistant(a) = s2.transcript_preview.last().expect("a") else {
+        panic!();
+    };
+    assert_eq!(
+        u.markdown, a.markdown,
+        "user and assistant prose must be byte-identical"
+    );
+}
+
+#[test]
+fn push_transcript_line_user_fenced_code_block_produces_multiple_lines() {
+    let mut state = AppState::new();
+    state.push_transcript_line(
+        TranscriptRole::User,
+        "```rust\nfn a() {}\nfn b() {}\n```".to_string(),
+    );
+    let TranscriptEntry::User(m) = state.transcript_preview.last().expect("entry") else {
+        panic!();
+    };
+    // Verify projection of the stored raw markdown yields multiple lines
+    let projected = crate::markdown::render_markdown_lines(&m.markdown, None);
+    assert!(projected.len() >= 2);
 }

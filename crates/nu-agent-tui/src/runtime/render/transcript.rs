@@ -11,7 +11,7 @@ use crate::runtime::{
 };
 use crate::tui_renderer::TuiRenderer;
 use crate::{
-    runtime::{render::expand_to_visual_rows, render_frame::current_time_millis},
+    runtime::{render::expand_to_visual_rows, render::frame::current_time_millis},
     state::{InputMode, PaneFocus},
 };
 use nu_agent_core::transcript::ir::Role;

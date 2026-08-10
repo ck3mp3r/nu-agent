@@ -22,18 +22,10 @@ pub use tools::*;
 pub use types::*;
 
 #[cfg(test)]
-mod agent_test;
-#[cfg(test)]
 mod card_test;
-#[cfg(test)]
-mod discovery_test;
 #[cfg(test)]
 mod error_test;
 #[cfg(test)]
 mod mesh_key_test;
 #[cfg(test)]
 mod peer_test;
-#[cfg(test)]
-mod server_test;
-#[cfg(test)]
-mod tools_test;

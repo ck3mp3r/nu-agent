@@ -6,21 +6,13 @@ pub mod stages;
 pub mod turn_outcome;
 
 #[cfg(test)]
-mod compaction_test;
-#[cfg(test)]
-mod formatting_test;
-#[cfg(test)]
-mod lifecycle_test;
-#[cfg(test)]
-mod mcp_toggle_test;
-#[cfg(test)]
-mod model_switch_test;
-#[cfg(test)]
 #[path = "pending_test.rs"]
 mod pending_test;
 #[cfg(test)]
 #[path = "pump_test.rs"]
 mod pump_test;
+#[cfg(test)]
+mod test;
 #[cfg(test)]
 mod test_shared;
 #[cfg(test)]

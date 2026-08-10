@@ -9,6 +9,8 @@ use crate::discovery::PeerDiscoveryImpl;
 use crate::*;
 
 pub mod builder;
+#[cfg(test)]
+mod test;
 
 pub use builder::AgentBuilder;
 

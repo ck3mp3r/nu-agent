@@ -1,4 +1,40 @@
+use std::sync::{Arc, Mutex};
+
 use super::*;
+
+#[derive(Default)]
+pub(crate) struct FakeRenderer {
+    emitted: Vec<UiEvent>,
+    flushed: usize,
+}
+
+impl UiRenderer for FakeRenderer {
+    fn emit(&mut self, event: &UiEvent) {
+        self.emitted.push(event.clone());
+    }
+
+    fn flush(&mut self) {
+        self.flushed += 1;
+    }
+}
+
+pub(crate) struct CapturingRenderer {
+    events: Arc<Mutex<Vec<UiEvent>>>,
+}
+
+impl CapturingRenderer {
+    pub(crate) fn new(events: Arc<Mutex<Vec<UiEvent>>>) -> Self {
+        Self { events }
+    }
+}
+
+impl UiRenderer for CapturingRenderer {
+    fn emit(&mut self, event: &UiEvent) {
+        self.events.lock().expect("events").push(event.clone());
+    }
+
+    fn flush(&mut self) {}
+}
 
 impl<R: UiRenderer, E: TerminalEventSource> TuiRuntimeRenderer<R, E> {
     pub(crate) fn new_tui_active_for_test(

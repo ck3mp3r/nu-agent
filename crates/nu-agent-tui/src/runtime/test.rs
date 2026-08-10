@@ -1,14 +1,14 @@
 use std::{
     cell::RefCell,
     fs,
-    path::Path,
-    process::Command,
     rc::Rc,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
 use crate::rendering::layout::wrapped_input_rows;
+use crate::runtime::renderer_test::{CapturingRenderer, FakeRenderer};
+use crate::runtime::status::test::{init_repo_with_branch, run_git};
 use crate::test_support::markdown_fixture;
 use crate::{
     interaction::input::{TerminalEvent, TerminalKey},
@@ -22,9 +22,8 @@ use crate::{
         cursor_style_for_test, help_panel_lines, help_panel_max_scroll_for_test,
         help_panel_overflow_cue_for_test, help_panel_visible_window_for_test,
         inline_slash_lines_for_test, input_line_for_test, input_line_for_test_at_millis,
-        input_pane_content_width_for_test, input_rows_with_prompt_for_test,
-        mcp_table_model_for_test, parse_persisted_tool_status_line, run_with_terminal_restore_sync,
-        status_panel_lines,
+        input_rows_with_prompt_for_test, mcp_table_model_for_test,
+        parse_persisted_tool_status_line, run_with_terminal_restore_sync, status_panel_lines,
     },
     state::{
         AppState, InputMode, McpServerUsabilityState, PromptStatus, ToolCallStatus,
@@ -38,37 +37,77 @@ use nu_agent_core::renderer::UiRenderer;
 use nu_agent_core::transcript::ir::Role;
 use nu_agent_core::transcript::items::TranscriptEntry;
 
-fn run_git(dir: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .current_dir(dir)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .args(args)
-        .output()
-        .expect("run git command");
-    assert!(
-        output.status.success(),
-        "git command failed in {}: git {}\nstdout: {}\nstderr: {}",
-        dir.display(),
-        args.join(" "),
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8_lossy(&output.stdout).trim().to_string()
+impl RuntimeCoordinator {
+    pub(crate) fn new_for_test_with_watchdog(
+        columns: u16,
+        rows: u16,
+        side_pane_visible: Option<bool>,
+        input_watchdog_timeout: Duration,
+    ) -> Self {
+        Self::new_with_watchdog(columns, rows, side_pane_visible, input_watchdog_timeout)
+    }
+
+    pub(crate) fn state(&self) -> &AppState {
+        &self.state
+    }
+
+    pub(crate) fn input_diagnostics_snapshot(&self) -> (String, String, Option<String>) {
+        (
+            self.input_backend_status.clone(),
+            self.last_input_poll_status.clone(),
+            self.last_input_error.clone(),
+        )
+    }
+
+    pub(crate) fn render_needed(&self) -> bool {
+        self.render_needed
+    }
+
+    pub(crate) fn set_render_needed(&mut self, needed: bool) {
+        self.render_needed = needed;
+    }
+
+    pub(crate) fn set_last_render_at(&mut self, at: Instant) {
+        self.last_render_at = at;
+    }
+
+    pub(crate) fn main_pane_rects_for_height(
+        main_height: u16,
+    ) -> (
+        ratatui::layout::Rect,
+        ratatui::layout::Rect,
+        ratatui::layout::Rect,
+        ratatui::layout::Rect,
+    ) {
+        crate::runtime::render::frame_test::main_pane_rects_for_height(main_height)
+    }
+
+    pub(crate) fn pump_once(&mut self, event_source: &mut impl TerminalEventSource) {
+        self.poll_terminal_event(event_source);
+        self.drain_transport();
+    }
 }
 
-fn init_repo_with_branch(path: &Path, branch: &str) {
-    run_git(path, &["init"]);
-    run_git(path, &["config", "user.email", "nu-agent@test.local"]);
-    run_git(path, &["config", "user.name", "nu-agent-test"]);
-    fs::write(path.join("README.md"), "seed\n").expect("seed file");
-    run_git(path, &["add", "README.md"]);
-    run_git(path, &["commit", "-m", "seed"]);
-    run_git(path, &["checkout", "-b", branch]);
+pub(crate) fn modal_open_state_applies_dimmed_backdrop_for_test(state: &AppState) -> bool {
+    state.command_palette_open
+        || state.info_panel.is_some()
+        || state.model_picker_open
+        || state.agent_picker_open
+        || state.session_picker_open
+}
+
+pub(crate) fn inline_model_picker_modal_respects_border_and_backdrop_policy_for_test(
+    state: &AppState,
+) -> bool {
+    state.model_picker_open
+}
+
+pub(crate) fn input_pane_content_width_for_test(inner_width: u16) -> usize {
+    inner_width.saturating_sub(2) as usize
 }
 
 #[derive(Default)]
-struct StubEventSource {
+pub(super) struct StubEventSource {
     next: Option<TerminalEvent>,
 }
 
@@ -79,7 +118,7 @@ impl TerminalEventSource for StubEventSource {
 }
 
 #[derive(Default)]
-struct ErrorEventSource;
+pub(super) struct ErrorEventSource;
 
 impl TerminalEventSource for ErrorEventSource {
     fn poll_event(&mut self) -> Result<Option<TerminalEvent>, String> {
@@ -88,7 +127,7 @@ impl TerminalEventSource for ErrorEventSource {
 }
 
 #[derive(Clone)]
-struct ErrorWithDiagnosticsEventSource {
+pub(super) struct ErrorWithDiagnosticsEventSource {
     diagnostics: InputSourceDiagnostics,
     error: String,
 }
@@ -104,7 +143,7 @@ impl TerminalEventSource for ErrorWithDiagnosticsEventSource {
 }
 
 #[derive(Clone)]
-struct DiagnosticsOnlyEventSource {
+pub(super) struct DiagnosticsOnlyEventSource {
     diagnostics: InputSourceDiagnostics,
 }
 
@@ -267,82 +306,7 @@ fn coordinator_esc_then_esc_requests_cancel_signal() {
     }
 
     assert_eq!(coordinator.state().status_line, "Abort requested.");
-    assert!(coordinator.cancel_controller().is_cancel_requested());
-}
-
-#[test]
-fn scripted_event_parser_supports_keys_chars_and_resize() {
-    let mut source =
-        ScriptedTerminalEvents::from_script("char:a,enter,esc,resize:120x40,ctrlu,ctrld,ctrlc");
-
-    assert_eq!(
-        source.poll_event(),
-        Ok(Some(TerminalEvent::Key(TerminalKey::Char('a'))))
-    );
-    assert_eq!(
-        source.poll_event(),
-        Ok(Some(TerminalEvent::Key(TerminalKey::Enter)))
-    );
-    assert_eq!(
-        source.poll_event(),
-        Ok(Some(TerminalEvent::Key(TerminalKey::Esc)))
-    );
-    assert_eq!(
-        source.poll_event(),
-        Ok(Some(TerminalEvent::Resize(
-            crate::interaction::input::TerminalResize {
-                columns: 120,
-                rows: 40,
-            }
-        )))
-    );
-    assert_eq!(
-        source.poll_event(),
-        Ok(Some(TerminalEvent::Key(TerminalKey::CtrlU)))
-    );
-    assert_eq!(
-        source.poll_event(),
-        Ok(Some(TerminalEvent::Key(TerminalKey::CtrlD)))
-    );
-    assert_eq!(
-        source.poll_event(),
-        Ok(Some(TerminalEvent::Key(TerminalKey::CtrlC)))
-    );
-    assert_eq!(source.poll_event(), Ok(None));
-}
-
-#[derive(Default)]
-struct FakeRenderer {
-    emitted: Vec<UiEvent>,
-    flushed: usize,
-}
-
-impl UiRenderer for FakeRenderer {
-    fn emit(&mut self, event: &UiEvent) {
-        self.emitted.push(event.clone());
-    }
-
-    fn flush(&mut self) {
-        self.flushed += 1;
-    }
-}
-
-struct CapturingRenderer {
-    events: Arc<Mutex<Vec<UiEvent>>>,
-}
-
-impl CapturingRenderer {
-    fn new(events: Arc<Mutex<Vec<UiEvent>>>) -> Self {
-        Self { events }
-    }
-}
-
-impl UiRenderer for CapturingRenderer {
-    fn emit(&mut self, event: &UiEvent) {
-        self.events.lock().expect("events").push(event.clone());
-    }
-
-    fn flush(&mut self) {}
+    assert!(coordinator.take_cancel_requested());
 }
 
 #[test]
@@ -356,12 +320,7 @@ fn runtime_renderer_reuses_eventing_and_preserves_emit_passthrough() {
     runtime_renderer.emit(&UiEvent::Tick);
     runtime_renderer.flush();
 
-    assert!(
-        runtime_renderer
-            .coordinator()
-            .cancel_controller()
-            .is_cancel_requested()
-    );
+    assert!(runtime_renderer.coordinator().take_cancel_requested());
     assert!(runtime_renderer.coordinator().quit_requested());
     let state = runtime_renderer.coordinator().state();
     assert_eq!(state.phase, UiPhase::Busy);
@@ -685,7 +644,7 @@ const LANE_1_CASES: &[(&str, Option<&str>, usize, &str)] = &[
 #[test]
 fn lane_1_scroll() {
     for &(model, branch, width, expected) in LANE_1_CASES {
-        let line = crate::runtime::status::status_test::compact_status_line_with_branch_for_test(
+        let line = crate::runtime::status::test::compact_status_line_with_branch_for_test(
             model, branch, None, width,
         );
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
@@ -718,7 +677,7 @@ fn lane_1_scroll() {
 
     // Structural-only: lane_1_with_branch_appends_branch_icon
     {
-        let line = crate::runtime::status::status_test::compact_status_line_with_branch_for_test(
+        let line = crate::runtime::status::test::compact_status_line_with_branch_for_test(
             "m",
             Some("main"),
             None,
@@ -734,7 +693,7 @@ fn lane_1_scroll() {
 
     // Structural-only: lane_1_with_branch_ellipsizes_label_while_preserving_icon
     {
-        let line = crate::runtime::status::status_test::compact_status_line_with_branch_for_test(
+        let line = crate::runtime::status::test::compact_status_line_with_branch_for_test(
             "the-quick-brown-fox-jumps-over",
             Some("feature/super-long-branch-name"),
             None,
@@ -754,7 +713,7 @@ fn lane_1_scroll() {
 
     // Structural-only: lane_1_with_branch_drops_icon_when_budget_below_three_cells
     {
-        let line = crate::runtime::status::status_test::compact_status_line_with_branch_for_test(
+        let line = crate::runtime::status::test::compact_status_line_with_branch_for_test(
             "abc",
             Some("main"),
             None,
@@ -771,7 +730,7 @@ fn lane_1_scroll() {
 
     // Structural-only: lane_1_with_detached_head_short_sha_also_gets_icon
     {
-        let line = crate::runtime::status::status_test::compact_status_line_with_branch_for_test(
+        let line = crate::runtime::status::test::compact_status_line_with_branch_for_test(
             "m",
             Some("a1b2c3d"),
             None,
@@ -800,7 +759,7 @@ fn branch_resolver_prefers_explicit_caller_repo_over_process_cwd() {
     let original_cwd = std::env::current_dir().expect("current dir");
     std::env::set_current_dir(&process_repo).expect("switch cwd to process repo");
 
-    let resolved = crate::runtime::status::status_test::resolve_repo_branch_for_test(&caller_repo);
+    let resolved = crate::runtime::status::test::resolve_repo_branch_for_test(&caller_repo);
 
     std::env::set_current_dir(original_cwd).expect("restore cwd");
     assert_eq!(resolved.as_deref(), Some("caller-branch"));
@@ -812,7 +771,7 @@ fn branch_resolver_returns_none_for_non_git_directory() {
     let non_git = temp_dir.path().join("plain");
     fs::create_dir_all(&non_git).expect("plain dir");
 
-    let resolved = crate::runtime::status::status_test::resolve_repo_branch_for_test(&non_git);
+    let resolved = crate::runtime::status::test::resolve_repo_branch_for_test(&non_git);
     assert_eq!(resolved, None);
 }
 
@@ -826,7 +785,7 @@ fn branch_resolver_uses_detached_head_short_sha_fallback() {
     let expected = run_git(&repo, &["rev-parse", "--short=12", "HEAD"]);
     run_git(&repo, &["checkout", "--detach"]);
 
-    let resolved = crate::runtime::status::status_test::resolve_repo_branch_for_test(&repo);
+    let resolved = crate::runtime::status::test::resolve_repo_branch_for_test(&repo);
     assert_eq!(resolved.as_deref(), Some(expected.as_str()));
 }
 
@@ -849,7 +808,7 @@ fn branch_resolver_is_worktree_safe() {
         ],
     );
 
-    let resolved = crate::runtime::status::status_test::resolve_repo_branch_for_test(&worktree);
+    let resolved = crate::runtime::status::test::resolve_repo_branch_for_test(&worktree);
     assert_eq!(resolved.as_deref(), Some("wt-branch"));
 }
 
@@ -906,7 +865,7 @@ fn repo_branch_tracker_does_not_leak_between_repositories() {
 
 #[test]
 fn lane_1_has_no_mode_token_in_any_input_mode() {
-    let insert_line = crate::runtime::status::status_test::compact_status_line_with_branch_for_test(
+    let insert_line = crate::runtime::status::test::compact_status_line_with_branch_for_test(
         "model", None, None, 80,
     );
     let insert_text: String = insert_line
@@ -915,7 +874,7 @@ fn lane_1_has_no_mode_token_in_any_input_mode() {
         .map(|s| s.content.as_ref())
         .collect();
 
-    let normal_line = crate::runtime::status::status_test::compact_status_line_with_branch_for_test(
+    let normal_line = crate::runtime::status::test::compact_status_line_with_branch_for_test(
         "model", None, None, 80,
     );
     let normal_text: String = normal_line
@@ -924,7 +883,7 @@ fn lane_1_has_no_mode_token_in_any_input_mode() {
         .map(|s| s.content.as_ref())
         .collect();
 
-    let visual_line = crate::runtime::status::status_test::compact_status_line_with_branch_for_test(
+    let visual_line = crate::runtime::status::test::compact_status_line_with_branch_for_test(
         "model", None, None, 80,
     );
     let visual_text: String = visual_line
@@ -962,7 +921,7 @@ fn coordinator_terminal_input_error_surfaces_status_and_requests_quit() {
     coordinator.pump_once(&mut source);
 
     assert!(coordinator.quit_requested());
-    assert!(coordinator.cancel_controller().is_cancel_requested());
+    assert!(coordinator.take_cancel_requested());
     assert_eq!(
         coordinator.fatal_error(),
         Some("Terminal input error: simulated source failure")
@@ -1089,12 +1048,7 @@ fn diagnostics_snapshot_reports_active_backend_last_poll_and_last_error() {
 
 #[test]
 fn immediate_poll_error_fails_fast_with_actionable_message_when_no_backends_available() {
-    let mut coordinator = RuntimeCoordinator::new_for_test_with_watchdog(
-        120,
-        30,
-        Some(true),
-        std::time::Duration::from_secs(60),
-    );
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
 
     let mut source = ErrorWithDiagnosticsEventSource {
         diagnostics: InputSourceDiagnostics {
@@ -1113,7 +1067,7 @@ fn immediate_poll_error_fails_fast_with_actionable_message_when_no_backends_avai
         .fatal_error()
         .expect("expected fatal fail-fast error");
     assert!(coordinator.quit_requested());
-    assert!(coordinator.cancel_controller().is_cancel_requested());
+    assert!(coordinator.take_cancel_requested());
     assert!(fatal.contains("No interactive input backend available"));
     assert!(fatal.contains("Last poll: crossterm error; /dev/tty unavailable"));
     assert!(fatal.contains("Last error: crossterm poll failed: not a terminal"));
@@ -1555,7 +1509,7 @@ fn global_abort_cancels_active_and_pending_and_new_submit_starts_fresh() {
 
 #[test]
 fn main_pane_vertical_split_has_no_overlap_or_bottom_cutoff() {
-    use crate::runtime::render_frame_test::STATUS_TARGET_HEIGHT;
+    use crate::runtime::render::frame_test::STATUS_TARGET_HEIGHT;
     let (_header, transcript, input, status) = RuntimeCoordinator::main_pane_rects_for_height(10);
 
     assert_eq!(_header.height, 0);
@@ -1570,24 +1524,6 @@ fn main_pane_vertical_split_has_no_overlap_or_bottom_cutoff() {
     assert_eq!(transcript.y + transcript.height, input.y);
     assert_eq!(input.y + input.height, status.y);
     assert_eq!(status.y + status.height, 10);
-}
-
-#[test]
-fn scripted_event_parser_supports_ctrlp_for_palette_toggle() {
-    let mut source = ScriptedTerminalEvents::from_script("ctrlp");
-    assert_eq!(
-        source.poll_event(),
-        Ok(Some(TerminalEvent::Key(TerminalKey::CtrlP)))
-    );
-}
-
-#[test]
-fn scripted_event_parser_supports_ctrln_for_query_picker_navigation() {
-    let mut source = ScriptedTerminalEvents::from_script("ctrln");
-    assert_eq!(
-        source.poll_event(),
-        Ok(Some(TerminalEvent::Key(TerminalKey::CtrlN)))
-    );
 }
 
 #[test]
@@ -1772,13 +1708,12 @@ fn status_contract_f_narrow_layout_is_compact_and_ellipsizes_deterministically()
         None,
     );
     let compact_text: String = compact.spans.iter().map(|s| s.content.as_ref()).collect();
-    let compact_narrow =
-        crate::runtime::status::status_test::compact_status_line_with_branch_for_test(
-            "provider/super-long-model-name-that-needs-truncation",
-            Some("feature/very-long-branch-name-that-needs-truncation"),
-            None,
-            24,
-        );
+    let compact_narrow = crate::runtime::status::test::compact_status_line_with_branch_for_test(
+        "provider/super-long-model-name-that-needs-truncation",
+        Some("feature/very-long-branch-name-that-needs-truncation"),
+        None,
+        24,
+    );
     let compact_narrow_text: String = compact_narrow
         .spans
         .iter()
@@ -1958,6 +1893,7 @@ fn help_panel_escape_closes_panel_after_scroll() {
     coordinator
         .state
         .open_info_panel(crate::state::InfoPanel::Help);
+    // AppState.info_panel_scroll is a public field — no setter method exists.
     coordinator.state.info_panel_scroll = 5;
 
     let mut down = StubEventSource {
@@ -2788,8 +2724,10 @@ fn command_palette_table_emits_overflow_position_cue_when_viewport_is_small() {
 #[test]
 fn help_modal_uses_large_readable_layout() {
     let area = ratatui::layout::Rect::new(0, 0, 120, 40);
-    let popup =
-        super::render_frame::modal_rect_for_panel(area, super::render_frame::ModalPanelKind::Help);
+    let popup = super::render::frame::modal_rect_for_panel(
+        area,
+        super::render::frame::ModalPanelKind::Help,
+    );
 
     assert!(popup.width >= 72);
     assert!(popup.height >= 18);
@@ -2798,9 +2736,9 @@ fn help_modal_uses_large_readable_layout() {
 #[test]
 fn status_modal_uses_compact_layout() {
     let area = ratatui::layout::Rect::new(0, 0, 120, 40);
-    let popup = super::render_frame::modal_rect_for_panel(
+    let popup = super::render::frame::modal_rect_for_panel(
         area,
-        super::render_frame::ModalPanelKind::Status,
+        super::render::frame::ModalPanelKind::Status,
     );
 
     assert!(popup.width <= 72);
@@ -2810,16 +2748,18 @@ fn status_modal_uses_compact_layout() {
 #[test]
 fn modal_layout_policy_applies_consistently_across_panels() {
     let area = ratatui::layout::Rect::new(0, 0, 120, 40);
-    let command_palette = super::render_frame::modal_rect_for_panel(
+    let command_palette = super::render::frame::modal_rect_for_panel(
         area,
-        super::render_frame::ModalPanelKind::CommandPalette,
+        super::render::frame::ModalPanelKind::CommandPalette,
     );
-    let skills = super::render_frame::modal_rect_for_panel(
+    let skills = super::render::frame::modal_rect_for_panel(
         area,
-        super::render_frame::ModalPanelKind::Skills,
+        super::render::frame::ModalPanelKind::Skills,
     );
-    let mcps =
-        super::render_frame::modal_rect_for_panel(area, super::render_frame::ModalPanelKind::Mcps);
+    let mcps = super::render::frame::modal_rect_for_panel(
+        area,
+        super::render::frame::ModalPanelKind::Mcps,
+    );
 
     assert_eq!(skills.width, mcps.width);
     assert_eq!(skills.height, mcps.height);
@@ -2829,13 +2769,13 @@ fn modal_layout_policy_applies_consistently_across_panels() {
 #[test]
 fn models_modal_uses_layout_policy_defaults() {
     let area = ratatui::layout::Rect::new(0, 0, 120, 40);
-    let models = super::render_frame::modal_rect_for_panel(
+    let models = super::render::frame::modal_rect_for_panel(
         area,
-        super::render_frame::ModalPanelKind::Models,
+        super::render::frame::ModalPanelKind::Models,
     );
-    let skills = super::render_frame::modal_rect_for_panel(
+    let skills = super::render::frame::modal_rect_for_panel(
         area,
-        super::render_frame::ModalPanelKind::Skills,
+        super::render::frame::ModalPanelKind::Skills,
     );
 
     assert_eq!(models.width, skills.width);
@@ -2845,13 +2785,13 @@ fn models_modal_uses_layout_policy_defaults() {
 #[test]
 fn themes_modal_uses_layout_policy_defaults() {
     let area = ratatui::layout::Rect::new(0, 0, 120, 40);
-    let themes = super::render_frame::modal_rect_for_panel(
+    let themes = super::render::frame::modal_rect_for_panel(
         area,
-        super::render_frame::ModalPanelKind::Themes,
+        super::render::frame::ModalPanelKind::Themes,
     );
-    let models = super::render_frame::modal_rect_for_panel(
+    let models = super::render::frame::modal_rect_for_panel(
         area,
-        super::render_frame::ModalPanelKind::Models,
+        super::render::frame::ModalPanelKind::Models,
     );
 
     assert_eq!(themes.width, models.width);
@@ -2859,18 +2799,11 @@ fn themes_modal_uses_layout_policy_defaults() {
 }
 
 #[test]
-fn modal_frame_uses_rounded_border_style() {
-    assert!(super::modal_frame_uses_rounded_border_style_for_test());
-}
-
-#[test]
 fn modal_open_state_applies_dimmed_backdrop() {
     let mut state = AppState::new();
     state.open_command_palette();
 
-    assert!(super::modal_open_state_applies_dimmed_backdrop_for_test(
-        &state
-    ));
+    assert!(modal_open_state_applies_dimmed_backdrop_for_test(&state));
 }
 
 #[test]
@@ -2878,7 +2811,7 @@ fn inline_model_picker_modal_respects_border_and_backdrop_policy() {
     let mut state = AppState::new();
     state.open_model_picker();
 
-    assert!(super::inline_model_picker_modal_respects_border_and_backdrop_policy_for_test(&state));
+    assert!(inline_model_picker_modal_respects_border_and_backdrop_policy_for_test(&state));
 }
 
 #[test]
@@ -2896,16 +2829,14 @@ fn permission_prompt_does_not_open_global_dimmed_modal_backdrop() {
         summary: "→ {\"command\":\"echo hi\"}".to_string(),
     });
 
-    assert!(!super::modal_open_state_applies_dimmed_backdrop_for_test(
-        &state
-    ));
+    assert!(!modal_open_state_applies_dimmed_backdrop_for_test(&state));
 }
 
 #[test]
 fn model_picker_empty_catalog_shows_deterministic_empty_state() {
     let state = AppState::new();
     assert_eq!(
-        super::model_picker_empty_state_message_for_test(),
+        crate::runtime::panels::MODEL_PICKER_EMPTY_STATE_MESSAGE,
         "No models available in cached startup config."
     );
     assert!(state.model_picker_filtered_options().is_empty());
@@ -3628,8 +3559,8 @@ fn cancellation_during_shutdown_restores_terminal_and_preserves_cancel_error() {
 #[test]
 fn main_pane_rects_transcript_gets_remaining_space() {
     use crate::rendering::layout::INPUT_MIN_HEIGHT;
-    use crate::runtime::render_frame_test::STATUS_TARGET_HEIGHT;
-    use crate::runtime::render_frame_test::main_pane_rects_for_height;
+    use crate::runtime::render::frame_test::STATUS_TARGET_HEIGHT;
+    use crate::runtime::render::frame_test::main_pane_rects_for_height;
 
     let main_height = 40u16;
     let (header, transcript, input, status) = main_pane_rects_for_height(main_height);
@@ -3660,7 +3591,7 @@ fn status_indicator_busy_cycles_through_four_frames() {
 
 #[test]
 fn lane_1_idle_shows_empty_circle_prefix() {
-    let line = crate::runtime::status::status_test::compact_status_line_with_branch_for_test(
+    let line = crate::runtime::status::test::compact_status_line_with_branch_for_test(
         "mymodel", None, None, 40,
     );
     let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
@@ -3669,7 +3600,7 @@ fn lane_1_idle_shows_empty_circle_prefix() {
 
 #[test]
 fn lane_1_busy_shows_spinner_prefix() {
-    let line = crate::runtime::status::status_test::compact_status_line_with_branch_for_test(
+    let line = crate::runtime::status::test::compact_status_line_with_branch_for_test(
         "mymodel",
         None,
         Some(0),
@@ -3681,7 +3612,7 @@ fn lane_1_busy_shows_spinner_prefix() {
 
 #[test]
 fn lane_1_prefix_does_not_exceed_available_width() {
-    let line = crate::runtime::status::status_test::compact_status_line_with_branch_for_test(
+    let line = crate::runtime::status::test::compact_status_line_with_branch_for_test(
         "abcdefghijklmnop",
         Some("branchname"),
         None,
@@ -4201,7 +4132,7 @@ fn input_content_width_accounts_for_borders() {
 
 #[test]
 fn status_target_height_is_three() {
-    use crate::runtime::render_frame_test::STATUS_TARGET_HEIGHT;
+    use crate::runtime::render::frame_test::STATUS_TARGET_HEIGHT;
     assert_eq!(STATUS_TARGET_HEIGHT, 3);
 }
 
@@ -4534,7 +4465,8 @@ fn bottom_align_pads_content_when_shorter_than_viewport() {
     let mut coordinator = RuntimeCoordinator::new(120, 40, Some(false));
     // Push a single logo entry — total_visual_rows will be small
     coordinator.push_startup_logo();
-    // Force a render to trigger the bottom-align logic
+    // AppState.entry_visual_info_dirty is a public field — no setter method exists.
+    // Force a render to trigger the bottom-align logic.
     coordinator.state.entry_visual_info_dirty = true;
     // The actual padding happens in render_transcript_pane which we can't easily unit-test
     // without a full Frame. Instead, verify the state is set up correctly for bottom-align:

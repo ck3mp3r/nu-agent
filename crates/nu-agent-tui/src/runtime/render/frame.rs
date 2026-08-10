@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use ratatui::layout::Rect;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ModalPanelKind {
+pub(crate) enum ModalPanelKind {
     CommandPalette,
     Help,
     Status,
@@ -15,7 +15,7 @@ pub(super) enum ModalPanelKind {
     Themes,
 }
 
-pub(super) fn modal_rect_for_panel(area: Rect, panel: ModalPanelKind) -> Rect {
+pub(crate) fn modal_rect_for_panel(area: Rect, panel: ModalPanelKind) -> Rect {
     let (min_w, max_w, min_h, max_h) = match panel {
         ModalPanelKind::CommandPalette => (20u16, 48u16, 5u16, 10u16),
         ModalPanelKind::Help => (72u16, 112u16, 18u16, 34u16),
@@ -46,7 +46,7 @@ pub(super) fn modal_rect_for_panel(area: Rect, panel: ModalPanelKind) -> Rect {
     }
 }
 
-pub(super) fn current_time_millis() -> u128 {
+pub(crate) fn current_time_millis() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()

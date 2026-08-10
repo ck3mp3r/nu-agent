@@ -930,8 +930,8 @@ fn dispatch_grep(
 }
 
 #[cfg(test)]
-#[path = "grep_test.rs"]
-mod grep_test;
+#[path = "fs_test.rs"]
+mod fs_test;
 
 fn dispatch_glob(
     pattern: &str,
@@ -980,7 +980,3 @@ fn dispatch_glob(
         "total": total,
     }))
 }
-
-#[cfg(test)]
-#[path = "glob_test.rs"]
-mod glob_test;

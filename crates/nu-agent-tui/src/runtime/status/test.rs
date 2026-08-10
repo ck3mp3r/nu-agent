@@ -1,5 +1,7 @@
 use std::{
+    fs,
     path::{Path, PathBuf},
+    process::Command,
     time::Duration,
 };
 
@@ -8,6 +10,35 @@ use ratatui::text::{Line, Span};
 use crate::{rendering::theme::TuiTheme, state::AppState};
 
 use super::RepoBranchTracker;
+
+pub(crate) fn run_git(dir: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .current_dir(dir)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .args(args)
+        .output()
+        .expect("run git command");
+    assert!(
+        output.status.success(),
+        "git command failed in {}: git {}\nstdout: {}\nstderr: {}",
+        dir.display(),
+        args.join(" "),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+pub(crate) fn init_repo_with_branch(path: &Path, branch: &str) {
+    run_git(path, &["init"]);
+    run_git(path, &["config", "user.email", "nu-agent@test.local"]);
+    run_git(path, &["config", "user.name", "nu-agent-test"]);
+    fs::write(path.join("README.md"), "seed\n").expect("seed file");
+    run_git(path, &["add", "README.md"]);
+    run_git(path, &["commit", "-m", "seed"]);
+    run_git(path, &["checkout", "-b", branch]);
+}
 
 const BRANCH_ICON_PREFIX: &str = "\u{e725} ";
 const BRANCH_ICON_PREFIX_WIDTH: usize = 2;
