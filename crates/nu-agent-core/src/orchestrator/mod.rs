@@ -59,6 +59,8 @@ pub struct InteractiveLoopConfig {
     pub interactive_pending: Option<PendingPermissions>,
     /// Optional channel for receiving external prompts (e.g., A2A tasks).
     pub external_prompt_rx: Option<std_mpsc::Receiver<String>>,
+    /// Optional channel for receiving task IDs to cancel (e.g., A2A tasks).
+    pub task_cancel_rx: Option<std_mpsc::Receiver<String>>,
     /// Optional sender for turn-complete notifications (prompt, response).
     pub on_turn_complete: Option<std_mpsc::Sender<(String, String)>>,
     /// Optional hydration config for resuming a prior session.
@@ -76,6 +78,7 @@ impl InteractiveLoopConfig {
             span,
             interactive_pending: None,
             external_prompt_rx: None,
+            task_cancel_rx: None,
             on_turn_complete: None,
             hydration: None,
             on_agent_switch: None,
@@ -91,6 +94,12 @@ impl InteractiveLoopConfig {
     /// Set the external prompt receiver.
     pub fn with_external_prompt_rx(mut self, rx: Option<std_mpsc::Receiver<String>>) -> Self {
         self.external_prompt_rx = rx;
+        self
+    }
+
+    /// Set the task cancel receiver.
+    pub fn with_task_cancel_rx(mut self, rx: Option<std_mpsc::Receiver<String>>) -> Self {
+        self.task_cancel_rx = rx;
         self
     }
 
@@ -242,6 +251,7 @@ where
         span,
         interactive_pending,
         mut external_prompt_rx,
+        mut task_cancel_rx,
         on_turn_complete,
         hydration,
         ref on_agent_switch,
@@ -271,6 +281,7 @@ where
     let mut worker_active = false;
     let mut should_evaluate_compaction = true;
     let mut active_external_prompt: Option<String> = None;
+    let mut active_external_task_id: Option<String> = None;
 
     let mut worker_ui = WorkerProgressUi {
         events: worker_event_tx,
@@ -330,6 +341,11 @@ where
             );
             ui.display_incoming_message(&prompt);
             active_external_prompt = Some(prompt.clone());
+            active_external_task_id = prompt
+                .strip_prefix("[A2A Task ")
+                .and_then(|s| s.find(']').map(|i| &s[..i]))
+                .and_then(|header| header.find(" from ").map(|i| &header[..i]))
+                .map(|s| s.to_string());
 
             worker_cmd_tx
                 .send(WorkerCommand::ExecuteTurn { prompt, span })
@@ -337,6 +353,17 @@ where
                 .unwrap_or(());
             worker_active = true;
             continue;
+        }
+
+        // Check for A2A task cancellations and cancel the running turn if the
+        // task ID matches the currently active external task.
+        if let Some(ref mut cancel_rx) = task_cancel_rx {
+            while let Ok(task_id) = cancel_rx.try_recv() {
+                if active_external_task_id.as_deref() == Some(task_id.as_str()) {
+                    log::info!("orchestrator: cancelling external task {task_id}");
+                    cancel_requested.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+            }
         }
 
         let mut ctx = OrchestrationContext {
@@ -347,6 +374,7 @@ where
             span,
             ui,
             active_external_prompt: &mut active_external_prompt,
+            active_external_task_id: &mut active_external_task_id,
             on_turn_complete: &on_turn_complete,
         };
         match stages.poll_all(&mut ctx).await {

@@ -132,6 +132,8 @@ impl AgentBuilder {
             Ok(s) => s,
             Err(e) => return Err((e, None)),
         };
+        let mut server = server;
+        let task_cancel_rx = server.take_task_cancel_receiver();
         card.url = server.local_url.clone();
         if let Some(iface) = card.supported_interfaces.first_mut() {
             iface.url = server.local_url.clone();
@@ -229,6 +231,7 @@ impl AgentBuilder {
             cache,
             completion_tx: Some(completion_tx),
             completion_rx: Some(completion_rx),
+            task_cancel_rx,
             discovery,
             mesh_key: self.mesh_key,
             reregister_token: Some(reregister_token),

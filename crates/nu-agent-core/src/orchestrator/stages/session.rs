@@ -37,6 +37,7 @@ impl SessionStage {
                         && let Some(prompt_text) = ctx.active_external_prompt.take()
                     {
                         let response_text = extract_response_text_from_value(value);
+                        let _ = ctx.active_external_task_id.take();
                         let _ = tx.send((prompt_text, response_text));
                     }
                 }
@@ -44,6 +45,7 @@ impl SessionStage {
                     log::info!("Turn outcome: Cancelled");
                     // Clear pending external prompt — the turn didn't complete.
                     let _ = ctx.active_external_prompt.take();
+                    let _ = ctx.active_external_task_id.take();
                 }
                 TurnOutcome::Error(error) => {
                     log::warn!(
@@ -55,6 +57,7 @@ impl SessionStage {
                     });
                     // Clear pending external prompt — the turn didn't complete.
                     let _ = ctx.active_external_prompt.take();
+                    let _ = ctx.active_external_task_id.take();
                 }
             }
             handled = true;

@@ -586,6 +586,52 @@ async fn test_incoming_task_channel() {
     server.shutdown().await;
 }
 
+#[tokio::test]
+async fn test_task_cancel_channel_emits_task_id() {
+    ensure_crypto_provider();
+    let card = AgentCard {
+        name: "test".into(),
+        url: "http://127.0.0.1:0".into(),
+        ..Default::default()
+    };
+    let mut server = A2aServer::start(card, Arc::new(PeerCache::new()), 0)
+        .await
+        .unwrap();
+    let mut cancel_rx = server.take_task_cancel_receiver().unwrap();
+    let client = test_client();
+
+    // Create a task
+    let send_resp = client
+        .post(format!("{}/message:send", server.local_url))
+        .json(
+            &json!({"message": {"role": "user", "parts": [{"type": "text", "text": "cancel me"}]}}),
+        )
+        .send()
+        .await
+        .unwrap();
+    let send_body: serde_json::Value = send_resp.json().await.unwrap();
+    let task_id = send_body["task"]["id"].as_str().unwrap().to_string();
+
+    // Cancel the task
+    let resp = client
+        .post(format!("{}/tasks/{}/cancel", server.local_url, task_id))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["task"]["status"]["state"], "CANCELED");
+
+    // Verify the cancel channel received the task ID
+    let received = cancel_rx.try_recv().unwrap();
+    assert_eq!(
+        received, task_id,
+        "cancel channel should deliver the task ID"
+    );
+
+    server.shutdown().await;
+}
+
 // ---------------------------------------------------------------------------
 // PeerCache population from sender_url
 // ---------------------------------------------------------------------------

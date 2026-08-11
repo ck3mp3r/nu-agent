@@ -103,6 +103,9 @@ pub async fn handle_tasks_cancel(
 ) -> impl IntoResponse {
     match state.task_store.cancel_task(&id) {
         Ok(task) => {
+            if let Err(e) = state.task_cancel_tx.send(id.clone()) {
+                log::warn!("Failed to send task cancel signal for task {id}: {e}");
+            }
             let result = serde_json::to_value(&task).unwrap_or_default();
             (StatusCode::OK, a2a_json_response(a2a_ok(result)))
         }

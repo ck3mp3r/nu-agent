@@ -417,6 +417,13 @@ pub(super) fn run_command(
             .as_mut()
             .and_then(|h| h.server.take_incoming_task_receiver());
 
+        // Extract the A2A task cancel receiver (if A2A is enabled).
+        // This receives task IDs when remote agents cancel tasks that were
+        // sent to this agent.
+        let a2a_task_cancel_rx = a2a_handle
+            .as_mut()
+            .and_then(|h| h.take_task_cancel_receiver());
+
         // Extract the A2A completion event receiver (if A2A is enabled).
         // This receives events when remote agents finish processing tasks
         // that were sent via tasks.send.
@@ -432,6 +439,7 @@ pub(super) fn run_command(
         let a2a = super::mode_execute::A2aContext {
             task_rx: a2a_task_rx,
             completion_rx: a2a_completion_rx,
+            task_cancel_rx: a2a_task_cancel_rx,
             task_store: a2a_task_store.clone(),
             card_handle: a2a_handle.as_ref().and_then(|h| h.card_handle()),
             cache: a2a_handle.as_ref().map(|h| h.cache()),

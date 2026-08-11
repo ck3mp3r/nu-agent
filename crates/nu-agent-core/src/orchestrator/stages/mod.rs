@@ -55,6 +55,10 @@ pub(crate) struct OrchestrationContext<'a, U> {
     /// Set by the main loop before dispatching a turn, consumed by the session
     /// stage when the turn completes so it can fire `on_turn_complete`.
     pub active_external_prompt: &'a mut Option<String>,
+    /// Task ID of the external prompt that triggered the current turn (if any).
+    /// Parallel to `active_external_prompt`; cleared by the session stage when
+    /// the turn completes so a later cancel signal for the same task is ignored.
+    pub active_external_task_id: &'a mut Option<String>,
     /// Optional sender for turn-completion notifications. When Some, the session
     /// stage fires `(prompt_text, response_text)` after each turn that was
     /// triggered by an external prompt.

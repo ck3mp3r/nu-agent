@@ -22,6 +22,7 @@ pub struct AgentHandle {
     pub server: A2aServer,
     pub completion_tx: Option<mpsc::Sender<A2aCompletionEvent>>,
     completion_rx: Option<mpsc::Receiver<A2aCompletionEvent>>,
+    task_cancel_rx: Option<mpsc::UnboundedReceiver<String>>,
     discovery: Arc<Mutex<PeerDiscoveryImpl>>,
     // Private — held for A2aToolContext construction.
     client: A2aClient,
@@ -96,6 +97,15 @@ impl AgentHandle {
     /// The receiver can only be taken once; subsequent calls return `None`.
     pub fn take_completion_receiver(&mut self) -> Option<mpsc::Receiver<A2aCompletionEvent>> {
         self.completion_rx.take()
+    }
+
+    /// Take the A2A task cancel receiver.
+    ///
+    /// This receiver delivers task IDs when remote agents cancel tasks that
+    /// were sent to this agent's server. The receiver can only be taken once;
+    /// subsequent calls return `None`.
+    pub fn take_task_cancel_receiver(&mut self) -> Option<mpsc::UnboundedReceiver<String>> {
+        self.task_cancel_rx.take()
     }
 
     /// Gracefully shut down the agent, stopping the server.

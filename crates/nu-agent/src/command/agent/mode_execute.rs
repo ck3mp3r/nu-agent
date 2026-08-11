@@ -100,6 +100,7 @@ pub(crate) struct TuiHydrationInput {
 pub(crate) struct A2aContext {
     pub(crate) task_rx: Option<tokio::sync::mpsc::Receiver<IncomingTask>>,
     pub(crate) completion_rx: Option<tokio::sync::mpsc::Receiver<A2aCompletionEvent>>,
+    pub(crate) task_cancel_rx: Option<tokio::sync::mpsc::UnboundedReceiver<String>>,
     pub(crate) task_store: Option<Arc<InMemoryTaskStore>>,
     /// Handle to the server's mutable AgentCard, for updating on agent switch.
     pub(crate) card_handle: Option<Arc<std::sync::RwLock<AgentCard>>>,
@@ -272,6 +273,22 @@ pub(crate) async fn run_tui_mode(
         if has_sources { Some(std_rx) } else { None }
     };
 
+    // Bridge the A2A task cancel channel into a std channel that the
+    // orchestrator can poll without A2A knowledge.
+    let task_cancel_rx: Option<std::sync::mpsc::Receiver<String>> =
+        a2a.task_cancel_rx.map(|mut rx| {
+            let (cancel_tx, cancel_rx) = std::sync::mpsc::channel::<String>();
+            std::thread::spawn(move || {
+                while let Some(task_id) = rx.blocking_recv() {
+                    if cancel_tx.send(task_id).is_err() {
+                        break; // std receiver dropped, no more forwarding needed
+                    }
+                }
+                log::warn!("task cancel channel closed");
+            });
+            cancel_rx
+        });
+
     // Create the auto-complete channel for A2A tasks. When the interactive loop
     // finishes processing an external prompt (A2A task), it sends the prompt and
     // response text through `turn_tx`. A background thread reads from the channel
@@ -349,6 +366,7 @@ pub(crate) async fn run_tui_mode(
                 .with_hydration(hydration.initial_messages, hydration.last_total_tokens)
                 .with_interactive_pending(Some(Arc::clone(&pending)))
                 .with_external_prompt_rx(external_prompt_rx)
+                .with_task_cancel_rx(task_cancel_rx)
                 .with_on_turn_complete(turn_tx);
             if let Some(cb) = on_agent_switch {
                 config = config.with_on_agent_switch(cb);
@@ -359,6 +377,7 @@ pub(crate) async fn run_tui_mode(
             let mut config = InteractiveLoopConfig::new(span)
                 .with_interactive_pending(Some(Arc::clone(&pending)))
                 .with_external_prompt_rx(external_prompt_rx)
+                .with_task_cancel_rx(task_cancel_rx)
                 .with_on_turn_complete(turn_tx);
             if let Some(cb) = on_agent_switch {
                 config = config.with_on_agent_switch(cb);
