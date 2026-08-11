@@ -4,6 +4,8 @@ use rig::tool::{DynamicTool, ToolExecutionError, ToolOutput};
 use std::path::PathBuf;
 
 use crate::tools::handler::fs::dispatch_fs_tool;
+use crate::tools::handler::nu::dispatch_nu_tool;
+use crate::tools::handler::tmux::dispatch_tmux_tool;
 
 /// Adapts a builtin tool to rig's DynamicTool interface.
 ///
@@ -40,6 +42,8 @@ impl BuiltinToolAdapter {
         let cwd = self.cwd;
         let max_tool_result_bytes = self.max_tool_result_bytes;
         let is_http = name == "http";
+        let is_tmux = name.starts_with("tmux_");
+        let is_nu = name == "nu";
 
         DynamicTool::new(
             name.clone(),
@@ -62,6 +66,28 @@ impl BuiltinToolAdapter {
                                         .unwrap_or_else(|| "no details".to_string())
                                 ))
                             })?
+                    } else if is_tmux {
+                        // Call the builtin tmux tool dispatcher
+                        dispatch_tmux_tool(&name, &args, &cwd).map_err(|e| {
+                            ToolExecutionError::provider(format!(
+                                "{}: {}",
+                                e.message,
+                                e.details
+                                    .map(|d| d.to_string())
+                                    .unwrap_or_else(|| "no details".to_string())
+                            ))
+                        })?
+                    } else if is_nu {
+                        // Call the builtin nu tool dispatcher
+                        dispatch_nu_tool(&name, &args, &cwd).map_err(|e| {
+                            ToolExecutionError::provider(format!(
+                                "{}: {}",
+                                e.message,
+                                e.details
+                                    .map(|d| d.to_string())
+                                    .unwrap_or_else(|| "no details".to_string())
+                            ))
+                        })?
                     } else {
                         // Call the builtin FS tool dispatcher
                         dispatch_fs_tool(&name, &args, &cwd).map_err(|e| {

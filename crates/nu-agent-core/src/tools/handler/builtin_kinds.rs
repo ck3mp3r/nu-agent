@@ -15,6 +15,11 @@ pub enum BuiltinKind {
     Http,
     Grep,
     Glob,
+    Nu,
+    TmuxSession,
+    TmuxWindow,
+    TmuxPane,
+    TmuxLayout,
 }
 
 impl BuiltinKind {
@@ -32,12 +37,44 @@ impl BuiltinKind {
             Self::Http => "http",
             Self::Grep => "grep",
             Self::Glob => "glob",
+            Self::Nu => "nu",
+            Self::TmuxSession => "tmux_session",
+            Self::TmuxWindow => "tmux_window",
+            Self::TmuxPane => "tmux_pane",
+            Self::TmuxLayout => "tmux_layout",
         }
     }
 
     /// True for filesystem-mutating tools (edit, patch).
     pub const fn is_fs(&self) -> bool {
         matches!(self, Self::Edit | Self::Patch)
+    }
+
+    /// True for tmux control tools.
+    pub const fn is_tmux(&self) -> bool {
+        matches!(
+            self,
+            Self::TmuxSession | Self::TmuxWindow | Self::TmuxPane | Self::TmuxLayout
+        )
+    }
+
+    /// True for the Nushell execution tool.
+    pub const fn is_nu(&self) -> bool {
+        matches!(self, Self::Nu)
+    }
+
+    /// True for tools that require elevated privilege (mutating or system-level).
+    pub const fn is_privileged(&self) -> bool {
+        matches!(
+            self,
+            Self::Edit
+                | Self::Patch
+                | Self::TmuxSession
+                | Self::TmuxWindow
+                | Self::TmuxPane
+                | Self::TmuxLayout
+                | Self::Nu
+        )
     }
 }
 
@@ -58,6 +95,11 @@ impl FromStr for BuiltinKind {
             "http" => Ok(Self::Http),
             "grep" => Ok(Self::Grep),
             "glob" => Ok(Self::Glob),
+            "nu" => Ok(Self::Nu),
+            "tmux_session" => Ok(Self::TmuxSession),
+            "tmux_window" => Ok(Self::TmuxWindow),
+            "tmux_pane" => Ok(Self::TmuxPane),
+            "tmux_layout" => Ok(Self::TmuxLayout),
             _ => Err(()),
         }
     }

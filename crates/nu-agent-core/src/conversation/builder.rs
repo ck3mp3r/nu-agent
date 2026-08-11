@@ -212,6 +212,92 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
                 "required": ["pattern"]
             }),
         },
+        ToolDefinition {
+            name: "tmux_session".to_string(),
+            description: "Manage tmux sessions. List all sessions, get info about a specific session, create a new session (in a directory), or kill a session. Killing requires force=true.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string", "enum": ["list", "info", "create", "kill"] },
+                    "session": { "type": "string", "description": "Session name (required for info/kill)" },
+                    "name": { "type": "string", "description": "Name for the new session (required for create)" },
+                    "directory": { "type": "string", "description": "Starting directory for the new session (optional, for create)" },
+                    "force": { "type": "boolean", "description": "Must be true to confirm destruction (required for kill)" }
+                },
+                "required": ["action"]
+            }),
+        },
+        ToolDefinition {
+            name: "tmux_window".to_string(),
+            description: "Manage tmux windows within a session. Create a new window (optionally with a name, directory, and target index) or kill a window. Killing requires force=true.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string", "enum": ["create", "kill"] },
+                    "session": { "type": "string", "description": "Session name" },
+                    "name": { "type": "string", "description": "Name for the new window (optional, for create)" },
+                    "directory": { "type": "string", "description": "Working directory for the new window (optional, for create)" },
+                    "index": { "type": "integer", "description": "Target window index (optional, for create)" },
+                    "window": { "type": "string", "description": "Window name or index to kill (required for kill action)" },
+                    "force": { "type": "boolean", "description": "Must be true to confirm destruction (required for kill)" }
+                },
+                "required": ["action", "session"]
+            }),
+        },
+        ToolDefinition {
+            name: "tmux_pane".to_string(),
+            description: "Control tmux panes within a session. List panes, find a pane by name or context, inspect the running process, capture visible output, send a command, split a pane (horizontally or vertically with a size percentage and optional directory), or kill a pane. Killing requires force=true.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string", "enum": ["list", "find", "process", "capture", "send", "split", "kill"] },
+                    "session": { "type": "string", "description": "Session name" },
+                    "pane": { "type": "string", "description": "Pane ID (optional, for capture/send/split/kill/process)" },
+                    "command": { "type": "string", "description": "Command to send to the pane (required for send)" },
+                    "direction": { "type": "string", "enum": ["horizontal", "vertical"], "description": "Split direction (optional, for split)" },
+                    "size": { "type": "integer", "description": "Size of new pane as percentage (optional, for split)" },
+                    "directory": { "type": "string", "description": "Working directory for the new pane (optional, for split)" },
+                    "name": { "type": "string", "description": "Pane name to find (optional, for find)" },
+                    "context": { "type": "string", "description": "Context to search for, e.g. directory name or command (optional, for find)" },
+                    "lines": { "type": "integer", "description": "Number of lines to capture (optional, for capture)" },
+                    "force": { "type": "boolean", "description": "Must be true to confirm destruction (required for kill)" }
+                },
+                "required": ["action", "session"]
+            }),
+        },
+        ToolDefinition {
+            name: "tmux_layout".to_string(),
+            description: "Select a layout for arranging panes in a tmux window. Non-destructive operation that only changes visual arrangement. Layouts: even-horizontal (equal width columns), even-vertical (equal height rows), main-horizontal (large top pane), main-vertical (large left pane), tiled (grid).".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string", "enum": ["select"] },
+                    "session": { "type": "string", "description": "Session name" },
+                    "window": { "type": "string", "description": "Window name or ID" },
+                    "layout": { "type": "string", "enum": ["even-horizontal", "even-vertical", "main-horizontal", "main-vertical", "tiled"] }
+                },
+                "required": ["action", "session", "window", "layout"]
+            }),
+        },
+        ToolDefinition {
+            name: "nu".to_string(),
+            description: "Execute a Nushell command in a stateless one-shot process. Returns stdout and stderr as text. Use Nushell syntax ONLY (NOT bash/sh/zsh). Each call is independent — no state preserved between calls. Use pipes to chain commands within a single call.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "Nushell command to execute. Use Nushell syntax ONLY (NOT bash/sh/zsh). Example: 'ls | where type == file | get name'"
+                    },
+                    "timeout_seconds": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Timeout in seconds. Default 300."
+                    }
+                },
+                "required": ["command"]
+            }),
+        },
     ]
 }
 /// Tool definitions available to any agent that can send messages.

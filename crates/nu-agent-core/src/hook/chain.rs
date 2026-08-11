@@ -45,7 +45,7 @@ fn resolve_tool_source(
     if closures.get(name).is_some() {
         ToolSource::Closure
     } else if let Ok(kind) = name.parse::<BuiltinKind>() {
-        if kind.is_fs() {
+        if kind.is_privileged() {
             ToolSource::BuiltinFs
         } else {
             ToolSource::Builtin

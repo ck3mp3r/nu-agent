@@ -4,8 +4,10 @@ mod conversion;
 mod dispatch;
 pub mod fs;
 pub mod http;
+pub mod nu;
 pub mod pre_authorize;
 mod result;
+pub mod tmux;
 mod types;
 
 #[cfg(test)]
@@ -30,6 +32,18 @@ pub fn is_fs_tool_name(tool_name: &str) -> bool {
     tool_name
         .parse::<builtin_kinds::BuiltinKind>()
         .is_ok_and(|b| b.is_fs())
+}
+
+pub fn is_tmux_tool_name(tool_name: &str) -> bool {
+    tool_name
+        .parse::<builtin_kinds::BuiltinKind>()
+        .is_ok_and(|b| b.is_tmux())
+}
+
+pub fn is_nu_tool_name(tool_name: &str) -> bool {
+    tool_name
+        .parse::<builtin_kinds::BuiltinKind>()
+        .is_ok_and(|b| b.is_nu())
 }
 
 pub fn is_builtin_tool_name(tool_name: &str) -> bool {

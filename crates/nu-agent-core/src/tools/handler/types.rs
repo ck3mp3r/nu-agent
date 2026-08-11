@@ -15,8 +15,9 @@ pub enum ToolSource {
     /// Agent-coordination and read-only builtin tools (`read`, `skill`, `spawn_agent`,
     /// `send_message`, `list_agents`). These bypass the permission system entirely.
     Builtin,
-    /// Filesystem-mutating builtin tools (`edit`, `patch`). Despite being built-in,
-    /// these go through the full permission flow because they can modify files on disk.
+    /// Privileged builtin tools (edit, patch, tmux, nu). Despite being built-in,
+    /// these go through the full permission flow because they can modify state
+    /// outside the agent.
     BuiltinFs,
     Unknown,
 }

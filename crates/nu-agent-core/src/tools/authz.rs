@@ -379,8 +379,36 @@ impl PermissionsConfig {
                 ("grep".to_string(), PermissionAction::Allow),
                 ("c5t_get*".to_string(), PermissionAction::Allow),
                 ("c5t_list*".to_string(), PermissionAction::Allow),
+                ("tmux_session".to_string(), PermissionAction::Ask),
+                ("tmux_window".to_string(), PermissionAction::Ask),
+                ("tmux_pane".to_string(), PermissionAction::Ask),
+                ("tmux_layout".to_string(), PermissionAction::Ask),
+                ("nu".to_string(), PermissionAction::Ask),
             ],
-            nested_field_rules: HashMap::new(),
+            nested_field_rules: HashMap::from([
+                (
+                    "tmux_session".to_string(),
+                    HashMap::from([(
+                        "action".to_string(),
+                        vec![
+                            ("list".to_string(), PermissionAction::Allow),
+                            ("info".to_string(), PermissionAction::Allow),
+                        ],
+                    )]),
+                ),
+                (
+                    "tmux_pane".to_string(),
+                    HashMap::from([(
+                        "action".to_string(),
+                        vec![
+                            ("list".to_string(), PermissionAction::Allow),
+                            ("find".to_string(), PermissionAction::Allow),
+                            ("process".to_string(), PermissionAction::Allow),
+                            ("capture".to_string(), PermissionAction::Allow),
+                        ],
+                    )]),
+                ),
+            ]),
             diagnostics: vec![PermissionDiagnostic {
                 code: "permissions.defaults.applied",
                 message: "permissions block missing; using conservative defaults".to_string(),
