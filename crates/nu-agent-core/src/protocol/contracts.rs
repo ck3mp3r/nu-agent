@@ -215,6 +215,7 @@ pub trait TranscriptUi {
         last_total_tokens: Option<u64>,
     );
     fn clear_transcript(&mut self) {}
+    fn push_startup_logo(&mut self) {}
 }
 
 /// Minimal runtime required for a single turn. Used by run_single_turn.

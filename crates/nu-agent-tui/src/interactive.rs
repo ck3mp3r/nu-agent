@@ -270,4 +270,8 @@ where
     fn clear_transcript(&mut self) {
         self.renderer.clear_transcript();
     }
+
+    fn push_startup_logo(&mut self) {
+        self.renderer.push_startup_logo();
+    }
 }

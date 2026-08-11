@@ -73,6 +73,7 @@ impl SlashStage {
                 SlashParseResult::Command(SlashCommand::New) => {
                     let _ = ctx.worker_tx.send(WorkerCommand::NewSession).await;
                     ctx.ui.clear_transcript();
+                    ctx.ui.push_startup_logo();
                     handled = true;
                     continue;
                 }

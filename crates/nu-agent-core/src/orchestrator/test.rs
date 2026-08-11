@@ -186,6 +186,25 @@ async fn recognized_slash_commands_never_sent_to_llm() {
 }
 
 #[tokio::test]
+async fn new_slash_command_clears_transcript_and_pushes_startup_logo() {
+    let runtime = FakeRuntime::default();
+    let mut ui = FakeInteractiveUi::with_prompts(&["/new"]);
+
+    let (runtime, result) = run_interactive_loop_impl(
+        runtime,
+        &mut ui,
+        InteractiveLoopConfig::new(Span::test_data()),
+    )
+    .await;
+    let value = result.expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert!(runtime.prompts.is_empty());
+    assert_eq!(ui.clear_transcript_count, 1);
+    assert_eq!(ui.push_startup_logo_count, 1);
+}
+
+#[tokio::test]
 async fn models_slash_command_not_sent_to_llm() {
     let runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&["/models"]);

@@ -55,6 +55,8 @@ pub(crate) struct FakeInteractiveUi {
     pub(crate) min_pump_count: usize,
     pub(crate) call_order: Vec<&'static str>,
     pub(crate) hydrated_messages: Vec<UiMessageSnapshot>,
+    pub(crate) clear_transcript_count: usize,
+    pub(crate) push_startup_logo_count: usize,
     pub(crate) mcp_toggle_requests: std::collections::VecDeque<McpToggleRequest>,
     pub(crate) mcp_states: Vec<(String, McpUsabilityState)>,
     pub(crate) mcp_details: Vec<(String, McpUsabilityState, Option<String>, usize)>,
@@ -77,6 +79,8 @@ impl FakeInteractiveUi {
             min_pump_count: 1,
             call_order: Vec::new(),
             hydrated_messages: Vec::new(),
+            clear_transcript_count: 0,
+            push_startup_logo_count: 0,
             mcp_toggle_requests: std::collections::VecDeque::new(),
             mcp_states: Vec::new(),
             mcp_details: Vec::new(),
@@ -218,6 +222,14 @@ impl TranscriptUi for FakeInteractiveUi {
     ) {
         self.call_order.push("hydrate");
         self.hydrated_messages.extend(messages);
+    }
+
+    fn clear_transcript(&mut self) {
+        self.clear_transcript_count += 1;
+    }
+
+    fn push_startup_logo(&mut self) {
+        self.push_startup_logo_count += 1;
     }
 }
 
