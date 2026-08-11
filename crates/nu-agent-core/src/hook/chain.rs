@@ -57,6 +57,23 @@ fn resolve_tool_source(
     }
 }
 
+/// Resolve the success flag for a tool result.
+///
+/// For the `nu` tool, the result is JSON with an `exit_code` field. A non-zero
+/// exit code means the command failed, so `success` must be `false` even though
+/// the tool itself returned `Ok`. Parse failures fall back to the base success.
+fn resolve_success(tool_name: &str, base_success: bool, result_text: &str) -> bool {
+    if tool_name == "nu" && base_success {
+        serde_json::from_str::<serde_json::Value>(result_text)
+            .ok()
+            .and_then(|v| v.get("exit_code").and_then(|c| c.as_i64()))
+            .map(|code| code == 0)
+            .unwrap_or(true)
+    } else {
+        base_success
+    }
+}
+
 /// Composable hook that delegates to named concern structs in explicit order.
 ///
 /// See module-level docs for the extension pattern.
@@ -290,8 +307,11 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
             .map(|e| e.kind().as_str().to_string());
 
         // 4. Emit ToolEnd
-        let success =
-            event.raw_result.error().is_none() && !super::agent_hook::is_tool_failure(&result_text);
+        let success = resolve_success(
+            tool_name,
+            event.raw_result.error().is_none() && !super::agent_hook::is_tool_failure(&result_text),
+            &result_text,
+        );
 
         let _ = self.ui_tx.send(UiEvent::ToolEnd {
             name: tool_name.to_string(),
@@ -351,3 +371,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
         async { Some(InvalidToolCallAction::retry(feedback)) }
     }
 }
+
+#[cfg(test)]
+#[path = "chain_test.rs"]
+mod chain_test;
