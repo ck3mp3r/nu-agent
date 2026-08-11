@@ -519,3 +519,40 @@ fn push_spacer_adds_spacer_when_last_is_not_spacer() {
         TranscriptEntry::Spacer(_)
     ));
 }
+
+#[test]
+fn user_prompt_queued_during_external_prompt_not_double_delivered() {
+    let mut state = AppState::new();
+
+    // External prompt arrives and is active
+    state.enqueue_external_prompt("external task".to_string());
+    assert_eq!(active_prompt_id(&state), Some(1));
+
+    // User submits a prompt while external is running
+    state.enqueue_prompt("user task".to_string());
+
+    // First take should return None — user prompt waits for external to complete
+    assert_eq!(
+        state.take_next_prompt_for_execution(),
+        None,
+        "user prompt must NOT be delivered while external prompt is active"
+    );
+
+    // Complete the external prompt
+    state.complete_active_prompt();
+
+    // Now the user prompt should be delivered exactly once
+    let result = state.take_next_prompt_for_execution();
+    assert_eq!(
+        result.as_deref(),
+        Some("user task"),
+        "user prompt should be delivered after external prompt completes"
+    );
+
+    // Second take should return None — not delivered again
+    assert_eq!(
+        state.take_next_prompt_for_execution(),
+        None,
+        "user prompt must NOT be delivered a second time"
+    );
+}

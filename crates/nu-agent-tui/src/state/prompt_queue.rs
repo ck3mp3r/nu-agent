@@ -114,6 +114,13 @@ impl<'a> PromptQueueLifecycle<'a> {
             return vec![];
         }
 
+        // FIX: Don't coalesce if there's already an active prompt — wait for it to complete.
+        // Without this guard, coalesce overwrites active_prompt_id, then enforce_single_active_invariant
+        // re-queues the prompt because two InProgress prompts exist, causing double delivery.
+        if self.active_prompt_id.is_some() {
+            return vec![];
+        }
+
         let ids: Vec<u64> = self.pending_prompt_ids.drain(..).collect();
         *self.active_prompt_id = ids.first().copied();
 
