@@ -166,7 +166,7 @@ async fn interactive_loop_continues_turn_processing_with_auto_compaction_enabled
 async fn recognized_slash_commands_never_sent_to_llm() {
     let runtime = FakeRuntime::default();
     let mut ui = FakeInteractiveUi::with_prompts(&[
-        "/help", "/status", "/mcp", "/models", "/agent", "/compact",
+        "/help", "/status", "/mcp", "/models", "/agent", "/compact", "/skills",
     ]);
 
     let (runtime, result) = run_interactive_loop_impl(
@@ -341,8 +341,9 @@ async fn manual_and_auto_compaction_failure_surface_is_consistent() {
 #[tokio::test]
 async fn slash_commands_reuse_command_palette_action_handlers() {
     let runtime = FakeRuntime::default();
-    let mut ui =
-        FakeInteractiveUi::with_prompts(&["/help", "/status", "/mcp", "/models", "/agent"]);
+    let mut ui = FakeInteractiveUi::with_prompts(&[
+        "/help", "/status", "/mcp", "/models", "/agent", "/skills",
+    ]);
 
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
@@ -361,6 +362,7 @@ async fn slash_commands_reuse_command_palette_action_handlers() {
             SharedUiAction::Mcps,
             SharedUiAction::Models,
             SharedUiAction::Agents,
+            SharedUiAction::Skills,
         ]
     );
     assert!(runtime.prompts.is_empty());

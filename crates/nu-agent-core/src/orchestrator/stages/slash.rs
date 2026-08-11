@@ -111,6 +111,11 @@ impl SlashStage {
                     handled = true;
                     continue;
                 }
+                SlashParseResult::Command(SlashCommand::Skills) => {
+                    let _ = ctx.ui.execute_shared_ui_action(SharedUiAction::Skills);
+                    handled = true;
+                    continue;
+                }
                 SlashParseResult::Unknown(command) => {
                     ctx.ui.emit(&UiEvent::Warning {
                         message: format!("Unknown slash command: {command}"),

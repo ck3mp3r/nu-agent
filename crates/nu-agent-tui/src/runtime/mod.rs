@@ -1035,6 +1035,10 @@ impl RuntimeCoordinator {
                 self.state.open_theme_picker();
                 true
             }
+            SharedUiAction::Skills => {
+                self.state.open_info_panel(InfoPanel::Skills);
+                true
+            }
         }
     }
 

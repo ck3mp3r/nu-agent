@@ -37,7 +37,7 @@
 - If the slash prefix is removed, suggestions close cleanly without falling back to command palette.
 - Up/Down selects a suggestion; `Enter` submits the selected slash command.
 - Supported commands: `/compact`, `/mcp`, `/help`, `/status`.
-- Supported commands: `/compact`, `/mcp`, `/help`, `/status`, `/models`.
+- Supported commands: `/compact`, `/mcp`, `/help`, `/status`, `/models`, `/skills`.
 - `/help`, `/status`, and `/mcp` map to the same handlers as Ctrl-P actions.
 - `/models` and Ctrl-P `Models` use the same shared model-picker action path.
 - Unknown slash commands warn deterministically and continue the loop.

@@ -1124,7 +1124,7 @@ fn inline_slash_enter_on_compact_triggers_compaction_path() {
 
 #[test]
 fn immediate_slash_commands_do_not_set_busy_or_spinner() {
-    for command in ["/compact", "/mcp", "/help", "/status"] {
+    for command in ["/compact", "/mcp", "/help", "/status", "/skills"] {
         let mut state = AppState::new();
 
         // InsertChar is now a no-op in the dispatch path (handled by TextArea).

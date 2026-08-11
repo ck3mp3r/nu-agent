@@ -9,6 +9,7 @@ pub enum SlashCommand {
     New,
     Session,
     Theme,
+    Skills,
 }
 
 impl SlashCommand {
@@ -23,6 +24,7 @@ impl SlashCommand {
             SlashCommand::New => "/new",
             SlashCommand::Session => "/session",
             SlashCommand::Theme => "/theme",
+            SlashCommand::Skills => "/skills",
         }
     }
 
@@ -37,6 +39,7 @@ impl SlashCommand {
             SlashCommand::New => "Start a new session",
             SlashCommand::Session => "Switch to an existing session",
             SlashCommand::Theme => "Switch color theme",
+            SlashCommand::Skills => "Open skills panel",
         }
     }
 }
@@ -61,7 +64,7 @@ pub enum SlashParseResult {
     Unknown(String),
 }
 
-pub const SLASH_COMMAND_ORDER: [SlashCommand; 9] = [
+pub const SLASH_COMMAND_ORDER: [SlashCommand; 10] = [
     SlashCommand::Compact,
     SlashCommand::Mcp,
     SlashCommand::Help,
@@ -71,6 +74,7 @@ pub const SLASH_COMMAND_ORDER: [SlashCommand; 9] = [
     SlashCommand::New,
     SlashCommand::Session,
     SlashCommand::Theme,
+    SlashCommand::Skills,
 ];
 
 pub fn filter_inline_slash_suggestions(input: &str) -> Vec<SlashCommand> {
@@ -106,6 +110,7 @@ pub fn parse_slash_command(input: &str) -> SlashParseResult {
         "/new" => Some(SlashCommand::New),
         "/session" => Some(SlashCommand::Session),
         "/theme" => Some(SlashCommand::Theme),
+        "/skills" => Some(SlashCommand::Skills),
         _ => {
             // Check for /session <id> prefix match
             if command.starts_with("/session ") {

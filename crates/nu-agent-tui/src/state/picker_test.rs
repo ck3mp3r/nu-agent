@@ -143,6 +143,7 @@ fn inline_slash_suggestions_open_on_leading_slash() {
             SlashCommand::New,
             SlashCommand::Session,
             SlashCommand::Theme,
+            SlashCommand::Skills,
         ]
     );
 }
@@ -152,7 +153,7 @@ fn inline_slash_suggestions_filter_incrementally_as_input_grows() {
     let mut state = AppState::new();
 
     state.check_inline_slash("/");
-    assert_eq!(state.inline_slash_suggestions().len(), 9);
+    assert_eq!(state.inline_slash_suggestions().len(), 10);
 
     state.check_inline_slash("/c");
     assert_eq!(state.inline_slash_suggestions(), &[SlashCommand::Compact]);

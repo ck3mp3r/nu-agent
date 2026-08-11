@@ -24,6 +24,7 @@ pub enum SharedUiAction {
     Agents,
     Sessions,
     Themes,
+    Skills,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
