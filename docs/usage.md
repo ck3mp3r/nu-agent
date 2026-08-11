@@ -152,7 +152,7 @@ Only CLI surface for policy override is `--permissions` (structured record/objec
 # Build per-run overlay in Nu and pass as a record
 let permissions = {
   "read": "deny"
-  "nu__run": {
+  "nu": {
     "command": {
       "kubectl delete *": "deny"
       "*": "ask"
@@ -171,7 +171,7 @@ Canonical shape:
 read = "allow"
 "c5t_get*" = "allow"
 
-[permissions.nu__run.command]
+[permissions.nu.command]
 "kubectl delete *" = "deny"
 "*" = "ask"
 ```
@@ -180,10 +180,10 @@ read = "allow"
 
 - global baseline: `"*": "allow|ask|deny"`
 - tool pattern actions: `"read": "allow"`, `"c5t_get*": "allow"`
-- nested `nu__run` map with explicit `command` key only:
-  - `"nu__run": { "command": { "<pattern>": "allow|ask|deny" } }`
+- nested `nu` map with explicit `command` key only:
+  - `"nu": { "command": { "<pattern>": "allow|ask|deny" } }`
 
-Unknown nested fields under `nu__run` are rejected with deterministic diagnostics.
+Unknown nested fields under `nu` are rejected with deterministic diagnostics.
 
 ### Deterministic precedence
 
@@ -191,14 +191,14 @@ Decision order is fixed:
 
 1. global baseline
 2. tool override
-3. nested `nu__run.command` override
+3. nested `nu.command` override
 
-For `nu__run.command` matching, runtime normalizes commands by:
+For `nu.command` matching, runtime normalizes commands by:
 
 - trimming leading/trailing whitespace
 - collapsing internal whitespace runs to one space
 
-If `nu__run.command` is missing/unreadable, behavior deterministically falls back
+If `nu.command` is missing/unreadable, behavior deterministically falls back
 to inherited tool/global decision with diagnostic metadata.
 
 If nested `"*"` equals inherited decision, it is a valid no-op and reported via
@@ -215,13 +215,13 @@ Merge rules:
 
 - overlapping leaf/action keys: CLI wins
 - non-overlapping config keys: retained
-- nested maps (for example `nu__run.command`): deterministic key merge
+- nested maps (for example `nu.command`): deterministic key merge
 
 Malformed CLI overlay fails fast with explicit key-path diagnostics.
 
 Startup emits a compact policy diagnostic summary:
 
-- `permissions policy: overlay_active=true|false global=<action> tool_rules=<n> nu__run.command_rules=<n>`
+- `permissions policy: overlay_active=true|false global=<action> tool_rules=<n> nu.command_rules=<n>`
 
 ### Ask flow and session grants
 
@@ -292,13 +292,33 @@ non_interactive_ask = "allow"
 - supported values: `deny`, `allow`
 - invalid values fail fast with deterministic config error
 
-## Built-in filesystem tools (CAS-safe)
+## Built-in tools
 
-The agent exposes exactly three built-in filesystem tools:
+The agent exposes the following built-in tools (no MCP server required):
 
-- `read`
-- `edit`
-- `patch`
+**Filesystem (CAS-safe):**
+- `read` — read file content with optional line windowing
+- `edit` — search/replace or create files with CAS guard
+- `patch` — line-range batch edits with CAS guard
+
+**Search:**
+- `grep` — recursive regex search (ripgrep-style)
+- `glob` — file glob matching
+
+**HTTP:**
+- `http` — fetch URLs, markdown extraction from HTML
+
+**Skills:**
+- `skill` — load skill content by name from local or home skill roots
+
+**Shell execution:**
+- `nu` — stateless Nushell command execution (NOT bash/sh/zsh)
+
+**tmux session management:**
+- `tmux_session` — list, info, create, kill sessions
+- `tmux_window` — create, kill windows
+- `tmux_pane` — list, find, capture, send, split, kill panes
+- `tmux_layout` — select layout
 
 These names are unprefixed and exact. There are no builtin aliases like
 `fs__read` or `tool__edit`.
@@ -532,9 +552,15 @@ CLI flags override config.toml, which overrides built-in defaults.
   - `/mcp`
   - `/help`
   - `/status`
+  - `/skills`
   - `/models`
-- `/help`, `/status`, and `/mcp` route to the same action handlers as Ctrl-P entries.
+  - `/agent`
+  - `/new`
+  - `/session`
+  - `/theme`
+- `/help`, `/status`, `/mcp`, and `/skills` route to the same action handlers as Ctrl-P entries.
 - `/models` and Ctrl-P `Models` route to the same shared model-picker action handler.
+- `/new` clears the transcript, starts a new session, and shows the startup logo.
 - Unknown slash commands emit deterministic warning text and the interactive loop continues.
 - Immediate slash command text is not echoed into the transcript and is not persisted as a session turn message.
 - Compaction result artifacts remain transcript-visible (for example, compaction summary/source/count rows).
@@ -578,7 +604,7 @@ hidden from the LLM entirely — they never appear in the tool list.
 | `allow` | yes | Runs without prompting |
 | `ask` | yes | User prompted before each use |
 | `deny` (tool-level) | **no** | Hidden from LLM tool list |
-| `deny` (granular, e.g. `nu__run.command`) | yes | Tool visible; specific commands blocked at runtime |
+| `deny` (granular, e.g. `nu.command`) | yes | Tool visible; specific commands blocked at runtime |
 
 ### Defaults
 
@@ -610,7 +636,7 @@ should never be available:
 ```toml
 [permissions]
 "*" = "ask"
-"nu__run" = "deny"
+"nu" = "deny"
 edit = "deny"
 patch = "deny"
 ```

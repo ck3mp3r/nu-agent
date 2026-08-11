@@ -241,7 +241,7 @@ skill = "ask"
 ### Nested field rules
 
 ```toml
-[permissions.nu__run.command]
+[permissions.nu.command]
 "rm*" = "deny"
 "git push*" = "deny"
 "*" = "ask"
