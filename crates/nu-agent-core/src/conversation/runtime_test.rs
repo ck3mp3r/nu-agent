@@ -66,6 +66,7 @@ fn permissions_startup_summary_emits_once_before_first_turn() {
 #[test]
 fn build_system_preamble_joins_non_empty_parts() {
     let result = super::build_system_preamble(
+        None,
         Some("preamble text"),
         None,
         None,
@@ -83,15 +84,47 @@ fn build_system_preamble_joins_non_empty_parts() {
 }
 
 #[test]
+fn build_system_preamble_includes_cwd_first() {
+    let result = super::build_system_preamble(
+        Some("Working directory: /tmp/project"),
+        Some("config preamble"),
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+
+    assert!(result.is_some());
+    let text = result.unwrap();
+    assert!(text.contains("Working directory: /tmp/project"));
+
+    // cwd must be the first part the LLM sees
+    let cwd_pos = text.find("Working directory: /tmp/project").unwrap();
+    let config_pos = text.find("config preamble").unwrap();
+    assert!(
+        cwd_pos < config_pos,
+        "cwd should come before config preamble"
+    );
+}
+
+#[test]
 fn build_system_preamble_returns_none_when_all_empty() {
-    let result = super::build_system_preamble(None, None, None, None, None, None);
+    let result = super::build_system_preamble(None, None, None, None, None, None, None);
     assert!(result.is_none());
 }
 
 #[test]
 fn build_system_preamble_handles_partial_inputs() {
-    let result =
-        super::build_system_preamble(Some("preamble"), None, None, None, Some("agents"), None);
+    let result = super::build_system_preamble(
+        None,
+        Some("preamble"),
+        None,
+        None,
+        None,
+        Some("agents"),
+        None,
+    );
 
     assert!(result.is_some());
     let text = result.unwrap();
@@ -102,6 +135,7 @@ fn build_system_preamble_handles_partial_inputs() {
 #[test]
 fn build_system_preamble_includes_persona_in_correct_position() {
     let result = super::build_system_preamble(
+        None,
         Some("config preamble"),
         Some("agent persona"),
         None,
@@ -137,7 +171,8 @@ fn build_system_preamble_includes_persona_in_correct_position() {
 
 #[test]
 fn build_system_preamble_persona_only() {
-    let result = super::build_system_preamble(None, Some("persona only"), None, None, None, None);
+    let result =
+        super::build_system_preamble(None, None, Some("persona only"), None, None, None, None);
 
     assert!(result.is_some());
     let text = result.unwrap();
@@ -147,6 +182,7 @@ fn build_system_preamble_persona_only() {
 #[test]
 fn build_system_preamble_includes_sub_agent_instruction() {
     let result = super::build_system_preamble(
+        None,
         None,
         Some("persona"),
         Some("sub-agent instruction"),
@@ -171,8 +207,15 @@ fn build_system_preamble_includes_sub_agent_instruction() {
 
 #[test]
 fn build_system_preamble_sub_agent_instruction_only() {
-    let result =
-        super::build_system_preamble(None, None, Some("you are a sub-agent"), None, None, None);
+    let result = super::build_system_preamble(
+        None,
+        None,
+        None,
+        Some("you are a sub-agent"),
+        None,
+        None,
+        None,
+    );
 
     assert!(result.is_some());
     let text = result.unwrap();

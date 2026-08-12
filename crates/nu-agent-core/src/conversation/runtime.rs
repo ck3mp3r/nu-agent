@@ -41,6 +41,7 @@ use crate::protocol::{
 /// Build system preamble from components.
 /// Joins non-empty parts with separators. Returns None if all empty.
 fn build_system_preamble(
+    cwd: Option<&str>,
     config_preamble: Option<&str>,
     agent_persona: Option<&str>,
     sub_agent_instruction: Option<&str>,
@@ -49,7 +50,8 @@ fn build_system_preamble(
     available_skills: Option<&str>,
 ) -> Option<String> {
     log::trace!(
-        "build_system_preamble: config_preamble={}, agent_persona={}, sub_agent_instruction={}, context={}, agents_chain={}, available_skills={}",
+        "build_system_preamble: cwd={}, config_preamble={}, agent_persona={}, sub_agent_instruction={}, context={}, agents_chain={}, available_skills={}",
+        cwd.is_some(),
         config_preamble.is_some(),
         agent_persona.is_some(),
         sub_agent_instruction.is_some(),
@@ -59,6 +61,7 @@ fn build_system_preamble(
     );
 
     let parts: Vec<&str> = [
+        cwd,
         config_preamble,
         agent_persona,
         sub_agent_instruction,
@@ -170,7 +173,9 @@ where
         self.permission_state.emit_startup_summary_once(ui);
 
         // Build system preamble from cached components
+        let cwd_str = self.cwd.to_str().map(|s| format!("Working directory: {s}"));
         let preamble = build_system_preamble(
+            cwd_str.as_deref(),
             self.provider.provider_config().preamble.as_deref(),
             self.persona.agent_persona_body(),
             self.persona.cached_sub_agent_instruction(),
