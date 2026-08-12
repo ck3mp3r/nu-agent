@@ -12,6 +12,15 @@ use crate::protocol::{
         PermissionController, PermissionRequest, PermissionRequestToken, PermissionResolution,
     },
 };
+use crate::tools::handler::builtin_tool::BuiltinTool;
+use crate::tools::handler::glob::GlobTool;
+use crate::tools::handler::grep::GrepTool;
+use crate::tools::handler::nu::NuTool;
+use crate::tools::handler::read::ReadTool;
+use crate::tools::handler::tmux_layout::TmuxLayoutTool;
+use crate::tools::handler::tmux_pane::TmuxPaneTool;
+use crate::tools::handler::tmux_session::TmuxSessionTool;
+use crate::tools::handler::tmux_window::TmuxWindowTool;
 
 static NEXT_PERMISSION_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -374,20 +383,20 @@ impl PermissionsConfig {
         Self {
             global,
             tool_rules: vec![
-                ("read".to_string(), PermissionAction::Allow),
-                ("glob".to_string(), PermissionAction::Allow),
-                ("grep".to_string(), PermissionAction::Allow),
+                (ReadTool::NAME.to_string(), PermissionAction::Allow),
+                (GlobTool::NAME.to_string(), PermissionAction::Allow),
+                (GrepTool::NAME.to_string(), PermissionAction::Allow),
                 ("c5t_get*".to_string(), PermissionAction::Allow),
                 ("c5t_list*".to_string(), PermissionAction::Allow),
-                ("tmux_session".to_string(), PermissionAction::Ask),
-                ("tmux_window".to_string(), PermissionAction::Ask),
-                ("tmux_pane".to_string(), PermissionAction::Ask),
-                ("tmux_layout".to_string(), PermissionAction::Ask),
-                ("nu".to_string(), PermissionAction::Ask),
+                (TmuxSessionTool::NAME.to_string(), PermissionAction::Ask),
+                (TmuxWindowTool::NAME.to_string(), PermissionAction::Ask),
+                (TmuxPaneTool::NAME.to_string(), PermissionAction::Ask),
+                (TmuxLayoutTool::NAME.to_string(), PermissionAction::Ask),
+                (NuTool::NAME.to_string(), PermissionAction::Ask),
             ],
             nested_field_rules: HashMap::from([
                 (
-                    "tmux_session".to_string(),
+                    TmuxSessionTool::NAME.to_string(),
                     HashMap::from([(
                         "action".to_string(),
                         vec![
@@ -397,7 +406,7 @@ impl PermissionsConfig {
                     )]),
                 ),
                 (
-                    "tmux_pane".to_string(),
+                    TmuxPaneTool::NAME.to_string(),
                     HashMap::from([(
                         "action".to_string(),
                         vec![

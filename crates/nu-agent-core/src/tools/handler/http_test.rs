@@ -1,4 +1,6 @@
-use super::http::{HttpArgs, dispatch_http_tool, process_body};
+use super::http::{HttpArgs, HttpTool, process_body};
+use crate::bus::Bus;
+use crate::tools::handler::builtin_tool::BuiltinTool;
 
 const DEFAULT_MAX_LENGTH: usize = 12000;
 
@@ -33,11 +35,16 @@ fn parse_args_custom_max_length() {
     assert_eq!(args.max_length, Some(500));
 }
 
-// --- dispatch_http_tool error path tests ---
+// --- HttpTool::execute error path tests ---
 
 #[tokio::test]
 async fn invalid_args_missing_url() {
-    let result = dispatch_http_tool(&serde_json::json!({})).await;
+    let result = HttpTool::execute(
+        &serde_json::json!({}),
+        std::path::Path::new("/tmp"),
+        &Bus::new(),
+    )
+    .await;
 
     let err = result.expect_err("expected an error for missing url");
     assert_eq!(err.kind, super::ToolErrorKind::Validation);
@@ -46,7 +53,12 @@ async fn invalid_args_missing_url() {
 
 #[tokio::test]
 async fn invalid_url_scheme() {
-    let result = dispatch_http_tool(&serde_json::json!({"url": "ftp://example.com"})).await;
+    let result = HttpTool::execute(
+        &serde_json::json!({"url": "ftp://example.com"}),
+        std::path::Path::new("/tmp"),
+        &Bus::new(),
+    )
+    .await;
 
     let err = result.expect_err("expected an error for ftp scheme");
     assert_eq!(err.kind, super::ToolErrorKind::Validation);
@@ -130,7 +142,12 @@ fn non_html_skips_conversion() {
 
 #[tokio::test]
 async fn empty_url_is_invalid() {
-    let result = dispatch_http_tool(&serde_json::json!({"url": ""})).await;
+    let result = HttpTool::execute(
+        &serde_json::json!({"url": ""}),
+        std::path::Path::new("/tmp"),
+        &Bus::new(),
+    )
+    .await;
     let err = result.expect_err("expected an error for empty url");
     assert_eq!(err.kind, super::ToolErrorKind::Validation);
 }

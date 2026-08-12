@@ -1,13 +1,25 @@
+use nu_plugin::EngineInterface;
+
 mod authz_gate;
 pub mod builtin_kinds;
+pub mod builtin_tool;
 mod conversion;
 mod dispatch;
-pub mod fs;
+pub mod edit;
+pub mod glob;
+pub mod grep;
 pub mod http;
 pub mod nu;
+pub mod patch;
 pub mod pre_authorize;
+pub mod read;
 mod result;
-pub mod tmux;
+pub mod skill;
+pub mod tmux_common;
+pub mod tmux_layout;
+pub mod tmux_pane;
+pub mod tmux_session;
+pub mod tmux_window;
 mod types;
 
 #[cfg(test)]
@@ -25,27 +37,27 @@ pub use types::{
 // Export authz_gate types for permission resolvers
 pub use authz_gate::{AuthorizationFlowContext, enforce_authorization_for_tool_call};
 
-/// Returns true for filesystem-mutating builtin tools (`edit`, `patch`).
-/// These are classified as `ToolSource::BuiltinFs` and go through the full
-/// permission flow — they are NOT auto-approved despite being built-in.
-pub fn is_fs_tool_name(tool_name: &str) -> bool {
-    tool_name
-        .parse::<builtin_kinds::BuiltinKind>()
-        .is_ok_and(|b| b.is_fs())
-}
-
-pub fn is_tmux_tool_name(tool_name: &str) -> bool {
-    tool_name
-        .parse::<builtin_kinds::BuiltinKind>()
-        .is_ok_and(|b| b.is_tmux())
-}
-
-pub fn is_nu_tool_name(tool_name: &str) -> bool {
-    tool_name
-        .parse::<builtin_kinds::BuiltinKind>()
-        .is_ok_and(|b| b.is_nu())
-}
-
 pub fn is_builtin_tool_name(tool_name: &str) -> bool {
     tool_name.parse::<builtin_kinds::BuiltinKind>().is_ok()
+}
+
+pub(crate) fn resolve_fs_path_for_cwd(path: &str, cwd: &std::path::Path) -> std::path::PathBuf {
+    let raw = std::path::Path::new(path);
+    if raw.is_absolute() {
+        raw.to_path_buf()
+    } else {
+        cwd.join(raw)
+    }
+}
+
+pub(crate) fn resolve_fs_path(
+    path: &str,
+    engine: &EngineInterface,
+) -> Result<std::path::PathBuf, ToolHandlerError> {
+    let cwd = engine.get_current_dir().map_err(|e| ToolHandlerError {
+        kind: ToolErrorKind::Runtime,
+        message: format!("Unable to resolve current working directory: {e}"),
+        details: None,
+    })?;
+    Ok(resolve_fs_path_for_cwd(path, std::path::Path::new(&cwd)))
 }

@@ -1,3 +1,4 @@
+pub mod bus;
 pub mod compaction;
 pub mod config;
 pub mod conversation;

@@ -75,8 +75,7 @@ use crate::{
     },
     state::{
         AppState, CompactionStatus, InfoPanel, InputMode, McpServerState, McpServerUsabilityState,
-        McpToggleRequest, ModelPickerOption, ThemePickerOption, TranscriptLineStatus,
-        TranscriptRole,
+        McpToggleRequest, ModelPickerOption, ThemePickerOption, TranscriptRole,
     },
 };
 use nu_agent_core::protocol::contracts::{SharedUiAction, UiMessageSnapshot};
@@ -86,7 +85,7 @@ use nu_agent_core::protocol::skills::DiscoverableSkill as ProtocolDiscoverableSk
 use nu_agent_core::renderer::UiRenderer;
 use nu_agent_core::tools::mcp::runtime::McpServerLifecycle;
 use nu_agent_core::transcript::ir::Role;
-use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry};
+use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry, TranscriptEntryKind};
 
 const STARTUP_LOGOS: &[&str] = &[
     include_str!("../logos/00.txt"),
@@ -166,10 +165,13 @@ impl RuntimeCoordinator {
 
                 // After Bug 2, content is just the summary body (no stats line)
                 if !message_content.trim().is_empty() {
-                    self.state
-                        .push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
+                    self.state.push_transcript_item(TranscriptEntry {
+                        id: 0,
+                        kind: TranscriptEntryKind::Assistant(ProseMessage {
                             markdown: message_content.to_string(),
-                        }));
+                        }),
+                        status: None,
+                    });
                 }
                 self.state.push_spacer();
                 continue;
@@ -180,10 +182,13 @@ impl RuntimeCoordinator {
             }
             if role == TranscriptRole::Assistant {
                 self.push_block_start_spacers(role);
-                self.state
-                    .push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
+                self.state.push_transcript_item(TranscriptEntry {
+                    id: 0,
+                    kind: TranscriptEntryKind::Assistant(ProseMessage {
                         markdown: message_content.trim().to_string(),
-                    }));
+                    }),
+                    status: None,
+                });
                 self.state.push_spacer(); // closing spacer for assistant block
                 continue;
             }
@@ -244,7 +249,7 @@ impl RuntimeCoordinator {
             .transcript_preview
             .iter()
             .rev()
-            .find(|e| !matches!(e, TranscriptEntry::Spacer(_)))
+            .find(|e| !matches!(e.kind, TranscriptEntryKind::Spacer(_)))
             .map(|e| e.role());
         let prev_is_tool_block = matches!(last_content, Some(Role::Tool) | Some(Role::ToolDisplay));
 
@@ -258,7 +263,7 @@ impl RuntimeCoordinator {
             .state
             .transcript_preview
             .last()
-            .is_some_and(|last| matches!(last, TranscriptEntry::Spacer(_)));
+            .is_some_and(|last| matches!(last.kind, TranscriptEntryKind::Spacer(_)));
         // Only push a closing spacer if there is a previous block to close.
         if !self.state.transcript_preview.is_empty() && !prev_is_spacer {
             self.state.push_spacer(); // closing spacer for previous block
@@ -278,7 +283,7 @@ impl RuntimeCoordinator {
             .transcript_preview
             .iter()
             .rev()
-            .find(|e| !matches!(e, TranscriptEntry::Spacer(_)))
+            .find(|e| !matches!(e.kind, TranscriptEntryKind::Spacer(_)))
             .map(|e| e.role());
         let prev_is_assistant = matches!(last_content, Some(Role::Assistant));
 
@@ -289,7 +294,7 @@ impl RuntimeCoordinator {
                 .state
                 .transcript_preview
                 .last()
-                .is_some_and(|last| matches!(last, TranscriptEntry::Spacer(_)));
+                .is_some_and(|last| matches!(last.kind, TranscriptEntryKind::Spacer(_)));
             if !prev_is_spacer {
                 self.state.push_spacer();
             }
@@ -304,8 +309,8 @@ impl RuntimeCoordinator {
     fn tool_block_is_open(&self) -> bool {
         self.state.transcript_preview.last().is_some_and(|last| {
             matches!(
-                last,
-                TranscriptEntry::Tool(_) | TranscriptEntry::ToolResult(_)
+                last.kind,
+                TranscriptEntryKind::Tool(_) | TranscriptEntryKind::ToolResult(_)
             )
         })
     }
@@ -386,10 +391,11 @@ impl RuntimeCoordinator {
         use rand::RngExt;
         let idx = rand::rng().random_range(0..STARTUP_LOGOS.len());
         let logo = STARTUP_LOGOS[idx];
-        self.state
-            .push_transcript_item(nu_agent_core::transcript::items::TranscriptEntry::Logo(
-                logo.to_string(),
-            ));
+        self.state.push_transcript_item(TranscriptEntry {
+            id: 0,
+            kind: TranscriptEntryKind::Logo(logo.to_string()),
+            status: None,
+        });
     }
 
     pub(crate) fn set_active_model_identity(&mut self, active_model_identity: String) {

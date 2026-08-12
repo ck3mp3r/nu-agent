@@ -6,25 +6,47 @@ impl AppState {
     pub fn push_transcript_line(&mut self, role: TranscriptRole, line: impl Into<String>) {
         let text = line.into();
         let entry = match role {
-            TranscriptRole::User => TranscriptEntry::User(ProseMessage { markdown: text }),
-            TranscriptRole::Assistant => {
-                TranscriptEntry::Assistant(ProseMessage { markdown: text })
-            }
+            TranscriptRole::User => TranscriptEntry {
+                id: 0,
+                kind: TranscriptEntryKind::User(ProseMessage { markdown: text }),
+                status: None,
+            },
+            TranscriptRole::Assistant => TranscriptEntry {
+                id: 0,
+                kind: TranscriptEntryKind::Assistant(ProseMessage { markdown: text }),
+                status: None,
+            },
             TranscriptRole::Tool => {
                 let args = text.trim_start_matches("→ ").to_string();
-                TranscriptEntry::Tool(ToolInvocation {
-                    name: String::new(),
-                    source: String::new(),
-                    args,
-                })
+                TranscriptEntry {
+                    id: 0,
+                    kind: TranscriptEntryKind::Tool(ToolInvocation {
+                        name: String::new(),
+                        source: String::new(),
+                        args,
+                    }),
+                    status: None,
+                }
             }
-            TranscriptRole::ToolDisplay => TranscriptEntry::ToolResult(TranscriptToolResult {
-                name: String::new(),
-                success: true,
-                lines: vec![DisplayLine::new(text.clone(), annotate_diff_hint(&text))],
-            }),
-            TranscriptRole::Compaction => TranscriptEntry::System(SystemMessage { text }),
-            TranscriptRole::System => TranscriptEntry::System(SystemMessage { text }),
+            TranscriptRole::ToolDisplay => TranscriptEntry {
+                id: 0,
+                kind: TranscriptEntryKind::ToolResult(TranscriptToolResult {
+                    name: String::new(),
+                    success: true,
+                    lines: vec![DisplayLine::new(text.clone(), annotate_diff_hint(&text))],
+                }),
+                status: None,
+            },
+            TranscriptRole::Compaction => TranscriptEntry {
+                id: 0,
+                kind: TranscriptEntryKind::System(SystemMessage { text }),
+                status: None,
+            },
+            TranscriptRole::System => TranscriptEntry {
+                id: 0,
+                kind: TranscriptEntryKind::System(SystemMessage { text }),
+                status: None,
+            },
         };
         self.push_transcript_item(entry);
     }
@@ -75,48 +97,11 @@ impl AppState {
                 None
             }
         });
-
-        self.prompt_items = self
-            .prompt_items
-            .drain(..)
-            .filter_map(|mut item| {
-                if item.transcript_line_index >= evicted_count {
-                    item.transcript_line_index -= evicted_count;
-                    Some(item)
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        self.tool_call_items = self
-            .tool_call_items
-            .drain(..)
-            .filter_map(|mut item| {
-                if item.transcript_line_index >= evicted_count {
-                    item.transcript_line_index -= evicted_count;
-                    Some(item)
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        self.compaction_items = self
-            .compaction_items
-            .drain(..)
-            .filter_map(|mut item| {
-                if item.transcript_line_index >= evicted_count {
-                    item.transcript_line_index -= evicted_count;
-                    Some(item)
-                } else {
-                    None
-                }
-            })
-            .collect();
     }
 
-    pub fn push_transcript_item(&mut self, entry: TranscriptEntry) {
+    pub fn push_transcript_item(&mut self, mut entry: TranscriptEntry) {
+        entry.id = self.next_entry_id;
+        self.next_entry_id = self.next_entry_id.saturating_add(1);
         self.transcript_preview.push(entry);
         self.entry_visual_info_dirty = true;
         self.enforce_transcript_cap();
@@ -126,8 +111,11 @@ impl AppState {
     /// Used to explicitly start and close transcript blocks.
     /// Two adjacent blocks have two spacers between them (closing + starting).
     pub fn push_spacer(&mut self) {
-        self.transcript_preview
-            .push(TranscriptEntry::Spacer(SpacerItem));
+        self.transcript_preview.push(TranscriptEntry {
+            id: 0,
+            kind: TranscriptEntryKind::Spacer(SpacerItem),
+            status: None,
+        });
         self.entry_visual_info_dirty = true;
         self.enforce_transcript_cap();
     }

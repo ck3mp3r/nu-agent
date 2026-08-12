@@ -256,10 +256,10 @@ fn ui_event_contract_exposes_required_variants() {
         UiEvent::PermissionRequested {
             request_id: "ask-0000000000000001".to_string(),
             context: PermissionRequestContext {
-                tool: "nu__run".to_string(),
+                tool: "nu".to_string(),
                 source: "closure".to_string(),
                 mode: Some("apply".to_string()),
-                matched_rule_identity: "nested:nu__run.command:*".to_string(),
+                matched_rule_identity: "nested:nu.command:*".to_string(),
                 scope: "nested".to_string(),
                 target_field: Some("command".to_string()),
                 pattern: "*".to_string(),
@@ -270,7 +270,7 @@ fn ui_event_contract_exposes_required_variants() {
         UiEvent::PermissionDecisionSubmitted {
             request_id: "ask-0000000000000001".to_string(),
             decision: PermissionDecision::AllowOnce,
-            matched_rule_identity: "nested:nu__run.command:*".to_string(),
+            matched_rule_identity: "nested:nu.command:*".to_string(),
         },
         UiEvent::PermissionDecisionTimedOut {
             request_id: "ask-0000000000000002".to_string(),
@@ -315,10 +315,10 @@ fn permission_event_field_shape_is_explicit_and_stable() {
     let requested = UiEvent::PermissionRequested {
         request_id: "ask-0000000000000001".to_string(),
         context: PermissionRequestContext {
-            tool: "nu__run(command=echo hi)".to_string(),
+            tool: "nu(command=echo hi)".to_string(),
             source: "closure".to_string(),
             mode: Some("apply".to_string()),
-            matched_rule_identity: "nested:nu__run.command:*".to_string(),
+            matched_rule_identity: "nested:nu.command:*".to_string(),
             scope: "nested".to_string(),
             target_field: Some("command".to_string()),
             pattern: "*".to_string(),
@@ -332,10 +332,10 @@ fn permission_event_field_shape_is_explicit_and_stable() {
             context,
         } => {
             assert_eq!(request_id, "ask-0000000000000001");
-            assert_eq!(context.tool, "nu__run(command=echo hi)");
+            assert_eq!(context.tool, "nu(command=echo hi)");
             assert_eq!(context.source, "closure");
             assert_eq!(context.mode.as_deref(), Some("apply"));
-            assert_eq!(context.matched_rule_identity, "nested:nu__run.command:*");
+            assert_eq!(context.matched_rule_identity, "nested:nu.command:*");
             assert_eq!(context.scope, "nested");
             assert_eq!(context.target_field.as_deref(), Some("command"));
             assert_eq!(context.pattern, "*");
@@ -348,7 +348,7 @@ fn permission_event_field_shape_is_explicit_and_stable() {
     let submitted = UiEvent::PermissionDecisionSubmitted {
         request_id: "ask-0000000000000001".to_string(),
         decision: PermissionDecision::AllowAlways,
-        matched_rule_identity: "nested:nu__run.command:*".to_string(),
+        matched_rule_identity: "nested:nu.command:*".to_string(),
     };
     match submitted {
         UiEvent::PermissionDecisionSubmitted {
@@ -358,7 +358,7 @@ fn permission_event_field_shape_is_explicit_and_stable() {
         } => {
             assert_eq!(request_id, "ask-0000000000000001");
             assert_eq!(decision.as_str(), "allow_always");
-            assert_eq!(matched_rule_identity, "nested:nu__run.command:*");
+            assert_eq!(matched_rule_identity, "nested:nu.command:*");
         }
         other => panic!("unexpected variant: {other:?}"),
     }
@@ -392,10 +392,10 @@ fn request_with_id(request_id: &str) -> PermissionRequest {
     PermissionRequest {
         request_id: request_id.to_string(),
         context: PermissionRequestContext {
-            tool: "nu__run".to_string(),
+            tool: "nu".to_string(),
             source: "closure".to_string(),
             mode: Some("apply".to_string()),
-            matched_rule_identity: "nested:nu__run.command:*".to_string(),
+            matched_rule_identity: "nested:nu.command:*".to_string(),
             scope: "nested".to_string(),
             target_field: Some("command".to_string()),
             pattern: "*".to_string(),

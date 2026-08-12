@@ -324,6 +324,9 @@ pub(super) fn run_command(
             })
             .await?;
 
+        // Signal bus shared by tool registration and the runtime.
+        let bus = nu_agent_core::bus::create_bus();
+
         let nu_agent_core::conversation::builder::BuildArtifacts {
             parent_name: _,
             merged_compaction,
@@ -344,6 +347,7 @@ pub(super) fn run_command(
                 max_tool_result_bytes: config
                     .max_tool_result_bytes
                     .unwrap_or(defaults::MAX_TOOL_RESULT_BYTES),
+                bus: bus.clone(),
                 merged_compaction: nu_agent_core::config::CompactionConfig::default(),
             },
         )
@@ -402,6 +406,7 @@ pub(super) fn run_command(
                 available_agents,
                 agents_config,
                 cwd: cwd.clone(),
+                bus: bus.clone(),
             });
         log::debug!(
             "runtime: agent_persona_body_len={:?}, agent_identity={:?}, agent_description={:?}",

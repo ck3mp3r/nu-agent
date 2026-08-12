@@ -23,19 +23,15 @@ impl<'a> PromptQueueLifecycle<'a> {
         }
     }
 
-    pub(super) fn enqueue_prompt(
-        &mut self,
-        submitted_text: String,
-        transcript_line_index: usize,
-    ) -> u64 {
+    pub(super) fn enqueue_prompt(&mut self, submitted_text: String) -> u64 {
         let id = *self.next_prompt_id;
         *self.next_prompt_id = self.next_prompt_id.saturating_add(1);
 
         self.prompt_items.push(QueuedPrompt {
             id,
             prompt_text: submitted_text,
-            transcript_line_index,
             status: PromptStatus::Queued,
+            entry_id: None,
         });
         self.pending_prompt_ids.push_back(id);
         id

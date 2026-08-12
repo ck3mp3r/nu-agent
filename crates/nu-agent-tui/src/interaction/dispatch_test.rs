@@ -16,8 +16,8 @@ use nu_agent_core::transcript::ir::Role;
 fn open_permission_prompt(state: &mut AppState) {
     state.open_permission_prompt(crate::state::PermissionPrompt {
         request_id: "ask-0000000000000001".to_string(),
-        matched_rule_identity: "nested:nu__run.command:*".to_string(),
-        tool: "nu__run".to_string(),
+        matched_rule_identity: "nested:nu.command:*".to_string(),
+        tool: "nu".to_string(),
         source: "closure".to_string(),
         mode: Some("apply".to_string()),
         scope: "nested".to_string(),

@@ -25,17 +25,15 @@ use crate::{
         input_rows_with_prompt_for_test, mcp_table_model_for_test,
         parse_persisted_tool_status_line, run_with_terminal_restore_sync, status_panel_lines,
     },
-    state::{
-        AppState, InputMode, McpServerUsabilityState, PromptStatus, ToolCallStatus,
-        TranscriptLineStatus, TranscriptRole, UiPhase,
-    },
+    state::{AppState, InputMode, McpServerUsabilityState, PromptStatus, TranscriptRole, UiPhase},
 };
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use nu_agent_core::protocol::contracts::{UiMessageSnapshot, UiMessageUsageSnapshot};
 use nu_agent_core::protocol::event::UiEvent;
 use nu_agent_core::renderer::UiRenderer;
 use nu_agent_core::transcript::ir::Role;
-use nu_agent_core::transcript::items::TranscriptEntry;
+use nu_agent_core::transcript::items::TranscriptEntryKind;
+use nu_agent_core::transcript::renderer::ItemStatus;
 
 impl RuntimeCoordinator {
     pub(crate) fn new_for_test_with_watchdog(
@@ -1182,8 +1180,8 @@ fn hydrated_tool_history_matches_live_tool_row_shape() {
         "k8s__list_pods"
     );
     assert_eq!(
-        coordinator.state().transcript_line_status_for_index(1),
-        Some(TranscriptLineStatus::Tool(ToolCallStatus::Done))
+        coordinator.state().transcript_preview[1].status,
+        Some(ItemStatus::Done)
     );
 }
 
@@ -2819,8 +2817,8 @@ fn permission_prompt_does_not_open_global_dimmed_modal_backdrop() {
     let mut state = AppState::new();
     state.open_permission_prompt(crate::state::PermissionPrompt {
         request_id: "ask-0000000000000001".to_string(),
-        matched_rule_identity: "nested:nu__run.command:*".to_string(),
-        tool: "nu__run".to_string(),
+        matched_rule_identity: "nested:nu.command:*".to_string(),
+        tool: "nu".to_string(),
         source: "closure".to_string(),
         mode: Some("apply".to_string()),
         scope: "nested".to_string(),
@@ -3625,7 +3623,6 @@ fn lane_1_prefix_does_not_exceed_available_width() {
 
 #[test]
 fn hydration_compaction_creates_block_structure() {
-    use crate::state::CompactionStatus;
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
     coordinator.hydrate_transcript_from_messages(
         vec![UiMessageSnapshot::new(
@@ -3654,10 +3651,8 @@ fn hydration_compaction_creates_block_structure() {
         .position(|line| line.text() == "Compaction")
         .expect("compaction header must exist");
     assert_eq!(
-        coordinator
-            .state()
-            .transcript_line_status_for_index(compaction_header_idx),
-        Some(TranscriptLineStatus::Compaction(CompactionStatus::Done))
+        coordinator.state().transcript_preview[compaction_header_idx].status,
+        Some(ItemStatus::Done)
     );
 }
 
@@ -3705,7 +3700,6 @@ fn hydration_compaction_renders_markdown_body() {
 
 #[test]
 fn hydration_compaction_empty_summary_shows_block_only() {
-    use crate::state::CompactionStatus;
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
     coordinator
         .hydrate_transcript_from_messages(vec![UiMessageSnapshot::new("compaction", "")], None);
@@ -3743,10 +3737,8 @@ fn hydration_compaction_empty_summary_shows_block_only() {
         .position(|line| line.text() == "Compaction")
         .expect("header must exist");
     assert_eq!(
-        coordinator
-            .state()
-            .transcript_line_status_for_index(header_idx),
-        Some(TranscriptLineStatus::Compaction(CompactionStatus::Done))
+        coordinator.state().transcript_preview[header_idx].status,
+        Some(ItemStatus::Done)
     );
 }
 
@@ -4021,9 +4013,9 @@ fn hydrate_assistant_message_with_bold_emits_md_bold_span() {
         .transcript_preview
         .iter()
         .filter_map(|e| {
-            if let nu_agent_core::transcript::items::TranscriptEntry::Assistant(
+            if let nu_agent_core::transcript::items::TranscriptEntryKind::Assistant(
                 nu_agent_core::transcript::items::ProseMessage { markdown },
-            ) = e
+            ) = &e.kind
             {
                 Some(markdown.as_str())
             } else {
@@ -4050,9 +4042,9 @@ fn hydrate_compaction_message_with_italic_emits_md_italic_span() {
         .transcript_preview
         .iter()
         .filter_map(|e| {
-            if let nu_agent_core::transcript::items::TranscriptEntry::Assistant(
+            if let nu_agent_core::transcript::items::TranscriptEntryKind::Assistant(
                 nu_agent_core::transcript::items::ProseMessage { markdown },
-            ) = e
+            ) = &e.kind
             {
                 Some(markdown.as_str())
             } else {
@@ -4440,7 +4432,7 @@ fn push_startup_logo_adds_logo_entry_to_transcript() {
     coordinator.push_startup_logo();
     let entries = &coordinator.state.transcript_preview;
     assert_eq!(entries.len(), 1);
-    assert!(matches!(entries[0], TranscriptEntry::Logo(_)));
+    assert!(matches!(entries[0].kind, TranscriptEntryKind::Logo(_)));
 }
 
 #[test]
@@ -4452,7 +4444,7 @@ fn startup_logo_not_pushed_during_hydration() {
         .state
         .transcript_preview
         .iter()
-        .any(|e| matches!(e, TranscriptEntry::Logo(_)));
+        .any(|e| matches!(e.kind, TranscriptEntryKind::Logo(_)));
     assert!(!has_logo, "hydration must not push a logo");
 }
 

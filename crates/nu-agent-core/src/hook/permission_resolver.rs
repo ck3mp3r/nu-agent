@@ -27,19 +27,15 @@ use crate::tools::handler::{
 };
 use crate::types::{ToolCall, ToolFunction};
 
-fn resolve_tool_source(
+pub(crate) fn resolve_tool_source(
     name: &str,
     closures: &ClosureRegistry,
     mcp: &McpToolRegistry,
 ) -> ToolSource {
     if closures.get(name).is_some() {
         ToolSource::Closure
-    } else if let Ok(kind) = name.parse::<BuiltinKind>() {
-        if kind.is_privileged() {
-            ToolSource::BuiltinFs
-        } else {
-            ToolSource::Builtin
-        }
+    } else if name.parse::<BuiltinKind>().is_ok() {
+        ToolSource::Builtin
     } else if mcp.contains(name) {
         ToolSource::Mcp
     } else {

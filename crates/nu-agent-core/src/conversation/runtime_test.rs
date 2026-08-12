@@ -28,7 +28,7 @@ fn permissions_startup_summary_emits_once_before_first_turn() {
 
     let mut ui = TestProgressUi::default();
     let summary =
-        "permissions policy: overlay_active=false global=ask tool_rules=5 nu__run.command_rules=1";
+        "permissions policy: overlay_active=false global=ask tool_rules=5 nested_command_rules=1";
 
     let mut state = super::super::state::permission::PermissionState::new(
         PermissionsConfig::safe_defaults(true),

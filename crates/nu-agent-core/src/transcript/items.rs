@@ -1,4 +1,5 @@
 use super::ir::{ContentLine, DisplayLine, RenderBlock, Role, Span, StyleHint};
+use super::renderer::ItemStatus;
 
 pub trait Renderable {
     fn to_render_block(&self) -> RenderBlock;
@@ -46,7 +47,7 @@ pub struct SystemMessage {
 pub struct Spacer;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TranscriptEntry {
+pub enum TranscriptEntryKind {
     User(ProseMessage),
     Assistant(ProseMessage),
     Tool(ToolInvocation),
@@ -55,6 +56,13 @@ pub enum TranscriptEntry {
     System(SystemMessage),
     Spacer(Spacer),
     Logo(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TranscriptEntry {
+    pub id: u64,
+    pub kind: TranscriptEntryKind,
+    pub status: Option<ItemStatus>,
 }
 
 impl Renderable for ToolInvocation {
@@ -140,7 +148,7 @@ impl Renderable for Spacer {
     }
 }
 
-impl Renderable for TranscriptEntry {
+impl Renderable for TranscriptEntryKind {
     fn to_render_block(&self) -> RenderBlock {
         match self {
             Self::User(m) => RenderBlock {
@@ -176,7 +184,13 @@ impl Renderable for TranscriptEntry {
     }
 }
 
-impl TranscriptEntry {
+impl Renderable for TranscriptEntry {
+    fn to_render_block(&self) -> RenderBlock {
+        self.kind.to_render_block()
+    }
+}
+
+impl TranscriptEntryKind {
     pub fn role(&self) -> Role {
         match self {
             Self::User(_) => Role::User,
@@ -200,6 +214,16 @@ impl TranscriptEntry {
             Self::Spacer(_) => String::new(),
             Self::Logo(text) => text.clone(),
         }
+    }
+}
+
+impl TranscriptEntry {
+    pub fn role(&self) -> Role {
+        self.kind.role()
+    }
+
+    pub fn text(&self) -> String {
+        self.kind.text()
     }
 }
 

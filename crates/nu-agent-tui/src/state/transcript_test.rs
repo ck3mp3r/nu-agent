@@ -1,9 +1,6 @@
-use crate::state::{
-    AppState, CompactionLine, CompactionStatus, PromptStatus, QueuedPrompt, ToolCallLine,
-    ToolCallStatus, TranscriptRole,
-};
+use crate::state::{AppState, TranscriptRole};
 use nu_agent_core::transcript::ir::Role;
-use nu_agent_core::transcript::items::TranscriptEntry;
+use nu_agent_core::transcript::items::TranscriptEntryKind;
 
 /// The cap constant that will be defined in production code.
 /// Tests reference this to avoid magic numbers.
@@ -149,209 +146,6 @@ fn shift_indices_compaction_streaming_start_evicted() {
     assert_eq!(state.compaction_streaming_start, None);
 }
 
-// ---------------------------------------------------------------------------
-// Index shifting — prompt_items
-// ---------------------------------------------------------------------------
-
-#[test]
-fn shift_indices_prompt_items_shifted() {
-    let mut state = AppState::new();
-    state.prompt_items.push(QueuedPrompt {
-        id: 1,
-        prompt_text: "hello".to_string(),
-        transcript_line_index: 2010,
-        status: PromptStatus::Done,
-    });
-
-    state.shift_indices_after_eviction(2000);
-
-    // RED: Stub does nothing, so this will fail (stays 2010)
-    assert_eq!(state.prompt_items[0].transcript_line_index, 10);
-}
-
-#[test]
-fn shift_indices_prompt_items_evicted_removed() {
-    let mut state = AppState::new();
-    state.prompt_items.push(QueuedPrompt {
-        id: 1,
-        prompt_text: "hello".to_string(),
-        transcript_line_index: 5,
-        status: PromptStatus::Done,
-    });
-
-    state.shift_indices_after_eviction(2000);
-
-    // RED: Stub does nothing, so this will fail (item still present)
-    assert!(state.prompt_items.is_empty());
-}
-
-// ---------------------------------------------------------------------------
-// Index shifting — tool_call_items
-// ---------------------------------------------------------------------------
-
-#[test]
-fn shift_indices_tool_call_items_shifted() {
-    let mut state = AppState::new();
-    state.tool_call_items.push(ToolCallLine {
-        id: 1,
-        transcript_line_index: 2010,
-        status: ToolCallStatus::Done,
-        key: "test_tool".to_string(),
-    });
-
-    state.shift_indices_after_eviction(2000);
-
-    // RED: Stub does nothing, so this will fail (stays 2010)
-    assert_eq!(state.tool_call_items[0].transcript_line_index, 10);
-}
-
-#[test]
-fn shift_indices_tool_call_items_evicted_removed() {
-    let mut state = AppState::new();
-    state.tool_call_items.push(ToolCallLine {
-        id: 1,
-        transcript_line_index: 5,
-        status: ToolCallStatus::Done,
-        key: "test_tool".to_string(),
-    });
-
-    state.shift_indices_after_eviction(2000);
-
-    // RED: Stub does nothing, so this will fail (item still present)
-    assert!(state.tool_call_items.is_empty());
-}
-
-// ---------------------------------------------------------------------------
-// Index shifting — compaction_items
-// ---------------------------------------------------------------------------
-
-#[test]
-fn shift_indices_compaction_items_shifted() {
-    let mut state = AppState::new();
-    state.compaction_items.push(CompactionLine {
-        transcript_line_index: 2010,
-        source: "test".to_string(),
-        status: CompactionStatus::Done,
-    });
-
-    state.shift_indices_after_eviction(2000);
-
-    // RED: Stub does nothing, so this will fail (stays 2010)
-    assert_eq!(state.compaction_items[0].transcript_line_index, 10);
-}
-
-#[test]
-fn shift_indices_compaction_items_evicted_removed() {
-    let mut state = AppState::new();
-    state.compaction_items.push(CompactionLine {
-        transcript_line_index: 5,
-        source: "test".to_string(),
-        status: CompactionStatus::Done,
-    });
-
-    state.shift_indices_after_eviction(2000);
-
-    // RED: Stub does nothing, so this will fail (item still present)
-    assert!(state.compaction_items.is_empty());
-}
-
-// ---------------------------------------------------------------------------
-// Index shifting — zero eviction is no-op
-// ---------------------------------------------------------------------------
-
-#[test]
-fn shift_indices_zero_eviction_is_noop() {
-    let mut state = AppState::new();
-    state.streaming_message_start = Some(10);
-    state.compaction_streaming_start = Some(20);
-    state.prompt_items.push(QueuedPrompt {
-        id: 1,
-        prompt_text: "hello".to_string(),
-        transcript_line_index: 30,
-        status: PromptStatus::Done,
-    });
-    state.tool_call_items.push(ToolCallLine {
-        id: 1,
-        transcript_line_index: 40,
-        status: ToolCallStatus::Done,
-        key: "tool".to_string(),
-    });
-    state.compaction_items.push(CompactionLine {
-        transcript_line_index: 50,
-        source: "test".to_string(),
-        status: CompactionStatus::Done,
-    });
-
-    state.shift_indices_after_eviction(0);
-
-    // RED: Stub does nothing, so this will pass (nothing changes)
-    assert_eq!(state.streaming_message_start, Some(10));
-    assert_eq!(state.compaction_streaming_start, Some(20));
-    assert_eq!(state.prompt_items[0].transcript_line_index, 30);
-    assert_eq!(state.tool_call_items[0].transcript_line_index, 40);
-    assert_eq!(state.compaction_items[0].transcript_line_index, 50);
-}
-
-// ---------------------------------------------------------------------------
-// Integration: push triggers eviction and shifts indices
-// ---------------------------------------------------------------------------
-
-#[test]
-fn push_transcript_item_triggers_eviction_and_shifts_indices() {
-    let mut state = AppState::new();
-
-    // Add a prompt at index 2010
-    state.prompt_items.push(QueuedPrompt {
-        id: 1,
-        prompt_text: "hello".to_string(),
-        transcript_line_index: 2010,
-        status: PromptStatus::Done,
-    });
-
-    // Push enough entries to trigger eviction
-    for i in 0..=MAX_TRANSCRIPT_ENTRIES {
-        state.push_transcript_line(TranscriptRole::User, format!("entry {i}"));
-    }
-
-    assert_eq!(state.transcript_preview.len(), MAX_TRANSCRIPT_ENTRIES);
-
-    // 2001 User entries → eviction drains 1 entry (no separators since all same role)
-    // Prompt at 2010 shifts to 2010 - 1 = 2009
-    assert_eq!(state.prompt_items[0].transcript_line_index, 2009);
-}
-
-// ---------------------------------------------------------------------------
-// Status lookup after eviction
-// ---------------------------------------------------------------------------
-
-#[test]
-fn transcript_line_status_works_after_eviction() {
-    let mut state = AppState::new();
-
-    // Fill up to the cap
-    for i in 0..MAX_TRANSCRIPT_ENTRIES {
-        state.push_transcript_line(TranscriptRole::User, format!("entry {i}"));
-    }
-
-    // Push a prompt at the last index (1999)
-    state.prompt_items.push(QueuedPrompt {
-        id: 1,
-        prompt_text: "hello".to_string(),
-        transcript_line_index: MAX_TRANSCRIPT_ENTRIES - 1,
-        status: PromptStatus::Done,
-    });
-
-    // Push one more to trigger eviction (drains 1 entry)
-    state.push_transcript_line(TranscriptRole::User, "overflow");
-
-    // Prompt at 1999 shifted to 1998 after eviction
-    let status = state.transcript_line_status_for_index(MAX_TRANSCRIPT_ENTRIES - 2);
-    assert!(
-        status.is_some(),
-        "status should still be findable after eviction"
-    );
-}
-
 #[test]
 fn no_turn_separator_between_user_and_assistant() {
     let mut state = AppState::new();
@@ -470,7 +264,7 @@ fn clear_assistant_projection_cache_removes_all_entries() {
 fn push_transcript_line_user_bold_markdown_emits_md_bold_span() {
     let mut state = AppState::new();
     state.push_transcript_line(TranscriptRole::User, "hello **world**".to_string());
-    let TranscriptEntry::User(m) = state.transcript_preview.last().expect("entry") else {
+    let TranscriptEntryKind::User(m) = &state.transcript_preview.last().expect("entry").kind else {
         panic!("expected User");
     };
     // Raw markdown is stored; verify it projects to MdBold at render time
@@ -486,7 +280,8 @@ fn push_transcript_line_user_bold_markdown_emits_md_bold_span() {
 fn push_transcript_line_assistant_bold_markdown_emits_md_bold_span() {
     let mut state = AppState::new();
     state.push_transcript_line(TranscriptRole::Assistant, "hello **world**".to_string());
-    let TranscriptEntry::Assistant(m) = state.transcript_preview.last().expect("entry") else {
+    let TranscriptEntryKind::Assistant(m) = &state.transcript_preview.last().expect("entry").kind
+    else {
         panic!("expected Assistant");
     };
     let bold = crate::markdown::render_markdown_lines(&m.markdown, None)
@@ -504,10 +299,10 @@ fn push_transcript_line_user_and_assistant_produce_identical_lines_for_same_text
     let text = "**bold** and *italic* and `code`".to_string();
     s1.push_transcript_line(TranscriptRole::User, text.clone());
     s2.push_transcript_line(TranscriptRole::Assistant, text);
-    let TranscriptEntry::User(u) = s1.transcript_preview.last().expect("u") else {
+    let TranscriptEntryKind::User(u) = &s1.transcript_preview.last().expect("u").kind else {
         panic!();
     };
-    let TranscriptEntry::Assistant(a) = s2.transcript_preview.last().expect("a") else {
+    let TranscriptEntryKind::Assistant(a) = &s2.transcript_preview.last().expect("a").kind else {
         panic!();
     };
     assert_eq!(
@@ -523,7 +318,7 @@ fn push_transcript_line_user_fenced_code_block_produces_multiple_lines() {
         TranscriptRole::User,
         "```rust\nfn a() {}\nfn b() {}\n```".to_string(),
     );
-    let TranscriptEntry::User(m) = state.transcript_preview.last().expect("entry") else {
+    let TranscriptEntryKind::User(m) = &state.transcript_preview.last().expect("entry").kind else {
         panic!();
     };
     // Verify projection of the stored raw markdown yields multiple lines

@@ -17,47 +17,6 @@ impl AppState {
         self.pending_prompt_ids.len()
     }
 
-    pub fn prompt_status_for_transcript_line(
-        &self,
-        transcript_line_index: usize,
-    ) -> Option<PromptStatus> {
-        self.prompt_items
-            .iter()
-            .rev()
-            .find(|prompt| {
-                if prompt.transcript_line_index == usize::MAX {
-                    return false;
-                }
-                prompt.transcript_line_index == transcript_line_index
-            })
-            .map(|prompt| prompt.status)
-    }
-
-    pub fn transcript_line_status_for_index(
-        &self,
-        transcript_line_index: usize,
-    ) -> Option<TranscriptLineStatus> {
-        if let Some(status) = self.prompt_status_for_transcript_line(transcript_line_index) {
-            return Some(TranscriptLineStatus::Prompt(status));
-        }
-
-        if let Some(status) = self
-            .compaction_items
-            .iter()
-            .rev()
-            .find(|item| item.transcript_line_index == transcript_line_index)
-            .map(|item| item.status)
-        {
-            return Some(TranscriptLineStatus::Compaction(status));
-        }
-
-        self.tool_call_items
-            .iter()
-            .rev()
-            .find(|tool| tool.transcript_line_index == transcript_line_index)
-            .map(|tool| TranscriptLineStatus::Tool(tool.status))
-    }
-
     pub fn start_compaction_block(&mut self, source: &str) {
         if self
             .compaction_items
@@ -70,66 +29,99 @@ impl AppState {
             let prev_is_spacer = self
                 .transcript_preview
                 .last()
-                .is_some_and(|last| matches!(last, TranscriptEntry::Spacer(_)));
+                .is_some_and(|last| matches!(last.kind, TranscriptEntryKind::Spacer(_)));
             if !prev_is_spacer {
                 self.push_spacer(); // closing spacer for previous block
             }
             self.push_spacer(); // starting spacer for compaction block
         }
         self.push_transcript_line(TranscriptRole::System, "Compaction".to_string());
-        let transcript_line_index = self.transcript_preview.len().saturating_sub(1);
+        let entry_id = self.transcript_preview.last().map(|e| e.id);
+        if let Some(entry) = self.transcript_preview.last_mut() {
+            entry.status = Some(ItemStatus::InProgress);
+        }
         self.compaction_items.push(CompactionLine {
-            transcript_line_index,
             source: source.to_string(),
             status: CompactionStatus::InProgress,
+            entry_id,
         });
     }
 
     pub fn finish_compaction_block(&mut self, source: &str, status: CompactionStatus) {
-        if let Some(item) = self
+        let mut found_idx: Option<usize> = self
             .compaction_items
-            .iter_mut()
+            .iter()
+            .enumerate()
             .rev()
-            .find(|item| item.source == source && item.status == CompactionStatus::InProgress)
-        {
-            item.status = status;
-            return;
+            .find(|(_, item)| item.source == source && item.status == CompactionStatus::InProgress)
+            .map(|(i, _)| i);
+        if found_idx.is_none() {
+            found_idx = self
+                .compaction_items
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, item)| item.status == CompactionStatus::InProgress)
+                .map(|(i, _)| i);
         }
-
-        if let Some(item) = self
-            .compaction_items
-            .iter_mut()
-            .rev()
-            .find(|item| item.status == CompactionStatus::InProgress)
-        {
+        if let Some(idx) = found_idx {
+            let item = &mut self.compaction_items[idx];
             item.status = status;
+            if let Some(entry_id) = item.entry_id
+                && let Some(entry) = self
+                    .transcript_preview
+                    .iter_mut()
+                    .rev()
+                    .find(|e| e.id == entry_id)
+            {
+                entry.status = Some(match status {
+                    CompactionStatus::InProgress => ItemStatus::InProgress,
+                    CompactionStatus::Done => ItemStatus::Done,
+                    CompactionStatus::Failed => ItemStatus::Failed,
+                });
+            }
         }
     }
 
     pub fn start_tool_call(&mut self, name: &str, arguments: &str) {
         let args_summary = nu_agent_core::protocol::tool_args::summarize_tool_arguments(arguments);
-        self.push_transcript_item(TranscriptEntry::Tool(ToolInvocation {
-            name: name.to_string(),
-            source: String::new(),
-            args: format!("→ {args_summary}"),
-        }));
+        self.push_transcript_item(TranscriptEntry {
+            id: 0,
+            kind: TranscriptEntryKind::Tool(ToolInvocation {
+                name: name.to_string(),
+                source: String::new(),
+                args: format!("→ {args_summary}"),
+            }),
+            status: Some(ItemStatus::InProgress),
+        });
+        let entry_id = self.transcript_preview.last().map(|e| e.id);
 
-        let transcript_line_index = self.transcript_preview.len().saturating_sub(1);
         tool_calls::ToolCallBookkeeping::new(
             &mut self.tool_call_items,
             &mut self.active_tool_ids_by_key,
             &mut self.next_tool_call_id,
         )
-        .start_tool_call(transcript_line_index, name, arguments);
+        .start_tool_call(name, arguments, entry_id);
     }
 
     pub fn finish_tool_call(&mut self, name: &str, arguments: &str, success: bool) {
+        let status = if success {
+            ItemStatus::Done
+        } else {
+            ItemStatus::Failed
+        };
         tool_calls::ToolCallBookkeeping::new(
             &mut self.tool_call_items,
             &mut self.active_tool_ids_by_key,
             &mut self.next_tool_call_id,
         )
-        .finish_tool_call(name, arguments, success);
+        .finish_tool_call(
+            name,
+            arguments,
+            success,
+            &mut self.transcript_preview,
+            status,
+        );
     }
 
     pub fn accept_submit(&mut self) {
@@ -142,15 +134,18 @@ impl AppState {
     pub fn enqueue_external_prompt(&mut self, text: String) {
         self.push_user_block_start_spacers();
         self.push_transcript_line(TranscriptRole::User, text.clone());
+        let entry_id = self.transcript_preview.last().map(|e| e.id);
+        if let Some(entry) = self.transcript_preview.last_mut() {
+            entry.status = Some(ItemStatus::InProgress);
+        }
         self.push_spacer(); // closing spacer for user block
-        let transcript_line_index = self.transcript_preview.len().saturating_sub(2);
         let id = self.next_prompt_id;
         self.next_prompt_id = self.next_prompt_id.saturating_add(1);
         self.prompt_items.push(QueuedPrompt {
             id,
             prompt_text: text,
-            transcript_line_index,
             status: PromptStatus::InProgress,
+            entry_id,
         });
         self.active_prompt_id = Some(id);
         self.phase = UiPhase::Busy;
@@ -164,7 +159,7 @@ impl AppState {
         let prev_is_spacer = self
             .transcript_preview
             .last()
-            .is_some_and(|last| matches!(last, TranscriptEntry::Spacer(_)));
+            .is_some_and(|last| matches!(last.kind, TranscriptEntryKind::Spacer(_)));
         // Only push a closing spacer if there is a previous block to close.
         if !self.transcript_preview.is_empty() && !prev_is_spacer {
             self.push_spacer(); // closing spacer for previous block
@@ -179,7 +174,7 @@ impl AppState {
             &mut self.active_prompt_id,
             &mut self.next_prompt_id,
         )
-        .enqueue_prompt(submitted_text, usize::MAX);
+        .enqueue_prompt(submitted_text);
         self.accept_submit();
         id
     }
@@ -213,10 +208,13 @@ impl AppState {
             .unwrap_or_default();
         self.push_user_block_start_spacers();
         self.push_transcript_line(TranscriptRole::User, prompt_text);
+        let entry_id = self.transcript_preview.last().map(|e| e.id);
+        if let Some(entry) = self.transcript_preview.last_mut() {
+            entry.status = Some(ItemStatus::InProgress);
+        }
         self.push_spacer(); // closing spacer for user block
-        let real_index = self.transcript_preview.len().saturating_sub(2);
         if let Some(prompt) = self.prompt_items.iter_mut().find(|p| p.id == active_id) {
-            prompt.transcript_line_index = real_index;
+            prompt.entry_id = entry_id;
         }
 
         self.phase = UiPhase::Busy;
@@ -248,12 +246,15 @@ impl AppState {
         let combined = texts.join("\n\n");
         self.push_user_block_start_spacers();
         self.push_transcript_line(TranscriptRole::User, combined.clone());
+        let entry_id = self.transcript_preview.last().map(|e| e.id);
+        if let Some(entry) = self.transcript_preview.last_mut() {
+            entry.status = Some(ItemStatus::InProgress);
+        }
         self.push_spacer(); // closing spacer for user block
-        let real_index = self.transcript_preview.len().saturating_sub(2);
         if let Some(active_id) = self.active_prompt_id
             && let Some(prompt) = self.prompt_items.iter_mut().find(|p| p.id == active_id)
         {
-            prompt.transcript_line_index = real_index;
+            prompt.entry_id = entry_id;
         }
 
         self.phase = UiPhase::Busy;
@@ -264,6 +265,7 @@ impl AppState {
     }
 
     pub fn complete_active_prompt(&mut self) {
+        let completed_id = self.active_prompt_id;
         prompt_queue::PromptQueueLifecycle::new(
             &mut self.prompt_items,
             &mut self.pending_prompt_ids,
@@ -271,6 +273,18 @@ impl AppState {
             &mut self.next_prompt_id,
         )
         .complete_active_prompt();
+
+        if let Some(id) = completed_id
+            && let Some(prompt) = self.prompt_items.iter().find(|p| p.id == id)
+            && let Some(entry_id) = prompt.entry_id
+            && let Some(entry) = self
+                .transcript_preview
+                .iter_mut()
+                .rev()
+                .find(|e| e.id == entry_id)
+        {
+            entry.status = Some(ItemStatus::Done);
+        }
 
         self.phase = UiPhase::Idle;
         self.input_locked = false;
@@ -280,6 +294,12 @@ impl AppState {
     }
 
     pub fn cancel_active_and_pending_prompts(&mut self) {
+        let cancelled_ids: Vec<u64> = self
+            .prompt_items
+            .iter()
+            .filter(|p| p.status == PromptStatus::InProgress || p.status == PromptStatus::Queued)
+            .map(|p| p.id)
+            .collect();
         prompt_queue::PromptQueueLifecycle::new(
             &mut self.prompt_items,
             &mut self.pending_prompt_ids,
@@ -287,6 +307,19 @@ impl AppState {
             &mut self.next_prompt_id,
         )
         .cancel_active_and_pending_prompts();
+
+        for id in cancelled_ids {
+            if let Some(prompt) = self.prompt_items.iter().find(|p| p.id == id)
+                && let Some(entry_id) = prompt.entry_id
+                && let Some(entry) = self
+                    .transcript_preview
+                    .iter_mut()
+                    .rev()
+                    .find(|e| e.id == entry_id)
+            {
+                entry.status = Some(ItemStatus::Cancelled);
+            }
+        }
 
         self.phase = UiPhase::Idle;
         self.input_locked = false;

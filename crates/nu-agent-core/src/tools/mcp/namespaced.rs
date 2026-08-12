@@ -14,7 +14,7 @@ const DEFAULT_MCP_TOOL_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// A wrapper around a DynamicTool that namespaces the tool name with a server prefix.
 ///
-/// This ensures rig's ToolServer sees namespaced names (e.g., `nu__run`) instead of
+/// This ensures rig's ToolServer sees namespaced names (e.g., `server__tool`) instead of
 /// raw MCP tool names, preventing name collisions across MCP servers.
 pub struct NamespacedTool {
     inner: DynamicTool,
@@ -86,7 +86,7 @@ impl NamespacedTool {
 /// Build a DynamicTool that calls an MCP server tool via its ServerSink.
 ///
 /// This replaces the old pattern of wrapping rig's (now private) `McpTool` in a
-/// `NamespacedTool`. The tool name is already namespaced (e.g. `nu__run`).
+/// `NamespacedTool`. The tool name is already namespaced (e.g. `server__tool`).
 fn build_mcp_dynamic_tool(
     name: String,
     description: String,

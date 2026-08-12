@@ -1,6 +1,6 @@
 use super::{
-    parse_panes, parse_panes_find, parse_sessions, parse_size, parse_windows, require_force,
-    resolve_dir,
+    pane_target, parse_panes, parse_panes_find, parse_sessions, parse_size, parse_windows,
+    require_force, resolve_dir,
 };
 use crate::tools::handler::ToolErrorKind;
 use std::path::Path;
@@ -183,4 +183,19 @@ fn resolve_dir_joins_relative_paths() {
 fn resolve_dir_returns_none_for_missing_directory() {
     let cwd = Path::new("/work");
     assert_eq!(resolve_dir(None, cwd), None);
+}
+
+#[test]
+fn pane_target_with_percent_id_returns_id_directly() {
+    assert_eq!(pane_target("nu-agent", Some("%5")), "%5");
+}
+
+#[test]
+fn pane_target_with_window_name_returns_session_prefix() {
+    assert_eq!(pane_target("nu-agent", Some("0")), "nu-agent:0");
+}
+
+#[test]
+fn pane_target_without_pane_returns_session() {
+    assert_eq!(pane_target("nu-agent", None), "nu-agent");
 }

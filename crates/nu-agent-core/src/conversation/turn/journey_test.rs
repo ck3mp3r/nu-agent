@@ -32,6 +32,7 @@ fn default_tool_infra(
         visible_tool_definitions: definitions,
         circuit_breaker: default_circuit_breaker(),
         doom_state: default_doom_state(),
+        bus: crate::bus::create_bus(),
     }
 }
 
@@ -375,14 +376,14 @@ fn echo_tool(response: &'static str) -> ToolInfra {
 /// A `nu__shell` mock tool that cancels the running turn after producing its result.
 ///
 /// Cancellation fires AFTER `call()` returns, so the tool result is recorded in
-/// `new_messages` before the token fires. The cancel takes effect at the next
+/// `new_messages` before the cancel event fires. The cancel takes effect at the next
 /// `on_completion_call`'s `is_cancelled()` check (sub-turn 2), not mid-tool.
 ///
 /// Using `tokio::task::yield_now()` ensures the tool result is committed to the
-/// `new_messages` list before the token is cancelled.
+/// `new_messages` list before the cancel event is published.
 struct TestNuShellCancellingTool {
     output: &'static str,
-    token: tokio_util::sync::CancellationToken,
+    bus: crate::bus::Bus,
     fired: Arc<AtomicBool>,
 }
 
@@ -407,11 +408,14 @@ impl rig::tool::Tool for TestNuShellCancellingTool {
     ) -> Result<Self::Output, Self::Error> {
         let result = self.output.to_string();
         // Cancel AFTER the tool result is produced. The select! in FilteredToolProxy
-        // has already resolved with Ok(result). The token takes effect at the next
+        // has already resolved with Ok(result). The cancel event takes effect at the next
         // on_completion_call's is_cancelled() check — AFTER the tool result is recorded.
         if !self.fired.swap(true, Ordering::SeqCst) {
             tokio::task::yield_now().await;
-            self.token.cancel();
+            let _ = self
+                .bus
+                .cancel()
+                .send(crate::bus::CancelEvent::Requested { task_id: None });
         }
         Ok(result)
     }
@@ -419,27 +423,26 @@ impl rig::tool::Tool for TestNuShellCancellingTool {
 
 /// Register a nu__shell tool that cancels the running turn after its first invocation.
 ///
-/// The `token` must come from `MockUi::with_external_cancel()` — the same token that
-/// the turn executor uses as its cancellation token.
-fn nu_shell_cancelling_tool(
-    output: &'static str,
-    token: tokio_util::sync::CancellationToken,
-) -> ToolInfra {
+/// The `bus` must come from `MockUi::with_external_cancel()` — the same bus that
+/// the turn executor uses for cancellation.
+fn nu_shell_cancelling_tool(output: &'static str, bus: crate::bus::Bus) -> ToolInfra {
     let handle = rig::tool::server::ToolServer::new()
         .tool(TestNuShellCancellingTool {
             output,
-            token,
+            bus: bus.clone(),
             fired: Arc::new(AtomicBool::new(false)),
         })
         .run();
-    default_tool_infra(
+    let mut infra = default_tool_infra(
         handle,
         vec![rig::completion::ToolDefinition {
             name: "nu__shell".to_string(),
             description: "Execute a Nushell command".to_string(),
             parameters: serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}),
         }],
-    )
+    );
+    infra.bus = bus;
+    infra
 }
 
 // ---------------------------------------------------------------------------
@@ -924,7 +927,7 @@ async fn journey_cancelled_turn_then_continuation() {
     let mut h = JourneyHarness::new("journey-cancel-tool");
 
     // Turn 1: the tool executes and cancels the turn from within call().
-    let (ui, token) = MockUi::with_external_cancel();
+    let (ui, bus) = MockUi::with_external_cancel();
     let model1 = MockCompletionModel::from_stream_turns([
         vec![
             MockStreamEvent::tool_call(
@@ -943,7 +946,7 @@ async fn journey_cancelled_turn_then_continuation() {
         .turn_with_ui(
             "run a git command",
             model1,
-            nu_shell_cancelling_tool("Already up to date.", token),
+            nu_shell_cancelling_tool("Already up to date.", bus),
             ui,
         )
         .await;
@@ -1438,43 +1441,50 @@ async fn journey_tool_result_truncated_at_configured_limit() {
 // Gap 2B (wiring): Config::max_tool_result_bytes → BuiltinToolAdapter
 // ---------------------------------------------------------------------------
 
-/// Register a `skill` tool backed by a real `BuiltinToolAdapter` using the provided
-/// `max_tool_result_bytes` limit and temp directory (caller creates the skill content
-/// inside `cwd`).  This is the only builtin-tool path we can exercise in `nu-agent-core`
-/// tests: `nu__shell` is not handled by `dispatch_fs_tool`, but `skill` is.
-async fn skill_via_builtin_adapter(
+/// Register a `grep` tool backed by a real `make_dynamic_tool::<GrepTool>` using the
+/// provided `max_tool_result_bytes` limit and temp directory (caller creates the file
+/// content inside `cwd`).  This is the only builtin-tool path we can exercise in
+/// `nu-agent-core` tests.
+async fn grep_via_builtin_adapter(
     max_tool_result_bytes: usize,
     cwd: std::path::PathBuf,
 ) -> ToolInfra {
-    use crate::hook::adapter::BuiltinToolAdapter;
+    use crate::tools::handler::builtin_tool::make_dynamic_tool;
+    use crate::tools::handler::grep::GrepTool;
     use crate::types::ToolDefinition;
 
     let tool_def = ToolDefinition {
-        name: "skill".to_string(),
-        description: "Load skill content".to_string(),
+        name: "grep".to_string(),
+        description: "Search file contents".to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {
-                "name": { "type": "string" }
+                "pattern": { "type": "string" }
             },
-            "required": ["name"]
+            "required": ["pattern"]
         }),
     };
-    let adapter = BuiltinToolAdapter::new(tool_def.clone(), cwd.clone(), max_tool_result_bytes);
-
+    let bus = crate::bus::Bus::new();
     let handle = rig::tool::server::ToolServer::new().run();
-    handle.add_dynamic_tool(adapter.into_dynamic_tool()).await;
+    handle
+        .add_dynamic_tool(make_dynamic_tool::<GrepTool>(
+            tool_def,
+            cwd.clone(),
+            max_tool_result_bytes,
+            bus,
+        ))
+        .await;
     default_tool_infra(
         handle,
         vec![rig::completion::ToolDefinition {
-            name: "skill".to_string(),
-            description: "Load skill content".to_string(),
+            name: "grep".to_string(),
+            description: "Search file contents".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "name": { "type": "string" }
+                    "pattern": { "type": "string" }
                 },
-                "required": ["name"]
+                "required": ["pattern"]
             }),
         }],
     )
@@ -1502,17 +1512,12 @@ async fn journey_tool_result_limit_flows_from_config_to_adapter() {
     );
     let (server, client) = h.start_mock_server().await;
 
-    // ── 2. Create a skill file whose serialised JSON will exceed 100 bytes ───
-    //    The content itself is 200 'x' characters; once wrapped in JSON
-    //    (`{"name":…,"source":…,"content":…}`) the total is well over 100 bytes.
+    // ── 2. Create a file whose serialised grep JSON will exceed 100 bytes ───
+    //    The content has long matching lines; once wrapped in JSON
+    //    (`{"matches":[…],"total":…}`) the total is well over 100 bytes.
     let temp_dir = tempfile::tempdir().expect("tempdir");
-    let skill_dir = temp_dir
-        .path()
-        .join(".agents")
-        .join("skills")
-        .join("big_skill");
-    std::fs::create_dir_all(&skill_dir).expect("create skill dir");
-    std::fs::write(skill_dir.join("SKILL.md"), "x".repeat(200)).expect("write skill");
+    let long_line = format!("needle {}\n", "x".repeat(200));
+    std::fs::write(temp_dir.path().join("big.txt"), long_line.repeat(10)).expect("write file");
 
     // ── 3. Mount: tool call → text response ──────────────────────────────────
     {
@@ -1525,7 +1530,7 @@ async fn journey_tool_result_limit_flows_from_config_to_adapter() {
                 ResponseTemplate::new(200)
                     .append_header("content-type", "text/event-stream")
                     .set_body_bytes(
-                        sse_tool_call_response("tc-adapter", "skill", "{\"name\":\"big_skill\"}")
+                        sse_tool_call_response("tc-adapter", "grep", "{\"pattern\":\"needle\"}")
                             .into_bytes(),
                     ),
             )
@@ -1550,7 +1555,7 @@ async fn journey_tool_result_limit_flows_from_config_to_adapter() {
         .turn_with_client(
             "load skill",
             &client,
-            skill_via_builtin_adapter(limit, cwd).await,
+            grep_via_builtin_adapter(limit, cwd).await,
         )
         .await;
     assert!(r.is_ok(), "turn must succeed: {r:?}");

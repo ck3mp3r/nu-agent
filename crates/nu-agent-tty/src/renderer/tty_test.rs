@@ -25,9 +25,13 @@ fn ctx() -> RenderContext {
 #[test]
 fn user_message_has_user_prefix() {
     let r = plain();
-    let block = TranscriptEntry::User(ProseMessage {
-        markdown: "hello".to_string(),
-    })
+    let block = TranscriptEntry {
+        id: 0,
+        kind: TranscriptEntryKind::User(ProseMessage {
+            markdown: "hello".to_string(),
+        }),
+        status: None,
+    }
     .to_render_block();
     let out = r.render(&block, &ctx());
     assert!(out.starts_with("[user] "), "got: {out}");
@@ -37,9 +41,13 @@ fn user_message_has_user_prefix() {
 #[test]
 fn assistant_has_no_prefix() {
     let r = plain();
-    let block = TranscriptEntry::Assistant(ProseMessage {
-        markdown: "hi".to_string(),
-    })
+    let block = TranscriptEntry {
+        id: 0,
+        kind: TranscriptEntryKind::Assistant(ProseMessage {
+            markdown: "hi".to_string(),
+        }),
+        status: None,
+    }
     .to_render_block();
     let out = r.render(&block, &ctx());
     assert!(
@@ -68,7 +76,12 @@ fn tool_shows_tool_prefix() {
 #[test]
 fn separator_renders_empty_string() {
     let r = plain();
-    let block = Spacer.to_render_block();
+    let block = TranscriptEntry {
+        id: 0,
+        kind: TranscriptEntryKind::Spacer(Spacer),
+        status: None,
+    }
+    .to_render_block();
     let out = r.render(&block, &ctx());
     assert_eq!(out, "");
 }

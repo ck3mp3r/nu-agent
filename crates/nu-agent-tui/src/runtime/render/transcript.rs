@@ -5,10 +5,7 @@ use ratatui::{
     widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
 };
 
-use crate::runtime::{
-    transcript_entries_for_render, transcript_line_status_to_item_status,
-    transcript_line_statuses_for_render,
-};
+use crate::runtime::transcript_entries_for_render;
 use crate::tui_renderer::TuiRenderer;
 use crate::{
     runtime::{render::expand_to_visual_rows, render::frame::current_time_millis},
@@ -47,8 +44,6 @@ impl RuntimeCoordinator {
             }
 
             let entries_for_render = transcript_entries_for_render(&self.state).to_vec();
-            let transcript_line_statuses =
-                transcript_line_statuses_for_render(&self.state, &entries_for_render);
 
             // Compute total visual rows from entry_visual_info
             let total_visual_rows = self
@@ -94,11 +89,7 @@ impl RuntimeCoordinator {
             {
                 let idx = first_visible + rel_idx;
                 let block = entry.to_render_block();
-                let item_status = transcript_line_statuses
-                    .get(idx)
-                    .copied()
-                    .flatten()
-                    .map(transcript_line_status_to_item_status);
+                let item_status = entry.status;
                 let ctx = RenderContext {
                     width,
                     cursor: false,

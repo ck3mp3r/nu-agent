@@ -1,5 +1,6 @@
 use super::ir::*;
 use super::items::*;
+use super::renderer::ItemStatus;
 
 // ── ProseMessage stores raw markdown ─────────────────────────────────────────
 
@@ -23,9 +24,13 @@ fn prose_message_clone_is_equal() {
 
 #[test]
 fn user_message_produces_user_role_block_with_markdown() {
-    let block = TranscriptEntry::User(ProseMessage {
-        markdown: "hi".to_string(),
-    })
+    let block = TranscriptEntry {
+        id: 0,
+        kind: TranscriptEntryKind::User(ProseMessage {
+            markdown: "hi".to_string(),
+        }),
+        status: None,
+    }
     .to_render_block();
     assert_eq!(block.role, Role::User);
     // Lines are empty — projection happens at render time in TuiRenderer
@@ -35,9 +40,13 @@ fn user_message_produces_user_role_block_with_markdown() {
 
 #[test]
 fn assistant_chunk_produces_assistant_role_block_with_markdown() {
-    let block = TranscriptEntry::Assistant(ProseMessage {
-        markdown: "hello".to_string(),
-    })
+    let block = TranscriptEntry {
+        id: 0,
+        kind: TranscriptEntryKind::Assistant(ProseMessage {
+            markdown: "hello".to_string(),
+        }),
+        status: None,
+    }
     .to_render_block();
     assert_eq!(block.role, Role::Assistant);
     assert!(block.lines.is_empty());
@@ -49,7 +58,7 @@ fn assistant_chunk_produces_assistant_role_block_with_markdown() {
 #[test]
 fn tool_invocation_produces_three_spans() {
     let block = ToolInvocation {
-        name: "nu__run".to_string(),
+        name: "nu".to_string(),
         source: "builtin".to_string(),
         args: "{\"cmd\":\"ls\"}".to_string(),
     }
@@ -57,10 +66,7 @@ fn tool_invocation_produces_three_spans() {
     assert_eq!(block.role, Role::Tool);
     assert!(block.markdown.is_none());
     assert_eq!(block.lines[0].spans.len(), 3);
-    assert_eq!(
-        block.lines[0].spans[0],
-        Span::emphasis("nu__run".to_string())
-    );
+    assert_eq!(block.lines[0].spans[0], Span::emphasis("nu".to_string()));
     assert_eq!(block.lines[0].spans[1], Span::meta("builtin".to_string()));
     assert_eq!(
         block.lines[0].spans[2],
@@ -131,13 +137,21 @@ fn compaction_notice_has_four_spans() {
 
 #[test]
 fn transcript_entry_user_delegates_correctly() {
-    let direct = TranscriptEntry::User(ProseMessage {
-        markdown: "z".to_string(),
-    })
+    let direct = TranscriptEntry {
+        id: 0,
+        kind: TranscriptEntryKind::User(ProseMessage {
+            markdown: "z".to_string(),
+        }),
+        status: None,
+    }
     .to_render_block();
-    let via_enum = TranscriptEntry::User(ProseMessage {
-        markdown: "z".to_string(),
-    })
+    let via_enum = TranscriptEntry {
+        id: 0,
+        kind: TranscriptEntryKind::User(ProseMessage {
+            markdown: "z".to_string(),
+        }),
+        status: None,
+    }
     .to_render_block();
     assert_eq!(direct, via_enum);
 }
@@ -145,18 +159,26 @@ fn transcript_entry_user_delegates_correctly() {
 #[test]
 fn transcript_entry_role_returns_correct_role() {
     assert_eq!(
-        TranscriptEntry::User(ProseMessage {
-            markdown: "x".to_string(),
-        })
+        TranscriptEntry {
+            id: 0,
+            kind: TranscriptEntryKind::User(ProseMessage {
+                markdown: "x".to_string(),
+            }),
+            status: None,
+        }
         .role(),
         Role::User
     );
     assert_eq!(
-        TranscriptEntry::Tool(ToolInvocation {
-            name: "t".to_string(),
-            source: "".to_string(),
-            args: "".to_string(),
-        })
+        TranscriptEntry {
+            id: 0,
+            kind: TranscriptEntryKind::Tool(ToolInvocation {
+                name: "t".to_string(),
+                source: "".to_string(),
+                args: "".to_string(),
+            }),
+            status: None,
+        }
         .role(),
         Role::Tool
     );
@@ -165,9 +187,13 @@ fn transcript_entry_role_returns_correct_role() {
 #[test]
 fn transcript_entry_text_returns_markdown_source() {
     assert_eq!(
-        TranscriptEntry::User(ProseMessage {
-            markdown: "hello world".to_string(),
-        })
+        TranscriptEntry {
+            id: 0,
+            kind: TranscriptEntryKind::User(ProseMessage {
+                markdown: "hello world".to_string(),
+            }),
+            status: None,
+        }
         .text(),
         "hello world"
     );
@@ -195,13 +221,21 @@ fn annotate_diff_hint_returns_normal_for_plain() {
 
 #[test]
 fn user_and_assistant_render_blocks_differ_only_in_role() {
-    let user_block = TranscriptEntry::User(ProseMessage {
-        markdown: "hi".to_string(),
-    })
+    let user_block = TranscriptEntry {
+        id: 0,
+        kind: TranscriptEntryKind::User(ProseMessage {
+            markdown: "hi".to_string(),
+        }),
+        status: None,
+    }
     .to_render_block();
-    let assistant_block = TranscriptEntry::Assistant(ProseMessage {
-        markdown: "hi".to_string(),
-    })
+    let assistant_block = TranscriptEntry {
+        id: 0,
+        kind: TranscriptEntryKind::Assistant(ProseMessage {
+            markdown: "hi".to_string(),
+        }),
+        status: None,
+    }
     .to_render_block();
     assert_eq!(user_block.markdown, assistant_block.markdown);
     assert_eq!(user_block.role, Role::User);
@@ -210,15 +244,24 @@ fn user_and_assistant_render_blocks_differ_only_in_role() {
 
 #[test]
 fn user_message_text_accessor_returns_raw_markdown() {
-    let entry = TranscriptEntry::User(ProseMessage {
-        markdown: "hello **world**\nagain".to_string(),
-    });
+    let entry = TranscriptEntry {
+        id: 0,
+        kind: TranscriptEntryKind::User(ProseMessage {
+            markdown: "hello **world**\nagain".to_string(),
+        }),
+        status: None,
+    };
     assert_eq!(entry.text(), "hello **world**\nagain");
 }
 
 #[test]
 fn logo_entry_has_system_role_with_center_and_suppress_prefix() {
-    let block = TranscriptEntry::Logo("test".to_string()).to_render_block();
+    let block = TranscriptEntry {
+        id: 0,
+        kind: TranscriptEntryKind::Logo("test".to_string()),
+        status: None,
+    }
+    .to_render_block();
     assert_eq!(block.role, Role::System);
     assert!(block.center, "logo must be centered");
     assert!(block.suppress_prefix, "logo must suppress lane prefix");
@@ -228,11 +271,47 @@ fn logo_entry_has_system_role_with_center_and_suppress_prefix() {
 
 #[test]
 fn logo_entry_text_returns_raw_text() {
-    let entry = TranscriptEntry::Logo("line1\nline2".to_string());
+    let entry = TranscriptEntry {
+        id: 0,
+        kind: TranscriptEntryKind::Logo("line1\nline2".to_string()),
+        status: None,
+    };
     assert_eq!(entry.text(), "line1\nline2");
 }
 
 #[test]
 fn logo_entry_role_is_system() {
-    assert_eq!(TranscriptEntry::Logo("x".to_string()).role(), Role::System);
+    assert_eq!(
+        TranscriptEntry {
+            id: 0,
+            kind: TranscriptEntryKind::Logo("x".to_string()),
+            status: None,
+        }
+        .role(),
+        Role::System
+    );
+}
+
+#[test]
+fn transcript_entry_carries_status() {
+    let entry = TranscriptEntry {
+        id: 0,
+        kind: TranscriptEntryKind::User(ProseMessage {
+            markdown: "hi".to_string(),
+        }),
+        status: Some(ItemStatus::Done),
+    };
+    assert_eq!(entry.status, Some(ItemStatus::Done));
+}
+
+#[test]
+fn transcript_entry_defaults_to_none_status() {
+    let entry = TranscriptEntry {
+        id: 0,
+        kind: TranscriptEntryKind::User(ProseMessage {
+            markdown: "hi".to_string(),
+        }),
+        status: None,
+    };
+    assert!(entry.status.is_none());
 }

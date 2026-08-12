@@ -1,8 +1,10 @@
+use std::path::Path;
 use std::time::Duration;
 
 use serde_json::Value as JsonValue;
 
-use super::ToolHandlerError;
+use super::{ToolHandlerError, builtin_tool::BuiltinTool};
+use crate::bus::Bus;
 
 const DEFAULT_MAX_LENGTH: usize = 12000;
 const DEFAULT_MODE: &str = "markdown";
@@ -81,53 +83,59 @@ fn validate_url(url: &str) -> Result<(), ToolHandlerError> {
     Ok(())
 }
 
-/// Dispatch the built-in `http` tool.
-///
-/// Fetches a URL via HTTP GET, optionally converts HTML to Markdown, and
-/// truncates the result to `max_length` characters.
-pub async fn dispatch_http_tool(
-    arguments: &JsonValue,
-) -> Result<Option<JsonValue>, ToolHandlerError> {
-    let args: HttpArgs = serde_json::from_value(arguments.clone())
-        .map_err(|e| ToolHandlerError::validation(format!("Invalid http arguments: {e}")))?;
+pub struct HttpTool;
 
-    validate_url(&args.url)?;
+impl BuiltinTool for HttpTool {
+    const NAME: &'static str = "http";
 
-    let effective_mode = args.mode.as_deref().unwrap_or(DEFAULT_MODE).to_string();
-    let max_length = args.max_length.unwrap_or(DEFAULT_MAX_LENGTH);
+    /// Fetch a URL via HTTP GET, optionally converts HTML to Markdown, and
+    /// truncates the result to `max_length` characters.
+    async fn execute(
+        arguments: &JsonValue,
+        _cwd: &Path,
+        _bus: &Bus,
+    ) -> Result<JsonValue, ToolHandlerError> {
+        let args: HttpArgs = serde_json::from_value(arguments.clone())
+            .map_err(|e| ToolHandlerError::validation(format!("Invalid http arguments: {e}")))?;
 
-    let client = build_fetch_client()?;
+        validate_url(&args.url)?;
 
-    let response = client
-        .get(&args.url)
-        .send()
-        .await
-        .map_err(|e| ToolHandlerError::runtime(format!("HTTP request failed: {e}")))?;
+        let effective_mode = args.mode.as_deref().unwrap_or(DEFAULT_MODE).to_string();
+        let max_length = args.max_length.unwrap_or(DEFAULT_MAX_LENGTH);
 
-    let status = response.status().as_u16();
-    let content_type = response
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_string();
-    let final_url = response.url().to_string();
+        let client = build_fetch_client()?;
 
-    let body = response
-        .text()
-        .await
-        .map_err(|e| ToolHandlerError::runtime(format!("Failed to read response body: {e}")))?;
+        let response = client
+            .get(&args.url)
+            .send()
+            .await
+            .map_err(|e| ToolHandlerError::runtime(format!("HTTP request failed: {e}")))?;
 
-    let (content, truncated) = process_body(body, &content_type, &effective_mode, max_length);
-    let length = content.len();
+        let status = response.status().as_u16();
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        let final_url = response.url().to_string();
 
-    Ok(Some(serde_json::json!({
-        "url": final_url,
-        "status": status,
-        "content_type": content_type,
-        "mode": effective_mode,
-        "content": content,
-        "length": length,
-        "truncated": truncated,
-    })))
+        let body = response
+            .text()
+            .await
+            .map_err(|e| ToolHandlerError::runtime(format!("Failed to read response body: {e}")))?;
+
+        let (content, truncated) = process_body(body, &content_type, &effective_mode, max_length);
+        let length = content.len();
+
+        Ok(serde_json::json!({
+            "url": final_url,
+            "status": status,
+            "content_type": content_type,
+            "mode": effective_mode,
+            "content": content,
+            "length": length,
+            "truncated": truncated,
+        }))
+    }
 }

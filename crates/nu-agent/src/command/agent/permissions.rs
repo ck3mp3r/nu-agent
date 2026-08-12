@@ -73,7 +73,7 @@ pub(super) fn resolve_effective_permissions_config(
     let summary = effective.summary();
     let overlay_active = agent_overlay.is_some() || cli_overlay.is_some();
     let startup_message = format!(
-        "permissions policy: overlay_active={} global={} tool_rules={} nu__run.command_rules={}",
+        "permissions policy: overlay_active={} global={} tool_rules={} nested_command_rules={}",
         overlay_active,
         summary.global.as_str(),
         summary.tool_rule_count,

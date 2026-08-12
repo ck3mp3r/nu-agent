@@ -122,6 +122,8 @@ where
     /// Doom loop state shared across turns so that repetitive tool call patterns
     /// are detected even when they span multiple consecutive turns.
     pub doom_state: Arc<Mutex<DoomLoopState>>,
+    /// Shared cancellation bus threaded through the turn pipeline.
+    pub bus: crate::bus::Bus,
     // ── Domain managers ──────────────────────────────────────────────────────
     pub provider: Prov,
     pub tools: Tools,
@@ -214,6 +216,7 @@ where
                     visible_tool_definitions,
                     circuit_breaker: Arc::clone(&self.circuit_breaker),
                     doom_state: Arc::clone(&self.doom_state),
+                    bus: self.bus.clone(),
                 },
             );
 

@@ -39,8 +39,9 @@ use nu_agent_core::protocol::slash::{SlashCommand, filter_inline_slash_suggestio
 use nu_agent_core::transcript::ir::{ContentLine, DisplayLine};
 use nu_agent_core::transcript::items::{
     ProseMessage, Spacer as SpacerItem, SystemMessage, ToolInvocation,
-    ToolResult as TranscriptToolResult, TranscriptEntry, annotate_diff_hint,
+    ToolResult as TranscriptToolResult, TranscriptEntry, TranscriptEntryKind, annotate_diff_hint,
 };
+use nu_agent_core::transcript::renderer::ItemStatus;
 use selection::TranscriptSelection;
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -112,18 +113,11 @@ pub enum CompactionStatus {
     Failed,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TranscriptLineStatus {
-    Prompt(PromptStatus),
-    Tool(ToolCallStatus),
-    Compaction(CompactionStatus),
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompactionLine {
-    pub transcript_line_index: usize,
     pub source: String,
     pub status: CompactionStatus,
+    pub entry_id: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -267,16 +261,16 @@ impl McpServerUsabilityState {
 pub struct QueuedPrompt {
     pub id: u64,
     pub prompt_text: String,
-    pub transcript_line_index: usize,
     pub status: PromptStatus,
+    pub entry_id: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolCallLine {
     pub id: u64,
-    pub transcript_line_index: usize,
     pub status: ToolCallStatus,
     pub key: String,
+    pub entry_id: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -369,6 +363,7 @@ pub struct AppState {
     active_prompt_id: Option<u64>,
     next_prompt_id: u64,
     next_tool_call_id: u64,
+    next_entry_id: u64,
     active_cycle: bool,
     insert_exit_pending_j: Option<std::time::Instant>,
     normal_pending_key: Option<char>,
@@ -468,6 +463,7 @@ impl Default for AppState {
             active_prompt_id: None,
             next_prompt_id: 1,
             next_tool_call_id: 1,
+            next_entry_id: 1,
             active_cycle: false,
             insert_exit_pending_j: None,
             normal_pending_key: None,

@@ -64,6 +64,8 @@ pub struct ToolInfra {
     pub visible_tool_definitions: Vec<ToolDefinition>,
     pub circuit_breaker: Arc<Mutex<McpCircuitBreaker>>,
     pub doom_state: Arc<Mutex<DoomLoopState>>,
+    /// Shared cancellation bus threaded through the turn pipeline.
+    pub bus: crate::bus::Bus,
 }
 
 pub struct TurnExecutor<'a, S: SessionManager> {
@@ -176,6 +178,7 @@ where
                         },
                         circuit_breaker: self.tool_infra.circuit_breaker.clone(),
                         doom_state: self.tool_infra.doom_state.clone(),
+                        bus: self.tool_infra.bus.clone(),
                     },
                 )
                 .await;
@@ -661,6 +664,7 @@ where
     )>,
     circuit_breaker: Arc<Mutex<McpCircuitBreaker>>,
     doom_state: Arc<Mutex<DoomLoopState>>,
+    bus: crate::bus::Bus,
 }
 
 impl<ST, U, P> ModelVisitor for TurnVisitor<'_, '_, ST, U, P>
@@ -694,6 +698,7 @@ where
                 visible_tool_definitions: self.visible_tool_definitions,
                 circuit_breaker: self.circuit_breaker.clone(),
                 doom_state: self.doom_state.clone(),
+                bus: self.bus.clone(),
             },
             self.config,
         );

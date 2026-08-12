@@ -10,7 +10,7 @@ use nu_agent_core::protocol::event::{
 };
 use nu_agent_core::protocol::slash::{SlashParseResult, extract_session_id, parse_slash_command};
 use nu_agent_core::transcript::ir::{ContentLine, Role};
-use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry};
+use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry, TranscriptEntryKind};
 
 pub const ESC_ABORT_CONFIRM_STATUS: &str = "Hit escape again to abort.";
 const ABORT_REQUESTED_STATUS: &str = "Abort requested.";
@@ -579,7 +579,7 @@ fn reduce_ui_event(state: &mut AppState, event: UiEvent) -> bool {
             let prev_is_spacer = state
                 .transcript_preview
                 .last()
-                .is_some_and(|last| matches!(last, TranscriptEntry::Spacer(_)));
+                .is_some_and(|last| matches!(last.kind, TranscriptEntryKind::Spacer(_)));
             if !prev_is_spacer && !state.transcript_preview.is_empty() {
                 state.push_spacer();
             }
@@ -617,9 +617,11 @@ fn reduce_ui_event(state: &mut AppState, event: UiEvent) -> bool {
             }
 
             if !body.trim().is_empty() {
-                state.push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
-                    markdown: body,
-                }));
+                state.push_transcript_item(TranscriptEntry {
+                    id: 0,
+                    kind: TranscriptEntryKind::Assistant(ProseMessage { markdown: body }),
+                    status: None,
+                });
             }
             state.compaction_streaming_start = None;
             state.push_spacer();
@@ -674,8 +676,8 @@ fn handle_tool_start(state: &mut AppState, name: &str, arguments: &str) -> bool 
     // spacers between them.
     let is_continuing_tool_block = state.transcript_preview.last().is_some_and(|last| {
         matches!(
-            last,
-            TranscriptEntry::Tool(_) | TranscriptEntry::ToolResult(_)
+            &last.kind,
+            TranscriptEntryKind::Tool(_) | TranscriptEntryKind::ToolResult(_)
         )
     });
     if !is_continuing_tool_block {
@@ -683,7 +685,7 @@ fn handle_tool_start(state: &mut AppState, name: &str, arguments: &str) -> bool 
             .transcript_preview
             .iter()
             .rev()
-            .find(|e| !matches!(e, TranscriptEntry::Spacer(_)))
+            .find(|e| !matches!(&e.kind, TranscriptEntryKind::Spacer(_)))
             .map(|e| e.role());
         let prev_is_assistant = matches!(last_content, Some(Role::Assistant));
 
@@ -693,7 +695,7 @@ fn handle_tool_start(state: &mut AppState, name: &str, arguments: &str) -> bool 
             let prev_is_spacer = state
                 .transcript_preview
                 .last()
-                .is_some_and(|last| matches!(last, TranscriptEntry::Spacer(_)));
+                .is_some_and(|last| matches!(&last.kind, TranscriptEntryKind::Spacer(_)));
             if !prev_is_spacer {
                 state.push_spacer();
             }
@@ -702,7 +704,7 @@ fn handle_tool_start(state: &mut AppState, name: &str, arguments: &str) -> bool 
             let prev_is_spacer = state
                 .transcript_preview
                 .last()
-                .is_some_and(|last| matches!(last, TranscriptEntry::Spacer(_)));
+                .is_some_and(|last| matches!(&last.kind, TranscriptEntryKind::Spacer(_)));
             // Only push a closing spacer if there is a previous block to close.
             if !state.transcript_preview.is_empty() && !prev_is_spacer {
                 state.push_spacer(); // closing spacer for previous block
@@ -936,7 +938,7 @@ fn handle_assistant_message(state: &mut AppState, text: String) -> bool {
             .transcript_preview
             .iter()
             .rev()
-            .find(|e| !matches!(e, TranscriptEntry::Spacer(_)))
+            .find(|e| !matches!(&e.kind, TranscriptEntryKind::Spacer(_)))
             .map(|e| e.role());
         let prev_is_tool_block = matches!(last_content, Some(Role::Tool) | Some(Role::ToolDisplay));
 
@@ -948,7 +950,7 @@ fn handle_assistant_message(state: &mut AppState, text: String) -> bool {
             let prev_is_spacer = state
                 .transcript_preview
                 .last()
-                .is_some_and(|last| matches!(last, TranscriptEntry::Spacer(_)));
+                .is_some_and(|last| matches!(&last.kind, TranscriptEntryKind::Spacer(_)));
             // Only push a closing spacer if there is a previous block to close.
             if !state.transcript_preview.is_empty() && !prev_is_spacer {
                 state.push_spacer(); // closing spacer for previous block
@@ -972,9 +974,13 @@ fn handle_assistant_message(state: &mut AppState, text: String) -> bool {
 
     // Always follow tail with ListState
     state.scroll_transcript_to_bottom();
-    state.push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
-        markdown: trimmed.to_string(),
-    }));
+    state.push_transcript_item(TranscriptEntry {
+        id: 0,
+        kind: TranscriptEntryKind::Assistant(ProseMessage {
+            markdown: trimmed.to_string(),
+        }),
+        status: None,
+    });
     true
 }
 
@@ -1000,9 +1006,13 @@ fn handle_compaction_summary_chunk(state: &mut AppState, source: &str, text: Str
 
     // Store raw markdown — projected at render time with canvas width
     state.scroll_transcript_to_bottom();
-    state.push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
-        markdown: trimmed.to_string(),
-    }));
+    state.push_transcript_item(TranscriptEntry {
+        id: 0,
+        kind: TranscriptEntryKind::Assistant(ProseMessage {
+            markdown: trimmed.to_string(),
+        }),
+        status: None,
+    });
     true
 }
 

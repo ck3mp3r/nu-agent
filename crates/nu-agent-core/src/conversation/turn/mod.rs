@@ -7,8 +7,8 @@
 
 use futures::StreamExt;
 use tokio::sync::mpsc;
-use tokio_util::sync::CancellationToken;
 
+use crate::bus::Bus;
 use crate::config::{Config, defaults};
 use crate::hook::agent_hook::HookState;
 use crate::hook::chain::HookChain;
@@ -239,17 +239,11 @@ where
         }
     }
 
-    // Create cancel token — use an externally supplied token if the UI provides one
-    // (e.g. MockUi::with_external_cancel() in tests, or a real UI that wants to cancel
-    // from outside the drain loop). Falls back to a fresh token when none is provided.
-    let ext_token = ui.external_cancel_token();
-    let external = ext_token.is_some();
-    log::debug!("execute_turn: cancel_token external={external}");
-    let cancel_token = ext_token.unwrap_or_default();
-
-    // Build the hook using HookChain<P> — no HookDriver needed
+    // Build the hook using HookChain<P> — no HookDriver needed.
+    // Cancellation is driven through the shared bus's cancel channel.
+    let bus = ctx.tool_infra.bus.clone();
     let hook = HookChain::new(
-        cancel_token.clone(),
+        bus.clone(),
         ui_tx,
         permission_resolver,
         ctx.tool_infra.closure_registry.clone(),
@@ -287,7 +281,7 @@ where
         tool_server_handle: ctx.tool_infra.tool_server_handle,
         visible_tool_definitions: ctx.tool_infra.visible_tool_definitions,
         max_turns: ctx.input.max_turns,
-        cancel_token: cancel_token.clone(),
+        bus: bus.clone(),
         additional_params: ctx.config.additional_params.clone(),
         temperature: ctx.config.temperature,
         max_tokens: ctx.config.max_tokens.map(|t| t as u64),
@@ -297,18 +291,19 @@ where
     let prompt_future = Box::pin(build_agent_and_stream(model, config));
 
     // Spawn the completion on the current task.
-    // Cancellation note: cancel_token fires Terminate on the next hook entry (on_completion_call,
-    // on_text_delta, or on_tool_call), causing rig to yield PromptCancelled { chat_history }.
-    // If the HTTP request hangs before any hook fires (e.g. dead network), the stream blocks
-    // until the provider's own HTTP client timeout. Ensure timeouts are configured on the client.
+    // Cancellation note: publishing CancelEvent on the bus fires Terminate on the next
+    // hook entry (on_completion_call, on_text_delta, or on_tool_call), causing rig to
+    // yield PromptCancelled { chat_history }. If the HTTP request hangs before any hook
+    // fires (e.g. dead network), the stream blocks until the provider's own HTTP client
+    // timeout. Ensure timeouts are configured on the client.
     let prompt_handle = tokio::spawn(prompt_future);
 
-    // Main-thread drain loop: forward UiEvents from the hook to the UI,
-    // and propagate cancel requests from the UI to the cancel token.
+    // Main-thread drain loop: forward UiEvents from the hook to the UI.
+    // Cancellation is not re-published here: the bus already delivers cancel
+    // events to all subscribers (including this turn's hook and tool proxies),
+    // so re-publishing would leave a lingering event that cancels the NEXT turn.
     loop {
-        if ui.take_cancel_requested() {
-            cancel_token.cancel();
-        }
+        ui.take_cancel_requested();
         match ui_rx.try_recv() {
             Ok(event) => ui.emit(&event),
             Err(mpsc::error::TryRecvError::Empty) => {
@@ -385,7 +380,7 @@ struct AgentPromptConfig<S: SessionStore + Clone + Send + Sync, P: AsyncPermissi
     tool_server_handle: rig::tool::server::ToolServerHandle,
     visible_tool_definitions: Vec<ToolDefinition>,
     max_turns: Option<u32>,
-    cancel_token: CancellationToken,
+    bus: Bus,
     additional_params: Option<serde_json::Value>,
     temperature: Option<f64>,
     max_tokens: Option<u64>,
@@ -396,7 +391,7 @@ struct StreamingTurnResult {
     text: String,
     usage: rig::completion::request::Usage,
     messages: Option<Vec<Message>>,
-    /// Whether the stream was cancelled via cancel_token
+    /// Whether the stream was cancelled via the bus cancel channel.
     cancelled: bool,
     /// Number of complete tool calls seen in the stream
     tool_call_count: usize,
@@ -416,7 +411,7 @@ struct FilteredToolProxy {
     tool_name: String,
     tool_definition: ToolDefinition,
     handle: rig::tool::server::ToolServerHandle,
-    cancel_token: CancellationToken,
+    bus: Bus,
 }
 
 impl FilteredToolProxy {
@@ -426,16 +421,17 @@ impl FilteredToolProxy {
         let description = self.tool_definition.description.clone();
         let parameters = self.tool_definition.parameters.clone();
         let handle = self.handle;
-        let cancel_token = self.cancel_token;
+        let bus = self.bus;
 
         let tool_name_for_closure = name.clone();
         DynamicTool::new(name, description, parameters, move |context, args| {
             let handle = handle.clone();
-            let cancel_token = cancel_token.clone();
+            let bus = bus.clone();
             let tool_name = tool_name_for_closure.clone();
             Box::pin(async move {
                 // Serialize args back to string for the handle.execute call
                 let args_str = serde_json::to_string(&args).unwrap_or_else(|_| "{}".to_string());
+                let mut cancel_rx = bus.cancel().subscribe();
                 tokio::select! {
                     result = handle.execute(&tool_name, &args_str, context) => {
                         if result.is_success() {
@@ -445,8 +441,9 @@ impl FilteredToolProxy {
                         } else {
                             // Refusal or skipped — no output available
                             Ok(ToolOutput::text(String::new()))
-                        }                    }
-                    _ = cancel_token.cancelled() => {
+                        }
+                    }
+                    Ok(_) = cancel_rx.recv() => {
                         Err(ToolExecutionError::cancelled("tool call cancelled"))
                     }
                 }
@@ -476,7 +473,7 @@ where
         tool_server_handle,
         visible_tool_definitions,
         max_turns,
-        cancel_token,
+        bus,
         additional_params,
         temperature,
         max_tokens,
@@ -490,7 +487,7 @@ where
                 tool_name: def.name.clone(),
                 tool_definition: def,
                 handle: tool_server_handle.clone(),
-                cancel_token: cancel_token.clone(),
+                bus: bus.clone(),
             };
             proxy.into_dynamic_tool()
         })
@@ -546,13 +543,14 @@ where
     let mut last_total_tokens: u64 = 0;
     let mut cancelled = false;
     let mut deltas_emitted = false;
+    let mut cancel_rx = bus.cancel().subscribe();
 
     loop {
         let item = tokio::select! {
             biased;
             item = stream.next() => item,
-            _ = cancel_token.cancelled() => {
-                log::trace!("Stream cancelled via cancel_token");
+            Ok(_) = cancel_rx.recv() => {
+                log::trace!("Stream cancelled via bus cancel channel");
                 cancelled = true;
                 break;
             }

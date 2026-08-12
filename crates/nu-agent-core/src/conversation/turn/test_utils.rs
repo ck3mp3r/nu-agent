@@ -6,6 +6,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use crate::bus::Bus;
 use crate::config::Config;
 use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
 use crate::protocol::contracts::ProgressUi;
@@ -19,11 +20,8 @@ use tokio::sync::mpsc;
 pub(super) struct MockUi {
     pub events: Vec<UiEvent>,
     cancel_flag: Arc<AtomicBool>,
-    /// An externally-managed cancellation token injected into the turn executor.
-    /// When `Some`, the turn executor uses this token instead of creating a fresh one,
-    /// so callers can cancel the running turn at any point (including from inside a
-    /// mock tool's `call()` implementation).
-    external_token: Option<tokio_util::sync::CancellationToken>,
+    cancel_bus: Option<Bus>,
+    cancel_published: Arc<AtomicBool>,
 }
 
 impl MockUi {
@@ -31,37 +29,38 @@ impl MockUi {
         Self {
             events: Vec::new(),
             cancel_flag: Arc::new(AtomicBool::new(false)),
-            external_token: None,
+            cancel_bus: None,
+            cancel_published: Arc::new(AtomicBool::new(false)),
         }
     }
 
-    /// Pre-set cancel so take_cancel_requested() fires on the very first drain
-    /// loop iteration — causes cancel_token to be set before the spawned tokio
-    /// task processes any stream event, which makes build_agent_and_stream return
-    /// Ok(StreamingTurnResult { cancelled: true, messages: Some(chat_history) }).
-    pub fn immediately_cancelled() -> Self {
+    /// Pre-set cancel so the first `take_cancel_requested()` fires and publishes
+    /// a `CancelEvent` to the bus. This drives cancellation through the shared
+    /// bus channel (which the hook and tool proxies subscribe to) instead of a
+    /// standalone flag, matching the production flow.
+    pub fn immediately_cancelled(bus: Bus) -> Self {
         Self {
             events: Vec::new(),
             cancel_flag: Arc::new(AtomicBool::new(true)),
-            external_token: None,
+            cancel_bus: Some(bus),
+            cancel_published: Arc::new(AtomicBool::new(false)),
         }
     }
 
-    /// Returns a `MockUi` and the `CancellationToken` it will inject into the turn executor.
+    /// Returns a `MockUi` and the `Bus` used to cancel the running turn.
     ///
-    /// Call `token.cancel()` at any point during the running turn to cancel it from outside —
-    /// including from within a mock tool's `call()` implementation. The token is injected via
-    /// `external_cancel_token()` which the turn executor reads in place of creating a fresh one.
-    ///
-    /// This avoids the 16ms drain-loop sleep race inherent in setting a cancel flag via `emit()`.
-    pub fn with_external_cancel() -> (Self, tokio_util::sync::CancellationToken) {
-        let token = tokio_util::sync::CancellationToken::new();
+    /// Call `bus.cancel().send(CancelEvent::Requested { .. })` at any point during
+    /// the running turn to cancel it from outside — including from within a mock
+    /// tool's `call()` implementation.
+    pub fn with_external_cancel() -> (Self, Bus) {
+        let bus = crate::bus::create_bus();
         let ui = Self {
             events: Vec::new(),
             cancel_flag: Arc::new(AtomicBool::new(false)),
-            external_token: Some(token.clone()),
+            cancel_bus: None,
+            cancel_published: Arc::new(AtomicBool::new(false)),
         };
-        (ui, token)
+        (ui, bus)
     }
 }
 
@@ -73,11 +72,16 @@ impl ProgressUi for MockUi {
     fn flush(&mut self) {}
 
     fn take_cancel_requested(&self) -> bool {
-        self.cancel_flag.swap(false, Ordering::SeqCst)
-    }
-
-    fn external_cancel_token(&self) -> Option<tokio_util::sync::CancellationToken> {
-        self.external_token.clone()
+        let was_cancelled = self.cancel_flag.swap(false, Ordering::SeqCst);
+        if was_cancelled
+            && !self.cancel_published.swap(true, Ordering::SeqCst)
+            && let Some(bus) = &self.cancel_bus
+        {
+            let _ = bus
+                .cancel()
+                .send(crate::bus::CancelEvent::Requested { task_id: None });
+        }
+        was_cancelled
     }
 }
 

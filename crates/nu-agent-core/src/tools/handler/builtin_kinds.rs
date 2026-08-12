@@ -44,38 +44,6 @@ impl BuiltinKind {
             Self::TmuxLayout => "tmux_layout",
         }
     }
-
-    /// True for filesystem-mutating tools (edit, patch).
-    pub const fn is_fs(&self) -> bool {
-        matches!(self, Self::Edit | Self::Patch)
-    }
-
-    /// True for tmux control tools.
-    pub const fn is_tmux(&self) -> bool {
-        matches!(
-            self,
-            Self::TmuxSession | Self::TmuxWindow | Self::TmuxPane | Self::TmuxLayout
-        )
-    }
-
-    /// True for the Nushell execution tool.
-    pub const fn is_nu(&self) -> bool {
-        matches!(self, Self::Nu)
-    }
-
-    /// True for tools that require elevated privilege (mutating or system-level).
-    pub const fn is_privileged(&self) -> bool {
-        matches!(
-            self,
-            Self::Edit
-                | Self::Patch
-                | Self::TmuxSession
-                | Self::TmuxWindow
-                | Self::TmuxPane
-                | Self::TmuxLayout
-                | Self::Nu
-        )
-    }
 }
 
 impl FromStr for BuiltinKind {

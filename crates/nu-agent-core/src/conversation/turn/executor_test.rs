@@ -39,6 +39,7 @@ fn turn_executor_new_constructs_without_panic() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            bus: crate::bus::create_bus(),
         },
     );
     // Construction succeeded — no panic.
@@ -65,6 +66,7 @@ fn turn_executor_exposes_memory_state() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            bus: crate::bus::create_bus(),
         },
     );
 
@@ -93,6 +95,7 @@ fn turn_executor_take_response_data_returns_none_before_execute() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            bus: crate::bus::create_bus(),
         },
     );
 
@@ -135,7 +138,8 @@ async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_comp
     ]]);
 
     let cached_client = CachedProviderClient::Mock(model);
-    let mut ui = MockUi::immediately_cancelled();
+    let bus = crate::bus::create_bus();
+    let mut ui = MockUi::immediately_cancelled(bus.clone());
 
     let closure_registry = ClosureRegistry::new();
     let mcp_registry = McpToolRegistry::empty();
@@ -151,6 +155,7 @@ async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_comp
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            bus,
         },
     );
 
@@ -271,6 +276,7 @@ async fn completed_turn_no_explicit_store_append_needed() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            bus: crate::bus::create_bus(),
         },
     );
 
@@ -350,7 +356,8 @@ async fn cancelled_turn_writes_via_single_memory_append() {
     ]]);
 
     let cached_client = CachedProviderClient::Mock(model);
-    let mut ui = MockUi::immediately_cancelled();
+    let bus = crate::bus::create_bus();
+    let mut ui = MockUi::immediately_cancelled(bus.clone());
 
     let closure_registry = crate::tools::closure::ClosureRegistry::new();
     let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
@@ -366,6 +373,7 @@ async fn cancelled_turn_writes_via_single_memory_append() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            bus,
         },
     );
 
@@ -460,6 +468,7 @@ async fn last_total_tokens_updated_on_completed_turn() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            bus: crate::bus::create_bus(),
         },
     );
 
@@ -537,6 +546,7 @@ async fn max_turns_error_persists_full_history() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            bus: crate::bus::create_bus(),
         },
     );
 
@@ -622,6 +632,7 @@ async fn unknown_tool_error_persists_full_history() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            bus: crate::bus::create_bus(),
         },
     );
 
@@ -703,6 +714,7 @@ async fn network_error_on_fresh_session_persists_user_message() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            bus: crate::bus::create_bus(),
         },
     );
 
@@ -800,6 +812,7 @@ async fn hard_error_on_first_llm_call_persists_user_message() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            bus: crate::bus::create_bus(),
         },
     );
 
@@ -884,6 +897,7 @@ async fn hard_error_no_session_persists_nothing() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            bus: crate::bus::create_bus(),
         },
     );
 
@@ -953,7 +967,8 @@ async fn prompt_cancelled_with_unpaired_tool_call_injects_synthetic_result() {
     ]]);
 
     let cached_client = CachedProviderClient::Mock(model);
-    let mut ui = MockUi::immediately_cancelled();
+    let bus = crate::bus::create_bus();
+    let mut ui = MockUi::immediately_cancelled(bus.clone());
 
     let closure_registry = crate::tools::closure::ClosureRegistry::new();
     let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
@@ -969,6 +984,7 @@ async fn prompt_cancelled_with_unpaired_tool_call_injects_synthetic_result() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            bus,
         },
     );
 
@@ -1082,6 +1098,7 @@ async fn unknown_tool_error_with_unpaired_tool_call_injects_synthetic_result() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            bus: crate::bus::create_bus(),
         },
     );
 
@@ -1471,6 +1488,7 @@ async fn hard_error_after_prior_history_persists_user_message() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            bus: crate::bus::create_bus(),
         },
     );
 
@@ -1635,6 +1653,7 @@ async fn hard_error_after_prior_history_persists_only_delta() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            bus: crate::bus::create_bus(),
         },
     );
 
@@ -1724,6 +1743,7 @@ async fn hard_error_twice_does_not_double_history() {
                 visible_tool_definitions: vec![],
                 circuit_breaker: default_circuit_breaker(),
                 doom_state: default_doom_state(),
+                bus: crate::bus::create_bus(),
             },
         );
         let result = executor
@@ -1765,6 +1785,7 @@ async fn hard_error_twice_does_not_double_history() {
                 visible_tool_definitions: vec![],
                 circuit_breaker: default_circuit_breaker(),
                 doom_state: default_doom_state(),
+                bus: crate::bus::create_bus(),
             },
         );
         let _ = executor
@@ -1805,6 +1826,7 @@ async fn hard_error_twice_does_not_double_history() {
                 visible_tool_definitions: vec![],
                 circuit_breaker: default_circuit_breaker(),
                 doom_state: default_doom_state(),
+                bus: crate::bus::create_bus(),
             },
         );
         let _ = executor
@@ -1896,7 +1918,8 @@ async fn cancelled_turn_after_prior_history_persists_only_delta() {
         MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
     ]]);
     let cached_client = CachedProviderClient::Mock(model);
-    let mut ui = MockUi::immediately_cancelled();
+    let bus = crate::bus::create_bus();
+    let mut ui = MockUi::immediately_cancelled(bus.clone());
     let closure_registry = ClosureRegistry::new();
     let mcp_registry = McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
@@ -1911,6 +1934,7 @@ async fn cancelled_turn_after_prior_history_persists_only_delta() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            bus,
         },
     );
 
@@ -2001,6 +2025,7 @@ async fn hard_error_on_first_llm_call_no_prior_history_persists_user_message() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            bus: crate::bus::create_bus(),
         },
     );
 
@@ -2157,6 +2182,7 @@ async fn hard_error_mid_tool_loop_preserves_real_tool_results() {
             }],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            bus: crate::bus::create_bus(),
         },
     );
 
@@ -2450,6 +2476,7 @@ async fn retry_succeeds_on_second_attempt() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            bus: crate::bus::create_bus(),
         },
     );
 
@@ -2534,6 +2561,7 @@ async fn retry_exhausted_surfaces_attempt_count() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            bus: crate::bus::create_bus(),
         },
     );
 
@@ -2598,6 +2626,7 @@ async fn non_retryable_error_not_retried() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            bus: crate::bus::create_bus(),
         },
     );
 
@@ -2665,6 +2694,7 @@ async fn retry_disabled_when_max_retries_is_zero() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            bus: crate::bus::create_bus(),
         },
     );
 
@@ -2801,8 +2831,8 @@ fn extract_retry_after_ms_handles_zero() {
 /// persists the real work.
 ///
 /// We exercise this end-to-end using the `JourneyHarness` pattern: a mock tool that
-/// fires the cancel token from within `call()` after producing its result. The
-/// `MockUi::with_external_cancel()` injects the token so the cancel fires
+/// publishes a cancel event to the bus from within `call()` after producing its result.
+/// The `MockUi::with_external_cancel()` returns the bus so the cancel fires
 /// deterministically.
 ///
 /// This is intentionally an integration test (not a unit test) because the bug
@@ -2817,6 +2847,7 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
     use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
     use super::test_utils::MockUi;
+    use crate::bus::CancelEvent;
     use crate::conversation::providers::CachedProviderClient;
     use crate::session::{FsSessionStore, StoreEntry};
     use crate::tools::closure::ClosureRegistry;
@@ -2825,7 +2856,7 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
     // -- cancelling tool (fires cancel after producing its result) ----------
     struct CancellingTool {
         output: &'static str,
-        token: tokio_util::sync::CancellationToken,
+        bus: crate::bus::Bus,
         fired: Arc<AtomicBool>,
     }
 
@@ -2851,7 +2882,10 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
             let result = self.output.to_string();
             if !self.fired.swap(true, Ordering::SeqCst) {
                 tokio::task::yield_now().await;
-                self.token.cancel();
+                let _ = self
+                    .bus
+                    .cancel()
+                    .send(CancelEvent::Requested { task_id: None });
             }
             Ok(result)
         }
@@ -2865,7 +2899,7 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
         FsSessionStore::new(temp_dir.path().to_path_buf()),
     ));
 
-    let (ui, cancel_token) = MockUi::with_external_cancel();
+    let (ui, bus) = MockUi::with_external_cancel();
 
     // Model: sub-turn 1 emits tool_call → tool executes (cancels after result).
     // Sub-turn 2 would normally proceed but cancel fires first.
@@ -2883,7 +2917,7 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
     let handle = rig::tool::server::ToolServer::new()
         .tool(CancellingTool {
             output: "tool_completed_successfully",
-            token: cancel_token,
+            bus: bus.clone(),
             fired: Arc::new(AtomicBool::new(false)),
         })
         .run();
@@ -2898,6 +2932,7 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
         }],
         circuit_breaker: default_circuit_breaker(),
         doom_state: default_doom_state(),
+        bus: bus.clone(),
     };
 
     let cached_client = CachedProviderClient::Mock(model);

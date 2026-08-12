@@ -49,7 +49,7 @@
 # skill = "ask"
 #
 # Nested field rules (e.g. restrict specific commands):
-# [permissions.nu__run.command]
+# [permissions.nu.command]
 # "rm*" = "deny"
 # "git push*" = "deny"
 

@@ -6,8 +6,8 @@ fn permission_prompt_open_sets_required_status_and_presence() {
     let mut state = AppState::new();
     state.open_permission_prompt(PermissionPrompt {
         request_id: "ask-0000000000000001".to_string(),
-        matched_rule_identity: "nested:nu__run.command:*".to_string(),
-        tool: "nu__run".to_string(),
+        matched_rule_identity: "nested:nu.command:*".to_string(),
+        tool: "nu".to_string(),
         source: "closure".to_string(),
         mode: Some("apply".to_string()),
         scope: "nested".to_string(),
@@ -49,8 +49,8 @@ fn submit_permission_decision_enqueues_submission_and_closes_prompt() {
     let mut state = AppState::new();
     state.open_permission_prompt(PermissionPrompt {
         request_id: "ask-0000000000000002".to_string(),
-        matched_rule_identity: "nested:nu__run.command:*".to_string(),
-        tool: "nu__run".to_string(),
+        matched_rule_identity: "nested:nu.command:*".to_string(),
+        tool: "nu".to_string(),
         source: "closure".to_string(),
         mode: None,
         scope: "nested".to_string(),
@@ -66,6 +66,6 @@ fn submit_permission_decision_enqueues_submission_and_closes_prompt() {
         .take_next_permission_decision_submission()
         .expect("queued submission");
     assert_eq!(submission.request_id, "ask-0000000000000002");
-    assert_eq!(submission.matched_rule_identity, "nested:nu__run.command:*");
+    assert_eq!(submission.matched_rule_identity, "nested:nu.command:*");
     assert_eq!(submission.decision, PermissionDecision::AllowAlways);
 }

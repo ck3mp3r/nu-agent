@@ -62,6 +62,8 @@ struct MockUi {
     cancel_after: Option<usize>,
     tick_count: usize,
     cancel_flag: Arc<AtomicBool>,
+    cancel_bus: Option<crate::bus::Bus>,
+    cancel_published: Arc<AtomicBool>,
 }
 
 impl MockUi {
@@ -71,6 +73,8 @@ impl MockUi {
             cancel_after: None,
             tick_count: 0,
             cancel_flag: Arc::new(AtomicBool::new(false)),
+            cancel_bus: None,
+            cancel_published: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -79,12 +83,18 @@ impl MockUi {
     /// without relying on stream-timing races: the cancel fires in the drain loop's
     /// first iteration, before the spawned tokio task has had time to call
     /// `on_completion_call` or poll the first stream event.
-    fn immediately_cancelled() -> Self {
+    ///
+    /// The first `take_cancel_requested()` also publishes a `CancelEvent` to the
+    /// shared bus so the hook and tool proxies observe it, matching the production
+    /// flow (the bus is the single cancellation channel).
+    fn immediately_cancelled(bus: crate::bus::Bus) -> Self {
         Self {
             events: Vec::new(),
             cancel_after: None,
             tick_count: 0,
             cancel_flag: Arc::new(AtomicBool::new(true)),
+            cancel_bus: Some(bus),
+            cancel_published: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -105,7 +115,16 @@ impl ProgressUi for MockUi {
     fn flush(&mut self) {}
 
     fn take_cancel_requested(&self) -> bool {
-        self.cancel_flag.swap(false, Ordering::SeqCst)
+        let was_cancelled = self.cancel_flag.swap(false, Ordering::SeqCst);
+        if was_cancelled
+            && !self.cancel_published.swap(true, Ordering::SeqCst)
+            && let Some(bus) = &self.cancel_bus
+        {
+            let _ = bus
+                .cancel()
+                .send(crate::bus::CancelEvent::Requested { task_id: None });
+        }
+        was_cancelled
     }
 }
 
@@ -116,6 +135,7 @@ impl ProgressUi for MockUi {
 fn make_turn_context<'a>(
     model: MockCompletionModel,
     config: &'a Config,
+    bus: crate::bus::Bus,
 ) -> TurnContext<'a, FsSessionStore, MockCompletionModel> {
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let store = Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
@@ -137,6 +157,7 @@ fn make_turn_context<'a>(
         visible_tool_definitions: vec![],
         circuit_breaker: default_circuit_breaker(),
         doom_state: default_doom_state(),
+        bus,
     };
     TurnContext::new(model, conversation, input, tool_infra, config)
 }
@@ -154,7 +175,7 @@ async fn execute_turn_text_only_response() {
     ]]);
 
     let config = Config::default();
-    let ctx = make_turn_context(model, &config);
+    let ctx = make_turn_context(model, &config, crate::bus::create_bus());
     let mut ui = MockUi::new();
     let resolver = MockResolver(PermissionDecision::Allow);
 
@@ -184,8 +205,9 @@ async fn execute_turn_cancel_returns_cancelled_true() {
     ]]);
 
     let config = Config::default();
-    let ctx = make_turn_context(model, &config);
-    let mut ui = MockUi::immediately_cancelled();
+    let bus = crate::bus::create_bus();
+    let ctx = make_turn_context(model, &config, bus.clone());
+    let mut ui = MockUi::immediately_cancelled(bus);
     let resolver = MockResolver(PermissionDecision::Allow);
 
     let result = execute_turn(ctx, &mut ui, resolver)
@@ -208,7 +230,7 @@ async fn execute_turn_with_additional_params_succeeds() {
         additional_params: Some(serde_json::json!({"thinking": {"type": "disabled"}})),
         ..Config::default()
     };
-    let ctx = make_turn_context(model, &config);
+    let ctx = make_turn_context(model, &config, crate::bus::create_bus());
     let mut ui = MockUi::new();
     let resolver = MockResolver(PermissionDecision::Allow);
 
@@ -389,69 +411,66 @@ fn streaming_error_from_prompt_cancelled_captures_messages() {
 // FilteredToolProxy cancellation tests
 // ---------------------------------------------------------------------------
 
-/// A cancelled token causes FilteredToolProxy to return Err immediately
-/// without waiting for the (potentially hanging) MCP tool server.
+/// Publishing a cancel event while a tool is executing causes FilteredToolProxy
+/// to return a Cancelled error immediately, without waiting for the (potentially
+/// hanging) tool body to finish.
+///
+/// The cancel must be published AFTER the tool starts running: the proxy subscribes
+/// to the bus cancel channel inside its execution closure, and broadcast channels
+/// only deliver messages sent after the receiver subscribes. Publishing before the
+/// call would race the subscription and not exercise the cancel branch.
 #[tokio::test]
-async fn filtered_tool_proxy_call_returns_err_when_cancelled() {
+async fn filtered_tool_proxy_cancels_during_execution() {
     let handle = rig::tool::server::ToolServer::new().run();
-    let cancel_token = CancellationToken::new();
-
-    let proxy = FilteredToolProxy {
-        tool_name: "nonexistent_tool".to_string(),
-        tool_definition: ToolDefinition {
-            name: "nonexistent_tool".to_string(),
-            description: "test".to_string(),
-            parameters: serde_json::json!({}),
-        },
-        handle,
-        cancel_token: cancel_token.clone(),
-    };
-
-    cancel_token.cancel();
-
-    // Convert to DynamicTool and execute via ToolSet
-    let dynamic_tool = proxy.into_dynamic_tool();
-    let mut toolset = rig::tool::ToolSet::default();
-    toolset.add_dynamic_tool(dynamic_tool);
-
-    let mut context = rig::tool::ToolContext::new();
-    let result = toolset
-        .execute("nonexistent_tool", "{}", &mut context)
+    // Register a tool that sleeps so the cancel can fire mid-execution.
+    handle
+        .add_dynamic_tool(rig::tool::DynamicTool::new(
+            "sleeping_tool",
+            "sleeps to allow cancellation",
+            serde_json::json!({}),
+            |_context, _args| {
+                Box::pin(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                    Ok(rig::tool::ToolOutput::text("done"))
+                })
+            },
+        ))
         .await;
 
-    assert!(
-        result.is_error(),
-        "A cancelled token must cause execute to return error"
-    );
-}
-
-/// A pre-cancelled token causes execute to return Err even when the tool would succeed.
-#[tokio::test]
-async fn filtered_tool_proxy_cancelled_before_call_short_circuits() {
-    let handle = rig::tool::server::ToolServer::new().run();
-    let cancel_token = CancellationToken::new();
-    cancel_token.cancel();
-
+    let bus = crate::bus::create_bus();
     let proxy = FilteredToolProxy {
-        tool_name: "any_tool".to_string(),
+        tool_name: "sleeping_tool".to_string(),
         tool_definition: ToolDefinition {
-            name: "any_tool".to_string(),
+            name: "sleeping_tool".to_string(),
             description: "test".to_string(),
             parameters: serde_json::json!({}),
         },
         handle,
-        cancel_token,
+        bus: bus.clone(),
     };
 
-    // Convert to DynamicTool and execute via ToolSet
+    // Convert to DynamicTool and execute via ToolSet.
     let dynamic_tool = proxy.into_dynamic_tool();
     let mut toolset = rig::tool::ToolSet::default();
     toolset.add_dynamic_tool(dynamic_tool);
 
-    let mut context = rig::tool::ToolContext::new();
-    let result = toolset.execute("any_tool", "{}", &mut context).await;
+    // Publish the cancel shortly after the tool call starts running.
+    let bus2 = bus.clone();
+    let cancel_handle = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let _ = bus2
+            .cancel()
+            .send(crate::bus::CancelEvent::Requested { task_id: None });
+    });
 
-    assert!(result.is_error(), "Pre-cancelled token must produce error");
+    let mut context = rig::tool::ToolContext::new();
+    let result = toolset.execute("sleeping_tool", "{}", &mut context).await;
+    cancel_handle.await.unwrap();
+
+    assert!(
+        result.is_error_kind(rig::tool::ToolErrorKind::Cancelled),
+        "A cancel during execution must produce a Cancelled error"
+    );
 }
 
 /// TurnError from PromptCancelled captures chat_history as messages.
@@ -852,6 +871,7 @@ async fn transient_turn_does_not_write_jsonl() {
         visible_tool_definitions: vec![],
         circuit_breaker: default_circuit_breaker(),
         doom_state: default_doom_state(),
+        bus: crate::bus::create_bus(),
     };
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("Hello, world!".to_string()),
@@ -909,6 +929,7 @@ async fn persistent_turn_writes_jsonl() {
         visible_tool_definitions: vec![],
         circuit_breaker: default_circuit_breaker(),
         doom_state: default_doom_state(),
+        bus: crate::bus::create_bus(),
     };
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("Hello from LLM!".to_string()),

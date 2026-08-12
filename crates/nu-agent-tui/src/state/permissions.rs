@@ -12,27 +12,6 @@ impl AppState {
         self.pane_focus = PaneFocus::Transcript;
     }
 
-    pub fn latest_in_progress_tool_transcript_line_for_tool(
-        &self,
-        tool_name: &str,
-    ) -> Option<usize> {
-        // Extract base tool name from display format "tool_name(args...)" or "tool_name"
-        let base_tool_name = tool_name.split('(').next().unwrap_or(tool_name);
-
-        self.tool_call_items
-            .iter()
-            .rev()
-            .find(|item| {
-                item.status == ToolCallStatus::InProgress
-                    && item
-                        .key
-                        .split_once('\n')
-                        .map(|(name, _)| name == base_tool_name)
-                        .unwrap_or(false)
-            })
-            .map(|item| item.transcript_line_index)
-    }
-
     pub fn latest_in_progress_tool_key_for_tool(&self, tool_name: &str) -> Option<String> {
         let base_tool_name = tool_name.split('(').next().unwrap_or(tool_name);
 

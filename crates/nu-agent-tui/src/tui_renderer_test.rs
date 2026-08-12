@@ -128,14 +128,14 @@ fn concat_spans(lines: &[ratatui::text::Line<'static>]) -> String {
 fn tool_row_renders_name_without_tool_brackets() {
     let r = make_renderer();
     let block = ToolInvocation {
-        name: "nu__run".to_string(),
+        name: "nu".to_string(),
         source: "".to_string(),
         args: r#"{"command":"version"}"#.to_string(),
     }
     .to_render_block();
     let lines = r.render(&block, &default_ctx(120));
     let text = concat_spans(&lines);
-    assert!(text.contains("nu__run"), "should contain tool name");
+    assert!(text.contains("nu"), "should contain tool name");
     assert!(!text.contains("tool["), "should not have tool[ prefix");
     assert!(
         text.contains(r#"{"command":"version"}"#),
@@ -267,7 +267,12 @@ fn diff_hunk_line_has_bold_modifier() {
 #[test]
 fn separator_renders_as_blank_line() {
     let r = make_renderer();
-    let block = Spacer.to_render_block();
+    let block = TranscriptEntry {
+        id: 0,
+        kind: TranscriptEntryKind::Spacer(Spacer),
+        status: None,
+    }
+    .to_render_block();
     let lines = r.render(&block, &default_ctx(40));
     let text = concat_spans(&lines);
     assert!(
@@ -283,9 +288,13 @@ fn separator_renders_as_blank_line() {
 #[test]
 fn selected_row_has_selection_bg_on_all_spans() {
     let r = make_renderer();
-    let block = TranscriptEntry::User(ProseMessage {
-        markdown: "hi".to_string(),
-    })
+    let block = TranscriptEntry {
+        id: 0,
+        kind: TranscriptEntryKind::User(ProseMessage {
+            markdown: "hi".to_string(),
+        }),
+        status: None,
+    }
     .to_render_block();
     let mut ctx = default_ctx(80);
     ctx.selected = true;
@@ -305,9 +314,13 @@ fn selected_row_has_selection_bg_on_all_spans() {
 #[test]
 fn short_line_no_wrap() {
     let r = make_renderer();
-    let block = TranscriptEntry::User(ProseMessage {
-        markdown: "Short text".to_string(),
-    })
+    let block = TranscriptEntry {
+        id: 0,
+        kind: TranscriptEntryKind::User(ProseMessage {
+            markdown: "Short text".to_string(),
+        }),
+        status: None,
+    }
     .to_render_block();
     let lines = r.render(&block, &default_ctx(80));
     assert_eq!(lines.len(), 1, "short line should not wrap");
@@ -322,9 +335,13 @@ fn word_wrap_breaks_at_space() {
     // Total = 15 chars, fits on one line
     // But let's make it wrap: "hello world " = 12 chars
     let text = "hello world foobar";
-    let block = TranscriptEntry::User(ProseMessage {
-        markdown: text.to_string(),
-    })
+    let block = TranscriptEntry {
+        id: 0,
+        kind: TranscriptEntryKind::User(ProseMessage {
+            markdown: text.to_string(),
+        }),
+        status: None,
+    }
     .to_render_block();
 
     // Width = 20, prefix = 4, available = 16
@@ -367,13 +384,21 @@ mod task_5_visual_diff_tests {
     fn render_block_for(role_user: bool, markdown: &str) -> Vec<ratatui::text::Line<'static>> {
         let r = make_renderer();
         let entry = if role_user {
-            TranscriptEntry::User(ProseMessage {
-                markdown: markdown.to_string(),
-            })
+            TranscriptEntry {
+                id: 0,
+                kind: TranscriptEntryKind::User(ProseMessage {
+                    markdown: markdown.to_string(),
+                }),
+                status: None,
+            }
         } else {
-            TranscriptEntry::Assistant(ProseMessage {
-                markdown: markdown.to_string(),
-            })
+            TranscriptEntry {
+                id: 0,
+                kind: TranscriptEntryKind::Assistant(ProseMessage {
+                    markdown: markdown.to_string(),
+                }),
+                status: None,
+            }
         };
         let block = entry.to_render_block();
         r.render(&block, &default_ctx(80))
@@ -481,9 +506,13 @@ mod task_5_visual_diff_tests {
         // Construct a ProseMessage with raw markdown; verify the renderer
         // produces styled output containing the text — no pre-projection needed.
         let r = make_renderer();
-        let block = TranscriptEntry::Assistant(ProseMessage {
-            markdown: "hello".to_string(),
-        })
+        let block = TranscriptEntry {
+            id: 0,
+            kind: TranscriptEntryKind::Assistant(ProseMessage {
+                markdown: "hello".to_string(),
+            }),
+            status: None,
+        }
         .to_render_block();
         let lines = r.render(&block, &default_ctx(80));
         assert!(!lines.is_empty(), "renderer must produce at least one line");
@@ -502,7 +531,12 @@ mod task_5_visual_diff_tests {
 #[test]
 fn logo_entry_renders_without_lane_prefix() {
     let r = make_renderer();
-    let block = TranscriptEntry::Logo("test".to_string()).to_render_block();
+    let block = TranscriptEntry {
+        id: 0,
+        kind: TranscriptEntryKind::Logo("test".to_string()),
+        status: None,
+    }
+    .to_render_block();
     let lines = r.render(&block, &default_ctx(80));
     let prefix: String = lines[0]
         .spans
@@ -520,7 +554,12 @@ fn logo_entry_renders_without_lane_prefix() {
 #[test]
 fn logo_entry_centered_adds_padding() {
     let r = make_renderer();
-    let block = TranscriptEntry::Logo("x".to_string()).to_render_block();
+    let block = TranscriptEntry {
+        id: 0,
+        kind: TranscriptEntryKind::Logo("x".to_string()),
+        status: None,
+    }
+    .to_render_block();
     let lines = r.render(&block, &default_ctx(80));
     let text: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
     assert!(

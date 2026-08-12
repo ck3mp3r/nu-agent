@@ -953,7 +953,7 @@ impl PermissionGateRuntime {
             finished: Arc::new(AtomicBool::new(false)),
             active: Arc::new(AtomicBool::new(false)),
             request_id: "ask-0000000000000abc".to_string(),
-            rule_identity: "nested:nu__run.command:*".to_string(),
+            rule_identity: "nested:nu.command:*".to_string(),
         }
     }
 }
@@ -974,7 +974,7 @@ impl CoreRuntime for PermissionGateRuntime {
             .begin_request(crate::protocol::permission::PermissionRequest {
                 request_id: self.request_id.clone(),
                 context: PermissionRequestContext {
-                    tool: "nu__run".to_string(),
+                    tool: "nu".to_string(),
                     source: "closure".to_string(),
                     mode: Some("apply".to_string()),
                     matched_rule_identity: self.rule_identity.clone(),
@@ -1006,7 +1006,7 @@ impl CoreRuntime for PermissionGateRuntime {
         {
             self.side_effects.fetch_add(1, Ordering::SeqCst);
             ui.emit(&UiEvent::ToolStart {
-                name: "nu__run".to_string(),
+                name: "nu".to_string(),
                 source: "closure".to_string(),
                 arguments: r#"{"command":"echo hi"}"#.to_string(),
             });

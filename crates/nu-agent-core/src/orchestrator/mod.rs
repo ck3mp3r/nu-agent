@@ -18,15 +18,12 @@ mod test_shared;
 #[cfg(test)]
 mod turn_outcome_test;
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-    mpsc as std_mpsc,
-};
-use tokio::sync::mpsc;
+use std::sync::{Arc, Mutex, mpsc as std_mpsc};
+use tokio::sync::{broadcast, mpsc};
 
 use nu_protocol::{LabeledError, Span, Value};
 
+use crate::bus::{Bus, CancelEvent};
 use crate::conversation::runtime::PendingPermissions;
 
 use crate::orchestrator::{
@@ -61,6 +58,8 @@ pub struct InteractiveLoopConfig {
     pub external_prompt_rx: Option<std_mpsc::Receiver<String>>,
     /// Optional channel for receiving task IDs to cancel (e.g., A2A tasks).
     pub task_cancel_rx: Option<std_mpsc::Receiver<String>>,
+    /// Shared cancellation bus.
+    pub bus: Bus,
     /// Optional sender for turn-complete notifications (prompt, response).
     pub on_turn_complete: Option<std_mpsc::Sender<(String, String)>>,
     /// Optional hydration config for resuming a prior session.
@@ -79,6 +78,7 @@ impl InteractiveLoopConfig {
             interactive_pending: None,
             external_prompt_rx: None,
             task_cancel_rx: None,
+            bus: crate::bus::create_bus(),
             on_turn_complete: None,
             hydration: None,
             on_agent_switch: None,
@@ -100,6 +100,12 @@ impl InteractiveLoopConfig {
     /// Set the task cancel receiver.
     pub fn with_task_cancel_rx(mut self, rx: Option<std_mpsc::Receiver<String>>) -> Self {
         self.task_cancel_rx = rx;
+        self
+    }
+
+    /// Set the shared cancellation bus.
+    pub fn with_bus(mut self, bus: Bus) -> Self {
+        self.bus = bus;
         self
     }
 
@@ -197,7 +203,7 @@ pub enum WorkerCommand {
 
 struct WorkerProgressUi {
     events: mpsc::UnboundedSender<UiEvent>,
-    cancel_requested: Arc<AtomicBool>,
+    cancel_rx: Arc<Mutex<broadcast::Receiver<CancelEvent>>>,
 }
 
 impl ProgressUi for WorkerProgressUi {
@@ -208,7 +214,11 @@ impl ProgressUi for WorkerProgressUi {
     fn flush(&mut self) {}
 
     fn take_cancel_requested(&self) -> bool {
-        self.cancel_requested.swap(false, Ordering::SeqCst)
+        let mut rx = self.cancel_rx.lock().expect("cancel_rx mutex poisoned");
+        matches!(
+            rx.try_recv(),
+            Ok(CancelEvent::Requested { .. }) | Err(broadcast::error::TryRecvError::Lagged(_))
+        )
     }
 }
 
@@ -252,6 +262,7 @@ where
         interactive_pending,
         mut external_prompt_rx,
         mut task_cancel_rx,
+        bus,
         on_turn_complete,
         hydration,
         ref on_agent_switch,
@@ -273,8 +284,6 @@ where
     let (worker_cmd_tx, mut worker_cmd_rx) = mpsc::channel::<WorkerCommand>(256);
     let (worker_event_tx, worker_event_rx) = mpsc::unbounded_channel::<UiEvent>();
     let (worker_result_tx, worker_result_rx) = mpsc::channel::<TurnOutcome>(256);
-    let cancel_requested = Arc::new(AtomicBool::new(false));
-    let worker_cancel = Arc::clone(&cancel_requested);
 
     let mut event_pump = EventPump::new(worker_event_rx);
     let mut stages = OrchestratorStages::new(initial_visible_count, worker_result_rx);
@@ -285,7 +294,7 @@ where
 
     let mut worker_ui = WorkerProgressUi {
         events: worker_event_tx,
-        cancel_requested: worker_cancel,
+        cancel_rx: Arc::new(Mutex::new(bus.cancel().subscribe())),
     };
 
     // Spawn the worker task with the owned runtime. The worker processes
@@ -326,7 +335,7 @@ where
             );
         }
         if ui.take_cancel_requested() {
-            cancel_requested.store(true, Ordering::SeqCst);
+            let _ = bus.cancel().send(CancelEvent::Requested { task_id: None });
         }
         event_pump.drain_batch(ui);
 
@@ -355,13 +364,16 @@ where
             continue;
         }
 
-        // Check for A2A task cancellations and cancel the running turn if the
-        // task ID matches the currently active external task.
+        // Check for A2A task cancellations and bridge to the bus cancel channel.
+        // Only cancel when the incoming task ID matches the currently running
+        // external task — otherwise cancelling task B would kill running task A.
         if let Some(ref mut cancel_rx) = task_cancel_rx {
             while let Ok(task_id) = cancel_rx.try_recv() {
                 if active_external_task_id.as_deref() == Some(task_id.as_str()) {
                     log::info!("orchestrator: cancelling external task {task_id}");
-                    cancel_requested.store(true, std::sync::atomic::Ordering::SeqCst);
+                    let _ = bus.cancel().send(CancelEvent::Requested {
+                        task_id: Some(task_id),
+                    });
                 }
             }
         }
@@ -397,7 +409,7 @@ where
             continue;
         }
         if worker_active {
-            cancel_requested.store(true, Ordering::SeqCst);
+            let _ = bus.cancel().send(CancelEvent::Requested { task_id: None });
             continue;
         }
         if stages.has_pending_ops() || should_evaluate_compaction {

@@ -831,7 +831,7 @@ fn hydrate_doom_loop_rehydrates_as_false() {
                 signature: None,
                 additional_params: None,
                 function: ToolFunction {
-                    name: "nu__run".to_string(),
+                    name: "nu".to_string(),
                     arguments: json!({"command": "ls"}),
                 },
             })),
@@ -841,7 +841,7 @@ fn hydrate_doom_loop_rehydrates_as_false() {
                 id: "call_doom_1".to_string(),
                 call_id: None,
                 content: OneOrMany::one(ToolResultContent::Text(Text {
-                    text: "Doom loop detected: 'nu__run' called 5 times with identical arguments"
+                    text: "Doom loop detected: 'nu' called 5 times with identical arguments"
                         .to_string(),
                     additional_params: None,
                 })),

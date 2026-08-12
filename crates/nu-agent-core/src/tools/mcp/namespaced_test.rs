@@ -30,9 +30,9 @@ fn large_mock_tool() -> DynamicTool {
 #[tokio::test]
 async fn namespaced_tool_returns_prefixed_name() {
     let inner = mock_tool("run", "Run a command");
-    let tool = NamespacedTool::new(inner, "nu", "__", MAX_TOOL_OUTPUT_BYTES);
+    let tool = NamespacedTool::new(inner, "test", "__", MAX_TOOL_OUTPUT_BYTES);
 
-    assert_eq!(tool.name(), "nu__run");
+    assert_eq!(tool.name(), "test__run");
 }
 
 #[tokio::test]

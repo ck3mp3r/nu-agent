@@ -23,17 +23,6 @@ pub async fn enforce_authorization_for_tool_call(
     ask_hook: &mut impl AskApprovalHook,
     event_sink: &mut impl PermissionEventSink,
 ) -> bool {
-    // `Builtin` tools (read-only + agent-coordination) bypass permissions entirely.
-    // `BuiltinFs` tools (edit, patch) are NOT in this set — they mutate the filesystem
-    // and must go through the full permission flow below, same as MCP/closure tools.
-    if source == ToolSource::Builtin {
-        log::debug!(
-            "Authz bypass: tool={} source=Builtin",
-            tool_call.function.name
-        );
-        return false;
-    }
-
     let mut auth_decision =
         permissions.evaluate(&tool_call.function.name, &tool_call.function.arguments);
     log::debug!(

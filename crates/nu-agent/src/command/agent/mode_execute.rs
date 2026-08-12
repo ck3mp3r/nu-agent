@@ -363,6 +363,7 @@ pub(crate) async fn run_tui_mode(
     let result = if input_is_nothing {
         if hydration.should_hydrate {
             let mut config = InteractiveLoopConfig::new(span)
+                .with_bus(runtime_impl.bus.clone())
                 .with_hydration(hydration.initial_messages, hydration.last_total_tokens)
                 .with_interactive_pending(Some(Arc::clone(&pending)))
                 .with_external_prompt_rx(external_prompt_rx)
@@ -375,6 +376,7 @@ pub(crate) async fn run_tui_mode(
                 .await
         } else {
             let mut config = InteractiveLoopConfig::new(span)
+                .with_bus(runtime_impl.bus.clone())
                 .with_interactive_pending(Some(Arc::clone(&pending)))
                 .with_external_prompt_rx(external_prompt_rx)
                 .with_task_cancel_rx(task_cancel_rx)

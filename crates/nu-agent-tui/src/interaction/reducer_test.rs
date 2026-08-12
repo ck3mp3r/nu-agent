@@ -3,21 +3,19 @@ use crate::{
         ESC_ABORT_CONFIRM_STATUS, ReducerInput, UserAction,
         VISUAL_REQUIRES_TRANSCRIPT_FOCUS_STATUS, reduce_with_cancel_controller,
     },
-    state::{
-        AppState, CompactionStatus, InputMode, PaneFocus, PromptStatus, ToolCallStatus,
-        TranscriptLineStatus, UiPhase,
-    },
+    state::{AppState, InputMode, PaneFocus, PromptStatus, UiPhase},
 };
 use nu_agent_core::protocol::event::{
     PermissionRequestContext, ToolDisplay, ToolDisplaySection, UiEvent,
 };
 use nu_agent_core::transcript::ir::Role;
-use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry};
+use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry, TranscriptEntryKind};
+use nu_agent_core::transcript::renderer::ItemStatus;
 
 // Helper to extract all text content from transcript entries
 fn extract_all_text_from_entry(entry: &TranscriptEntry) -> Vec<String> {
-    match entry {
-        TranscriptEntry::ToolResult(result) => {
+    match &entry.kind {
+        TranscriptEntryKind::ToolResult(result) => {
             result.lines.iter().map(|line| line.text.clone()).collect()
         }
         _ => vec![entry.text()],
@@ -372,14 +370,14 @@ fn tool_end_transcript_line_shows_args_summary_without_result_payload_dump() {
     // [Spacer, Tool] — ToolStart pushed a starting spacer, ToolEnd pushed no display
     assert_eq!(state.transcript_preview.len(), 2);
     assert!(matches!(
-        state.transcript_preview[0],
-        TranscriptEntry::Spacer(_)
+        state.transcript_preview[0].kind,
+        TranscriptEntryKind::Spacer(_)
     ));
     let entry = &state.transcript_preview[1];
     assert_eq!(entry.role(), Role::Tool);
     assert_eq!(entry.text(), "k8s__list_pods");
     // Check the args field for status and content
-    if let TranscriptEntry::Tool(invocation) = entry {
+    if let TranscriptEntryKind::Tool(invocation) = &entry.kind {
         assert!(invocation.args.contains("namespace"));
         assert!(!invocation.args.contains("api-0"));
         assert!(!invocation.args.contains("[{"));
@@ -405,20 +403,20 @@ fn tool_row_materializes_immediately_on_tool_start_with_args_and_running_status(
     // handle_tool_start pushes a starting spacer before the tool
     assert_eq!(state.transcript_preview.len(), 2);
     assert!(matches!(
-        state.transcript_preview[0],
-        TranscriptEntry::Spacer(_)
+        state.transcript_preview[0].kind,
+        TranscriptEntryKind::Spacer(_)
     ));
     let entry = &state.transcript_preview[1];
     assert_eq!(entry.role(), Role::Tool);
     assert_eq!(entry.text(), "k8s__list_pods");
-    if let TranscriptEntry::Tool(invocation) = entry {
+    if let TranscriptEntryKind::Tool(invocation) = &entry.kind {
         assert!(invocation.args.contains("namespace"));
     } else {
         panic!("Expected Tool variant");
     }
     assert_eq!(
-        state.transcript_line_status_for_index(1),
-        Some(TranscriptLineStatus::Tool(ToolCallStatus::InProgress))
+        state.transcript_preview[1].status,
+        Some(ItemStatus::InProgress)
     );
 }
 
@@ -453,14 +451,11 @@ fn tool_end_transitions_same_row_to_done_or_failed_status() {
     // [Spacer, Tool] — starting spacer then the tool
     assert_eq!(state.transcript_preview.len(), 2);
     assert!(matches!(
-        state.transcript_preview[0],
-        TranscriptEntry::Spacer(_)
+        state.transcript_preview[0].kind,
+        TranscriptEntryKind::Spacer(_)
     ));
     assert_eq!(state.transcript_preview[1].text(), "gh__get_pr");
-    assert_eq!(
-        state.transcript_line_status_for_index(1),
-        Some(TranscriptLineStatus::Tool(ToolCallStatus::Done))
-    );
+    assert_eq!(state.transcript_preview[1].status, Some(ItemStatus::Done));
 
     let mut failed = AppState::new();
     reduce_with_cancel_controller(
@@ -488,12 +483,12 @@ fn tool_end_transitions_same_row_to_done_or_failed_status() {
     );
     assert_eq!(failed.transcript_preview.len(), 2);
     assert!(matches!(
-        failed.transcript_preview[0],
-        TranscriptEntry::Spacer(_)
+        failed.transcript_preview[0].kind,
+        TranscriptEntryKind::Spacer(_)
     ));
     assert_eq!(
-        failed.transcript_line_status_for_index(1),
-        Some(TranscriptLineStatus::Tool(ToolCallStatus::Failed))
+        failed.transcript_preview[1].status,
+        Some(ItemStatus::Failed)
     );
 }
 
@@ -677,8 +672,8 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
                 // [Spacer, Tool] — starting spacer then the tool, no closing spacer
                 assert_eq!(state.transcript_preview.len(), 2);
                 assert!(matches!(
-                    state.transcript_preview[0],
-                    TranscriptEntry::Spacer(_)
+                    state.transcript_preview[0].kind,
+                    TranscriptEntryKind::Spacer(_)
                 ));
                 assert_eq!(state.transcript_preview[1].role(), Role::Tool);
                 assert_eq!(state.transcript_preview[1].text(), "k8s__list_pods");
@@ -976,10 +971,8 @@ fn compaction_block_running_state_has_no_source_or_status_metadata_line() {
         .position(|line| line.text() == "Compaction")
         .expect("compaction line");
     assert_eq!(
-        state.transcript_line_status_for_index(idx),
-        Some(TranscriptLineStatus::Compaction(
-            CompactionStatus::InProgress
-        ))
+        state.transcript_preview[idx].status,
+        Some(ItemStatus::InProgress)
     );
 
     let lines = state
@@ -1019,10 +1012,7 @@ fn compaction_block_shows_tick_on_success() {
         .iter()
         .position(|line| line.text() == "Compaction")
         .expect("compaction line");
-    assert_eq!(
-        state.transcript_line_status_for_index(idx),
-        Some(TranscriptLineStatus::Compaction(CompactionStatus::Done))
-    );
+    assert_eq!(state.transcript_preview[idx].status, Some(ItemStatus::Done));
 }
 
 #[test]
@@ -1051,8 +1041,8 @@ fn compaction_block_shows_failure_state_on_error() {
         .position(|line| line.text() == "Compaction")
         .expect("compaction line");
     assert_eq!(
-        state.transcript_line_status_for_index(idx),
-        Some(TranscriptLineStatus::Compaction(CompactionStatus::Failed))
+        state.transcript_preview[idx].status,
+        Some(ItemStatus::Failed)
     );
     assert!(
         state
@@ -1384,11 +1374,11 @@ fn tool_start_truncates_long_args_summary_with_ellipsis() {
     // [Spacer, Tool] — starting spacer then the tool
     assert_eq!(state.transcript_preview.len(), 2);
     assert!(matches!(
-        state.transcript_preview[0],
-        TranscriptEntry::Spacer(_)
+        state.transcript_preview[0].kind,
+        TranscriptEntryKind::Spacer(_)
     ));
     assert_eq!(state.transcript_preview[1].text(), "k8s__describe");
-    if let TranscriptEntry::Tool(invocation) = &state.transcript_preview[1] {
+    if let TranscriptEntryKind::Tool(invocation) = &state.transcript_preview[1].kind {
         assert!(invocation.args.starts_with("→ "));
         assert!(invocation.args.ends_with('…'));
         assert!(invocation.args.chars().count() < 180);
@@ -1489,15 +1479,15 @@ fn tool_display_body_lines_are_unprefixed_while_tool_call_line_remains_prefixed(
     let call_row = state
         .transcript_preview
         .iter()
-        .find(|entry| matches!(entry, TranscriptEntry::Tool(t) if t.name == "edit"))
+        .find(|entry| matches!(&entry.kind, TranscriptEntryKind::Tool(t) if t.name == "edit"))
         .expect("tool call row should exist");
     assert_eq!(call_row.role(), Role::Tool);
 
     let display_rows: Vec<_> = state
         .transcript_preview
         .iter()
-        .filter(|entry| match entry {
-            TranscriptEntry::ToolResult(result) => result.lines.iter().any(|line| {
+        .filter(|entry| match &entry.kind {
+            TranscriptEntryKind::ToolResult(result) => result.lines.iter().any(|line| {
                 line.text == "sample.txt (diff)"
                     || line.text.contains("--- a/sample.txt")
                     || line.text.contains("+++ b/sample.txt")
@@ -1555,8 +1545,8 @@ fn tool_display_diff_block_highlighting_remains_after_prefix_hygiene_fix() {
     let diff_rows: Vec<_> = state
         .transcript_preview
         .iter()
-        .filter(|entry| match entry {
-            TranscriptEntry::ToolResult(result) if entry.role() == Role::ToolDisplay => {
+        .filter(|entry| match &entry.kind {
+            TranscriptEntryKind::ToolResult(result) if entry.role() == Role::ToolDisplay => {
                 result.lines.iter().any(|line| {
                     line.text.contains("--- a/sample.txt") || line.text.contains("+++ b/sample.txt")
                 })
@@ -1789,8 +1779,8 @@ fn diff_display_preserves_hunk_line_range_context() {
     );
 
     assert!(state.transcript_preview.iter().any(|entry| {
-        match entry {
-            TranscriptEntry::ToolResult(result) => result
+        match &entry.kind {
+            TranscriptEntryKind::ToolResult(result) => result
                 .lines
                 .iter()
                 .any(|line| line.text.contains("@@ -10,3 +10,4 @@")),
@@ -1843,8 +1833,8 @@ fn diff_display_supports_line_number_readability_without_breaking_highlighting()
         .filter(|entry| entry.role() == Role::ToolDisplay)
         .collect();
 
-    assert!(diff_rows.iter().any(|entry| match entry {
-        TranscriptEntry::ToolResult(result) => result.lines.iter().any(|line| {
+    assert!(diff_rows.iter().any(|entry| match &entry.kind {
+        TranscriptEntryKind::ToolResult(result) => result.lines.iter().any(|line| {
             line.text.contains("│alpha")
                 || line.text.contains("│beta")
                 || line.text.contains("│omega")
@@ -2046,7 +2036,7 @@ fn permission_requested_without_display_does_not_add_transcript_entries() {
     reduce_with_cancel_controller(
         &mut state,
         event_input(UiEvent::ToolStart {
-            name: "nu__run".to_string(),
+            name: "nu".to_string(),
             source: "mcp".to_string(),
             arguments: r#"{"command":"ls"}"#.to_string(),
         }),
@@ -2060,13 +2050,13 @@ fn permission_requested_without_display_does_not_add_transcript_entries() {
         event_input(UiEvent::PermissionRequested {
             request_id: "req-1".to_string(),
             context: PermissionRequestContext {
-                tool: "nu__run".to_string(),
+                tool: "nu".to_string(),
                 source: "mcp".to_string(),
                 mode: None,
-                matched_rule_identity: "tool:nu__run".to_string(),
+                matched_rule_identity: "tool:nu".to_string(),
                 scope: "tool".to_string(),
                 target_field: None,
-                pattern: "nu__run".to_string(),
+                pattern: "nu".to_string(),
                 summary: r#"→ {"command":"ls"}"#.to_string(),
                 pre_authorize_display: None,
             },
@@ -2526,7 +2516,7 @@ mod task_4a_tests {
     use super::*;
     use nu_agent_core::protocol::event::UiEvent;
     use nu_agent_core::transcript::ir::StyleHint;
-    use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry};
+    use nu_agent_core::transcript::items::ProseMessage;
 
     /// Return raw markdown strings stored in all Assistant ProseMessage entries.
     fn assistant_markdown_entries(state: &AppState) -> Vec<String> {
@@ -2534,7 +2524,7 @@ mod task_4a_tests {
             .transcript_preview
             .iter()
             .filter_map(|e| {
-                if let TranscriptEntry::Assistant(ProseMessage { markdown }) = e {
+                if let TranscriptEntryKind::Assistant(ProseMessage { markdown }) = &e.kind {
                     Some(markdown.clone())
                 } else {
                     None
@@ -2658,12 +2648,20 @@ mod visual_selection_tests {
         // Populate transcript with entries that render as multiple lines
         // Entry 0: multi-line markdown (renders as 3 visual rows)
         // Entry 1: multi-line markdown (renders as 2 visual rows)
-        state.push_transcript_item(TranscriptEntry::User(ProseMessage {
-            markdown: "line 0\nextra\nmore".to_string(),
-        }));
-        state.push_transcript_item(TranscriptEntry::User(ProseMessage {
-            markdown: "line 1\nextra".to_string(),
-        }));
+        state.push_transcript_item(TranscriptEntry {
+            id: 0,
+            kind: TranscriptEntryKind::User(ProseMessage {
+                markdown: "line 0\nextra\nmore".to_string(),
+            }),
+            status: None,
+        });
+        state.push_transcript_item(TranscriptEntry {
+            id: 0,
+            kind: TranscriptEntryKind::User(ProseMessage {
+                markdown: "line 1\nextra".to_string(),
+            }),
+            status: None,
+        });
         // Scroll offset = 2 means we've scrolled past entry 0's 3 lines
         // (offset 0, 1, 2 are all entry 0's visual rows)
         // The first visible entry should be entry 1
@@ -2735,9 +2733,13 @@ mod visual_selection_tests {
         state.entry_indices = (0..5).collect();
         state.total_visual_rows = 5;
         for i in 0..5 {
-            state.push_transcript_item(TranscriptEntry::User(ProseMessage {
-                markdown: format!("line {i}"),
-            }));
+            state.push_transcript_item(TranscriptEntry {
+                id: 0,
+                kind: TranscriptEntryKind::User(ProseMessage {
+                    markdown: format!("line {i}"),
+                }),
+                status: None,
+            });
         }
         reduce_with_cancel_controller(
             &mut state,
@@ -2909,9 +2911,13 @@ mod visual_selection_tests {
         state.transcript_selection = Some(TranscriptSelection::new(0));
         state.total_visual_rows = 5;
         for i in 0..5 {
-            state.push_transcript_item(TranscriptEntry::User(ProseMessage {
-                markdown: format!("line {i}"),
-            }));
+            state.push_transcript_item(TranscriptEntry {
+                id: 0,
+                kind: TranscriptEntryKind::User(ProseMessage {
+                    markdown: format!("line {i}"),
+                }),
+                status: None,
+            });
         }
         reduce_with_cancel_controller(
             &mut state,
@@ -2934,9 +2940,13 @@ mod visual_selection_tests {
         state.entry_indices = (0..20).collect();
         state.total_visual_rows = 20;
         for i in 0..20 {
-            state.push_transcript_item(TranscriptEntry::User(ProseMessage {
-                markdown: format!("line {i}"),
-            }));
+            state.push_transcript_item(TranscriptEntry {
+                id: 0,
+                kind: TranscriptEntryKind::User(ProseMessage {
+                    markdown: format!("line {i}"),
+                }),
+                status: None,
+            });
         }
         reduce_with_cancel_controller(
             &mut state,
@@ -2960,9 +2970,13 @@ mod visual_selection_tests {
         state.entry_indices = (0..20).collect();
         state.total_visual_rows = 20;
         for i in 0..20 {
-            state.push_transcript_item(TranscriptEntry::User(ProseMessage {
-                markdown: format!("line {i}"),
-            }));
+            state.push_transcript_item(TranscriptEntry {
+                id: 0,
+                kind: TranscriptEntryKind::User(ProseMessage {
+                    markdown: format!("line {i}"),
+                }),
+                status: None,
+            });
         }
         // scroll_margin = 3, viewport_bottom = 0+10-3 = 7
         // cursor moves 6→7, visual_row=7 >= 7, viewport scrolls
@@ -2988,9 +3002,13 @@ mod visual_selection_tests {
         state.entry_indices = (0..20).collect();
         state.total_visual_rows = 20;
         for i in 0..20 {
-            state.push_transcript_item(TranscriptEntry::User(ProseMessage {
-                markdown: format!("line {i}"),
-            }));
+            state.push_transcript_item(TranscriptEntry {
+                id: 0,
+                kind: TranscriptEntryKind::User(ProseMessage {
+                    markdown: format!("line {i}"),
+                }),
+                status: None,
+            });
         }
         // scroll_margin = 10/3 = 3
         // viewport shows rows 0-9 (scroll_offset=0, viewport_height=10)
@@ -3023,9 +3041,13 @@ mod visual_selection_tests {
         state.entry_indices = (0..60).collect();
         state.total_visual_rows = 60;
         for i in 0..60 {
-            state.push_transcript_item(TranscriptEntry::User(ProseMessage {
-                markdown: format!("line {i}"),
-            }));
+            state.push_transcript_item(TranscriptEntry {
+                id: 0,
+                kind: TranscriptEntryKind::User(ProseMessage {
+                    markdown: format!("line {i}"),
+                }),
+                status: None,
+            });
         }
         reduce_with_cancel_controller(
             &mut state,
@@ -3052,9 +3074,13 @@ mod visual_selection_tests {
         state.transcript_following_tail = false;
         state.entry_indices = (0..30).collect();
         for i in 0..30 {
-            state.push_transcript_item(TranscriptEntry::User(ProseMessage {
-                markdown: format!("line {i}"),
-            }));
+            state.push_transcript_item(TranscriptEntry {
+                id: 0,
+                kind: TranscriptEntryKind::User(ProseMessage {
+                    markdown: format!("line {i}"),
+                }),
+                status: None,
+            });
         }
         reduce_with_cancel_controller(
             &mut state,
@@ -3080,9 +3106,13 @@ mod visual_selection_tests {
         state.transcript_following_tail = false;
         state.entry_indices = (0..30).collect();
         for i in 0..30 {
-            state.push_transcript_item(TranscriptEntry::User(ProseMessage {
-                markdown: format!("line {i}"),
-            }));
+            state.push_transcript_item(TranscriptEntry {
+                id: 0,
+                kind: TranscriptEntryKind::User(ProseMessage {
+                    markdown: format!("line {i}"),
+                }),
+                status: None,
+            });
         }
         reduce_with_cancel_controller(
             &mut state,
@@ -3109,9 +3139,13 @@ mod visual_selection_tests {
         state.transcript_following_tail = false;
         state.entry_indices = (0..30).collect();
         for i in 0..30 {
-            state.push_transcript_item(TranscriptEntry::User(ProseMessage {
-                markdown: format!("line {i}"),
-            }));
+            state.push_transcript_item(TranscriptEntry {
+                id: 0,
+                kind: TranscriptEntryKind::User(ProseMessage {
+                    markdown: format!("line {i}"),
+                }),
+                status: None,
+            });
         }
         reduce_with_cancel_controller(
             &mut state,
@@ -3136,9 +3170,13 @@ mod visual_selection_tests {
         state.transcript_following_tail = false;
         state.entry_indices = (0..30).collect();
         for i in 0..30 {
-            state.push_transcript_item(TranscriptEntry::User(ProseMessage {
-                markdown: format!("line {i}"),
-            }));
+            state.push_transcript_item(TranscriptEntry {
+                id: 0,
+                kind: TranscriptEntryKind::User(ProseMessage {
+                    markdown: format!("line {i}"),
+                }),
+                status: None,
+            });
         }
         reduce_with_cancel_controller(
             &mut state,
@@ -3157,9 +3195,13 @@ fn finalize_pushes_closing_spacer() {
     state.pending_submit_text = Some("prompt".to_string());
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
     let _ = state.activate_next_prompt();
-    state.push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
-        markdown: "response".to_string(),
-    }));
+    state.push_transcript_item(TranscriptEntry {
+        id: 0,
+        kind: TranscriptEntryKind::Assistant(ProseMessage {
+            markdown: "response".to_string(),
+        }),
+        status: None,
+    });
 
     // Dispatch Completed event which calls finalize
     reduce_with_cancel_controller(
@@ -3169,7 +3211,7 @@ fn finalize_pushes_closing_spacer() {
     );
 
     let last = state.transcript_preview.last().unwrap();
-    assert!(matches!(last, TranscriptEntry::Spacer(_)));
+    assert!(matches!(last.kind, TranscriptEntryKind::Spacer(_)));
 }
 
 #[test]
@@ -3185,12 +3227,12 @@ fn handle_tool_start_pushes_starting_spacer() {
         None,
     );
     assert!(matches!(
-        state.transcript_preview[0],
-        TranscriptEntry::Spacer(_)
+        state.transcript_preview[0].kind,
+        TranscriptEntryKind::Spacer(_)
     ));
     assert!(matches!(
-        state.transcript_preview[1],
-        TranscriptEntry::Tool(_)
+        state.transcript_preview[1].kind,
+        TranscriptEntryKind::Tool(_)
     ));
 }
 
@@ -3205,12 +3247,12 @@ fn handle_assistant_message_pushes_starting_spacer() {
         None,
     );
     assert!(matches!(
-        state.transcript_preview[0],
-        TranscriptEntry::Spacer(_)
+        state.transcript_preview[0].kind,
+        TranscriptEntryKind::Spacer(_)
     ));
     assert!(matches!(
-        state.transcript_preview[1],
-        TranscriptEntry::Assistant(_)
+        state.transcript_preview[1].kind,
+        TranscriptEntryKind::Assistant(_)
     ));
 }
 
@@ -3247,16 +3289,16 @@ fn handle_tool_end_does_not_push_spacer_between_tool_calls() {
     // transcript: [Spacer, Tool, Tool] — no spacer between the two tool calls
     assert_eq!(state.transcript_preview.len(), 3);
     assert!(matches!(
-        state.transcript_preview[0],
-        TranscriptEntry::Spacer(_)
+        state.transcript_preview[0].kind,
+        TranscriptEntryKind::Spacer(_)
     ));
     assert!(matches!(
-        state.transcript_preview[1],
-        TranscriptEntry::Tool(_)
+        state.transcript_preview[1].kind,
+        TranscriptEntryKind::Tool(_)
     ));
     assert!(matches!(
-        state.transcript_preview[2],
-        TranscriptEntry::Tool(_)
+        state.transcript_preview[2].kind,
+        TranscriptEntryKind::Tool(_)
     ));
 }
 
@@ -3273,9 +3315,13 @@ fn cancel_pushes_closing_spacer() {
         Some(&cancel_controller),
     );
     let _ = state.take_next_prompt_for_execution();
-    state.push_transcript_item(TranscriptEntry::Assistant(ProseMessage {
-        markdown: "partial".to_string(),
-    }));
+    state.push_transcript_item(TranscriptEntry {
+        id: 0,
+        kind: TranscriptEntryKind::Assistant(ProseMessage {
+            markdown: "partial".to_string(),
+        }),
+        status: None,
+    });
 
     // First Esc enters AbortPending, second confirms the cancel
     reduce_with_cancel_controller(
@@ -3290,5 +3336,5 @@ fn cancel_pushes_closing_spacer() {
     );
 
     let last = state.transcript_preview.last().unwrap();
-    assert!(matches!(last, TranscriptEntry::Spacer(_)));
+    assert!(matches!(last.kind, TranscriptEntryKind::Spacer(_)));
 }

@@ -1,70 +1,118 @@
-use super::{NuArgs, build_result, parse_args};
+use crate::bus::{Bus, CancelEvent};
 use crate::tools::handler::ToolErrorKind;
+use crate::tools::handler::builtin_tool::BuiltinTool;
+use crate::tools::handler::nu::NuTool;
 use std::path::Path;
+use std::time::Duration;
 
-#[test]
-fn parse_args_parses_command() {
-    let args: NuArgs = parse_args(&serde_json::json!({"command": "ls"})).unwrap();
-    assert_eq!(args.command, "ls");
-    assert!(args.timeout_seconds.is_none());
-}
-
-#[test]
-fn parse_args_parses_timeout() {
-    let args: NuArgs =
-        parse_args(&serde_json::json!({"command": "ls", "timeout_seconds": 10})).unwrap();
-    assert_eq!(args.command, "ls");
-    assert_eq!(args.timeout_seconds, Some(10));
-}
-
-#[test]
-fn parse_args_missing_command_is_validation_error() {
-    let err = parse_args(&serde_json::json!({})).unwrap_err();
-    assert_eq!(err.kind, ToolErrorKind::Validation);
-    assert!(
-        err.message.contains("Invalid nu arguments"),
-        "message: {}",
-        err.message
-    );
-}
-
-#[test]
-fn parse_args_wrong_type_is_validation_error() {
-    let err = parse_args(&serde_json::json!({"command": 42})).unwrap_err();
-    assert_eq!(err.kind, ToolErrorKind::Validation);
-}
-
-#[test]
-fn build_result_formats_stdout_stderr_exit_code() {
-    let result = build_result("hello".to_string(), "warn".to_string(), 0);
-    assert_eq!(result["stdout"], "hello");
-    assert_eq!(result["stderr"], "warn");
+#[tokio::test]
+async fn nu_executes_simple_command() {
+    let bus = Bus::new();
+    let result = NuTool::execute(
+        &serde_json::json!({"command": "echo hello"}),
+        Path::new("/tmp"),
+        &bus,
+    )
+    .await
+    .unwrap();
     assert_eq!(result["exit_code"], 0);
+    assert!(result["stdout"].as_str().unwrap().contains("hello"));
 }
 
-#[test]
-fn build_result_preserves_nonzero_exit_code() {
-    let result = build_result(String::new(), "boom".to_string(), 1);
-    assert_eq!(result["stdout"], "");
-    assert_eq!(result["stderr"], "boom");
-    assert_eq!(result["exit_code"], 1);
+#[tokio::test]
+async fn nu_captures_stdout_and_stderr() {
+    let bus = Bus::new();
+    let result = NuTool::execute(
+        &serde_json::json!({"command": "print \"out\"; error make {msg: \"err\"}"}),
+        Path::new("/tmp"),
+        &bus,
+    )
+    .await
+    .unwrap();
+    assert!(!result["stdout"].as_str().unwrap().is_empty());
+    assert!(!result["stderr"].as_str().unwrap().is_empty());
 }
 
-#[test]
-fn build_result_handles_empty_output() {
-    let result = build_result(String::new(), String::new(), 0);
+#[tokio::test]
+async fn nu_missing_command_returns_validation_error() {
+    let bus = Bus::new();
+    let err = NuTool::execute(&serde_json::json!({}), Path::new("/tmp"), &bus)
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind, ToolErrorKind::Validation);
+}
+
+#[tokio::test]
+async fn nu_non_string_command_returns_validation_error() {
+    let bus = Bus::new();
+    let err = NuTool::execute(&serde_json::json!({"command": 42}), Path::new("/tmp"), &bus)
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind, ToolErrorKind::Validation);
+}
+
+#[tokio::test]
+async fn nu_nonzero_exit_preserved() {
+    let bus = Bus::new();
+    let result = NuTool::execute(
+        &serde_json::json!({"command": "exit 3"}),
+        Path::new("/tmp"),
+        &bus,
+    )
+    .await
+    .unwrap();
+    assert_ne!(result["exit_code"], 0);
+}
+
+#[tokio::test]
+async fn nu_empty_output_handled() {
+    let bus = Bus::new();
+    let result = NuTool::execute(
+        &serde_json::json!({"command": "null"}),
+        Path::new("/tmp"),
+        &bus,
+    )
+    .await
+    .unwrap();
     assert_eq!(result["stdout"], "");
     assert_eq!(result["stderr"], "");
     assert_eq!(result["exit_code"], 0);
 }
 
-#[test]
-fn dispatch_unknown_tool_returns_none() {
-    let result = super::dispatch_nu_tool(
-        "not_nu",
-        &serde_json::json!({"command": "ls"}),
+#[tokio::test]
+async fn nu_timeout_kills_process_and_returns_error() {
+    let bus = Bus::new();
+    let start = std::time::Instant::now();
+    let result = NuTool::execute(
+        &serde_json::json!({"command": "sleep 10sec", "timeout_seconds": 1}),
         Path::new("/tmp"),
+        &bus,
     )
-    .unwrap();
-    assert!(result.is_none());
+    .await;
+    let elapsed = start.elapsed();
+    assert!(elapsed < Duration::from_secs(5));
+    assert!(result.is_err());
+    assert!(result.unwrap_err().message.contains("timed out"));
+}
+
+#[tokio::test]
+async fn nu_cancellation_kills_process_quickly() {
+    let bus = Bus::new();
+    let bus2 = bus.clone();
+    let handle = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let _ = bus2.cancel().send(CancelEvent::Requested { task_id: None });
+    });
+    let start = std::time::Instant::now();
+    let result = NuTool::execute(
+        &serde_json::json!({"command": "sleep 30sec"}),
+        Path::new("/tmp"),
+        &bus,
+    )
+    .await;
+    handle.await.unwrap();
+    let elapsed = start.elapsed();
+    assert!(elapsed < Duration::from_secs(5));
+    assert!(result.is_err());
+    assert!(result.unwrap_err().message.contains("cancelled"));
 }

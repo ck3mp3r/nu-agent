@@ -12,13 +12,8 @@ use crate::tools::{closure::ClosureRegistry, executor::ToolExecutor};
 pub enum ToolSource {
     Closure,
     Mcp,
-    /// Agent-coordination and read-only builtin tools (`read`, `skill`, `spawn_agent`,
-    /// `send_message`, `list_agents`). These bypass the permission system entirely.
+    /// Built-in tools compiled into the binary (all built-in tools).
     Builtin,
-    /// Privileged builtin tools (edit, patch, tmux, nu). Despite being built-in,
-    /// these go through the full permission flow because they can modify state
-    /// outside the agent.
-    BuiltinFs,
     Unknown,
 }
 
@@ -28,7 +23,6 @@ impl ToolSource {
             Self::Closure => "closure",
             Self::Mcp => "mcp",
             Self::Builtin => "builtin",
-            Self::BuiltinFs => "builtin_fs",
             Self::Unknown => "unknown",
         }
     }

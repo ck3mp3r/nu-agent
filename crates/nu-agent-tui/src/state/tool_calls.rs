@@ -1,4 +1,6 @@
 use super::{ToolCallLine, ToolCallStatus};
+use nu_agent_core::transcript::items::TranscriptEntry;
+use nu_agent_core::transcript::renderer::ItemStatus;
 use std::collections::{HashMap, VecDeque};
 
 pub(super) struct ToolCallBookkeeping<'a> {
@@ -20,21 +22,16 @@ impl<'a> ToolCallBookkeeping<'a> {
         }
     }
 
-    pub(super) fn start_tool_call(
-        &mut self,
-        transcript_line_index: usize,
-        name: &str,
-        arguments: &str,
-    ) {
+    pub(super) fn start_tool_call(&mut self, name: &str, arguments: &str, entry_id: Option<u64>) {
         let id = *self.next_tool_call_id;
         *self.next_tool_call_id = self.next_tool_call_id.saturating_add(1);
         let key = tool_call_key(name, arguments);
 
         self.tool_call_items.push(ToolCallLine {
             id,
-            transcript_line_index,
             status: ToolCallStatus::InProgress,
             key: key.clone(),
+            entry_id,
         });
         self.active_tool_ids_by_key
             .entry(key)
@@ -42,7 +39,14 @@ impl<'a> ToolCallBookkeeping<'a> {
             .push_back(id);
     }
 
-    pub(super) fn finish_tool_call(&mut self, name: &str, arguments: &str, success: bool) {
+    pub(super) fn finish_tool_call(
+        &mut self,
+        name: &str,
+        arguments: &str,
+        success: bool,
+        transcript_preview: &mut [TranscriptEntry],
+        status: ItemStatus,
+    ) {
         let key = tool_call_key(name, arguments);
         let maybe_id = self
             .active_tool_ids_by_key
@@ -64,6 +68,14 @@ impl<'a> ToolCallBookkeeping<'a> {
             } else {
                 ToolCallStatus::Failed
             };
+            if let Some(entry_id) = tool.entry_id
+                && let Some(entry) = transcript_preview
+                    .iter_mut()
+                    .rev()
+                    .find(|entry| entry.id == entry_id)
+            {
+                entry.status = Some(status);
+            }
         }
     }
 }

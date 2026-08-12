@@ -1,21 +1,35 @@
-use nu_agent_core::transcript::items::{ProseMessage, Spacer, TranscriptEntry};
+use nu_agent_core::transcript::items::{
+    ProseMessage, Spacer, TranscriptEntry, TranscriptEntryKind,
+};
 
 use super::transcript::row_needs_user_bg;
 
 fn user() -> TranscriptEntry {
-    TranscriptEntry::User(ProseMessage {
-        markdown: "hi".to_string(),
-    })
+    TranscriptEntry {
+        id: 0,
+        kind: TranscriptEntryKind::User(ProseMessage {
+            markdown: "hi".to_string(),
+        }),
+        status: None,
+    }
 }
 
 fn assistant() -> TranscriptEntry {
-    TranscriptEntry::Assistant(ProseMessage {
-        markdown: "hi".to_string(),
-    })
+    TranscriptEntry {
+        id: 0,
+        kind: TranscriptEntryKind::Assistant(ProseMessage {
+            markdown: "hi".to_string(),
+        }),
+        status: None,
+    }
 }
 
 fn spacer() -> TranscriptEntry {
-    TranscriptEntry::Spacer(Spacer)
+    TranscriptEntry {
+        id: 0,
+        kind: TranscriptEntryKind::Spacer(Spacer),
+        status: None,
+    }
 }
 
 #[test]

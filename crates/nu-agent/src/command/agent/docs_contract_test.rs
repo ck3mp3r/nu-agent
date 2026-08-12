@@ -140,14 +140,14 @@ fn usage_docs_describe_permissions_dsl_canonical_shape_and_precedence() {
     assert!(docs.contains("permissions DSL"));
     assert!(
         docs.contains(
-            "\"nu__run\": { \"command\": { \"kubectl delete *\": \"deny\", \"*\": \"ask\" } }"
-        ) || docs.contains("\"nu__run\": {")
+            "\"nu\": { \"command\": { \"kubectl delete *\": \"deny\", \"*\": \"ask\" } }"
+        ) || docs.contains("\"nu\": {")
             && docs.contains("\"command\": {")
             && docs.contains("\"kubectl delete *\": \"deny\"")
     );
     assert!(docs.contains("global baseline"));
     assert!(docs.contains("tool override"));
-    assert!(docs.contains("nested `nu__run.command` override"));
+    assert!(docs.contains("nested `nu.command` override"));
 }
 
 #[test]

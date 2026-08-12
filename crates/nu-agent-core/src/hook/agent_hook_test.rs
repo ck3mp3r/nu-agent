@@ -10,9 +10,7 @@ use std::sync::{Arc, Mutex};
 fn is_tool_failure_detects_all_failure_variants() {
     assert!(is_tool_failure("Toolset error: something went wrong"));
     assert!(is_tool_failure("Permission denied"));
-    assert!(is_tool_failure(
-        "Doom loop detected: 'nu__run' called 3 times"
-    ));
+    assert!(is_tool_failure("Doom loop detected: 'nu' called 3 times"));
     assert!(is_tool_failure("Tool 'nonexistent' is not available."));
 }
 

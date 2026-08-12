@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use nu_protocol::{LabeledError, Span};
 
+use crate::bus::Bus;
 use crate::compaction::{CompactionParams, CompactionStrategy};
 use crate::config::CompactionConfig;
 use crate::protocol::persona::PersonaSummary;
@@ -405,6 +406,8 @@ pub struct BuildInput<'a> {
     pub tool_timeout: std::time::Duration,
     pub session: Option<&'a mut crate::session::Session>,
     pub max_tool_result_bytes: usize,
+    /// Signal bus for tool cancellation and events.
+    pub bus: Bus,
     /// Already-merged compaction config (defaults ← plugin config ← CLI flags).
     pub merged_compaction: CompactionConfig,
 }
@@ -421,8 +424,7 @@ pub struct BuildArtifacts {
 ///
 /// Absorbs the registration logic that was previously in the binary's
 /// `register_tools` function, eliminating the layering violation where the
-/// binary directly constructed `OrchestratorState` and called `adapt_builtins` /
-/// `adapt_closures`.
+/// binary directly constructed `OrchestratorState` and called `adapt_closures`.
 pub struct AgentRuntimeBuilder<'a> {
     input: BuildInput<'a>,
 }
@@ -437,7 +439,6 @@ impl<'a> AgentRuntimeBuilder<'a> {
     /// Returns `BuildArtifacts` containing the parent name,
     /// merged compaction config, and resolved compaction strategy.
     pub async fn build(self) -> Result<BuildArtifacts, LabeledError> {
-        use crate::hook::adapter::builtin::adapt_builtins;
         use crate::hook::adapter::closure::adapt_closures;
 
         let BuildInput {
@@ -451,6 +452,7 @@ impl<'a> AgentRuntimeBuilder<'a> {
             tool_timeout,
             session,
             max_tool_result_bytes,
+            bus,
             merged_compaction,
         } = self.input;
 
@@ -493,10 +495,15 @@ impl<'a> AgentRuntimeBuilder<'a> {
             session.set_compaction_config(compaction_params.clone());
         }
 
-        let builtin_tools = adapt_builtins(builtin_defs, cwd.clone(), max_tool_result_bytes);
-
-        for tool in builtin_tools {
-            tool_server_handle.add_dynamic_tool(tool).await;
+        for def in builtin_defs {
+            crate::tools::handler::builtin_tool::register_builtin(
+                def,
+                cwd.clone(),
+                max_tool_result_bytes,
+                bus.clone(),
+                tool_server_handle,
+            )
+            .await;
         }
 
         Ok(BuildArtifacts {

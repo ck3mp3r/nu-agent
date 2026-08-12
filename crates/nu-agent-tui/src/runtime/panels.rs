@@ -1,24 +1,5 @@
 use super::*;
 
-pub(super) fn transcript_line_status_to_item_status(
-    status: TranscriptLineStatus,
-) -> nu_agent_core::transcript::renderer::ItemStatus {
-    use crate::state::{CompactionStatus, PromptStatus, ToolCallStatus};
-    use nu_agent_core::transcript::renderer::ItemStatus;
-    match status {
-        TranscriptLineStatus::Tool(ToolCallStatus::InProgress) => ItemStatus::InProgress,
-        TranscriptLineStatus::Tool(ToolCallStatus::Done) => ItemStatus::Done,
-        TranscriptLineStatus::Tool(ToolCallStatus::Failed) => ItemStatus::Failed,
-        TranscriptLineStatus::Prompt(PromptStatus::InProgress) => ItemStatus::InProgress,
-        TranscriptLineStatus::Prompt(PromptStatus::Done) => ItemStatus::Done,
-        TranscriptLineStatus::Prompt(PromptStatus::Cancelled) => ItemStatus::Cancelled,
-        TranscriptLineStatus::Prompt(PromptStatus::Queued) => ItemStatus::Queued,
-        TranscriptLineStatus::Compaction(CompactionStatus::InProgress) => ItemStatus::InProgress,
-        TranscriptLineStatus::Compaction(CompactionStatus::Done) => ItemStatus::Done,
-        TranscriptLineStatus::Compaction(CompactionStatus::Failed) => ItemStatus::Failed,
-    }
-}
-
 pub(super) fn render_permission_controls(frame: &mut ratatui::Frame, area: Rect, theme: &TuiTheme) {
     let controls = Line::from(vec![
         Span::styled("[a]", theme.status_running),
@@ -34,23 +15,6 @@ pub(super) fn render_permission_controls(frame: &mut ratatui::Frame, area: Rect,
 
 pub(super) fn transcript_entries_for_render(state: &AppState) -> &[TranscriptEntry] {
     &state.transcript_preview
-}
-
-pub(super) fn transcript_line_statuses_for_render(
-    state: &AppState,
-    entries: &[TranscriptEntry],
-) -> Vec<Option<TranscriptLineStatus>> {
-    entries
-        .iter()
-        .enumerate()
-        .map(|(idx, entry)| {
-            if matches!(entry, TranscriptEntry::Spacer(_)) {
-                None
-            } else {
-                state.transcript_line_status_for_index(idx)
-            }
-        })
-        .collect()
 }
 
 pub(super) fn wrapped_visual_rows_for_rendered_line(

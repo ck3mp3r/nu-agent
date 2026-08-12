@@ -42,8 +42,9 @@ fn make_tool_call(name: &str) -> ToolCall {
 }
 
 #[tokio::test]
-async fn builtin_tools_bypass_permission_flow() {
-    // Even with deny-all permissions, builtin tools should be allowed
+async fn config_allow_tools_pass_permission_flow() {
+    // With safe_defaults(true), `read` is configured as Allow so it passes
+    // without prompting, even though the hook would otherwise deny.
     let permissions = PermissionsConfig::safe_defaults(true);
     let grant_cache = Arc::new(Mutex::new(SessionGrantCache::default()));
     let flow_context = AuthorizationFlowContext {
@@ -52,13 +53,7 @@ async fn builtin_tools_bypass_permission_flow() {
     let mut ask_hook = AlwaysDenyHook;
     let mut sink = NoopSink;
 
-    for tool_name in [
-        "read",
-        "skill",
-        "send_message",
-        "list_agents",
-        "spawn_agent",
-    ] {
+    for tool_name in ["read", "glob", "grep"] {
         let tool_call = make_tool_call(tool_name);
         let result = enforce_authorization_for_tool_call(
             &tool_call,
@@ -72,14 +67,16 @@ async fn builtin_tools_bypass_permission_flow() {
         .await;
         assert!(
             !result,
-            "builtin tool '{}' should be auto-allowed but was denied",
+            "tool '{}' configured as allow should pass the permission flow",
             tool_name,
         );
     }
 }
 
 #[tokio::test]
-async fn fs_tools_go_through_permission_flow() {
+async fn config_ask_tools_prompt_through_permission_flow() {
+    // With safe_defaults(true), tools not listed as allow fall through to the
+    // global Ask action, so the AlwaysDenyHook denies them.
     let permissions = PermissionsConfig::safe_defaults(true);
     let grant_cache = Arc::new(Mutex::new(SessionGrantCache::default()));
     let flow_context = AuthorizationFlowContext {
@@ -88,11 +85,11 @@ async fn fs_tools_go_through_permission_flow() {
     let mut ask_hook = AlwaysDenyHook;
     let mut sink = NoopSink;
 
-    for tool_name in ["edit", "patch"] {
+    for tool_name in ["nu", "edit", "skill", "spawn_agent", "send_message"] {
         let tool_call = make_tool_call(tool_name);
         let result = enforce_authorization_for_tool_call(
             &tool_call,
-            ToolSource::BuiltinFs,
+            ToolSource::Builtin,
             &permissions,
             Arc::clone(&grant_cache),
             &flow_context,
@@ -102,7 +99,7 @@ async fn fs_tools_go_through_permission_flow() {
         .await;
         assert!(
             result,
-            "BuiltinFs tool '{}' should go through permission flow and be denied by AlwaysDenyHook",
+            "tool '{}' not configured as allow should be denied by the hook",
             tool_name,
         );
     }

@@ -12,10 +12,9 @@
 //! 3. Call the concern's method inside whichever event method needs it.
 //! 4. Nothing else changes.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use tokio::sync::mpsc;
-use tokio_util::sync::CancellationToken;
+use tokio::sync::{broadcast, mpsc};
 
 use rig::agent::{
     AgentHook, CompletionCallAction, CompletionCallEvent, HookContext, InvalidToolCallAction,
@@ -25,37 +24,19 @@ use rig::agent::{
 use rig::core::wasm_compat::WasmCompatSend;
 use rig::message::Message;
 
+use crate::bus::{Bus, CancelEvent};
 use crate::config::defaults;
 use crate::protocol::event::UiEvent;
 use crate::tools::closure::ClosureRegistry;
-use crate::tools::handler::{McpToolRegistry, ToolSource, builtin_kinds::BuiltinKind};
+use crate::tools::handler::{McpToolRegistry, builtin_kinds::BuiltinKind};
 
-use super::cancel::CancelChecker;
 use super::circuit_breaker_guard::CircuitBreakerGuard;
 use super::doom_loop::DoomLoopDetector;
 use super::history_snapshot::HistorySnapshot;
-use super::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
+use super::permission_resolver::{
+    AsyncPermissionResolver, PermissionDecision, resolve_tool_source,
+};
 use super::subturn_cap::SubTurnCap;
-
-fn resolve_tool_source(
-    name: &str,
-    closures: &ClosureRegistry,
-    mcp: &McpToolRegistry,
-) -> ToolSource {
-    if closures.get(name).is_some() {
-        ToolSource::Closure
-    } else if let Ok(kind) = name.parse::<BuiltinKind>() {
-        if kind.is_privileged() {
-            ToolSource::BuiltinFs
-        } else {
-            ToolSource::Builtin
-        }
-    } else if mcp.contains(name) {
-        ToolSource::Mcp
-    } else {
-        ToolSource::Unknown
-    }
-}
 
 /// Resolve the success flag for a tool result.
 ///
@@ -63,7 +44,11 @@ fn resolve_tool_source(
 /// exit code means the command failed, so `success` must be `false` even though
 /// the tool itself returned `Ok`. Parse failures fall back to the base success.
 fn resolve_success(tool_name: &str, base_success: bool, result_text: &str) -> bool {
-    if tool_name == "nu" && base_success {
+    if base_success
+        && tool_name
+            .parse::<BuiltinKind>()
+            .is_ok_and(|k| k == BuiltinKind::Nu)
+    {
         serde_json::from_str::<serde_json::Value>(result_text)
             .ok()
             .and_then(|v| v.get("exit_code").and_then(|c| c.as_i64()))
@@ -79,7 +64,7 @@ fn resolve_success(tool_name: &str, base_success: bool, result_text: &str) -> bo
 /// See module-level docs for the extension pattern.
 #[derive(Clone)]
 pub struct HookChain<P: AsyncPermissionResolver> {
-    cancel: CancelChecker,
+    cancel_rx: Arc<Mutex<broadcast::Receiver<CancelEvent>>>,
     subturn: SubTurnCap,
     doom: DoomLoopDetector,
     circuit: CircuitBreakerGuard,
@@ -92,7 +77,7 @@ pub struct HookChain<P: AsyncPermissionResolver> {
 
 impl<P: AsyncPermissionResolver> HookChain<P> {
     pub fn new(
-        cancel_token: CancellationToken,
+        bus: Bus,
         ui_tx: mpsc::UnboundedSender<UiEvent>,
         permission_resolver: P,
         closure_registry: Arc<ClosureRegistry>,
@@ -101,9 +86,7 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
         hook_state: super::agent_hook::HookState,
     ) -> Self {
         Self {
-            cancel: CancelChecker {
-                token: cancel_token,
-            },
+            cancel_rx: Arc::new(Mutex::new(bus.cancel().subscribe())),
             subturn: SubTurnCap::new(
                 max_tool_calls_per_subturn.unwrap_or(defaults::MAX_TOOL_CALLS_PER_SUBTURN),
             ),
@@ -127,6 +110,19 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
     /// (which consumes `self`), then read it back after a `CompletionError`.
     pub fn last_known_history(&self) -> std::sync::Arc<std::sync::Mutex<Vec<Message>>> {
         self.history.arc()
+    }
+
+    /// Returns `true` if a cancellation has been requested via the bus cancel channel.
+    ///
+    /// Consumes any pending cancel event. A `Lagged` error also counts as cancelled
+    /// because the cancel channel is capacity-bounded and an overflowed buffer means
+    /// the turn must stop.
+    fn is_cancelled(&self) -> bool {
+        let mut rx = self.cancel_rx.lock().expect("cancel_rx mutex poisoned");
+        matches!(
+            rx.try_recv(),
+            Ok(CancelEvent::Requested { .. }) | Err(broadcast::error::TryRecvError::Lagged(_))
+        )
     }
 }
 
@@ -160,7 +156,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
             log::trace!("on_completion_call: history_len={}", event.history.len());
         }
 
-        let cancelled = self.cancel.is_cancelled();
+        let cancelled = self.is_cancelled();
         let ui_tx = self.ui_tx.clone();
 
         async move {
@@ -177,7 +173,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
         _ctx: &HookContext,
         event: TextDelta<'_>,
     ) -> impl std::future::Future<Output = ObservationAction> + WasmCompatSend {
-        let cancelled = self.cancel.is_cancelled();
+        let cancelled = self.is_cancelled();
         let ui_tx = self.ui_tx.clone();
         let text = event.aggregated.to_string();
 
@@ -202,7 +198,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
         log::trace!("on_tool_call: tool={tool_name}");
 
         // Pre-compute all synchronous checks and capture values for the async block
-        let cancelled = self.cancel.is_cancelled();
+        let cancelled = self.is_cancelled();
         let subturn_action = self.subturn.check_and_increment(tool_name);
         let doom_action = self.doom.check_and_record(tool_name, args, &self.ui_tx);
         let circuit_action = self

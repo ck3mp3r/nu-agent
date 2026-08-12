@@ -1,5 +1,6 @@
 use serde_json::Value as JsonValue;
 
+use super::builtin_kinds::BuiltinKind;
 use super::types::EditPreviewDisplayPayload;
 use crate::protocol::event::{ToolDisplay, ToolDisplaySection, ToolDisplayStats};
 
@@ -137,8 +138,10 @@ pub fn build_direct_tool_display(tool_name: &str, payload: &JsonValue) -> Option
         return Some(display);
     }
 
-    if tool_name != "edit" {
-        return None;
+    let kind = tool_name.parse::<BuiltinKind>().ok();
+    match kind {
+        Some(BuiltinKind::Edit) => {}
+        _ => return None,
     }
 
     let path = payload.get("path")?.as_str()?;

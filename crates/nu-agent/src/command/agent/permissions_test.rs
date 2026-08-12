@@ -10,7 +10,7 @@ fn resolve_effective_permissions_merges_cli_overlay_additively() {
 "*" = "ask"
 read = "allow"
 
-[nu__run.command]
+[nu.command]
 "kubectl get *" = "allow"
 "*" = "ask"
 "#,
@@ -23,7 +23,7 @@ read = "allow"
         "permissions",
         Value::test_record(record! {
             "read" => Value::test_string("deny"),
-            "nu__run" => Value::test_record(record! {
+            "nu" => Value::test_record(record! {
                 "command" => Value::test_record(record! {
                     "kubectl delete *" => Value::test_string("deny")
                 })
@@ -41,17 +41,14 @@ read = "allow"
     );
     assert_eq!(
         effective
-            .evaluate(
-                "nu__run",
-                &serde_json::json!({"command": "kubectl get pods"})
-            )
+            .evaluate("nu", &serde_json::json!({"command": "kubectl get pods"}))
             .action,
         PermissionAction::Allow
     );
     assert_eq!(
         effective
             .evaluate(
-                "nu__run",
+                "nu",
                 &serde_json::json!({"command": "kubectl delete pod x"})
             )
             .action,

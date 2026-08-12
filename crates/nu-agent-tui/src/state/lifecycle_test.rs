@@ -1,6 +1,6 @@
 use crate::state::*;
 use nu_agent_core::transcript::ir::Role;
-use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry};
+use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry, TranscriptEntryKind};
 
 /// The active prompt is the one currently in `InProgress` status.
 fn active_prompt_id(state: &AppState) -> Option<u64> {
@@ -187,13 +187,13 @@ fn enqueue_external_prompt_adds_user_transcript_line() {
     // starting spacer + user + closing spacer
     assert!(!state.transcript_preview.is_empty());
     assert!(matches!(
-        state.transcript_preview[0],
-        TranscriptEntry::Spacer(_)
+        state.transcript_preview[0].kind,
+        TranscriptEntryKind::Spacer(_)
     ));
     assert_eq!(state.transcript_preview[1].role(), Role::User);
     assert!(matches!(
-        state.transcript_preview.last().unwrap(),
-        TranscriptEntry::Spacer(_)
+        state.transcript_preview.last().unwrap().kind,
+        TranscriptEntryKind::Spacer(_)
     ));
 }
 
@@ -230,10 +230,15 @@ fn enqueue_external_prompt_has_spinner_status_on_transcript_line() {
 
     state.enqueue_external_prompt("spinner check".to_string());
 
-    let transcript_idx = state.prompt_items()[0].transcript_line_index;
+    // The user entry should carry InProgress status directly on the entry.
+    let user_entry = state
+        .transcript_preview
+        .iter()
+        .find(|e| matches!(e.kind, TranscriptEntryKind::User(_)))
+        .expect("user entry");
     assert_eq!(
-        state.transcript_line_status_for_index(transcript_idx),
-        Some(TranscriptLineStatus::Prompt(PromptStatus::InProgress)),
+        user_entry.status,
+        Some(nu_agent_core::transcript::renderer::ItemStatus::InProgress),
         "transcript line should show InProgress for spinner"
     );
 }
@@ -245,19 +250,6 @@ fn enqueue_prompt_does_not_add_transcript_entry() {
     let before = state.transcript_preview.len();
     state.enqueue_prompt("second".to_string());
     assert_eq!(state.transcript_preview.len(), before);
-}
-
-#[test]
-fn queued_prompt_has_sentinel_transcript_line_index() {
-    let mut state = AppState::new();
-    state.enqueue_external_prompt("first".to_string());
-    state.enqueue_prompt("second".to_string());
-    let queued = state
-        .prompt_items()
-        .iter()
-        .find(|p| p.status == PromptStatus::Queued)
-        .unwrap();
-    assert_eq!(queued.transcript_line_index, usize::MAX);
 }
 
 #[test]
@@ -283,32 +275,17 @@ fn activate_next_prompt_adds_user_entry_to_transcript() {
     // starting spacer + user + closing spacer
     assert_eq!(state.transcript_preview.len(), before + 3);
     assert!(matches!(
-        state.transcript_preview.get(before),
-        Some(TranscriptEntry::Spacer(_))
+        state.transcript_preview.get(before).map(|e| &e.kind),
+        Some(TranscriptEntryKind::Spacer(_))
     ));
     assert!(matches!(
-        state.transcript_preview.get(before + 1),
-        Some(TranscriptEntry::User(_))
+        state.transcript_preview.get(before + 1).map(|e| &e.kind),
+        Some(TranscriptEntryKind::User(_))
     ));
     assert!(matches!(
-        state.transcript_preview.last().unwrap(),
-        TranscriptEntry::Spacer(_)
+        state.transcript_preview.last().unwrap().kind,
+        TranscriptEntryKind::Spacer(_)
     ));
-}
-
-#[test]
-fn activated_prompt_has_real_transcript_line_index() {
-    let mut state = AppState::new();
-    state.enqueue_external_prompt("first".to_string());
-    state.enqueue_prompt("second".to_string());
-    state.complete_active_prompt();
-    state.activate_next_prompt();
-    let items = state.prompt_items().to_vec();
-    let active = items
-        .iter()
-        .find(|p| p.status == PromptStatus::InProgress)
-        .unwrap();
-    assert_ne!(active.transcript_line_index, usize::MAX);
 }
 
 #[test]
@@ -509,14 +486,18 @@ fn clear_insert_exit_pending_j_resets_to_false() {
 #[test]
 fn push_spacer_adds_spacer_when_last_is_not_spacer() {
     let mut state = AppState::new();
-    state.push_transcript_item(TranscriptEntry::User(ProseMessage {
-        markdown: "hi".into(),
-    }));
+    state.push_transcript_item(TranscriptEntry {
+        id: 0,
+        kind: TranscriptEntryKind::User(ProseMessage {
+            markdown: "hi".into(),
+        }),
+        status: None,
+    });
     state.push_spacer();
     assert_eq!(state.transcript_preview.len(), 2);
     assert!(matches!(
-        state.transcript_preview[1],
-        TranscriptEntry::Spacer(_)
+        state.transcript_preview[1].kind,
+        TranscriptEntryKind::Spacer(_)
     ));
 }
 
