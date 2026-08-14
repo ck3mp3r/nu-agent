@@ -522,6 +522,10 @@ where
     Persona: PersonaManager + Send + Sync,
     Multi: MultiAgentManager + Send + Sync,
 {
+    fn cwd(&self) -> &std::path::Path {
+        &self.cwd
+    }
+
     async fn load_session(&mut self, session_id: &str) -> Result<Vec<UiMessageSnapshot>, String> {
         let store = Arc::clone(&self.store);
         let sid = session_id.to_string();

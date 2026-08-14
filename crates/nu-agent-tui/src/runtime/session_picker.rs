@@ -28,17 +28,7 @@ pub(super) fn session_picker_table_model(
         .map(|option| {
             let relative = relative_timestamp(option.created_at, now);
             let title = option.title.as_deref().unwrap_or("(untitled)").to_string();
-            let truncated_title = if title.chars().count() > 20 {
-                format!("{}…", title.chars().take(19).collect::<String>())
-            } else {
-                title
-            };
-            let id = if option.id.len() > 12 {
-                format!("{}…", &option.id[..12])
-            } else {
-                option.id.clone()
-            };
-            vec![relative, truncated_title, id]
+            vec![relative, title]
         })
         .collect();
 

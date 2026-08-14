@@ -1,6 +1,7 @@
 use nu_protocol::{LabeledError, Span, Value};
 
 use crate::protocol::event::{PermissionDecisionSubmission, ToolDisplay, UiEvent};
+use crate::session::SessionInfo;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum McpUsabilityState {
@@ -197,6 +198,7 @@ pub trait DisplayStateUi {
     fn set_active_persona_icon(&mut self, _icon: Option<String>) {}
     fn set_context_window_max_tokens(&mut self, _max_tokens: Option<u64>) {}
     fn display_incoming_message(&mut self, _text: &str) {}
+    fn set_session_picker_options(&mut self, _options: Vec<SessionInfo>) {}
 }
 
 pub trait LifecycleUi {

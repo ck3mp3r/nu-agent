@@ -162,6 +162,13 @@ impl CommandRouter {
                 let _ = response_tx.send(result);
                 true
             }
+            WorkerCommand::RefreshSessionPicker { response_tx } => {
+                log::debug!("Router: RefreshSessionPicker");
+                let cwd = runtime.cwd();
+                let result = runtime.list_sessions(cwd).await;
+                let _ = response_tx.send(result);
+                true
+            }
             WorkerCommand::Shutdown => {
                 log::info!("Router: Shutdown");
                 false

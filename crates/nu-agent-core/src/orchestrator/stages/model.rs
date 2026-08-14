@@ -5,7 +5,8 @@ use crate::orchestrator::pending::PendingOps;
 use crate::orchestrator::poll::{PollOutcome, poll_pending};
 use crate::orchestrator::stages::{OrchestrationContext, StageOutcome};
 use crate::orchestrator::{
-    PendingAgentSwitch, PendingMcpToggle, PendingModelSwitch, PendingSessionSwitch, WorkerCommand,
+    PendingAgentSwitch, PendingMcpToggle, PendingModelSwitch, PendingSessionRefresh,
+    PendingSessionSwitch, WorkerCommand,
 };
 use crate::protocol::contracts::{
     DisplayStateUi, LifecycleUi, McpToggleRequest, McpUsabilityState, ProgressUi, SharedUiAction,
@@ -25,6 +26,7 @@ pub(crate) struct ModelSwitchStage {
     pending_model_switch: Option<PendingModelSwitch>,
     pending_agent_switch: Option<PendingAgentSwitch>,
     pending_session_switch: Option<(String, PendingSessionSwitch)>,
+    pending_session_refresh: Option<PendingSessionRefresh>,
     pending_mcp_toggles: Vec<PendingMcpToggle>,
     pending_ops: PendingOps,
 }
@@ -36,6 +38,7 @@ impl ModelSwitchStage {
             pending_model_switch: None,
             pending_agent_switch: None,
             pending_session_switch: None,
+            pending_session_refresh: None,
             pending_mcp_toggles: Vec::new(),
             pending_ops: PendingOps::new(),
         }
@@ -168,6 +171,31 @@ impl ModelSwitchStage {
             }
         }
 
+        // --- Poll pending session refresh result ---
+        if let Some(response_rx) = self.pending_session_refresh.take() {
+            match poll_pending(response_rx) {
+                PollOutcome::Ready(Ok(sessions)) => {
+                    ctx.ui.set_session_picker_options(sessions);
+                    let _ = ctx.ui.execute_shared_ui_action(SharedUiAction::Sessions);
+                    handled = true;
+                }
+                PollOutcome::Ready(Err(message)) => {
+                    log::warn!("Session refresh failed: {message}");
+                    let _ = ctx.bus.warning().send(WarningEvent::Message { message });
+                    let _ = ctx.ui.execute_shared_ui_action(SharedUiAction::Sessions);
+                    handled = true;
+                }
+                PollOutcome::Pending(rx) => self.pending_session_refresh = Some(rx),
+                PollOutcome::Disconnected => {
+                    let _ = ctx.bus.warning().send(WarningEvent::Message {
+                        message: "Session refresh worker disconnected".to_string(),
+                    });
+                    let _ = ctx.ui.execute_shared_ui_action(SharedUiAction::Sessions);
+                    handled = true;
+                }
+            }
+        }
+
         // --- Poll pending MCP toggle results ---
         let mut retained = Vec::new();
         for (server_name, response_rx) in self.pending_mcp_toggles.drain(..) {
@@ -249,8 +277,23 @@ impl ModelSwitchStage {
         }
 
         while ctx.ui.take_next_session_picker_launch_request() {
-            let _ = ctx.ui.execute_shared_ui_action(SharedUiAction::Sessions);
             handled = true;
+            if self.pending_session_refresh.is_none() {
+                let (response_tx, response_rx) = std_mpsc::channel();
+                if ctx
+                    .worker_tx
+                    .send(WorkerCommand::RefreshSessionPicker { response_tx })
+                    .await
+                    .is_ok()
+                {
+                    self.pending_session_refresh = Some(response_rx);
+                } else {
+                    let _ = ctx.bus.warning().send(WarningEvent::Message {
+                        message: "Session refresh worker channel closed".to_string(),
+                    });
+                    let _ = ctx.ui.execute_shared_ui_action(SharedUiAction::Sessions);
+                }
+            }
         }
 
         while ctx.ui.take_next_theme_picker_launch_request() {
@@ -405,6 +448,7 @@ impl ModelSwitchStage {
     pub fn has_pending(&self) -> bool {
         self.pending_model_switch.is_some()
             || self.pending_agent_switch.is_some()
+            || self.pending_session_refresh.is_some()
             || !self.pending_mcp_toggles.is_empty()
     }
 

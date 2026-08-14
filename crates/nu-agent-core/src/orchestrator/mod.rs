@@ -44,6 +44,7 @@ use crate::protocol::{
     model_switching::ModelSwitching,
     session_management::{SessionPersistence, SessionState},
 };
+use crate::session::SessionInfo;
 
 /// Configuration for the interactive loop.
 ///
@@ -139,6 +140,8 @@ pub(crate) type PendingMcpToggle = (String, std_mpsc::Receiver<McpToggleResult>)
 pub type ModelSwitchResult = Result<(String, Option<u64>), String>;
 pub type AgentSwitchResult = Result<(String, String, Option<u64>, Option<String>), String>;
 pub type SessionSwitchResult = Result<Vec<UiMessageSnapshot>, String>;
+pub type RefreshSessionPickerResult = Result<Vec<SessionInfo>, String>;
+pub(crate) type PendingSessionRefresh = std_mpsc::Receiver<RefreshSessionPickerResult>;
 pub(crate) type PendingModelSwitch = std_mpsc::Receiver<ModelSwitchResult>;
 pub(crate) type PendingAgentSwitch = std_mpsc::Receiver<AgentSwitchResult>;
 pub(crate) type PendingSessionSwitch = std_mpsc::Receiver<SessionSwitchResult>;
@@ -177,6 +180,9 @@ pub enum WorkerCommand {
     SwitchSession {
         session_id: String,
         response_tx: std_mpsc::Sender<SessionSwitchResult>,
+    },
+    RefreshSessionPicker {
+        response_tx: std_mpsc::Sender<RefreshSessionPickerResult>,
     },
     ClearSession,
     NewSession,

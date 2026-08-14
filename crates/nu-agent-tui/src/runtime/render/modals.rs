@@ -368,26 +368,16 @@ impl RuntimeCoordinator {
                 rows[1],
             );
         } else {
-            let header = Row::new(vec!["When", "Title", "ID"]).style(self.theme.subtle_meta);
-            let table_rows = model.rows.iter().map(|row| {
-                Row::new(vec![
-                    Cell::from(row[0].clone()),
-                    Cell::from(row[1].clone()),
-                    Cell::from(row[2].clone()),
-                ])
-            });
-            let table = Table::new(
-                table_rows,
-                [
-                    Constraint::Length(10),
-                    Constraint::Min(12),
-                    Constraint::Length(15),
-                ],
-            )
-            .header(header)
-            .column_spacing(1)
-            .highlight_symbol("❯ ")
-            .row_highlight_style(self.theme.focus);
+            let header = Row::new(vec!["When", "Title"]).style(self.theme.subtle_meta);
+            let table_rows = model
+                .rows
+                .iter()
+                .map(|row| Row::new(vec![Cell::from(row[0].clone()), Cell::from(row[1].clone())]));
+            let table = Table::new(table_rows, [Constraint::Length(10), Constraint::Min(20)])
+                .header(header)
+                .column_spacing(1)
+                .highlight_symbol("❯ ")
+                .row_highlight_style(self.theme.focus);
             let mut table_state = TableState::default();
             table_state.select(model.selected);
             frame.render_stateful_widget(table, rows[1], &mut table_state);

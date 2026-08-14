@@ -10,6 +10,7 @@ use nu_agent_core::renderer::UiRenderer;
 
 use crate::runtime::{HybridTerminalEvents, TuiRuntimeRenderer};
 use crate::state::SessionPickerOption;
+use nu_agent_core::session::SessionInfo;
 
 #[cfg(test)]
 #[path = "interactive_test.rs"]
@@ -234,6 +235,25 @@ where
 
     fn display_incoming_message(&mut self, text: &str) {
         self.renderer.display_incoming_message(text);
+    }
+
+    fn set_session_picker_options(&mut self, options: Vec<SessionInfo>) {
+        let tui_options: Vec<SessionPickerOption> = options
+            .into_iter()
+            .map(|info| {
+                let display = info
+                    .title
+                    .clone()
+                    .unwrap_or_else(|| "(untitled)".to_string());
+                SessionPickerOption {
+                    id: info.id,
+                    title: info.title,
+                    created_at: info.last_active,
+                    display,
+                }
+            })
+            .collect();
+        self.renderer.set_session_picker_options(tui_options);
     }
 }
 

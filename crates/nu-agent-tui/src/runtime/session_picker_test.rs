@@ -83,10 +83,8 @@ fn session_picker_table_model_with_options() {
     assert_eq!(model.rows.len(), 2);
     assert_eq!(model.rows[0][0], "2h ago");
     assert_eq!(model.rows[0][1], "My Session");
-    assert_eq!(model.rows[0][2], "abc123def456…");
     assert_eq!(model.rows[1][0], "1d ago");
     assert_eq!(model.rows[1][1], "(untitled)");
-    assert_eq!(model.rows[1][2], "xyz789");
 }
 
 #[test]

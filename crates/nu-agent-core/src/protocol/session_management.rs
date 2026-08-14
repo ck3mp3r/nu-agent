@@ -24,6 +24,11 @@ pub trait SessionState {
 /// `Compaction::execute_compaction_trigger` and
 /// `McpManagement::set_mcp_server_enabled`.
 pub trait SessionPersistence {
+    /// Returns the runtime's working directory for CWD-scoped session listing.
+    fn cwd(&self) -> &std::path::Path {
+        std::path::Path::new("/")
+    }
+
     /// Load a session by ID and return its messages as UI snapshots.
     /// Returns an error string if the session doesn't exist or can't be loaded.
     fn load_session(
