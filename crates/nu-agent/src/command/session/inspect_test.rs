@@ -1,5 +1,5 @@
 use super::inspect::{AgentSessionInspect, CwdInterface};
-use nu_agent_core::session::prefix::dir_prefix;
+use nu_agent_core::session::prefix::{dir_prefix, dir_prefix_legacy};
 use nu_agent_core::session::{FsSessionStore, SessionStore, SessionStoreImpl};
 use nu_agent_core::types::Message;
 use nu_plugin::{EvaluatedCall, SimplePluginCommand};
@@ -142,5 +142,45 @@ async fn run_prepends_cwd_prefix_to_session_id() {
         id.as_deref(),
         Some(full_id.as_str()),
         "returned id should equal the prefixed session id"
+    );
+}
+
+#[tokio::test]
+async fn inspect_finds_legacy_prefixed_session_via_fallback() {
+    let temp_dir = TempDir::new().unwrap();
+    let store = Arc::new(SessionStoreImpl::Fs(FsSessionStore::new(
+        temp_dir.path().to_path_buf(),
+    )));
+
+    // Create a session with the legacy 7-char prefix (as if created before the
+    // prefix length increase).
+    let legacy_prefix = dir_prefix_legacy(temp_dir.path());
+    let legacy_id = format!("{legacy_prefix}-old-session");
+    store
+        .create(&legacy_id, &[Message::user("hello")])
+        .await
+        .unwrap();
+
+    let command = AgentSessionInspect::new();
+    let engine = MockCwd {
+        dir: temp_dir.path().to_string_lossy().to_string(),
+    };
+    let call = make_call("old-session");
+
+    let result = command.run_inner(&engine, &call, &store).await;
+    assert!(result.is_ok(), "run_inner failed: {:?}", result.err());
+
+    let value = result.unwrap();
+    let id = match &value {
+        Value::Record { val, .. } => val
+            .get("id")
+            .and_then(|v| v.as_str().ok())
+            .map(|s| s.to_owned()),
+        _ => None,
+    };
+    assert_eq!(
+        id.as_deref(),
+        Some(legacy_id.as_str()),
+        "returned id should equal the legacy-prefixed session id"
     );
 }

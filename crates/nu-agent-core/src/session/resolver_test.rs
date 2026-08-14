@@ -884,9 +884,9 @@ async fn resolve_session_request_user_provided_id_gets_prefixed() {
         .unwrap();
 
     let id = result.final_session_id.unwrap();
-    // Must start with 7-char prefix derived from cwd
+    // Must start with 16-char prefix derived from cwd
     let prefix = crate::session::prefix::dir_prefix(&cwd);
-    assert_eq!(&id[..8], format!("{prefix}-"));
+    assert_eq!(&id[..17], format!("{prefix}-"));
     assert!(
         id.ends_with("foo"),
         "expected id to end with 'foo', got: {id}"
@@ -964,5 +964,50 @@ async fn attach_existing_session_always_returns_initial_messages() {
     assert!(
         !result.initial_messages.is_empty(),
         "initial_messages must be non-empty when session has messages"
+    );
+}
+
+#[tokio::test]
+async fn attach_falls_back_to_legacy_prefixed_session() {
+    use crate::session::FsSessionStore;
+    use crate::session::resolver::{
+        DefaultSessionResolver, SessionResolutionInput, SessionResolver,
+    };
+    use crate::types::Message;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let store = Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
+    let cwd = std::path::PathBuf::from("/home/user/project");
+
+    // Create a session with the legacy 7-char prefix (as if created before the
+    // prefix length increase).
+    let legacy_prefix = crate::session::prefix::dir_prefix_legacy(&cwd);
+    let raw_id = "old-session";
+    let legacy_id = format!("{legacy_prefix}-{raw_id}");
+    store
+        .create(&legacy_id, &[Message::user("hello")])
+        .await
+        .unwrap();
+
+    let resolver = DefaultSessionResolver::new(Arc::clone(&store));
+    let result = resolver
+        .resolve(SessionResolutionInput {
+            use_tui: true,
+            session_id: Some(raw_id.to_string()),
+            cwd: cwd.clone(),
+        })
+        .await
+        .unwrap();
+
+    // The resolved final_session_id must be the legacy-prefixed ID
+    assert_eq!(
+        result.final_session_id.as_deref(),
+        Some(legacy_id.as_str()),
+        "expected legacy-prefixed session to be resolved via fallback"
+    );
+    assert!(
+        result.should_hydrate_transcript,
+        "should_hydrate_transcript must be true when legacy session has messages"
     );
 }

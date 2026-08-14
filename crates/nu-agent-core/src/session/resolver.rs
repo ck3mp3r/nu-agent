@@ -55,11 +55,35 @@ impl<S: SessionStore + Clone + Send + Sync> SessionResolver for DefaultSessionRe
         &self,
         input: SessionResolutionInput,
     ) -> Result<SessionResolution, LabeledError> {
-        let prefix = crate::session::prefix::dir_prefix(&input.cwd);
+        let new_prefix = crate::session::prefix::dir_prefix(&input.cwd);
+        let legacy_prefix = crate::session::prefix::dir_prefix_legacy(&input.cwd);
         let request = resolve_session_request(input.use_tui, input.session_id);
         let request = match request {
-            SessionRequest::Attach(id) => SessionRequest::Attach(format!("{prefix}-{id}")),
-            SessionRequest::Create(id) => SessionRequest::Create(format!("{prefix}-{id}")),
+            SessionRequest::Attach(id) => {
+                let new_id = format!("{new_prefix}-{id}");
+                let legacy_id = format!("{legacy_prefix}-{id}");
+                // Try the new prefix first, then fall back to the legacy prefix
+                // for sessions created before the prefix length increase.
+                let new_exists = self
+                    .store
+                    .load(&new_id)
+                    .await
+                    .map_err(|e| LabeledError::new(format!("Failed to load session: {e}")))?
+                    .is_some();
+                let resolved = if new_exists {
+                    new_id
+                } else {
+                    let legacy_exists = self
+                        .store
+                        .load(&legacy_id)
+                        .await
+                        .map_err(|e| LabeledError::new(format!("Failed to load session: {e}")))?
+                        .is_some();
+                    if legacy_exists { legacy_id } else { new_id }
+                };
+                SessionRequest::Attach(resolved)
+            }
+            SessionRequest::Create(id) => SessionRequest::Create(format!("{new_prefix}-{id}")),
             SessionRequest::None => SessionRequest::None,
         };
         match request {

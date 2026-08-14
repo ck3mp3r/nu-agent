@@ -36,6 +36,7 @@ pub trait SessionPersistence {
     /// List all available sessions.
     fn list_sessions(
         &self,
+        _cwd: &std::path::Path,
     ) -> impl std::future::Future<Output = Result<Vec<SessionInfo>, String>> + Send {
         async move { Ok(Vec::new()) }
     }

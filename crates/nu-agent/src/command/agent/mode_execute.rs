@@ -151,7 +151,10 @@ pub(crate) async fn run_tui_mode(
     tui_ui.set_agent_picker_options(agent_picker_catalog);
     // Populate session picker from session store
     {
-        let sessions = runtime_impl.list_sessions().await;
+        let cwd = runtime_impl
+            .mcp_caller_cwd()
+            .unwrap_or(std::path::Path::new("."));
+        let sessions = runtime_impl.list_sessions(cwd).await;
         match sessions {
             Ok(sessions) => {
                 let options: Vec<nu_agent_tui::state::SessionPickerOption> = sessions

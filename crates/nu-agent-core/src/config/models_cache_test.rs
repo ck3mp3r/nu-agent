@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use serial_test::serial;
+
 use super::{ModelLimit, ModelSpec, ModelsCache, ModelsCacheError, ProviderSpec};
 
 fn make_test_cache() -> ModelsCache {
@@ -31,6 +33,7 @@ fn make_test_cache() -> ModelsCache {
 }
 
 #[test]
+#[serial]
 fn load_returns_error_when_file_missing() {
     // Point XDG_DATA_HOME at a temp dir with no models.json, then verify NotFound.
     let dir = tempfile::tempdir().expect("temp dir");

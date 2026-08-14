@@ -1,9 +1,32 @@
-use super::AgentSessionClear;
+use super::clear::{AgentSessionClear, CwdInterface};
+use nu_agent_core::session::prefix::dir_prefix_legacy;
 use nu_agent_core::session::{FsSessionStore, SessionStore, SessionStoreImpl};
 use nu_agent_core::types::Message;
-use nu_plugin::SimplePluginCommand;
+use nu_plugin::{EvaluatedCall, SimplePluginCommand};
+use nu_protocol::{LabeledError, Span, Value};
 use std::sync::Arc;
 use tempfile::TempDir;
+
+/// Minimal mock for CwdInterface that returns a fixed directory path.
+struct MockCwd {
+    dir: String,
+}
+
+impl CwdInterface for MockCwd {
+    fn get_current_dir(&self) -> Result<String, LabeledError> {
+        Ok(self.dir.clone())
+    }
+}
+
+/// Helper: build a minimal EvaluatedCall with a single positional string argument.
+fn make_call(session_id: &str) -> EvaluatedCall {
+    let span = Span::test_data();
+    EvaluatedCall {
+        head: span,
+        positional: vec![Value::string(session_id, span)],
+        named: vec![],
+    }
+}
 
 #[tokio::test]
 async fn test_agent_session_clear_deletes_existing_session() {
@@ -111,4 +134,37 @@ async fn test_delete_session_removes_only_target_file() {
     assert!(path1.exists(), "session-1 should still exist");
     assert!(!path2.exists(), "session-2 should be deleted");
     assert!(path3.exists(), "session-3 should still exist");
+}
+
+#[tokio::test]
+async fn clear_deletes_legacy_prefixed_session_via_fallback() {
+    let temp_dir = TempDir::new().unwrap();
+    let store = Arc::new(SessionStoreImpl::Fs(FsSessionStore::new(
+        temp_dir.path().to_path_buf(),
+    )));
+
+    // Create a session with the legacy 7-char prefix (as if created before the
+    // prefix length increase).
+    let legacy_prefix = dir_prefix_legacy(temp_dir.path());
+    let legacy_id = format!("{legacy_prefix}-old-session");
+    store
+        .create(&legacy_id, &[Message::user("hello")])
+        .await
+        .unwrap();
+
+    let command = AgentSessionClear::new();
+    let engine = MockCwd {
+        dir: temp_dir.path().to_string_lossy().to_string(),
+    };
+    let call = make_call("old-session");
+
+    let result = command.run_inner(&engine, &call, &store).await;
+    assert!(result.is_ok(), "run_inner failed: {:?}", result.err());
+
+    // The legacy-prefixed session should now be deleted
+    let loaded = store.load(&legacy_id).await.unwrap();
+    assert!(
+        loaded.is_none(),
+        "legacy-prefixed session should be deleted after clear"
+    );
 }

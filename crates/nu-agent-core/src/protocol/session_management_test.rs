@@ -1,5 +1,6 @@
 use super::session_management::{SessionPersistence, SessionState};
 use crate::session::SessionInfo;
+use std::path::Path;
 
 // --- SessionState tests ---
 
@@ -33,7 +34,7 @@ async fn session_persistence_default_load_session_returns_error() {
 #[tokio::test]
 async fn session_persistence_default_list_sessions_returns_empty() {
     let persistence = NoopSessionPersistence;
-    let result = persistence.list_sessions().await;
+    let result = persistence.list_sessions(Path::new("/")).await;
     assert_eq!(result, Ok(Vec::<SessionInfo>::new()));
 }
 
@@ -61,6 +62,6 @@ async fn both_traits_can_be_implemented_together() {
         Err("Session loading not supported".to_string())
     );
 
-    let list_result = combined.list_sessions().await;
+    let list_result = combined.list_sessions(Path::new("/")).await;
     assert_eq!(list_result, Ok(Vec::<SessionInfo>::new()));
 }

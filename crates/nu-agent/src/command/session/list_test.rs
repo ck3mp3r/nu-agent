@@ -1,9 +1,32 @@
-use super::AgentSessionList;
+use super::list::{AgentSessionList, CwdInterface};
+use nu_agent_core::session::prefix::{dir_prefix, dir_prefix_legacy};
 use nu_agent_core::session::{FsSessionStore, SessionStore, SessionStoreImpl};
 use nu_agent_core::types::Message;
-use nu_plugin::SimplePluginCommand;
+use nu_plugin::{EvaluatedCall, SimplePluginCommand};
+use nu_protocol::{LabeledError, Span, Value};
 use std::sync::Arc;
 use tempfile::TempDir;
+
+/// Minimal mock for CwdInterface that returns a fixed directory path.
+struct MockCwd {
+    dir: String,
+}
+
+impl CwdInterface for MockCwd {
+    fn get_current_dir(&self) -> Result<String, LabeledError> {
+        Ok(self.dir.clone())
+    }
+}
+
+/// Helper: build a minimal EvaluatedCall with no positional arguments.
+fn make_call() -> EvaluatedCall {
+    let span = Span::test_data();
+    EvaluatedCall {
+        head: span,
+        positional: vec![],
+        named: vec![],
+    }
+}
 
 #[tokio::test]
 async fn test_agent_session_list_returns_table_with_session_stats() {
@@ -78,4 +101,62 @@ fn test_agent_session_list_command_signature() {
     // Verify signature
     let sig = SimplePluginCommand::signature(&command);
     assert_eq!(sig.name, "agent session list");
+}
+
+#[tokio::test]
+async fn list_returns_both_new_and_legacy_prefixed_sessions() {
+    let temp_dir = TempDir::new().unwrap();
+    let store = Arc::new(SessionStoreImpl::Fs(FsSessionStore::new(
+        temp_dir.path().to_path_buf(),
+    )));
+
+    let new_prefix = dir_prefix(temp_dir.path());
+    let legacy_prefix = dir_prefix_legacy(temp_dir.path());
+
+    // Create one session with the new 16-char prefix and one with the legacy 7-char prefix
+    store
+        .create(
+            &format!("{new_prefix}-new-session"),
+            &[Message::user("hello")],
+        )
+        .await
+        .unwrap();
+    store
+        .create(
+            &format!("{legacy_prefix}-legacy-session"),
+            &[Message::user("hello")],
+        )
+        .await
+        .unwrap();
+
+    let command = AgentSessionList::new();
+    let engine = MockCwd {
+        dir: temp_dir.path().to_string_lossy().to_string(),
+    };
+    let call = make_call();
+    let result = command.run_inner(&engine, &call, &store).await.unwrap();
+
+    // Extract the display IDs from the returned list
+    let ids: Vec<String> = match &result {
+        Value::List { vals, .. } => vals
+            .iter()
+            .filter_map(|v| match v {
+                Value::Record { val, .. } => val
+                    .get("id")
+                    .and_then(|v| v.as_str().ok())
+                    .map(|s| s.to_owned()),
+                _ => None,
+            })
+            .collect(),
+        _ => panic!("Expected list result"),
+    };
+
+    assert!(
+        ids.contains(&"new-session".to_string()),
+        "expected new-prefixed session in list, got: {ids:?}"
+    );
+    assert!(
+        ids.contains(&"legacy-session".to_string()),
+        "expected legacy-prefixed session in list, got: {ids:?}"
+    );
 }

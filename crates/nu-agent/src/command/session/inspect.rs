@@ -1,6 +1,6 @@
 use crate::plugin::AgentPlugin;
 use nu_agent_core::compaction::CompactionParams;
-use nu_agent_core::session::prefix::dir_prefix;
+use nu_agent_core::session::prefix::{dir_prefix, dir_prefix_legacy};
 use nu_agent_core::session::{SessionStore, SessionStoreImpl, StoreEntry};
 use nu_agent_core::types::{AssistantContent, Message, UserContent};
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
@@ -45,15 +45,29 @@ impl AgentSessionInspect {
         let session_id: String = call.req(0)?;
 
         let cwd = std::path::PathBuf::from(engine.get_current_dir()?);
-        let prefix = dir_prefix(&cwd);
-        let session_id = format!("{prefix}-{session_id}");
+        let new_prefix = dir_prefix(&cwd);
+        let legacy_prefix = dir_prefix_legacy(&cwd);
+        let new_id = format!("{new_prefix}-{session_id}");
+        let legacy_id = format!("{legacy_prefix}-{session_id}");
 
-        // Load session metadata and entries from the store
-        let (metadata, entries) = store
-            .load(&session_id)
+        // Load session metadata and entries from the store, trying the new
+        // prefix first and falling back to the legacy prefix for sessions
+        // created before the prefix length increase.
+        let loaded = store
+            .load(&new_id)
             .await
-            .map_err(|e| LabeledError::new(format!("Failed to load session: {}", e)))?
-            .ok_or_else(|| LabeledError::new(format!("Session not found: {session_id}")))?;
+            .map_err(|e| LabeledError::new(format!("Failed to load session: {}", e)))?;
+        let (metadata, entries) = match loaded {
+            Some(v) => v,
+            None => {
+                let legacy = store
+                    .load(&legacy_id)
+                    .await
+                    .map_err(|e| LabeledError::new(format!("Failed to load session: {}", e)))?;
+                legacy
+                    .ok_or_else(|| LabeledError::new(format!("Session not found: {session_id}")))?
+            }
+        };
 
         // Filter messages from entries (skip compaction markers)
         let messages: Vec<&Message> = entries

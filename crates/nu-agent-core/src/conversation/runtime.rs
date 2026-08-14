@@ -571,11 +571,15 @@ where
         Ok(crate::session::resolver::hydrate_transcript_from_store_entries(&entries))
     }
 
-    async fn list_sessions(&self) -> Result<Vec<SessionInfo>, String> {
-        self.store
+    async fn list_sessions(&self, cwd: &std::path::Path) -> Result<Vec<SessionInfo>, String> {
+        let sessions = self
+            .store
             .list()
             .await
-            .map_err(|e| format!("Failed to list sessions: {e}"))
+            .map_err(|e| format!("Failed to list sessions: {e}"))?;
+        Ok(crate::session::prefix::filter_sessions_by_cwd(
+            sessions, cwd,
+        ))
     }
 }
 
