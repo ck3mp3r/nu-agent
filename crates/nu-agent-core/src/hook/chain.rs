@@ -24,7 +24,7 @@ use rig::agent::{
 use rig::core::wasm_compat::WasmCompatSend;
 use rig::message::Message;
 
-use crate::bus::{Bus, CancelEvent};
+use crate::bus::{Bus, CancelEvent, LlmEvent, ToolEvent, WarningEvent};
 use crate::config::defaults;
 use crate::protocol::event::UiEvent;
 use crate::tools::closure::ClosureRegistry;
@@ -70,7 +70,10 @@ pub struct HookChain<P: AsyncPermissionResolver> {
     circuit: CircuitBreakerGuard,
     history: HistorySnapshot,
     permission: P,
+    /// mpsc sender used by the permission resolver for permission events (request/response).
     ui_tx: mpsc::UnboundedSender<UiEvent>,
+    /// Shared signal bus — tool/LLM/warning events are published here.
+    bus: Bus,
     closure_registry: Arc<ClosureRegistry>,
     mcp_registry: Arc<McpToolRegistry>,
 }
@@ -99,6 +102,7 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
             history: HistorySnapshot::new(),
             permission: permission_resolver,
             ui_tx,
+            bus,
             closure_registry,
             mcp_registry,
         }
@@ -121,7 +125,7 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
         let mut rx = self.cancel_rx.lock().expect("cancel_rx mutex poisoned");
         matches!(
             rx.try_recv(),
-            Ok(CancelEvent::Requested { .. }) | Err(broadcast::error::TryRecvError::Lagged(_))
+            Ok(CancelEvent::Requested) | Err(broadcast::error::TryRecvError::Lagged(_))
         )
     }
 }
@@ -157,13 +161,13 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
         }
 
         let cancelled = self.is_cancelled();
-        let ui_tx = self.ui_tx.clone();
+        let bus = self.bus.clone();
 
         async move {
             if cancelled {
                 return CompletionCallAction::stop("Cancelled by user");
             }
-            let _ = ui_tx.send(UiEvent::LlmStart);
+            let _ = bus.llm().send(LlmEvent::Start);
             CompletionCallAction::continue_run()
         }
     }
@@ -174,14 +178,14 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
         event: TextDelta<'_>,
     ) -> impl std::future::Future<Output = ObservationAction> + WasmCompatSend {
         let cancelled = self.is_cancelled();
-        let ui_tx = self.ui_tx.clone();
+        let bus = self.bus.clone();
         let text = event.aggregated.to_string();
 
         async move {
             if cancelled {
                 return ObservationAction::stop("Cancelled by user");
             }
-            let _ = ui_tx.send(UiEvent::AssistantMessage { text });
+            let _ = bus.llm().send(LlmEvent::AssistantMessage { text });
             ObservationAction::continue_run()
         }
     }
@@ -200,7 +204,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
         // Pre-compute all synchronous checks and capture values for the async block
         let cancelled = self.is_cancelled();
         let subturn_action = self.subturn.check_and_increment(tool_name);
-        let doom_action = self.doom.check_and_record(tool_name, args, &self.ui_tx);
+        let doom_action = self.doom.check_and_record(tool_name, args, &self.bus);
         let circuit_action = self
             .circuit
             .check_server_enabled(tool_name, &self.mcp_registry);
@@ -209,7 +213,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
             .as_str()
             .to_string();
 
-        let _ = self.ui_tx.send(UiEvent::ToolStart {
+        let _ = self.bus.tool().send(ToolEvent::Start {
             name: tool_name.to_string(),
             source: source.clone(),
             arguments: args.to_string(),
@@ -217,6 +221,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
 
         let permission = self.permission.clone();
         let ui_tx = self.ui_tx.clone();
+        let bus = self.bus.clone();
         let tool_name_owned = tool_name.to_string();
         let args_owned = args.to_string();
         let source_owned = source;
@@ -242,7 +247,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
             match decision {
                 PermissionDecision::Allow => ToolCallAction::run(),
                 PermissionDecision::Deny => {
-                    let _ = ui_tx.send(UiEvent::ToolEnd {
+                    let _ = bus.tool().send(ToolEvent::End {
                         name: tool_name_owned,
                         source: source_owned,
                         arguments: args_owned,
@@ -309,7 +314,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
             &result_text,
         );
 
-        let _ = self.ui_tx.send(UiEvent::ToolEnd {
+        let _ = self.bus.tool().send(ToolEvent::End {
             name: tool_name.to_string(),
             source,
             arguments: args.to_string(),
@@ -326,7 +331,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
             &result_text,
             success,
             &self.mcp_registry,
-            &self.ui_tx,
+            &self.bus,
         );
 
         async { ToolResultAction::keep() }
@@ -339,9 +344,20 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
     ) -> impl std::future::Future<Output = ObservationAction> + WasmCompatSend {
         let usage = event.usage;
         if usage.total_tokens > 0 {
-            let _ = self.ui_tx.send(UiEvent::LlmEnd {
-                response_chars: 0,
-                tool_calls: 0,
+            let mut response_chars = 0usize;
+            let mut tool_calls = 0usize;
+            for item in event.content.iter() {
+                match item {
+                    rig::message::AssistantContent::Text(text) => {
+                        response_chars += text.text.chars().count();
+                    }
+                    rig::message::AssistantContent::ToolCall(_) => tool_calls += 1,
+                    _ => {}
+                }
+            }
+            let _ = self.bus.llm().send(LlmEvent::End {
+                response_chars,
+                tool_calls,
                 input_tokens: usage.input_tokens,
                 output_tokens: usage.output_tokens,
                 total_tokens: usage.total_tokens,
@@ -361,7 +377,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
             event.tool_name,
             event.available_tools.join(", ")
         );
-        let _ = self.ui_tx.send(UiEvent::Warning {
+        let _ = self.bus.warning().send(WarningEvent::Message {
             message: feedback.clone(),
         });
         async { Some(InvalidToolCallAction::retry(feedback)) }

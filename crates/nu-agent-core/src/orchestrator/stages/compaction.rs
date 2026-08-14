@@ -1,5 +1,6 @@
 use std::sync::mpsc as std_mpsc;
 
+use crate::bus::WarningEvent;
 use crate::orchestrator::stages::{OrchestrationContext, StageOutcome};
 use crate::orchestrator::{
     PendingAutoCompaction, PendingCompactionTrigger, WorkerCommand, poll_option_channel,
@@ -7,7 +8,6 @@ use crate::orchestrator::{
 use crate::protocol::contracts::{
     DisplayStateUi, LifecycleUi, ProgressUi, TranscriptUi, UserInputUi,
 };
-use crate::protocol::event::UiEvent;
 
 /// Polls auto-compaction evaluation and manual compaction trigger responses.
 pub(crate) struct CompactionStage {
@@ -39,12 +39,15 @@ impl CompactionStage {
         if let Some(response_rx) = self.pending_compaction_trigger.take() {
             let (message, rx) = poll_option_channel(response_rx);
             if let Some(msg) = message {
-                ctx.ui.emit(&UiEvent::Warning { message: msg });
+                let _ = ctx
+                    .bus
+                    .warning()
+                    .send(WarningEvent::Message { message: msg });
                 handled = true;
             } else if let Some(rx) = rx {
                 self.pending_compaction_trigger = Some(rx);
             } else {
-                ctx.ui.emit(&UiEvent::Warning {
+                let _ = ctx.bus.warning().send(WarningEvent::Message {
                     message: "Compaction worker disconnected".to_string(),
                 });
                 handled = true;
@@ -68,7 +71,10 @@ impl CompactionStage {
         if let Some(response_rx) = self.pending_auto_compaction.take() {
             let (message, rx) = poll_option_channel(response_rx);
             if let Some(msg) = message {
-                ctx.ui.emit(&UiEvent::Warning { message: msg });
+                let _ = ctx
+                    .bus
+                    .warning()
+                    .send(WarningEvent::Message { message: msg });
                 handled = true;
             } else if let Some(rx) = rx {
                 self.pending_auto_compaction = Some(rx);

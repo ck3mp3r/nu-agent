@@ -17,7 +17,7 @@ const COMPACTION_FAILURE_WARNING: &str =
 /// focused capability traits.
 ///
 /// This struct encapsulates the worker-thread dispatch logic that was previously
-/// inline inside `run_interactive_loop`. Each match arm is identical to the
+/// inline inside the interactive loop. Each match arm is identical to the
 /// original orchestrator implementation — this is a pure extraction.
 pub struct CommandRouter;
 

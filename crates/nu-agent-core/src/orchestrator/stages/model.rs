@@ -1,5 +1,6 @@
 use std::sync::mpsc as std_mpsc;
 
+use crate::bus::{SessionEvent, WarningEvent};
 use crate::orchestrator::pending::PendingOps;
 use crate::orchestrator::poll::{PollOutcome, poll_pending};
 use crate::orchestrator::stages::{OrchestrationContext, StageOutcome};
@@ -10,7 +11,6 @@ use crate::protocol::contracts::{
     DisplayStateUi, LifecycleUi, McpToggleRequest, McpUsabilityState, ProgressUi, SharedUiAction,
     TranscriptUi, UserInputUi,
 };
-use crate::protocol::event::UiEvent;
 
 /// Handles all model switching, agent switching, and MCP toggle operations.
 ///
@@ -24,7 +24,7 @@ pub(crate) struct ModelSwitchStage {
     last_authoritative_visible_count: usize,
     pending_model_switch: Option<PendingModelSwitch>,
     pending_agent_switch: Option<PendingAgentSwitch>,
-    pending_session_switch: Option<PendingSessionSwitch>,
+    pending_session_switch: Option<(String, PendingSessionSwitch)>,
     pending_mcp_toggles: Vec<PendingMcpToggle>,
     pending_ops: PendingOps,
 }
@@ -88,19 +88,19 @@ impl ModelSwitchStage {
                     log::debug!("Model switch succeeded: {active_identity}");
                     ctx.ui.set_active_model_identity(active_identity.as_str());
                     ctx.ui.set_context_window_max_tokens(max_tokens);
-                    ctx.ui.emit(&UiEvent::Warning {
+                    let _ = ctx.bus.warning().send(WarningEvent::Message {
                         message: format!("Model switched: {active_identity}"),
                     });
                     handled = true;
                 }
                 PollOutcome::Ready(Err(message)) => {
                     log::warn!("Model switch failed: {message}");
-                    ctx.ui.emit(&UiEvent::Warning { message });
+                    let _ = ctx.bus.warning().send(WarningEvent::Message { message });
                     handled = true;
                 }
                 PollOutcome::Pending(rx) => self.pending_model_switch = Some(rx),
                 PollOutcome::Disconnected => {
-                    ctx.ui.emit(&UiEvent::Warning {
+                    let _ = ctx.bus.warning().send(WarningEvent::Message {
                         message: "Model switch worker disconnected".to_string(),
                     });
                     handled = true;
@@ -117,19 +117,19 @@ impl ModelSwitchStage {
                     ctx.ui.set_active_persona_icon(icon);
                     ctx.ui.set_active_model_identity(&model_identity);
                     ctx.ui.set_context_window_max_tokens(max_tokens);
-                    ctx.ui.emit(&UiEvent::Warning {
+                    let _ = ctx.bus.warning().send(WarningEvent::Message {
                         message: format!("Agent switched to: {agent_identity}"),
                     });
                     handled = true;
                 }
                 PollOutcome::Ready(Err(message)) => {
                     log::warn!("Agent switch failed: {message}");
-                    ctx.ui.emit(&UiEvent::Warning { message });
+                    let _ = ctx.bus.warning().send(WarningEvent::Message { message });
                     handled = true;
                 }
                 PollOutcome::Pending(rx) => self.pending_agent_switch = Some(rx),
                 PollOutcome::Disconnected => {
-                    ctx.ui.emit(&UiEvent::Warning {
+                    let _ = ctx.bus.warning().send(WarningEvent::Message {
                         message: "Agent switch worker channel closed".to_string(),
                     });
                     handled = true;
@@ -138,25 +138,29 @@ impl ModelSwitchStage {
         }
 
         // --- Poll pending session switch result ---
-        if let Some(response_rx) = self.pending_session_switch.take() {
+        if let Some((session_id, response_rx)) = self.pending_session_switch.take() {
             match poll_pending(response_rx) {
                 PollOutcome::Ready(Ok(snapshots)) => {
                     log::debug!("Session switch succeeded: {} messages", snapshots.len());
                     ctx.ui.clear_transcript();
                     ctx.ui.hydrate_transcript_from_messages(snapshots, None);
-                    ctx.ui.emit(&UiEvent::Warning {
+                    let _ = ctx.bus.warning().send(WarningEvent::Message {
                         message: "Session switched".to_string(),
+                    });
+                    let _ = ctx.bus.session().send(SessionEvent::Switched {
+                        from_session_id: None,
+                        to_session_id: session_id,
                     });
                     handled = true;
                 }
                 PollOutcome::Ready(Err(message)) => {
                     log::warn!("Session switch failed: {message}");
-                    ctx.ui.emit(&UiEvent::Warning { message });
+                    let _ = ctx.bus.warning().send(WarningEvent::Message { message });
                     handled = true;
                 }
-                PollOutcome::Pending(rx) => self.pending_session_switch = Some(rx),
+                PollOutcome::Pending(rx) => self.pending_session_switch = Some((session_id, rx)),
                 PollOutcome::Disconnected => {
-                    ctx.ui.emit(&UiEvent::Warning {
+                    let _ = ctx.bus.warning().send(WarningEvent::Message {
                         message: "Session switch worker disconnected".to_string(),
                     });
                     handled = true;
@@ -259,7 +263,7 @@ impl ModelSwitchStage {
             handled = true;
             if *ctx.worker_active {
                 self.pending_ops.queue_model_switch(model_spec.clone());
-                ctx.ui.emit(&UiEvent::Warning {
+                let _ = ctx.bus.warning().send(WarningEvent::Message {
                     message: format!("Model switch queued for next turn: {model_spec}"),
                 });
             } else if self.pending_model_switch.is_none() {
@@ -275,7 +279,7 @@ impl ModelSwitchStage {
                 {
                     self.pending_model_switch = Some(response_rx);
                 } else {
-                    ctx.ui.emit(&UiEvent::Warning {
+                    let _ = ctx.bus.warning().send(WarningEvent::Message {
                         message: "Model switch worker channel closed".to_string(),
                     });
                 }
@@ -289,7 +293,7 @@ impl ModelSwitchStage {
             handled = true;
             if *ctx.worker_active {
                 self.pending_ops.queue_agent_switch(agent_name.clone());
-                ctx.ui.emit(&UiEvent::Warning {
+                let _ = ctx.bus.warning().send(WarningEvent::Message {
                     message: format!("Agent switch queued for next turn: {agent_name}"),
                 });
             } else if self.pending_agent_switch.is_none() {
@@ -305,7 +309,7 @@ impl ModelSwitchStage {
                 {
                     self.pending_agent_switch = Some(response_rx);
                 } else {
-                    ctx.ui.emit(&UiEvent::Warning {
+                    let _ = ctx.bus.warning().send(WarningEvent::Message {
                         message: "Agent switch worker channel closed".to_string(),
                     });
                 }
@@ -318,7 +322,7 @@ impl ModelSwitchStage {
         while let Some(session_id) = ctx.ui.take_next_session_switch_request() {
             handled = true;
             if *ctx.worker_active {
-                ctx.ui.emit(&UiEvent::Warning {
+                let _ = ctx.bus.warning().send(WarningEvent::Message {
                     message: "Cannot switch session while worker is active".to_string(),
                 });
             } else if self.pending_session_switch.is_none() {
@@ -326,15 +330,15 @@ impl ModelSwitchStage {
                 if ctx
                     .worker_tx
                     .send(WorkerCommand::SwitchSession {
-                        session_id,
+                        session_id: session_id.clone(),
                         response_tx,
                     })
                     .await
                     .is_ok()
                 {
-                    self.pending_session_switch = Some(response_rx);
+                    self.pending_session_switch = Some((session_id, response_rx));
                 } else {
-                    ctx.ui.emit(&UiEvent::Warning {
+                    let _ = ctx.bus.warning().send(WarningEvent::Message {
                         message: "Session switch worker channel closed".to_string(),
                     });
                 }
@@ -358,7 +362,7 @@ impl ModelSwitchStage {
             {
                 self.pending_model_switch = Some(response_rx);
             } else {
-                ctx.ui.emit(&UiEvent::Warning {
+                let _ = ctx.bus.warning().send(WarningEvent::Message {
                     message: "Model switch worker channel closed".to_string(),
                 });
             }
@@ -382,7 +386,7 @@ impl ModelSwitchStage {
             {
                 self.pending_agent_switch = Some(response_rx);
             } else {
-                ctx.ui.emit(&UiEvent::Warning {
+                let _ = ctx.bus.warning().send(WarningEvent::Message {
                     message: "Agent switch worker channel closed".to_string(),
                 });
             }

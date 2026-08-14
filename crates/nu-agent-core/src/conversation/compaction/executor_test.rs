@@ -49,6 +49,7 @@ fn compaction_executor_new_constructs_without_panic() {
         &memory,
         "test-session",
         CompactionParams::default(),
+        crate::bus::create_bus(),
     );
     // Construction succeeded — no panic.
 }

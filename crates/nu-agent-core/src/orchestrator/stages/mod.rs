@@ -1,8 +1,8 @@
-use std::sync::mpsc as std_mpsc;
 use tokio::sync::mpsc;
 
 use nu_protocol::{LabeledError, Span};
 
+use crate::bus::Bus;
 use crate::conversation::runtime::PendingPermissions;
 use crate::orchestrator::WorkerCommand;
 use crate::orchestrator::turn_outcome::TurnOutcome;
@@ -53,16 +53,14 @@ pub(crate) struct OrchestrationContext<'a, U> {
     pub ui: &'a mut U,
     /// External prompt that triggered the current turn (if any).
     /// Set by the main loop before dispatching a turn, consumed by the session
-    /// stage when the turn completes so it can fire `on_turn_complete`.
+    /// stage when the turn completes.
     pub active_external_prompt: &'a mut Option<String>,
     /// Task ID of the external prompt that triggered the current turn (if any).
     /// Parallel to `active_external_prompt`; cleared by the session stage when
     /// the turn completes so a later cancel signal for the same task is ignored.
     pub active_external_task_id: &'a mut Option<String>,
-    /// Optional sender for turn-completion notifications. When Some, the session
-    /// stage fires `(prompt_text, response_text)` after each turn that was
-    /// triggered by an external prompt.
-    pub on_turn_complete: &'a Option<std_mpsc::Sender<(String, String)>>,
+    /// Shared signal bus. The session stage publishes turn-completion events.
+    pub bus: &'a Bus,
 }
 
 /// All orchestration stages, bundled as a single composable unit.

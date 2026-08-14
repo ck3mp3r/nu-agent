@@ -1,4 +1,4 @@
-// Tests for CommandRouter agent-switch dispatch through run_interactive_loop.
+// Tests for CommandRouter agent-switch dispatch through the interactive loop.
 //
 // These verify that SwitchAgent commands dispatched by CommandRouter on the
 // worker thread produce the correct UI updates when the orchestrator loop

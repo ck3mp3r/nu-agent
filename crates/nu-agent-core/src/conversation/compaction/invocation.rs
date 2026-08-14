@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use crate::bus::{Bus, CompactionEvent};
 use crate::compaction::CompactionOutcome;
 use crate::protocol::{compaction::CompactionTriggerSource, contracts::ProgressUi, event::UiEvent};
 use crate::session::{CachedMemory, SessionStore};
@@ -10,10 +11,21 @@ pub(in crate::conversation) const COMPACTION_FAILURE_WARNING: &str =
 
 const COMPACTION_SUMMARY_PROMPT: &str = include_str!("prompts/compaction_summary.md");
 
+/// Data describing a completed compaction, published to the bus as
+/// `CompactionEvent::Triggered`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::conversation) struct CompactionTriggeredInfo {
+    pub source: String,
+    pub summarized_count: usize,
+    pub kept_recent_count: usize,
+    pub summary_preview: String,
+    pub summary_body: String,
+}
+
 pub(in crate::conversation) async fn execute_compaction_event_shared<F, Fut>(
     source: CompactionTriggerSource,
     execute: F,
-) -> Result<Option<(UiEvent, Option<u64>)>, String>
+) -> Result<Option<(CompactionTriggeredInfo, Option<u64>)>, String>
 where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = Result<Option<CompactionOutcome>, String>>,
@@ -23,7 +35,7 @@ where
     };
 
     Ok(Some((
-        UiEvent::CompactionTriggered {
+        CompactionTriggeredInfo {
             source: source.as_str().to_string(),
             summarized_count: outcome.summarized_count,
             kept_recent_count: outcome.kept_recent_count,
@@ -52,7 +64,8 @@ pub(in crate::conversation) struct CompactionInvocation<'a> {
 /// * `params` - Compaction parameters (thresholds, strategy, budget)
 /// * `memory` - `CachedMemory<S>` owning cache and backing store
 /// * `model` - Completion model for summarization
-/// * `ui` - Progress UI for emitting events
+/// * `ui` - Progress UI for cancel checks and tick events
+/// * `bus` - Signal bus for publishing compaction events
 /// * `invocation` - Compaction mode, source label, and token state
 ///
 /// # Returns
@@ -63,6 +76,7 @@ pub(in crate::conversation) async fn execute_compaction_with_config<S, M, U>(
     memory: &CachedMemory<S>,
     model: M,
     ui: &mut U,
+    bus: &Bus,
     invocation: CompactionInvocation<'_>,
 ) -> Result<Option<CompactionOutcome>, String>
 where
@@ -73,11 +87,13 @@ where
 {
     // Perform compaction with summarizer closure
     let source_owned = invocation.source.to_string();
+    let bus_clone = bus.clone();
     let summarizer = |old_messages: &[Message]| {
         let messages = old_messages.to_vec();
         let model_clone = model.clone();
         let src = source_owned.clone();
-        async move { summarize_messages(model_clone, ui, &messages, &src).await }
+        let bus = bus_clone.clone();
+        async move { summarize_messages(model_clone, ui, bus, &messages, &src).await }
     };
 
     let outcome = crate::compaction::compact(session_id, params, memory, summarizer)
@@ -151,13 +167,14 @@ fn format_messages_for_summary(messages: &[Message]) -> String {
 /// Summarize old rig messages with LLM.
 ///
 /// Formats rig messages, creates summarization prompt, and calls rig agent completion.
-/// Uses streaming API to emit progressive chunks via `UiEvent::CompactionSummaryChunk`.
+/// Uses streaming API to emit progressive chunks via `CompactionEvent::SummaryChunk`.
 ///
 /// Returns `(summary_text, total_tokens)` where `total_tokens` is captured from the
 /// streaming `Final` variant if the provider yields usage data.
 async fn summarize_messages<M, U>(
     model: M,
     ui: &mut U,
+    bus: Bus,
     old_messages: &[Message],
     source: &str,
 ) -> std::io::Result<(String, Option<u64>)>
@@ -194,7 +211,7 @@ where
                         match chunk {
                             rig::streaming::StreamedAssistantContent::Text(delta) => {
                                 aggregated.push_str(&delta.text);
-                                ui.emit(&UiEvent::CompactionSummaryChunk {
+                                let _ = bus.compaction().send(CompactionEvent::SummaryChunk {
                                     source: source.to_string(),
                                     delta: delta.text,
                                     aggregated: aggregated.clone(),

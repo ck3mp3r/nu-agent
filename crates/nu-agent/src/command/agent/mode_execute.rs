@@ -9,6 +9,7 @@ use nu_agent_a2a::{
     A2aCompletionEvent, AgentCard, InMemoryTaskStore, IncomingTask, Part, Peer, PeerCache,
     PeerDiscoveryImpl, mdns_name_for_switch, rebuild_card_for_switch, skill_from_persona,
 };
+use nu_agent_core::bus::{ExternalEvent, TurnEvent};
 use nu_agent_core::utils::value_ext::extract_response_text_from_value;
 use nu_agent_core::{
     conversation::runtime::AgentConversationRuntime,
@@ -54,21 +55,6 @@ pub(crate) fn auto_complete_a2a_task(store: &InMemoryTaskStore, task_id: &str, r
     if let Err(e) = store.complete_task(task_id, &final_text) {
         log::warn!("Failed to auto-complete A2A task {task_id}: {e}");
     }
-}
-
-/// Extract an A2A task ID from a formatted external prompt string.
-///
-/// The prompt format is: `[A2A Task {id} from {url}]: {text}`
-/// Returns the task ID portion, or `None` if the prompt doesn't match.
-pub(crate) fn extract_a2a_task_id(prompt_text: &str) -> Option<&str> {
-    if prompt_text.starts_with("[A2A Task ")
-        && let Some(end) = prompt_text.find(']')
-    {
-        // header is "id from url" (everything between "[A2A Task " and "]")
-        let header = &prompt_text["[A2A Task ".len()..end];
-        return header.split(" from ").next();
-    }
-    None
 }
 
 /// Whether the plugin should call `enter_foreground()` to receive SIGINT.
@@ -217,17 +203,13 @@ pub(crate) async fn run_tui_mode(
         tui_ui.push_startup_logo();
     }
 
-    // Bridge A2A channels (incoming tasks + completion events) into a single
-    // std channel of formatted prompt strings that the orchestrator can poll
-    // without A2A knowledge.
-    let external_prompt_rx: Option<std::sync::mpsc::Receiver<String>> = {
-        let (tx, std_rx) = std::sync::mpsc::channel::<String>();
-        let mut has_sources = false;
-
+    // Publish A2A channels (incoming tasks + completion events) onto the
+    // signal bus's external channel, which the orchestrator subscribes to.
+    let external_bus = runtime_impl.bus.clone();
+    {
         // Forward incoming A2A tasks
         if let Some(mut rx) = a2a.task_rx {
-            has_sources = true;
-            let tx = tx.clone();
+            let bus = external_bus.clone();
             std::thread::spawn(move || {
                 while let Some(incoming) = rx.blocking_recv() {
                     let text: String = incoming
@@ -244,9 +226,10 @@ pub(crate) async fn run_tui_mode(
                         "[A2A Task {} from {}]: {}\n\nProcess this request and respond with your answer. Your response will be automatically delivered as the task result.",
                         incoming.task_id, incoming.sender_url, text
                     );
-                    if tx.send(prompt).is_err() {
-                        break; // std receiver dropped, no more forwarding needed
-                    }
+                    let _ = bus.external().send(ExternalEvent::PromptReceived {
+                        prompt,
+                        task_id: incoming.task_id,
+                    });
                 }
                 log::warn!("incoming task channel closed");
             });
@@ -254,24 +237,22 @@ pub(crate) async fn run_tui_mode(
 
         // Forward A2A completion events
         if let Some(mut rx) = a2a.completion_rx {
-            has_sources = true;
-            let tx = tx.clone();
+            let bus = external_bus.clone();
             std::thread::spawn(move || {
                 while let Some(event) = rx.blocking_recv() {
                     let prompt = format!(
                         "[A2A Task {} completed by {}]: {}\n\nStatus: {}.",
                         event.task_id, event.agent_name, event.result, event.status
                     );
-                    if tx.send(prompt).is_err() {
-                        break;
-                    }
+                    let _ = bus.external().send(ExternalEvent::PromptReceived {
+                        prompt,
+                        task_id: event.task_id,
+                    });
                 }
                 log::warn!("completion event channel closed");
             });
         }
-
-        if has_sources { Some(std_rx) } else { None }
-    };
+    }
 
     // Bridge the A2A task cancel channel into a std channel that the
     // orchestrator can poll without A2A knowledge.
@@ -289,27 +270,29 @@ pub(crate) async fn run_tui_mode(
             cancel_rx
         });
 
-    // Create the auto-complete channel for A2A tasks. When the interactive loop
-    // finishes processing an external prompt (A2A task), it sends the prompt and
-    // response text through `turn_tx`. A background thread reads from the channel
-    // and calls `store.complete_task()`.
-    let turn_tx: Option<std::sync::mpsc::Sender<(String, String)>> =
-        if let Some(ref store) = a2a.task_store {
-            let (tx, rx) = std::sync::mpsc::channel::<(String, String)>();
-            let store = Arc::clone(store);
-            std::thread::spawn(move || {
-                while let Ok((prompt_text, response_text)) = rx.recv() {
-                    if let Some(task_id) = extract_a2a_task_id(&prompt_text)
-                        && let Err(e) = store.complete_task(task_id, &response_text)
-                    {
-                        log::warn!("auto-complete failed for task {task_id}: {e}");
+    // Auto-complete A2A tasks from turn-completion events on the signal bus.
+    // The session stage publishes `TurnEvent::TaskCompleted` with the task ID after
+    // each external turn completes. A background thread reads these and calls
+    // `store.complete_task()`.
+    if let Some(ref store) = a2a.task_store {
+        let store = Arc::clone(store);
+        let mut turn_rx = runtime_impl.bus.turn().subscribe();
+        std::thread::spawn(move || {
+            loop {
+                match turn_rx.blocking_recv() {
+                    Ok(TurnEvent::TaskCompleted { output, task_id }) => {
+                        if let Err(e) = store.complete_task(&task_id, &output) {
+                            log::warn!("auto-complete failed for task {task_id}: {e}");
+                        }
                     }
+                    Ok(TurnEvent::TurnCompleted { .. }) => {}
+                    Ok(TurnEvent::Started { .. }) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
-            });
-            Some(tx)
-        } else {
-            None
-        };
+            }
+        });
+    }
 
     // Build the on_agent_switch callback for A2A card updates.
     // Always built (regardless of A2A status) so the persona icon can be
@@ -366,9 +349,7 @@ pub(crate) async fn run_tui_mode(
                 .with_bus(runtime_impl.bus.clone())
                 .with_hydration(hydration.initial_messages, hydration.last_total_tokens)
                 .with_interactive_pending(Some(Arc::clone(&pending)))
-                .with_external_prompt_rx(external_prompt_rx)
-                .with_task_cancel_rx(task_cancel_rx)
-                .with_on_turn_complete(turn_tx);
+                .with_task_cancel_rx(task_cancel_rx);
             if let Some(cb) = on_agent_switch {
                 config = config.with_on_agent_switch(cb);
             }
@@ -378,9 +359,7 @@ pub(crate) async fn run_tui_mode(
             let mut config = InteractiveLoopConfig::new(span)
                 .with_bus(runtime_impl.bus.clone())
                 .with_interactive_pending(Some(Arc::clone(&pending)))
-                .with_external_prompt_rx(external_prompt_rx)
-                .with_task_cancel_rx(task_cancel_rx)
-                .with_on_turn_complete(turn_tx);
+                .with_task_cancel_rx(task_cancel_rx);
             if let Some(cb) = on_agent_switch {
                 config = config.with_on_agent_switch(cb);
             }

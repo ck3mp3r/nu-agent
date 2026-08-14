@@ -49,7 +49,7 @@ impl MockUi {
 
     /// Returns a `MockUi` and the `Bus` used to cancel the running turn.
     ///
-    /// Call `bus.cancel().send(CancelEvent::Requested { .. })` at any point during
+    /// Call `bus.cancel().send(CancelEvent::Requested)` at any point during
     /// the running turn to cancel it from outside — including from within a mock
     /// tool's `call()` implementation.
     pub fn with_external_cancel() -> (Self, Bus) {
@@ -77,9 +77,7 @@ impl ProgressUi for MockUi {
             && !self.cancel_published.swap(true, Ordering::SeqCst)
             && let Some(bus) = &self.cancel_bus
         {
-            let _ = bus
-                .cancel()
-                .send(crate::bus::CancelEvent::Requested { task_id: None });
+            let _ = bus.cancel().send(crate::bus::CancelEvent::Requested);
         }
         was_cancelled
     }

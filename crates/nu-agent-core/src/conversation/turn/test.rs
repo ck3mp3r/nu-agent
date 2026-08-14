@@ -120,9 +120,7 @@ impl ProgressUi for MockUi {
             && !self.cancel_published.swap(true, Ordering::SeqCst)
             && let Some(bus) = &self.cancel_bus
         {
-            let _ = bus
-                .cancel()
-                .send(crate::bus::CancelEvent::Requested { task_id: None });
+            let _ = bus.cancel().send(crate::bus::CancelEvent::Requested);
         }
         was_cancelled
     }
@@ -458,9 +456,7 @@ async fn filtered_tool_proxy_cancels_during_execution() {
     let bus2 = bus.clone();
     let cancel_handle = tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        let _ = bus2
-            .cancel()
-            .send(crate::bus::CancelEvent::Requested { task_id: None });
+        let _ = bus2.cancel().send(crate::bus::CancelEvent::Requested);
     });
 
     let mut context = rig::tool::ToolContext::new();

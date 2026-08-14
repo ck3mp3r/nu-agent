@@ -1,14 +1,8 @@
 use super::*;
 use rig::agent::ToolCallAction;
 use std::sync::{Arc, Mutex};
-use tokio::sync::mpsc;
 
-fn make_ui_tx() -> (
-    mpsc::UnboundedSender<crate::protocol::event::UiEvent>,
-    mpsc::UnboundedReceiver<crate::protocol::event::UiEvent>,
-) {
-    mpsc::unbounded_channel()
-}
+use crate::bus::create_bus;
 
 #[test]
 fn no_doom_loop_under_threshold() {
@@ -16,10 +10,10 @@ fn no_doom_loop_under_threshold() {
     let detector = DoomLoopDetector {
         state: Arc::clone(&state),
     };
-    let (tx, _rx) = make_ui_tx();
+    let bus = create_bus();
 
     for _ in 0..(DOOM_LOOP_THRESHOLD - 1) {
-        let result = detector.check_and_record("read_file", "{\"path\": \"same\"}", &tx);
+        let result = detector.check_and_record("read_file", "{\"path\": \"same\"}", &bus);
         assert!(result.is_none());
     }
 }
@@ -30,10 +24,10 @@ fn doom_loop_fires_at_threshold() {
     let detector = DoomLoopDetector {
         state: Arc::clone(&state),
     };
-    let (tx, _rx) = make_ui_tx();
+    let bus = create_bus();
 
     for i in 0..DOOM_LOOP_THRESHOLD {
-        let result = detector.check_and_record("read_file", "{\"path\": \"same\"}", &tx);
+        let result = detector.check_and_record("read_file", "{\"path\": \"same\"}", &bus);
         if i < DOOM_LOOP_THRESHOLD - 1 {
             assert!(result.is_none(), "call {i} should not trip doom loop");
         } else {
@@ -62,10 +56,11 @@ fn different_args_does_not_trip_doom_loop() {
     let detector = DoomLoopDetector {
         state: Arc::clone(&state),
     };
-    let (tx, _rx) = make_ui_tx();
+    let bus = create_bus();
 
     for i in 0..DOOM_LOOP_THRESHOLD {
-        let result = detector.check_and_record("read_file", &format!("{{\"path\": \"{i}\"}}"), &tx);
+        let result =
+            detector.check_and_record("read_file", &format!("{{\"path\": \"{i}\"}}"), &bus);
         assert!(
             result.is_none(),
             "call {i} should not trip doom loop (different args)"

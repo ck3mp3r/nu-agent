@@ -4,36 +4,6 @@ use nu_protocol::{Value, record};
 use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
-// extract_a2a_task_id tests
-// ---------------------------------------------------------------------------
-
-#[test]
-fn test_extract_a2a_task_id_valid() {
-    let prompt =
-        "[A2A Task 2af0ac91-da79-41e8-9075-01f2fb5d06d6 from http://127.0.0.1:57704]: Do something";
-    assert_eq!(
-        mode_execute::extract_a2a_task_id(prompt),
-        Some("2af0ac91-da79-41e8-9075-01f2fb5d06d6")
-    );
-}
-
-#[test]
-fn test_extract_a2a_task_id_not_a2a() {
-    assert_eq!(mode_execute::extract_a2a_task_id("Hello, world!"), None);
-}
-
-#[test]
-fn test_extract_a2a_task_id_empty() {
-    assert_eq!(mode_execute::extract_a2a_task_id(""), None);
-}
-
-#[test]
-fn test_extract_a2a_task_id_no_from() {
-    let prompt = "[A2A Task 2af0ac91]: Do something";
-    assert_eq!(mode_execute::extract_a2a_task_id(prompt), Some("2af0ac91"));
-}
-
-// ---------------------------------------------------------------------------
 // auto_complete_a2a_task tests
 // ---------------------------------------------------------------------------
 

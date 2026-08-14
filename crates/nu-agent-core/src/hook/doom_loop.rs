@@ -6,9 +6,8 @@
 use std::sync::{Arc, Mutex};
 
 use rig::agent::ToolCallAction;
-use tokio::sync::mpsc;
 
-use crate::protocol::event::UiEvent;
+use crate::bus::{Bus, WarningEvent};
 
 pub const DOOM_LOOP_THRESHOLD: usize = 5;
 
@@ -58,7 +57,7 @@ impl DoomLoopDetector {
         &self,
         tool_name: &str,
         args: &str,
-        ui_tx: &mpsc::UnboundedSender<UiEvent>,
+        bus: &Bus,
     ) -> Option<ToolCallAction> {
         let mut state = self.state.lock().expect("doom loop mutex poisoned");
         if let Some(tool) = state.check_and_record(tool_name, args) {
@@ -67,7 +66,7 @@ impl DoomLoopDetector {
                 "Doom loop detected: '{}' called {} times with identical arguments",
                 tool, DOOM_LOOP_THRESHOLD
             );
-            let _ = ui_tx.send(UiEvent::Warning {
+            let _ = bus.warning().send(WarningEvent::Message {
                 message: message.clone(),
             });
             Some(ToolCallAction::skip(message))

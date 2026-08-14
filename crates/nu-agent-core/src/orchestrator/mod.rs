@@ -23,7 +23,7 @@ use tokio::sync::{broadcast, mpsc};
 
 use nu_protocol::{LabeledError, Span, Value};
 
-use crate::bus::{Bus, CancelEvent};
+use crate::bus::{Bus, CancelEvent, ExternalEvent, SessionEvent, TurnEvent};
 use crate::conversation::runtime::PendingPermissions;
 
 use crate::orchestrator::{
@@ -54,14 +54,10 @@ pub struct InteractiveLoopConfig {
     pub span: Span,
     /// Pending permission requests awaiting user decisions.
     pub interactive_pending: Option<PendingPermissions>,
-    /// Optional channel for receiving external prompts (e.g., A2A tasks).
-    pub external_prompt_rx: Option<std_mpsc::Receiver<String>>,
     /// Optional channel for receiving task IDs to cancel (e.g., A2A tasks).
     pub task_cancel_rx: Option<std_mpsc::Receiver<String>>,
     /// Shared cancellation bus.
     pub bus: Bus,
-    /// Optional sender for turn-complete notifications (prompt, response).
-    pub on_turn_complete: Option<std_mpsc::Sender<(String, String)>>,
     /// Optional hydration config for resuming a prior session.
     pub hydration: Option<HydrationConfig>,
     /// Optional callback invoked after a successful agent switch.
@@ -76,10 +72,8 @@ impl InteractiveLoopConfig {
         Self {
             span,
             interactive_pending: None,
-            external_prompt_rx: None,
             task_cancel_rx: None,
             bus: crate::bus::create_bus(),
-            on_turn_complete: None,
             hydration: None,
             on_agent_switch: None,
         }
@@ -88,12 +82,6 @@ impl InteractiveLoopConfig {
     /// Set the interactive pending permissions.
     pub fn with_interactive_pending(mut self, pending: Option<PendingPermissions>) -> Self {
         self.interactive_pending = pending;
-        self
-    }
-
-    /// Set the external prompt receiver.
-    pub fn with_external_prompt_rx(mut self, rx: Option<std_mpsc::Receiver<String>>) -> Self {
-        self.external_prompt_rx = rx;
         self
     }
 
@@ -106,12 +94,6 @@ impl InteractiveLoopConfig {
     /// Set the shared cancellation bus.
     pub fn with_bus(mut self, bus: Bus) -> Self {
         self.bus = bus;
-        self
-    }
-
-    /// Set the on-turn-complete sender.
-    pub fn with_on_turn_complete(mut self, tx: Option<std_mpsc::Sender<(String, String)>>) -> Self {
-        self.on_turn_complete = tx;
         self
     }
 
@@ -217,7 +199,7 @@ impl ProgressUi for WorkerProgressUi {
         let mut rx = self.cancel_rx.lock().expect("cancel_rx mutex poisoned");
         matches!(
             rx.try_recv(),
-            Ok(CancelEvent::Requested { .. }) | Err(broadcast::error::TryRecvError::Lagged(_))
+            Ok(CancelEvent::Requested) | Err(broadcast::error::TryRecvError::Lagged(_))
         )
     }
 }
@@ -260,10 +242,8 @@ where
     let InteractiveLoopConfig {
         span,
         interactive_pending,
-        mut external_prompt_rx,
         mut task_cancel_rx,
         bus,
-        on_turn_complete,
         hydration,
         ref on_agent_switch,
     } = config;
@@ -271,6 +251,15 @@ where
     if let Some(hydration) = hydration {
         ui.hydrate_transcript_from_messages(hydration.messages, hydration.last_total_tokens);
         runtime.seed_last_total_tokens(hydration.last_total_tokens);
+        let _ = bus.session().send(SessionEvent::Started {
+            session_id: String::new(),
+            hydrated: true,
+        });
+    } else {
+        let _ = bus.session().send(SessionEvent::Started {
+            session_id: String::new(),
+            hydrated: false,
+        });
     }
 
     let initial_visible_count = runtime.llm_visible_mcp_tool_count();
@@ -285,7 +274,7 @@ where
     let (worker_event_tx, worker_event_rx) = mpsc::unbounded_channel::<UiEvent>();
     let (worker_result_tx, worker_result_rx) = mpsc::channel::<TurnOutcome>(256);
 
-    let mut event_pump = EventPump::new(worker_event_rx);
+    let mut event_pump = EventPump::new(worker_event_rx, &bus);
     let mut stages = OrchestratorStages::new(initial_visible_count, worker_result_rx);
     let mut worker_active = false;
     let mut should_evaluate_compaction = true;
@@ -321,6 +310,8 @@ where
         runtime
     });
 
+    let mut external_rx = bus.external().subscribe();
+
     // Main loop: pump UI, drain events, run stages, check quit conditions.
     loop {
         ui.pump_once();
@@ -335,14 +326,13 @@ where
             );
         }
         if ui.take_cancel_requested() {
-            let _ = bus.cancel().send(CancelEvent::Requested { task_id: None });
+            let _ = bus.cancel().send(CancelEvent::Requested);
         }
         event_pump.drain_batch(ui);
 
         // Check for external prompts (e.g., A2A tasks) when worker is idle.
         if !worker_active
-            && let Some(ref mut ext_rx) = external_prompt_rx
-            && let Ok(prompt) = ext_rx.try_recv()
+            && let Ok(ExternalEvent::PromptReceived { prompt, task_id }) = external_rx.try_recv()
         {
             log::info!(
                 "orchestrator: dispatching external prompt (len={})",
@@ -350,11 +340,12 @@ where
             );
             ui.display_incoming_message(&prompt);
             active_external_prompt = Some(prompt.clone());
-            active_external_task_id = prompt
-                .strip_prefix("[A2A Task ")
-                .and_then(|s| s.find(']').map(|i| &s[..i]))
-                .and_then(|header| header.find(" from ").map(|i| &header[..i]))
-                .map(|s| s.to_string());
+            active_external_task_id = Some(task_id.clone());
+
+            let _ = bus.turn().send(TurnEvent::Started {
+                prompt: prompt.clone(),
+                task_id: Some(task_id),
+            });
 
             worker_cmd_tx
                 .send(WorkerCommand::ExecuteTurn { prompt, span })
@@ -371,9 +362,7 @@ where
             while let Ok(task_id) = cancel_rx.try_recv() {
                 if active_external_task_id.as_deref() == Some(task_id.as_str()) {
                     log::info!("orchestrator: cancelling external task {task_id}");
-                    let _ = bus.cancel().send(CancelEvent::Requested {
-                        task_id: Some(task_id),
-                    });
+                    let _ = bus.cancel().send(CancelEvent::Requested);
                 }
             }
         }
@@ -387,7 +376,7 @@ where
             ui,
             active_external_prompt: &mut active_external_prompt,
             active_external_task_id: &mut active_external_task_id,
-            on_turn_complete: &on_turn_complete,
+            bus: &bus,
         };
         match stages.poll_all(&mut ctx).await {
             StageOutcome::Fatal(e) => {
@@ -409,7 +398,7 @@ where
             continue;
         }
         if worker_active {
-            let _ = bus.cancel().send(CancelEvent::Requested { task_id: None });
+            let _ = bus.cancel().send(CancelEvent::Requested);
             continue;
         }
         if stages.has_pending_ops() || should_evaluate_compaction {
@@ -423,36 +412,16 @@ where
         .await
         .unwrap_or_else(|_| panic!("worker panicked"));
 
+    let _ = bus.session().send(SessionEvent::Ended {
+        session_id: String::new(),
+    });
+
     (runtime, Ok(Value::nothing(span)))
 }
 
-pub async fn run_interactive_loop<R, U>(
-    runtime: R,
-    ui: &mut U,
-    config: InteractiveLoopConfig,
-) -> Result<Value, LabeledError>
-where
-    R: CoreRuntime
-        + McpManagement
-        + ModelSwitching
-        + SessionState
-        + SessionPersistence
-        + Compaction
-        + Send
-        + 'static,
-    U: ProgressUi + UserInputUi + DisplayStateUi + LifecycleUi + TranscriptUi,
-{
-    let (_runtime, result) = run_interactive_loop_impl(runtime, ui, config).await;
-    result
-}
-
-/// Like [`run_interactive_loop`] but also checks an external channel for
-/// pre-formatted prompt strings (e.g., injected A2A tasks) before each
-/// iteration. These prompts are dispatched with higher priority than
-/// regular user input.
-///
-/// The `on_turn_complete` callback is fired after each turn that was triggered
-/// by an external prompt, with `(prompt_text, response_text)`.
+/// Checks an external channel for pre-formatted prompt strings (e.g., injected
+/// A2A tasks) before each iteration. These prompts are dispatched with higher
+/// priority than regular user input.
 pub async fn run_interactive_loop_with_external_prompts<R, U>(
     runtime: R,
     ui: &mut U,
@@ -473,32 +442,8 @@ where
     result
 }
 
-pub async fn run_hydrated_interactive_loop<R, U>(
-    runtime: R,
-    ui: &mut U,
-    config: InteractiveLoopConfig,
-) -> Result<Value, LabeledError>
-where
-    R: CoreRuntime
-        + McpManagement
-        + ModelSwitching
-        + SessionState
-        + SessionPersistence
-        + Compaction
-        + Send
-        + 'static,
-    U: ProgressUi + UserInputUi + DisplayStateUi + LifecycleUi + TranscriptUi,
-{
-    let (_runtime, result) = run_interactive_loop_impl(runtime, ui, config).await;
-    result
-}
-
-/// Like [`run_hydrated_interactive_loop`] but also checks an external channel
-/// for pre-formatted prompt strings (e.g., injected A2A tasks) before each
-/// iteration.
-///
-/// The `on_turn_complete` callback is fired after each turn that was triggered
-/// by an external prompt, with `(prompt_text, response_text)`.
+/// Checks an external channel for pre-formatted prompt strings (e.g., injected
+/// A2A tasks) before each iteration.
 pub async fn run_hydrated_interactive_loop_with_external_prompts<R, U>(
     runtime: R,
     ui: &mut U,

@@ -3,15 +3,15 @@
 //! responsibility. AgentConversationRuntime constructs a CompactionExecutor and delegates.
 
 use super::invocation::{
-    COMPACTION_FAILURE_WARNING, CompactionInvocation, execute_compaction_event_shared,
-    execute_compaction_with_config,
+    COMPACTION_FAILURE_WARNING, CompactionInvocation, CompactionTriggeredInfo,
+    execute_compaction_event_shared, execute_compaction_with_config,
 };
+use crate::bus::{Bus, CompactionEvent};
 use crate::compaction::CompactionParams;
 use crate::config::Config;
 use crate::conversation::providers::{CachedProviderClient, ModelVisitor};
 use crate::protocol::compaction::CompactionTriggerSource;
 use crate::protocol::contracts::ProgressUi;
-use crate::protocol::event::UiEvent;
 use crate::session::{CachedMemory, SessionStore};
 
 pub struct CompactionExecutor<'a, S: SessionStore + Clone + Send + Sync> {
@@ -19,6 +19,7 @@ pub struct CompactionExecutor<'a, S: SessionStore + Clone + Send + Sync> {
     memory: &'a CachedMemory<S>,
     final_session_id: &'a str,
     compaction_params: CompactionParams,
+    bus: Bus,
 }
 
 impl<'a, S: SessionStore + Clone + Send + Sync> CompactionExecutor<'a, S> {
@@ -27,12 +28,14 @@ impl<'a, S: SessionStore + Clone + Send + Sync> CompactionExecutor<'a, S> {
         memory: &'a CachedMemory<S>,
         final_session_id: &'a str,
         compaction_params: CompactionParams,
+        bus: Bus,
     ) -> Self {
         Self {
             config,
             memory,
             final_session_id,
             compaction_params,
+            bus,
         }
     }
 
@@ -60,6 +63,7 @@ impl<'a, S: SessionStore + Clone + Send + Sync> CompactionExecutor<'a, S> {
             compaction_params: CompactionParams,
             ui: &'a mut U,
             source_label: &'a str,
+            bus: &'a Bus,
         }
 
         impl<S, U> ModelVisitor for CompactionVisitor<'_, S, U>
@@ -68,7 +72,7 @@ impl<'a, S: SessionStore + Clone + Send + Sync> CompactionExecutor<'a, S> {
             S::Error: std::fmt::Display,
             U: ProgressUi + Send,
         {
-            type Output = Result<Option<(UiEvent, Option<u64>)>, String>;
+            type Output = Result<Option<(CompactionTriggeredInfo, Option<u64>)>, String>;
 
             async fn visit<M>(self, model: M) -> Self::Output
             where
@@ -92,6 +96,7 @@ impl<'a, S: SessionStore + Clone + Send + Sync> CompactionExecutor<'a, S> {
                             &memory,
                             model,
                             self.ui,
+                            self.bus,
                             CompactionInvocation {
                                 source: &source_label,
                             },
@@ -103,8 +108,8 @@ impl<'a, S: SessionStore + Clone + Send + Sync> CompactionExecutor<'a, S> {
             }
         }
 
-        ui.emit(&UiEvent::CompactionStarted {
-            source: source_label.clone(),
+        let _ = self.bus.compaction().send(CompactionEvent::Started {
+            source: Some(source_label.clone()),
         });
 
         let result = cached_client
@@ -117,18 +122,25 @@ impl<'a, S: SessionStore + Clone + Send + Sync> CompactionExecutor<'a, S> {
                     compaction_params: self.compaction_params.clone(),
                     ui,
                     source_label: &source_label,
+                    bus: &self.bus,
                 },
             )
             .await;
 
         match result {
-            Ok(Some((event, summary_total_tokens))) => {
-                ui.emit(&event);
+            Ok(Some((info, summary_total_tokens))) => {
+                let _ = self.bus.compaction().send(CompactionEvent::Triggered {
+                    source: info.source,
+                    summarized_count: info.summarized_count,
+                    kept_recent_count: info.kept_recent_count,
+                    summary_preview: info.summary_preview,
+                    summary_body: info.summary_body,
+                });
                 Ok(Some(summary_total_tokens))
             }
             Ok(None) => Ok(None),
             Err(error) => {
-                ui.emit(&UiEvent::CompactionFailed {
+                let _ = self.bus.compaction().send(CompactionEvent::Failed {
                     source: source_label,
                     message: COMPACTION_FAILURE_WARNING.to_string(),
                 });

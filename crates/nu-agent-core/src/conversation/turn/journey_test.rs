@@ -412,10 +412,7 @@ impl rig::tool::Tool for TestNuShellCancellingTool {
         // on_completion_call's is_cancelled() check — AFTER the tool result is recorded.
         if !self.fired.swap(true, Ordering::SeqCst) {
             tokio::task::yield_now().await;
-            let _ = self
-                .bus
-                .cancel()
-                .send(crate::bus::CancelEvent::Requested { task_id: None });
+            let _ = self.bus.cancel().send(crate::bus::CancelEvent::Requested);
         }
         Ok(result)
     }

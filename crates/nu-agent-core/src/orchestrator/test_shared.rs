@@ -5,6 +5,7 @@ pub(crate) use std::sync::{
 };
 pub(crate) use std::time::Duration;
 
+pub(crate) use crate::bus::{ExternalEvent, create_bus};
 pub(crate) use crate::compaction::CompactionStrategy;
 pub(crate) use crate::orchestrator::{
     InteractiveLoopConfig, run_interactive_loop_impl, run_single_turn,
@@ -609,7 +610,7 @@ pub(crate) fn _assert_single_turn_accepts_core_runtime<R: CoreRuntime + Send, U:
     // if this compiles, the bound is correct
 }
 
-// Compile-time check: run_interactive_loop must accept anything that impls the focused capability traits
+// Compile-time check: the interactive loop must accept anything that impls the focused capability traits
 pub(crate) fn _assert_interactive_loop_accepts_extended_runtime<
     R: CoreRuntime
         + McpManagement

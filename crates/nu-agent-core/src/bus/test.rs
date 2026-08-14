@@ -9,7 +9,7 @@ async fn publish_cancel_reaches_subscriber() {
     let mut rx = bus.cancel().subscribe();
 
     bus.cancel()
-        .send(CancelEvent::Requested { task_id: None })
+        .send(CancelEvent::Requested)
         .expect("send should succeed");
 
     let received = timeout(Duration::from_millis(100), rx.recv())
@@ -17,7 +17,7 @@ async fn publish_cancel_reaches_subscriber() {
         .expect("receive should not time out")
         .expect("receive should succeed");
 
-    assert!(matches!(received, CancelEvent::Requested { task_id: None }));
+    assert!(matches!(received, CancelEvent::Requested));
 }
 
 #[tokio::test]
@@ -81,7 +81,7 @@ async fn lagged_subscriber_continues() {
 
     for _ in 0..65 {
         bus.cancel()
-            .send(CancelEvent::Requested { task_id: None })
+            .send(CancelEvent::Requested)
             .expect("send should succeed");
     }
 
@@ -95,9 +95,7 @@ async fn lagged_subscriber_continues() {
     while rx.try_recv().is_ok() {}
 
     bus.cancel()
-        .send(CancelEvent::Requested {
-            task_id: Some("after-lag".into()),
-        })
+        .send(CancelEvent::Requested)
         .expect("send should succeed");
 
     let next = timeout(Duration::from_millis(100), rx.recv())
@@ -105,12 +103,7 @@ async fn lagged_subscriber_continues() {
         .expect("receive should not time out")
         .expect("receive should succeed");
 
-    assert!(matches!(
-        next,
-        CancelEvent::Requested {
-            task_id: Some(ref id)
-        } if id == "after-lag"
-    ));
+    assert!(matches!(next, CancelEvent::Requested));
 }
 
 #[tokio::test]
@@ -121,7 +114,7 @@ async fn clone_bus_preserves_channels() {
 
     clone
         .cancel()
-        .send(CancelEvent::Requested { task_id: None })
+        .send(CancelEvent::Requested)
         .expect("send on clone should succeed");
 
     let received = timeout(Duration::from_millis(100), rx.recv())
@@ -129,5 +122,34 @@ async fn clone_bus_preserves_channels() {
         .expect("receive should not time out")
         .expect("receive should succeed");
 
-    assert!(matches!(received, CancelEvent::Requested { task_id: None }));
+    assert!(matches!(received, CancelEvent::Requested));
+}
+
+#[tokio::test]
+async fn publish_session_reaches_subscriber() {
+    let bus = create_bus();
+    let mut rx = bus.session().subscribe();
+
+    bus.session()
+        .send(SessionEvent::Started {
+            session_id: "s1".into(),
+            hydrated: false,
+        })
+        .expect("send should succeed");
+
+    let received = timeout(Duration::from_millis(100), rx.recv())
+        .await
+        .expect("receive should not time out")
+        .expect("receive should succeed");
+
+    match received {
+        SessionEvent::Started {
+            session_id,
+            hydrated,
+        } => {
+            assert_eq!(session_id, "s1");
+            assert!(!hydrated);
+        }
+        _ => panic!("expected SessionEvent::Started"),
+    }
 }

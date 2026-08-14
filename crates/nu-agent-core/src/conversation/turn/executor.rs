@@ -10,6 +10,7 @@ use nu_protocol::{LabeledError, Span, Value};
 use rig::memory::ConversationMemory;
 use tokio::sync::mpsc;
 
+use crate::bus::{Bus, LlmEvent, TurnEvent};
 use crate::config::{Config, defaults};
 use crate::conversation::managers::SessionManager;
 use crate::conversation::providers::{CachedProviderClient, ModelVisitor};
@@ -65,7 +66,7 @@ pub struct ToolInfra {
     pub circuit_breaker: Arc<Mutex<McpCircuitBreaker>>,
     pub doom_state: Arc<Mutex<DoomLoopState>>,
     /// Shared cancellation bus threaded through the turn pipeline.
-    pub bus: crate::bus::Bus,
+    pub bus: Bus,
 }
 
 pub struct TurnExecutor<'a, S: SessionManager> {
@@ -571,7 +572,7 @@ where
                     }
                 }
             }
-            ui.emit(&UiEvent::Completed {
+            let _ = self.tool_infra.bus.turn().send(TurnEvent::TurnCompleted {
                 tool_calls: turn_result.tool_call_count,
             });
             ui.flush();
@@ -609,13 +610,13 @@ where
         // from prior turns don't carry over into the next healthy turn.
         self.tool_infra.doom_state.lock().unwrap().reset();
 
-        // Emit UI events
+        // Emit UI events via bus
         if !turn_result.deltas_emitted {
-            ui.emit(&UiEvent::AssistantMessage {
+            let _ = self.tool_infra.bus.llm().send(LlmEvent::AssistantMessage {
                 text: turn_result.text.clone(),
             });
         }
-        ui.emit(&UiEvent::Completed {
+        let _ = self.tool_infra.bus.turn().send(TurnEvent::TurnCompleted {
             tool_calls: turn_result.tool_call_count,
         });
         ui.flush();
@@ -664,7 +665,7 @@ where
     )>,
     circuit_breaker: Arc<Mutex<McpCircuitBreaker>>,
     doom_state: Arc<Mutex<DoomLoopState>>,
-    bus: crate::bus::Bus,
+    bus: Bus,
 }
 
 impl<ST, U, P> ModelVisitor for TurnVisitor<'_, '_, ST, U, P>

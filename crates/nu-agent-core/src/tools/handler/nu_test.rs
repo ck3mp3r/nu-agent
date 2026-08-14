@@ -101,7 +101,7 @@ async fn nu_cancellation_kills_process_quickly() {
     let bus2 = bus.clone();
     let handle = tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(100)).await;
-        let _ = bus2.cancel().send(CancelEvent::Requested { task_id: None });
+        let _ = bus2.cancel().send(CancelEvent::Requested);
     });
     let start = std::time::Instant::now();
     let result = NuTool::execute(

@@ -3,12 +3,11 @@ use super::*;
 use std::cell::Cell;
 
 use crate::compaction::CompactionOutcome;
-use crate::conversation::test_helpers::TestProgressUi;
-use crate::protocol::{compaction::CompactionTriggerSource, contracts::ProgressUi, event::UiEvent};
+use crate::conversation::compaction::invocation::CompactionTriggeredInfo;
+use crate::protocol::compaction::CompactionTriggerSource;
 
 #[tokio::test]
 async fn manual_and_auto_compaction_share_single_execution_path() {
-    let mut ui = TestProgressUi::default();
     let counter = Cell::new(0usize);
 
     let manual = execute_compaction_event_shared(CompactionTriggerSource::SlashCompact, || async {
@@ -21,9 +20,6 @@ async fn manual_and_auto_compaction_share_single_execution_path() {
         }))
     })
     .await;
-    if let Ok(Some((event, _))) = &manual {
-        ui.emit(event);
-    }
     let auto = execute_compaction_event_shared(CompactionTriggerSource::AutoThreshold, || async {
         counter.set(counter.get() + 1);
         Ok(Some(CompactionOutcome {
@@ -34,9 +30,6 @@ async fn manual_and_auto_compaction_share_single_execution_path() {
         }))
     })
     .await;
-    if let Ok(Some((event, _))) = &auto {
-        ui.emit(event);
-    }
 
     assert!(manual.is_ok());
     assert!(auto.is_ok());
@@ -45,9 +38,7 @@ async fn manual_and_auto_compaction_share_single_execution_path() {
 
 #[tokio::test]
 async fn compaction_event_emits_correct_source_metadata() {
-    let mut ui = TestProgressUi::default();
-
-    execute_compaction_event_shared(CompactionTriggerSource::AutoThreshold, || async {
+    let auto = execute_compaction_event_shared(CompactionTriggerSource::AutoThreshold, || async {
         Ok(Some(CompactionOutcome {
             summarized_count: 3,
             kept_recent_count: 2,
@@ -56,9 +47,9 @@ async fn compaction_event_emits_correct_source_metadata() {
         }))
     })
     .await
-    .map(|opt| opt.map(|(event, _)| ui.emit(&event)))
-    .expect("auto event");
-    execute_compaction_event_shared(CompactionTriggerSource::SlashCompact, || async {
+    .expect("auto event")
+    .expect("auto should be Some");
+    let manual = execute_compaction_event_shared(CompactionTriggerSource::SlashCompact, || async {
         Ok(Some(CompactionOutcome {
             summarized_count: 4,
             kept_recent_count: 1,
@@ -67,48 +58,56 @@ async fn compaction_event_emits_correct_source_metadata() {
         }))
     })
     .await
-    .map(|opt| opt.map(|(event, _)| ui.emit(&event)))
-    .expect("manual event");
+    .expect("manual event")
+    .expect("manual should be Some");
 
-    assert!(ui.events.contains(&UiEvent::CompactionTriggered {
-        source: "auto_threshold".to_string(),
-        summarized_count: 3,
-        kept_recent_count: 2,
-        summary_preview: "auto summary body".to_string(),
-        summary_body: "auto summary body".to_string(),
-    }));
-    assert!(ui.events.contains(&UiEvent::CompactionTriggered {
-        source: "slash_compact".to_string(),
-        summarized_count: 4,
-        kept_recent_count: 1,
-        summary_preview: "manual summary body".to_string(),
-        summary_body: "manual summary body".to_string(),
-    }));
+    assert_eq!(
+        auto.0,
+        CompactionTriggeredInfo {
+            source: "auto_threshold".to_string(),
+            summarized_count: 3,
+            kept_recent_count: 2,
+            summary_preview: "auto summary body".to_string(),
+            summary_body: "auto summary body".to_string(),
+        }
+    );
+    assert_eq!(
+        manual.0,
+        CompactionTriggeredInfo {
+            source: "slash_compact".to_string(),
+            summarized_count: 4,
+            kept_recent_count: 1,
+            summary_preview: "manual summary body".to_string(),
+            summary_body: "manual summary body".to_string(),
+        }
+    );
 }
 
 #[tokio::test]
 async fn compaction_summary_transcript_includes_source_and_counts() {
-    let mut ui = TestProgressUi::default();
+    let (info, _) =
+        execute_compaction_event_shared(CompactionTriggerSource::AutoThreshold, || async {
+            Ok(Some(CompactionOutcome {
+                summarized_count: 7,
+                kept_recent_count: 3,
+                summary_text: "summary body for transcript".to_string(),
+                summary_total_tokens: None,
+            }))
+        })
+        .await
+        .expect("event")
+        .expect("should be Some");
 
-    execute_compaction_event_shared(CompactionTriggerSource::AutoThreshold, || async {
-        Ok(Some(CompactionOutcome {
+    assert_eq!(
+        info,
+        CompactionTriggeredInfo {
+            source: "auto_threshold".to_string(),
             summarized_count: 7,
             kept_recent_count: 3,
-            summary_text: "summary body for transcript".to_string(),
-            summary_total_tokens: None,
-        }))
-    })
-    .await
-    .map(|opt| opt.map(|(event, _)| ui.emit(&event)))
-    .expect("event");
-
-    assert!(ui.events.contains(&UiEvent::CompactionTriggered {
-        source: "auto_threshold".to_string(),
-        summarized_count: 7,
-        kept_recent_count: 3,
-        summary_preview: "summary body for transcript".to_string(),
-        summary_body: "summary body for transcript".to_string(),
-    }));
+            summary_preview: "summary body for transcript".to_string(),
+            summary_body: "summary body for transcript".to_string(),
+        }
+    );
 }
 
 #[tokio::test]

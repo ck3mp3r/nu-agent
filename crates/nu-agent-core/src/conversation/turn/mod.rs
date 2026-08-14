@@ -162,6 +162,8 @@ where
 ///
 /// This variant is used by TUI mode where the caller creates `(ui_tx, ui_rx)` first
 /// so the hook's `ui_tx` clone and the drain loop's `ui_rx` share the same channel.
+/// The `ui_tx` channel carries only permission events; main lifecycle events
+/// (tool calls, LLM calls, turn completion) go through the signal bus.
 /// The `InteractivePermissionResolver` does NOT own a `ui_tx` — it receives one
 /// per-call from the `HookChain` (which gets it from this same channel).
 ///

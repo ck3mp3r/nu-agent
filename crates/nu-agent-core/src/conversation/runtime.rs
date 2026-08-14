@@ -688,6 +688,7 @@ where
             self.session.memory(),
             session_id,
             self.compaction_params.clone(),
+            self.bus.clone(),
         )
         .execute(
             ui,

@@ -139,6 +139,7 @@ async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_comp
 
     let cached_client = CachedProviderClient::Mock(model);
     let bus = crate::bus::create_bus();
+    let mut turn_rx = bus.turn().subscribe();
     let mut ui = MockUi::immediately_cancelled(bus.clone());
 
     let closure_registry = ClosureRegistry::new();
@@ -218,12 +219,14 @@ async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_comp
     //     trim a trailing user-only message from an immediately-cancelled turn.
     // The key invariant is JSONL durability (step 2 above), not the repair-filtered view.
 
-    // 3. UiEvent::Completed must have been emitted
+    // 3. TurnEvent::TurnCompleted must have been published on the bus turn channel
+    let completed_received = turn_rx
+        .try_recv()
+        .map(|event| matches!(event, crate::bus::TurnEvent::TurnCompleted { .. }))
+        .unwrap_or(false);
     assert!(
-        ui.events
-            .iter()
-            .any(|e| matches!(e, UiEvent::Completed { .. })),
-        "UiEvent::Completed must be emitted for a cancelled turn (path C)"
+        completed_received,
+        "TurnEvent::TurnCompleted must be published for a cancelled turn (path C)"
     );
 
     // 4. UiEvent::AssistantMessage must NOT have been emitted
@@ -2882,10 +2885,7 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
             let result = self.output.to_string();
             if !self.fired.swap(true, Ordering::SeqCst) {
                 tokio::task::yield_now().await;
-                let _ = self
-                    .bus
-                    .cancel()
-                    .send(CancelEvent::Requested { task_id: None });
+                let _ = self.bus.cancel().send(CancelEvent::Requested);
             }
             Ok(result)
         }

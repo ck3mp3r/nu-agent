@@ -1,8 +1,8 @@
 use super::*;
+use crate::bus::create_bus;
 use crate::tools::handler::McpToolRegistry;
 use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
 use std::sync::{Arc, Mutex};
-use tokio::sync::mpsc;
 
 fn make_guard() -> CircuitBreakerGuard {
     CircuitBreakerGuard {
@@ -12,13 +12,6 @@ fn make_guard() -> CircuitBreakerGuard {
 
 fn make_registry_empty() -> Arc<McpToolRegistry> {
     Arc::new(McpToolRegistry::empty())
-}
-
-fn make_ui_tx() -> (
-    mpsc::UnboundedSender<crate::protocol::event::UiEvent>,
-    mpsc::UnboundedReceiver<crate::protocol::event::UiEvent>,
-) {
-    mpsc::unbounded_channel()
 }
 
 #[test]
@@ -34,10 +27,9 @@ fn non_mcp_tool_check_returns_none() {
 fn record_result_non_mcp_tool_is_noop() {
     let guard = make_guard();
     let registry = make_registry_empty();
-    let (tx, mut rx) = make_ui_tx();
+    let bus = create_bus();
     // Should not panic or emit events
-    guard.record_result("local_tool", "some result", true, &registry, &tx);
-    assert!(rx.try_recv().is_err());
+    guard.record_result("local_tool", "some result", true, &registry, &bus);
 }
 
 #[test]

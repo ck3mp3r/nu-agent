@@ -2994,24 +2994,38 @@ async fn matching_a2a_task_cancel_sets_cancel_requested() {
     let mut ui = FakeInteractiveUi::with_prompts(&[]);
 
     let (cancel_tx, cancel_rx) = std::sync::mpsc::channel::<String>();
-    let (ext_tx, ext_rx) = std::sync::mpsc::channel::<String>();
+    let bus = create_bus();
 
-    // Dispatch an external A2A task and a matching cancel.
-    ext_tx
-        .send(
-            "[A2A Task 11111111-2222-3333-4444-555555555555 from http://a.local]: do work"
+    // Publish an external A2A task, retrying until the loop subscribes.
+    let publish_bus = bus.clone();
+    tokio::spawn(async move {
+        let event = ExternalEvent::PromptReceived {
+            prompt: "[A2A Task 11111111-2222-3333-4444-555555555555 from http://a.local]: do work"
                 .to_string(),
-        )
-        .unwrap();
-    cancel_tx
-        .send("11111111-2222-3333-4444-555555555555".to_string())
-        .unwrap();
+            task_id: "11111111-2222-3333-4444-555555555555".to_string(),
+        };
+        while publish_bus.external().send(event.clone()).is_err() {
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    });
+
+    // Send a matching cancel once the turn has started.
+    let started = runtime.started.clone();
+    let cancel_tx_clone = cancel_tx.clone();
+    tokio::spawn(async move {
+        while !started.load(Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+        cancel_tx_clone
+            .send("11111111-2222-3333-4444-555555555555".to_string())
+            .unwrap();
+    });
 
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
         &mut ui,
         InteractiveLoopConfig::new(Span::test_data())
-            .with_external_prompt_rx(Some(ext_rx))
+            .with_bus(bus)
             .with_task_cancel_rx(Some(cancel_rx)),
     )
     .await;
@@ -3032,15 +3046,20 @@ async fn non_matching_a2a_task_cancel_does_not_set_cancel_requested() {
     let mut ui = FakeInteractiveUi::with_prompts(&[]);
 
     let (cancel_tx, cancel_rx) = std::sync::mpsc::channel::<String>();
-    let (ext_tx, ext_rx) = std::sync::mpsc::channel::<String>();
+    let bus = create_bus();
 
-    // Dispatch an external A2A task and a NON-matching cancel.
-    ext_tx
-        .send(
-            "[A2A Task 11111111-2222-3333-4444-555555555555 from http://a.local]: do work"
+    // Publish an external A2A task, retrying until the loop subscribes.
+    let publish_bus = bus.clone();
+    tokio::spawn(async move {
+        let event = ExternalEvent::PromptReceived {
+            prompt: "[A2A Task 11111111-2222-3333-4444-555555555555 from http://a.local]: do work"
                 .to_string(),
-        )
-        .unwrap();
+            task_id: "11111111-2222-3333-4444-555555555555".to_string(),
+        };
+        while publish_bus.external().send(event.clone()).is_err() {
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    });
     cancel_tx
         .send("99999999-9999-9999-9999-999999999999".to_string())
         .unwrap();
@@ -3056,7 +3075,7 @@ async fn non_matching_a2a_task_cancel_does_not_set_cancel_requested() {
         runtime,
         &mut ui,
         InteractiveLoopConfig::new(Span::test_data())
-            .with_external_prompt_rx(Some(ext_rx))
+            .with_bus(bus)
             .with_task_cancel_rx(Some(cancel_rx)),
     )
     .await;
@@ -3077,16 +3096,21 @@ async fn matching_a2a_task_cancel_stops_running_turn() {
     let mut ui = FakeInteractiveUi::with_prompts(&[]);
 
     let (cancel_tx, cancel_rx) = std::sync::mpsc::channel::<String>();
-    let (ext_tx, ext_rx) = std::sync::mpsc::channel::<String>();
+    let bus = create_bus();
 
-    // Dispatch an external A2A task that blocks, then send a matching cancel
+    // Publish an external A2A task that blocks, then send a matching cancel
     // shortly after the turn has started.
-    ext_tx
-        .send(
-            "[A2A Task 22222222-3333-4444-5555-666666666666 from http://a.local]: do work"
+    let publish_bus = bus.clone();
+    tokio::spawn(async move {
+        let event = ExternalEvent::PromptReceived {
+            prompt: "[A2A Task 22222222-3333-4444-5555-666666666666 from http://a.local]: do work"
                 .to_string(),
-        )
-        .unwrap();
+            task_id: "22222222-3333-4444-5555-666666666666".to_string(),
+        };
+        while publish_bus.external().send(event.clone()).is_err() {
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    });
 
     let started = runtime.started.clone();
     let cancel_tx_clone = cancel_tx.clone();
@@ -3104,7 +3128,7 @@ async fn matching_a2a_task_cancel_stops_running_turn() {
         runtime,
         &mut ui,
         InteractiveLoopConfig::new(Span::test_data())
-            .with_external_prompt_rx(Some(ext_rx))
+            .with_bus(bus)
             .with_task_cancel_rx(Some(cancel_rx)),
     )
     .await;

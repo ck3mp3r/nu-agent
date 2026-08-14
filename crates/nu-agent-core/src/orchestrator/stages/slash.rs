@@ -2,13 +2,13 @@ use std::sync::mpsc as std_mpsc;
 
 use nu_protocol::LabeledError;
 
+use crate::bus::{TurnEvent, WarningEvent};
 use crate::orchestrator::stages::{OrchestrationContext, StageOutcome};
 use crate::orchestrator::{PendingCompactionTrigger, WorkerCommand};
 use crate::protocol::compaction::CompactionTriggerSource;
 use crate::protocol::contracts::{
     DisplayStateUi, LifecycleUi, ProgressUi, SharedUiAction, TranscriptUi, UserInputUi,
 };
-use crate::protocol::event::UiEvent;
 use crate::protocol::slash::{SlashCommand, SlashParseResult, parse_slash_command};
 
 /// Processes slash commands and regular prompt submissions from the UI.
@@ -63,7 +63,7 @@ impl SlashStage {
                     {
                         self.pending_compaction_trigger = Some(response_rx);
                     } else {
-                        ctx.ui.emit(&UiEvent::Warning {
+                        let _ = ctx.bus.warning().send(WarningEvent::Message {
                             message: "Compaction worker channel closed".to_string(),
                         });
                     }
@@ -118,7 +118,7 @@ impl SlashStage {
                     continue;
                 }
                 SlashParseResult::Unknown(command) => {
-                    ctx.ui.emit(&UiEvent::Warning {
+                    let _ = ctx.bus.warning().send(WarningEvent::Message {
                         message: format!("Unknown slash command: {command}"),
                     });
                     handled = true;
@@ -128,6 +128,10 @@ impl SlashStage {
             }
 
             // Regular prompt: dispatch to worker
+            let _ = ctx.bus.turn().send(TurnEvent::Started {
+                prompt: prompt.clone(),
+                task_id: None,
+            });
             match ctx
                 .worker_tx
                 .send(WorkerCommand::ExecuteTurn {

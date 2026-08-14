@@ -6,9 +6,8 @@
 use std::sync::{Arc, Mutex};
 
 use rig::agent::ToolCallAction;
-use tokio::sync::mpsc;
 
-use crate::protocol::event::UiEvent;
+use crate::bus::{Bus, WarningEvent};
 use crate::tools::handler::McpToolRegistry;
 use crate::tools::mcp::circuit_breaker::{McpCircuitBreaker, is_transport_error};
 use crate::tools::mcp::runtime::classify_mcp_error;
@@ -57,7 +56,7 @@ impl CircuitBreakerGuard {
         result: &str,
         success: bool,
         mcp_registry: &McpToolRegistry,
-        ui_tx: &mpsc::UnboundedSender<UiEvent>,
+        bus: &Bus,
     ) {
         let Some(server_name) = mcp_registry.server_name_for(tool_name) else {
             return;
@@ -83,7 +82,7 @@ impl CircuitBreakerGuard {
                 if let Err(e) = mcp_registry.set_server_enabled(server_name, false) {
                     log::error!("Failed to disable MCP server '{}': {}", server_name, e);
                 }
-                let _ = ui_tx.send(UiEvent::Warning {
+                let _ = bus.warning().send(WarningEvent::Message {
                     message: format!(
                         "MCP server '{}' disconnected — tools disabled. \
                          Re-enable via MCP panel.",

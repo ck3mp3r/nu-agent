@@ -1,11 +1,11 @@
 use tokio::sync::mpsc;
 
+use crate::bus::{TurnEvent, WarningEvent};
 use crate::orchestrator::stages::{OrchestrationContext, StageOutcome};
 use crate::orchestrator::turn_outcome::TurnOutcome;
 use crate::protocol::contracts::{
     DisplayStateUi, LifecycleUi, ProgressUi, TranscriptUi, UserInputUi,
 };
-use crate::protocol::event::UiEvent;
 use crate::utils::value_ext::extract_response_text_from_value;
 
 /// Polls the worker result channel and applies turn outcomes (success, cancel, error).
@@ -31,14 +31,17 @@ impl SessionStage {
                 TurnOutcome::Success(ref value) => {
                     log::info!("Turn outcome: Success");
 
-                    // Fire on_turn_complete callback if this turn was triggered
+                    // Publish a turn-completion event if this turn was triggered
                     // by an external prompt (e.g., A2A task).
-                    if let Some(tx) = ctx.on_turn_complete
-                        && let Some(prompt_text) = ctx.active_external_prompt.take()
-                    {
+                    if ctx.active_external_prompt.take().is_some() {
                         let response_text = extract_response_text_from_value(value);
-                        let _ = ctx.active_external_task_id.take();
-                        let _ = tx.send((prompt_text, response_text));
+                        let task_id = ctx.active_external_task_id.take();
+                        if let Some(task_id) = task_id {
+                            let _ = ctx.bus.turn().send(TurnEvent::TaskCompleted {
+                                output: response_text,
+                                task_id,
+                            });
+                        }
                     }
                 }
                 TurnOutcome::Cancelled => {
@@ -52,7 +55,7 @@ impl SessionStage {
                         "Turn outcome: Error msg={}",
                         &error.msg[..error.msg.len().min(200)]
                     );
-                    ctx.ui.emit(&UiEvent::TurnError {
+                    let _ = ctx.bus.warning().send(WarningEvent::TurnError {
                         message: format!("Turn failed: {}", error.msg),
                     });
                     // Clear pending external prompt — the turn didn't complete.
