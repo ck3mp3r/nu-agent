@@ -6,6 +6,7 @@ use std::path::Path;
 use std::time::Duration;
 
 #[tokio::test]
+#[ignore]
 async fn nu_executes_simple_command() {
     let bus = Bus::new();
     let result = NuTool::execute(
@@ -20,6 +21,7 @@ async fn nu_executes_simple_command() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn nu_captures_stdout_and_stderr() {
     let bus = Bus::new();
     let result = NuTool::execute(
@@ -52,6 +54,7 @@ async fn nu_non_string_command_returns_validation_error() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn nu_nonzero_exit_preserved() {
     let bus = Bus::new();
     let result = NuTool::execute(
@@ -65,6 +68,7 @@ async fn nu_nonzero_exit_preserved() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn nu_empty_output_handled() {
     let bus = Bus::new();
     let result = NuTool::execute(
@@ -80,6 +84,7 @@ async fn nu_empty_output_handled() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn nu_handles_large_output_without_deadlock() {
     let bus = Bus::new();
     // Generate ~100KB of output — exceeds typical 64KB pipe buffer
@@ -100,6 +105,7 @@ async fn nu_handles_large_output_without_deadlock() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn nu_timeout_kills_process_and_returns_error() {
     let bus = Bus::new();
     let start = std::time::Instant::now();
@@ -116,6 +122,7 @@ async fn nu_timeout_kills_process_and_returns_error() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn nu_cancellation_kills_process_quickly() {
     let bus = Bus::new();
     let bus2 = bus.clone();

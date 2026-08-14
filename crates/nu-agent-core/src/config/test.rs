@@ -1699,6 +1699,15 @@ fn test_session_store_env_var_jsonl() {
 
 #[test]
 #[serial]
+fn test_session_store_env_var_memory() {
+    with_env_vars(vec![("AGENT_SESSION_STORE_TYPE", "memory")], || {
+        let config = Config::from_env("openai", "gpt-4");
+        assert_eq!(config.session_store_type, Some(StoreType::Memory));
+    });
+}
+
+#[test]
+#[serial]
 fn test_session_store_env_var_unknown_ignored() {
     // Invalid env var values are silently ignored (None) by from_env
     with_env_vars(vec![("AGENT_SESSION_STORE_TYPE", "unknown")], || {

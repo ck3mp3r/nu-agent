@@ -167,12 +167,14 @@ This works for Together AI, Groq, OpenRouter, vLLM, LiteLLM, and any other OpenA
 
 ```toml
 [session_store]
-store_type = "sqlite"    # "sqlite" (default) or "jsonl"
+store_type = "sqlite"    # "sqlite" (default), "jsonl", or "memory"
 path = "/custom/path"   # optional custom path
 ```
 
-- `store_type` — `"sqlite"` (default) or `"jsonl"`
+- `store_type` — `"sqlite"` (default), `"jsonl"`, or `"memory"`
 - `path` — optional custom path (JSONL defaults to `$XDG_CACHE_HOME/nu-agent/sessions/`)
+
+`"memory"` uses an in-memory SQLite database — nothing persists after the process exits. It is useful for ephemeral sessions and testing.
 
 Precedence for store type: CLI `--store` flag > `AGENT_SESSION_STORE_TYPE` env var > config > built-in default (SQLite).
 
@@ -421,7 +423,7 @@ Environment variables still work as a lowest-priority fallback when `config.toml
 - `AGENT_READ_TIMEOUT_SECS` — HTTP read timeout in seconds (default 30). 0 disables.
 - `AGENT_A2A_ENABLED` — enable A2A (default `false`)
 - `AGENT_A2A_PORT` — A2A port (0 = random, >0 = fixed)
-- `AGENT_SESSION_STORE_TYPE` — `sqlite` or `jsonl`
+- `AGENT_SESSION_STORE_TYPE` — `sqlite`, `jsonl`, or `memory`
 - `{PROVIDER}_API_KEY` — e.g. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` (for providers with direct env naming)
 
 There is no `AGENT_MODEL` env override at runtime; set the default model in `config.toml`. (`agent config init` reads `AGENT_PROVIDER`/`AGENT_MODEL` when generating a starter config.)

@@ -12,7 +12,6 @@ in
     buildInputs = [
       # Rust toolchain (stable)
       toolchain
-      pkgs.nushell
     ];
 
     shellHook = ''

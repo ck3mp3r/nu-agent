@@ -17,6 +17,9 @@ pub enum StoreType {
     /// JSONL file-backed session store.
     #[serde(rename = "jsonl")]
     Jsonl,
+    /// In-memory session store (backed by SQLite `:memory:`).
+    #[serde(rename = "memory")]
+    Memory,
 }
 
 impl FromStr for StoreType {
@@ -26,8 +29,9 @@ impl FromStr for StoreType {
         match s.to_lowercase().as_str() {
             "sqlite" => Ok(StoreType::Sqlite),
             "jsonl" => Ok(StoreType::Jsonl),
+            "memory" => Ok(StoreType::Memory),
             other => Err(format!(
-                "Unknown store type: '{other}'. Expected 'sqlite' or 'jsonl'."
+                "Unknown store type: '{other}'. Expected 'sqlite', 'jsonl', or 'memory'."
             )),
         }
     }
@@ -233,6 +237,12 @@ pub async fn create_store(store_type: StoreType) -> Result<SessionStoreImpl, Sto
                 })?
                 .to_string();
             let store = SqliteSessionStore::new(&path_str)
+                .await
+                .map_err(StoreError::from)?;
+            Ok(SessionStoreImpl::Sqlite(store))
+        }
+        StoreType::Memory => {
+            let store = SqliteSessionStore::new(":memory:")
                 .await
                 .map_err(StoreError::from)?;
             Ok(SessionStoreImpl::Sqlite(store))

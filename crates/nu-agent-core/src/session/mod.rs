@@ -11,6 +11,10 @@ mod store;
 mod prefix_test;
 
 #[cfg(test)]
+#[path = "factory_test.rs"]
+mod factory_test;
+
+#[cfg(test)]
 #[path = "store_test.rs"]
 mod store_test;
 

@@ -121,7 +121,7 @@ impl SimplePluginCommand for AgentSessionClear {
             .named(
                 "store",
                 SyntaxShape::String,
-                "Session store backend: sqlite|jsonl",
+                "Session store backend: sqlite|jsonl|memory",
                 None,
             )
             .category(Category::Experimental)

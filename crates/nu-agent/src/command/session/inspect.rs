@@ -199,7 +199,7 @@ impl SimplePluginCommand for AgentSessionInspect {
             .named(
                 "store",
                 SyntaxShape::String,
-                "Session store backend: sqlite|jsonl",
+                "Session store backend: sqlite|jsonl|memory",
                 None,
             )
             .category(Category::Experimental)

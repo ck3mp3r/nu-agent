@@ -50,7 +50,7 @@ impl AgentPlugin {
         if let Some(store_str) = call.get_flag::<String>("store")? {
             store_str.parse().map_err(|e: String| {
                 nu_protocol::LabeledError::new(format!("Invalid --store value: {e}"))
-                    .with_label("expected 'sqlite' or 'jsonl'", call.head)
+                    .with_label("expected 'sqlite', 'jsonl', or 'memory'", call.head)
             })
         } else {
             Ok(self.store_type)
