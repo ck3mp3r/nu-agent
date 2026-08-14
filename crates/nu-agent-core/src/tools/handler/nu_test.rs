@@ -80,6 +80,26 @@ async fn nu_empty_output_handled() {
 }
 
 #[tokio::test]
+async fn nu_handles_large_output_without_deadlock() {
+    let bus = Bus::new();
+    // Generate ~100KB of output — exceeds typical 64KB pipe buffer
+    let result = NuTool::execute(
+        &serde_json::json!({"command": "1..10000 | each { |_| 'xxxxxxxxxxxxxxxxxxxx' } | str join (char newline)"}),
+        Path::new("/tmp"),
+        &bus,
+    )
+    .await
+    .unwrap();
+    assert_eq!(result["exit_code"], 0);
+    let stdout = result["stdout"].as_str().unwrap();
+    assert!(
+        stdout.len() > 64_000,
+        "expected >64KB output, got {} bytes",
+        stdout.len()
+    );
+}
+
+#[tokio::test]
 async fn nu_timeout_kills_process_and_returns_error() {
     let bus = Bus::new();
     let start = std::time::Instant::now();

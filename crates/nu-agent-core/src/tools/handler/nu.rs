@@ -1,6 +1,7 @@
 use serde_json::Value as JsonValue;
 use std::path::Path;
 use std::time::Duration;
+use tokio::io::AsyncReadExt;
 
 use super::{ToolHandlerError, builtin_tool::BuiltinTool};
 use crate::bus::Bus;
@@ -45,10 +46,26 @@ impl BuiltinTool for NuTool {
 
         let mut cancel_rx = bus.cancel().subscribe();
 
-        let status = tokio::select! {
-            status = child.wait() => {
-                status.map_err(|e| ToolHandlerError::runtime(format!("Failed to wait for nu process: {e}")))?
+        let (status, stdout, stderr) = tokio::select! {
+            // Primary arm: read pipes + wait concurrently
+            result = async {
+                let mut stdout = String::new();
+                let mut stderr = String::new();
+
+                // tokio::join! polls all three concurrently
+                let (stdout_res, stderr_res, status_res) = tokio::join!(
+                    stdout_handle.read_to_string(&mut stdout),
+                    stderr_handle.read_to_string(&mut stderr),
+                    child.wait(),
+                );
+                let _ = stdout_res;
+                let _ = stderr_res;
+                (status_res, stdout, stderr)
+            } => {
+                let status = result.0.map_err(|e| ToolHandlerError::runtime(format!("Failed to wait for nu process: {e}")))?;
+                (status, result.1, result.2)
             }
+            // Timeout: kill child, return error
             _ = tokio::time::sleep(timeout) => {
                 let _ = child.kill().await;
                 let _ = child.wait().await;
@@ -57,19 +74,13 @@ impl BuiltinTool for NuTool {
                     timeout.as_secs()
                 )));
             }
+            // Cancellation: kill child, return error
             Ok(_) = cancel_rx.recv() => {
                 let _ = child.kill().await;
                 let _ = child.wait().await;
                 return Err(ToolHandlerError::runtime("nu command cancelled by user"));
             }
         };
-
-        // Drain stdout/stderr with async reads
-        use tokio::io::AsyncReadExt;
-        let mut stdout = String::new();
-        let mut stderr = String::new();
-        let _ = stdout_handle.read_to_string(&mut stdout).await;
-        let _ = stderr_handle.read_to_string(&mut stderr).await;
 
         Ok(serde_json::json!({
             "stdout": stdout,
