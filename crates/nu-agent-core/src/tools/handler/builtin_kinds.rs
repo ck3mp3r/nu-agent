@@ -20,6 +20,10 @@ pub enum BuiltinKind {
     TmuxWindow,
     TmuxPane,
     TmuxLayout,
+    AstQuery,
+    AstNodes,
+    AstRefs,
+    AstTree,
 }
 
 impl BuiltinKind {
@@ -42,6 +46,10 @@ impl BuiltinKind {
             Self::TmuxWindow => "tmux_window",
             Self::TmuxPane => "tmux_pane",
             Self::TmuxLayout => "tmux_layout",
+            Self::AstQuery => "ast_query",
+            Self::AstNodes => "ast_nodes",
+            Self::AstRefs => "ast_refs",
+            Self::AstTree => "ast_tree",
         }
     }
 }
@@ -68,6 +76,10 @@ impl FromStr for BuiltinKind {
             "tmux_window" => Ok(Self::TmuxWindow),
             "tmux_pane" => Ok(Self::TmuxPane),
             "tmux_layout" => Ok(Self::TmuxLayout),
+            "ast_query" => Ok(Self::AstQuery),
+            "ast_nodes" => Ok(Self::AstNodes),
+            "ast_refs" => Ok(Self::AstRefs),
+            "ast_tree" => Ok(Self::AstTree),
             _ => Err(()),
         }
     }

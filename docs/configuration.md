@@ -259,6 +259,189 @@ skill = "ask"
 
 When no `[permissions]` section exists: `read`, `glob`, `grep` → `allow`; `c5t_get*`, `c5t_list*` → `allow`; everything else → `ask` (TUI) or `deny` (pipeline).
 
+## Tree-sitter tools (code analysis)
+
+The tree-sitter tools perform structural code analysis using tree-sitter grammars. They are language-generic — they work with any tree-sitter grammar you have installed. They are read-only and auto-allowed by default.
+
+### Prerequisites
+
+The tree-sitter tools require the `tree-sitter` CLI to install and compile grammars. Install it with:
+
+```sh
+cargo install tree-sitter-cli
+```
+
+Or via your package manager:
+
+```sh
+# macOS (Homebrew)
+brew install tree-sitter
+
+# Debian/Ubuntu
+apt install tree-sitter
+
+# Arch
+pacman -S tree-sitter
+
+# Windows (scoop)
+scoop install tree-sitter
+```
+
+### Setup steps
+
+1. **Create the config file** (once):
+
+   ```sh
+   tree-sitter init-config
+   ```
+
+   This creates `config.json` at the platform config location (see below).
+
+2. **Clone grammar repos** into a directory you will list in `parser-directories`:
+
+   ```sh
+   git clone https://github.com/tree-sitter/tree-sitter-rust ~/code/tree-sitter-rust
+   git clone https://github.com/tree-sitter/tree-sitter-python ~/code/tree-sitter-python
+   ```
+
+3. **Add the directory to the config** — edit `config.json` and add:
+
+   ```json
+   {
+     "parser-directories": ["/Users/yourname/code"]
+   }
+   ```
+
+4. **Build each grammar**:
+
+   ```sh
+   cd ~/code/tree-sitter-rust
+   tree-sitter build
+   ```
+
+   This creates `build/rust.so` (or `.dylib` on macOS, `.dll` on Windows).
+
+### Config file location
+
+The config file is resolved in this order:
+
+| OS | Path |
+|----|------|
+| Any | `$TREE_SITTER_DIR/config.json` (env var override) |
+| Linux | `$XDG_CONFIG_HOME/tree-sitter/config.json` or `~/.config/tree-sitter/config.json` |
+| macOS | `~/Library/Application Support/tree-sitter/config.json` |
+| Windows | `%APPDATA%/tree-sitter/config.json` |
+
+### Config format
+
+The config is a JSON file with a `parser-directories` array:
+
+```json
+{
+  "parser-directories": ["/Users/yourname/code"]
+}
+```
+
+Any subdirectory of a listed directory whose name starts with `tree-sitter-` is recognized as a grammar repo. The language name is the suffix — `tree-sitter-rust` → language `rust`, `tree-sitter-python` → `python`.
+
+### Grammar discovery
+
+The tools build a grammar cache on first use:
+
+1. Reads `parser-directories` from the config file.
+2. Scans each directory for `tree-sitter-*` subdirectories.
+3. For each grammar, looks for a compiled shared library in this order:
+   1. `<grammar_dir>/build/<language>.<ext>` — if built in the `build/` subdir
+   2. `<grammar_dir>/<language>.<ext>` — grammar dir root (default `tree-sitter build` output)
+   3. `<cache_dir>/lib/<language>.<ext>` — XDG cache `lib/` subdirectory
+4. Loads the symbol `tree_sitter_<language>` from the shared library.
+
+The cache is built once per process. If you install a new grammar, restart the agent.
+
+### Cache path
+
+Compiled grammars are cached in the XDG cache directory:
+
+| All platforms | `$XDG_CACHE_HOME/tree-sitter/lib/` or `~/.cache/tree-sitter/lib/` |
+
+### Supported languages
+
+ANY language with a tree-sitter grammar. The tools are language-generic — Rust, Go, Python, TypeScript, Nix, TOML, JSON, YAML, and more. Search for grammars at <https://github.com/tree-sitter> or clone the grammar repo and run `tree-sitter build`.
+
+### Tools
+
+There are four separate tools. Each is called directly with its own parameters — there is no shared `action` field.
+
+**`ast_query`** — run an S-expression tree-sitter query against source code.
+
+- Required: `path`, `language`, `query`
+- Optional: `captures` (array of strings), `max_matches` (int, default 100), `include_text` (bool, default true)
+
+```json
+{"path": "src/main.rs", "language": "rust", "query": "(function_item name: (identifier) @name)"}
+{"path": "src/main.rs", "language": "rust", "query": "(struct_item name: (type_identifier) @name)", "captures": ["name"], "include_text": false}
+```
+
+**`ast_nodes`** — list AST nodes of a given type in source code.
+
+- Required: `path`, `language`, `node_type`
+- Optional: `max_matches` (int, default 200), `include_text` (bool, default false)
+
+```json
+{"path": "src/main.rs", "language": "rust", "node_type": "match_arm"}
+{"path": "src/main.rs", "language": "rust", "node_type": "function_item", "include_text": true}
+```
+
+**`ast_refs`** — find references to a named symbol in source code.
+
+- Required: `path`, `language`, `name`
+- Optional: `max_matches` (int, default 100)
+
+```json
+{"path": "src/main.rs", "language": "rust", "name": "Config"}
+{"path": "src/lib.rs", "language": "rust", "name": "parse", "max_matches": 50}
+```
+
+**`ast_tree`** — dump the full S-expression parse tree of source code.
+
+- Required: `path`, `language`
+- Optional: `max_depth` (int, default unlimited)
+
+```json
+{"path": "src/main.rs", "language": "rust", "max_depth": 3}
+{"path": "main.py", "language": "python", "max_depth": 5}
+```
+
+Other languages:
+
+```json
+{"path": "main.py", "language": "python", "query": "(function_definition name: (identifier) @name)"}
+{"path": "main.go", "language": "go", "node_type": "function_declaration"}
+{"path": "default.nix", "language": "nix", "name": "buildInputs"}
+```
+
+### Error messages
+
+| Message | Cause | Fix |
+|---------|-------|-----|
+| `No tree-sitter config found. Run tree-sitter init-config to create one.` | No config file exists at any platform location. | Run `tree-sitter init-config`. |
+| `Failed to load tree-sitter config: ...` | Config file exists but is unreadable (permissions, corrupt). | Check file permissions; delete and re-run `tree-sitter init-config`. |
+| `Failed to parse tree-sitter config: ...` | Config JSON is invalid or missing `parser-directories`. | Open the config and fix the JSON; ensure `parser-directories` is an array. |
+| `No tree-sitter grammar found for language 'rust'. File: '...'. Install the rust grammar: clone the tree-sitter-rust repo and run tree-sitter build in it.` | No grammar dir for the requested language was found in any `parser-directories`. | Clone the `tree-sitter-rust` repo and run `tree-sitter build` in it. |
+| `Grammar for rust found at ... but not compiled. Run tree-sitter build in the grammar directory.` | Grammar repo exists but has no compiled shared library in `build/`, the grammar root, or the cache `lib/` subdir. | `cd <grammar-dir> && tree-sitter build`. |
+| `Failed to load grammar for rust: ...` | Shared library found but could not be loaded (wrong architecture, missing deps). | Rebuild: `tree-sitter build` in the grammar dir. |
+| `Failed to load grammar for rust: symbol 'tree_sitter_rust' not found: ...` | Shared library loaded but does not export the expected symbol. | Delete and re-clone the grammar repo, then rebuild. |
+| `File not found: ...` | The `path` argument points to a non-existent file. | Verify the path relative to the working directory. |
+| `Invalid tree-sitter query: ...` | The `query` S-expression is malformed or uses an unknown node name. | Check node names via the `ast_tree` tool; fix the query. |
+| `Invalid ast_query arguments: ...` | Argument JSON does not match the `ast_query` schema. | Check required fields (`path`, `language`, `query`) and their types. |
+| `Invalid ast_nodes arguments: ...` | Argument JSON does not match the `ast_nodes` schema. | Check required fields (`path`, `language`, `node_type`) and their types. |
+| `Invalid ast_refs arguments: ...` | Argument JSON does not match the `ast_refs` schema. | Check required fields (`path`, `language`, `name`) and their types. |
+| `Invalid ast_tree arguments: ...` | Argument JSON does not match the `ast_tree` schema. | Check required fields (`path`, `language`) and their types. |
+
+### Permission
+
+The tree-sitter tools (`ast_query`, `ast_nodes`, `ast_refs`, `ast_tree`) are read-only and auto-allowed in `safe_defaults`. They do not modify files.
+
 ## MCP Servers
 
 The `[mcp]` table configures MCP servers. Each server is a sub-table keyed by name.

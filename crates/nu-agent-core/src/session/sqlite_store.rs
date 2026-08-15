@@ -39,6 +39,7 @@ impl SqliteSessionStore {
 
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
+            .min_connections(1)
             .connect_with(opts)
             .await?;
 

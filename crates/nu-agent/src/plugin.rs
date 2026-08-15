@@ -1,3 +1,5 @@
+use std::sync::Mutex;
+
 use nu_plugin::{Plugin, PluginCommand};
 
 use crate::command::agent::Agent;
@@ -13,6 +15,10 @@ use nu_agent_core::session::{SessionStoreImpl, StoreError, StoreType, create_sto
 pub struct AgentPlugin {
     pub(crate) runtime: tokio::runtime::Runtime,
     store_type: StoreType,
+    /// Cached in-memory session store, created once and reused for the agent's
+    /// entire runtime. A fresh `:memory:` SQLite database is empty each time,
+    /// so it must be created exactly once and shared across all commands.
+    cached_memory_store: Mutex<Option<SessionStoreImpl>>,
 }
 
 impl AgentPlugin {
@@ -27,18 +33,30 @@ impl AgentPlugin {
         Self {
             runtime,
             store_type: StoreType::Sqlite,
+            cached_memory_store: Mutex::new(None),
         }
     }
 
     /// Creates the session store on first use. Called by each command's `run()`
     /// method to obtain the store lazily rather than at plugin construction.
     pub fn create_store(&self) -> Result<SessionStoreImpl, StoreError> {
-        self.runtime.block_on(create_store(self.store_type))
+        self.create_store_with(self.store_type)
     }
 
     /// Creates the session store with a specific store type.
     /// Used when the CLI `--store` flag overrides the default.
     pub fn create_store_with(&self, store_type: StoreType) -> Result<SessionStoreImpl, StoreError> {
+        if store_type == StoreType::Memory {
+            let mut cache = self
+                .cached_memory_store
+                .lock()
+                .expect("cached memory store mutex poisoned");
+            if cache.is_none() {
+                let store = self.runtime.block_on(create_store(store_type))?;
+                *cache = Some(store);
+            }
+            return Ok(cache.as_ref().expect("memory store just set").clone());
+        }
         self.runtime.block_on(create_store(store_type))
     }
 

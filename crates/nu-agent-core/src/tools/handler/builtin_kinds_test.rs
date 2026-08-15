@@ -19,6 +19,10 @@ fn as_str_returns_correct_string_for_all_variants() {
     assert_eq!(BuiltinKind::TmuxWindow.as_str(), "tmux_window");
     assert_eq!(BuiltinKind::TmuxPane.as_str(), "tmux_pane");
     assert_eq!(BuiltinKind::TmuxLayout.as_str(), "tmux_layout");
+    assert_eq!(BuiltinKind::AstQuery.as_str(), "ast_query");
+    assert_eq!(BuiltinKind::AstNodes.as_str(), "ast_nodes");
+    assert_eq!(BuiltinKind::AstRefs.as_str(), "ast_refs");
+    assert_eq!(BuiltinKind::AstTree.as_str(), "ast_tree");
 }
 
 #[test]
@@ -63,6 +67,16 @@ fn from_str_returns_some_for_all_valid_strings() {
         BuiltinKind::from_str("tmux_layout"),
         Ok(BuiltinKind::TmuxLayout)
     );
+    assert_eq!(
+        BuiltinKind::from_str("ast_query"),
+        Ok(BuiltinKind::AstQuery)
+    );
+    assert_eq!(
+        BuiltinKind::from_str("ast_nodes"),
+        Ok(BuiltinKind::AstNodes)
+    );
+    assert_eq!(BuiltinKind::from_str("ast_refs"), Ok(BuiltinKind::AstRefs));
+    assert_eq!(BuiltinKind::from_str("ast_tree"), Ok(BuiltinKind::AstTree));
 }
 
 #[test]
@@ -72,6 +86,10 @@ fn from_str_round_trips_all_tmux_variants() {
         BuiltinKind::TmuxWindow,
         BuiltinKind::TmuxPane,
         BuiltinKind::TmuxLayout,
+        BuiltinKind::AstQuery,
+        BuiltinKind::AstNodes,
+        BuiltinKind::AstRefs,
+        BuiltinKind::AstTree,
     ] {
         assert_eq!(BuiltinKind::from_str(kind.as_str()), Ok(kind));
     }

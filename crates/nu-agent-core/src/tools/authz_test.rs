@@ -1253,6 +1253,34 @@ fn safe_defaults_tty_mode_hides_unknown_tools() {
     assert!(!config.is_tool_visible("edit"));
 }
 
+#[test]
+fn ast_query_tool_permission_defaults_to_allow() {
+    let config = PermissionsConfig::safe_defaults(true);
+    let decision = config.evaluate("ast_query", &serde_json::json!({}));
+    assert_eq!(decision.action, PermissionAction::Allow);
+}
+
+#[test]
+fn ast_nodes_tool_permission_defaults_to_allow() {
+    let config = PermissionsConfig::safe_defaults(true);
+    let decision = config.evaluate("ast_nodes", &serde_json::json!({}));
+    assert_eq!(decision.action, PermissionAction::Allow);
+}
+
+#[test]
+fn ast_refs_tool_permission_defaults_to_allow() {
+    let config = PermissionsConfig::safe_defaults(true);
+    let decision = config.evaluate("ast_refs", &serde_json::json!({}));
+    assert_eq!(decision.action, PermissionAction::Allow);
+}
+
+#[test]
+fn ast_tree_tool_permission_defaults_to_allow() {
+    let config = PermissionsConfig::safe_defaults(true);
+    let decision = config.evaluate("ast_tree", &serde_json::json!({}));
+    assert_eq!(decision.action, PermissionAction::Allow);
+}
+
 // ── SessionGrantCache::clear tests ──────────────────────────────────────
 
 #[test]

@@ -101,14 +101,15 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "patch".to_string(),
-            description: "Apply line-range patch operations with compare-and-swap guard. Lines are 1-indexed: range {start: 5, end: 10} replaces lines 5 through 10 inclusive. The replacement string replaces the entire range.".to_string(),
+            description: "Apply line-range patch operations with compare-and-swap guard. Lines are 1-indexed: range {start: 5, end: 10} replaces lines 5 through 10 inclusive. The replacement string replaces the entire range. WARNING: Line numbers MUST come from a prior `read` call — do not guess. Prefer `edit` (search_replace) for most changes — it does not require line numbers. The `expected_version` must match the version returned by the most recent `read`, `edit`, or `patch` call.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string" },
-                    "expected_version": { "type": "string" },
+                    "path": { "type": "string", "description": "Path to the file to patch." },
+                    "expected_version": { "type": "string", "description": "Version token from the most recent read/edit/patch. Rejects the patch if the file changed since." },
                     "operations": {
                         "type": "array",
+                        "description": "Patch operations to apply. Applied in reverse line order to preserve line numbers.",
                         "items": {
                             "type": "object",
                             "properties": {
@@ -120,7 +121,7 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
                                     },
                                     "required": ["start", "end"]
                                 },
-                                "replacement": { "type": "string" }
+                                "replacement": { "type": "string", "description": "Text that replaces the entire line range." }
                             },
                             "required": ["range", "replacement"]
                         }
@@ -297,6 +298,64 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
                     }
                 },
                 "required": ["command"]
+            }),
+        },
+        ToolDefinition {
+            name: "ast_query".to_string(),
+            description: "Run an S-expression tree-sitter query against source code. Returns matching captures with positions. Requires tree-sitter grammars installed via `tree-sitter` CLI.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Path to the source file to analyze." },
+                    "language": { "type": "string", "description": "Language name (e.g., 'rust', 'go', 'python'). Must match a tree-sitter grammar installed via 'tree-sitter' CLI." },
+                    "query": { "type": "string", "description": "Tree-sitter S-expression query string." },
+                    "captures": { "type": "array", "items": { "type": "string" }, "description": "Optional list of capture names to filter results by." },
+                    "max_matches": { "type": "integer", "description": "Maximum number of matches to return. Default 100." },
+                    "include_text": { "type": "boolean", "description": "Include node text in results. Default true." }
+                },
+                "required": ["path", "language", "query"]
+            }),
+        },
+        ToolDefinition {
+            name: "ast_nodes".to_string(),
+            description: "List AST nodes of a given type in source code. Returns node positions. Requires tree-sitter grammars installed via `tree-sitter` CLI.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Path to the source file to analyze." },
+                    "language": { "type": "string", "description": "Language name (e.g., 'rust', 'go', 'python'). Must match a tree-sitter grammar installed via 'tree-sitter' CLI." },
+                    "node_type": { "type": "string", "description": "Tree-sitter node type to find (e.g., 'function_item', 'match_arm'). Use ast_tree to discover valid node types." },
+                    "max_matches": { "type": "integer", "description": "Maximum number of nodes to return. Default 200." },
+                    "include_text": { "type": "boolean", "description": "Include node text in results. Default false." }
+                },
+                "required": ["path", "language", "node_type"]
+            }),
+        },
+        ToolDefinition {
+            name: "ast_refs".to_string(),
+            description: "Find references to a named symbol in source code. Returns positions of matching identifiers. Requires tree-sitter grammars installed via `tree-sitter` CLI.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Path to the source file to analyze." },
+                    "language": { "type": "string", "description": "Language name (e.g., 'rust', 'go', 'python'). Must match a tree-sitter grammar installed via 'tree-sitter' CLI." },
+                    "name": { "type": "string", "description": "Symbol name to search for (e.g., 'Config', 'parse')." },
+                    "max_matches": { "type": "integer", "description": "Maximum number of matches to return. Default 100." }
+                },
+                "required": ["path", "language", "name"]
+            }),
+        },
+        ToolDefinition {
+            name: "ast_tree".to_string(),
+            description: "Dump the full S-expression parse tree of source code. Requires tree-sitter grammars installed via `tree-sitter` CLI.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Path to the source file to analyze." },
+                    "language": { "type": "string", "description": "Language name (e.g., 'rust', 'go', 'python'). Must match a tree-sitter grammar installed via 'tree-sitter' CLI." },
+                    "max_depth": { "type": "integer", "description": "Maximum tree depth to dump. Nodes beyond this depth are shown as '...'." }
+                },
+                "required": ["path", "language"]
             }),
         },
     ]

@@ -163,7 +163,11 @@ fn builtin_tool_registration_contains_exact_unprefixed_names() {
             "tmux_window",
             "tmux_pane",
             "tmux_layout",
-            "nu"
+            "nu",
+            "ast_query",
+            "ast_nodes",
+            "ast_refs",
+            "ast_tree"
         ]
     );
 }

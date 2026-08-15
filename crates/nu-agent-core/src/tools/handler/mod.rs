@@ -20,6 +20,7 @@ pub mod tmux_layout;
 pub mod tmux_pane;
 pub mod tmux_session;
 pub mod tmux_window;
+pub mod tree_sitter;
 mod types;
 
 #[cfg(test)]

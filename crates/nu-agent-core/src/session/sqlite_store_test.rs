@@ -658,3 +658,27 @@ async fn title_survives_round_trip_sqlite() {
     let (metadata, _entries) = store.load("round-trip").await.expect("load").unwrap();
     assert_eq!(metadata.title, Some("Round trip title test".to_string()));
 }
+
+// ================================================================
+// Pool connection persistence
+// ================================================================
+
+#[tokio::test]
+async fn memory_store_persists_sessions_table_across_queries() {
+    // Regression test: the :memory: SQLite database is per-connection.
+    // If the pool drops its single connection, the next query opens a new
+    // connection with a fresh empty database and the sessions table is lost.
+    // min_connections(1) keeps the connection alive for the pool's lifetime.
+    let store = SqliteSessionStore::new(":memory:")
+        .await
+        .expect("create store");
+
+    store
+        .create("persist-test", &[Message::user("hello")])
+        .await
+        .expect("create");
+
+    let sessions = store.list().await.expect("list");
+    assert_eq!(sessions.len(), 1, "session should persist across queries");
+    assert_eq!(sessions[0].id, "persist-test");
+}

@@ -16,6 +16,7 @@ use super::tmux_layout::TmuxLayoutTool;
 use super::tmux_pane::TmuxPaneTool;
 use super::tmux_session::TmuxSessionTool;
 use super::tmux_window::TmuxWindowTool;
+use super::tree_sitter::{AstNodesTool, AstQueryTool, AstRefsTool, AstTreeTool};
 use crate::bus::Bus;
 use crate::tools::limits::truncate_tool_output;
 use crate::types::ToolDefinition;
@@ -85,6 +86,10 @@ pub async fn register_builtin(
         BuiltinKind::TmuxWindow => make_dynamic_tool::<TmuxWindowTool>(def, cwd, max_bytes, bus),
         BuiltinKind::TmuxPane => make_dynamic_tool::<TmuxPaneTool>(def, cwd, max_bytes, bus),
         BuiltinKind::TmuxLayout => make_dynamic_tool::<TmuxLayoutTool>(def, cwd, max_bytes, bus),
+        BuiltinKind::AstQuery => make_dynamic_tool::<AstQueryTool>(def, cwd, max_bytes, bus),
+        BuiltinKind::AstNodes => make_dynamic_tool::<AstNodesTool>(def, cwd, max_bytes, bus),
+        BuiltinKind::AstRefs => make_dynamic_tool::<AstRefsTool>(def, cwd, max_bytes, bus),
+        BuiltinKind::AstTree => make_dynamic_tool::<AstTreeTool>(def, cwd, max_bytes, bus),
         _ => return,
     };
     tool_server.add_dynamic_tool(tool).await;

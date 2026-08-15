@@ -55,11 +55,17 @@ src/
 - ❌ NO: Making a field `pub(crate)` just so tests can peek at internal state — this is the same code smell as `#[cfg(test)]` accessors
 
 **If a test needs to inspect private state, one of these is wrong:**
-1. The public API is incomplete — add a public method that exposes the observable behavior
-2. The test is testing implementation details — rewrite it to assert outcomes through the public API
-3. The design is wrong — the internal state shouldn't matter, only its observable effects
+1. The test is testing implementation details — rewrite it to assert outcomes through the public API
+2. The design is wrong — the internal state shouldn't matter, only its observable effects
 
 **Pre-existing violations are still violations.** If you encounter `#[cfg(test)]` accessor methods while working on an unrelated task, do NOT fix them inline — create a separate task for the cleanup. But they ARE a code smell that must be addressed.
+
+### Test Through the Public Boundary
+
+- Tests verify behavior through the actual public API (e.g., `BuiltinTool::execute()` for tool handlers), not through internal types or methods exposed solely for testing
+- No private helper functions made public just for tests — shared logic is a private implementation detail, tested indirectly through observable output
+- If a test needs to inspect internal state, the test is testing implementation details — rewrite it to assert outcomes through the public API, not add a backdoor
+- `pub(crate)` on a field or method just so tests can peek at internal state is the same code smell as `#[cfg(test)]` accessors
 
 ### What counts as production code
 

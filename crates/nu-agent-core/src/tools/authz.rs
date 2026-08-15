@@ -21,6 +21,7 @@ use crate::tools::handler::tmux_layout::TmuxLayoutTool;
 use crate::tools::handler::tmux_pane::TmuxPaneTool;
 use crate::tools::handler::tmux_session::TmuxSessionTool;
 use crate::tools::handler::tmux_window::TmuxWindowTool;
+use crate::tools::handler::tree_sitter::{AstNodesTool, AstQueryTool, AstRefsTool, AstTreeTool};
 
 static NEXT_PERMISSION_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -393,6 +394,10 @@ impl PermissionsConfig {
                 (TmuxPaneTool::NAME.to_string(), PermissionAction::Ask),
                 (TmuxLayoutTool::NAME.to_string(), PermissionAction::Ask),
                 (NuTool::NAME.to_string(), PermissionAction::Ask),
+                (AstQueryTool::NAME.to_string(), PermissionAction::Allow),
+                (AstNodesTool::NAME.to_string(), PermissionAction::Allow),
+                (AstRefsTool::NAME.to_string(), PermissionAction::Allow),
+                (AstTreeTool::NAME.to_string(), PermissionAction::Allow),
             ],
             nested_field_rules: HashMap::from([
                 (

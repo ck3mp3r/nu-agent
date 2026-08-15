@@ -314,6 +314,21 @@ The agent exposes the following built-in tools (no MCP server required):
 **Shell execution:**
 - `nu` — stateless Nushell command execution (NOT bash/sh/zsh)
 
+**Code analysis:**
+- `ast_query` — run an S-expression tree-sitter query against source code
+- `ast_nodes` — list AST nodes of a given type in source code
+- `ast_refs` — find references to a named symbol in source code
+- `ast_tree` — dump the full S-expression parse tree of source code
+
+  All four tools require `path` and `language` parameters. `language` must match an installed tree-sitter grammar (e.g. `rust`, `python`, `go`). See [docs/configuration.md](../configuration.md) for full setup instructions.
+
+  ```json
+  {"path": "src/main.rs", "language": "rust", "query": "(function_item name: (identifier) @name)"}
+  {"path": "src/main.rs", "language": "rust", "node_type": "function_item"}
+  {"path": "src/main.rs", "language": "rust", "name": "Config"}
+  {"path": "src/main.rs", "language": "rust", "max_depth": 3}
+  ```
+
 **tmux session management:**
 - `tmux_session` — list, info, create, kill sessions
 - `tmux_window` — create, kill windows
