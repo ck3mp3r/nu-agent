@@ -1,4 +1,4 @@
-use crate::rendering::highlight::{
+use super::highlight::{
     HighlightRequest, SyntaxTokenChannel, cached_syntax_set, highlight_source_tokens,
 };
 

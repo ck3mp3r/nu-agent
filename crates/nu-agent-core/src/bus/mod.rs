@@ -1,6 +1,7 @@
 use tokio::sync::broadcast;
 
-use crate::protocol::event::ToolDisplay;
+use crate::orchestrator::UiStateEvent;
+use crate::protocol::event::{ToolDisplay, UiEvent};
 
 /// A request to cancel the current task.
 #[derive(Debug, Clone)]
@@ -111,6 +112,176 @@ pub enum WarningEvent {
     TurnError { message: String },
 }
 
+/// A permission lifecycle event.
+#[derive(Debug, Clone)]
+pub enum PermissionEvent {
+    Requested {
+        request_id: String,
+        context: Box<crate::protocol::event::PermissionRequestContext>,
+    },
+    DecisionSubmitted {
+        request_id: String,
+        decision: crate::protocol::event::PermissionDecision,
+        matched_rule_identity: String,
+    },
+    DecisionTimedOut {
+        request_id: String,
+    },
+    DecisionIgnored {
+        request_id: String,
+        reason: String,
+    },
+}
+
+impl From<ToolEvent> for Option<UiEvent> {
+    fn from(event: ToolEvent) -> Self {
+        match event {
+            ToolEvent::Start {
+                name,
+                source,
+                arguments,
+            } => Some(UiEvent::ToolStart {
+                name,
+                source,
+                arguments,
+            }),
+            ToolEvent::End {
+                name,
+                source,
+                arguments,
+                success,
+                result,
+                display,
+                error_kind,
+                message,
+            } => Some(UiEvent::ToolEnd {
+                name,
+                source,
+                arguments,
+                success,
+                result,
+                display,
+                error_kind,
+                message,
+            }),
+        }
+    }
+}
+
+impl From<LlmEvent> for Option<UiEvent> {
+    fn from(event: LlmEvent) -> Self {
+        match event {
+            LlmEvent::Start => Some(UiEvent::LlmStart),
+            LlmEvent::End {
+                response_chars,
+                tool_calls,
+                input_tokens,
+                output_tokens,
+                total_tokens,
+            } => Some(UiEvent::LlmEnd {
+                response_chars,
+                tool_calls,
+                input_tokens,
+                output_tokens,
+                total_tokens,
+            }),
+            LlmEvent::AssistantMessage { text } => Some(UiEvent::AssistantMessage { text }),
+        }
+    }
+}
+
+impl From<WarningEvent> for Option<UiEvent> {
+    fn from(event: WarningEvent) -> Self {
+        match event {
+            WarningEvent::Message { message } => Some(UiEvent::Warning { message }),
+            WarningEvent::TurnError { message } => Some(UiEvent::TurnError { message }),
+        }
+    }
+}
+
+impl From<CompactionEvent> for Option<UiEvent> {
+    fn from(event: CompactionEvent) -> Self {
+        match event {
+            CompactionEvent::Started { source } => Some(UiEvent::CompactionStarted {
+                source: source.unwrap_or_default(),
+            }),
+            CompactionEvent::SummaryChunk {
+                source,
+                delta,
+                aggregated,
+            } => Some(UiEvent::CompactionSummaryChunk {
+                source,
+                delta,
+                aggregated,
+            }),
+            CompactionEvent::Triggered {
+                source,
+                summarized_count,
+                kept_recent_count,
+                summary_preview,
+                summary_body,
+            } => Some(UiEvent::CompactionTriggered {
+                source,
+                summarized_count,
+                kept_recent_count,
+                summary_preview,
+                summary_body,
+            }),
+            CompactionEvent::Failed { source, message } => {
+                Some(UiEvent::CompactionFailed { source, message })
+            }
+        }
+    }
+}
+
+impl From<TurnEvent> for Option<UiEvent> {
+    fn from(event: TurnEvent) -> Self {
+        match event {
+            // Turn started is not rendered in the TUI.
+            TurnEvent::Started { .. } => None,
+            TurnEvent::TurnCompleted { tool_calls } => Some(UiEvent::Completed { tool_calls }),
+            // A2A-only completion — not for the TUI.
+            TurnEvent::TaskCompleted { .. } => None,
+        }
+    }
+}
+
+impl From<SessionEvent> for Option<UiEvent> {
+    fn from(_event: SessionEvent) -> Self {
+        // Session lifecycle events are not rendered in the TUI.
+        None
+    }
+}
+
+impl From<PermissionEvent> for Option<UiEvent> {
+    fn from(event: PermissionEvent) -> Self {
+        match event {
+            PermissionEvent::Requested {
+                request_id,
+                context,
+            } => Some(UiEvent::PermissionRequested {
+                request_id,
+                context: *context,
+            }),
+            PermissionEvent::DecisionSubmitted {
+                request_id,
+                decision,
+                matched_rule_identity,
+            } => Some(UiEvent::PermissionDecisionSubmitted {
+                request_id,
+                decision,
+                matched_rule_identity,
+            }),
+            PermissionEvent::DecisionTimedOut { request_id } => {
+                Some(UiEvent::PermissionDecisionTimedOut { request_id })
+            }
+            PermissionEvent::DecisionIgnored { request_id, reason } => {
+                Some(UiEvent::PermissionDecisionIgnored { request_id, reason })
+            }
+        }
+    }
+}
+
 /// Typed broadcast channels, one per event category.
 ///
 /// Each channel carries its own event type, so the compiler enforces that,
@@ -125,6 +296,8 @@ pub struct Bus {
     external: broadcast::Sender<ExternalEvent>,
     compaction: broadcast::Sender<CompactionEvent>,
     warning: broadcast::Sender<WarningEvent>,
+    permission: broadcast::Sender<PermissionEvent>,
+    ui_state: broadcast::Sender<UiStateEvent>,
 }
 
 impl Bus {
@@ -138,6 +311,8 @@ impl Bus {
             external: broadcast::channel(64).0,
             compaction: broadcast::channel(16).0,
             warning: broadcast::channel(64).0,
+            permission: broadcast::channel(64).0,
+            ui_state: broadcast::channel(64).0,
         }
     }
 
@@ -165,6 +340,12 @@ impl Bus {
     pub fn warning(&self) -> &broadcast::Sender<WarningEvent> {
         &self.warning
     }
+    pub fn permission(&self) -> &broadcast::Sender<PermissionEvent> {
+        &self.permission
+    }
+    pub fn ui_state(&self) -> &broadcast::Sender<UiStateEvent> {
+        &self.ui_state
+    }
 }
 
 impl Default for Bus {
@@ -177,5 +358,8 @@ pub fn create_bus() -> Bus {
     Bus::new()
 }
 
+#[cfg(test)]
+#[path = "event_from_test.rs"]
+mod event_from_test;
 #[cfg(test)]
 mod test;

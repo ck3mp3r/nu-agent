@@ -292,6 +292,11 @@ where
     let model = ctx.model.clone();
     let prompt_future = Box::pin(build_agent_and_stream(model, config));
 
+    // Subscribe to bus lifecycle channels BEFORE spawning the prompt so
+    // broadcast retains events emitted during the turn (broadcast only keeps
+    // events for receivers that exist at send time).
+    let mut bus_forwarder = BusForwarder::new(&bus);
+
     // Spawn the completion on the current task.
     // Cancellation note: publishing CancelEvent on the bus fires Terminate on the next
     // hook entry (on_completion_call, on_text_delta, or on_tool_call), causing rig to
@@ -300,7 +305,7 @@ where
     // timeout. Ensure timeouts are configured on the client.
     let prompt_handle = tokio::spawn(prompt_future);
 
-    // Main-thread drain loop: forward UiEvents from the hook to the UI.
+    // Main-thread drain loop: forward UiEvents from the hook and the bus to the UI.
     // Cancellation is not re-published here: the bus already delivers cancel
     // events to all subscribers (including this turn's hook and tool proxies),
     // so re-publishing would leave a lingering event that cancels the NEXT turn.
@@ -314,6 +319,7 @@ where
             }
             Err(mpsc::error::TryRecvError::Disconnected) => break,
         }
+        bus_forwarder.drain_to(ui);
     }
     ui.flush();
 
@@ -648,6 +654,13 @@ where
 }
 
 pub mod executor;
+
+pub(crate) mod bus_forwarder;
+pub(crate) use bus_forwarder::BusForwarder;
+
+#[cfg(test)]
+#[path = "bus_forwarder_test.rs"]
+mod bus_forwarder_test;
 
 pub(crate) mod error;
 pub use error::TurnError;

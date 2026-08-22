@@ -56,6 +56,12 @@ impl CompactionTriggerPolicy for TokenCompactionPolicy {
             };
         };
 
+        if tokens == 0 {
+            return CompactionTriggerDecision::NoFire {
+                reason: "zero_tokens".to_string(),
+            };
+        }
+
         if self.context_window_max == 0 {
             return CompactionTriggerDecision::NoFire {
                 reason: "zero_context_window".to_string(),

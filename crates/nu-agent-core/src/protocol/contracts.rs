@@ -1,7 +1,7 @@
 use nu_protocol::{LabeledError, Span, Value};
 
-use crate::protocol::event::{PermissionDecisionSubmission, ToolDisplay, UiEvent};
-use crate::session::SessionInfo;
+use crate::orchestrator::OrchestratorEvent;
+use crate::protocol::event::{ToolDisplay, UiEvent};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum McpUsabilityState {
@@ -142,69 +142,7 @@ pub trait ProgressUi {
 }
 
 pub trait UserInputUi {
-    fn take_submitted_prompt(&mut self) -> Option<String>;
-    fn take_next_model_picker_launch_request(&mut self) -> bool {
-        false
-    }
-    fn take_next_mcp_toggle_request(&mut self) -> Option<McpToggleRequest> {
-        None
-    }
-    fn take_next_model_switch_request(&mut self) -> Option<String> {
-        None
-    }
-    fn take_next_permission_decision_submission(&mut self) -> Option<PermissionDecisionSubmission> {
-        None
-    }
-    fn take_next_agent_picker_launch_request(&mut self) -> bool {
-        false
-    }
-    fn take_next_agent_switch_request(&mut self) -> Option<String> {
-        None
-    }
-    fn take_next_session_picker_launch_request(&mut self) -> bool {
-        false
-    }
-    fn take_next_theme_picker_launch_request(&mut self) -> bool {
-        false
-    }
-    fn take_next_session_switch_request(&mut self) -> Option<String> {
-        None
-    }
-}
-
-pub trait DisplayStateUi {
-    fn set_mcp_server_state(&mut self, _server_name: &str, _state: McpUsabilityState) {}
-    fn set_mcp_visible_tool_count_by_server_name(&mut self, _server_name: &str, _count: usize) {}
-    fn set_mcp_visible_tool_names_by_server_name(
-        &mut self,
-        _server_name: &str,
-        _names: Vec<String>,
-    ) {
-    }
-    fn set_mcp_server_state_with_details(
-        &mut self,
-        server_name: &str,
-        state: McpUsabilityState,
-        _reason: Option<String>,
-        _llm_visible_mcp_tool_count: usize,
-    ) {
-        self.set_mcp_server_state(server_name, state);
-    }
-    fn execute_shared_ui_action(&mut self, _action: SharedUiAction) -> bool {
-        false
-    }
-    fn set_active_model_identity(&mut self, _active_model_identity: &str) {}
-    fn set_active_agent_identity(&mut self, _name: &str) {}
-    fn set_active_persona_icon(&mut self, _icon: Option<String>) {}
-    fn set_context_window_max_tokens(&mut self, _max_tokens: Option<u64>) {}
-    fn display_incoming_message(&mut self, _text: &str) {}
-    fn set_session_picker_options(&mut self, _options: Vec<SessionInfo>) {}
-}
-
-pub trait LifecycleUi {
-    fn pump_once(&mut self);
-    fn quit_requested(&self) -> bool;
-    fn fatal_error(&self) -> Option<&str>;
+    fn event_sender(&self) -> &tokio::sync::mpsc::Sender<OrchestratorEvent>;
 }
 
 pub trait TranscriptUi {

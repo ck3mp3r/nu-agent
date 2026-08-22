@@ -1,4 +1,6 @@
-use crate::orchestrator::{OnAgentSwitch, WorkerCommand, turn_outcome::TurnOutcome};
+use crate::orchestrator::{
+    OnAgentSwitch, UiRequest, UiRequestResponse, WorkerCommand, turn_outcome::TurnOutcome,
+};
 use crate::protocol::{
     compaction::CompactionTriggerDecision,
     compaction_runtime::Compaction,
@@ -76,7 +78,7 @@ impl CommandRouter {
                     }
                     _ => None,
                 };
-                let _ = response_tx.send(warning);
+                let _ = response_tx.send(warning).await;
                 true
             }
             WorkerCommand::ExecuteCompactionTrigger {
@@ -89,58 +91,15 @@ impl CommandRouter {
                     .await
                     .err()
                     .map(|_error| COMPACTION_FAILURE_WARNING.to_string());
-                let _ = response_tx.send(warning);
+                let _ = response_tx.send(warning).await;
                 true
             }
-            WorkerCommand::ToggleMcp {
-                server_name,
-                enable,
+            WorkerCommand::HandleUiRequest {
+                request,
                 response_tx,
             } => {
-                log::debug!("Router dispatching ToggleMcp: server={server_name} enable={enable}");
-                let result = runtime.set_mcp_server_enabled(&server_name, enable).await;
-                let visible_count = runtime.llm_visible_mcp_tool_count();
-                let visible_count_for_server =
-                    runtime.llm_visible_mcp_tool_count_for_server(&server_name);
-                let visible_names_by_server = runtime.llm_visible_mcp_tool_names_by_server();
-                let success = result.is_ok();
-                log::debug!(
-                    "Router ToggleMcp result: server={server_name} success={success} visible_count={visible_count}"
-                );
-                let _ = response_tx.send((
-                    result,
-                    visible_count,
-                    visible_count_for_server,
-                    visible_names_by_server,
-                ));
-                true
-            }
-            WorkerCommand::SwitchModel {
-                model_spec,
-                response_tx,
-            } => {
-                log::debug!("Router: SwitchModel spec={model_spec}");
-                let _ = response_tx.send(runtime.switch_model(&model_spec));
-                true
-            }
-            WorkerCommand::SwitchAgent {
-                agent_name,
-                response_tx,
-            } => {
-                log::debug!("Router: SwitchAgent name={agent_name}");
-                let result = runtime.switch_agent(&agent_name);
-                let response = result.map(|agent_identity| {
-                    let model_identity = runtime.active_model_identity();
-                    let max_tokens = runtime.max_context_tokens();
-                    let icon = runtime.agent_icon().map(|s| s.to_string());
-                    // Notify the binary layer that the agent card should be updated.
-                    if let Some(ref cb) = on_agent_switch {
-                        let description = runtime.agent_description().map(|s| s.to_string());
-                        cb(agent_identity.clone(), description, icon.clone());
-                    }
-                    (agent_identity, model_identity, max_tokens, icon)
-                });
-                let _ = response_tx.send(response);
+                log::debug!("Router: HandleUiRequest");
+                Self::dispatch_ui_request(request, runtime, &on_agent_switch, response_tx).await;
                 true
             }
             WorkerCommand::ClearSession => {
@@ -153,25 +112,78 @@ impl CommandRouter {
                 runtime.new_session();
                 true
             }
-            WorkerCommand::SwitchSession {
-                session_id,
-                response_tx,
-            } => {
-                log::info!("Router: SwitchSession id={session_id}");
-                let result = runtime.load_session(&session_id).await;
-                let _ = response_tx.send(result);
-                true
-            }
-            WorkerCommand::RefreshSessionPicker { response_tx } => {
-                log::debug!("Router: RefreshSessionPicker");
-                let cwd = runtime.cwd();
-                let result = runtime.list_sessions(cwd).await;
-                let _ = response_tx.send(result);
-                true
-            }
             WorkerCommand::Shutdown => {
                 log::info!("Router: Shutdown");
                 false
+            }
+        }
+    }
+
+    /// Dispatch a single [`UiRequest`] to the runtime and send the response
+    /// through the provided channel.
+    pub async fn dispatch_ui_request<R>(
+        request: UiRequest,
+        runtime: &mut R,
+        on_agent_switch: &Option<OnAgentSwitch>,
+        response_tx: mpsc::Sender<UiRequestResponse>,
+    ) where
+        R: CoreRuntime + McpManagement + ModelSwitching + SessionState + SessionPersistence + Send,
+    {
+        match request {
+            UiRequest::SwitchModel { spec } => {
+                log::debug!("Router: UiRequest SwitchModel spec={spec}");
+                let result = runtime.switch_model(&spec);
+                let _ = response_tx
+                    .send(UiRequestResponse::ModelSwitch(result))
+                    .await;
+            }
+            UiRequest::SwitchAgent { name } => {
+                log::debug!("Router: UiRequest SwitchAgent name={name}");
+                let result = runtime.switch_agent(&name);
+                let response = result.map(|agent_identity| {
+                    let model_identity = runtime.active_model_identity();
+                    let max_tokens = runtime.max_context_tokens();
+                    let icon = runtime.agent_icon().map(|s| s.to_string());
+                    if let Some(cb) = on_agent_switch {
+                        let description = runtime.agent_description().map(|s| s.to_string());
+                        cb(agent_identity.clone(), description, icon.clone());
+                    }
+                    (agent_identity, model_identity, max_tokens, icon)
+                });
+                let _ = response_tx
+                    .send(UiRequestResponse::AgentSwitch(response))
+                    .await;
+            }
+            UiRequest::SwitchSession { id } => {
+                log::debug!("Router: UiRequest SwitchSession id={id}");
+                let result = runtime.load_session(&id).await;
+                let _ = response_tx
+                    .send(UiRequestResponse::SessionSwitch { id, result })
+                    .await;
+            }
+            UiRequest::ToggleMcp { server, enable } => {
+                log::debug!("Router: UiRequest ToggleMcp server={server} enable={enable}");
+                let result = runtime.set_mcp_server_enabled(&server, enable).await;
+                let total = runtime.llm_visible_mcp_tool_count();
+                let server_count = runtime.llm_visible_mcp_tool_count_for_server(&server);
+                let names_by_server = runtime.llm_visible_mcp_tool_names_by_server();
+                let _ = response_tx
+                    .send(UiRequestResponse::McpToggle {
+                        server,
+                        result,
+                        total,
+                        server_count,
+                        names_by_server,
+                    })
+                    .await;
+            }
+            UiRequest::RefreshSessionPicker => {
+                log::debug!("Router: UiRequest RefreshSessionPicker");
+                let cwd = runtime.cwd();
+                let result = runtime.list_sessions(cwd).await;
+                let _ = response_tx
+                    .send(UiRequestResponse::SessionRefresh(result))
+                    .await;
             }
         }
     }

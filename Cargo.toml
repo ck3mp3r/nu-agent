@@ -1,3 +1,13 @@
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+debug = false
+panic = "abort"
+strip = "symbols"
+
+[profile.release.package."*"]
+strip = false
 [workspace]
 members = ["crates/*"]
 resolver = "2"
@@ -79,10 +89,3 @@ fs2 = "0.4"
 # Dev/test
 serial_test = "4.0.1"
 
-[profile.release]
-opt-level = "z"
-lto = true
-codegen-units = 1
-debug = false
-panic = "abort"
-strip = "symbols"

@@ -1,6 +1,6 @@
-use nu_agent_core::transcript::ir::StyleHint;
+use crate::transcript::ir::StyleHint;
 
-use crate::rendering::highlight::{HighlightRequest, SyntaxTokenChannel, highlight_source_tokens};
+use super::super::highlight::{HighlightRequest, SyntaxTokenChannel, highlight_source_tokens};
 
 #[derive(Debug, Clone)]
 pub(super) struct CodeBlockState {

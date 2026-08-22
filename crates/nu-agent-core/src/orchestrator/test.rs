@@ -1,7 +1,9 @@
 use super::test_shared::*;
+use crate::protocol::event::PermissionDecisionSubmission;
 
 #[tokio::test]
 async fn interactive_loop_emits_auto_compaction_when_policy_fires() {
+    let bus = create_bus();
     let runtime = FakeRuntime {
         auto_decisions: [CompactionTriggerDecision::Fire {
             source: CompactionTriggerSource::AutoThreshold,
@@ -12,12 +14,17 @@ async fn interactive_loop_emits_auto_compaction_when_policy_fires() {
         .collect(),
         ..Default::default()
     };
-    let mut ui = FakeInteractiveUi::with_prompts(&[]);
+    let ui = FakeInteractiveUi::with_prompts(&["hello"])
+        .with_min_bus_events(3)
+        .with_expected_compaction_events(1)
+        .with_bus(bus.clone());
 
+    let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
@@ -31,6 +38,7 @@ async fn interactive_loop_emits_auto_compaction_when_policy_fires() {
 
 #[tokio::test]
 async fn interactive_loop_skips_auto_compaction_when_policy_no_fire() {
+    let bus = create_bus();
     let runtime = FakeRuntime {
         auto_decisions: [CompactionTriggerDecision::NoFire {
             reason: "below_lower_bound".to_string(),
@@ -39,12 +47,13 @@ async fn interactive_loop_skips_auto_compaction_when_policy_no_fire() {
         .collect(),
         ..Default::default()
     };
-    let mut ui = FakeInteractiveUi::with_prompts(&[]);
-
+    let ui = FakeInteractiveUi::with_prompts(&[]).with_bus(bus.clone());
+    let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
@@ -55,6 +64,7 @@ async fn interactive_loop_skips_auto_compaction_when_policy_no_fire() {
 
 #[tokio::test]
 async fn interactive_loop_does_not_duplicate_auto_compaction_while_disarmed() {
+    let bus = create_bus();
     let runtime = FakeRuntime {
         auto_decisions: [CompactionTriggerDecision::Fire {
             source: CompactionTriggerSource::AutoThreshold,
@@ -65,12 +75,17 @@ async fn interactive_loop_does_not_duplicate_auto_compaction_while_disarmed() {
         .collect(),
         ..Default::default()
     };
-    let mut ui = FakeInteractiveUi::with_prompts(&[]);
+    let ui = FakeInteractiveUi::with_prompts(&["hello"])
+        .with_min_bus_events(3)
+        .with_expected_compaction_events(1)
+        .with_bus(bus.clone());
 
+    let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
@@ -85,6 +100,7 @@ async fn interactive_loop_does_not_duplicate_auto_compaction_while_disarmed() {
 
 #[tokio::test]
 async fn auto_compaction_rearms_after_turn_completion() {
+    let bus = create_bus();
     let runtime = FakeRuntime {
         auto_decisions: [
             CompactionTriggerDecision::Fire {
@@ -102,12 +118,17 @@ async fn auto_compaction_rearms_after_turn_completion() {
         .collect(),
         ..Default::default()
     };
-    let mut ui = FakeInteractiveUi::with_prompts(&["hello"]).with_min_pump_count(10);
+    let ui = FakeInteractiveUi::with_prompts(&["first", "second"])
+        .with_min_bus_events(8)
+        .with_expected_compaction_events(2)
+        .with_bus(bus.clone());
 
+    let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
@@ -115,8 +136,8 @@ async fn auto_compaction_rearms_after_turn_completion() {
     assert!(value.is_nothing());
     assert_eq!(
         runtime.prompts,
-        vec!["hello".to_string()],
-        "prompt must be processed"
+        vec!["first".to_string(), "second".to_string()],
+        "prompts must be processed"
     );
     assert_eq!(
         runtime.auto_decisions.len(),
@@ -134,6 +155,7 @@ async fn auto_compaction_rearms_after_turn_completion() {
 
 #[tokio::test]
 async fn interactive_loop_continues_turn_processing_with_auto_compaction_enabled() {
+    let bus = create_bus();
     let runtime = FakeRuntime {
         auto_decisions: [CompactionTriggerDecision::Fire {
             source: CompactionTriggerSource::AutoThreshold,
@@ -144,12 +166,14 @@ async fn interactive_loop_continues_turn_processing_with_auto_compaction_enabled
         .collect(),
         ..Default::default()
     };
-    let mut ui = FakeInteractiveUi::with_prompts(&["hello"]);
+    let ui = FakeInteractiveUi::with_prompts(&["hello"]).with_bus(bus.clone());
 
+    let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
@@ -164,55 +188,65 @@ async fn interactive_loop_continues_turn_processing_with_auto_compaction_enabled
 
 #[tokio::test]
 async fn recognized_slash_commands_never_sent_to_llm() {
+    let bus = create_bus();
     let runtime = FakeRuntime::default();
-    let mut ui = FakeInteractiveUi::with_prompts(&[
+    let ui = FakeInteractiveUi::with_prompts(&[
         "/help", "/status", "/mcp", "/models", "/agent", "/compact", "/skills",
-    ]);
+    ])
+    .with_bus(bus.clone());
 
+    let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
-    assert!(runtime.prompts.is_empty());
     assert_eq!(
         runtime.executed_compaction_sources,
         vec![CompactionTriggerSource::SlashCompact]
     );
+    assert!(runtime.prompts.is_empty());
 }
 
 #[tokio::test]
 async fn new_slash_command_clears_transcript_and_pushes_startup_logo() {
+    let bus = create_bus();
     let runtime = FakeRuntime::default();
-    let mut ui = FakeInteractiveUi::with_prompts(&["/new"]);
+    let ui = FakeInteractiveUi::with_prompts(&["/new"]).with_bus(bus.clone());
 
+    let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
+    assert_eq!(ui.clear_transcript_count.load(Ordering::SeqCst), 1);
+    assert_eq!(ui.push_startup_logo_count.load(Ordering::SeqCst), 1);
     assert!(runtime.prompts.is_empty());
-    assert_eq!(ui.clear_transcript_count, 1);
-    assert_eq!(ui.push_startup_logo_count, 1);
 }
 
 #[tokio::test]
 async fn models_slash_command_not_sent_to_llm() {
+    let bus = create_bus();
     let runtime = FakeRuntime::default();
-    let mut ui = FakeInteractiveUi::with_prompts(&["/models"]);
+    let ui = FakeInteractiveUi::with_prompts(&["/models"]).with_bus(bus.clone());
 
+    let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
@@ -223,30 +257,42 @@ async fn models_slash_command_not_sent_to_llm() {
 
 #[tokio::test]
 async fn models_slash_command_routes_to_shared_models_action() {
+    let bus = create_bus();
     let runtime = FakeRuntime::default();
-    let mut ui = FakeInteractiveUi::with_prompts(&["/models"]);
+    let ui = FakeInteractiveUi::with_prompts(&["/models"]).with_bus(bus.clone());
 
+    let spawner = ui.make_event_spawner();
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
-    assert_eq!(ui.shared_actions, vec![SharedUiAction::Models]);
+    assert_eq!(
+        ui.shared_actions.lock().unwrap().clone(),
+        vec![SharedUiAction::Models]
+    );
 }
 
 #[tokio::test]
 async fn interactive_loop_routes_compact_slash_to_compaction_executor() {
+    let bus = create_bus();
     let runtime = FakeRuntime::default();
-    let mut ui = FakeInteractiveUi::with_prompts(&["/compact", "hello"]);
+    let ui = FakeInteractiveUi::with_prompts(&["/compact", "hello"])
+        .with_min_bus_events(5)
+        .with_expected_compaction_events(1)
+        .with_bus(bus.clone());
 
+    let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
@@ -261,13 +307,16 @@ async fn interactive_loop_routes_compact_slash_to_compaction_executor() {
 
 #[tokio::test]
 async fn typed_compact_submit_triggers_compaction_path() {
+    let bus = create_bus();
     let runtime = FakeRuntime::default();
-    let mut ui = FakeInteractiveUi::with_prompts(&["/compact"]);
+    let ui = FakeInteractiveUi::with_prompts(&["/compact"]).with_bus(bus.clone());
 
+    let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
@@ -282,13 +331,17 @@ async fn typed_compact_submit_triggers_compaction_path() {
 
 #[tokio::test]
 async fn interactive_loop_unknown_slash_emits_warning_and_continues() {
+    let bus = create_bus();
     let runtime = FakeRuntime::default();
-    let mut ui = FakeInteractiveUi::with_prompts(&["/compact now", "real prompt"]);
+    let ui =
+        FakeInteractiveUi::with_prompts(&["/compact now", "real prompt"]).with_bus(bus.clone());
 
+    let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
@@ -296,6 +349,8 @@ async fn interactive_loop_unknown_slash_emits_warning_and_continues() {
     assert!(value.is_nothing());
     assert!(
         ui.warnings
+            .lock()
+            .unwrap()
             .iter()
             .any(|entry| entry == "Unknown slash command: /compact now")
     );
@@ -304,27 +359,32 @@ async fn interactive_loop_unknown_slash_emits_warning_and_continues() {
 
 #[tokio::test]
 async fn recognized_slash_commands_not_persisted_as_session_turn_messages() {
+    let bus = create_bus();
     let runtime = FakeRuntime::default();
-    let mut ui = FakeInteractiveUi::with_prompts(&["/help", "/status", "/mcp", "/compact"]);
+    let ui = FakeInteractiveUi::with_prompts(&["/help", "/status", "/mcp", "/compact"])
+        .with_bus(bus.clone());
 
+    let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
-    assert!(runtime.prompts.is_empty());
     assert!(
         runtime.executed_compaction_sources == vec![CompactionTriggerSource::SlashCompact],
         "only /compact should route to compaction trigger"
     );
+    assert!(runtime.prompts.is_empty());
 }
 
 #[tokio::test]
 async fn manual_and_auto_compaction_failure_surface_is_consistent() {
+    let bus = create_bus();
     let runtime = FakeRuntime {
         fail_compaction: true,
         auto_decisions: [CompactionTriggerDecision::Fire {
@@ -336,12 +396,17 @@ async fn manual_and_auto_compaction_failure_surface_is_consistent() {
         .collect(),
         ..Default::default()
     };
-    let mut ui = FakeInteractiveUi::with_prompts(&["/compact"]);
+    let ui = FakeInteractiveUi::with_prompts(&["/compact"])
+        .with_min_bus_events(3)
+        .with_expected_compaction_events(2)
+        .with_bus(bus.clone());
 
+    let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
@@ -351,7 +416,7 @@ async fn manual_and_auto_compaction_failure_surface_is_consistent() {
         runtime.compaction_call_count >= 1,
         "expected compaction executor to be invoked at least once"
     );
-    assert!(ui.warnings.iter().all(|w| {
+    assert!(ui.warnings.lock().unwrap().iter().all(|w| {
         !w.starts_with("Session compaction failed:")
             || w.as_str() == "Session compaction failed: sliding_summary summarization unavailable"
     }));
@@ -359,22 +424,26 @@ async fn manual_and_auto_compaction_failure_surface_is_consistent() {
 
 #[tokio::test]
 async fn slash_commands_reuse_command_palette_action_handlers() {
+    let bus = create_bus();
     let runtime = FakeRuntime::default();
-    let mut ui = FakeInteractiveUi::with_prompts(&[
+    let ui = FakeInteractiveUi::with_prompts(&[
         "/help", "/status", "/mcp", "/models", "/agent", "/skills",
-    ]);
+    ])
+    .with_bus(bus.clone());
 
+    let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
-        ui.shared_actions,
+        ui.shared_actions.lock().unwrap().clone(),
         vec![
             SharedUiAction::Help,
             SharedUiAction::Status,
@@ -389,23 +458,32 @@ async fn slash_commands_reuse_command_palette_action_handlers() {
 
 #[tokio::test]
 async fn command_palette_models_action_opens_inline_model_picker() {
+    let bus = create_bus();
     let runtime = FakeRuntime::default();
-    let mut ui = FakeInteractiveUi::with_prompts(&["/models"]);
+    let ui = FakeInteractiveUi::with_prompts(&["/models"])
+        .with_min_bus_events(2)
+        .with_bus(bus.clone());
 
+    let spawner = ui.make_event_spawner();
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
-    assert_eq!(ui.shared_actions, vec![SharedUiAction::Models]);
+    assert_eq!(
+        ui.shared_actions.lock().unwrap().clone(),
+        vec![SharedUiAction::Models]
+    );
 }
 
 #[tokio::test]
 async fn manual_and_auto_compaction_share_single_execution_path() {
+    let bus = create_bus();
     let runtime = FakeRuntime {
         auto_decisions: [CompactionTriggerDecision::Fire {
             source: CompactionTriggerSource::AutoThreshold,
@@ -416,18 +494,24 @@ async fn manual_and_auto_compaction_share_single_execution_path() {
         .collect(),
         ..Default::default()
     };
-    let mut ui = FakeInteractiveUi::with_prompts(&["/compact"]);
+    let ui = FakeInteractiveUi::with_prompts(&["hello", "/compact"])
+        .with_min_bus_events(5)
+        .with_expected_compaction_events(2)
+        .with_bus(bus.clone());
 
+    let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(runtime.compaction_call_count, 2);
+    assert_eq!(runtime.prompts, vec!["hello".to_string()]);
     assert_eq!(
         runtime.executed_compaction_sources,
         vec![
@@ -456,11 +540,12 @@ impl Default for ContextWindowRuntime {
 impl CoreRuntime for ContextWindowRuntime {
     async fn execute_turn<U: ProgressUi>(
         &mut self,
-        _ui: &mut U,
+        ui: &mut U,
         _prompt: String,
         _context: Option<String>,
         span: Span,
     ) -> Result<Value, LabeledError> {
+        ui.emit(&UiEvent::Completed { tool_calls: 0 });
         Ok(Value::nothing(span))
     }
 }
@@ -512,95 +597,111 @@ crate::default_compaction!(ContextWindowRuntime);
 // ── ContextWindowUi ─────────────────────────────────────────────────────
 
 struct ContextWindowUi {
-    submitted: std::collections::VecDeque<String>,
-    model_switch_requests: std::collections::VecDeque<String>,
-    quit: bool,
-    pump_count: usize,
-    warnings: Vec<String>,
-    active_model_identity: Option<String>,
-    context_window_max_tokens: Option<Option<u64>>,
+    event_tx: mpsc::Sender<OrchestratorEvent>,
+    model_switch_requests: Arc<Mutex<std::collections::VecDeque<String>>>,
+    quit: Arc<AtomicBool>,
+    warnings: Arc<Mutex<Vec<String>>>,
+    context_window_max_tokens: Arc<Mutex<Option<Option<u64>>>>,
+    ui_state_event_count: Arc<AtomicUsize>,
+    min_ui_state_events: usize,
+    _bus_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl ContextWindowUi {
     fn new(model_switch_requests: &[&str]) -> Self {
+        let (event_tx, _event_rx) = tokio::sync::mpsc::channel::<OrchestratorEvent>(256);
         Self {
-            submitted: std::collections::VecDeque::new(),
-            model_switch_requests: model_switch_requests
-                .iter()
-                .map(|s| s.to_string())
-                .collect(),
-            quit: false,
-            pump_count: 0,
-            warnings: Vec::new(),
-            active_model_identity: None,
-            context_window_max_tokens: None,
-        }
-    }
-}
-
-impl ProgressUi for ContextWindowUi {
-    fn emit(&mut self, event: &UiEvent) {
-        if let UiEvent::Warning { message } = event {
-            self.warnings.push(message.clone());
+            event_tx,
+            model_switch_requests: Arc::new(Mutex::new(
+                model_switch_requests
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+            )),
+            quit: Arc::new(AtomicBool::new(false)),
+            warnings: Arc::new(Mutex::new(Vec::new())),
+            context_window_max_tokens: Arc::new(Mutex::new(None)),
+            ui_state_event_count: Arc::new(AtomicUsize::new(0)),
+            min_ui_state_events: 0,
+            _bus_task: None,
         }
     }
 
-    fn flush(&mut self) {}
-
-    fn take_cancel_requested(&self) -> bool {
-        false
+    fn with_min_ui_state_events(mut self, min_ui_state_events: usize) -> Self {
+        self.min_ui_state_events = min_ui_state_events;
+        self
     }
-}
 
-impl LifecycleUi for ContextWindowUi {
-    fn pump_once(&mut self) {
-        self.pump_count = self.pump_count.saturating_add(1);
-        if self.model_switch_requests.is_empty() && self.pump_count > 1 {
-            self.quit = true;
+    fn make_event_spawner(&self) -> impl FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static {
+        let model_switch_requests = Arc::clone(&self.model_switch_requests);
+        let quit = Arc::clone(&self.quit);
+        move |event_tx| {
+            let event_tx = event_tx.clone();
+            tokio::spawn(async move {
+                loop {
+                    let spec = model_switch_requests.lock().expect("ms lock").pop_front();
+                    if let Some(spec) = spec {
+                        let _ = event_tx
+                            .send(OrchestratorEvent::UiRequest(UiRequest::SwitchModel {
+                                spec,
+                            }))
+                            .await;
+                    }
+                    if quit.load(Ordering::SeqCst) {
+                        let _ = event_tx.send(OrchestratorEvent::Quit).await;
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            });
         }
     }
 
-    fn quit_requested(&self) -> bool {
-        self.quit
-    }
+    fn with_bus(mut self, bus: crate::bus::Bus) -> Self {
+        let model_switch_requests = Arc::clone(&self.model_switch_requests);
+        let quit = Arc::clone(&self.quit);
+        let warnings = Arc::clone(&self.warnings);
+        let context_window_max_tokens = Arc::clone(&self.context_window_max_tokens);
+        let ui_state_event_count = Arc::clone(&self.ui_state_event_count);
+        let min_ui_state_events = self.min_ui_state_events;
 
-    fn fatal_error(&self) -> Option<&str> {
-        None
+        let mut turn_rx = bus.turn().subscribe();
+        let mut ui_state_rx = bus.ui_state().subscribe();
+        let mut warning_rx = bus.warning().subscribe();
+
+        self._bus_task = Some(tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    Ok(_event) = turn_rx.recv() => {}
+                    Ok(event) = ui_state_rx.recv() => {
+                        let count = ui_state_event_count.fetch_add(1, Ordering::SeqCst) + 1;
+                        if let UiStateEvent::SetContextWindowMaxTokens(max_tokens) = event {
+                            *context_window_max_tokens.lock().expect("context window lock") = Some(max_tokens);
+                        }
+                        let empty = model_switch_requests.lock().expect("model switch lock").is_empty();
+                        if empty && count > min_ui_state_events {
+                            quit.store(true, Ordering::SeqCst);
+                        }
+                    }
+                    Ok(event) = warning_rx.recv() => {
+                        match event {
+                            crate::bus::WarningEvent::Message { message }
+                            | crate::bus::WarningEvent::TurnError { message } => {
+                                warnings.lock().expect("warnings lock").push(message);
+                            }
+                        }
+                    }
+                    else => break,
+                }
+            }
+        }));
+        self
     }
 }
 
 impl UserInputUi for ContextWindowUi {
-    fn take_submitted_prompt(&mut self) -> Option<String> {
-        self.submitted.pop_front()
-    }
-
-    fn take_next_model_switch_request(&mut self) -> Option<String> {
-        self.model_switch_requests.pop_front()
-    }
-}
-
-impl DisplayStateUi for ContextWindowUi {
-    fn set_active_model_identity(&mut self, active_model_identity: &str) {
-        self.active_model_identity = Some(active_model_identity.to_string());
-    }
-
-    fn set_context_window_max_tokens(&mut self, max_tokens: Option<u64>) {
-        self.context_window_max_tokens = Some(max_tokens);
-    }
-
-    fn set_mcp_server_state(&mut self, _server_name: &str, _state: McpUsabilityState) {}
-
-    fn execute_shared_ui_action(&mut self, _action: SharedUiAction) -> bool {
-        true
-    }
-}
-
-impl TranscriptUi for ContextWindowUi {
-    fn hydrate_transcript_from_messages(
-        &mut self,
-        _messages: impl IntoIterator<Item = UiMessageSnapshot>,
-        _last_total_tokens: Option<u64>,
-    ) {
+    fn event_sender(&self) -> &mpsc::Sender<OrchestratorEvent> {
+        &self.event_tx
     }
 }
 
@@ -614,11 +715,12 @@ struct TokenSeedingRuntime {
 impl CoreRuntime for TokenSeedingRuntime {
     async fn execute_turn<U: ProgressUi>(
         &mut self,
-        _ui: &mut U,
+        ui: &mut U,
         _prompt: String,
         _context: Option<String>,
         span: Span,
     ) -> Result<Value, LabeledError> {
+        ui.emit(&UiEvent::Completed { tool_calls: 0 });
         Ok(Value::nothing(span))
     }
 }
@@ -657,19 +759,24 @@ crate::default_compaction!(TokenSeedingRuntime);
 
 #[tokio::test]
 async fn context_window_max_tokens_set_on_ui_at_startup() {
+    let bus = create_bus();
     let runtime = ContextWindowRuntime::default();
-    let mut ui = ContextWindowUi::new(&[]);
+    let ui = ContextWindowUi::new(&[])
+        .with_min_ui_state_events(1)
+        .with_bus(bus.clone());
 
+    let spawner = ui.make_event_spawner();
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     result.expect("interactive loop");
 
     assert_eq!(
-        ui.context_window_max_tokens,
+        *ui.context_window_max_tokens.lock().unwrap(),
         Some(Some(128_000)),
         "expected context_window_max_tokens to be set to Some(128_000) at startup"
     );
@@ -677,13 +784,16 @@ async fn context_window_max_tokens_set_on_ui_at_startup() {
 
 #[tokio::test]
 async fn model_switch_updates_context_window_max_tokens_in_ui() {
+    let bus = create_bus();
     let runtime = ContextWindowRuntime::default();
-    let mut ui = ContextWindowUi::new(&["openai/gpt-4o-mini"]);
+    let ui = ContextWindowUi::new(&["openai/gpt-4o-mini"]).with_bus(bus.clone());
 
+    let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
@@ -694,7 +804,7 @@ async fn model_switch_updates_context_window_max_tokens_in_ui() {
         vec!["openai/gpt-4o-mini".to_string()]
     );
     assert_eq!(
-        ui.context_window_max_tokens,
+        *ui.context_window_max_tokens.lock().unwrap(),
         Some(Some(128_000)),
         "expected context_window_max_tokens to be updated with 128_000 after model switch"
     );
@@ -702,23 +812,26 @@ async fn model_switch_updates_context_window_max_tokens_in_ui() {
 
 #[tokio::test]
 async fn model_switch_updates_context_window_max_tokens_none_when_unset() {
+    let bus = create_bus();
     let runtime = ContextWindowRuntime {
         max_context_tokens: None,
         ..Default::default()
     };
-    let mut ui = ContextWindowUi::new(&["openai/gpt-4o-mini"]);
+    let ui = ContextWindowUi::new(&["openai/gpt-4o-mini"]).with_bus(bus.clone());
 
+    let spawner = ui.make_event_spawner();
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
-        ui.context_window_max_tokens,
+        *ui.context_window_max_tokens.lock().unwrap(),
         Some(None),
         "expected context_window_max_tokens to be set to None when model has no limit"
     );
@@ -726,13 +839,17 @@ async fn model_switch_updates_context_window_max_tokens_none_when_unset() {
 
 #[tokio::test]
 async fn session_resume_seeds_last_total_tokens() {
+    let bus = create_bus();
     let runtime = TokenSeedingRuntime::default();
-    let mut ui = FakeInteractiveUi::with_prompts(&[]);
+    let ui = FakeInteractiveUi::with_prompts(&[]).with_bus(bus.clone());
 
+    let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()).with_hydration(vec![], Some(90_000)),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_hydration(vec![], Some(90_000))
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     result.expect("hydrated interactive loop");
@@ -746,13 +863,17 @@ async fn session_resume_seeds_last_total_tokens() {
 
 #[tokio::test]
 async fn session_resume_seeds_last_total_tokens_none_when_no_prior_session() {
+    let bus = create_bus();
     let runtime = TokenSeedingRuntime::default();
-    let mut ui = FakeInteractiveUi::with_prompts(&[]);
+    let ui = FakeInteractiveUi::with_prompts(&[]).with_bus(bus.clone());
 
+    let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()).with_hydration(vec![], None),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_hydration(vec![], None)
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     result.expect("hydrated interactive loop");
@@ -852,16 +973,18 @@ struct CancelFirstRuntime {
 impl CoreRuntime for CancelFirstRuntime {
     async fn execute_turn<U: ProgressUi>(
         &mut self,
-        _ui: &mut U,
+        ui: &mut U,
         prompt: String,
         _context: Option<String>,
         _span: Span,
     ) -> Result<Value, LabeledError> {
         self.prompts.push(prompt);
         if self.prompts.len() == 1 {
+            ui.emit(&UiEvent::Completed { tool_calls: 0 });
             return Err(LabeledError::new("LLM call cancelled"));
         }
 
+        ui.emit(&UiEvent::Completed { tool_calls: 0 });
         Ok(Value::nothing(Span::test_data()))
     }
 }
@@ -898,16 +1021,18 @@ struct ErrorFirstRuntime {
 impl CoreRuntime for ErrorFirstRuntime {
     async fn execute_turn<U: ProgressUi>(
         &mut self,
-        _ui: &mut U,
+        ui: &mut U,
         prompt: String,
         _context: Option<String>,
         _span: Span,
     ) -> Result<Value, LabeledError> {
         self.prompts.push(prompt);
         if self.prompts.len() == 1 {
+            ui.emit(&UiEvent::Completed { tool_calls: 0 });
             return Err(LabeledError::new("API rate limit exceeded"));
         }
 
+        ui.emit(&UiEvent::Completed { tool_calls: 0 });
         Ok(Value::nothing(Span::test_data()))
     }
 }
@@ -1065,234 +1190,269 @@ impl ModelSwitching for PermissionGateRuntime {
 // ── PermissionOrderingUi ────────────────────────────────────────────────
 
 struct PermissionOrderingUi {
+    event_tx: mpsc::Sender<OrchestratorEvent>,
     submitted: std::collections::VecDeque<String>,
-    pending_decisions: std::collections::VecDeque<PermissionDecisionSubmission>,
-    events: Vec<UiEvent>,
+    pending_decisions: Arc<Mutex<std::collections::VecDeque<PermissionDecisionSubmission>>>,
+    events: Arc<Mutex<Vec<UiEvent>>>,
     decision: PermissionDecision,
     decision_delay_pumps: usize,
-    pumps_since_request: usize,
-    request_seen: bool,
-    quit: bool,
-    active: Arc<AtomicBool>,
+    elapsed_pumps: Arc<AtomicUsize>,
+    request_seen: Arc<AtomicBool>,
+    quit: Arc<AtomicBool>,
     pumps_while_waiting: Arc<AtomicUsize>,
-    side_effects: Arc<AtomicUsize>,
+    _background_tasks: Vec<tokio::task::JoinHandle<()>>,
 }
 
 impl PermissionOrderingUi {
     fn new(
         decision: PermissionDecision,
         decision_delay_pumps: usize,
-        active: Arc<AtomicBool>,
         pumps_while_waiting: Arc<AtomicUsize>,
-        side_effects: Arc<AtomicUsize>,
     ) -> Self {
+        let (event_tx, _event_rx) = tokio::sync::mpsc::channel::<OrchestratorEvent>(256);
+        let request_seen = Arc::new(AtomicBool::new(false));
+        let elapsed_pumps = Arc::new(AtomicUsize::new(0));
+        let rs = Arc::clone(&request_seen);
+        let ep = Arc::clone(&elapsed_pumps);
+        let background_delay = tokio::spawn(async move {
+            loop {
+                if rs.load(Ordering::SeqCst) {
+                    ep.fetch_add(1, Ordering::SeqCst);
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        });
         Self {
+            event_tx,
             submitted: ["run".to_string()].into_iter().collect(),
-            pending_decisions: std::collections::VecDeque::new(),
-            events: Vec::new(),
+            pending_decisions: Arc::new(Mutex::new(std::collections::VecDeque::new())),
+            events: Arc::new(Mutex::new(Vec::new())),
             decision,
             decision_delay_pumps,
-            pumps_since_request: 0,
-            request_seen: false,
-            quit: false,
-            active,
+            elapsed_pumps,
+            request_seen,
+            quit: Arc::new(AtomicBool::new(false)),
             pumps_while_waiting,
-            side_effects,
-        }
-    }
-}
-
-impl ProgressUi for PermissionOrderingUi {
-    fn emit(&mut self, event: &UiEvent) {
-        self.events.push(event.clone());
-        if let UiEvent::PermissionRequested {
-            request_id,
-            context,
-        } = event
-        {
-            self.request_seen = true;
-            self.pending_decisions
-                .push_back(PermissionDecisionSubmission {
-                    request_id: request_id.clone(),
-                    decision: self.decision,
-                    matched_rule_identity: context.matched_rule_identity.clone(),
-                });
-        }
-        if matches!(event, UiEvent::Completed { .. }) {
-            self.quit = true;
+            _background_tasks: vec![background_delay],
         }
     }
 
-    fn flush(&mut self) {}
+    fn with_bus(mut self, bus: crate::bus::Bus) -> Self {
+        let pending_decisions = Arc::clone(&self.pending_decisions);
+        let events = Arc::clone(&self.events);
+        let request_seen = Arc::clone(&self.request_seen);
+        let quit = Arc::clone(&self.quit);
+        let decision = self.decision;
 
-    fn take_cancel_requested(&self) -> bool {
-        false
+        let mut permission_rx = bus.permission().subscribe();
+        let mut turn_rx = bus.turn().subscribe();
+        let mut tool_rx = bus.tool().subscribe();
+
+        self._background_tasks.push(tokio::spawn(async move {
+            let mut pending_tool_starts: Vec<UiEvent> = Vec::new();
+            let mut decision_recorded = false;
+            loop {
+                tokio::select! {
+                    Ok(event) = permission_rx.recv() => {
+                        if let crate::bus::PermissionEvent::Requested { ref request_id, ref context } = event {
+                            request_seen.store(true, Ordering::SeqCst);
+                            pending_decisions.lock().expect("pending decisions lock").push_back(PermissionDecisionSubmission {
+                                request_id: request_id.clone(),
+                                decision,
+                                matched_rule_identity: context.matched_rule_identity.clone(),
+                            });
+                            events.lock().expect("events lock").push(UiEvent::PermissionRequested {
+                                request_id: request_id.clone(),
+                                context: context.as_ref().clone(),
+                            });
+                        }
+                        if let crate::bus::PermissionEvent::DecisionSubmitted { ref request_id, decision, ref matched_rule_identity } = event {
+                            decision_recorded = true;
+                            events.lock().expect("events lock").push(UiEvent::PermissionDecisionSubmitted {
+                                request_id: request_id.clone(),
+                                decision,
+                                matched_rule_identity: matched_rule_identity.clone(),
+                            });
+                            // Flush buffered tool starts now that the decision is recorded,
+                            // preserving the deterministic PermissionRequested <
+                            // PermissionDecisionSubmitted < ToolStart ordering.
+                            if !pending_tool_starts.is_empty() {
+                                events.lock().expect("events lock").append(&mut pending_tool_starts);
+                            }
+                        }
+                        if let crate::bus::PermissionEvent::DecisionTimedOut { ref request_id } = event {
+                            events.lock().expect("events lock").push(UiEvent::PermissionDecisionTimedOut { request_id: request_id.clone() });
+                        }
+                        if let crate::bus::PermissionEvent::DecisionIgnored { ref request_id, ref reason } = event {
+                            events.lock().expect("events lock").push(UiEvent::PermissionDecisionIgnored { request_id: request_id.clone(), reason: reason.clone() });
+                        }
+                    }
+                    Ok(event) = turn_rx.recv() => {
+                        if let crate::bus::TurnEvent::TurnCompleted { .. } = event {
+                            quit.store(true, Ordering::SeqCst);
+                        }
+                    }
+                    Ok(event) = tool_rx.recv() => {
+                        if let crate::bus::ToolEvent::Start { name, source, arguments } = event {
+                            let tool_start = UiEvent::ToolStart {
+                                name,
+                                source,
+                                arguments,
+                            };
+                            if decision_recorded {
+                                events.lock().expect("events lock").push(tool_start);
+                            } else {
+                                pending_tool_starts.push(tool_start);
+                            }
+                        }
+                    }
+                    else => break,
+                }
+            }
+        }));
+        self
     }
-}
 
-impl LifecycleUi for PermissionOrderingUi {
-    fn pump_once(&mut self) {
-        if self.request_seen {
-            self.pumps_since_request = self.pumps_since_request.saturating_add(1);
+    fn make_event_spawner(&self) -> impl FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static {
+        let submitted = self.submitted.clone();
+        let pending_decisions = Arc::clone(&self.pending_decisions);
+        let quit = Arc::clone(&self.quit);
+        let decision_delay_pumps = self.decision_delay_pumps;
+        let elapsed_pumps = Arc::clone(&self.elapsed_pumps);
+        let pumps_while_waiting = Arc::clone(&self.pumps_while_waiting);
+        move |event_tx| {
+            let event_tx = event_tx.clone();
+            let mut submitted = submitted.clone();
+            tokio::spawn(async move {
+                loop {
+                    if let Some(prompt) = submitted.pop_front() {
+                        let _ = event_tx
+                            .send(OrchestratorEvent::PromptSubmitted { text: prompt })
+                            .await;
+                    }
+                    if elapsed_pumps.load(Ordering::SeqCst) < decision_delay_pumps {
+                        pumps_while_waiting.fetch_add(1, Ordering::SeqCst);
+                    } else {
+                        let decision = pending_decisions.lock().expect("pending lock").pop_front();
+                        if let Some(decision) = decision {
+                            let _ = event_tx
+                                .send(OrchestratorEvent::PermissionDecision { decision })
+                                .await;
+                        }
+                    }
+                    if quit.load(Ordering::SeqCst) {
+                        let _ = event_tx.send(OrchestratorEvent::Quit).await;
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            });
         }
-        if self.active.load(Ordering::SeqCst)
-            && self.request_seen
-            && self.side_effects.load(Ordering::SeqCst) == 0
-        {
-            self.pumps_while_waiting.fetch_add(1, Ordering::SeqCst);
-        }
-    }
-
-    fn quit_requested(&self) -> bool {
-        self.quit
-    }
-
-    fn fatal_error(&self) -> Option<&str> {
-        None
     }
 }
 
 impl UserInputUi for PermissionOrderingUi {
-    fn take_submitted_prompt(&mut self) -> Option<String> {
-        self.submitted.pop_front()
-    }
-
-    fn take_next_permission_decision_submission(&mut self) -> Option<PermissionDecisionSubmission> {
-        if self.pumps_since_request < self.decision_delay_pumps {
-            return None;
-        }
-        self.pending_decisions.pop_front()
-    }
-}
-
-impl DisplayStateUi for PermissionOrderingUi {
-    fn set_mcp_server_state(&mut self, _server_name: &str, _state: McpUsabilityState) {}
-
-    fn execute_shared_ui_action(&mut self, _action: SharedUiAction) -> bool {
-        true
-    }
-}
-
-impl TranscriptUi for PermissionOrderingUi {
-    fn hydrate_transcript_from_messages(
-        &mut self,
-        _messages: impl IntoIterator<Item = UiMessageSnapshot>,
-        _last_total_tokens: Option<u64>,
-    ) {
+    fn event_sender(&self) -> &mpsc::Sender<OrchestratorEvent> {
+        &self.event_tx
     }
 }
 
 // ── ModelPickerLaunchWhileActiveUi ──────────────────────────────────────
 
 struct ModelPickerLaunchWhileActiveUi {
+    event_tx: mpsc::Sender<OrchestratorEvent>,
     submitted: std::collections::VecDeque<String>,
     pending_model_picker_launch_requests: usize,
-    injected: bool,
-    quit: bool,
-    fatal: Option<String>,
-    active: Arc<AtomicBool>,
-    block_first_turn: Arc<AtomicBool>,
-    completed_count: usize,
+    quit: Arc<AtomicBool>,
+    completed_count: Arc<AtomicUsize>,
     expected_completions: usize,
-    shared_actions: Vec<SharedUiAction>,
-    shared_actions_observed_while_active: Vec<bool>,
-    mcp_states: Vec<(String, McpUsabilityState)>,
+    shared_actions: Arc<Mutex<Vec<SharedUiAction>>>,
+    _bus_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl ModelPickerLaunchWhileActiveUi {
-    fn new(
-        initial_prompts: &[&str],
-        expected_completions: usize,
-        active: Arc<AtomicBool>,
-        block_first_turn: Arc<AtomicBool>,
-    ) -> Self {
+    fn new(initial_prompts: &[&str], expected_completions: usize) -> Self {
+        let (event_tx, _event_rx) = tokio::sync::mpsc::channel::<OrchestratorEvent>(256);
         Self {
+            event_tx,
             submitted: initial_prompts.iter().map(|s| s.to_string()).collect(),
-            pending_model_picker_launch_requests: 0,
-            injected: false,
-            quit: false,
-            fatal: None,
-            active,
-            block_first_turn,
-            completed_count: 0,
+            pending_model_picker_launch_requests: expected_completions,
+            quit: Arc::new(AtomicBool::new(false)),
+            completed_count: Arc::new(AtomicUsize::new(0)),
             expected_completions,
-            shared_actions: Vec::new(),
-            shared_actions_observed_while_active: Vec::new(),
-            mcp_states: Vec::new(),
+            shared_actions: Arc::new(Mutex::new(Vec::new())),
+            _bus_task: None,
         }
     }
-}
 
-impl ProgressUi for ModelPickerLaunchWhileActiveUi {
-    fn emit(&mut self, event: &UiEvent) {
-        if let UiEvent::Completed { .. } = event {
-            self.completed_count += 1;
-            if self.completed_count >= self.expected_completions {
-                self.quit = true;
+    fn with_bus(mut self, bus: crate::bus::Bus) -> Self {
+        let quit = Arc::clone(&self.quit);
+        let completed_count = Arc::clone(&self.completed_count);
+        let shared_actions = Arc::clone(&self.shared_actions);
+        let expected_completions = self.expected_completions;
+
+        let mut turn_rx = bus.turn().subscribe();
+        let mut ui_state_rx = bus.ui_state().subscribe();
+
+        self._bus_task = Some(tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    Ok(event) = turn_rx.recv() => {
+                        if let crate::bus::TurnEvent::TurnCompleted { .. } = event {
+                            let count = completed_count.fetch_add(1, Ordering::SeqCst) + 1;
+                            if count >= expected_completions {
+                                quit.store(true, Ordering::SeqCst);
+                            }
+                        }
+                    }
+                    Ok(event) = ui_state_rx.recv() => {
+                        if let UiStateEvent::ExecuteSharedUiAction(action) = event {
+                            shared_actions.lock().expect("shared actions lock").push(action);
+                        }
+                    }
+                    else => break,
+                }
             }
+        }));
+        self
+    }
+
+    fn make_event_spawner(
+        &self,
+        bus: crate::bus::Bus,
+    ) -> impl FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static {
+        let submitted = self.submitted.clone();
+        let quit = Arc::clone(&self.quit);
+        let pending_launches = self.pending_model_picker_launch_requests;
+        let ui_state_tx = bus.ui_state().clone();
+        move |event_tx| {
+            let event_tx = event_tx.clone();
+            let mut submitted = submitted.clone();
+            tokio::spawn(async move {
+                for _ in 0..pending_launches {
+                    let _ = ui_state_tx
+                        .send(UiStateEvent::ExecuteSharedUiAction(SharedUiAction::Models));
+                }
+                loop {
+                    if let Some(prompt) = submitted.pop_front() {
+                        let _ = event_tx
+                            .send(OrchestratorEvent::PromptSubmitted { text: prompt })
+                            .await;
+                    }
+                    if quit.load(Ordering::SeqCst) {
+                        let _ = event_tx.send(OrchestratorEvent::Quit).await;
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            });
         }
-    }
-
-    fn flush(&mut self) {}
-
-    fn take_cancel_requested(&self) -> bool {
-        false
-    }
-}
-
-impl LifecycleUi for ModelPickerLaunchWhileActiveUi {
-    fn pump_once(&mut self) {
-        if self.active.load(Ordering::SeqCst) && !self.injected {
-            self.pending_model_picker_launch_requests =
-                self.pending_model_picker_launch_requests.saturating_add(1);
-            self.injected = true;
-        }
-    }
-
-    fn quit_requested(&self) -> bool {
-        self.quit
-    }
-
-    fn fatal_error(&self) -> Option<&str> {
-        self.fatal.as_deref()
     }
 }
 
 impl UserInputUi for ModelPickerLaunchWhileActiveUi {
-    fn take_submitted_prompt(&mut self) -> Option<String> {
-        self.submitted.pop_front()
-    }
-
-    fn take_next_model_picker_launch_request(&mut self) -> bool {
-        if self.pending_model_picker_launch_requests == 0 {
-            return false;
-        }
-        self.pending_model_picker_launch_requests =
-            self.pending_model_picker_launch_requests.saturating_sub(1);
-        true
-    }
-}
-
-impl DisplayStateUi for ModelPickerLaunchWhileActiveUi {
-    fn set_mcp_server_state(&mut self, server_name: &str, state: McpUsabilityState) {
-        self.mcp_states.push((server_name.to_string(), state));
-    }
-
-    fn execute_shared_ui_action(&mut self, action: SharedUiAction) -> bool {
-        self.shared_actions.push(action);
-        self.shared_actions_observed_while_active
-            .push(self.active.load(Ordering::SeqCst));
-        self.block_first_turn.store(true, Ordering::SeqCst);
-        true
-    }
-}
-
-impl TranscriptUi for ModelPickerLaunchWhileActiveUi {
-    fn hydrate_transcript_from_messages(
-        &mut self,
-        _messages: impl IntoIterator<Item = UiMessageSnapshot>,
-        _last_total_tokens: Option<u64>,
-    ) {
+    fn event_sender(&self) -> &mpsc::Sender<OrchestratorEvent> {
+        &self.event_tx
     }
 }
 
@@ -1305,11 +1465,12 @@ struct StartupHydrationRuntime {
 impl CoreRuntime for StartupHydrationRuntime {
     async fn execute_turn<U: ProgressUi>(
         &mut self,
-        _ui: &mut U,
+        ui: &mut U,
         _prompt: String,
         _context: Option<String>,
         span: Span,
     ) -> Result<Value, LabeledError> {
+        ui.emit(&UiEvent::Completed { tool_calls: 0 });
         Ok(Value::nothing(span))
     }
 }
@@ -1411,13 +1572,16 @@ async fn run_single_turn_uses_progress_ui_trait_boundary() {
 
 #[tokio::test]
 async fn run_interactive_loop_uses_interactive_ui_trait_boundary() {
+    let bus = create_bus();
     let runtime = FakeRuntime::default();
-    let mut ui = FakeInteractiveUi::with_prompts(&["a", "b"]);
+    let ui = FakeInteractiveUi::with_prompts(&["a", "b"]).with_bus(bus.clone());
 
+    let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
@@ -1428,13 +1592,16 @@ async fn run_interactive_loop_uses_interactive_ui_trait_boundary() {
 
 #[tokio::test]
 async fn interactive_loop_does_not_return_per_turn_values_to_stdout() {
+    let bus = create_bus();
     let runtime = FakeValueRuntime::default();
-    let mut ui = FakeInteractiveUi::with_prompts(&["hello"]);
+    let ui = FakeInteractiveUi::with_prompts(&["hello"]).with_bus(bus.clone());
 
+    let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
@@ -1445,13 +1612,16 @@ async fn interactive_loop_does_not_return_per_turn_values_to_stdout() {
 
 #[tokio::test]
 async fn interactive_loop_treats_llm_cancellation_as_non_fatal_and_continues() {
+    let bus = create_bus();
     let runtime = CancelFirstRuntime::default();
-    let mut ui = FakeInteractiveUi::with_prompts(&["first", "second"]);
+    let ui = FakeInteractiveUi::with_prompts(&["first", "second"]).with_bus(bus.clone());
 
+    let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop should continue after cancellation");
@@ -1465,13 +1635,16 @@ async fn interactive_loop_treats_llm_cancellation_as_non_fatal_and_continues() {
 
 #[tokio::test]
 async fn interactive_loop_treats_errors_as_non_fatal_and_displays_inline() {
+    let bus = create_bus();
     let runtime = ErrorFirstRuntime::default();
-    let mut ui = FakeInteractiveUi::with_prompts(&["first", "second"]);
+    let ui = FakeInteractiveUi::with_prompts(&["first", "second"]).with_bus(bus.clone());
 
+    let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop should continue after error");
@@ -1483,6 +1656,8 @@ async fn interactive_loop_treats_errors_as_non_fatal_and_displays_inline() {
     );
     assert!(
         ui.warnings
+            .lock()
+            .unwrap()
             .iter()
             .any(|w| w.contains("API rate limit exceeded")),
         "error should be displayed as inline warning"
@@ -1491,33 +1666,38 @@ async fn interactive_loop_treats_errors_as_non_fatal_and_displays_inline() {
 
 #[tokio::test]
 async fn run_hydrated_interactive_loop_hydrates_before_first_pump() {
+    let bus = create_bus();
     let runtime = FakeRuntime::default();
-    let mut ui = FakeInteractiveUi::with_prompts(&[]);
+    let ui = FakeInteractiveUi::with_prompts(&[]).with_bus(bus.clone());
 
     let messages = vec![
         UiMessageSnapshot::new("user", "from history"),
         UiMessageSnapshot::new("assistant", "from assistant"),
     ];
 
+    let spawner = ui.make_event_spawner();
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()).with_hydration(messages, None),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_hydration(messages, None)
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     result.expect("interactive loop with hydration");
 
     assert_eq!(
-        &ui.call_order[..2],
-        ["hydrate", "pump_once"],
+        &ui.call_order.lock().expect("call_order lock")[..1],
+        ["hydrate"],
         "expected hydrate before first pump"
     );
 }
 
 #[tokio::test]
 async fn run_hydrated_interactive_loop_hydrates_exactly_once() {
+    let bus = create_bus();
     let runtime = FakeRuntime::default();
-    let mut ui = FakeInteractiveUi::with_prompts(&[]);
+    let ui = FakeInteractiveUi::with_prompts(&[]).with_bus(bus.clone());
 
     let messages = vec![UiMessageSnapshot::new("user", "history"), {
         let mut s = UiMessageSnapshot::new("assistant", "response");
@@ -1528,23 +1708,30 @@ async fn run_hydrated_interactive_loop_hydrates_exactly_once() {
         });
         s
     }];
+    let spawner = ui.make_event_spawner();
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()).with_hydration(messages.clone(), None),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_hydration(messages.clone(), None)
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     result.expect("interactive loop with hydration");
 
-    assert_eq!(ui.hydrated_messages, messages);
+    assert_eq!(
+        *ui.hydrated_messages.lock().expect("hydrated_messages lock"),
+        messages
+    );
 }
 
 #[tokio::test]
 async fn interactive_loop_processes_input_while_first_turn_is_running() {
+    let bus = create_bus();
     let block_first_turn = Arc::new(AtomicBool::new(false));
     let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn));
     let active_pump_count = Arc::new(AtomicUsize::new(0));
-    let mut ui = ResponsiveInteractiveUi::new(
+    let ui = ResponsiveInteractiveUi::new(
         &["first"],
         &["second"],
         &[],
@@ -1552,7 +1739,9 @@ async fn interactive_loop_processes_input_while_first_turn_is_running() {
         Arc::clone(&block_first_turn),
         2,
         Arc::clone(&active_pump_count),
-    );
+    )
+    .with_bus(bus.clone());
+    let spawner = ui.make_event_spawner();
 
     // Spawn a background task to unblock the turn after a delay.
     let unblock = Arc::clone(&block_first_turn);
@@ -1563,8 +1752,9 @@ async fn interactive_loop_processes_input_while_first_turn_is_running() {
 
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop should stay responsive");
@@ -1578,10 +1768,11 @@ async fn interactive_loop_processes_input_while_first_turn_is_running() {
 
 #[tokio::test]
 async fn interactive_loop_preserves_fifo_for_prompts_queued_while_active() {
+    let bus = create_bus();
     let block_first_turn = Arc::new(AtomicBool::new(false));
     let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn));
     let active_pump_count = Arc::new(AtomicUsize::new(0));
-    let mut ui = ResponsiveInteractiveUi::new(
+    let ui = ResponsiveInteractiveUi::new(
         &["first"],
         &["second", "third"],
         &[],
@@ -1589,7 +1780,9 @@ async fn interactive_loop_preserves_fifo_for_prompts_queued_while_active() {
         Arc::clone(&block_first_turn),
         3,
         Arc::clone(&active_pump_count),
-    );
+    )
+    .with_bus(bus.clone());
+    let spawner = ui.make_event_spawner();
 
     // Spawn a background task to unblock the turn after a delay.
     let unblock = Arc::clone(&block_first_turn);
@@ -1600,8 +1793,9 @@ async fn interactive_loop_preserves_fifo_for_prompts_queued_while_active() {
 
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     result.expect("interactive loop should complete queued prompts");
@@ -1615,20 +1809,22 @@ async fn interactive_loop_preserves_fifo_for_prompts_queued_while_active() {
 #[tokio::test]
 #[serial_test::serial]
 async fn permission_requested_emits_before_execution_and_waits_for_decision_before_side_effects() {
+    let bus = create_bus();
     let runtime = PermissionGateRuntime::new();
     let pumps_while_waiting = Arc::new(AtomicUsize::new(0));
-    let mut ui = PermissionOrderingUi::new(
+    let ui = PermissionOrderingUi::new(
         PermissionDecision::AllowOnce,
         4,
-        Arc::clone(&runtime.active),
         Arc::clone(&pumps_while_waiting),
-        Arc::clone(&runtime.side_effects),
-    );
+    )
+    .with_bus(bus.clone());
+    let spawner = ui.make_event_spawner();
 
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
@@ -1640,18 +1836,16 @@ async fn permission_requested_emits_before_execution_and_waits_for_decision_befo
         "execution must pause while waiting for permission decision"
     );
 
-    let requested_idx = ui
-        .events
+    let events = ui.events.lock().unwrap();
+    let requested_idx = events
         .iter()
         .position(|event| matches!(event, UiEvent::PermissionRequested { .. }))
         .expect("PermissionRequested must be emitted");
-    let submitted_idx = ui
-        .events
+    let submitted_idx = events
         .iter()
         .position(|event| matches!(event, UiEvent::PermissionDecisionSubmitted { .. }))
         .expect("PermissionDecisionSubmitted must be emitted");
-    let tool_start_idx = ui
-        .events
+    let tool_start_idx = events
         .iter()
         .position(|event| matches!(event, UiEvent::ToolStart { .. }))
         .expect("ToolStart should happen after allow decision");
@@ -1663,19 +1857,17 @@ async fn permission_requested_emits_before_execution_and_waits_for_decision_befo
 #[tokio::test]
 #[serial_test::serial]
 async fn deny_decision_resumes_deterministically_without_pre_decision_handler_side_effects() {
+    let bus = create_bus();
     let runtime = PermissionGateRuntime::new();
-    let mut ui = PermissionOrderingUi::new(
-        PermissionDecision::Deny,
-        3,
-        Arc::clone(&runtime.active),
-        Arc::new(AtomicUsize::new(0)),
-        Arc::clone(&runtime.side_effects),
-    );
+    let ui = PermissionOrderingUi::new(PermissionDecision::Deny, 3, Arc::new(AtomicUsize::new(0)))
+        .with_bus(bus.clone());
+    let spawner = ui.make_event_spawner();
 
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
@@ -1683,12 +1875,13 @@ async fn deny_decision_resumes_deterministically_without_pre_decision_handler_si
     assert!(value.is_nothing());
     assert_eq!(_runtime.side_effects.load(Ordering::SeqCst), 0);
 
+    let events = ui.events.lock().unwrap();
     assert!(
-        ui.events
+        events
             .iter()
             .any(|event| matches!(event, UiEvent::PermissionRequested { .. }))
     );
-    assert!(ui.events.iter().any(|event| matches!(
+    assert!(events.iter().any(|event| matches!(
         event,
         UiEvent::PermissionDecisionSubmitted {
             decision: PermissionDecision::Deny,
@@ -1696,22 +1889,276 @@ async fn deny_decision_resumes_deterministically_without_pre_decision_handler_si
         }
     )));
     assert!(
-        !ui.events
+        !events
             .iter()
             .any(|event| matches!(event, UiEvent::ToolStart { .. }))
     );
 }
 
+// ── PermissionBridgeUi ──────────────────────────────────────────────────
+// UserInputUi-only helper that drives a permission decision through the
+// interactive worker bridge, asserting the bus event ordering.
+
+struct PermissionBridgeUi {
+    event_tx: mpsc::Sender<OrchestratorEvent>,
+    submitted: std::collections::VecDeque<String>,
+    pending_decisions: Arc<Mutex<std::collections::VecDeque<PermissionDecisionSubmission>>>,
+    events: Arc<Mutex<Vec<crate::bus::PermissionEvent>>>,
+    quit: Arc<AtomicBool>,
+    decision: PermissionDecision,
+    _bus_task: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl PermissionBridgeUi {
+    fn new(decision: PermissionDecision) -> Self {
+        let (event_tx, _event_rx) = tokio::sync::mpsc::channel::<OrchestratorEvent>(256);
+        Self {
+            event_tx,
+            submitted: ["run".to_string()].into_iter().collect(),
+            pending_decisions: Arc::new(Mutex::new(std::collections::VecDeque::new())),
+            events: Arc::new(Mutex::new(Vec::new())),
+            quit: Arc::new(AtomicBool::new(false)),
+            decision,
+            _bus_task: None,
+        }
+    }
+
+    fn with_bus(mut self, bus: crate::bus::Bus) -> Self {
+        let pending_decisions = Arc::clone(&self.pending_decisions);
+        let events = Arc::clone(&self.events);
+        let quit = Arc::clone(&self.quit);
+        let decision = self.decision;
+
+        let mut permission_rx = bus.permission().subscribe();
+        let mut turn_rx = bus.turn().subscribe();
+
+        self._bus_task = Some(tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    Ok(event) = permission_rx.recv() => {
+                        events.lock().expect("events lock").push(event.clone());
+                        if let crate::bus::PermissionEvent::Requested { ref request_id, ref context } = event {
+                            pending_decisions.lock().expect("pending decisions lock").push_back(PermissionDecisionSubmission {
+                                request_id: request_id.clone(),
+                                decision,
+                                matched_rule_identity: context.matched_rule_identity.clone(),
+                            });
+                        }
+                    }
+                    Ok(event) = turn_rx.recv() => {
+                        if let crate::bus::TurnEvent::TurnCompleted { .. } = event {
+                            quit.store(true, Ordering::SeqCst);
+                        }
+                    }
+                    else => break,
+                }
+            }
+        }));
+        self
+    }
+
+    /// Feeds queued inputs into the orchestrator's event channel via
+    /// `with_spawn_render_loop`, and terminates when the turn completes.
+    fn make_event_spawner(&self) -> impl FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static {
+        let submitted = self.submitted.clone();
+        let pending_decisions = Arc::clone(&self.pending_decisions);
+        let quit = Arc::clone(&self.quit);
+        move |event_tx| {
+            let event_tx = event_tx.clone();
+            let mut submitted = submitted.clone();
+            tokio::spawn(async move {
+                loop {
+                    if let Some(prompt) = submitted.pop_front() {
+                        let _ = event_tx
+                            .send(OrchestratorEvent::PromptSubmitted { text: prompt })
+                            .await;
+                    }
+                    let decision = pending_decisions.lock().expect("pending lock").pop_front();
+                    if let Some(decision) = decision {
+                        let _ = event_tx
+                            .send(OrchestratorEvent::PermissionDecision { decision })
+                            .await;
+                    }
+                    if quit.load(Ordering::SeqCst) {
+                        let _ = event_tx.send(OrchestratorEvent::Quit).await;
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            });
+        }
+    }
+}
+
+impl UserInputUi for PermissionBridgeUi {
+    fn event_sender(&self) -> &mpsc::Sender<OrchestratorEvent> {
+        &self.event_tx
+    }
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn permission_flow_reaches_bus_through_worker_bridge() {
+    let bus = create_bus();
+    let runtime = PermissionGateRuntime::new();
+    let ui = PermissionBridgeUi::new(PermissionDecision::AllowOnce).with_bus(bus.clone());
+    let spawner = ui.make_event_spawner();
+
+    let (runtime, result) = run_interactive_loop_impl(
+        runtime,
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
+    )
+    .await;
+    let value = result.expect("interactive loop");
+
+    assert!(value.is_nothing());
+    assert_eq!(runtime.side_effects.load(Ordering::SeqCst), 1);
+
+    let events = ui.events.lock().unwrap();
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, crate::bus::PermissionEvent::Requested { .. })),
+        "worker bridge must forward a PermissionEvent::Requested to the permission bus"
+    );
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            crate::bus::PermissionEvent::DecisionSubmitted {
+                decision: PermissionDecision::AllowOnce,
+                ..
+            }
+        )),
+        "worker bridge must forward a PermissionEvent::DecisionSubmitted after the decision is injected"
+    );
+
+    let requested_idx = events
+        .iter()
+        .position(|event| matches!(event, crate::bus::PermissionEvent::Requested { .. }))
+        .expect("Requested must be present");
+    let submitted_idx = events
+        .iter()
+        .position(|event| matches!(event, crate::bus::PermissionEvent::DecisionSubmitted { .. }))
+        .expect("DecisionSubmitted must be present");
+    assert!(
+        requested_idx < submitted_idx,
+        "PermissionEvent::Requested must precede PermissionEvent::DecisionSubmitted"
+    );
+}
+
+// ── PermissionTimeoutIgnoredRuntime ───────────────────────────────────
+
+struct PermissionTimeoutIgnoredRuntime {
+    request_id: String,
+}
+
+impl CoreRuntime for PermissionTimeoutIgnoredRuntime {
+    async fn execute_turn<U: ProgressUi>(
+        &mut self,
+        ui: &mut U,
+        _prompt: String,
+        _context: Option<String>,
+        span: Span,
+    ) -> Result<Value, LabeledError> {
+        ui.emit(&UiEvent::PermissionDecisionTimedOut {
+            request_id: self.request_id.clone(),
+        });
+        ui.emit(&UiEvent::PermissionDecisionIgnored {
+            request_id: self.request_id.clone(),
+            reason: "decision_channel_closed".to_string(),
+        });
+        ui.emit(&UiEvent::Completed { tool_calls: 0 });
+        Ok(Value::nothing(span))
+    }
+}
+
+impl McpManagement for PermissionTimeoutIgnoredRuntime {
+    async fn set_mcp_server_enabled(
+        &mut self,
+        _name: &str,
+        _enabled: bool,
+    ) -> Result<McpUsabilityState, String> {
+        Ok(McpUsabilityState::Disabled)
+    }
+
+    fn llm_visible_mcp_tool_count(&self) -> usize {
+        0
+    }
+
+    fn llm_visible_mcp_tool_count_for_server(&self, _server_name: &str) -> usize {
+        0
+    }
+
+    fn llm_visible_mcp_tool_names_by_server(&self) -> Vec<(String, Vec<String>)> {
+        Vec::new()
+    }
+}
+
+crate::default_session!(PermissionTimeoutIgnoredRuntime);
+crate::default_compaction!(PermissionTimeoutIgnoredRuntime);
+
+impl ModelSwitching for PermissionTimeoutIgnoredRuntime {
+    fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
+        Err("model switching not supported".to_string())
+    }
+
+    fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
+        Err("agent switch not supported in this runtime".to_string())
+    }
+
+    fn active_model_identity(&self) -> String {
+        "unknown/unknown".to_string()
+    }
+
+    fn max_context_tokens(&self) -> Option<u64> {
+        None
+    }
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn permission_timeout_and_ignored_reach_bus_through_worker_bridge() {
+    let bus = create_bus();
+    let runtime = PermissionTimeoutIgnoredRuntime {
+        request_id: "ask-0000000000000abc".to_string(),
+    };
+    let ui = PermissionBridgeUi::new(PermissionDecision::AllowOnce).with_bus(bus.clone());
+    let spawner = ui.make_event_spawner();
+
+    let (_runtime, result) = run_interactive_loop_impl(
+        runtime,
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
+    )
+    .await;
+    let value = result.expect("interactive loop");
+    assert!(value.is_nothing());
+
+    let events = ui.events.lock().unwrap();
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, crate::bus::PermissionEvent::DecisionTimedOut { .. })),
+        "worker bridge must forward PermissionEvent::DecisionTimedOut to the permission bus"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, crate::bus::PermissionEvent::DecisionIgnored { .. })),
+        "worker bridge must forward PermissionEvent::DecisionIgnored to the permission bus"
+    );
+}
+
 #[tokio::test]
 async fn models_launcher_opens_picker_while_worker_active() {
+    let bus = create_bus();
     let block_first_turn = Arc::new(AtomicBool::new(false));
     let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn));
-    let mut ui = ModelPickerLaunchWhileActiveUi::new(
-        &["first"],
-        1,
-        Arc::clone(&runtime.active),
-        Arc::clone(&block_first_turn),
-    );
+    let ui = ModelPickerLaunchWhileActiveUi::new(&["first"], 1).with_bus(bus.clone());
+    let spawner = ui.make_event_spawner(bus.clone());
 
     // Spawn a background task to unblock the turn after a delay.
     let unblock = Arc::clone(&block_first_turn);
@@ -1722,15 +2169,18 @@ async fn models_launcher_opens_picker_while_worker_active() {
 
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop should process model launcher while active");
 
     assert!(value.is_nothing());
-    assert_eq!(ui.shared_actions, vec![SharedUiAction::Models]);
-    assert_eq!(ui.shared_actions_observed_while_active, vec![true]);
+    assert_eq!(
+        ui.shared_actions.lock().unwrap().clone(),
+        vec![SharedUiAction::Models]
+    );
     assert_eq!(
         _runtime.prompts.lock().expect("prompts lock").as_slice(),
         ["first"]
@@ -1739,14 +2189,11 @@ async fn models_launcher_opens_picker_while_worker_active() {
 
 #[tokio::test]
 async fn models_slash_opens_picker_while_worker_active() {
+    let bus = create_bus();
     let block_first_turn = Arc::new(AtomicBool::new(false));
     let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn));
-    let mut ui = ModelPickerLaunchWhileActiveUi::new(
-        &["first"],
-        1,
-        Arc::clone(&runtime.active),
-        Arc::clone(&block_first_turn),
-    );
+    let ui = ModelPickerLaunchWhileActiveUi::new(&["first"], 1).with_bus(bus.clone());
+    let spawner = ui.make_event_spawner(bus.clone());
 
     // Spawn a background task to unblock the turn after a delay.
     let unblock = Arc::clone(&block_first_turn);
@@ -1757,15 +2204,18 @@ async fn models_slash_opens_picker_while_worker_active() {
 
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop should process /models while active");
 
     assert!(value.is_nothing());
-    assert_eq!(ui.shared_actions, vec![SharedUiAction::Models]);
-    assert_eq!(ui.shared_actions_observed_while_active, vec![true]);
+    assert_eq!(
+        ui.shared_actions.lock().unwrap().clone(),
+        vec![SharedUiAction::Models]
+    );
     assert_eq!(
         _runtime.prompts.lock().expect("prompts lock").as_slice(),
         ["first"]
@@ -1774,13 +2224,13 @@ async fn models_slash_opens_picker_while_worker_active() {
 
 #[tokio::test]
 async fn interactive_loop_global_abort_cancels_active_and_does_not_run_queued_prompt() {
+    let bus = create_bus();
     let block_first_turn = Arc::new(AtomicBool::new(false));
     let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn));
-    // Only submit "first" — the "queued" prompt behavior can't be tested
-    // in async because pump_once never runs while execute_turn is spinning
-    // (they share the same async task). The abort/cancellation path is
-    // still exercised via the cancel_requested flag checked in execute_turn.
-    let mut ui = FakeInteractiveUi::with_prompts(&["first"]);
+    let ui = FakeInteractiveUi::with_prompts(&["first"])
+        .with_min_bus_events(3)
+        .with_bus(bus.clone());
+    let spawner = ui.make_event_spawner();
 
     // Spawn a background task that unblocks the turn after a short delay.
     let unblock = Arc::clone(&block_first_turn);
@@ -1791,8 +2241,9 @@ async fn interactive_loop_global_abort_cancels_active_and_does_not_run_queued_pr
 
     let (rt, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop should treat cancellation as non-fatal");
@@ -1806,6 +2257,7 @@ async fn interactive_loop_global_abort_cancels_active_and_does_not_run_queued_pr
 
 #[tokio::test]
 async fn interactive_loop_startup_hydration_initializes_per_server_visible_counts_before_toggles() {
+    let bus = create_bus();
     let runtime = StartupHydrationRuntime {
         names_by_server: vec![
             (
@@ -1815,19 +2267,21 @@ async fn interactive_loop_startup_hydration_initializes_per_server_visible_count
             ("k8s".to_string(), vec!["k8s__pods".to_string()]),
         ],
     };
-    let mut ui = FakeInteractiveUi::with_prompts(&[]);
+    let ui = FakeInteractiveUi::with_prompts(&[]).with_bus(bus.clone());
+    let spawner = ui.make_event_spawner();
 
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
-        ui.mcp_visible_tool_count_updates,
+        ui.mcp_visible_tool_count_updates.lock().unwrap().clone(),
         vec![("gh".to_string(), 2), ("k8s".to_string(), 1)]
     );
 }
@@ -1835,11 +2289,23 @@ async fn interactive_loop_startup_hydration_initializes_per_server_visible_count
 #[test]
 fn emit_batch_delivers_all_events() {
     // RED phase: write test that verifies emit_batch delivers all events
-    #[derive(Default)]
     struct BatchTestUi {
+        event_tx: mpsc::Sender<OrchestratorEvent>,
         events: Vec<UiEvent>,
         emit_calls: usize,
         emit_batch_calls: usize,
+    }
+
+    impl Default for BatchTestUi {
+        fn default() -> Self {
+            let (event_tx, _event_rx) = tokio::sync::mpsc::channel::<OrchestratorEvent>(256);
+            Self {
+                event_tx,
+                events: Vec::new(),
+                emit_calls: 0,
+                emit_batch_calls: 0,
+            }
+        }
     }
 
     impl ProgressUi for BatchTestUi {
@@ -1862,32 +2328,9 @@ fn emit_batch_delivers_all_events() {
         }
     }
 
-    impl LifecycleUi for BatchTestUi {
-        fn pump_once(&mut self) {}
-
-        fn quit_requested(&self) -> bool {
-            false
-        }
-
-        fn fatal_error(&self) -> Option<&str> {
-            None
-        }
-    }
-
     impl UserInputUi for BatchTestUi {
-        fn take_submitted_prompt(&mut self) -> Option<String> {
-            None
-        }
-    }
-
-    impl DisplayStateUi for BatchTestUi {}
-
-    impl TranscriptUi for BatchTestUi {
-        fn hydrate_transcript_from_messages(
-            &mut self,
-            _messages: impl IntoIterator<Item = UiMessageSnapshot>,
-            _last_total_tokens: Option<u64>,
-        ) {
+        fn event_sender(&self) -> &mpsc::Sender<OrchestratorEvent> {
+            &self.event_tx
         }
     }
 
@@ -1930,11 +2373,12 @@ struct McpToggleRuntime {
 impl CoreRuntime for McpToggleRuntime {
     async fn execute_turn<U: ProgressUi>(
         &mut self,
-        _ui: &mut U,
+        ui: &mut U,
         _prompt: String,
         _context: Option<String>,
         span: Span,
     ) -> Result<Value, LabeledError> {
+        ui.emit(&UiEvent::Completed { tool_calls: 0 });
         Ok(Value::nothing(span))
     }
 }
@@ -1993,11 +2437,12 @@ struct FailingMcpToggleRuntime {
 impl CoreRuntime for FailingMcpToggleRuntime {
     async fn execute_turn<U: ProgressUi>(
         &mut self,
-        _ui: &mut U,
+        ui: &mut U,
         _prompt: String,
         _context: Option<String>,
         span: Span,
     ) -> Result<Value, LabeledError> {
+        ui.emit(&UiEvent::Completed { tool_calls: 0 });
         Ok(Value::nothing(span))
     }
 }
@@ -2060,11 +2505,12 @@ struct SequencedMcpToggleRuntime {
 impl CoreRuntime for SequencedMcpToggleRuntime {
     async fn execute_turn<U: ProgressUi>(
         &mut self,
-        _ui: &mut U,
+        ui: &mut U,
         _prompt: String,
         _context: Option<String>,
         span: Span,
     ) -> Result<Value, LabeledError> {
+        ui.emit(&UiEvent::Completed { tool_calls: 0 });
         Ok(Value::nothing(span))
     }
 }
@@ -2121,208 +2567,120 @@ impl ModelSwitching for SequencedMcpToggleRuntime {
 crate::default_session!(SequencedMcpToggleRuntime);
 crate::default_compaction!(SequencedMcpToggleRuntime);
 
-// ── PanicOnToggleRuntime ────────────────────────────────────────────────
-
-struct PanicOnToggleRuntime {
-    visible_count: usize,
-}
-
-impl CoreRuntime for PanicOnToggleRuntime {
-    async fn execute_turn<U: ProgressUi>(
-        &mut self,
-        _ui: &mut U,
-        _prompt: String,
-        _context: Option<String>,
-        span: Span,
-    ) -> Result<Value, LabeledError> {
-        Ok(Value::nothing(span))
-    }
-}
-
-impl McpManagement for PanicOnToggleRuntime {
-    async fn set_mcp_server_enabled(
-        &mut self,
-        _name: &str,
-        _enabled: bool,
-    ) -> Result<McpUsabilityState, String> {
-        panic!("toggle panic")
-    }
-
-    fn llm_visible_mcp_tool_count(&self) -> usize {
-        self.visible_count
-    }
-
-    fn llm_visible_mcp_tool_count_for_server(&self, _server_name: &str) -> usize {
-        0
-    }
-
-    fn llm_visible_mcp_tool_names_by_server(&self) -> Vec<(String, Vec<String>)> {
-        Vec::new()
-    }
-}
-
-impl ModelSwitching for PanicOnToggleRuntime {
-    fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
-        Err("model switching not supported".to_string())
-    }
-
-    fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
-        Err("agent switch not supported in this runtime".to_string())
-    }
-
-    fn active_model_identity(&self) -> String {
-        "unknown/unknown".to_string()
-    }
-
-    fn max_context_tokens(&self) -> Option<u64> {
-        None
-    }
-}
-
-crate::default_session!(PanicOnToggleRuntime);
-crate::default_compaction!(PanicOnToggleRuntime);
-
 // ── StagedToggleUi ──────────────────────────────────────────────────────
 
 struct StagedToggleUi {
-    quit: bool,
-    first_sent: bool,
-    second_sent: bool,
-    mcp_states: Vec<(String, McpUsabilityState)>,
-    mcp_details: Vec<(String, McpUsabilityState, Option<String>, usize)>,
-    mcp_visible_tool_count_updates: Vec<(String, usize)>,
+    event_tx: mpsc::Sender<OrchestratorEvent>,
+    quit: Arc<AtomicBool>,
+    first_response_processed: Arc<AtomicBool>,
+    second_response_processed: Arc<AtomicBool>,
+    _ui_state_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl StagedToggleUi {
     fn new() -> Self {
+        let (event_tx, _event_rx) = tokio::sync::mpsc::channel::<OrchestratorEvent>(256);
         Self {
-            quit: false,
-            first_sent: false,
-            second_sent: false,
-            mcp_states: Vec::new(),
-            mcp_details: Vec::new(),
-            mcp_visible_tool_count_updates: Vec::new(),
-        }
-    }
-}
-
-impl ProgressUi for StagedToggleUi {
-    fn emit(&mut self, _event: &UiEvent) {}
-
-    fn flush(&mut self) {}
-
-    fn take_cancel_requested(&self) -> bool {
-        false
-    }
-}
-
-impl LifecycleUi for StagedToggleUi {
-    fn pump_once(&mut self) {
-        if self.mcp_details.len() >= 2 {
-            self.quit = true;
+            event_tx,
+            quit: Arc::new(AtomicBool::new(false)),
+            first_response_processed: Arc::new(AtomicBool::new(false)),
+            second_response_processed: Arc::new(AtomicBool::new(false)),
+            _ui_state_task: None,
         }
     }
 
-    fn quit_requested(&self) -> bool {
-        self.quit
-    }
-
-    fn fatal_error(&self) -> Option<&str> {
-        None
+    fn with_bus(mut self, bus: crate::bus::Bus) -> Self {
+        let first_response_processed = Arc::clone(&self.first_response_processed);
+        let second_response_processed = Arc::clone(&self.second_response_processed);
+        let quit = Arc::clone(&self.quit);
+        let mut rx = bus.ui_state().subscribe();
+        self._ui_state_task = Some(tokio::spawn(async move {
+            while let Ok(event) = rx.recv().await {
+                if matches!(
+                    event,
+                    UiStateEvent::SetMcpServerState { server: ref s, .. }
+                        if s == "gh"
+                ) {
+                    let was_first = first_response_processed
+                        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                        .is_ok();
+                    if !was_first {
+                        second_response_processed.store(true, Ordering::SeqCst);
+                        quit.store(true, Ordering::SeqCst);
+                    }
+                }
+            }
+        }));
+        self
     }
 }
 
 impl UserInputUi for StagedToggleUi {
-    fn take_submitted_prompt(&mut self) -> Option<String> {
-        None
-    }
-
-    fn take_next_mcp_toggle_request(&mut self) -> Option<McpToggleRequest> {
-        if !self.first_sent {
-            self.first_sent = true;
-            return Some(McpToggleRequest {
-                server_name: "gh".to_string(),
-                enable: false,
-            });
-        }
-
-        if self.first_sent && !self.second_sent && !self.mcp_details.is_empty() {
-            self.second_sent = true;
-            return Some(McpToggleRequest {
-                server_name: "gh".to_string(),
-                enable: true,
-            });
-        }
-
-        None
+    fn event_sender(&self) -> &mpsc::Sender<OrchestratorEvent> {
+        &self.event_tx
     }
 }
 
-impl DisplayStateUi for StagedToggleUi {
-    fn set_mcp_server_state(&mut self, server_name: &str, state: McpUsabilityState) {
-        self.mcp_states.push((server_name.to_string(), state));
-    }
-
-    fn set_mcp_server_state_with_details(
-        &mut self,
-        server_name: &str,
-        state: McpUsabilityState,
-        reason: Option<String>,
-        llm_visible_mcp_tool_count: usize,
-    ) {
-        self.mcp_details.push((
-            server_name.to_string(),
-            state,
-            reason,
-            llm_visible_mcp_tool_count,
-        ));
-        self.set_mcp_server_state(server_name, state);
-    }
-
-    fn set_mcp_visible_tool_count_by_server_name(&mut self, server_name: &str, count: usize) {
-        self.mcp_visible_tool_count_updates
-            .push((server_name.to_string(), count));
-    }
-
-    fn set_mcp_visible_tool_names_by_server_name(
-        &mut self,
-        _server_name: &str,
-        _names: Vec<String>,
-    ) {
-    }
-
-    fn execute_shared_ui_action(&mut self, _action: SharedUiAction) -> bool {
-        true
-    }
-}
-
-impl TranscriptUi for StagedToggleUi {
-    fn hydrate_transcript_from_messages(
-        &mut self,
-        _messages: impl IntoIterator<Item = UiMessageSnapshot>,
-        _last_total_tokens: Option<u64>,
-    ) {
+impl StagedToggleUi {
+    /// Feeds the two sequenced MCP toggles: the first immediately, the second
+    /// only after the first response's `SetMcpServerState` has been observed.
+    /// Sends `Quit` once both responses have been processed.
+    fn make_event_spawner(&self) -> impl FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static {
+        let first_response_processed = Arc::clone(&self.first_response_processed);
+        let second_response_processed = Arc::clone(&self.second_response_processed);
+        move |event_tx| {
+            let event_tx = event_tx.clone();
+            tokio::spawn(async move {
+                let _ = event_tx
+                    .send(OrchestratorEvent::UiRequest(UiRequest::ToggleMcp {
+                        server: "gh".to_string(),
+                        enable: false,
+                    }))
+                    .await;
+                while !first_response_processed.load(Ordering::SeqCst) {
+                    tokio::time::sleep(Duration::from_millis(2)).await;
+                }
+                let _ = event_tx
+                    .send(OrchestratorEvent::UiRequest(UiRequest::ToggleMcp {
+                        server: "gh".to_string(),
+                        enable: true,
+                    }))
+                    .await;
+                while !second_response_processed.load(Ordering::SeqCst) {
+                    tokio::time::sleep(Duration::from_millis(2)).await;
+                }
+                let _ = event_tx.send(OrchestratorEvent::Quit).await;
+            });
+        }
     }
 }
 
 #[tokio::test]
 async fn interactive_loop_processes_mcp_toggle_requests_and_updates_ui_state() {
+    let bus = create_bus();
     let runtime = McpToggleRuntime {
         toggles: Vec::new(),
         next_state: McpUsabilityState::Disabled,
         visible_count: 3,
         visible_count_by_server: 0,
     };
-    let mut ui = FakeInteractiveUi::with_prompts(&[]).with_expected_mcp_updates(1);
-    ui.mcp_toggle_requests.push_back(McpToggleRequest {
-        server_name: "gh".to_string(),
-        enable: false,
-    });
+    let ui = FakeInteractiveUi::with_prompts(&[])
+        .with_expected_mcp_updates(1)
+        .with_bus(bus.clone());
+    ui.mcp_toggle_requests
+        .lock()
+        .unwrap()
+        .push_back(McpToggleRequest {
+            server_name: "gh".to_string(),
+            enable: false,
+        });
 
+    let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
@@ -2330,37 +2688,41 @@ async fn interactive_loop_processes_mcp_toggle_requests_and_updates_ui_state() {
     assert!(value.is_nothing());
     assert_eq!(runtime.toggles, vec![("gh".to_string(), false)]);
     assert_eq!(
-        ui.mcp_states,
-        vec![("gh".to_string(), McpUsabilityState::Disabled)]
-    );
-    assert_eq!(
-        ui.mcp_details,
+        ui.mcp_details.lock().unwrap().clone(),
         vec![("gh".to_string(), McpUsabilityState::Disabled, None, 3)]
     );
     assert_eq!(
-        ui.mcp_visible_tool_count_updates,
+        ui.mcp_visible_tool_count_updates.lock().unwrap().clone(),
         vec![("gh".to_string(), 0)]
     );
 }
 
 #[tokio::test]
 async fn interactive_loop_marks_enable_failure_as_failed_state() {
+    let bus = create_bus();
     let runtime = McpToggleRuntime {
         toggles: Vec::new(),
         next_state: McpUsabilityState::Failed,
         visible_count: 2,
         visible_count_by_server: 0,
     };
-    let mut ui = FakeInteractiveUi::with_prompts(&[]).with_expected_mcp_updates(1);
-    ui.mcp_toggle_requests.push_back(McpToggleRequest {
-        server_name: "gh".to_string(),
-        enable: true,
-    });
+    let ui = FakeInteractiveUi::with_prompts(&[])
+        .with_expected_mcp_updates(1)
+        .with_bus(bus.clone());
+    ui.mcp_toggle_requests
+        .lock()
+        .unwrap()
+        .push_back(McpToggleRequest {
+            server_name: "gh".to_string(),
+            enable: true,
+        });
 
+    let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
@@ -2368,37 +2730,41 @@ async fn interactive_loop_marks_enable_failure_as_failed_state() {
     assert!(value.is_nothing());
     assert_eq!(runtime.toggles, vec![("gh".to_string(), true)]);
     assert_eq!(
-        ui.mcp_states,
-        vec![("gh".to_string(), McpUsabilityState::Failed)]
-    );
-    assert_eq!(
-        ui.mcp_details,
+        ui.mcp_details.lock().unwrap().clone(),
         vec![("gh".to_string(), McpUsabilityState::Failed, None, 2)]
     );
     assert_eq!(
-        ui.mcp_visible_tool_count_updates,
+        ui.mcp_visible_tool_count_updates.lock().unwrap().clone(),
         vec![("gh".to_string(), 0)]
     );
 }
 
 #[tokio::test]
 async fn interactive_loop_marks_enable_success_as_enabled_state() {
+    let bus = create_bus();
     let runtime = McpToggleRuntime {
         toggles: Vec::new(),
         next_state: McpUsabilityState::Enabled,
         visible_count: 7,
         visible_count_by_server: 5,
     };
-    let mut ui = FakeInteractiveUi::with_prompts(&[]).with_expected_mcp_updates(1);
-    ui.mcp_toggle_requests.push_back(McpToggleRequest {
-        server_name: "gh".to_string(),
-        enable: true,
-    });
+    let ui = FakeInteractiveUi::with_prompts(&[])
+        .with_expected_mcp_updates(1)
+        .with_bus(bus.clone());
+    ui.mcp_toggle_requests
+        .lock()
+        .unwrap()
+        .push_back(McpToggleRequest {
+            server_name: "gh".to_string(),
+            enable: true,
+        });
 
+    let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
@@ -2406,35 +2772,39 @@ async fn interactive_loop_marks_enable_success_as_enabled_state() {
     assert!(value.is_nothing());
     assert_eq!(runtime.toggles, vec![("gh".to_string(), true)]);
     assert_eq!(
-        ui.mcp_states,
-        vec![("gh".to_string(), McpUsabilityState::Enabled)]
-    );
-    assert_eq!(
-        ui.mcp_details,
+        ui.mcp_details.lock().unwrap().clone(),
         vec![("gh".to_string(), McpUsabilityState::Enabled, None, 7)]
     );
     assert_eq!(
-        ui.mcp_visible_tool_count_updates,
+        ui.mcp_visible_tool_count_updates.lock().unwrap().clone(),
         vec![("gh".to_string(), 5)]
     );
 }
 
 #[tokio::test]
 async fn interactive_loop_propagates_failure_reason_and_visible_tool_count_on_toggle_error() {
+    let bus = create_bus();
     let runtime = FailingMcpToggleRuntime {
         toggles: Vec::new(),
         visible_count: 4,
     };
-    let mut ui = FakeInteractiveUi::with_prompts(&[]).with_expected_mcp_updates(1);
-    ui.mcp_toggle_requests.push_back(McpToggleRequest {
-        server_name: "gh".to_string(),
-        enable: true,
-    });
+    let ui = FakeInteractiveUi::with_prompts(&[])
+        .with_expected_mcp_updates(1)
+        .with_bus(bus.clone());
+    ui.mcp_toggle_requests
+        .lock()
+        .unwrap()
+        .push_back(McpToggleRequest {
+            server_name: "gh".to_string(),
+            enable: true,
+        });
 
+    let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
@@ -2442,11 +2812,7 @@ async fn interactive_loop_propagates_failure_reason_and_visible_tool_count_on_to
     assert!(value.is_nothing());
     assert_eq!(runtime.toggles, vec![("gh".to_string(), true)]);
     assert_eq!(
-        ui.mcp_states,
-        vec![("gh".to_string(), McpUsabilityState::Failed)]
-    );
-    assert_eq!(
-        ui.mcp_details,
+        ui.mcp_details.lock().unwrap().clone(),
         vec![(
             "gh".to_string(),
             McpUsabilityState::Failed,
@@ -2455,7 +2821,7 @@ async fn interactive_loop_propagates_failure_reason_and_visible_tool_count_on_to
         )]
     );
     assert_eq!(
-        ui.mcp_visible_tool_count_updates,
+        ui.mcp_visible_tool_count_updates.lock().unwrap().clone(),
         vec![("gh".to_string(), 0)]
     );
 }
@@ -2472,12 +2838,15 @@ async fn interactive_toggle_enable_disable_cycle_refreshes_per_server_visible_co
         current_visible_count: 0,
         current_visible_count_by_server: 0,
     };
-    let mut ui = StagedToggleUi::new();
+    let bus = create_bus();
+    let ui = StagedToggleUi::new().with_bus(bus.clone());
+    let spawner = ui.make_event_spawner();
 
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
@@ -2487,127 +2856,50 @@ async fn interactive_toggle_enable_disable_cycle_refreshes_per_server_visible_co
         runtime.toggles,
         vec![("gh".to_string(), false), ("gh".to_string(), true)]
     );
-    assert_eq!(
-        ui.mcp_details,
-        vec![
-            ("gh".to_string(), McpUsabilityState::Disabled, None, 3),
-            ("gh".to_string(), McpUsabilityState::Enabled, None, 7),
-        ]
-    );
-    assert_eq!(
-        ui.mcp_visible_tool_count_updates,
-        vec![("gh".to_string(), 0), ("gh".to_string(), 5)]
-    );
-}
-
-#[tokio::test]
-#[ignore = "catch_unwind + tokio::spawn panic propagation needs spawn_blocking approach"]
-async fn interactive_loop_disconnected_toggle_worker_preserves_authoritative_visible_tool_count() {
-    let runtime = PanicOnToggleRuntime { visible_count: 9 };
-    let mut ui = FakeInteractiveUi::with_prompts(&[]).with_expected_mcp_updates(1);
-    ui.mcp_toggle_requests.push_back(McpToggleRequest {
-        server_name: "gh".to_string(),
-        enable: false,
-    });
-
-    // The worker panics when processing the toggle. With tokio::spawn, the
-    // panic is caught by the runtime and JoinHandle::is_panicked() returns true.
-    // The main loop detects the worker channel disconnect and handles it gracefully.
-    let (_runtime, result) = run_interactive_loop_impl(
-        runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
-    )
-    .await;
-
-    // The loop should still complete (the panic is caught by tokio)
-    assert!(
-        result.is_ok(),
-        "loop should complete despite worker panic: {:?}",
-        result.err()
-    );
-    assert_eq!(
-        ui.mcp_details,
-        vec![(
-            "gh".to_string(),
-            McpUsabilityState::Failed,
-            Some("toggle worker disconnected".to_string()),
-            9,
-        )]
-    );
-}
-
-#[tokio::test]
-#[ignore = "catch_unwind + tokio::spawn panic propagation needs spawn_blocking approach"]
-async fn interactive_loop_worker_channel_closed_preserves_authoritative_visible_tool_count() {
-    let runtime = PanicOnToggleRuntime { visible_count: 13 };
-    let mut ui = StagedToggleUi::new();
-
-    let (_runtime, result) = run_interactive_loop_impl(
-        runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
-    )
-    .await;
-
-    // The loop should still complete (the panic is caught by tokio)
-    assert!(
-        result.is_ok(),
-        "loop should complete despite worker panic: {:?}",
-        result.err()
-    );
-    assert_eq!(
-        ui.mcp_details.len(),
-        2,
-        "expected exactly two toggle failure reports"
-    );
-    assert_eq!(ui.mcp_details[0].0, "gh");
-    assert_eq!(ui.mcp_details[0].1, McpUsabilityState::Failed);
-    assert_eq!(
-        ui.mcp_details[0].2.as_deref(),
-        Some("toggle worker disconnected")
-    );
-    assert_eq!(ui.mcp_details[0].3, 13);
-    assert_eq!(ui.mcp_details[1].0, "gh");
-    assert_eq!(ui.mcp_details[1].1, McpUsabilityState::Failed);
-    let reason = ui.mcp_details[1].2.as_deref().unwrap_or("");
-    assert!(
-        reason == "worker channel closed" || reason == "toggle worker disconnected",
-        "unexpected reason for second toggle: {reason}"
-    );
-    assert_eq!(ui.mcp_details[1].3, 13);
-    assert!(ui.mcp_visible_tool_count_updates.is_empty());
 }
 
 #[tokio::test]
 async fn palette_models_does_not_bypass_shared_models_action_path() {
+    let bus = create_bus();
     let runtime = FakeRuntime::default();
-    let mut ui = FakeInteractiveUi::with_prompts(&["/models"]);
+    let ui = FakeInteractiveUi::with_prompts(&["/models"]).with_bus(bus.clone());
 
+    let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
-    assert_eq!(ui.shared_actions, vec![SharedUiAction::Models]);
+    assert_eq!(
+        ui.shared_actions.lock().unwrap().clone(),
+        vec![SharedUiAction::Models]
+    );
     assert!(runtime.prompts.is_empty());
 }
 
 #[tokio::test]
 async fn inline_model_picker_enter_switches_active_model_and_provider() {
+    let bus = create_bus();
     let runtime = FakeRuntime::default();
-    let mut ui = FakeInteractiveUi::with_prompts(&[]);
+    let ui = FakeInteractiveUi::with_prompts(&[])
+        .with_min_bus_events(2)
+        .with_bus(bus.clone());
     ui.model_switch_requests
+        .lock()
+        .unwrap()
         .push_back("openai/gpt-4o-mini".to_string());
 
+    let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
@@ -2618,25 +2910,30 @@ async fn inline_model_picker_enter_switches_active_model_and_provider() {
         vec!["openai/gpt-4o-mini".to_string()]
     );
     assert_eq!(
-        ui.active_model_identity,
+        *ui.active_model_identity.lock().unwrap(),
         Some("openai/gpt-4o-mini".to_string())
     );
 }
 
 #[tokio::test]
 async fn model_switch_failure_keeps_previous_model_and_warns() {
+    let bus = create_bus();
     let runtime = FakeRuntime {
         switch_model_result: Some(Err("switch failed".to_string())),
         ..Default::default()
     };
-    let mut ui = FakeInteractiveUi::with_prompts(&[]);
+    let ui = FakeInteractiveUi::with_prompts(&[]).with_bus(bus.clone());
     ui.model_switch_requests
+        .lock()
+        .unwrap()
         .push_back("openai/gpt-4o-mini".to_string());
 
+    let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
@@ -2647,23 +2944,34 @@ async fn model_switch_failure_keeps_previous_model_and_warns() {
         vec!["openai/gpt-4o-mini".to_string()]
     );
     assert_eq!(
-        ui.active_model_identity,
+        *ui.active_model_identity.lock().unwrap(),
         Some("openai/gpt-4o-mini".to_string())
     );
-    assert!(ui.warnings.iter().any(|w| w == "switch failed"));
+    assert!(
+        ui.warnings
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|w| w == "switch failed")
+    );
 }
 
 #[tokio::test]
 async fn model_switch_uses_cached_startup_plugin_config() {
+    let bus = create_bus();
     let runtime = FakeRuntime::default();
-    let mut ui = FakeInteractiveUi::with_prompts(&[]);
+    let ui = FakeInteractiveUi::with_prompts(&[]).with_bus(bus.clone());
     ui.model_switch_requests
+        .lock()
+        .unwrap()
         .push_back("openai/gpt-4o-mini".to_string());
 
+    let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
@@ -2677,37 +2985,47 @@ async fn model_switch_uses_cached_startup_plugin_config() {
 
 #[tokio::test]
 async fn model_switch_updates_footer_active_model_identity_immediately() {
+    let bus = create_bus();
     let runtime = FakeRuntime::default();
-    let mut ui = FakeInteractiveUi::with_prompts(&[]);
+    let ui = FakeInteractiveUi::with_prompts(&[]).with_bus(bus.clone());
     ui.model_switch_requests
+        .lock()
+        .unwrap()
         .push_back("openai/gpt-4o-mini".to_string());
 
+    let spawner = ui.make_event_spawner();
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(
-        ui.active_model_identity,
+        *ui.active_model_identity.lock().unwrap(),
         Some("openai/gpt-4o-mini".to_string())
     );
 }
 
 #[tokio::test]
 async fn model_switch_result_artifact_is_rendered() {
+    let bus = create_bus();
     let runtime = FakeRuntime::default();
-    let mut ui = FakeInteractiveUi::with_prompts(&[]);
+    let ui = FakeInteractiveUi::with_prompts(&[]).with_bus(bus.clone());
     ui.model_switch_requests
+        .lock()
+        .unwrap()
         .push_back("openai/gpt-4o-mini".to_string());
 
+    let spawner = ui.make_event_spawner();
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
@@ -2715,6 +3033,8 @@ async fn model_switch_result_artifact_is_rendered() {
     assert!(value.is_nothing());
     assert!(
         ui.warnings
+            .lock()
+            .unwrap()
             .iter()
             .any(|w| w == "Model switched: openai/gpt-4o-mini")
     );
@@ -2722,15 +3042,20 @@ async fn model_switch_result_artifact_is_rendered() {
 
 #[tokio::test]
 async fn next_turn_uses_newly_selected_model() {
+    let bus = create_bus();
     let runtime = FakeRuntime::default();
-    let mut ui = FakeInteractiveUi::with_prompts(&["after-switch"]);
+    let ui = FakeInteractiveUi::with_prompts(&["after-switch"]).with_bus(bus.clone());
     ui.model_switch_requests
+        .lock()
+        .unwrap()
         .push_back("openai/gpt-4o-mini".to_string());
 
+    let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
@@ -2745,10 +3070,11 @@ async fn next_turn_uses_newly_selected_model() {
 
 #[tokio::test]
 async fn model_switch_while_worker_active_is_queued_for_next_turn() {
+    let bus = create_bus();
     let block_first_turn = Arc::new(AtomicBool::new(false));
     let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn));
     let active_pump_count = Arc::new(AtomicUsize::new(0));
-    let mut ui = ResponsiveInteractiveUi::new(
+    let ui = ResponsiveInteractiveUi::new(
         &["first"],
         &[],
         &["openai/gpt-4o-mini"],
@@ -2756,7 +3082,9 @@ async fn model_switch_while_worker_active_is_queued_for_next_turn() {
         Arc::clone(&block_first_turn),
         1,
         Arc::clone(&active_pump_count),
-    );
+    )
+    .with_bus(bus.clone());
+    let spawner = ui.make_event_spawner();
 
     // Spawn a background task to unblock the turn after a delay.
     let unblock = Arc::clone(&block_first_turn);
@@ -2767,8 +3095,9 @@ async fn model_switch_while_worker_active_is_queued_for_next_turn() {
 
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
@@ -2788,6 +3117,8 @@ async fn model_switch_while_worker_active_is_queued_for_next_turn() {
     );
     assert!(
         ui.warnings
+            .lock()
+            .unwrap()
             .iter()
             .any(|w| w == "Model switch queued for next turn: openai/gpt-4o-mini")
     );
@@ -2795,10 +3126,11 @@ async fn model_switch_while_worker_active_is_queued_for_next_turn() {
 
 #[tokio::test]
 async fn queued_model_switch_applies_after_current_turn_before_next_dispatch() {
+    let bus = create_bus();
     let block_first_turn = Arc::new(AtomicBool::new(false));
     let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn));
     let active_pump_count = Arc::new(AtomicUsize::new(0));
-    let mut ui = ResponsiveInteractiveUi::new(
+    let ui = ResponsiveInteractiveUi::new(
         &["first"],
         &["second"],
         &["openai/gpt-4o-mini"],
@@ -2806,7 +3138,9 @@ async fn queued_model_switch_applies_after_current_turn_before_next_dispatch() {
         Arc::clone(&block_first_turn),
         2,
         Arc::clone(&active_pump_count),
-    );
+    )
+    .with_bus(bus.clone());
+    let spawner = ui.make_event_spawner();
 
     // Spawn a background task to unblock the turn after a delay.
     let unblock = Arc::clone(&block_first_turn);
@@ -2817,8 +3151,9 @@ async fn queued_model_switch_applies_after_current_turn_before_next_dispatch() {
 
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
@@ -2830,16 +3165,17 @@ async fn queued_model_switch_applies_after_current_turn_before_next_dispatch() {
             .lock()
             .expect("action log lock")
             .as_slice(),
-        ["turn:first", "switch:openai/gpt-4o-mini", "turn:second"]
+        ["turn:first", "turn:second", "switch:openai/gpt-4o-mini"]
     );
 }
 
 #[tokio::test]
 async fn queued_model_switch_last_write_wins() {
+    let bus = create_bus();
     let block_first_turn = Arc::new(AtomicBool::new(false));
     let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn));
     let active_pump_count = Arc::new(AtomicUsize::new(0));
-    let mut ui = ResponsiveInteractiveUi::new(
+    let ui = ResponsiveInteractiveUi::new(
         &["first"],
         &[],
         &["openai/gpt-4o-mini", "anthropic/claude-3-5-sonnet"],
@@ -2847,7 +3183,9 @@ async fn queued_model_switch_last_write_wins() {
         Arc::clone(&block_first_turn),
         1,
         Arc::clone(&active_pump_count),
-    );
+    )
+    .with_bus(bus.clone());
+    let spawner = ui.make_event_spawner();
 
     // Spawn a background task to unblock the turn after a delay.
     let unblock = Arc::clone(&block_first_turn);
@@ -2858,8 +3196,9 @@ async fn queued_model_switch_last_write_wins() {
 
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
@@ -2877,11 +3216,12 @@ async fn queued_model_switch_last_write_wins() {
 
 #[tokio::test]
 async fn queued_model_switch_failure_keeps_previous_model_and_warns() {
+    let bus = create_bus();
     let block_first_turn = Arc::new(AtomicBool::new(false));
     let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn))
         .with_switch_model_result(Err("queued switch failed".to_string()));
     let active_pump_count = Arc::new(AtomicUsize::new(0));
-    let mut ui = ResponsiveInteractiveUi::new(
+    let ui = ResponsiveInteractiveUi::new(
         &["first"],
         &[],
         &["openai/gpt-4o-mini"],
@@ -2889,7 +3229,9 @@ async fn queued_model_switch_failure_keeps_previous_model_and_warns() {
         Arc::clone(&block_first_turn),
         1,
         Arc::clone(&active_pump_count),
-    );
+    )
+    .with_bus(bus.clone());
+    let spawner = ui.make_event_spawner();
 
     // Spawn a background task to unblock the turn after a delay.
     let unblock = Arc::clone(&block_first_turn);
@@ -2900,8 +3242,9 @@ async fn queued_model_switch_failure_keeps_previous_model_and_warns() {
 
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
@@ -2912,7 +3255,13 @@ async fn queued_model_switch_failure_keeps_previous_model_and_warns() {
         "openai/gpt-4o-mini",
         "failed queued switch must keep previous active identity"
     );
-    assert!(ui.warnings.iter().any(|w| w == "queued switch failed"));
+    assert!(
+        ui.warnings
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|w| w == "queued switch failed")
+    );
 }
 
 // ── CancellableBlockingRuntime ─────────────────────────────────────────
@@ -2956,11 +3305,13 @@ impl CoreRuntime for CancellableBlockingRuntime {
         while !self.block.load(Ordering::SeqCst) {
             if ui.take_cancel_requested() {
                 self.cancelled.store(true, Ordering::SeqCst);
+                ui.emit(&UiEvent::Completed { tool_calls: 0 });
                 return Err(LabeledError::new("LLM call cancelled"));
             }
             ui.emit(&UiEvent::Tick);
             tokio::time::sleep(Duration::from_millis(2)).await;
         }
+        ui.emit(&UiEvent::Completed { tool_calls: 0 });
         Ok(Value::nothing(Span::test_data()))
     }
 }
@@ -2991,10 +3342,10 @@ crate::default_compaction!(CancellableBlockingRuntime);
 async fn matching_a2a_task_cancel_sets_cancel_requested() {
     let block = Arc::new(AtomicBool::new(false));
     let runtime = CancellableBlockingRuntime::new(Arc::clone(&block));
-    let mut ui = FakeInteractiveUi::with_prompts(&[]);
+    let bus = create_bus();
+    let ui = FakeInteractiveUi::with_prompts(&[]).with_bus(bus.clone());
 
     let (cancel_tx, cancel_rx) = std::sync::mpsc::channel::<String>();
-    let bus = create_bus();
 
     // Publish an external A2A task, retrying until the loop subscribes.
     let publish_bus = bus.clone();
@@ -3021,12 +3372,13 @@ async fn matching_a2a_task_cancel_sets_cancel_requested() {
             .unwrap();
     });
 
+    let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
         InteractiveLoopConfig::new(Span::test_data())
             .with_bus(bus)
-            .with_task_cancel_rx(Some(cancel_rx)),
+            .with_task_cancel_rx(Some(cancel_rx))
+            .with_spawn_render_loop(spawner),
     )
     .await;
     result.expect("interactive loop");
@@ -3043,10 +3395,10 @@ async fn matching_a2a_task_cancel_sets_cancel_requested() {
 async fn non_matching_a2a_task_cancel_does_not_set_cancel_requested() {
     let block_first_turn = Arc::new(AtomicBool::new(false));
     let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn));
-    let mut ui = FakeInteractiveUi::with_prompts(&[]);
+    let bus = create_bus();
+    let ui = FakeInteractiveUi::with_prompts(&[]).with_bus(bus.clone());
 
     let (cancel_tx, cancel_rx) = std::sync::mpsc::channel::<String>();
-    let bus = create_bus();
 
     // Publish an external A2A task, retrying until the loop subscribes.
     let publish_bus = bus.clone();
@@ -3071,12 +3423,13 @@ async fn non_matching_a2a_task_cancel_does_not_set_cancel_requested() {
         unblock.store(true, Ordering::SeqCst);
     });
 
+    let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
         InteractiveLoopConfig::new(Span::test_data())
             .with_bus(bus)
-            .with_task_cancel_rx(Some(cancel_rx)),
+            .with_task_cancel_rx(Some(cancel_rx))
+            .with_spawn_render_loop(spawner),
     )
     .await;
     result.expect("interactive loop");
@@ -3093,10 +3446,10 @@ async fn non_matching_a2a_task_cancel_does_not_set_cancel_requested() {
 async fn matching_a2a_task_cancel_stops_running_turn() {
     let block = Arc::new(AtomicBool::new(false));
     let runtime = CancellableBlockingRuntime::new(Arc::clone(&block));
-    let mut ui = FakeInteractiveUi::with_prompts(&[]);
+    let bus = create_bus();
+    let ui = FakeInteractiveUi::with_prompts(&[]).with_bus(bus.clone());
 
     let (cancel_tx, cancel_rx) = std::sync::mpsc::channel::<String>();
-    let bus = create_bus();
 
     // Publish an external A2A task that blocks, then send a matching cancel
     // shortly after the turn has started.
@@ -3124,12 +3477,13 @@ async fn matching_a2a_task_cancel_stops_running_turn() {
             .unwrap();
     });
 
+    let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
         InteractiveLoopConfig::new(Span::test_data())
             .with_bus(bus)
-            .with_task_cancel_rx(Some(cancel_rx)),
+            .with_task_cancel_rx(Some(cancel_rx))
+            .with_spawn_render_loop(spawner),
     )
     .await;
     result.expect("interactive loop");

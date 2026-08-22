@@ -192,6 +192,31 @@ fn does_not_fire_with_zero_context_window() {
 }
 
 #[test]
+fn does_not_fire_with_zero_tokens() {
+    let policy = TokenCompactionPolicy::new(200_000, 0.80, CompactionStrategy::SlidingSummary);
+    let decision = policy.evaluate(Some(0));
+    assert_eq!(
+        decision,
+        CompactionTriggerDecision::NoFire {
+            reason: "zero_tokens".to_string()
+        }
+    );
+}
+
+#[test]
+fn fires_at_threshold_with_nonzero_tokens() {
+    // Regression: Some(1) with a large context window stays below threshold.
+    let policy = TokenCompactionPolicy::new(200_000, 0.80, CompactionStrategy::SlidingSummary);
+    let decision = policy.evaluate(Some(1));
+    assert!(matches!(
+        decision,
+        CompactionTriggerDecision::NoFire {
+            reason: ref r
+        } if r.contains("below_threshold")
+    ));
+}
+
+#[test]
 fn respects_custom_threshold_percentage() {
     let policy = TokenCompactionPolicy::new(128_000, 0.90, CompactionStrategy::SlidingSummary);
     // 90% of 128k = 115,200

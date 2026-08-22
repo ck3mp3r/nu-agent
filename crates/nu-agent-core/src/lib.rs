@@ -13,3 +13,6 @@ pub mod tools;
 pub mod transcript;
 pub mod types;
 pub mod utils;
+
+#[cfg(test)]
+pub(crate) mod test_support;

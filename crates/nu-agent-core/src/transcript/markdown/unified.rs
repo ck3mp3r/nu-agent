@@ -1,6 +1,6 @@
-use nu_agent_core::transcript::ir::ContentLine;
+use crate::transcript::ir::ContentLine;
 
-use crate::markdown::project_markdown_to_lines;
+use super::project_markdown_to_lines;
 
 /// Project raw markdown text into IR ContentLines using the existing
 /// pulldown-cmark pipeline. Preserves single blank lines between blocks

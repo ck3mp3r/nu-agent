@@ -5,6 +5,15 @@ impl AppState {
         Self::default()
     }
 
+    pub fn new_with_sender(
+        event_tx: tokio::sync::mpsc::Sender<nu_agent_core::orchestrator::OrchestratorEvent>,
+    ) -> Self {
+        Self {
+            event_tx,
+            ..Self::default()
+        }
+    }
+
     pub fn is_active_cycle(&self) -> bool {
         self.active_cycle
     }

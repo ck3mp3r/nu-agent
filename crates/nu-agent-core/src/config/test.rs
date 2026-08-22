@@ -564,6 +564,7 @@ fn test_model_role_config_default() {
 // ============================================================================
 
 #[test]
+#[serial]
 fn test_resolve_model_basic() {
     // Test resolving a basic model specification
     let plugin_config = PluginConfig {
@@ -636,6 +637,7 @@ fn test_resolve_model_basic() {
 }
 
 #[test]
+#[serial]
 fn test_resolve_model_with_env_fallback() {
     // Test that resolve_model falls back to env vars when provider doesn't have api_key
     let plugin_config = PluginConfig {
@@ -690,6 +692,7 @@ fn test_resolve_model_with_env_fallback() {
 }
 
 #[test]
+#[serial]
 fn test_resolve_model_invalid_format() {
     // Test that invalid model format returns error
     let plugin_config = PluginConfig {
@@ -739,6 +742,7 @@ fn test_resolve_model_invalid_format() {
 }
 
 #[test]
+#[serial]
 fn test_resolve_model_provider_not_found() {
     // Test that unknown provider resolves successfully (provider block is optional)
     let plugin_config = PluginConfig {
@@ -776,7 +780,15 @@ fn test_resolve_model_provider_not_found() {
 }
 
 #[test]
+#[serial]
 fn test_resolve_model_model_not_in_config() {
+    // Isolate from AGENT_* env vars set by the surrounding environment
+    // (e.g. nix build sets AGENT_TEMPERATURE), which would otherwise be
+    // picked up by Config::from_env and break the default expectations.
+    unsafe {
+        std::env::remove_var("AGENT_TEMPERATURE");
+    }
+
     // Test that model not in provider's models map still works (uses defaults)
     let plugin_config = PluginConfig {
         models: {
@@ -831,6 +843,7 @@ fn test_resolve_model_model_not_in_config() {
 }
 
 #[test]
+#[serial]
 fn test_resolve_model_with_provider_field() {
     // Test resolving with custom provider field (like github-copilot)
     let plugin_config = PluginConfig {
@@ -889,6 +902,7 @@ fn test_resolve_model_with_provider_field() {
 }
 
 #[test]
+#[serial]
 fn test_resolve_model_merges_limits() {
     // Test that model limits are properly merged into Config
     let plugin_config = PluginConfig {
@@ -1058,6 +1072,7 @@ fn test_plugin_config_resolve_model_role_level_overrides() {
 // ============================================================================
 
 #[test]
+#[serial]
 fn resolve_model_handles_two_part_format() {
     // Test that traditional 2-part format still works (backward compatibility)
     let plugin_config = PluginConfig {
@@ -1111,6 +1126,7 @@ fn resolve_model_handles_two_part_format() {
 }
 
 #[test]
+#[serial]
 fn resolve_model_validates_empty_parts() {
     // Test that empty parts in model specification are rejected
     let plugin_config = PluginConfig {
@@ -1165,6 +1181,7 @@ fn resolve_model_validates_empty_parts() {
 // ============================================================================
 
 #[test]
+#[serial]
 fn resolve_model_uses_split_once_for_multi_part_models() {
     let plugin_config = PluginConfig {
         models: {
@@ -1222,6 +1239,7 @@ fn resolve_model_uses_split_once_for_multi_part_models() {
 }
 
 #[test]
+#[serial]
 fn resolve_model_works_with_simple_two_part() {
     let plugin_config = PluginConfig {
         models: {

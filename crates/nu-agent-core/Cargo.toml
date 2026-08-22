@@ -36,6 +36,9 @@ noyalib = { workspace = true }
 rand = { workspace = true }
 pulldown-cmark = { workspace = true }
 htmd = { workspace = true }
+syntect = { workspace = true }
+unicodeit = { workspace = true }
+unicode-width = { workspace = true }
 fs2 = { workspace = true }
 libloading = "0.9"
 tree-sitter = "0.26"

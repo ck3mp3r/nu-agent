@@ -352,21 +352,22 @@ pub(crate) async fn run_tui_mode(
                 .with_bus(runtime_impl.bus.clone())
                 .with_hydration(hydration.initial_messages, hydration.last_total_tokens)
                 .with_interactive_pending(Some(Arc::clone(&pending)))
-                .with_task_cancel_rx(task_cancel_rx);
+                .with_task_cancel_rx(task_cancel_rx)
+                .with_spawn_render_loop(tui_ui.make_render_loop_spawner(runtime_impl.bus.clone()));
             if let Some(cb) = on_agent_switch {
                 config = config.with_on_agent_switch(cb);
             }
-            run_hydrated_interactive_loop_with_external_prompts(runtime_impl, &mut tui_ui, config)
-                .await
+            run_hydrated_interactive_loop_with_external_prompts(runtime_impl, config).await
         } else {
             let mut config = InteractiveLoopConfig::new(span)
                 .with_bus(runtime_impl.bus.clone())
                 .with_interactive_pending(Some(Arc::clone(&pending)))
-                .with_task_cancel_rx(task_cancel_rx);
+                .with_task_cancel_rx(task_cancel_rx)
+                .with_spawn_render_loop(tui_ui.make_render_loop_spawner(runtime_impl.bus.clone()));
             if let Some(cb) = on_agent_switch {
                 config = config.with_on_agent_switch(cb);
             }
-            run_interactive_loop_with_external_prompts(runtime_impl, &mut tui_ui, config).await
+            run_interactive_loop_with_external_prompts(runtime_impl, config).await
         }
     } else {
         let (prompt, context) = super::input::extract_prompt_and_context(input)?;

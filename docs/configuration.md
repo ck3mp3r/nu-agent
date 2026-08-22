@@ -103,7 +103,7 @@ max_context_tokens = 32768
 | `model_context_tokens` | int | Approximate context window for in-session token warnings | from `models.json` / none |
 | `context_warning_threshold` | float | Fraction of `model_context_tokens` at which to warn, 0.0–1.0 | 0.6 |
 | `additional_params` | table | Provider-specific parameters forwarded verbatim to the completion request body (see [Additional Parameters](#additional-parameters)) | none |
-| `read_timeout_secs` | int | HTTP read timeout in seconds; 0 = disable | 30 |
+| `read_timeout_secs` | int | HTTP read timeout in seconds; 0 = disable | 120 |
 | `max_retries` | int | Retry attempts for transient errors | 3 |
 | `retry_base_delay_ms` | int | Base backoff in ms, doubles each attempt, capped at 30s | 1,000 |
 
@@ -598,12 +598,12 @@ Environment variables still work as a lowest-priority fallback when `config.toml
 - `AGENT_MAX_OUTPUT_TOKENS`
 - `AGENT_MAX_TOOL_TURNS`
 - `AGENT_MAX_TOOL_RESULT_BYTES` — max bytes per tool call before truncation (default 20000; `0` = unlimited)
-- `AGENT_MAX_TOOL_CALLS_PER_SUBTURN` — max tool calls in a single LLM response (default 10; `0` = unlimited)
+- `AGENT_MAX_TOOL_CALLS_PER_SUBTURN` — max tool calls in a single LLM response (default 25; `0` = unlimited)
 - `AGENT_MODEL_CONTEXT_TOKENS` — approximate context window for token warnings
 - `AGENT_CONTEXT_WARNING_THRESHOLD` — fraction at which to warn, `0.0`–`1.0` (default `0.6`)
 - `AGENT_MAX_RETRIES` — retry attempts (default 3)
 - `AGENT_RETRY_BASE_DELAY_MS` — base backoff in ms, doubles each attempt, capped at 30s (default 1000)
-- `AGENT_READ_TIMEOUT_SECS` — HTTP read timeout in seconds (default 30). 0 disables.
+- `AGENT_READ_TIMEOUT_SECS` — HTTP read timeout in seconds (default 120). 0 disables.
 - `AGENT_A2A_ENABLED` — enable A2A (default `false`)
 - `AGENT_A2A_PORT` — A2A port (0 = random, >0 = fixed)
 - `AGENT_SESSION_STORE_TYPE` — `sqlite`, `jsonl`, or `memory`

@@ -1,103 +1,39 @@
-use std::sync::mpsc as std_mpsc;
-
 use crate::bus::WarningEvent;
-use crate::orchestrator::stages::{OrchestrationContext, StageOutcome};
-use crate::orchestrator::{
-    PendingAutoCompaction, PendingCompactionTrigger, WorkerCommand, poll_option_channel,
-};
-use crate::protocol::contracts::{
-    DisplayStateUi, LifecycleUi, ProgressUi, TranscriptUi, UserInputUi,
-};
+use crate::orchestrator::stages::{CompactionHandler, OrchestrationContext};
 
-/// Polls auto-compaction evaluation and manual compaction trigger responses.
+/// Handles auto-compaction evaluation and compaction result routing.
 pub(crate) struct CompactionStage {
-    pending_auto_compaction: Option<PendingAutoCompaction>,
-    pending_compaction_trigger: Option<PendingCompactionTrigger>,
+    has_auto_compaction_pending: bool,
 }
 
 impl CompactionStage {
     pub fn new() -> Self {
         Self {
-            pending_auto_compaction: None,
-            pending_compaction_trigger: None,
+            has_auto_compaction_pending: false,
+        }
+    }
+}
+
+impl CompactionHandler for CompactionStage {
+    fn handle_result(&mut self, message: Option<String>, ctx: &mut OrchestrationContext) {
+        self.has_auto_compaction_pending = false;
+        if let Some(msg) = message {
+            let _ = ctx
+                .bus
+                .warning()
+                .send(WarningEvent::Message { message: msg });
         }
     }
 
-    pub async fn poll<U>(&mut self, ctx: &mut OrchestrationContext<'_, U>) -> StageOutcome
-    where
-        U: ProgressUi + UserInputUi + DisplayStateUi + LifecycleUi + TranscriptUi,
-    {
-        if *ctx.worker_active {
-            self.pending_auto_compaction = None;
-            self.pending_compaction_trigger = None;
-            *ctx.should_evaluate_compaction = false;
-            return StageOutcome::Idle;
-        }
-
-        let mut handled = false;
-
-        if let Some(response_rx) = self.pending_compaction_trigger.take() {
-            let (message, rx) = poll_option_channel(response_rx);
-            if let Some(msg) = message {
-                let _ = ctx
-                    .bus
-                    .warning()
-                    .send(WarningEvent::Message { message: msg });
-                handled = true;
-            } else if let Some(rx) = rx {
-                self.pending_compaction_trigger = Some(rx);
-            } else {
-                let _ = ctx.bus.warning().send(WarningEvent::Message {
-                    message: "Compaction worker disconnected".to_string(),
-                });
-                handled = true;
-            }
-        }
-
-        if *ctx.should_evaluate_compaction && self.pending_auto_compaction.is_none() {
-            *ctx.should_evaluate_compaction = false;
-            let (response_tx, response_rx) = std_mpsc::channel();
-            if ctx
-                .worker_tx
-                .send(WorkerCommand::EvaluateAutoCompaction { response_tx })
-                .await
-                .is_ok()
-            {
-                self.pending_auto_compaction = Some(response_rx);
-                handled = true;
-            }
-        }
-
-        if let Some(response_rx) = self.pending_auto_compaction.take() {
-            let (message, rx) = poll_option_channel(response_rx);
-            if let Some(msg) = message {
-                let _ = ctx
-                    .bus
-                    .warning()
-                    .send(WarningEvent::Message { message: msg });
-                handled = true;
-            } else if let Some(rx) = rx {
-                self.pending_auto_compaction = Some(rx);
-            }
-            // Disconnected: silently drop (no warning needed for auto-compaction disconnect)
-        }
-
-        if handled {
-            StageOutcome::Handled
-        } else {
-            StageOutcome::Idle
-        }
+    fn set_pending_auto_compaction(&mut self) {
+        self.has_auto_compaction_pending = true;
     }
 
-    /// Called by `SlashStage` (via `OrchestratorStages::poll_all`) when a `/compact`
-    /// command is submitted. Stores the pending trigger receiver so it can be polled
-    /// on the next iteration.
-    pub fn set_pending_compaction_trigger(&mut self, rx: PendingCompactionTrigger) {
-        self.pending_compaction_trigger = Some(rx);
+    fn has_pending_auto_compaction(&self) -> bool {
+        self.has_auto_compaction_pending
     }
 
-    /// Returns `true` if any compaction work is in flight.
-    pub fn has_pending(&self) -> bool {
-        self.pending_auto_compaction.is_some() || self.pending_compaction_trigger.is_some()
+    fn has_pending(&self) -> bool {
+        self.has_auto_compaction_pending
     }
 }

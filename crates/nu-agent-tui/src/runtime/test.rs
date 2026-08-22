@@ -22,12 +22,13 @@ use crate::{
         cursor_style_for_test, help_panel_lines, help_panel_max_scroll_for_test,
         help_panel_overflow_cue_for_test, help_panel_visible_window_for_test,
         inline_slash_lines_for_test, input_line_for_test, input_line_for_test_at_millis,
-        input_rows_with_prompt_for_test, mcp_table_model_for_test,
-        parse_persisted_tool_status_line, run_with_terminal_restore_sync, status_panel_lines,
+        input_rows_with_prompt_for_test, mcp_table_model_for_test, run_with_terminal_restore_sync,
+        status_panel_lines,
     },
     state::{AppState, InputMode, McpServerUsabilityState, PromptStatus, TranscriptRole, UiPhase},
 };
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use nu_agent_core::orchestrator::OrchestratorEvent;
 use nu_agent_core::protocol::contracts::{UiMessageSnapshot, UiMessageUsageSnapshot};
 use nu_agent_core::protocol::event::UiEvent;
 use nu_agent_core::renderer::UiRenderer;
@@ -104,6 +105,21 @@ pub(crate) fn input_pane_content_width_for_test(inner_width: u16) -> usize {
     inner_width.saturating_sub(2) as usize
 }
 
+#[test]
+fn idle_startup_does_not_show_spinner() {
+    let coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    assert_ne!(coordinator.state().status_line, "Thinking...");
+    assert!(!coordinator.state().input_locked);
+    let line = crate::runtime::status::test::compact_status_line_with_branch_for_test(
+        "mymodel", None, None, 40,
+    );
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert!(
+        text.starts_with("○ "),
+        "idle startup must show idle indicator, got {text:?}"
+    );
+}
+
 #[derive(Default)]
 pub(super) struct StubEventSource {
     next: Option<TerminalEvent>,
@@ -171,8 +187,11 @@ fn coordinator_submit_handoff_keeps_input_editable_and_preserves_transcript_prev
 
     assert_eq!(coordinator.state().phase, UiPhase::Busy);
     assert!(!coordinator.state().input_locked);
-    assert_eq!(coordinator.take_submitted_prompt(), Some("x".to_string()));
-    assert_eq!(coordinator.take_submitted_prompt(), None);
+    assert_eq!(
+        coordinator.state.take_next_prompt_for_execution(),
+        Some("x".to_string())
+    );
+    assert_eq!(coordinator.state.take_next_prompt_for_execution(), None);
     // starting spacer + user + closing spacer
     assert_eq!(coordinator.state().transcript_preview.len(), 3);
     assert_eq!(coordinator.state().transcript_preview[1].role(), Role::User);
@@ -193,7 +212,7 @@ fn slash_commands_do_not_append_command_text_to_transcript() {
     coordinator.pump_once(&mut source);
 
     assert_eq!(
-        coordinator.take_submitted_prompt(),
+        coordinator.state.take_next_prompt_for_execution(),
         Some("/help".to_string())
     );
     assert_eq!(coordinator.state().phase, UiPhase::Idle);
@@ -222,7 +241,7 @@ fn compact_result_artifact_is_visible_without_slash_command_echo() {
     }
 
     assert_eq!(
-        coordinator.take_submitted_prompt(),
+        coordinator.state.take_next_prompt_for_execution(),
         Some("/compact".to_string())
     );
     assert!(coordinator.state().transcript_preview.is_empty());
@@ -269,7 +288,7 @@ fn immediate_slash_commands_do_not_set_busy_or_spinner() {
         coordinator.pump_once(&mut submit);
 
         assert_eq!(
-            coordinator.take_submitted_prompt(),
+            coordinator.state.take_next_prompt_for_execution(),
             Some(command.to_string()),
             "expected immediate slash command handoff"
         );
@@ -335,10 +354,19 @@ fn runtime_renderer_pump_and_take_submitted_prompt_supports_interactive_turn_han
     runtime_renderer.pump_terminal_once();
 
     assert_eq!(
-        runtime_renderer.take_submitted_prompt(),
+        runtime_renderer
+            .coordinator
+            .state
+            .take_next_prompt_for_execution(),
         Some("hi".to_string())
     );
-    assert_eq!(runtime_renderer.take_submitted_prompt(), None);
+    assert_eq!(
+        runtime_renderer
+            .coordinator
+            .state
+            .take_next_prompt_for_execution(),
+        None
+    );
 }
 
 #[test]
@@ -350,6 +378,84 @@ fn runtime_renderer_quit_requested_reflects_ctrlc_terminal_event() {
     runtime_renderer.pump_terminal_once();
 
     assert!(runtime_renderer.quit_requested());
+}
+
+#[test]
+fn submit_reaches_orchestrator_channel_through_render_loop_path_only() {
+    let inner = FakeRenderer::default();
+    let scripted = ScriptedTerminalEvents::from_script("char:h,char:i,enter");
+    let mut runtime_renderer = TuiRuntimeRenderer::new(inner, scripted, 120, 30);
+
+    // Replace the channel before pumping so we can read exactly what the render
+    // loop path pushes.
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<OrchestratorEvent>(256);
+    runtime_renderer.coordinator.state.event_tx = tx;
+
+    runtime_renderer.pump_terminal_once();
+    runtime_renderer.pump_terminal_once();
+    runtime_renderer.pump_terminal_once();
+
+    // Drain the transport so that any queued reducer events (including the
+    // Submit user action produced by the Enter key) are applied to AppState.
+    runtime_renderer.coordinator.drain_transport();
+
+    // Now replicate the render loop's terminal-event path: reduce the event,
+    // take pending orchestrator events, and forward them to the channel.
+    runtime_renderer.coordinator.state.reduce_terminal_event(
+        &TerminalEvent::Key(TerminalKey::Enter),
+        Some(&runtime_renderer.coordinator.cancel_controller),
+    );
+    let pending = runtime_renderer
+        .coordinator
+        .state
+        .take_pending_events(&runtime_renderer.coordinator.cancel_controller);
+    assert_eq!(
+        pending.len(),
+        1,
+        "render loop must produce one pending event"
+    );
+    assert!(
+        matches!(
+            pending[0],
+            OrchestratorEvent::PromptSubmitted { ref text } if text == "hi"
+        ),
+        "pending event must be the submitted prompt"
+    );
+    for event in pending {
+        let _ = runtime_renderer.coordinator.state.event_tx.try_send(event);
+    }
+
+    // The bridge future in the orchestrator must NOT consume the prompt queue;
+    // the render-loop path must produce exactly one PromptSubmitted event.
+    let mut found = 0;
+    while let Ok(event) = rx.try_recv() {
+        if matches!(event, OrchestratorEvent::PromptSubmitted { text } if text == "hi") {
+            found += 1;
+        }
+    }
+    assert_eq!(
+        found, 1,
+        "exactly one PromptSubmitted must reach the channel"
+    );
+
+    // After the channel event is taken, the poll-style queue is empty because
+    // the render loop already drained it.
+    assert_eq!(
+        runtime_renderer
+            .coordinator
+            .state
+            .take_next_prompt_for_execution(),
+        None
+    );
+    // And the transcript shows the user turn was started.
+    assert!(
+        runtime_renderer
+            .coordinator
+            .state
+            .transcript_preview
+            .iter()
+            .any(|entry| entry.role() == Role::User && entry.text() == "hi")
+    );
 }
 
 #[test]
@@ -477,7 +583,7 @@ fn user_then_assistant_flows_without_turn_separator() {
     };
     coordinator.pump_once(&mut source);
     // Activate the queued prompt so the User transcript entry is written
-    let _ = coordinator.take_submitted_prompt();
+    let _ = coordinator.state.take_next_prompt_for_execution();
 
     coordinator.enqueue_ui_event(UiEvent::AssistantMessage {
         text: "world".to_string(),
@@ -935,7 +1041,7 @@ fn runtime_renderer_reports_fatal_error_on_event_source_failure() {
 
     assert!(runtime_renderer.quit_requested());
     assert_eq!(
-        runtime_renderer.fatal_error(),
+        runtime_renderer.coordinator.fatal_error(),
         Some("Terminal input error: simulated source failure")
     );
 }
@@ -1187,17 +1293,21 @@ fn hydrated_tool_history_matches_live_tool_row_shape() {
 
 #[test]
 fn parse_persisted_tool_status_line_supports_done_and_failed_shapes() {
-    let done =
-        parse_persisted_tool_status_line("tool[k8s__list_pods] → {\"namespace\":\"prod\"} · done");
+    let done = crate::state::parse_persisted_tool_status_line(
+        "tool[k8s__list_pods] → {\"namespace\":\"prod\"} · done",
+    );
     assert_eq!(
         done,
         Some(("k8s__list_pods", "{\"namespace\":\"prod\"}", true))
     );
 
-    let failed = parse_persisted_tool_status_line("tool[gh__run] → {} · failed");
+    let failed = crate::state::parse_persisted_tool_status_line("tool[gh__run] → {} · failed");
     assert_eq!(failed, Some(("gh__run", "{}", false)));
 
-    assert_eq!(parse_persisted_tool_status_line("tool[gh__run] → {}"), None);
+    assert_eq!(
+        crate::state::parse_persisted_tool_status_line("tool[gh__run] → {}"),
+        None
+    );
 }
 
 #[test]
@@ -1475,7 +1585,7 @@ fn global_abort_cancels_active_and_pending_and_new_submit_starts_fresh() {
         coordinator.pump_once(&mut source);
     }
 
-    assert_eq!(coordinator.take_submitted_prompt(), None);
+    assert_eq!(coordinator.state.take_next_prompt_for_execution(), None);
 
     let statuses = coordinator
         .state()
@@ -1500,7 +1610,7 @@ fn global_abort_cancels_active_and_pending_and_new_submit_starts_fresh() {
         coordinator.pump_once(&mut source);
     }
     assert_eq!(
-        coordinator.take_submitted_prompt(),
+        coordinator.state.take_next_prompt_for_execution(),
         Some("a\n\nbc".to_string())
     );
 }
@@ -2984,7 +3094,9 @@ fn footer_two_lane_contract_exposes_lane_1_and_lane_2_simultaneously() {
 #[test]
 fn configured_path_resolves_context_max_without_fallback_format() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    coordinator.set_context_window_max_tokens(Some(128_000));
+    coordinator
+        .state
+        .set_context_window_max_tokens(Some(128_000));
     coordinator.enqueue_ui_event(UiEvent::LlmEnd {
         response_chars: 40,
         tool_calls: 0,
@@ -3004,7 +3116,7 @@ fn configured_path_resolves_context_max_without_fallback_format() {
 #[test]
 fn lane_2_context_line_updates_after_each_turn_and_does_not_stale() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    coordinator.set_context_window_max_tokens(Some(100));
+    coordinator.state.set_context_window_max_tokens(Some(100));
 
     coordinator.enqueue_ui_event(UiEvent::LlmEnd {
         response_chars: 12,
@@ -3071,7 +3183,7 @@ fn lane_2_rehydrates_used_tokens_from_hydrated_history_metadata() {
 #[test]
 fn lane_2_rehydrate_with_known_max_shows_ratio_immediately() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    coordinator.set_context_window_max_tokens(Some(1000));
+    coordinator.state.set_context_window_max_tokens(Some(1000));
     coordinator.hydrate_transcript_from_messages(
         vec![{
             let mut s = UiMessageSnapshot::new("assistant", "history");
@@ -3107,7 +3219,7 @@ fn lane_2_rehydrate_without_usage_metadata_and_without_max_uses_fallback() {
 #[test]
 fn lane_2_rehydrate_without_usage_metadata_with_known_max_shows_ratio_not_fallback() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    coordinator.set_context_window_max_tokens(Some(100));
+    coordinator.state.set_context_window_max_tokens(Some(100));
     coordinator.hydrate_transcript_from_messages(
         vec![UiMessageSnapshot::new("assistant", "history")],
         None,
@@ -3121,7 +3233,7 @@ fn lane_2_rehydrate_without_usage_metadata_with_known_max_shows_ratio_not_fallba
 #[test]
 fn lane_2_rehydrate_is_replaced_by_live_turn_usage() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    coordinator.set_context_window_max_tokens(Some(100));
+    coordinator.state.set_context_window_max_tokens(Some(100));
     coordinator.hydrate_transcript_from_messages(
         vec![{
             let mut s = UiMessageSnapshot::new("assistant", "history");
@@ -4429,7 +4541,7 @@ fn entry_visual_info_cleared_on_clear_transcript() {
 #[test]
 fn push_startup_logo_adds_logo_entry_to_transcript() {
     let mut coordinator = RuntimeCoordinator::new(120, 40, Some(false));
-    coordinator.push_startup_logo();
+    coordinator.state.push_startup_logo();
     let entries = &coordinator.state.transcript_preview;
     assert_eq!(entries.len(), 1);
     assert!(matches!(entries[0].kind, TranscriptEntryKind::Logo(_)));
@@ -4456,7 +4568,7 @@ fn bottom_align_pads_content_when_shorter_than_viewport() {
     // after a render pass.
     let mut coordinator = RuntimeCoordinator::new(120, 40, Some(false));
     // Push a single logo entry — total_visual_rows will be small
-    coordinator.push_startup_logo();
+    coordinator.state.push_startup_logo();
     // AppState.entry_visual_info_dirty is a public field — no setter method exists.
     // Force a render to trigger the bottom-align logic.
     coordinator.state.entry_visual_info_dirty = true;

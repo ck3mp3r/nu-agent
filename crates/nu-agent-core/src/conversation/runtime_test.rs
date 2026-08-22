@@ -1214,3 +1214,26 @@ fn set_permissions_replaces_config_and_resets_startup() {
     });
     assert_eq!(warning, Some(summary));
 }
+
+#[test]
+fn only_system_messages_returns_true_for_only_system() {
+    let messages = vec![Message::system("preamble"), Message::system("summary")];
+    assert!(only_system_messages(&messages));
+}
+
+#[test]
+fn only_system_messages_returns_false_for_mixed() {
+    let messages = vec![Message::system("preamble"), Message::user("hello")];
+    assert!(!only_system_messages(&messages));
+}
+
+#[test]
+fn only_system_messages_returns_true_for_empty() {
+    assert!(only_system_messages(&[]));
+}
+
+#[test]
+fn only_system_messages_returns_false_for_only_user() {
+    let messages = vec![Message::user("hello")];
+    assert!(!only_system_messages(&messages));
+}

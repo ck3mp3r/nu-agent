@@ -1,11 +1,8 @@
-pub mod highlight;
+pub use nu_agent_core::transcript::highlight;
 pub mod layout;
 pub mod modal;
 pub mod selection;
 pub mod theme;
-
-#[cfg(test)]
-mod highlight_test;
 
 #[cfg(test)]
 mod layout_test;
