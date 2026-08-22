@@ -127,12 +127,28 @@ where
         );
         let live_terminal = self.renderer.take_live_terminal();
         let cancel_controller = coordinator.cancel_controller.clone();
+        // Subscribe a filesystem watcher to git ref files before the loop starts
+        // so branch changes are delivered as events, not polled.
+        let watch_targets = coordinator.repo_branch_watch_targets();
+        let (branch_tx, branch_rx) = mpsc::channel(8);
+        let branch_watcher = if watch_targets.is_empty() {
+            None
+        } else {
+            match crate::runtime::branch_watcher::spawn_branch_watcher(watch_targets, branch_tx) {
+                Ok(w) => Some(w),
+                Err(e) => {
+                    log::warn!("git branch watcher failed: {e}");
+                    None
+                }
+            }
+        };
         move |event_tx| {
             let (terminal_tx, terminal_rx) = mpsc::channel(64);
             spawn_terminal_input(terminal_tx);
             tokio::spawn(async move {
                 let mut coordinator = coordinator;
                 let mut live = live_terminal;
+                let _branch_watcher = branch_watcher;
                 run_render_loop(
                     &mut coordinator,
                     &bus,
@@ -140,6 +156,7 @@ where
                     event_tx,
                     terminal_rx,
                     &mut live,
+                    branch_rx,
                 )
                 .await;
             });
@@ -210,6 +227,7 @@ pub(crate) async fn run_render_loop(
     event_tx: mpsc::Sender<OrchestratorEvent>,
     mut terminal_event_rx: mpsc::Receiver<TerminalEvent>,
     live_terminal: &mut Option<LiveTerminalUi>,
+    mut branch_rx: mpsc::Receiver<()>,
 ) {
     let mut tool_rx = bus.tool().subscribe();
     let mut llm_rx = bus.llm().subscribe();
@@ -320,6 +338,10 @@ pub(crate) async fn run_render_loop(
                     coordinator.mark_render_needed();
                     let _ = coordinator.render_if_needed(live_terminal);
                 }
+            }
+            _ = branch_rx.recv() => {
+                coordinator.refresh_repo_branch();
+                let _ = coordinator.render_if_needed(live_terminal);
             }
             _ = render_timer.tick() => {
                 coordinator.mark_render_needed();

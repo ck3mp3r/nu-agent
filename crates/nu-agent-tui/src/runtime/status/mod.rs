@@ -5,7 +5,6 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
-    time::{Duration, Instant},
 };
 
 use ratatui::text::{Line, Span};
@@ -85,51 +84,21 @@ impl HeadState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct FileStamp {
-    exists: bool,
-    len: u64,
-    modified_millis: u128,
-}
-
 #[derive(Debug, Clone)]
 pub(super) struct RepoBranchTracker {
     caller_cwd: Option<PathBuf>,
     repo_context: Option<GitRepoContext>,
     branch: Option<String>,
     watch_targets: Vec<PathBuf>,
-    watch_stamps: Vec<FileStamp>,
-    last_watch_check: Instant,
-    last_fallback_probe: Instant,
-    watch_check_interval: Duration,
-    fallback_poll_interval: Duration,
 }
 
 impl RepoBranchTracker {
     pub(super) fn from_caller_cwd(caller_cwd: Option<PathBuf>) -> Self {
-        Self::from_caller_cwd_with_intervals(
-            caller_cwd,
-            Duration::from_millis(300),
-            Duration::from_secs(2),
-        )
-    }
-
-    fn from_caller_cwd_with_intervals(
-        caller_cwd: Option<PathBuf>,
-        watch_check_interval: Duration,
-        fallback_poll_interval: Duration,
-    ) -> Self {
-        let now = Instant::now();
         let mut tracker = Self {
             caller_cwd,
             repo_context: None,
             branch: None,
             watch_targets: Vec::new(),
-            watch_stamps: Vec::new(),
-            last_watch_check: now,
-            last_fallback_probe: now,
-            watch_check_interval,
-            fallback_poll_interval,
         };
         tracker.refresh_branch_state();
         tracker
@@ -143,27 +112,15 @@ impl RepoBranchTracker {
         self.caller_cwd.as_deref()
     }
 
-    pub(super) fn tick(&mut self) {
-        let now = Instant::now();
-        let watch_due = now.duration_since(self.last_watch_check) >= self.watch_check_interval;
-        let fallback_due =
-            now.duration_since(self.last_fallback_probe) >= self.fallback_poll_interval;
+    /// Paths that change when the branch switches (git HEAD, packed-refs, and
+    /// the symbolic branch ref). The event watcher subscribes to these.
+    pub(super) fn watch_targets(&self) -> &[PathBuf] {
+        &self.watch_targets
+    }
 
-        if !watch_due && !fallback_due {
-            return;
-        }
-
-        if watch_due {
-            self.last_watch_check = now;
-        }
-        if fallback_due {
-            self.last_fallback_probe = now;
-        }
-
-        let watch_changed = watch_due && self.watch_targets_changed();
-        if watch_changed || fallback_due {
-            self.refresh_branch_state();
-        }
+    /// Re-read the current branch. Called when a filesystem event fires.
+    pub(super) fn refresh(&mut self) {
+        self.refresh_branch_state();
     }
 
     fn refresh_branch_state(&mut self) {
@@ -171,7 +128,6 @@ impl RepoBranchTracker {
             self.repo_context = None;
             self.branch = None;
             self.watch_targets.clear();
-            self.watch_stamps.clear();
             return;
         }
 
@@ -185,23 +141,12 @@ impl RepoBranchTracker {
         let Some(context) = self.repo_context.as_ref() else {
             self.branch = None;
             self.watch_targets.clear();
-            self.watch_stamps.clear();
             return;
         };
 
         let head_state = read_head_state(context);
         self.branch = head_state.as_ref().and_then(HeadState::branch_label);
-
-        let new_targets = watch_targets_for_context(context, head_state.as_ref());
-        if new_targets != self.watch_targets {
-            self.watch_targets = new_targets;
-        }
-        self.watch_stamps = file_stamps(&self.watch_targets);
-    }
-
-    fn watch_targets_changed(&self) -> bool {
-        let new_stamps = file_stamps(&self.watch_targets);
-        new_stamps != self.watch_stamps
+        self.watch_targets = watch_targets_for_context(context, head_state.as_ref());
     }
 }
 
@@ -290,33 +235,6 @@ fn watch_targets_for_context(
     }
 
     targets.into_iter().collect()
-}
-
-fn file_stamps(paths: &[PathBuf]) -> Vec<FileStamp> {
-    paths.iter().map(|path| file_stamp(path)).collect()
-}
-
-fn file_stamp(path: &Path) -> FileStamp {
-    let Ok(metadata) = fs::metadata(path) else {
-        return FileStamp {
-            exists: false,
-            len: 0,
-            modified_millis: 0,
-        };
-    };
-
-    let modified_millis = metadata
-        .modified()
-        .ok()
-        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|duration| duration.as_millis())
-        .unwrap_or(0);
-
-    FileStamp {
-        exists: true,
-        len: metadata.len(),
-        modified_millis,
-    }
 }
 
 fn token_string_for_state(state: &AppState) -> Option<String> {

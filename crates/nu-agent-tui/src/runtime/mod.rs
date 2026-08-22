@@ -12,6 +12,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 mod backend;
+pub(crate) mod branch_watcher;
 mod panels;
 pub(crate) mod render;
 mod renderer;
@@ -449,6 +450,28 @@ impl RuntimeCoordinator {
         self.repo_branch_tracker = Some(status::RepoBranchTracker::from_caller_cwd(caller_cwd));
     }
 
+    /// The git ref files that, when changed, indicate a branch switch. The
+    /// render loop subscribes a filesystem watcher to these.
+    pub(crate) fn repo_branch_watch_targets(&self) -> Vec<std::path::PathBuf> {
+        self.repo_branch_tracker
+            .as_ref()
+            .map(|t| t.watch_targets().to_vec())
+            .unwrap_or_default()
+    }
+
+    /// Re-read the current git branch after a filesystem change event.
+    pub(crate) fn refresh_repo_branch(&mut self) {
+        if let Some(tracker) = self.repo_branch_tracker.as_mut() {
+            tracker.refresh();
+        }
+        self.mark_render_needed();
+    }
+
+    /// The current git branch shown in the status bar, if any.
+    pub(crate) fn repo_branch(&self) -> Option<&str> {
+        self.repo_branch_tracker.as_ref().and_then(|t| t.branch())
+    }
+
     pub fn quit_requested(&self) -> bool {
         self.quit_requested
     }
@@ -486,7 +509,7 @@ impl RuntimeCoordinator {
         }
 
         if let Some(tracker) = self.repo_branch_tracker.as_mut() {
-            tracker.tick();
+            tracker.refresh();
         }
 
         let poll_result = event_source.poll_event();
@@ -1164,7 +1187,7 @@ impl RuntimeCoordinator {
                 let available_inner_w = content_main.width.saturating_sub(4) as usize;
                 let pre_right_width = {
                     let rc = status_right_content(
-                        self.repo_branch_tracker.as_ref().and_then(|t| t.branch()),
+                        self.repo_branch(),
                         self.repo_branch_tracker
                             .as_ref()
                             .and_then(|t| t.caller_cwd()),

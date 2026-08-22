@@ -85,6 +85,7 @@ noyalib = "0.0.17"
 oauth2 = "5.0"
 rand = "0.10.1"
 fs2 = "0.4"
+notify = "8.2.0"
 
 # Dev/test
 serial_test = "4.0.1"
