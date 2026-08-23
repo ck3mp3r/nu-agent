@@ -1,16 +1,11 @@
-pub mod pending;
-pub mod poll;
-pub mod pump;
+pub mod bridge;
 pub mod router;
 pub mod stages;
 pub mod turn_outcome;
 
 #[cfg(test)]
-#[path = "pending_test.rs"]
-mod pending_test;
-#[cfg(test)]
-#[path = "pump_test.rs"]
-mod pump_test;
+#[path = "stage_test.rs"]
+mod stage_test;
 #[cfg(test)]
 mod test;
 #[cfg(test)]
@@ -27,19 +22,19 @@ use crate::bus::{Bus, CancelEvent, ExternalEvent, SessionEvent, TurnEvent};
 use crate::conversation::runtime::PendingPermissions;
 
 use crate::orchestrator::{
-    pump::EventPump,
     router::CommandRouter,
-    stages::{OrchestrationContext, OrchestratorStages, StageOutcome},
+    stages::{
+        CompactionHandler, OrchestrationContext, PermissionHandler, SessionHandler, SlashHandler,
+        UiRequestHandler, compaction::CompactionStage, permission::PermissionStage,
+        session::SessionStage, slash::SlashStage, ui_request::UiRequestStage,
+    },
     turn_outcome::TurnOutcome,
 };
 use crate::protocol::{
     compaction::CompactionTriggerSource,
     compaction_runtime::Compaction,
-    contracts::{
-        CoreRuntime, DisplayStateUi, LifecycleUi, McpUsabilityState, ProgressUi, TranscriptUi,
-        UiMessageSnapshot, UserInputUi,
-    },
-    event::UiEvent,
+    contracts::{CoreRuntime, McpUsabilityState, ProgressUi, SharedUiAction, UiMessageSnapshot},
+    event::{PermissionDecisionSubmission, UiEvent},
     mcp_management::McpManagement,
     model_switching::ModelSwitching,
     session_management::{SessionPersistence, SessionState},
@@ -50,7 +45,7 @@ use crate::session::SessionInfo;
 ///
 /// Groups common arguments that would otherwise be passed individually,
 /// keeping function signatures under clippy's `too_many_arguments` threshold.
-pub struct InteractiveLoopConfig {
+pub struct InteractiveLoopConfig<F = fn(mpsc::Sender<OrchestratorEvent>)> {
     /// The span to use for values created during the loop.
     pub span: Span,
     /// Pending permission requests awaiting user decisions.
@@ -65,9 +60,12 @@ pub struct InteractiveLoopConfig {
     /// Receives the new agent's identity (name) and optional description.
     /// Used by the binary layer to update the A2A agent card.
     pub on_agent_switch: Option<OnAgentSwitch>,
+    /// Optional closure that spawns the TUI render loop.
+    /// Receives the orchestrator event sender.
+    pub spawn_render_loop: Option<F>,
 }
 
-impl InteractiveLoopConfig {
+impl InteractiveLoopConfig<fn(mpsc::Sender<OrchestratorEvent>)> {
     /// Create a new config with the given span and all other fields set to `None`.
     pub fn new(span: Span) -> Self {
         Self {
@@ -77,9 +75,12 @@ impl InteractiveLoopConfig {
             bus: crate::bus::create_bus(),
             hydration: None,
             on_agent_switch: None,
+            spawn_render_loop: None,
         }
     }
+}
 
+impl<F: FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static> InteractiveLoopConfig<F> {
     /// Set the interactive pending permissions.
     pub fn with_interactive_pending(mut self, pending: Option<PendingPermissions>) -> Self {
         self.interactive_pending = pending;
@@ -120,6 +121,31 @@ impl InteractiveLoopConfig {
         self.on_agent_switch = Some(callback);
         self
     }
+
+    /// Set the render-loop spawner closure.
+    pub fn with_spawn_render_loop<F2: FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static>(
+        self,
+        f: F2,
+    ) -> InteractiveLoopConfig<F2> {
+        let InteractiveLoopConfig {
+            span,
+            interactive_pending,
+            task_cancel_rx,
+            bus,
+            hydration,
+            on_agent_switch,
+            spawn_render_loop: _,
+        } = self;
+        InteractiveLoopConfig {
+            span,
+            interactive_pending,
+            task_cancel_rx,
+            bus,
+            hydration,
+            on_agent_switch,
+            spawn_render_loop: Some(f),
+        }
+    }
 }
 
 /// Configuration for hydrating a prior session into the interactive loop.
@@ -136,17 +162,105 @@ pub type McpToggleResult = (
     usize,
     Vec<(String, Vec<String>)>,
 );
-pub(crate) type PendingMcpToggle = (String, std_mpsc::Receiver<McpToggleResult>);
 pub type ModelSwitchResult = Result<(String, Option<u64>), String>;
 pub type AgentSwitchResult = Result<(String, String, Option<u64>, Option<String>), String>;
 pub type SessionSwitchResult = Result<Vec<UiMessageSnapshot>, String>;
 pub type RefreshSessionPickerResult = Result<Vec<SessionInfo>, String>;
-pub(crate) type PendingSessionRefresh = std_mpsc::Receiver<RefreshSessionPickerResult>;
-pub(crate) type PendingModelSwitch = std_mpsc::Receiver<ModelSwitchResult>;
-pub(crate) type PendingAgentSwitch = std_mpsc::Receiver<AgentSwitchResult>;
-pub(crate) type PendingSessionSwitch = std_mpsc::Receiver<SessionSwitchResult>;
-pub(crate) type PendingAutoCompaction = std_mpsc::Receiver<Option<String>>;
-pub(crate) type PendingCompactionTrigger = std_mpsc::Receiver<Option<String>>;
+pub(crate) type PendingCompactionTrigger = mpsc::Receiver<Option<String>>;
+
+/// Events flowing into the orchestrator loop from all components (TUI, worker,
+/// bus pump). The orchestrator drains this single channel with `while let Some`.
+pub enum OrchestratorEvent {
+    // ── From TUI (user actions) ──
+    PromptSubmitted {
+        text: String,
+    },
+    PermissionDecision {
+        decision: PermissionDecisionSubmission,
+    },
+    UiRequest(UiRequest),
+
+    // ── From worker (async results) ──
+    WorkerResult(TurnOutcome),
+    BlockingResponse(UiRequestResponse),
+    ConcurrentResponse(UiRequestResponse),
+    CompactionResult {
+        message: Option<String>,
+    },
+
+    // ── Signals ──
+    ExternalPrompt {
+        prompt: String,
+        task_id: String,
+    },
+    ExternalCancel {
+        task_id: String,
+    },
+    CancelRequested,
+    Quit,
+    FatalError(LabeledError),
+}
+
+/// A request from the TUI that requires an async response from the worker.
+#[derive(Clone)]
+pub enum UiRequest {
+    SwitchModel { spec: String },
+    SwitchAgent { name: String },
+    SwitchSession { id: String },
+    ToggleMcp { server: String, enable: bool },
+    RefreshSessionPicker,
+}
+
+/// Per-type response to a `UiRequest`.
+#[derive(Debug)]
+pub enum UiRequestResponse {
+    ModelSwitch(ModelSwitchResult),
+    AgentSwitch(AgentSwitchResult),
+    SessionSwitch {
+        id: String,
+        result: SessionSwitchResult,
+    },
+    McpToggle {
+        server: String,
+        result: Result<McpUsabilityState, String>,
+        total: usize,
+        server_count: usize,
+        names_by_server: Vec<(String, Vec<String>)>,
+    },
+    SessionRefresh(RefreshSessionPickerResult),
+}
+
+/// UI state updates broadcast to the TUI render loop.
+#[derive(Clone)]
+pub enum UiStateEvent {
+    SetActiveModelIdentity(String),
+    SetActiveAgentIdentity(String),
+    SetActivePersonaIcon(Option<String>),
+    SetContextWindowMaxTokens(Option<u64>),
+    ClearTranscript,
+    HydrateTranscript {
+        messages: Vec<UiMessageSnapshot>,
+        last_total_tokens: Option<u64>,
+    },
+    SetMcpServerState {
+        server: String,
+        state: McpUsabilityState,
+        error: Option<String>,
+        total: usize,
+    },
+    SetMcpVisibleToolCount {
+        server: String,
+        count: usize,
+    },
+    SetMcpVisibleToolNames {
+        server: String,
+        names: Vec<String>,
+    },
+    SetSessionPickerOptions(Vec<SessionInfo>),
+    DisplayIncomingMessage(String),
+    ExecuteSharedUiAction(SharedUiAction),
+    PushStartupLogo,
+}
 
 /// Callback invoked after a successful agent switch.
 /// Receives the new agent's identity (name), optional description, and optional icon.
@@ -157,32 +271,16 @@ pub enum WorkerCommand {
         prompt: String,
         span: Span,
     },
+    HandleUiRequest {
+        request: UiRequest,
+        response_tx: mpsc::Sender<UiRequestResponse>,
+    },
     EvaluateAutoCompaction {
-        response_tx: std_mpsc::Sender<Option<String>>,
+        response_tx: mpsc::Sender<Option<String>>,
     },
     ExecuteCompactionTrigger {
         source: CompactionTriggerSource,
-        response_tx: std_mpsc::Sender<Option<String>>,
-    },
-    ToggleMcp {
-        server_name: String,
-        enable: bool,
-        response_tx: std_mpsc::Sender<McpToggleResult>,
-    },
-    SwitchModel {
-        model_spec: String,
-        response_tx: std_mpsc::Sender<ModelSwitchResult>,
-    },
-    SwitchAgent {
-        agent_name: String,
-        response_tx: std_mpsc::Sender<AgentSwitchResult>,
-    },
-    SwitchSession {
-        session_id: String,
-        response_tx: std_mpsc::Sender<SessionSwitchResult>,
-    },
-    RefreshSessionPicker {
-        response_tx: std_mpsc::Sender<RefreshSessionPickerResult>,
+        response_tx: mpsc::Sender<Option<String>>,
     },
     ClearSession,
     NewSession,
@@ -210,29 +308,9 @@ impl ProgressUi for WorkerProgressUi {
     }
 }
 
-/// Poll a one-shot option channel without blocking.
-/// Returns (value, Some(rx)) if empty (re-park the receiver), (value, None) if disconnected.
-/// The returned Option<T> is Some if a value was ready, None for all other outcomes
-/// where the caller doesn't need the value.
-///
-/// Returns: (Option<T>, Option<Receiver<Option<T>>>)
-///   - (Some(v), None)     — value ready
-///   - (None, Some(rx))    — empty, re-park
-///   - (None, None)        — disconnected
-pub(crate) fn poll_option_channel<T>(
-    rx: std_mpsc::Receiver<Option<T>>,
-) -> (Option<T>, Option<std_mpsc::Receiver<Option<T>>>) {
-    match rx.try_recv() {
-        Ok(val) => (val, None),
-        Err(std_mpsc::TryRecvError::Empty) => (None, Some(rx)),
-        Err(std_mpsc::TryRecvError::Disconnected) => (None, None),
-    }
-}
-
-pub(crate) async fn run_interactive_loop_impl<R, U>(
+pub(crate) async fn run_interactive_loop_impl<R, F>(
     mut runtime: R,
-    ui: &mut U,
-    config: InteractiveLoopConfig,
+    config: InteractiveLoopConfig<F>,
 ) -> (R, Result<Value, LabeledError>)
 where
     R: CoreRuntime
@@ -243,19 +321,23 @@ where
         + Compaction
         + Send
         + 'static,
-    U: ProgressUi + UserInputUi + DisplayStateUi + LifecycleUi + TranscriptUi,
+    F: FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static,
 {
     let InteractiveLoopConfig {
         span,
         interactive_pending,
-        mut task_cancel_rx,
+        task_cancel_rx,
         bus,
         hydration,
         ref on_agent_switch,
+        spawn_render_loop,
     } = config;
 
     if let Some(hydration) = hydration {
-        ui.hydrate_transcript_from_messages(hydration.messages, hydration.last_total_tokens);
+        let _ = bus.ui_state().send(UiStateEvent::HydrateTranscript {
+            messages: hydration.messages,
+            last_total_tokens: hydration.last_total_tokens,
+        });
         runtime.seed_last_total_tokens(hydration.last_total_tokens);
         let _ = bus.session().send(SessionEvent::Started {
             session_id: String::new(),
@@ -269,23 +351,32 @@ where
     }
 
     let initial_visible_count = runtime.llm_visible_mcp_tool_count();
-    ui.set_active_model_identity(runtime.active_model_identity().as_str());
-    ui.set_context_window_max_tokens(runtime.max_context_tokens());
+    let _ = bus.ui_state().send(UiStateEvent::SetActiveModelIdentity(
+        runtime.active_model_identity(),
+    ));
+    let _ = bus.ui_state().send(UiStateEvent::SetContextWindowMaxTokens(
+        runtime.max_context_tokens(),
+    ));
     for (server_name, names) in runtime.llm_visible_mcp_tool_names_by_server() {
-        ui.set_mcp_visible_tool_count_by_server_name(&server_name, names.len());
-        ui.set_mcp_visible_tool_names_by_server_name(&server_name, names);
+        let _ = bus.ui_state().send(UiStateEvent::SetMcpVisibleToolCount {
+            server: server_name.clone(),
+            count: names.len(),
+        });
+        let _ = bus.ui_state().send(UiStateEvent::SetMcpVisibleToolNames {
+            server: server_name,
+            names,
+        });
     }
 
     let (worker_cmd_tx, mut worker_cmd_rx) = mpsc::channel::<WorkerCommand>(256);
-    let (worker_event_tx, worker_event_rx) = mpsc::unbounded_channel::<UiEvent>();
-    let (worker_result_tx, worker_result_rx) = mpsc::channel::<TurnOutcome>(256);
+    let (worker_event_tx, mut worker_event_rx) = mpsc::unbounded_channel::<UiEvent>();
+    let (worker_result_tx, mut worker_result_rx) = mpsc::channel::<TurnOutcome>(256);
 
-    let mut event_pump = EventPump::new(worker_event_rx, &bus);
-    let mut stages = OrchestratorStages::new(initial_visible_count, worker_result_rx);
     let mut worker_active = false;
     let mut should_evaluate_compaction = true;
     let mut active_external_prompt: Option<String> = None;
     let mut active_external_task_id: Option<String> = None;
+    let mut pending_external_cancel: Option<String> = None;
 
     let mut worker_ui = WorkerProgressUi {
         events: worker_event_tx,
@@ -316,102 +407,79 @@ where
         runtime
     });
 
-    let mut external_rx = bus.external().subscribe();
+    let (event_tx, event_rx) = mpsc::channel::<OrchestratorEvent>(256);
+    let (blocking_response_tx, blocking_response_rx) = mpsc::channel::<UiRequestResponse>(32);
+    let (concurrent_response_tx, concurrent_response_rx) = mpsc::channel::<UiRequestResponse>(32);
 
-    // Main loop: pump UI, drain events, run stages, check quit conditions.
-    loop {
-        ui.pump_once();
-        if let Some(error) = ui.fatal_error() {
-            let _ = worker_cmd_tx.send(WorkerCommand::Shutdown).await;
-            let runtime = worker_handle
-                .await
-                .unwrap_or_else(|_| panic!("worker panicked"));
-            return (
-                runtime,
-                Err(LabeledError::new(format!("Interactive UI failed: {error}"))),
-            );
-        }
-        if ui.take_cancel_requested() {
-            let _ = bus.cancel().send(CancelEvent::Requested);
-        }
-        event_pump.drain_batch(ui);
+    spawn_blocking_bridge(blocking_response_rx, event_tx.clone());
+    spawn_concurrent_bridge(concurrent_response_rx, event_tx.clone());
+    spawn_bus_pump(&bus, event_tx.clone());
+    spawn_task_cancel_bridge(task_cancel_rx, event_tx.clone());
 
-        // Check for external prompts (e.g., A2A tasks) when worker is idle.
-        if !worker_active
-            && let Ok(ExternalEvent::PromptReceived { prompt, task_id }) = external_rx.try_recv()
-        {
-            log::info!(
-                "orchestrator: dispatching external prompt (len={})",
-                prompt.len()
-            );
-            ui.display_incoming_message(&prompt);
-            active_external_prompt = Some(prompt.clone());
-            active_external_task_id = Some(task_id.clone());
-
-            let _ = bus.turn().send(TurnEvent::Started {
-                prompt: prompt.clone(),
-                task_id: Some(task_id),
-            });
-
-            worker_cmd_tx
-                .send(WorkerCommand::ExecuteTurn { prompt, span })
-                .await
-                .unwrap_or(());
-            worker_active = true;
-            continue;
-        }
-
-        // Check for A2A task cancellations and bridge to the bus cancel channel.
-        // Only cancel when the incoming task ID matches the currently running
-        // external task — otherwise cancelling task B would kill running task A.
-        if let Some(ref mut cancel_rx) = task_cancel_rx {
-            while let Ok(task_id) = cancel_rx.try_recv() {
-                if active_external_task_id.as_deref() == Some(task_id.as_str()) {
-                    log::info!("orchestrator: cancelling external task {task_id}");
-                    let _ = bus.cancel().send(CancelEvent::Requested);
-                }
-            }
-        }
-
-        let mut ctx = OrchestrationContext {
-            worker_tx: &worker_cmd_tx,
-            pending: &interactive_pending,
-            worker_active: &mut worker_active,
-            should_evaluate_compaction: &mut should_evaluate_compaction,
-            span,
-            ui,
-            active_external_prompt: &mut active_external_prompt,
-            active_external_task_id: &mut active_external_task_id,
-            bus: &bus,
-        };
-        match stages.poll_all(&mut ctx).await {
-            StageOutcome::Fatal(e) => {
-                let _ = worker_cmd_tx.send(WorkerCommand::Shutdown).await;
-                let runtime = worker_handle
-                    .await
-                    .unwrap_or_else(|_| panic!("worker panicked"));
-                return (runtime, Err(e));
-            }
-            StageOutcome::Handled => continue,
-            StageOutcome::Idle => {
-                // Yield to allow the worker task to make progress.
-                // Without this, the main loop spins in a tight loop and
-                // the spawned worker never gets a chance to process commands.
-                tokio::task::yield_now().await;
-            }
-        }
-        if !ui.quit_requested() {
-            continue;
-        }
-        if worker_active {
-            let _ = bus.cancel().send(CancelEvent::Requested);
-            continue;
-        }
-        if stages.has_pending_ops() || should_evaluate_compaction {
-            continue;
-        }
-        break;
+    if let Some(spawn) = spawn_render_loop {
+        spawn(event_tx.clone());
     }
+
+    // Worker result bridge: forward worker outcomes to the event channel.
+    let worker_result_tx_clone = event_tx.clone();
+    tokio::spawn(async move {
+        while let Some(outcome) = worker_result_rx.recv().await {
+            let _ = worker_result_tx_clone
+                .send(OrchestratorEvent::WorkerResult(outcome))
+                .await;
+        }
+    });
+
+    // Worker event bridge: forward worker UiEvents to the corresponding bus
+    // channels. Only permission events (which arrive via the worker's ui_tx,
+    // not the bus) are re-published here. Lifecycle events (tool/llm/warning/
+    // compaction/turn) are already published on their bus channels by the hooks
+    // and executor, and the render loop subscribes to those channels directly;
+    // re-publishing them would re-inject them into the same bus BusForwarder
+    // drains, causing an infinite feedback loop that repeats the transcript.
+    let worker_bus = bus.clone();
+    tokio::spawn(async move {
+        while let Some(event) = worker_event_rx.recv().await {
+            match bridge::bridge_action(event) {
+                bridge::BridgeAction::PublishPermission(permission_event) => {
+                    let _ = worker_bus.permission().send(permission_event);
+                }
+                bridge::BridgeAction::Ignore => {}
+            }
+        }
+    });
+
+    // Stages
+    let mut slash = SlashStage::new();
+    let mut permission = PermissionStage::new();
+    let mut session = SessionStage::new();
+    let mut compaction = CompactionStage::new();
+    let mut ui_request = UiRequestStage::new(initial_visible_count);
+
+    // Context
+    let mut ctx = OrchestrationContext {
+        worker_tx: &worker_cmd_tx,
+        blocking_response_tx: &blocking_response_tx,
+        concurrent_response_tx: &concurrent_response_tx,
+        pending: &interactive_pending,
+        worker_active: &mut worker_active,
+        should_evaluate_compaction: &mut should_evaluate_compaction,
+        span,
+        active_external_prompt: &mut active_external_prompt,
+        active_external_task_id: &mut active_external_task_id,
+        pending_external_cancel: &mut pending_external_cancel,
+        bus: &bus,
+    };
+
+    let stages = Stages {
+        slash: &mut slash,
+        permission: &mut permission,
+        ui_request: &mut ui_request,
+        compaction: &mut compaction,
+        session: &mut session,
+    };
+
+    let result = run_orchestrator_loop(event_rx, event_tx.clone(), stages, &mut ctx).await;
 
     let _ = worker_cmd_tx.send(WorkerCommand::Shutdown).await;
     let runtime = worker_handle
@@ -422,16 +490,16 @@ where
         session_id: String::new(),
     });
 
-    (runtime, Ok(Value::nothing(span)))
+    let result = result.map(|()| Value::nothing(span));
+    (runtime, result)
 }
 
 /// Checks an external channel for pre-formatted prompt strings (e.g., injected
 /// A2A tasks) before each iteration. These prompts are dispatched with higher
 /// priority than regular user input.
-pub async fn run_interactive_loop_with_external_prompts<R, U>(
+pub async fn run_interactive_loop_with_external_prompts<R, F>(
     runtime: R,
-    ui: &mut U,
-    config: InteractiveLoopConfig,
+    config: InteractiveLoopConfig<F>,
 ) -> Result<Value, LabeledError>
 where
     R: CoreRuntime
@@ -442,18 +510,17 @@ where
         + Compaction
         + Send
         + 'static,
-    U: ProgressUi + UserInputUi + DisplayStateUi + LifecycleUi + TranscriptUi,
+    F: FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static,
 {
-    let (_runtime, result) = run_interactive_loop_impl(runtime, ui, config).await;
+    let (_runtime, result) = run_interactive_loop_impl(runtime, config).await;
     result
 }
 
 /// Checks an external channel for pre-formatted prompt strings (e.g., injected
 /// A2A tasks) before each iteration.
-pub async fn run_hydrated_interactive_loop_with_external_prompts<R, U>(
+pub async fn run_hydrated_interactive_loop_with_external_prompts<R, F>(
     runtime: R,
-    ui: &mut U,
-    config: InteractiveLoopConfig,
+    config: InteractiveLoopConfig<F>,
 ) -> Result<Value, LabeledError>
 where
     R: CoreRuntime
@@ -464,9 +531,9 @@ where
         + Compaction
         + Send
         + 'static,
-    U: ProgressUi + UserInputUi + DisplayStateUi + LifecycleUi + TranscriptUi,
+    F: FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static,
 {
-    let (_runtime, result) = run_interactive_loop_impl(runtime, ui, config).await;
+    let (_runtime, result) = run_interactive_loop_impl(runtime, config).await;
     result
 }
 
@@ -483,3 +550,259 @@ where
 {
     runtime.execute_turn(ui, prompt, context, span).await
 }
+
+/// The orchestrator event loop. Drains a single `OrchestratorEvent` channel and
+/// dispatches each event to the appropriate stage handler.
+///
+/// Generic over the five stage traits (DIP + ISP). The loop owns no stage state;
+/// stages are passed in as `&mut` and mutated in place.
+pub(crate) struct Stages<'a, S, P, U, C, Se> {
+    pub slash: &'a mut S,
+    pub permission: &'a mut P,
+    pub ui_request: &'a mut U,
+    pub compaction: &'a mut C,
+    pub session: &'a mut Se,
+}
+
+pub(crate) async fn run_orchestrator_loop<S, P, U, C, Se>(
+    mut event_rx: mpsc::Receiver<OrchestratorEvent>,
+    event_tx: mpsc::Sender<OrchestratorEvent>,
+    stages: Stages<'_, S, P, U, C, Se>,
+    ctx: &mut OrchestrationContext<'_>,
+) -> Result<(), LabeledError>
+where
+    S: SlashHandler,
+    P: PermissionHandler,
+    U: UiRequestHandler,
+    C: CompactionHandler,
+    Se: SessionHandler,
+{
+    let Stages {
+        slash,
+        permission,
+        ui_request,
+        compaction,
+        session,
+    } = stages;
+    let mut pending_compaction_rx: Option<mpsc::Receiver<Option<String>>> = None;
+    let mut quit_pending = false;
+    loop {
+        let ev = tokio::select! {
+            biased;
+            message = async {
+                if let Some(rx) = pending_compaction_rx.as_mut() {
+                    rx.recv().await.unwrap_or(None)
+                } else {
+                    std::future::pending::<Option<String>>().await
+                }
+            } => OrchestratorEvent::CompactionResult { message },
+            ev = event_rx.recv() => {
+                let Some(ev) = ev else { break; };
+                ev
+            }
+        };
+        match ev {
+            OrchestratorEvent::PromptSubmitted { text } => {
+                if !ui_request.has_blocking_pending() {
+                    slash.handle(text, ctx).await;
+                    if let Some(rx) = slash.take_pending_compaction_trigger() {
+                        pending_compaction_rx = Some(rx);
+                    }
+                }
+            }
+            OrchestratorEvent::CompactionResult { message } => {
+                compaction.handle_result(message, ctx);
+                *ctx.should_evaluate_compaction = false;
+                pending_compaction_rx = None;
+                if quit_pending && !*ctx.worker_active {
+                    break;
+                }
+                // Re-arm compaction evaluation after a slash compaction result, mirroring
+                // the auto-compaction path after WorkerResult.
+                if *ctx.should_evaluate_compaction
+                    && !*ctx.worker_active
+                    && !compaction.has_pending_auto_compaction()
+                {
+                    let (response_tx, response_rx) = mpsc::channel::<Option<String>>(1);
+                    let _ = ctx
+                        .worker_tx
+                        .send(WorkerCommand::EvaluateAutoCompaction { response_tx })
+                        .await;
+                    compaction.set_pending_auto_compaction();
+                    spawn_compaction_bridge(response_rx, event_tx.clone());
+                }
+            }
+            OrchestratorEvent::PermissionDecision { decision } => {
+                permission.handle(decision, ctx);
+            }
+            OrchestratorEvent::UiRequest(req) => {
+                ui_request.handle_incoming(req, ctx).await;
+            }
+            OrchestratorEvent::BlockingResponse(resp) => {
+                ui_request.handle_blocking_response(resp, ctx);
+                if quit_pending && !ui_request.has_pending() {
+                    break;
+                }
+            }
+            OrchestratorEvent::ConcurrentResponse(resp) => {
+                ui_request.handle_concurrent_response(resp, ctx);
+                if quit_pending && !ui_request.has_pending() {
+                    break;
+                }
+            }
+            OrchestratorEvent::WorkerResult(outcome) => {
+                session.handle_outcome(outcome, ctx);
+                // Worker is now idle — drain queued blocking requests.
+                ui_request.drain_queued(ctx).await;
+                // Re-arm compaction evaluation after turn completion.
+                if *ctx.should_evaluate_compaction
+                    && !*ctx.worker_active
+                    && !compaction.has_pending_auto_compaction()
+                {
+                    let (response_tx, response_rx) = mpsc::channel::<Option<String>>(1);
+                    let _ = ctx
+                        .worker_tx
+                        .send(WorkerCommand::EvaluateAutoCompaction { response_tx })
+                        .await;
+                    compaction.set_pending_auto_compaction();
+                    spawn_compaction_bridge(response_rx, event_tx.clone());
+                }
+                // If a quit was requested while the worker was active and the
+                // worker is now idle, exit the loop.
+                if quit_pending && !*ctx.worker_active {
+                    break;
+                }
+            }
+            OrchestratorEvent::ExternalPrompt { prompt, task_id } => {
+                if !*ctx.worker_active {
+                    let _ = ctx
+                        .bus
+                        .ui_state()
+                        .send(UiStateEvent::DisplayIncomingMessage(prompt.clone()));
+                    *ctx.active_external_prompt = Some(prompt.clone());
+                    *ctx.active_external_task_id = Some(task_id.clone());
+                    if ctx.pending_external_cancel.as_deref() == Some(task_id.as_str()) {
+                        *ctx.pending_external_cancel = None;
+                        let _ = ctx.bus.cancel().send(CancelEvent::Requested);
+                    }
+                    let _ = ctx.bus.turn().send(TurnEvent::Started {
+                        prompt: prompt.clone(),
+                        task_id: Some(task_id),
+                    });
+                    let _ = ctx
+                        .worker_tx
+                        .send(WorkerCommand::ExecuteTurn {
+                            prompt,
+                            span: ctx.span,
+                        })
+                        .await;
+                    *ctx.worker_active = true;
+                }
+            }
+            OrchestratorEvent::ExternalCancel { task_id } => {
+                if ctx.active_external_task_id.as_deref() == Some(task_id.as_str()) {
+                    let _ = ctx.bus.cancel().send(CancelEvent::Requested);
+                } else {
+                    *ctx.pending_external_cancel = Some(task_id);
+                }
+            }
+            OrchestratorEvent::CancelRequested => {
+                let _ = ctx.bus.cancel().send(CancelEvent::Requested);
+            }
+            OrchestratorEvent::Quit => {
+                if *ctx.worker_active {
+                    quit_pending = true;
+                    let _ = ctx.bus.cancel().send(CancelEvent::Requested);
+                    continue;
+                }
+                if ui_request.has_pending() || compaction.has_pending() {
+                    quit_pending = true;
+                    continue;
+                }
+                if pending_compaction_rx.is_some() {
+                    quit_pending = true;
+                    continue;
+                }
+                break;
+            }
+            OrchestratorEvent::FatalError(e) => {
+                return Err(e);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Bridge task: forwards blocking UI request responses to the event channel.
+fn spawn_blocking_bridge(
+    mut rx: mpsc::Receiver<UiRequestResponse>,
+    tx: mpsc::Sender<OrchestratorEvent>,
+) {
+    tokio::spawn(async move {
+        while let Some(resp) = rx.recv().await {
+            let _ = tx.send(OrchestratorEvent::BlockingResponse(resp)).await;
+        }
+    });
+}
+
+/// Bridge task: forwards concurrent UI request responses to the event channel.
+fn spawn_concurrent_bridge(
+    mut rx: mpsc::Receiver<UiRequestResponse>,
+    tx: mpsc::Sender<OrchestratorEvent>,
+) {
+    tokio::spawn(async move {
+        while let Some(resp) = rx.recv().await {
+            let _ = tx.send(OrchestratorEvent::ConcurrentResponse(resp)).await;
+        }
+    });
+}
+
+/// Bridge task: forwards compaction results to the event channel.
+fn spawn_compaction_bridge(
+    mut rx: mpsc::Receiver<Option<String>>,
+    tx: mpsc::Sender<OrchestratorEvent>,
+) {
+    tokio::spawn(async move {
+        while let Some(message) = rx.recv().await {
+            let _ = tx
+                .send(OrchestratorEvent::CompactionResult { message })
+                .await;
+        }
+    });
+}
+
+/// Bus pump task: subscribes to the external bus channel and forwards
+/// `ExternalEvent::PromptReceived` as `OrchestratorEvent::ExternalPrompt`.
+fn spawn_bus_pump(bus: &Bus, tx: mpsc::Sender<OrchestratorEvent>) {
+    let mut external_rx = bus.external().subscribe();
+    tokio::spawn(async move {
+        while let Ok(event) = external_rx.recv().await {
+            match event {
+                ExternalEvent::PromptReceived { prompt, task_id } => {
+                    let _ = tx
+                        .send(OrchestratorEvent::ExternalPrompt { prompt, task_id })
+                        .await;
+                }
+            }
+        }
+    });
+}
+
+/// Bridge task: forwards A2A task cancellation IDs to the event channel.
+/// Uses `spawn_blocking` because the source is a `std::mpsc::Receiver`.
+fn spawn_task_cancel_bridge(
+    rx: Option<std_mpsc::Receiver<String>>,
+    tx: mpsc::Sender<OrchestratorEvent>,
+) {
+    if let Some(cancel_rx) = rx {
+        tokio::task::spawn_blocking(move || {
+            while let Ok(task_id) = cancel_rx.recv() {
+                let _ = tx.blocking_send(OrchestratorEvent::ExternalCancel { task_id });
+            }
+        });
+    }
+}
+
+#[cfg(test)]
+#[path = "orchestrator_loop_test.rs"]
+mod orchestrator_loop_test;

@@ -5,7 +5,7 @@ use nu_agent_core::renderer::UiRenderer;
 use super::StderrUiRenderer;
 
 #[test]
-fn default_mode_suppresses_streaming() {
+fn normal_mode_streams_text() {
     let mut stderr_bytes = Vec::<u8>::new();
     let mut renderer = StderrUiRenderer::new(
         &mut stderr_bytes,
@@ -24,17 +24,17 @@ fn default_mode_suppresses_streaming() {
     renderer.flush();
 
     let stderr_out = String::from_utf8(stderr_bytes).expect("utf8");
-    assert!(!stderr_out.contains("hello world"));
+    assert!(stderr_out.contains("hello world"));
 }
 
 #[test]
-fn verbose_mode_shows_streaming() {
+fn normal_mode_shows_streaming() {
     let mut stderr_bytes = Vec::<u8>::new();
     let mut renderer = StderrUiRenderer::new(
         &mut stderr_bytes,
         UiPolicy {
             quiet: false,
-            verbosity: Verbosity::Verbose,
+            verbosity: Verbosity::Normal,
         },
         false,
     );
@@ -124,7 +124,7 @@ fn streaming_completed_resets_state() {
         &mut stderr_bytes,
         UiPolicy {
             quiet: false,
-            verbosity: Verbosity::Verbose,
+            verbosity: Verbosity::Normal,
         },
         false,
     );
@@ -154,13 +154,13 @@ fn streaming_completed_resets_state() {
 }
 
 #[test]
-fn verbose_mode_incremental_streaming() {
+fn normal_mode_incremental_streaming() {
     let mut stderr_bytes = Vec::<u8>::new();
     let mut renderer = StderrUiRenderer::new(
         &mut stderr_bytes,
         UiPolicy {
             quiet: false,
-            verbosity: Verbosity::Verbose,
+            verbosity: Verbosity::Normal,
         },
         false,
     );
@@ -187,14 +187,14 @@ fn verbose_mode_incremental_streaming() {
 }
 
 #[test]
-fn spinner_stops_when_streaming_starts_in_verbose_mode() {
+fn spinner_stops_when_streaming_starts() {
     let mut stderr_bytes = Vec::<u8>::new();
     {
         let mut renderer = StderrUiRenderer::new(
             &mut stderr_bytes,
             UiPolicy {
                 quiet: false,
-                verbosity: Verbosity::Verbose,
+                verbosity: Verbosity::Normal,
             },
             true, // TTY enabled - spinner will work
         );
@@ -227,7 +227,7 @@ fn streaming_adds_newline_on_completion() {
         &mut stderr_bytes,
         UiPolicy {
             quiet: false,
-            verbosity: Verbosity::Verbose,
+            verbosity: Verbosity::Normal,
         },
         false,
     );
@@ -292,4 +292,118 @@ fn trace_mode_shows_streaming() {
 
     let stderr_out = String::from_utf8(stderr_bytes).expect("utf8");
     assert!(stderr_out.contains("trace output"));
+}
+
+#[test]
+fn tool_display_renders_diff_with_stats() {
+    let mut stderr_bytes = Vec::<u8>::new();
+    let mut renderer = StderrUiRenderer::new(
+        &mut stderr_bytes,
+        UiPolicy {
+            quiet: false,
+            verbosity: Verbosity::Normal,
+        },
+        false,
+    );
+    let display = nu_agent_core::protocol::event::ToolDisplay {
+        title: "edit file".to_string(),
+        sections: vec![nu_agent_core::protocol::event::ToolDisplaySection {
+            label: "diff".to_string(),
+            language: "diff".to_string(),
+            content: "+added\n-removed\nunchanged".to_string(),
+            stats: Some(nu_agent_core::protocol::event::ToolDisplayStats {
+                files_changed: Some(2),
+                insertions: Some(3),
+                deletions: Some(1),
+                ..Default::default()
+            }),
+        }],
+    };
+    renderer.emit(&UiEvent::ToolEnd {
+        name: "edit".to_string(),
+        source: "code".to_string(),
+        arguments: "{}".to_string(),
+        success: true,
+        result: "ok".to_string(),
+        display: Some(display),
+        error_kind: None,
+        message: None,
+    });
+    renderer.flush();
+    let stderr_out = String::from_utf8(stderr_bytes).expect("utf8");
+    assert!(stderr_out.contains("2 files changed"));
+}
+
+#[test]
+fn llm_end_prints_token_usage() {
+    let mut stderr_bytes = Vec::<u8>::new();
+    let mut renderer = StderrUiRenderer::new(
+        &mut stderr_bytes,
+        UiPolicy {
+            quiet: false,
+            verbosity: Verbosity::Normal,
+        },
+        false,
+    );
+    renderer.emit(&UiEvent::LlmStart);
+    renderer.emit(&UiEvent::AssistantMessage {
+        text: "hi".to_string(),
+    });
+    renderer.emit(&UiEvent::LlmEnd {
+        response_chars: 2,
+        tool_calls: 0,
+        input_tokens: 80,
+        output_tokens: 20,
+        total_tokens: 100,
+    });
+    renderer.flush();
+    let stderr_out = String::from_utf8(stderr_bytes).expect("utf8");
+    assert!(stderr_out.contains("100 tokens"));
+    assert!(stderr_out.contains("80 in + 20 out"));
+}
+
+#[test]
+fn compaction_triggered_uses_success_color() {
+    let mut stderr_bytes = Vec::<u8>::new();
+    let mut renderer = StderrUiRenderer::new(
+        &mut stderr_bytes,
+        UiPolicy {
+            quiet: false,
+            verbosity: Verbosity::Normal,
+        },
+        true,
+    );
+    renderer.emit(&UiEvent::CompactionTriggered {
+        source: "auto".to_string(),
+        summarized_count: 1,
+        kept_recent_count: 0,
+        summary_preview: "s".to_string(),
+        summary_body: "s".to_string(),
+    });
+    renderer.flush();
+    let stderr_out = String::from_utf8(stderr_bytes).expect("utf8");
+    assert!(stderr_out.contains("\u{1b}[32m"));
+}
+
+#[test]
+fn no_color_renders_compaction_plain() {
+    let mut stderr_bytes = Vec::<u8>::new();
+    let mut renderer = StderrUiRenderer::new(
+        &mut stderr_bytes,
+        UiPolicy {
+            quiet: false,
+            verbosity: Verbosity::Normal,
+        },
+        false,
+    );
+    renderer.emit(&UiEvent::CompactionTriggered {
+        source: "auto".to_string(),
+        summarized_count: 1,
+        kept_recent_count: 0,
+        summary_preview: "s".to_string(),
+        summary_body: "s".to_string(),
+    });
+    renderer.flush();
+    let stderr_out = String::from_utf8(stderr_bytes).expect("utf8");
+    assert!(!stderr_out.contains("\u{1b}["));
 }

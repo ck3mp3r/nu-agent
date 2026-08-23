@@ -108,10 +108,6 @@ impl<'a, S: SessionStore + Clone + Send + Sync> CompactionExecutor<'a, S> {
             }
         }
 
-        let _ = self.bus.compaction().send(CompactionEvent::Started {
-            source: Some(source_label.clone()),
-        });
-
         let result = cached_client
             .with_model(
                 &self.config.model,
@@ -129,6 +125,9 @@ impl<'a, S: SessionStore + Clone + Send + Sync> CompactionExecutor<'a, S> {
 
         match result {
             Ok(Some((info, summary_total_tokens))) => {
+                let _ = self.bus.compaction().send(CompactionEvent::Started {
+                    source: Some(source_label.clone()),
+                });
                 let _ = self.bus.compaction().send(CompactionEvent::Triggered {
                     source: info.source,
                     summarized_count: info.summarized_count,

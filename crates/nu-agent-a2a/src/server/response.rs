@@ -1,4 +1,4 @@
-use axum::Json;
+use axum::{Json, response::IntoResponse};
 use serde_json::{Value, json};
 
 // ---------------------------------------------------------------------------
@@ -50,4 +50,31 @@ pub fn a2a_json_response(body: Value) -> (axum::http::HeaderMap, Json<Value>) {
         "application/a2a+json".parse().expect("static content-type"),
     );
     (headers, Json(body))
+}
+
+/// Small error wrapper for streaming handlers.
+///
+/// `axum::http::Response` is 128 bytes, which trips the `result_large_err`
+/// lint when returned directly as a `Result` `Err`. Boxing it and implementing
+/// `IntoResponse` keeps the error pointer-sized while satisfying both axum's
+/// `Handler` bound and the lint.
+#[derive(Debug)]
+pub struct SseError(Box<axum::response::Response>);
+
+impl SseError {
+    pub fn new(response: axum::response::Response) -> Self {
+        Self(Box::new(response))
+    }
+}
+
+impl From<(axum::http::StatusCode, (axum::http::HeaderMap, Json<Value>))> for SseError {
+    fn from(tuple: (axum::http::StatusCode, (axum::http::HeaderMap, Json<Value>))) -> Self {
+        Self::new(tuple.into_response())
+    }
+}
+
+impl axum::response::IntoResponse for SseError {
+    fn into_response(self) -> axum::response::Response {
+        *self.0
+    }
 }

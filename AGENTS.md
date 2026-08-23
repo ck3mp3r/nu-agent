@@ -189,6 +189,26 @@ pub trait AskApprovalHook {
 pub trait AskApprovalHook {
     fn choose<S: Sink>(&mut self, ..., sink: Option<&mut S>) -> AskChoice;
 }
+
+### No Delegation Chains
+
+A delegation chain is a type that implements a trait by forwarding every method to
+an inner field — `self.inner.method()` for each trait method. This is a SOLID
+violation: the wrapper type has no responsibility of its own, it just adds a layer.
+
+Delegation chains indicate the trait is implemented on the wrong type. If type B
+owns the data and type A wraps B just to implement a trait, either:
+1. Implement the trait on B directly (B owns the data, B owns the behavior)
+2. Or eliminate the trait — if the caller can call B directly, the trait and the
+   wrapper are unnecessary indirection
+
+- ❌ NO: `TuiInteractiveUi` implements `DisplayStateUi` by calling `self.renderer.set_*()`
+       which calls `self.state.set_*()` — 3 layers, zero behavior added
+- ✅ YES: The render loop calls `AppState::reduce_ui_state_event()` directly — no wrapper
+
+If you find yourself writing `fn method(&mut self) { self.inner.method() }`, stop.
+Either implement the trait on the inner type or eliminate the indirection.
+
 ```
 
 ## Streaming HTTP

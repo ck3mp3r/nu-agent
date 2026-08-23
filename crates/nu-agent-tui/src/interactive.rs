@@ -1,16 +1,20 @@
+use nu_agent_core::orchestrator::OrchestratorEvent;
 use nu_agent_core::protocol::{
-    contracts::{
-        DisplayStateUi, LifecycleUi, McpToggleRequest, McpUsabilityState, ProgressUi,
-        SharedUiAction, TranscriptUi, UiMessageSnapshot, UserInputUi,
-    },
-    event::{PermissionDecisionSubmission, UiEvent},
+    contracts::{ProgressUi, UserInputUi},
+    event::UiEvent,
     picker::ModelPickerOption,
 };
 use nu_agent_core::renderer::UiRenderer;
+use nu_protocol::LabeledError;
+use tokio::sync::mpsc;
 
-use crate::runtime::{HybridTerminalEvents, TuiRuntimeRenderer};
+use crate::interaction::cancel::CancelController;
+use crate::interaction::input::TerminalEvent;
+use crate::runtime::map_crossterm_event;
+use crate::runtime::{
+    HybridTerminalEvents, LiveTerminalUi, RuntimeCoordinator, TuiRuntimeRenderer,
+};
 use crate::state::SessionPickerOption;
-use nu_agent_core::session::SessionInfo;
 
 #[cfg(test)]
 #[path = "interactive_test.rs"]
@@ -32,12 +36,11 @@ where
     }
 
     pub fn set_active_model_identity(&mut self, active_model_identity: String) {
-        self.renderer
-            .set_active_model_identity(active_model_identity);
+        self.renderer.coordinator.active_model_identity = active_model_identity;
     }
 
     pub fn set_active_persona_icon(&mut self, icon: Option<String>) {
-        self.renderer.set_active_persona_icon(icon);
+        self.renderer.coordinator.state.active_persona_icon = icon;
     }
 
     pub fn set_mcp_lifecycle_projection(
@@ -59,34 +62,51 @@ where
     }
 
     pub fn set_llm_visible_mcp_tool_count(&mut self, count: usize) {
-        self.renderer.set_llm_visible_mcp_tool_count(count);
+        self.renderer
+            .coordinator
+            .set_llm_visible_mcp_tool_count(count);
     }
 
     pub fn set_context_window_max_tokens(&mut self, max_tokens: Option<u64>) {
-        self.renderer.set_context_window_max_tokens(max_tokens);
+        self.renderer
+            .coordinator
+            .state
+            .set_context_window_max_tokens(max_tokens);
     }
 
     pub fn set_model_picker_options(&mut self, options: Vec<ModelPickerOption>) {
-        self.renderer.set_model_picker_options(options);
+        self.renderer
+            .coordinator
+            .state
+            .set_model_picker_options(options);
     }
 
     pub fn set_agent_picker_options(
         &mut self,
         options: Vec<nu_agent_core::protocol::picker::AgentPickerOption>,
     ) {
-        self.renderer.set_agent_picker_options(options);
+        self.renderer
+            .coordinator
+            .state
+            .set_agent_picker_options(options);
     }
 
     pub fn set_session_picker_options(&mut self, options: Vec<SessionPickerOption>) {
-        self.renderer.set_session_picker_options(options);
+        self.renderer
+            .coordinator
+            .state
+            .set_session_picker_options(options);
     }
 
     pub fn set_active_agent_identity(&mut self, name: &str) {
-        self.renderer.set_active_agent_identity(name);
+        self.renderer
+            .coordinator
+            .state
+            .set_active_agent_identity(name);
     }
 
     pub fn set_agent_cycle_names(&mut self, names: Vec<String>) {
-        self.renderer.set_agent_cycle_names(names);
+        self.renderer.coordinator.state.agent_cycle_names = names;
     }
 
     pub fn set_repo_branch_caller_cwd(&mut self, caller_cwd: Option<std::path::PathBuf>) {
@@ -94,7 +114,53 @@ where
     }
 
     pub fn push_startup_logo(&mut self) {
-        self.renderer.push_startup_logo();
+        self.renderer.coordinator.state.push_startup_logo();
+    }
+
+    pub fn make_render_loop_spawner(
+        &mut self,
+        bus: nu_agent_core::bus::Bus,
+    ) -> impl FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static {
+        let coordinator = std::mem::replace(
+            &mut self.renderer.coordinator,
+            RuntimeCoordinator::new(120, 30, Some(true)),
+        );
+        let live_terminal = self.renderer.take_live_terminal();
+        let cancel_controller = coordinator.cancel_controller.clone();
+        // Subscribe a filesystem watcher to git ref files before the loop starts
+        // so branch changes are delivered as events, not polled.
+        let watch_targets = coordinator.repo_branch_watch_targets();
+        let (branch_tx, branch_rx) = mpsc::channel(8);
+        let branch_watcher = if watch_targets.is_empty() {
+            None
+        } else {
+            match crate::runtime::branch_watcher::spawn_branch_watcher(watch_targets, branch_tx) {
+                Ok(w) => Some(w),
+                Err(e) => {
+                    log::warn!("git branch watcher failed: {e}");
+                    None
+                }
+            }
+        };
+        move |event_tx| {
+            let (terminal_tx, terminal_rx) = mpsc::channel(64);
+            spawn_terminal_input(terminal_tx);
+            tokio::spawn(async move {
+                let mut coordinator = coordinator;
+                let mut live = live_terminal;
+                let _branch_watcher = branch_watcher;
+                run_render_loop(
+                    &mut coordinator,
+                    &bus,
+                    &cancel_controller,
+                    event_tx,
+                    terminal_rx,
+                    &mut live,
+                    branch_rx,
+                )
+                .await;
+            });
+        }
     }
 }
 
@@ -123,175 +189,164 @@ impl<R> UserInputUi for TuiInteractiveUi<R>
 where
     R: UiRenderer,
 {
-    fn take_submitted_prompt(&mut self) -> Option<String> {
-        self.renderer.take_submitted_prompt()
-    }
-
-    fn take_next_model_picker_launch_request(&mut self) -> bool {
-        self.renderer.take_next_model_picker_launch_request()
-    }
-
-    fn take_next_mcp_toggle_request(&mut self) -> Option<McpToggleRequest> {
-        self.renderer
-            .take_next_mcp_toggle_request()
-            .map(|request| McpToggleRequest {
-                server_name: request.server_name,
-                enable: request.enable,
-            })
-    }
-
-    fn take_next_model_switch_request(&mut self) -> Option<String> {
-        self.renderer.take_next_model_switch_request()
-    }
-
-    fn take_next_permission_decision_submission(&mut self) -> Option<PermissionDecisionSubmission> {
-        self.renderer.take_next_permission_decision_submission()
-    }
-
-    fn take_next_agent_picker_launch_request(&mut self) -> bool {
-        self.renderer.take_next_agent_picker_launch_request()
-    }
-
-    fn take_next_session_picker_launch_request(&mut self) -> bool {
-        self.renderer.take_next_session_picker_launch_request()
-    }
-
-    fn take_next_theme_picker_launch_request(&mut self) -> bool {
-        self.renderer.take_next_theme_picker_launch_request()
-    }
-
-    fn take_next_agent_switch_request(&mut self) -> Option<String> {
-        self.renderer.take_next_agent_switch_request()
-    }
-
-    fn take_next_session_switch_request(&mut self) -> Option<String> {
-        self.renderer.take_next_session_switch_request()
+    fn event_sender(&self) -> &mpsc::Sender<OrchestratorEvent> {
+        self.renderer.event_sender()
     }
 }
 
-impl<R> DisplayStateUi for TuiInteractiveUi<R>
-where
-    R: UiRenderer,
-{
-    fn set_mcp_server_state(&mut self, server_name: &str, state: McpUsabilityState) {
-        let mapped = match state {
-            McpUsabilityState::Enabled => crate::state::McpServerUsabilityState::Enabled,
-            McpUsabilityState::Disabled => crate::state::McpServerUsabilityState::Disabled,
-            McpUsabilityState::Failed => crate::state::McpServerUsabilityState::Failed,
-        };
-        let _ = self.renderer.set_mcp_server_state(server_name, mapped);
-    }
-
-    fn set_mcp_visible_tool_count_by_server_name(&mut self, server_name: &str, count: usize) {
-        self.renderer
-            .set_mcp_visible_tool_count_by_server_name(server_name, count);
-    }
-
-    fn set_mcp_visible_tool_names_by_server_name(&mut self, server_name: &str, names: Vec<String>) {
-        self.renderer
-            .set_mcp_visible_tool_names_by_server_name(server_name, names);
-    }
-
-    fn set_mcp_server_state_with_details(
-        &mut self,
-        server_name: &str,
-        state: McpUsabilityState,
-        reason: Option<String>,
-        llm_visible_mcp_tool_count: usize,
-    ) {
-        let mapped = match state {
-            McpUsabilityState::Enabled => crate::state::McpServerUsabilityState::Enabled,
-            McpUsabilityState::Disabled => crate::state::McpServerUsabilityState::Disabled,
-            McpUsabilityState::Failed => crate::state::McpServerUsabilityState::Failed,
-        };
-        let _ = self.renderer.set_mcp_server_state_with_details(
-            server_name,
-            mapped,
-            reason,
-            llm_visible_mcp_tool_count,
-        );
-    }
-
-    fn execute_shared_ui_action(&mut self, action: SharedUiAction) -> bool {
-        self.renderer.execute_shared_ui_action(action)
-    }
-
-    fn set_active_model_identity(&mut self, active_model_identity: &str) {
-        self.renderer
-            .set_active_model_identity(active_model_identity.to_string());
-    }
-
-    fn set_active_agent_identity(&mut self, name: &str) {
-        self.renderer.set_active_agent_identity(name);
-    }
-
-    fn set_active_persona_icon(&mut self, icon: Option<String>) {
-        self.renderer.set_active_persona_icon(icon);
-    }
-
-    fn set_context_window_max_tokens(&mut self, max_tokens: Option<u64>) {
-        self.renderer.set_context_window_max_tokens(max_tokens);
-    }
-
-    fn display_incoming_message(&mut self, text: &str) {
-        self.renderer.display_incoming_message(text);
-    }
-
-    fn set_session_picker_options(&mut self, options: Vec<SessionInfo>) {
-        let tui_options: Vec<SessionPickerOption> = options
-            .into_iter()
-            .map(|info| {
-                let display = info
-                    .title
-                    .clone()
-                    .unwrap_or_else(|| "(untitled)".to_string());
-                SessionPickerOption {
-                    id: info.id,
-                    title: info.title,
-                    created_at: info.last_active,
-                    display,
+/// Spawn a blocking task that reads crossterm terminal events and sends
+/// them on the given channel.
+pub fn spawn_terminal_input(
+    terminal_event_tx: mpsc::Sender<TerminalEvent>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::task::spawn_blocking(move || {
+        loop {
+            let event = match crossterm::event::read() {
+                Ok(event) => event,
+                Err(err) => {
+                    log::warn!("crossterm read failed: {err}");
+                    break;
                 }
-            })
-            .collect();
-        self.renderer.set_session_picker_options(tui_options);
-    }
+            };
+            if let Some(terminal_event) = map_crossterm_event(event)
+                && terminal_event_tx.blocking_send(terminal_event).is_err()
+            {
+                break;
+            }
+        }
+    })
 }
 
-impl<R> LifecycleUi for TuiInteractiveUi<R>
-where
-    R: UiRenderer,
-{
-    fn pump_once(&mut self) {
-        self.renderer.pump_terminal_once();
-    }
+/// Render loop driving `RuntimeCoordinator` from terminal events, bus
+/// channels, and a periodic tick. Owns `&mut RuntimeCoordinator` and calls
+/// `AppState` methods directly.
+pub(crate) async fn run_render_loop(
+    coordinator: &mut RuntimeCoordinator,
+    bus: &nu_agent_core::bus::Bus,
+    cancel_controller: &CancelController,
+    event_tx: mpsc::Sender<OrchestratorEvent>,
+    mut terminal_event_rx: mpsc::Receiver<TerminalEvent>,
+    live_terminal: &mut Option<LiveTerminalUi>,
+    mut branch_rx: mpsc::Receiver<()>,
+) {
+    let mut tool_rx = bus.tool().subscribe();
+    let mut llm_rx = bus.llm().subscribe();
+    let mut warning_rx = bus.warning().subscribe();
+    let mut compaction_rx = bus.compaction().subscribe();
+    let mut turn_rx = bus.turn().subscribe();
+    let mut session_rx = bus.session().subscribe();
+    let mut permission_rx = bus.permission().subscribe();
+    let mut ui_state_rx = bus.ui_state().subscribe();
+    let mut render_timer = tokio::time::interval(std::time::Duration::from_millis(80));
 
-    fn quit_requested(&self) -> bool {
-        self.renderer.quit_requested()
-    }
-
-    fn fatal_error(&self) -> Option<&str> {
-        self.renderer.fatal_error()
-    }
-}
-
-impl<R> TranscriptUi for TuiInteractiveUi<R>
-where
-    R: UiRenderer,
-{
-    fn hydrate_transcript_from_messages(
-        &mut self,
-        messages: impl IntoIterator<Item = UiMessageSnapshot>,
-        last_total_tokens: Option<u64>,
-    ) {
-        self.renderer
-            .hydrate_transcript_from_messages(messages, last_total_tokens);
-    }
-
-    fn clear_transcript(&mut self) {
-        self.renderer.clear_transcript();
-    }
-
-    fn push_startup_logo(&mut self) {
-        self.renderer.push_startup_logo();
+    loop {
+        tokio::select! {
+            maybe = terminal_event_rx.recv() => {
+                let Some(event) = maybe else { return; };
+                coordinator.handle_terminal_event(event);
+                let pending = coordinator.state.take_pending_events(cancel_controller);
+                for ev in pending {
+                    if event_tx.send(ev).await.is_err() {
+                        return;
+                    }
+                }
+                let ui_state_events = coordinator.state.take_pending_ui_state_events();
+                for ev in ui_state_events {
+                    let _ = bus.ui_state().send(ev);
+                }
+                if coordinator.state.quit_requested {
+                    let _ = event_tx.send(OrchestratorEvent::Quit).await;
+                    return;
+                }
+                if let Some(msg) = coordinator.fatal_error() {
+                    let _ = event_tx
+                        .send(OrchestratorEvent::FatalError(LabeledError::new(
+                            msg.to_string(),
+                        )))
+                        .await;
+                    return;
+                }
+                coordinator.mark_render_needed();
+                let _ = coordinator.render_if_needed(live_terminal);
+            }
+            ok = tool_rx.recv() => {
+                if let Ok(event) = ok
+                    && let Some(ui_event) = Option::<UiEvent>::from(event)
+                {
+                    coordinator.state.reduce_ui_event(ui_event);
+                    coordinator.mark_render_needed();
+                    let _ = coordinator.render_if_needed(live_terminal);
+                }
+            }
+            ok = llm_rx.recv() => {
+                if let Ok(event) = ok
+                    && let Some(ui_event) = Option::<UiEvent>::from(event)
+                {
+                    coordinator.state.reduce_ui_event(ui_event);
+                    coordinator.mark_render_needed();
+                    let _ = coordinator.render_if_needed(live_terminal);
+                }
+            }
+            ok = warning_rx.recv() => {
+                if let Ok(event) = ok
+                    && let Some(ui_event) = Option::<UiEvent>::from(event)
+                {
+                    coordinator.state.reduce_ui_event(ui_event);
+                    coordinator.mark_render_needed();
+                    let _ = coordinator.render_if_needed(live_terminal);
+                }
+            }
+            ok = compaction_rx.recv() => {
+                if let Ok(event) = ok
+                    && let Some(ui_event) = Option::<UiEvent>::from(event)
+                {
+                    coordinator.state.reduce_ui_event(ui_event);
+                    coordinator.mark_render_needed();
+                    let _ = coordinator.render_if_needed(live_terminal);
+                }
+            }
+            ok = turn_rx.recv() => {
+                if let Ok(event) = ok
+                    && let Some(ui_event) = Option::<UiEvent>::from(event)
+                {
+                    coordinator.state.reduce_ui_event(ui_event);
+                    coordinator.mark_render_needed();
+                    let _ = coordinator.render_if_needed(live_terminal);
+                }
+            }
+            ok = session_rx.recv() => {
+                if let Ok(event) = ok
+                    && let Some(ui_event) = Option::<UiEvent>::from(event)
+                {
+                    coordinator.state.reduce_ui_event(ui_event);
+                    coordinator.mark_render_needed();
+                    let _ = coordinator.render_if_needed(live_terminal);
+                }
+            }
+            ok = ui_state_rx.recv() => {
+                if let Ok(event) = ok {
+                    coordinator.reduce_ui_state_event(event);
+                    coordinator.mark_render_needed();
+                    let _ = coordinator.render_if_needed(live_terminal);
+                }
+            }
+            ok = permission_rx.recv() => {
+                if let Ok(event) = ok
+                    && let Some(ui_event) = Option::<UiEvent>::from(event)
+                {
+                    coordinator.state.reduce_ui_event(ui_event);
+                    coordinator.mark_render_needed();
+                    let _ = coordinator.render_if_needed(live_terminal);
+                }
+            }
+            _ = branch_rx.recv() => {
+                coordinator.refresh_repo_branch();
+                let _ = coordinator.render_if_needed(live_terminal);
+            }
+            _ = render_timer.tick() => {
+                coordinator.mark_render_needed();
+                let _ = coordinator.render_if_needed(live_terminal);
+            }
+        }
     }
 }

@@ -1,15 +1,8 @@
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    process::Command,
-    time::Duration,
-};
+use std::{fs, path::Path, process::Command};
 
 use ratatui::text::{Line, Span};
 
 use crate::{rendering::theme::TuiTheme, state::AppState};
-
-use super::RepoBranchTracker;
 
 pub(crate) fn run_git(dir: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
@@ -57,20 +50,6 @@ pub(crate) fn compact_status_line(
         available_width,
         theme,
     )
-}
-
-impl RepoBranchTracker {
-    pub(crate) fn from_caller_cwd_for_test(
-        caller_cwd: Option<PathBuf>,
-        watch_check_interval: Duration,
-        fallback_poll_interval: Duration,
-    ) -> Self {
-        Self::from_caller_cwd_with_intervals(
-            caller_cwd,
-            watch_check_interval,
-            fallback_poll_interval,
-        )
-    }
 }
 
 pub(crate) fn resolve_repo_branch_for_test(caller_cwd: &Path) -> Option<String> {

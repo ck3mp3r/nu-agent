@@ -127,18 +127,15 @@ where
     }
 }
 
-pub(super) struct LiveTerminalUi {
-    pub(super) terminal: Terminal<CrosstermBackend<std::io::Stderr>>,
+pub(crate) struct LiveTerminalUi {
+    pub(crate) terminal: Terminal<CrosstermBackend<std::io::Stderr>>,
 }
 
 impl LiveTerminalUi {
-    pub(super) fn new() -> Result<Self, String> {
+    pub(crate) fn new() -> Result<Self, String> {
         let backend = CrosstermBackend::new(std::io::stderr());
-        let mut terminal = Terminal::new(backend)
+        let terminal = Terminal::new(backend)
             .map_err(|err| format!("failed to initialize ratatui terminal: {err}"))?;
-        terminal
-            .clear()
-            .map_err(|err| format!("failed to clear ratatui terminal: {err}"))?;
         Ok(Self { terminal })
     }
 }

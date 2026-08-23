@@ -78,7 +78,7 @@ pub fn reduce_with_cancel_controller(
 ) -> bool {
     match input {
         ReducerInput::User(action) => reduce_user_action(state, action, cancel_controller),
-        ReducerInput::Event(event) => reduce_ui_event(state, *event),
+        ReducerInput::Event(event) => reduce_ui_event_impl(state, *event),
     }
 }
 
@@ -540,7 +540,7 @@ fn handle_escape_confirm(
     false
 }
 
-fn reduce_ui_event(state: &mut AppState, event: UiEvent) -> bool {
+pub(crate) fn reduce_ui_event_impl(state: &mut AppState, event: UiEvent) -> bool {
     match event {
         UiEvent::LlmStart => handle_llm_start(state),
         UiEvent::Tick => handle_tick(state),

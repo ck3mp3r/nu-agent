@@ -100,7 +100,7 @@ If a closure tool and an MCP tool share the same exposed name, closure tools tak
 
 MCP servers can require authentication. The agent supports three auth types: `none`, `bearer`, and `oauth`.
 
-Configure auth under `[mcp.<server>.auth]` in config.toml. See [configuration.md](./configuration.md#mcp-authentication) for config examples.
+Configure auth under `[mcp.<server>.auth]` in config.toml. See [configuration.md](./configuration.md#mcp-servers) for config examples.
 
 ### OAuth flow (step-by-step)
 

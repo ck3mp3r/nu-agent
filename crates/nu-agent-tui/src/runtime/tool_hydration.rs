@@ -1,12 +1,11 @@
 const TOOL_PREFIX: &str = "tool[";
-const TOOL_SUFFIX_MARKER: &str = "]";
 const TOOL_ARGS_MARKER: &str = "] → ";
 const TOOL_DONE_SUFFIX: &str = " · done";
 const TOOL_FAILED_SUFFIX: &str = " · failed";
 
 pub(super) fn extract_tool_name(line: &str) -> &str {
     if let Some(rest) = line.strip_prefix(TOOL_PREFIX)
-        && let Some((name, _)) = rest.split_once(TOOL_SUFFIX_MARKER)
+        && let Some((name, _)) = rest.split_once(']')
     {
         return name;
     }

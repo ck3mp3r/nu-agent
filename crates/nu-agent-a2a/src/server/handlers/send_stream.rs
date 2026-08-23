@@ -12,19 +12,19 @@ use url::Url;
 use crate::{IncomingTask, Message, Peer, Role, TaskEvent, TaskState};
 
 use super::super::AppState;
-use super::super::response::{a2a_error, a2a_error_with_meta, a2a_json_response};
+use super::super::response::{SseError, a2a_error, a2a_error_with_meta, a2a_json_response};
 use super::SseResult;
 
 pub async fn handle_tasks_send_stream(
     State(state): State<AppState>,
     Json(body): Json<Value>,
-) -> Result<Sse<ReceiverStream<SseResult>>, (StatusCode, impl IntoResponse)> {
+) -> Result<Sse<ReceiverStream<SseResult>>, SseError> {
     // Validate message (same as handle_tasks_send)
     let message = match body.get("message") {
         Some(m) if m.is_object() => m,
         _ => {
             let err = a2a_error(400, "BAD_REQUEST", "Invalid request: missing 'message'");
-            return Err((StatusCode::BAD_REQUEST, a2a_json_response(err)));
+            return Err((StatusCode::BAD_REQUEST, a2a_json_response(err)).into());
         }
     };
 
@@ -34,7 +34,7 @@ pub async fn handle_tasks_send_stream(
             "BAD_REQUEST",
             "Invalid request: message missing 'role'",
         );
-        return Err((StatusCode::BAD_REQUEST, a2a_json_response(err)));
+        return Err((StatusCode::BAD_REQUEST, a2a_json_response(err)).into());
     }
     if message.get("parts").and_then(|v| v.as_array()).is_none() {
         let err = a2a_error(
@@ -42,7 +42,7 @@ pub async fn handle_tasks_send_stream(
             "BAD_REQUEST",
             "Invalid request: message missing 'parts'",
         );
-        return Err((StatusCode::BAD_REQUEST, a2a_json_response(err)));
+        return Err((StatusCode::BAD_REQUEST, a2a_json_response(err)).into());
     }
 
     let session_id = body
@@ -111,7 +111,9 @@ pub async fn handle_tasks_send_stream(
                 &format!("Invalid task state transition: {e}"),
                 serde_json::json!({"taskId": task_id}),
             );
-            (StatusCode::INTERNAL_SERVER_ERROR, a2a_json_response(err))
+            SseError::new(
+                (StatusCode::INTERNAL_SERVER_ERROR, a2a_json_response(err)).into_response(),
+            )
         })?;
 
     // Forward to incoming task event channel

@@ -33,10 +33,18 @@ mod tool_calls_test;
 #[cfg(test)]
 mod mod_test;
 
-use crate::rendering::theme::TuiTheme;
-use nu_agent_core::protocol::event::{PermissionDecision, PermissionDecisionSubmission};
+use crate::interaction::cancel::CancelController;
+use crate::interaction::dispatch::rewrite_action;
+use crate::interaction::input::{TerminalEvent, map_terminal_event};
+use crate::interaction::reducer::{
+    ReducerInput, append_direct_tool_display, reduce_with_cancel_controller,
+};
+use crate::rendering::theme::{ThemeName, TuiTheme};
+use nu_agent_core::orchestrator::{OrchestratorEvent, UiRequest, UiStateEvent};
+use nu_agent_core::protocol::contracts::{McpUsabilityState, SharedUiAction, UiMessageSnapshot};
+use nu_agent_core::protocol::event::{PermissionDecision, PermissionDecisionSubmission, UiEvent};
 use nu_agent_core::protocol::slash::{SlashCommand, filter_inline_slash_suggestions};
-use nu_agent_core::transcript::ir::{ContentLine, DisplayLine};
+use nu_agent_core::transcript::ir::{ContentLine, DisplayLine, Role};
 use nu_agent_core::transcript::items::{
     ProseMessage, Spacer as SpacerItem, SystemMessage, ToolInvocation,
     ToolResult as TranscriptToolResult, TranscriptEntry, TranscriptEntryKind, annotate_diff_hint,
@@ -45,6 +53,38 @@ use nu_agent_core::transcript::renderer::ItemStatus;
 use selection::TranscriptSelection;
 use std::collections::HashMap;
 use std::collections::VecDeque;
+
+const TOOL_PREFIX: &str = "tool[";
+const TOOL_ARGS_MARKER: &str = "] → ";
+const TOOL_DONE_SUFFIX: &str = " · done";
+const TOOL_FAILED_SUFFIX: &str = " · failed";
+const STARTUP_LOGOS: &[&str] = &[
+    include_str!("../logos/00.txt"),
+    include_str!("../logos/01.txt"),
+    include_str!("../logos/02.txt"),
+    include_str!("../logos/03.txt"),
+];
+
+pub(crate) fn extract_tool_name(line: &str) -> &str {
+    if let Some(rest) = line.strip_prefix(TOOL_PREFIX)
+        && let Some((name, _)) = rest.split_once(']')
+    {
+        return name;
+    }
+    "unknown"
+}
+
+pub(crate) fn parse_persisted_tool_status_line(line: &str) -> Option<(&str, &str, bool)> {
+    let remainder = line.strip_prefix(TOOL_PREFIX)?;
+    let (name, after_name) = remainder.split_once(TOOL_ARGS_MARKER)?;
+    if let Some(arguments) = after_name.strip_suffix(TOOL_DONE_SUFFIX) {
+        return Some((name, arguments, true));
+    }
+    if let Some(arguments) = after_name.strip_suffix(TOOL_FAILED_SUFFIX) {
+        return Some((name, arguments, false));
+    }
+    None
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EntryVisualInfo {
@@ -292,7 +332,7 @@ pub struct AbortState {
     pub confirmation_marker: u64,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct AppState {
     pub phase: UiPhase,
     pub input_locked: bool,
@@ -332,6 +372,7 @@ pub struct AppState {
     pending_agent_picker_launch_requests: usize,
     pending_agent_switch_requests: VecDeque<String>,
     active_agent_identity: Option<String>,
+    pub active_model_identity: String,
     pub active_persona_icon: Option<String>,
     pub agent_cycle_names: Vec<String>,
     pub info_panel: Option<InfoPanel>,
@@ -389,10 +430,13 @@ pub struct AppState {
     pub entry_visual_info: Vec<EntryVisualInfo>,
     pub entry_visual_info_dirty: bool,
     pub theme: TuiTheme,
+    pub event_tx: tokio::sync::mpsc::Sender<nu_agent_core::orchestrator::OrchestratorEvent>,
 }
 
 impl Default for AppState {
     fn default() -> Self {
+        let (event_tx, _event_rx) =
+            tokio::sync::mpsc::channel::<nu_agent_core::orchestrator::OrchestratorEvent>(256);
         Self {
             phase: UiPhase::Idle,
             input_locked: false,
@@ -432,6 +476,7 @@ impl Default for AppState {
             pending_agent_picker_launch_requests: 0,
             pending_agent_switch_requests: VecDeque::new(),
             active_agent_identity: None,
+            active_model_identity: String::new(),
             active_persona_icon: None,
             agent_cycle_names: Vec::new(),
             info_panel: None,
@@ -487,6 +532,390 @@ impl Default for AppState {
             entry_visual_info: Vec::new(),
             entry_visual_info_dirty: true,
             theme: TuiTheme::default(),
+            event_tx,
         }
+    }
+}
+
+impl AppState {
+    pub fn take_pending_events(
+        &mut self,
+        cancel_controller: &CancelController,
+    ) -> Vec<OrchestratorEvent> {
+        let mut events = Vec::new();
+        while let Some(prompt) = self.take_next_prompt_for_execution() {
+            events.push(OrchestratorEvent::PromptSubmitted { text: prompt });
+        }
+        while let Some(decision) = self.take_next_permission_decision_submission() {
+            events.push(OrchestratorEvent::PermissionDecision { decision });
+        }
+        while let Some(spec) = self.take_next_model_switch_request() {
+            events.push(OrchestratorEvent::UiRequest(UiRequest::SwitchModel {
+                spec,
+            }));
+        }
+        while let Some(name) = self.take_next_agent_switch_request() {
+            events.push(OrchestratorEvent::UiRequest(UiRequest::SwitchAgent {
+                name,
+            }));
+        }
+        while let Some(id) = self.take_next_session_switch_request() {
+            events.push(OrchestratorEvent::UiRequest(UiRequest::SwitchSession {
+                id,
+            }));
+        }
+        while let Some(req) = self.take_next_mcp_toggle_request() {
+            events.push(OrchestratorEvent::UiRequest(UiRequest::ToggleMcp {
+                server: req.server_name,
+                enable: req.enable,
+            }));
+        }
+        if cancel_controller.take_cancel_requested() {
+            events.push(OrchestratorEvent::CancelRequested);
+        }
+        events
+    }
+
+    pub fn take_pending_ui_state_events(&mut self) -> Vec<UiStateEvent> {
+        let mut events = Vec::new();
+        if self.take_next_model_picker_launch_request() {
+            events.push(UiStateEvent::ExecuteSharedUiAction(SharedUiAction::Models));
+        }
+        if self.take_next_agent_picker_launch_request() {
+            events.push(UiStateEvent::ExecuteSharedUiAction(SharedUiAction::Agents));
+        }
+        if self.take_next_session_picker_launch_request() {
+            events.push(UiStateEvent::ExecuteSharedUiAction(
+                SharedUiAction::Sessions,
+            ));
+        }
+        if self.take_next_theme_picker_launch_request() {
+            events.push(UiStateEvent::ExecuteSharedUiAction(SharedUiAction::Themes));
+        }
+        events
+    }
+
+    pub fn reduce_terminal_event(
+        &mut self,
+        event: &TerminalEvent,
+        cancel_controller: Option<&CancelController>,
+    ) -> bool {
+        let Some(mapped_action) = map_terminal_event(event, self.input_locked) else {
+            return false;
+        };
+        let (action, force_changed) = rewrite_action(self, mapped_action);
+        let changed =
+            reduce_with_cancel_controller(self, ReducerInput::User(action), cancel_controller);
+        force_changed || changed
+    }
+
+    pub fn reduce_ui_event(&mut self, event: UiEvent) -> bool {
+        crate::interaction::reducer::reduce_ui_event_impl(self, event)
+    }
+
+    pub fn reduce_ui_state_event(&mut self, event: UiStateEvent) {
+        match event {
+            UiStateEvent::SetActiveModelIdentity(s) => self.set_active_model_identity(&s),
+            UiStateEvent::SetActiveAgentIdentity(s) => self.set_active_agent_identity(&s),
+            UiStateEvent::SetActivePersonaIcon(icon) => self.set_active_persona_icon(icon),
+            UiStateEvent::SetContextWindowMaxTokens(tokens) => {
+                self.set_context_window_max_tokens(tokens)
+            }
+            UiStateEvent::ClearTranscript => self.clear_transcript(),
+            UiStateEvent::HydrateTranscript {
+                messages,
+                last_total_tokens,
+            } => self.hydrate_transcript_from_messages(messages, last_total_tokens),
+            UiStateEvent::SetMcpServerState {
+                server,
+                state,
+                error,
+                total,
+            } => {
+                let mapped = match state {
+                    McpUsabilityState::Enabled => McpServerUsabilityState::Enabled,
+                    McpUsabilityState::Disabled => McpServerUsabilityState::Disabled,
+                    McpUsabilityState::Failed => McpServerUsabilityState::Failed,
+                };
+                self.set_mcp_server_state_with_details(&server, mapped, error, total)
+            }
+            UiStateEvent::SetMcpVisibleToolCount { server, count } => {
+                self.set_mcp_visible_tool_count_by_server_name(&server, count)
+            }
+            UiStateEvent::SetMcpVisibleToolNames { server, names } => {
+                self.set_mcp_visible_tool_names_by_server_name(&server, names)
+            }
+            UiStateEvent::SetSessionPickerOptions(sessions) => {
+                let tui_options: Vec<SessionPickerOption> = sessions
+                    .into_iter()
+                    .map(|info| {
+                        let display = info
+                            .title
+                            .clone()
+                            .unwrap_or_else(|| "(untitled)".to_string());
+                        SessionPickerOption {
+                            id: info.id,
+                            title: info.title,
+                            created_at: info.last_active,
+                            display,
+                        }
+                    })
+                    .collect();
+                self.set_session_picker_options(tui_options)
+            }
+            UiStateEvent::DisplayIncomingMessage(msg) => self.display_incoming_message(&msg),
+            UiStateEvent::ExecuteSharedUiAction(action) => {
+                self.execute_shared_ui_action(action);
+            }
+            UiStateEvent::PushStartupLogo => {
+                self.push_startup_logo();
+            }
+        }
+    }
+
+    fn set_active_model_identity(&mut self, identity: &str) {
+        self.active_model_identity = identity.to_string();
+    }
+
+    fn set_active_persona_icon(&mut self, icon: Option<String>) {
+        self.active_persona_icon = icon;
+    }
+
+    fn set_mcp_server_state_with_details(
+        &mut self,
+        server_name: &str,
+        state: McpServerUsabilityState,
+        reason: Option<String>,
+        llm_visible_mcp_tool_count: usize,
+    ) {
+        self.set_llm_visible_mcp_tool_count(llm_visible_mcp_tool_count);
+        self.set_mcp_server_state_by_name_with_reason(server_name, state, reason);
+    }
+
+    fn display_incoming_message(&mut self, text: &str) {
+        self.enqueue_external_prompt(text.to_string());
+    }
+
+    fn execute_shared_ui_action(&mut self, action: SharedUiAction) -> bool {
+        match action {
+            SharedUiAction::Help => {
+                self.open_info_panel(InfoPanel::Help);
+                true
+            }
+            SharedUiAction::Status => {
+                self.open_info_panel(InfoPanel::Status);
+                true
+            }
+            SharedUiAction::Mcps => {
+                self.open_info_panel(InfoPanel::Mcps);
+                true
+            }
+            SharedUiAction::Models => {
+                self.open_model_picker();
+                true
+            }
+            SharedUiAction::Agents => {
+                self.open_agent_picker();
+                true
+            }
+            SharedUiAction::Sessions => {
+                self.open_session_picker();
+                true
+            }
+            SharedUiAction::Themes => {
+                let current = ThemeName::all()
+                    .into_iter()
+                    .find(|name| name.resolve() == self.theme)
+                    .unwrap_or_default();
+                let options = ThemeName::all()
+                    .into_iter()
+                    .map(|name| ThemePickerOption {
+                        name: format!("{name:?}"),
+                        display_name: match name {
+                            ThemeName::CatppuccinMocha => "Catppuccin Mocha".to_string(),
+                            ThemeName::CatppuccinLatte => "Catppuccin Latte".to_string(),
+                        },
+                        active: name == current,
+                    })
+                    .collect();
+                self.set_theme_picker_options(options);
+                self.open_theme_picker();
+                true
+            }
+            SharedUiAction::Skills => {
+                self.open_info_panel(InfoPanel::Skills);
+                true
+            }
+        }
+    }
+
+    pub fn push_startup_logo(&mut self) {
+        use rand::RngExt;
+        let idx = rand::rng().random_range(0..STARTUP_LOGOS.len());
+        let logo = STARTUP_LOGOS[idx];
+        self.push_transcript_item(TranscriptEntry {
+            id: 0,
+            kind: TranscriptEntryKind::Logo(logo.to_string()),
+            status: None,
+        });
+    }
+
+    fn hydrate_transcript_from_messages(
+        &mut self,
+        messages: Vec<UiMessageSnapshot>,
+        last_total_tokens: Option<u64>,
+    ) {
+        for mut message in messages {
+            if let Some(usage) = message.usage() {
+                self.hydrate_usage(
+                    usage.input_tokens(),
+                    usage.output_tokens(),
+                    usage.total_tokens(),
+                );
+            }
+            if let Some(display) = message.take_tool_display() {
+                append_direct_tool_display(self, display);
+                continue;
+            }
+            let role = match message.role() {
+                "user" => TranscriptRole::User,
+                "assistant" => TranscriptRole::Assistant,
+                "tool" => TranscriptRole::Tool,
+                "compaction" => TranscriptRole::Compaction,
+                _ => TranscriptRole::System,
+            };
+            let message_content = message.content();
+
+            if role == TranscriptRole::Compaction {
+                self.start_compaction_block("history");
+                self.finish_compaction_block("history", CompactionStatus::Done);
+
+                if !message_content.trim().is_empty() {
+                    self.push_transcript_item(TranscriptEntry {
+                        id: 0,
+                        kind: TranscriptEntryKind::Assistant(ProseMessage {
+                            markdown: message_content.to_string(),
+                        }),
+                        status: None,
+                    });
+                }
+                self.push_spacer();
+                continue;
+            }
+
+            if message_content.trim().is_empty() {
+                continue;
+            }
+            if role == TranscriptRole::Assistant {
+                self.push_hydrate_block_start_spacers(role);
+                self.push_transcript_item(TranscriptEntry {
+                    id: 0,
+                    kind: TranscriptEntryKind::Assistant(ProseMessage {
+                        markdown: message_content.trim().to_string(),
+                    }),
+                    status: None,
+                });
+                self.push_spacer();
+                continue;
+            }
+
+            if role == TranscriptRole::Tool {
+                let persisted = message_content.trim();
+                if let Some(arguments) = message.tool_arguments() {
+                    let success = message.tool_success().unwrap_or(true);
+                    let name = message
+                        .tool_name()
+                        .unwrap_or_else(|| extract_tool_name(persisted));
+                    self.push_hydrate_tool_block_start_spacers();
+                    self.start_tool_call(name, arguments);
+                    self.finish_tool_call(name, arguments, success);
+                    continue;
+                }
+                if let Some((name, arguments, success)) =
+                    parse_persisted_tool_status_line(persisted)
+                {
+                    self.push_hydrate_tool_block_start_spacers();
+                    self.start_tool_call(name, arguments);
+                    self.finish_tool_call(name, arguments, success);
+                    continue;
+                }
+                continue;
+            }
+
+            self.push_hydrate_block_start_spacers(role);
+            for line in message_content.lines() {
+                if !line.trim().is_empty() {
+                    self.push_transcript_line(role, line.to_string());
+                }
+            }
+            self.push_spacer();
+        }
+
+        if self.hydrate_tool_block_is_open() {
+            self.push_spacer();
+        }
+
+        if let Some(tokens) = last_total_tokens {
+            self.hydrate_latest_total_tokens(tokens);
+        }
+    }
+
+    fn push_hydrate_block_start_spacers(&mut self, role: TranscriptRole) {
+        let last_content = self
+            .transcript_preview
+            .iter()
+            .rev()
+            .find(|e| !matches!(e.kind, TranscriptEntryKind::Spacer(_)))
+            .map(|e| e.role());
+        let prev_is_tool_block = matches!(last_content, Some(Role::Tool) | Some(Role::ToolDisplay));
+
+        if role == TranscriptRole::Assistant && prev_is_tool_block {
+            self.push_spacer();
+            return;
+        }
+
+        let prev_is_spacer = self
+            .transcript_preview
+            .last()
+            .is_some_and(|last| matches!(last.kind, TranscriptEntryKind::Spacer(_)));
+        if !self.transcript_preview.is_empty() && !prev_is_spacer {
+            self.push_spacer();
+        }
+        self.push_spacer();
+    }
+
+    fn push_hydrate_tool_block_start_spacers(&mut self) {
+        if self.hydrate_tool_block_is_open() {
+            return;
+        }
+        let last_content = self
+            .transcript_preview
+            .iter()
+            .rev()
+            .find(|e| !matches!(e.kind, TranscriptEntryKind::Spacer(_)))
+            .map(|e| e.role());
+        let prev_is_assistant = matches!(last_content, Some(Role::Assistant));
+
+        if prev_is_assistant {
+            let prev_is_spacer = self
+                .transcript_preview
+                .last()
+                .is_some_and(|last| matches!(last.kind, TranscriptEntryKind::Spacer(_)));
+            if !prev_is_spacer {
+                self.push_spacer();
+            }
+            return;
+        }
+
+        self.push_hydrate_block_start_spacers(TranscriptRole::Tool);
+    }
+
+    fn hydrate_tool_block_is_open(&self) -> bool {
+        self.transcript_preview.last().is_some_and(|last| {
+            matches!(
+                last.kind,
+                TranscriptEntryKind::Tool(_) | TranscriptEntryKind::ToolResult(_)
+            )
+        })
     }
 }

@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use nu_plugin::EngineInterface;
 use nu_protocol::{LabeledError, Span, Value};
+use rig::memory::ConversationMemory;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 
@@ -14,6 +15,7 @@ use crate::session::SessionInfo;
 use crate::session::SessionStore;
 use crate::session::SessionStoreImpl;
 use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
+use crate::types::Message;
 
 use super::compaction::CompactionGuard;
 use super::compaction::executor::CompactionExecutor;
@@ -83,6 +85,12 @@ fn build_system_preamble(
         );
         Some(parts.join("\n\n---\n\n"))
     }
+}
+
+/// Returns `true` when every message in the slice is a `Message::System`.
+/// Returns `true` for an empty slice (no messages = nothing to compact).
+fn only_system_messages(messages: &[Message]) -> bool {
+    messages.iter().all(|m| matches!(m, Message::System { .. }))
 }
 
 /// Generic agent runtime composed of independent domain managers.
@@ -672,6 +680,26 @@ where
         ui: &mut U,
         source: CompactionTriggerSource,
     ) -> Result<(), String> {
+        // Block compaction when the in-memory LLM context has no user or
+        // assistant messages (e.g. just a system preamble, or only a summary
+        // left by a prior SlidingSummary compaction). This prevents an
+        // orphaned CompactionEvent::Started from a no-op compact() early-return.
+        let session_id = self
+            .final_session_id
+            .as_ref()
+            .ok_or_else(|| "session_unavailable".to_string())?;
+        match self.session.memory().load(session_id).await {
+            Ok(messages) => {
+                if only_system_messages(&messages) {
+                    return Ok(());
+                }
+            }
+            Err(e) => {
+                // Fail open: a load error must not block compaction.
+                log::warn!("compaction guard: memory load failed: {e}");
+            }
+        }
+
         if self
             .compaction
             .compacting()
@@ -685,11 +713,6 @@ where
         self.provider
             .ensure_client_cached()
             .map_err(|e| e.to_string())?;
-
-        let session_id = self
-            .final_session_id
-            .as_ref()
-            .ok_or_else(|| "session_unavailable".to_string())?;
 
         let result = CompactionExecutor::<SessionStoreImpl>::new(
             self.provider.provider_config(),

@@ -1,4 +1,4 @@
-use nu_agent_core::transcript::ir::{ContentLine, Span as IrSpan, StyleHint};
+use crate::transcript::ir::{ContentLine, Span as IrSpan, StyleHint};
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use unicode_width::UnicodeWidthStr;
 use unicodeit;

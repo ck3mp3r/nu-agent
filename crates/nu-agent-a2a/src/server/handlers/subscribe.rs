@@ -1,10 +1,6 @@
 use std::pin::Pin;
 
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::{IntoResponse, Sse},
-};
+use axum::{extract::State, http::StatusCode, response::Sse};
 use serde_json::json;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -12,7 +8,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use crate::{TaskEvent, TaskState};
 
 use super::super::AppState;
-use super::super::response::{a2a_error_with_meta, a2a_json_response};
+use super::super::response::{SseError, a2a_error_with_meta, a2a_json_response};
 use super::SseResult;
 
 // ---------------------------------------------------------------------------
@@ -22,10 +18,7 @@ use super::SseResult;
 pub async fn handle_tasks_subscribe(
     State(state): State<AppState>,
     axum::extract::Path(id): axum::extract::Path<String>,
-) -> Result<
-    Sse<Pin<Box<dyn tokio_stream::Stream<Item = SseResult> + Send>>>,
-    (StatusCode, impl IntoResponse),
-> {
+) -> Result<Sse<Pin<Box<dyn tokio_stream::Stream<Item = SseResult> + Send>>>, SseError> {
     let task = match state.task_store.get_task(&id) {
         Ok(t) => t,
         Err(_) => {
@@ -35,7 +28,7 @@ pub async fn handle_tasks_subscribe(
                 "The specified task ID does not exist or is not accessible",
                 json!({"taskId": id, "timestamp": chrono::Utc::now().to_rfc3339()}),
             );
-            return Err((StatusCode::NOT_FOUND, a2a_json_response(err)));
+            return Err((StatusCode::NOT_FOUND, a2a_json_response(err)).into());
         }
     };
 

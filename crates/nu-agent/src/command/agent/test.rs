@@ -1192,13 +1192,22 @@ fn docs_usage_flag_reference_excludes_removed_flags() {
     let usage_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/usage.md");
     let usage = std::fs::read_to_string(&usage_path).expect("read docs/usage.md");
 
+    // Extract the agent `## Flag reference` section only — subcommand flags
+    // (e.g. `agent models list --provider`) are separate and may legitimately
+    // use names the agent command removed.
+    let flag_section = usage
+        .split("## Flag reference")
+        .nth(1)
+        .and_then(|s| s.split("## Subcommands").next())
+        .unwrap_or("");
+
     assert!(
-        !usage.contains("--provider"),
-        "docs/usage.md must not reference removed --provider flag"
+        !flag_section.contains("--provider"),
+        "agent flag reference must not include removed --provider flag"
     );
     assert!(
-        !usage.contains("--max-tokens"),
-        "docs/usage.md must not reference removed --max-tokens flag"
+        !flag_section.contains("--max-tokens"),
+        "agent flag reference must not include removed --max-tokens flag"
     );
     assert!(usage.contains("--model"), "docs should reference --model");
     assert!(

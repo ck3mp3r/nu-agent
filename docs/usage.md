@@ -658,25 +658,58 @@ patch = "deny"
 
 ## Flag reference
 
-- `--model <provider/model>`
-- `--api-key <string>`
-- `--base-url <string>`
-- `--temperature <number>`
-- `--max-context-tokens <int>`
-- `--max-output-tokens <int>`
-- `--max-turns <int>`
-- `--tools <record>`
-- `--permissions <record>`
-- `--a2a` — enable A2A agent-to-agent communication
-- `--tool-timeout <duration>`
-- `--session <id>`
-- `--quiet` / `-q`
-- `--verbose` / `-v` (progressive: `-v`, `-vv`, `-vvv+`)
+`agent` (TUI mode when no input is piped):
+
+- `--model <provider/model>` / `-m` — model to use in `provider/model` format
+- `--api-key <string>` — API key override for the provider
+- `--base-url <string>` — custom API endpoint URL
+- `--temperature <number>` — sampling temperature (0.0 to 2.0)
+- `--max-context-tokens <int>` — maximum context window size (input + output)
+- `--max-output-tokens <int>` — maximum output tokens
+- `--max-turns <int>` — maximum tool calling turns
+- `--tools <record>` — record of tool closures `{name: closure, ...}`
+- `--permissions <record>` — structured permissions overlay for this run
+- `--tool-timeout <duration>` / `-t` — tool execution timeout (default: 30s)
+- `--session <id>` — session ID to resume (auto-creates if missing)
+- `--a2a-port <int>` — A2A agent port. `0` = random, `>0` = fixed; implies A2A mode
+- `--mesh-key <string>` — mesh isolation key; agents only discover peers with the same key (default: SHA-256 of cwd)
+- `--verbose` / `-v` — increase UX detail; repeat (`-v`, `-vv`, `-vvv`)
+- `--quiet` / `-q` — suppress non-essential UX progress output
+- `--log-level <string>` — file log level (`error|warn|info|debug|trace`); writes to `$XDG_STATE_HOME/nu-agent/logs/agent.log`
+- `--agent <name>` — load an agent persona from `.agents/<name>.md`
+- `--name <string>` — agent instance identity for multi-agent messaging
+- `--parent-name <string>` — parent agent name for sub-agent reporting (internal)
 - `--compaction-strategy <string>` — `sliding_summary`, `sliding_window`, `token_truncate`
 - `--keep-recent <int>` — recent messages to keep during compaction (default: 10)
 - `--token-budget <int>` — token budget for `token_truncate` strategy
 - `--proactive-threshold-pct <number>` — proactive compaction threshold 0.0–1.0 (default: 0.80)
-- `--log-level <string>` — log level for file-based logging (`error|warn|info|debug|trace`); writes to `$XDG_STATE_HOME/nu-agent/logs/agent.log`
+- `--store <string>` — session store backend: `sqlite|jsonl|memory`
+
+## Subcommands
+
+```nu
+# Configuration
+agent config init [--force]
+
+# Model discovery
+agent models sync
+agent models list [--provider <name>]
+
+# Provider auth (secrets.json)
+agent provider auth login <name> [--api-key <key>]
+agent provider auth logout <name>
+agent provider auth status
+
+# MCP auth
+agent mcp auth login <server>
+agent mcp auth logout <server>
+agent mcp auth status
+
+# Sessions
+agent session list [--store <type>]
+agent session clear <id> [--store <type>]
+agent session inspect <id> [--store <type>]
+```
 
 ## MCP Authentication Commands
 

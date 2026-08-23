@@ -1,6 +1,5 @@
 use std::{
     io::Write,
-    path::PathBuf,
     time::{Duration, Instant},
 };
 
@@ -13,14 +12,14 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 mod backend;
+pub(crate) mod branch_watcher;
 mod panels;
 pub(crate) mod render;
 mod renderer;
 mod session_picker;
 mod status;
 mod terminal;
-mod tool_hydration;
-use backend::LiveTerminalUi;
+pub(crate) use backend::LiveTerminalUi;
 pub use backend::{
     AnsiTerminalBackend, RuntimeRunError, run_with_terminal_restore, run_with_terminal_restore_sync,
 };
@@ -35,9 +34,9 @@ pub use terminal::CrosstermTerminalEvents;
 pub use terminal::events_test::ScriptedTerminalEvents;
 #[cfg(test)]
 pub(crate) use terminal::events_test::map_crossterm_event_for_test;
+pub(crate) use terminal::map_crossterm_event;
 pub use terminal::{HybridTerminalEvents, InputSourceDiagnostics, TerminalEventSource};
 pub use terminal::{TtyTerminalEvents, open_tty_reader};
-use tool_hydration::{extract_tool_name, parse_persisted_tool_status_line};
 
 #[cfg(test)]
 pub(super) mod test;
@@ -74,12 +73,12 @@ use crate::{
         theme::{ThemeName, TuiTheme},
     },
     state::{
-        AppState, CompactionStatus, InfoPanel, InputMode, McpServerState, McpServerUsabilityState,
-        McpToggleRequest, ModelPickerOption, ThemePickerOption, TranscriptRole,
+        AppState, CompactionStatus, InputMode, McpServerState, McpServerUsabilityState,
+        ModelPickerOption, TranscriptRole,
     },
 };
-use nu_agent_core::protocol::contracts::{SharedUiAction, UiMessageSnapshot};
-use nu_agent_core::protocol::event::PermissionDecisionSubmission;
+use nu_agent_core::orchestrator::UiStateEvent;
+use nu_agent_core::protocol::contracts::UiMessageSnapshot;
 use nu_agent_core::protocol::event::UiEvent;
 use nu_agent_core::protocol::skills::DiscoverableSkill as ProtocolDiscoverableSkill;
 use nu_agent_core::renderer::UiRenderer;
@@ -87,23 +86,16 @@ use nu_agent_core::tools::mcp::runtime::McpServerLifecycle;
 use nu_agent_core::transcript::ir::Role;
 use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry, TranscriptEntryKind};
 
-const STARTUP_LOGOS: &[&str] = &[
-    include_str!("../logos/00.txt"),
-    include_str!("../logos/01.txt"),
-    include_str!("../logos/02.txt"),
-    include_str!("../logos/03.txt"),
-];
-
 #[derive(Debug)]
 pub struct RuntimeCoordinator {
-    state: AppState,
+    pub(crate) state: AppState,
     transport: TuiTransport,
-    cancel_controller: CancelController,
+    pub(crate) cancel_controller: CancelController,
     input_height: u16,
     side_pane_visible: Option<bool>,
     quit_requested: bool,
     fatal_error: Option<String>,
-    active_model_identity: String,
+    pub(crate) active_model_identity: String,
     input_backend_status: String,
     last_input_poll_status: String,
     last_input_error: Option<String>,
@@ -130,7 +122,7 @@ impl RuntimeCoordinator {
         )
     }
 
-    pub(crate) fn hydrate_transcript_from_messages(
+    pub fn hydrate_transcript_from_messages(
         &mut self,
         messages: impl IntoIterator<Item = UiMessageSnapshot>,
         last_total_tokens: Option<u64>,
@@ -199,14 +191,14 @@ impl RuntimeCoordinator {
                     let success = message.tool_success().unwrap_or(true);
                     let name = message
                         .tool_name()
-                        .unwrap_or_else(|| extract_tool_name(persisted));
+                        .unwrap_or_else(|| crate::state::extract_tool_name(persisted));
                     self.push_tool_block_start_spacers();
                     self.state.start_tool_call(name, arguments);
                     self.state.finish_tool_call(name, arguments, success);
                     continue;
                 }
                 if let Some((name, arguments, success)) =
-                    parse_persisted_tool_status_line(persisted)
+                    crate::state::parse_persisted_tool_status_line(persisted)
                 {
                     self.push_tool_block_start_spacers();
                     self.state.start_tool_call(name, arguments);
@@ -322,8 +314,10 @@ impl RuntimeCoordinator {
     ) -> Self {
         let side_pane_visible = Some(false);
         let theme = TuiTheme::default();
+        let (event_tx, _event_rx) =
+            tokio::sync::mpsc::channel::<nu_agent_core::orchestrator::OrchestratorEvent>(256);
         let mut coordinator = Self {
-            state: AppState::new(),
+            state: AppState::new_with_sender(event_tx),
             transport: TuiTransport::new(),
             cancel_controller: CancelController::new(),
             input_height: INPUT_MIN_HEIGHT,
@@ -347,59 +341,22 @@ impl RuntimeCoordinator {
         coordinator.sync_transcript_viewport_lines_with_layout();
         coordinator
     }
-    pub(crate) fn display_incoming_message(&mut self, text: &str) {
-        self.state.enqueue_external_prompt(text.to_string());
-    }
-
-    pub(crate) fn take_submitted_prompt(&mut self) -> Option<String> {
-        self.state.take_next_prompt_for_execution()
-    }
-
-    pub(crate) fn take_next_model_picker_launch_request(&mut self) -> bool {
-        self.state.take_next_model_picker_launch_request()
-    }
-
-    pub(crate) fn take_next_agent_picker_launch_request(&mut self) -> bool {
-        self.state.take_next_agent_picker_launch_request()
-    }
-
-    pub(crate) fn take_next_session_picker_launch_request(&mut self) -> bool {
-        self.state.take_next_session_picker_launch_request()
-    }
-
-    pub(crate) fn take_next_theme_picker_launch_request(&mut self) -> bool {
-        self.state.take_next_theme_picker_launch_request()
-    }
-
     pub(crate) fn take_next_theme_switch_request(&mut self) -> Option<String> {
         self.state.take_next_theme_switch_request()
     }
 
-    pub(crate) fn take_next_agent_switch_request(&mut self) -> Option<String> {
-        self.state.take_next_agent_switch_request()
-    }
-
-    pub(crate) fn take_next_session_switch_request(&mut self) -> Option<String> {
-        self.state.take_next_session_switch_request()
-    }
-
-    pub(crate) fn clear_transcript(&mut self) {
-        self.state.clear_transcript();
-    }
-
-    pub(crate) fn push_startup_logo(&mut self) {
-        use rand::RngExt;
-        let idx = rand::rng().random_range(0..STARTUP_LOGOS.len());
-        let logo = STARTUP_LOGOS[idx];
-        self.state.push_transcript_item(TranscriptEntry {
-            id: 0,
-            kind: TranscriptEntryKind::Logo(logo.to_string()),
-            status: None,
-        });
-    }
-
-    pub(crate) fn set_active_model_identity(&mut self, active_model_identity: String) {
+    pub fn set_active_model_identity(&mut self, active_model_identity: String) {
         self.active_model_identity = active_model_identity;
+    }
+
+    /// Consume a UI-state event from the bus. Keeps the coordinator's own
+    /// rendering fields (e.g. `active_model_identity`) in sync with the event
+    /// and forwards the rest to `AppState`.
+    pub fn reduce_ui_state_event(&mut self, event: UiStateEvent) {
+        if let UiStateEvent::SetActiveModelIdentity(identity) = &event {
+            self.active_model_identity = identity.clone();
+        }
+        self.state.reduce_ui_state_event(event);
     }
 
     pub(crate) fn set_mcp_lifecycle_projection(&mut self, projection: Vec<McpServerLifecycle>) {
@@ -444,16 +401,12 @@ impl RuntimeCoordinator {
         self.state.set_llm_visible_mcp_tool_count(count);
     }
 
-    pub(crate) fn set_mcp_visible_tool_count_by_server_name(
-        &mut self,
-        server_name: &str,
-        count: usize,
-    ) {
+    pub fn set_mcp_visible_tool_count_by_server_name(&mut self, server_name: &str, count: usize) {
         self.state
             .set_mcp_visible_tool_count_by_server_name(server_name, count);
     }
 
-    pub(crate) fn set_mcp_visible_tool_names_by_server_name(
+    pub fn set_mcp_visible_tool_names_by_server_name(
         &mut self,
         server_name: &str,
         names: Vec<String>,
@@ -462,85 +415,75 @@ impl RuntimeCoordinator {
             .set_mcp_visible_tool_names_by_server_name(server_name, names);
     }
 
-    pub(crate) fn set_context_window_max_tokens(&mut self, max_tokens: Option<u64>) {
+    pub fn set_context_window_max_tokens(&mut self, max_tokens: Option<u64>) {
         self.state.set_context_window_max_tokens(max_tokens);
     }
 
-    pub(crate) fn set_model_picker_options(&mut self, options: Vec<ModelPickerOption>) {
+    pub fn set_model_picker_options(&mut self, options: Vec<ModelPickerOption>) {
         self.state.set_model_picker_options(options);
     }
 
-    pub(crate) fn set_agent_picker_options(
+    pub fn set_agent_picker_options(
         &mut self,
         options: Vec<nu_agent_core::protocol::picker::AgentPickerOption>,
     ) {
         self.state.set_agent_picker_options(options);
     }
 
-    pub(crate) fn set_session_picker_options(
-        &mut self,
-        options: Vec<crate::state::SessionPickerOption>,
-    ) {
+    pub fn set_session_picker_options(&mut self, options: Vec<crate::state::SessionPickerOption>) {
         self.state.set_session_picker_options(options);
     }
 
-    pub(crate) fn set_active_agent_identity(&mut self, name: &str) {
+    pub fn set_active_agent_identity(&mut self, name: &str) {
         self.state.set_active_agent_identity(name);
     }
 
-    pub(crate) fn set_active_persona_icon(&mut self, icon: Option<String>) {
+    pub fn set_active_persona_icon(&mut self, icon: Option<String>) {
         self.state.active_persona_icon = icon;
     }
 
-    pub(crate) fn set_agent_cycle_names(&mut self, names: Vec<String>) {
+    pub fn set_agent_cycle_names(&mut self, names: Vec<String>) {
         self.state.agent_cycle_names = names;
     }
 
-    pub(crate) fn set_repo_branch_caller_cwd(&mut self, caller_cwd: Option<PathBuf>) {
+    pub(crate) fn set_repo_branch_caller_cwd(&mut self, caller_cwd: Option<std::path::PathBuf>) {
         self.repo_branch_tracker = Some(status::RepoBranchTracker::from_caller_cwd(caller_cwd));
     }
 
-    pub(crate) fn take_next_mcp_toggle_request(&mut self) -> Option<McpToggleRequest> {
-        self.state.take_next_mcp_toggle_request()
+    /// The git ref files that, when changed, indicate a branch switch. The
+    /// render loop subscribes a filesystem watcher to these.
+    pub(crate) fn repo_branch_watch_targets(&self) -> Vec<std::path::PathBuf> {
+        self.repo_branch_tracker
+            .as_ref()
+            .map(|t| t.watch_targets().to_vec())
+            .unwrap_or_default()
     }
 
-    pub(crate) fn take_next_model_switch_request(&mut self) -> Option<String> {
-        self.state.take_next_model_switch_request()
+    /// Re-read the current git branch after a filesystem change event.
+    pub(crate) fn refresh_repo_branch(&mut self) {
+        if let Some(tracker) = self.repo_branch_tracker.as_mut() {
+            tracker.refresh();
+        }
+        self.mark_render_needed();
     }
 
-    pub(crate) fn take_next_permission_decision_submission(
-        &mut self,
-    ) -> Option<PermissionDecisionSubmission> {
-        self.state.take_next_permission_decision_submission()
-    }
-
-    pub(crate) fn set_mcp_server_state(
-        &mut self,
-        server_name: &str,
-        state: McpServerUsabilityState,
-    ) -> bool {
-        self.state.set_mcp_server_state_by_name(server_name, state)
-    }
-
-    pub(crate) fn set_mcp_server_state_with_details(
-        &mut self,
-        server_name: &str,
-        state: McpServerUsabilityState,
-        reason: Option<String>,
-        llm_visible_mcp_tool_count: usize,
-    ) -> bool {
-        self.state
-            .set_llm_visible_mcp_tool_count(llm_visible_mcp_tool_count);
-        self.state
-            .set_mcp_server_state_by_name_with_reason(server_name, state, reason)
+    /// The current git branch shown in the status bar, if any.
+    pub(crate) fn repo_branch(&self) -> Option<&str> {
+        self.repo_branch_tracker.as_ref().and_then(|t| t.branch())
     }
 
     pub fn quit_requested(&self) -> bool {
         self.quit_requested
     }
 
-    pub(crate) fn fatal_error(&self) -> Option<&str> {
+    pub fn fatal_error(&self) -> Option<&str> {
         self.fatal_error.as_deref()
+    }
+
+    pub fn event_sender(
+        &self,
+    ) -> &tokio::sync::mpsc::Sender<nu_agent_core::orchestrator::OrchestratorEvent> {
+        &self.state.event_tx
     }
 
     pub fn take_cancel_requested(&self) -> bool {
@@ -566,7 +509,7 @@ impl RuntimeCoordinator {
         }
 
         if let Some(tracker) = self.repo_branch_tracker.as_mut() {
-            tracker.tick();
+            tracker.refresh();
         }
 
         let poll_result = event_source.poll_event();
@@ -593,7 +536,14 @@ impl RuntimeCoordinator {
         };
 
         self.last_input_poll_status = format!("event from {}", diagnostics.active_backend);
+        self.handle_terminal_event(event);
+    }
 
+    /// Process a single terminal event received from the input source: route
+    /// insert-mode characters/paste into the textarea, and dispatch everything
+    /// else (submit, quit, navigation, pickers) through the reducer. Shared by
+    /// the blocking terminal poll path and the async render loop.
+    pub fn handle_terminal_event(&mut self, event: TerminalEvent) {
         if let TerminalEvent::Key(TerminalKey::Esc) = event
             && self.state.phase == crate::state::UiPhase::Idle
             && !self.state.command_palette_open
@@ -995,59 +945,6 @@ impl RuntimeCoordinator {
         true
     }
 
-    fn execute_shared_ui_action(&mut self, action: SharedUiAction) -> bool {
-        match action {
-            SharedUiAction::Help => {
-                self.state.open_info_panel(InfoPanel::Help);
-                true
-            }
-            SharedUiAction::Status => {
-                self.state.open_info_panel(InfoPanel::Status);
-                true
-            }
-            SharedUiAction::Mcps => {
-                self.state.open_info_panel(InfoPanel::Mcps);
-                true
-            }
-            SharedUiAction::Models => {
-                self.state.open_model_picker();
-                true
-            }
-            SharedUiAction::Agents => {
-                self.state.open_agent_picker();
-                true
-            }
-            SharedUiAction::Sessions => {
-                self.state.open_session_picker();
-                true
-            }
-            SharedUiAction::Themes => {
-                let current = ThemeName::all()
-                    .into_iter()
-                    .find(|name| name.resolve() == self.state.theme)
-                    .unwrap_or_default();
-                let options = ThemeName::all()
-                    .into_iter()
-                    .map(|name| ThemePickerOption {
-                        name: format!("{name:?}"),
-                        display_name: match name {
-                            ThemeName::CatppuccinMocha => "Catppuccin Mocha".to_string(),
-                            ThemeName::CatppuccinLatte => "Catppuccin Latte".to_string(),
-                        },
-                        active: name == current,
-                    })
-                    .collect();
-                self.state.set_theme_picker_options(options);
-                self.state.open_theme_picker();
-                true
-            }
-            SharedUiAction::Skills => {
-                self.state.open_info_panel(InfoPanel::Skills);
-                true
-            }
-        }
-    }
-
     fn recompute_layout_for_current_input(&mut self) {
         let line_count = self.textarea.lines().len() as u16;
         self.input_height = line_count.clamp(INPUT_MIN_HEIGHT, INPUT_MAX_HEIGHT);
@@ -1204,11 +1101,14 @@ impl RuntimeCoordinator {
         self.mark_render_needed();
     }
 
-    fn mark_render_needed(&mut self) {
+    pub(crate) fn mark_render_needed(&mut self) {
         self.render_needed = true;
     }
 
-    fn render_if_needed(&mut self, live: &mut Option<LiveTerminalUi>) -> Result<(), String> {
+    pub(crate) fn render_if_needed(
+        &mut self,
+        live: &mut Option<LiveTerminalUi>,
+    ) -> Result<(), String> {
         if !self.render_needed {
             return Ok(());
         }
@@ -1245,7 +1145,7 @@ impl RuntimeCoordinator {
         }
     }
 
-    fn render_frame(&mut self, live: &mut Option<LiveTerminalUi>) -> Result<(), String> {
+    pub(crate) fn render_frame(&mut self, live: &mut Option<LiveTerminalUi>) -> Result<(), String> {
         let Some(live) = live.as_mut() else {
             return Ok(());
         };
@@ -1287,7 +1187,7 @@ impl RuntimeCoordinator {
                 let available_inner_w = content_main.width.saturating_sub(4) as usize;
                 let pre_right_width = {
                     let rc = status_right_content(
-                        self.repo_branch_tracker.as_ref().and_then(|t| t.branch()),
+                        self.repo_branch(),
                         self.repo_branch_tracker
                             .as_ref()
                             .and_then(|t| t.caller_cwd()),

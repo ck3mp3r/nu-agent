@@ -7,12 +7,15 @@ pub mod tty;
 mod tty_test;
 
 use nu_agent_core::policy::{UiPolicy, Verbosity};
-use nu_agent_core::protocol::event::UiEvent;
+use nu_agent_core::protocol::event::{ToolDisplay, UiEvent};
 use nu_agent_core::renderer::UiRenderer;
+use nu_agent_core::transcript::ir::StyleHint;
 use std::io::Write;
 use std::time::{Duration, Instant};
 
+use crate::ansi::style_text;
 use crate::formatter::{ToolEndView, format_tool_start};
+use crate::markdown_buffer::StreamingMarkdownBuffer;
 use crate::spinner::SpinnerState;
 
 pub struct StderrUiRenderer<W: Write> {
@@ -24,6 +27,8 @@ pub struct StderrUiRenderer<W: Write> {
     active_tool_args: Option<String>,
     streaming_started: bool,
     streaming_printed_len: usize,
+    markdown_buffer: StreamingMarkdownBuffer,
+    use_color: bool,
 }
 
 trait TickGate {
@@ -74,12 +79,56 @@ impl<W: Write> StderrUiRenderer<W> {
             active_tool_args: None,
             streaming_started: false,
             streaming_printed_len: 0,
+            markdown_buffer: StreamingMarkdownBuffer::new(),
+            use_color: stderr_is_tty,
         }
     }
 
     fn write_line(&mut self, line: &str) {
         let _ = self.writer.write_all(line.as_bytes());
         let _ = self.writer.write_all(b"\n");
+    }
+
+    /// Render a tool's diff/title/stats content with ANSI colors.
+    fn render_tool_display(&mut self, display: &ToolDisplay) {
+        if self.policy.quiet {
+            return;
+        }
+        let _ = self.writer.write_all(display.title.as_bytes());
+        let _ = self.writer.write_all(b"\n");
+        for section in &display.sections {
+            for line in section.content.lines() {
+                let hint = if line.starts_with('+') {
+                    StyleHint::DiffAdd
+                } else if line.starts_with('-') {
+                    StyleHint::DiffRemove
+                } else {
+                    StyleHint::Normal
+                };
+                let styled = style_text(line, &hint, self.use_color);
+                self.write_line(&styled);
+            }
+            if let Some(stats) = &section.stats {
+                let mut parts = Vec::new();
+                if let Some(f) = stats.files_changed {
+                    parts.push(format!("{f} files changed"));
+                }
+                if let Some(i) = stats.insertions {
+                    parts.push(format!("{i} insertions"));
+                }
+                if let Some(d) = stats.deletions {
+                    parts.push(format!("{d} deletions"));
+                }
+                if let Some(o) = stats.omitted_files {
+                    parts.push(format!("{o} files omitted"));
+                }
+                if !parts.is_empty() {
+                    let line = parts.join(", ");
+                    let styled = style_text(&line, &StyleHint::Muted, self.use_color);
+                    self.write_line(&styled);
+                }
+            }
+        }
     }
 
     fn clear_spinner_line(&mut self) {
@@ -230,7 +279,11 @@ impl<W: Write> StderrUiRenderer<W> {
                 if self.policy.quiet {
                     None
                 } else {
-                    Some(format!("compaction: source={source} status=running"))
+                    Some(style_text(
+                        &format!("compaction: source={source} status=running"),
+                        &StyleHint::Muted,
+                        self.use_color,
+                    ))
                 }
             }
             UiEvent::CompactionSummaryChunk { .. } => None,
@@ -243,8 +296,12 @@ impl<W: Write> StderrUiRenderer<W> {
                 if self.policy.quiet {
                     None
                 } else {
-                    Some(format!(
-                        "compaction: source={source} summarized={summarized_count} preview={summary_preview}"
+                    Some(style_text(
+                        &format!(
+                            "compaction: source={source} summarized={summarized_count} preview={summary_preview}"
+                        ),
+                        &StyleHint::Success,
+                        self.use_color,
                     ))
                 }
             }
@@ -252,8 +309,10 @@ impl<W: Write> StderrUiRenderer<W> {
                 if self.policy.quiet {
                     None
                 } else {
-                    Some(format!(
-                        "compaction: source={source} status=failed message={message}"
+                    Some(style_text(
+                        &format!("compaction: source={source} status=failed message={message}"),
+                        &StyleHint::Error,
+                        self.use_color,
                     ))
                 }
             }
@@ -276,6 +335,7 @@ impl<W: Write> UiRenderer for StderrUiRenderer<W> {
                 self.active_tool_name = None;
                 self.streaming_started = false;
                 self.streaming_printed_len = 0;
+                self.markdown_buffer.reset();
                 self.spinner.start();
                 self.draw_spinner();
             }
@@ -288,22 +348,25 @@ impl<W: Write> UiRenderer for StderrUiRenderer<W> {
                 self.draw_spinner();
             }
             UiEvent::AssistantMessage { text } => {
-                // Only stream output in verbose mode (-v or higher)
-                if self.policy.verbosity >= Verbosity::Verbose {
-                    if !self.streaming_started {
-                        self.streaming_started = true;
-                        // Stop the spinner when streaming starts
-                        if self.spinner.is_active() {
-                            self.clear_spinner_line();
-                            self.spinner.stop();
-                        }
+                if self.policy.quiet {
+                    return;
+                }
+                if !self.streaming_started {
+                    self.streaming_started = true;
+                    // Stop the spinner when streaming starts
+                    if self.spinner.is_active() {
+                        self.clear_spinner_line();
+                        self.spinner.stop();
                     }
-                    // Only print the new portion (text is accumulated, not delta)
-                    if text.len() > self.streaming_printed_len {
-                        let _ = self
-                            .writer
-                            .write_all(&text.as_bytes()[self.streaming_printed_len..]);
-                        self.streaming_printed_len = text.len();
+                }
+                // Buffer the new portion and emit only the safe markdown prefix.
+                if text.len() > self.streaming_printed_len {
+                    let delta = &text[self.streaming_printed_len..];
+                    self.streaming_printed_len = text.len();
+                    let safe = self.markdown_buffer.push(delta);
+                    if !safe.is_empty() {
+                        let _ = self.writer.write_all(safe.as_bytes());
+                        let _ = self.writer.flush();
                     }
                 }
             }
@@ -318,15 +381,48 @@ impl<W: Write> UiRenderer for StderrUiRenderer<W> {
                 self.active_tool_name = None;
                 self.active_tool_args = None;
             }
+            UiEvent::ToolEnd {
+                display: Some(display),
+                ..
+            } if !self.policy.quiet => {
+                self.render_tool_display(display);
+            }
+            UiEvent::LlmEnd {
+                input_tokens,
+                output_tokens,
+                total_tokens,
+                ..
+            } if self.streaming_started => {
+                let remaining = self.markdown_buffer.flush();
+                if !remaining.is_empty() {
+                    let _ = self.writer.write_all(remaining.as_bytes());
+                }
+                let _ = self.writer.write_all(b"\n");
+                if !self.policy.quiet && *total_tokens > 0 {
+                    let line = format!(
+                        "  {total_tokens} tokens ({input_tokens} in + {output_tokens} out)"
+                    );
+                    let styled = style_text(&line, &StyleHint::Muted, self.use_color);
+                    self.write_line(&styled);
+                }
+                self.streaming_started = false;
+                self.streaming_printed_len = 0;
+                self.markdown_buffer.reset();
+            }
             UiEvent::Completed { .. } if self.spinner.is_active() => {
                 self.clear_spinner_line();
                 self.spinner.stop();
                 self.active_tool_name = None;
                 self.active_tool_args = None;
                 if self.streaming_started {
+                    let remaining = self.markdown_buffer.flush();
+                    if !remaining.is_empty() {
+                        let _ = self.writer.write_all(remaining.as_bytes());
+                    }
                     let _ = self.writer.write_all(b"\n");
                     self.streaming_started = false;
                     self.streaming_printed_len = 0;
+                    self.markdown_buffer.reset();
                 }
             }
             UiEvent::TurnError { .. } if self.spinner.is_active() => {
@@ -335,9 +431,14 @@ impl<W: Write> UiRenderer for StderrUiRenderer<W> {
                 self.active_tool_name = None;
             }
             UiEvent::Completed { .. } if self.streaming_started => {
+                let remaining = self.markdown_buffer.flush();
+                if !remaining.is_empty() {
+                    let _ = self.writer.write_all(remaining.as_bytes());
+                }
                 let _ = self.writer.write_all(b"\n");
                 self.streaming_started = false;
                 self.streaming_printed_len = 0;
+                self.markdown_buffer.reset();
             }
             _ => {}
         }

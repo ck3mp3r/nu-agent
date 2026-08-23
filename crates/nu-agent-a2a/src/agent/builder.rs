@@ -97,7 +97,7 @@ impl AgentBuilder {
     ///
     /// Returns an error tuple with the [`A2aError`] and an optional
     /// [`A2aServer`] that the caller may choose to shut down.
-    pub async fn build(mut self) -> Result<AgentHandle, (A2aError, Option<A2aServer>)> {
+    pub async fn build(mut self) -> Result<AgentHandle, (A2aError, Option<Box<A2aServer>>)> {
         let mut card = match self.card {
             Some(c) => c,
             None => AgentCard {

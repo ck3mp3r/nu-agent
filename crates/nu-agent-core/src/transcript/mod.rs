@@ -1,5 +1,7 @@
+pub mod highlight;
 pub mod ir;
 pub mod items;
+pub mod markdown;
 pub mod renderer;
 
 #[cfg(test)]

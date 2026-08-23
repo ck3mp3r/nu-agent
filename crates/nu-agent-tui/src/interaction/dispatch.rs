@@ -1,9 +1,5 @@
 use crate::{
-    interaction::{
-        cancel::CancelController,
-        input::{TerminalEvent, map_terminal_event},
-        reducer::{ReducerInput, UserAction, reduce_with_cancel_controller},
-    },
+    interaction::{cancel::CancelController, input::TerminalEvent, reducer::UserAction},
     state::{AppState, InputMode, UiPhase},
 };
 
@@ -12,14 +8,7 @@ pub fn dispatch_terminal_event(
     event: &TerminalEvent,
     cancel_controller: Option<&CancelController>,
 ) -> bool {
-    let Some(mapped_action) = map_terminal_event(event, state.input_locked) else {
-        return false;
-    };
-
-    let (action, force_changed) = rewrite_action(state, mapped_action);
-    let changed =
-        reduce_with_cancel_controller(state, ReducerInput::User(action), cancel_controller);
-    force_changed || changed
+    state.reduce_terminal_event(event, cancel_controller)
 }
 
 pub(crate) fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserAction, bool) {

@@ -1,12 +1,12 @@
-use nu_agent_core::transcript::ir::StyleHint;
+use crate::transcript::ir::StyleHint;
 
-use crate::{
+use crate::test_support::markdown_fixture;
+use crate::transcript::{
+    highlight::{HighlightRequest, SyntaxTokenChannel, highlight_source_tokens},
     markdown::project_markdown_to_lines,
-    rendering::highlight::{HighlightRequest, SyntaxTokenChannel, highlight_source_tokens},
-    test_support::markdown_fixture,
 };
 
-fn plain_line(line: &nu_agent_core::transcript::ir::ContentLine) -> String {
+fn plain_line(line: &crate::transcript::ir::ContentLine) -> String {
     line.spans
         .iter()
         .map(|span| span.text.as_str())
@@ -20,11 +20,11 @@ fn plain_lines(markdown: &str) -> Vec<String> {
         .collect::<Vec<_>>()
 }
 
-fn line_has_code_hint(line: &nu_agent_core::transcript::ir::ContentLine, hint: StyleHint) -> bool {
+fn line_has_code_hint(line: &crate::transcript::ir::ContentLine, hint: StyleHint) -> bool {
     line.spans.iter().any(|span| span.hint == hint)
 }
 
-fn line_has_non_default_token_style(line: &nu_agent_core::transcript::ir::ContentLine) -> bool {
+fn line_has_non_default_token_style(line: &crate::transcript::ir::ContentLine) -> bool {
     line.spans
         .iter()
         .skip_while(|span| span.text == "    ")
@@ -631,8 +631,8 @@ It's a **Rust project** using **Nix flakes** for development/build environment m
 
 // === render_markdown_lines tests ===
 
-use crate::markdown::render_markdown_lines;
-use nu_agent_core::transcript::ir::StyleHint as IrStyleHint;
+use crate::transcript::ir::StyleHint as IrStyleHint;
+use crate::transcript::markdown::render_markdown_lines;
 
 #[test]
 fn render_markdown_lines_empty_input_returns_empty_vec() {
@@ -755,12 +755,10 @@ fn markdown_table_with_emoji_aligns_right_border_correctly() {
 #[test]
 fn render_markdown_lines_tags_code_keyword() {
     let lines = render_markdown_lines("```rust\nfn x() {}\n```", None);
-    let has_keyword = lines.iter().flat_map(|l| l.spans.iter()).any(|s| {
-        matches!(
-            s.hint,
-            nu_agent_core::transcript::ir::StyleHint::MdCodeKeyword
-        )
-    });
+    let has_keyword = lines
+        .iter()
+        .flat_map(|l| l.spans.iter())
+        .any(|s| matches!(s.hint, crate::transcript::ir::StyleHint::MdCodeKeyword));
     assert!(has_keyword, "should contain MdCodeKeyword span");
 }
 #[test]

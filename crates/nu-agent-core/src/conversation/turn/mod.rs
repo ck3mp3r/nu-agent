@@ -8,7 +8,7 @@
 use futures::StreamExt;
 use tokio::sync::mpsc;
 
-use crate::bus::Bus;
+use crate::bus::{Bus, WarningEvent};
 use crate::config::{Config, defaults};
 use crate::hook::agent_hook::HookState;
 use crate::hook::chain::HookChain;
@@ -221,26 +221,6 @@ where
     // every JSONL load. This second pass catches anything that slipped through at a
     // higher layer (e.g. an in-memory cache populated directly without going through
     // `load()`).
-    if let Some(limit) = ctx.config.model_context_tokens {
-        let estimated = token_estimate::estimate_token_count(&repaired_messages);
-        let threshold = (limit as f32
-            * ctx
-                .config
-                .context_warning_threshold
-                .unwrap_or(defaults::CONTEXT_WARNING_THRESHOLD)) as usize;
-        log::debug!("execute_turn: token_estimate={estimated} threshold={threshold} limit={limit}");
-        if estimated >= threshold {
-            let _ = ui_tx.send(UiEvent::Warning {
-                message: format!(
-                    "Conversation is using ~{estimated} estimated tokens \
-                     (~{}% of the {limit}-token context window). \
-                     Consider running 'agent session compact' before the next turn.",
-                    (estimated * 100) / limit,
-                ),
-            });
-        }
-    }
-
     // Build the hook using HookChain<P> — no HookDriver needed.
     // Cancellation is driven through the shared bus's cancel channel.
     let bus = ctx.tool_infra.bus.clone();
@@ -292,6 +272,36 @@ where
     let model = ctx.model.clone();
     let prompt_future = Box::pin(build_agent_and_stream(model, config));
 
+    // Subscribe to bus lifecycle channels BEFORE spawning the prompt so
+    // broadcast retains events emitted during the turn (broadcast only keeps
+    // events for receivers that exist at send time).
+    let mut bus_forwarder = BusForwarder::new(&bus);
+
+    // Publish a context-window warning on the warning bus channel (after the
+    // forwarder subscribes so TTY mode receives it). It is not sent through the
+    // worker's ui_tx: the worker event bridge only forwards permission events,
+    // so a ui_tx warning would be dropped. The TUI render loop reads warnings
+    // from the bus directly.
+    if let Some(limit) = ctx.config.model_context_tokens {
+        let estimated = token_estimate::estimate_token_count(&repaired_messages);
+        let threshold = (limit as f32
+            * ctx
+                .config
+                .context_warning_threshold
+                .unwrap_or(defaults::CONTEXT_WARNING_THRESHOLD)) as usize;
+        log::debug!("execute_turn: token_estimate={estimated} threshold={threshold} limit={limit}");
+        if estimated >= threshold {
+            let _ = bus.warning().send(WarningEvent::Message {
+                message: format!(
+                    "Conversation is using ~{estimated} estimated tokens \
+                     (~{}% of the {limit}-token context window). \
+                     Consider running 'agent session compact' before the next turn.",
+                    (estimated * 100) / limit,
+                ),
+            });
+        }
+    }
+
     // Spawn the completion on the current task.
     // Cancellation note: publishing CancelEvent on the bus fires Terminate on the next
     // hook entry (on_completion_call, on_text_delta, or on_tool_call), causing rig to
@@ -300,7 +310,7 @@ where
     // timeout. Ensure timeouts are configured on the client.
     let prompt_handle = tokio::spawn(prompt_future);
 
-    // Main-thread drain loop: forward UiEvents from the hook to the UI.
+    // Main-thread drain loop: forward UiEvents from the hook and the bus to the UI.
     // Cancellation is not re-published here: the bus already delivers cancel
     // events to all subscribers (including this turn's hook and tool proxies),
     // so re-publishing would leave a lingering event that cancels the NEXT turn.
@@ -314,6 +324,7 @@ where
             }
             Err(mpsc::error::TryRecvError::Disconnected) => break,
         }
+        bus_forwarder.drain_to(ui);
     }
     ui.flush();
 
@@ -648,6 +659,13 @@ where
 }
 
 pub mod executor;
+
+pub(crate) mod bus_forwarder;
+pub(crate) use bus_forwarder::BusForwarder;
+
+#[cfg(test)]
+#[path = "bus_forwarder_test.rs"]
+mod bus_forwarder_test;
 
 pub(crate) mod error;
 pub use error::TurnError;

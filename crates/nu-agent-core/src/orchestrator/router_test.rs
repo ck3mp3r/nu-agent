@@ -7,20 +7,20 @@
 use nu_protocol::{LabeledError, Span, Value};
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, AtomicUsize, Ordering},
+    atomic::{AtomicBool, Ordering},
 };
 use std::time::Duration;
+use tokio::sync::mpsc;
 
+use crate::bus::create_bus;
 use crate::orchestrator::{
-    CommandRouter, InteractiveLoopConfig, OnAgentSwitch, WorkerCommand, run_interactive_loop_impl,
+    CommandRouter, InteractiveLoopConfig, OnAgentSwitch, OrchestratorEvent, UiRequest,
+    UiRequestResponse, WorkerCommand, run_interactive_loop_impl,
 };
 use crate::protocol::{
     compaction::{CompactionTriggerDecision, CompactionTriggerSource},
     compaction_runtime::Compaction,
-    contracts::{
-        CoreRuntime, DisplayStateUi, LifecycleUi, McpUsabilityState, ProgressUi, SharedUiAction,
-        TranscriptUi, UiMessageSnapshot, UserInputUi,
-    },
+    contracts::{CoreRuntime, McpUsabilityState, ProgressUi, UiMessageSnapshot, UserInputUi},
     event::UiEvent,
     mcp_management::McpManagement,
     model_switching::ModelSwitching,
@@ -35,6 +35,7 @@ struct AgentSwitchRuntime {
     switched_agents: Vec<String>,
     switch_agent_result: Option<Result<String, String>>,
     active_model: String,
+    bus: crate::bus::Bus,
 }
 
 impl Default for AgentSwitchRuntime {
@@ -43,6 +44,7 @@ impl Default for AgentSwitchRuntime {
             switched_agents: Vec::new(),
             switch_agent_result: None,
             active_model: "openai/gpt-4o-mini".to_string(),
+            bus: crate::bus::Bus::default(),
         }
     }
 }
@@ -50,12 +52,15 @@ impl Default for AgentSwitchRuntime {
 impl CoreRuntime for AgentSwitchRuntime {
     async fn execute_turn<U: ProgressUi>(
         &mut self,
-        ui: &mut U,
+        _ui: &mut U,
         _prompt: String,
         _context: Option<String>,
         span: Span,
     ) -> Result<Value, LabeledError> {
-        ui.emit(&UiEvent::Completed { tool_calls: 0 });
+        let _ = self
+            .bus
+            .turn()
+            .send(crate::bus::TurnEvent::TurnCompleted { tool_calls: 0 });
         Ok(Value::nothing(span))
     }
 }
@@ -130,92 +135,114 @@ impl Compaction for AgentSwitchRuntime {
 // ---------------------------------------------------------------------------
 
 struct AgentSwitchUi {
-    submitted: std::collections::VecDeque<String>,
-    agent_switch_requests: std::collections::VecDeque<String>,
-    quit: bool,
-    pump_count: usize,
-    warnings: Vec<String>,
-    active_model_identity: Option<String>,
-    active_agent_identity: Option<String>,
+    event_tx: tokio::sync::mpsc::Sender<OrchestratorEvent>,
+    agent_switch_requests: Arc<Mutex<std::collections::VecDeque<String>>>,
+    quit: Arc<AtomicBool>,
+    warnings: Arc<Mutex<Vec<String>>>,
+    active_model_identity: Arc<Mutex<Option<String>>>,
+    active_agent_identity: Arc<Mutex<Option<String>>>,
+    _bus_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl AgentSwitchUi {
     fn new(agent_switches: &[&str]) -> Self {
+        let (event_tx, _event_rx) = tokio::sync::mpsc::channel::<OrchestratorEvent>(256);
         Self {
-            submitted: std::collections::VecDeque::new(),
-            agent_switch_requests: agent_switches.iter().map(|s| s.to_string()).collect(),
-            quit: false,
-            pump_count: 0,
-            warnings: Vec::new(),
-            active_model_identity: None,
-            active_agent_identity: None,
-        }
-    }
-}
-
-impl ProgressUi for AgentSwitchUi {
-    fn emit(&mut self, event: &UiEvent) {
-        if let UiEvent::Warning { message } = event {
-            self.warnings.push(message.clone());
+            event_tx,
+            agent_switch_requests: Arc::new(Mutex::new(
+                agent_switches.iter().map(|s| s.to_string()).collect(),
+            )),
+            quit: Arc::new(AtomicBool::new(false)),
+            warnings: Arc::new(Mutex::new(Vec::new())),
+            active_model_identity: Arc::new(Mutex::new(None)),
+            active_agent_identity: Arc::new(Mutex::new(None)),
+            _bus_task: None,
         }
     }
 
-    fn flush(&mut self) {}
+    fn with_bus(mut self, bus: crate::bus::Bus) -> Self {
+        let quit = Arc::clone(&self.quit);
+        let agent_switch_requests = Arc::clone(&self.agent_switch_requests);
+        let warnings = Arc::clone(&self.warnings);
+        let active_model_identity = Arc::clone(&self.active_model_identity);
+        let active_agent_identity = Arc::clone(&self.active_agent_identity);
 
-    fn take_cancel_requested(&self) -> bool {
-        false
+        let mut turn_rx = bus.turn().subscribe();
+        let mut warning_rx = bus.warning().subscribe();
+        let mut ui_state_rx = bus.ui_state().subscribe();
+
+        self._bus_task = Some(tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    Ok(event) = turn_rx.recv() => {
+                        if let crate::bus::TurnEvent::TurnCompleted { .. } = event
+                            && agent_switch_requests
+                                .lock()
+                                .expect("agent switch requests lock")
+                                .is_empty()
+                        {
+                            quit.store(true, Ordering::SeqCst);
+                        }
+                    }
+                    ok = warning_rx.recv() => {
+                        if let Ok(crate::bus::WarningEvent::Message { message }) = ok {
+                            warnings.lock().expect("warnings lock").push(message);
+                        }
+                    }
+                    ok = ui_state_rx.recv() => {
+                        if let Ok(event) = ok {
+                            match event {
+                                crate::orchestrator::UiStateEvent::SetActiveModelIdentity(identity) => {
+                                    *active_model_identity.lock().expect("active model identity lock") =
+                                        Some(identity);
+                                }
+                                crate::orchestrator::UiStateEvent::SetActiveAgentIdentity(identity) => {
+                                    *active_agent_identity.lock().expect("active agent identity lock") =
+                                        Some(identity);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    else => break,
+                }
+            }
+        }));
+        self
     }
-}
 
-impl LifecycleUi for AgentSwitchUi {
-    fn pump_once(&mut self) {
-        self.pump_count = self.pump_count.saturating_add(1);
-        if self.agent_switch_requests.is_empty() && self.pump_count > 1 {
-            self.quit = true;
+    /// Feeds the queued agent-switch requests into the orchestrator's event
+    /// channel and sends `Quit` once all have been dispatched.
+    fn make_event_spawner(&self) -> impl FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static {
+        let agent_switch_requests = Arc::clone(&self.agent_switch_requests);
+        move |event_tx| {
+            let event_tx = event_tx.clone();
+            tokio::spawn(async move {
+                loop {
+                    let name = {
+                        let mut guard = agent_switch_requests
+                            .lock()
+                            .expect("agent switch requests lock");
+                        guard.pop_front()
+                    };
+                    let Some(name) = name else {
+                        break;
+                    };
+                    let _ = event_tx
+                        .send(OrchestratorEvent::UiRequest(UiRequest::SwitchAgent {
+                            name,
+                        }))
+                        .await;
+                }
+                let _ = event_tx.send(OrchestratorEvent::Quit).await;
+            });
         }
-    }
-
-    fn quit_requested(&self) -> bool {
-        self.quit
-    }
-
-    fn fatal_error(&self) -> Option<&str> {
-        None
     }
 }
 
 impl UserInputUi for AgentSwitchUi {
-    fn take_submitted_prompt(&mut self) -> Option<String> {
-        self.submitted.pop_front()
-    }
-
-    fn take_next_agent_switch_request(&mut self) -> Option<String> {
-        self.agent_switch_requests.pop_front()
-    }
-}
-
-impl DisplayStateUi for AgentSwitchUi {
-    fn set_active_model_identity(&mut self, active_model_identity: &str) {
-        self.active_model_identity = Some(active_model_identity.to_string());
-    }
-
-    fn set_active_agent_identity(&mut self, name: &str) {
-        self.active_agent_identity = Some(name.to_string());
-    }
-
-    fn set_mcp_server_state(&mut self, _server_name: &str, _state: McpUsabilityState) {}
-
-    fn execute_shared_ui_action(&mut self, _action: SharedUiAction) -> bool {
-        true
-    }
-}
-
-impl TranscriptUi for AgentSwitchUi {
-    fn hydrate_transcript_from_messages(
-        &mut self,
-        _messages: impl IntoIterator<Item = UiMessageSnapshot>,
-        _last_total_tokens: Option<u64>,
-    ) {
+    fn event_sender(&self) -> &tokio::sync::mpsc::Sender<OrchestratorEvent> {
+        &self.event_tx
     }
 }
 
@@ -229,6 +256,7 @@ struct LongRunningAgentRuntime {
     active: Arc<AtomicBool>,
     block_first_turn: Arc<AtomicBool>,
     active_model: String,
+    bus: crate::bus::Bus,
 }
 
 impl LongRunningAgentRuntime {
@@ -239,7 +267,13 @@ impl LongRunningAgentRuntime {
             active: Arc::new(AtomicBool::new(false)),
             block_first_turn,
             active_model: "openai/gpt-4o-mini".to_string(),
+            bus: crate::bus::Bus::default(),
         }
+    }
+
+    fn with_bus(mut self, bus: crate::bus::Bus) -> Self {
+        self.bus = bus;
+        self
     }
 }
 
@@ -268,7 +302,12 @@ impl CoreRuntime for LongRunningAgentRuntime {
             }
         }
 
-        ui.emit(&UiEvent::Completed { tool_calls: 0 });
+        // Publish TurnCompleted directly to the bus (worker bridge no longer
+        // converts UiEvent::Completed), matching production.
+        let _ = self
+            .bus
+            .turn()
+            .send(crate::bus::TurnEvent::TurnCompleted { tool_calls: 0 });
         self.active.store(false, Ordering::SeqCst);
         Ok(Value::nothing(Span::test_data()))
     }
@@ -344,128 +383,124 @@ impl Compaction for LongRunningAgentRuntime {
 // ---------------------------------------------------------------------------
 
 struct ResponsiveAgentSwitchUi {
+    event_tx: tokio::sync::mpsc::Sender<OrchestratorEvent>,
     submitted: std::collections::VecDeque<String>,
-    injected_agent_switch_during_active: Vec<String>,
     agent_switch_requests: std::collections::VecDeque<String>,
-    injected: bool,
-    quit: bool,
-    pump_count: usize,
-    active: Arc<AtomicBool>,
-    block_first_turn: Arc<AtomicBool>,
-    completed_count: usize,
+    quit: Arc<AtomicBool>,
+    completed_count: Arc<Mutex<usize>>,
     expected_completions: usize,
-    active_pump_count: Arc<AtomicUsize>,
-    warnings: Vec<String>,
-    active_model_identity: Option<String>,
-    active_agent_identity: Option<String>,
+    warnings: Arc<Mutex<Vec<String>>>,
+    active_agent_identity: Arc<Mutex<Option<String>>>,
+    _turn_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl ResponsiveAgentSwitchUi {
     fn new(
         initial_prompts: &[&str],
         injected_agent_switch_during_active: &[&str],
-        active: Arc<AtomicBool>,
-        block_first_turn: Arc<AtomicBool>,
         expected_completions: usize,
-        active_pump_count: Arc<AtomicUsize>,
     ) -> Self {
+        let (event_tx, _event_rx) = tokio::sync::mpsc::channel::<OrchestratorEvent>(256);
         Self {
+            event_tx,
             submitted: initial_prompts.iter().map(|s| s.to_string()).collect(),
-            injected_agent_switch_during_active: injected_agent_switch_during_active
+            agent_switch_requests: injected_agent_switch_during_active
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),
-            agent_switch_requests: std::collections::VecDeque::new(),
-            injected: false,
-            quit: false,
-            pump_count: 0,
-            active,
-            block_first_turn,
-            completed_count: 0,
+            quit: Arc::new(AtomicBool::new(false)),
+            completed_count: Arc::new(Mutex::new(0)),
             expected_completions,
-            active_pump_count,
-            warnings: Vec::new(),
-            active_model_identity: None,
-            active_agent_identity: None,
-        }
-    }
-}
-
-impl ProgressUi for ResponsiveAgentSwitchUi {
-    fn emit(&mut self, event: &UiEvent) {
-        if let UiEvent::Completed { .. } = event {
-            self.completed_count += 1;
-            if self.completed_count >= self.expected_completions {
-                self.quit = true;
-            }
-        } else if let UiEvent::Warning { message } = event {
-            self.warnings.push(message.clone());
+            warnings: Arc::new(Mutex::new(Vec::new())),
+            active_agent_identity: Arc::new(Mutex::new(None)),
+            _turn_task: None,
         }
     }
 
-    fn flush(&mut self) {}
+    fn with_bus(mut self, bus: crate::bus::Bus) -> Self {
+        let quit = Arc::clone(&self.quit);
+        let completed_count = Arc::clone(&self.completed_count);
+        let expected_completions = self.expected_completions;
+        let warnings = Arc::clone(&self.warnings);
+        let active_agent_identity = Arc::clone(&self.active_agent_identity);
 
-    fn take_cancel_requested(&self) -> bool {
-        false
-    }
-}
+        let mut turn_rx = bus.turn().subscribe();
+        let mut warning_rx = bus.warning().subscribe();
+        let mut ui_state_rx = bus.ui_state().subscribe();
 
-impl LifecycleUi for ResponsiveAgentSwitchUi {
-    fn pump_once(&mut self) {
-        self.pump_count += 1;
-        if self.active.load(Ordering::SeqCst) {
-            self.active_pump_count.fetch_add(1, Ordering::SeqCst);
-            if !self.injected {
-                for request in self.injected_agent_switch_during_active.clone() {
-                    self.agent_switch_requests.push_back(request);
+        self._turn_task = Some(tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    Ok(event) = turn_rx.recv() => {
+                        if let crate::bus::TurnEvent::TurnCompleted { .. } = event {
+                            let count = {
+                                let mut count = completed_count.lock().expect("completed count lock");
+                                *count += 1;
+                                *count
+                            };
+                            if count >= expected_completions {
+                                quit.store(true, Ordering::SeqCst);
+                            }
+                        }
+                    }
+                    Ok(event) = warning_rx.recv() => {
+                        if let crate::bus::WarningEvent::Message { message } = event {
+                            warnings.lock().expect("warnings lock").push(message);
+                        }
+                    }
+                    Ok(event) = ui_state_rx.recv() => {
+                        if let crate::orchestrator::UiStateEvent::SetActiveAgentIdentity(identity) = event {
+                            *active_agent_identity.lock().expect("active agent identity lock") = Some(identity);
+                        }
+                    }
+                    else => break,
                 }
-                self.injected = true;
-                self.block_first_turn.store(true, Ordering::SeqCst);
             }
+        }));
+        self
+    }
+
+    /// Feeds the first prompt immediately, then injects agent-switch requests
+    /// only while the worker is active. `Quit` is gated on the expected turn
+    /// completion count (set by `with_bus`).
+    fn make_event_spawner(&self) -> impl FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static {
+        let submitted = self.submitted.clone();
+        let agent_switch_requests = self.agent_switch_requests.clone();
+        let quit = Arc::clone(&self.quit);
+        move |event_tx| {
+            let event_tx = event_tx.clone();
+            let mut submitted = submitted.clone();
+            let mut agent_switch_requests = agent_switch_requests.clone();
+            tokio::spawn(async move {
+                if let Some(prompt) = submitted.pop_front() {
+                    let _ = event_tx
+                        .send(OrchestratorEvent::PromptSubmitted { text: prompt })
+                        .await;
+                }
+                while !quit.load(Ordering::SeqCst) {
+                    if let Some(name) = agent_switch_requests.pop_front() {
+                        let _ = event_tx
+                            .send(OrchestratorEvent::UiRequest(UiRequest::SwitchAgent {
+                                name,
+                            }))
+                            .await;
+                    }
+                    if quit.load(Ordering::SeqCst)
+                        && event_tx.send(OrchestratorEvent::Quit).await.is_err()
+                    {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(2)).await;
+                }
+                let _ = event_tx.send(OrchestratorEvent::Quit).await;
+            });
         }
-    }
-
-    fn quit_requested(&self) -> bool {
-        self.quit
-    }
-
-    fn fatal_error(&self) -> Option<&str> {
-        None
     }
 }
 
 impl UserInputUi for ResponsiveAgentSwitchUi {
-    fn take_submitted_prompt(&mut self) -> Option<String> {
-        self.submitted.pop_front()
-    }
-
-    fn take_next_agent_switch_request(&mut self) -> Option<String> {
-        self.agent_switch_requests.pop_front()
-    }
-}
-
-impl DisplayStateUi for ResponsiveAgentSwitchUi {
-    fn set_active_model_identity(&mut self, active_model_identity: &str) {
-        self.active_model_identity = Some(active_model_identity.to_string());
-    }
-
-    fn set_active_agent_identity(&mut self, name: &str) {
-        self.active_agent_identity = Some(name.to_string());
-    }
-
-    fn set_mcp_server_state(&mut self, _server_name: &str, _state: McpUsabilityState) {}
-
-    fn execute_shared_ui_action(&mut self, _action: SharedUiAction) -> bool {
-        true
-    }
-}
-
-impl TranscriptUi for ResponsiveAgentSwitchUi {
-    fn hydrate_transcript_from_messages(
-        &mut self,
-        _messages: impl IntoIterator<Item = UiMessageSnapshot>,
-        _last_total_tokens: Option<u64>,
-    ) {
+    fn event_sender(&self) -> &tokio::sync::mpsc::Sender<OrchestratorEvent> {
+        &self.event_tx
     }
 }
 
@@ -475,60 +510,82 @@ impl TranscriptUi for ResponsiveAgentSwitchUi {
 
 #[tokio::test]
 async fn agent_switch_sends_command_and_updates_ui_identity() {
-    let runtime = AgentSwitchRuntime::default();
-    let mut ui = AgentSwitchUi::new(&["research-agent"]);
+    let bus = create_bus();
+    let runtime = AgentSwitchRuntime {
+        bus: bus.clone(),
+        ..Default::default()
+    };
+    let ui = AgentSwitchUi::new(&["research-agent"]).with_bus(bus.clone());
+    let spawner = ui.make_event_spawner();
 
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
     assert_eq!(runtime.switched_agents, vec!["research-agent"]);
-    assert_eq!(ui.active_agent_identity, Some("research-agent".to_string()));
     assert_eq!(
-        ui.active_model_identity,
+        *ui.active_agent_identity
+            .lock()
+            .expect("active agent identity lock"),
+        Some("research-agent".to_string())
+    );
+    assert_eq!(
+        *ui.active_model_identity
+            .lock()
+            .expect("active model identity lock"),
         Some("openai/gpt-4o-mini".to_string())
     );
 }
 
 #[tokio::test]
 async fn agent_switch_failure_warns_and_keeps_previous_agent() {
+    let bus = create_bus();
     let runtime = AgentSwitchRuntime {
         switch_agent_result: Some(Err("agent not found".to_string())),
+        bus: bus.clone(),
         ..Default::default()
     };
-    let mut ui = AgentSwitchUi::new(&["nonexistent-agent"]);
+    let ui = AgentSwitchUi::new(&["nonexistent-agent"]).with_bus(bus.clone());
+    let spawner = ui.make_event_spawner();
 
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
-    assert!(ui.warnings.iter().any(|w| w == "agent not found"));
-    assert_eq!(ui.active_agent_identity, None);
+    assert!(
+        ui.warnings
+            .lock()
+            .expect("warnings lock")
+            .iter()
+            .any(|w| w == "agent not found")
+    );
+    assert_eq!(
+        *ui.active_agent_identity
+            .lock()
+            .expect("active agent identity lock"),
+        None
+    );
 }
 
 #[tokio::test]
 async fn agent_switch_while_worker_active_is_queued_for_next_turn() {
+    let bus = create_bus();
     let block_first_turn = Arc::new(AtomicBool::new(false));
-    let runtime = LongRunningAgentRuntime::new(Arc::clone(&block_first_turn));
-    let active_pump_count = Arc::new(AtomicUsize::new(0));
-    let mut ui = ResponsiveAgentSwitchUi::new(
-        &["first"],
-        &["research-agent"],
-        Arc::clone(&runtime.active),
-        Arc::clone(&block_first_turn),
-        1,
-        Arc::clone(&active_pump_count),
-    );
+    let runtime = LongRunningAgentRuntime::new(Arc::clone(&block_first_turn)).with_bus(bus.clone());
+    let ui = ResponsiveAgentSwitchUi::new(&["first"], &["research-agent"], 1).with_bus(bus.clone());
+    let spawner = ui.make_event_spawner();
 
     // Spawn a background task to unblock the turn after a delay.
     let unblock = Arc::clone(&block_first_turn);
@@ -539,8 +596,9 @@ async fn agent_switch_while_worker_active_is_queued_for_next_turn() {
 
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
@@ -556,25 +614,27 @@ async fn agent_switch_while_worker_active_is_queued_for_next_turn() {
     );
     assert!(
         ui.warnings
+            .lock()
+            .expect("warnings lock")
             .iter()
             .any(|w| w == "Agent switch queued for next turn: research-agent")
     );
-    assert_eq!(ui.active_agent_identity, Some("research-agent".to_string()));
+    assert_eq!(
+        *ui.active_agent_identity
+            .lock()
+            .expect("active agent identity lock"),
+        Some("research-agent".to_string())
+    );
 }
 
 #[tokio::test]
 async fn queued_agent_switch_last_write_wins() {
+    let bus = create_bus();
     let block_first_turn = Arc::new(AtomicBool::new(false));
-    let runtime = LongRunningAgentRuntime::new(Arc::clone(&block_first_turn));
-    let active_pump_count = Arc::new(AtomicUsize::new(0));
-    let mut ui = ResponsiveAgentSwitchUi::new(
-        &["first"],
-        &["agent-a", "agent-b"],
-        Arc::clone(&runtime.active),
-        Arc::clone(&block_first_turn),
-        1,
-        Arc::clone(&active_pump_count),
-    );
+    let runtime = LongRunningAgentRuntime::new(Arc::clone(&block_first_turn)).with_bus(bus.clone());
+    let ui =
+        ResponsiveAgentSwitchUi::new(&["first"], &["agent-a", "agent-b"], 1).with_bus(bus.clone());
+    let spawner = ui.make_event_spawner();
 
     // Spawn a background task to unblock the turn after a delay.
     let unblock = Arc::clone(&block_first_turn);
@@ -585,8 +645,9 @@ async fn queued_agent_switch_last_write_wins() {
 
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        &mut ui,
-        InteractiveLoopConfig::new(Span::test_data()),
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
     )
     .await;
     let value = result.expect("interactive loop");
@@ -600,7 +661,12 @@ async fn queued_agent_switch_last_write_wins() {
             .as_slice(),
         ["agent-b"]
     );
-    assert_eq!(ui.active_agent_identity, Some("agent-b".to_string()));
+    assert_eq!(
+        *ui.active_agent_identity
+            .lock()
+            .expect("active agent identity lock"),
+        Some("agent-b".to_string())
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -615,11 +681,12 @@ struct SwitchSessionRuntime {
 impl CoreRuntime for SwitchSessionRuntime {
     async fn execute_turn<U: ProgressUi>(
         &mut self,
-        _ui: &mut U,
+        ui: &mut U,
         _prompt: String,
         _context: Option<String>,
         span: Span,
     ) -> Result<Value, LabeledError> {
+        ui.emit(&UiEvent::Completed { tool_calls: 0 });
         Ok(Value::nothing(span))
     }
 }
@@ -689,10 +756,12 @@ async fn switch_session_dispatches_async_load_without_panic() {
     let (result_tx, _result_rx) = tokio::sync::mpsc::channel(1);
 
     // Response channel for the SwitchSession command
-    let (response_tx, response_rx) = std::sync::mpsc::channel();
+    let (response_tx, mut response_rx) = tokio::sync::mpsc::channel::<UiRequestResponse>(1);
 
-    let cmd = WorkerCommand::SwitchSession {
-        session_id: "test-session-123".to_string(),
+    let cmd = WorkerCommand::HandleUiRequest {
+        request: UiRequest::SwitchSession {
+            id: "test-session-123".to_string(),
+        },
         response_tx,
     };
 
@@ -706,20 +775,27 @@ async fn switch_session_dispatches_async_load_without_panic() {
     assert!(should_continue, "SwitchSession should not trigger shutdown");
 
     // 2. load_session was called with the correct session_id
-    let loaded = loaded_session_id.lock().expect("lock");
-    assert_eq!(
-        loaded.as_deref(),
-        Some("test-session-123"),
-        "load_session should be called with the correct session_id"
-    );
-    drop(loaded);
+    {
+        let loaded = loaded_session_id.lock().expect("lock");
+        assert_eq!(
+            loaded.as_deref(),
+            Some("test-session-123"),
+            "load_session should be called with the correct session_id"
+        );
+    }
 
     // 3. The result is sent through the response channel
-    let result = response_rx.recv().expect("response should be sent");
-    assert!(
-        result.is_err(),
-        "default load_session should return an error"
-    );
+    let response = response_rx.recv().await.expect("response should be sent");
+    match response {
+        UiRequestResponse::SessionSwitch { id, result } => {
+            assert_eq!(id, "test-session-123");
+            assert!(
+                result.is_err(),
+                "default load_session should return an error"
+            );
+        }
+        other => panic!("unexpected response: {other:?}"),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -743,15 +819,21 @@ async fn on_agent_switch_callback_invoked_after_successful_switch() {
         },
     );
 
+    let bus = create_bus();
     let runtime = AgentSwitchRuntime {
         switch_agent_result: Some(Ok("research-agent".to_string())),
+        bus: bus.clone(),
         ..Default::default()
     };
-    let mut ui = AgentSwitchUi::new(&["research-agent"]);
+    let ui = AgentSwitchUi::new(&["research-agent"]).with_bus(bus.clone());
+    let spawner = ui.make_event_spawner();
 
-    let config = InteractiveLoopConfig::new(Span::test_data()).with_on_agent_switch(callback);
+    let config = InteractiveLoopConfig::new(Span::test_data())
+        .with_on_agent_switch(callback)
+        .with_bus(bus)
+        .with_spawn_render_loop(spawner);
 
-    let (_runtime, result) = run_interactive_loop_impl(runtime, &mut ui, config).await;
+    let (_runtime, result) = run_interactive_loop_impl(runtime, config).await;
     let value = result.expect("interactive loop");
     assert!(value.is_nothing());
 
@@ -766,4 +848,185 @@ async fn on_agent_switch_callback_invoked_after_successful_switch() {
     // The AgentSwitchRuntime doesn't implement agent_icon(), so it
     // returns None (the default trait method).
     assert_eq!(icon, Some(None));
+}
+
+// ---------------------------------------------------------------------------
+// dispatch_ui_request tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn dispatch_ui_request_switch_model() {
+    let mut runtime = AgentSwitchRuntime::default();
+    let (response_tx, mut response_rx) = tokio::sync::mpsc::channel::<UiRequestResponse>(32);
+
+    CommandRouter::dispatch_ui_request(
+        UiRequest::SwitchModel {
+            spec: "test-model".to_string(),
+        },
+        &mut runtime,
+        &None,
+        response_tx,
+    )
+    .await;
+
+    let response = response_rx.recv().await.expect("response should be sent");
+    match response {
+        UiRequestResponse::ModelSwitch(result) => {
+            assert!(
+                result.is_err(),
+                "AgentSwitchRuntime switch_model returns Err"
+            );
+        }
+        other => panic!("expected ModelSwitch, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn dispatch_ui_request_switch_agent() {
+    let mut runtime = AgentSwitchRuntime::default();
+    let (response_tx, mut response_rx) = tokio::sync::mpsc::channel::<UiRequestResponse>(32);
+
+    CommandRouter::dispatch_ui_request(
+        UiRequest::SwitchAgent {
+            name: "research-agent".to_string(),
+        },
+        &mut runtime,
+        &None,
+        response_tx,
+    )
+    .await;
+
+    let response = response_rx.recv().await.expect("response should be sent");
+    match response {
+        UiRequestResponse::AgentSwitch(result) => {
+            let (agent, model, _max_tokens, _icon) = result.expect("switch should succeed");
+            assert_eq!(agent, "research-agent");
+            assert_eq!(model, "openai/gpt-4o-mini");
+        }
+        other => panic!("expected AgentSwitch, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn dispatch_ui_request_switch_agent_invokes_callback() {
+    let switched_name = Arc::new(Mutex::new(None::<String>));
+    let cb_name = Arc::clone(&switched_name);
+    let callback: OnAgentSwitch = Arc::new(
+        move |name: String, _desc: Option<String>, _icon: Option<String>| {
+            *cb_name.lock().expect("name lock") = Some(name);
+        },
+    );
+
+    let mut runtime = AgentSwitchRuntime::default();
+    let (response_tx, mut response_rx) = tokio::sync::mpsc::channel::<UiRequestResponse>(32);
+
+    CommandRouter::dispatch_ui_request(
+        UiRequest::SwitchAgent {
+            name: "research-agent".to_string(),
+        },
+        &mut runtime,
+        &Some(callback),
+        response_tx,
+    )
+    .await;
+
+    let response = response_rx.recv().await.expect("response should be sent");
+    match response {
+        UiRequestResponse::AgentSwitch(result) => {
+            assert!(result.is_ok(), "switch should succeed");
+        }
+        other => panic!("expected AgentSwitch, got {other:?}"),
+    }
+
+    let name = switched_name.lock().expect("name lock").take();
+    assert_eq!(name.as_deref(), Some("research-agent"));
+}
+
+#[tokio::test]
+async fn dispatch_ui_request_switch_session() {
+    let loaded_session_id: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let mut runtime = SwitchSessionRuntime {
+        loaded_session_id: Arc::clone(&loaded_session_id),
+        active_model: "openai/gpt-4o-mini".to_string(),
+    };
+    let (response_tx, mut response_rx) = tokio::sync::mpsc::channel::<UiRequestResponse>(32);
+
+    CommandRouter::dispatch_ui_request(
+        UiRequest::SwitchSession {
+            id: "test-session-123".to_string(),
+        },
+        &mut runtime,
+        &None,
+        response_tx,
+    )
+    .await;
+
+    let response = response_rx.recv().await.expect("response should be sent");
+    match response {
+        UiRequestResponse::SessionSwitch { id, result } => {
+            assert_eq!(id, "test-session-123");
+            assert!(result.is_err(), "default load_session returns Err");
+        }
+        other => panic!("expected SessionSwitch, got {other:?}"),
+    }
+
+    let loaded = loaded_session_id.lock().expect("lock");
+    assert_eq!(loaded.as_deref(), Some("test-session-123"));
+}
+
+#[tokio::test]
+async fn dispatch_ui_request_toggle_mcp() {
+    let mut runtime = AgentSwitchRuntime::default();
+    let (response_tx, mut response_rx) = tokio::sync::mpsc::channel::<UiRequestResponse>(32);
+
+    CommandRouter::dispatch_ui_request(
+        UiRequest::ToggleMcp {
+            server: "test-server".to_string(),
+            enable: true,
+        },
+        &mut runtime,
+        &None,
+        response_tx,
+    )
+    .await;
+
+    let response = response_rx.recv().await.expect("response should be sent");
+    match response {
+        UiRequestResponse::McpToggle {
+            server,
+            result,
+            total,
+            server_count,
+            names_by_server,
+        } => {
+            assert_eq!(server, "test-server");
+            assert_eq!(result, Ok(McpUsabilityState::Disabled));
+            assert_eq!(total, 0);
+            assert_eq!(server_count, 0);
+            assert!(names_by_server.is_empty());
+        }
+        other => panic!("expected McpToggle, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn dispatch_ui_request_refresh_session_picker() {
+    let mut runtime = AgentSwitchRuntime::default();
+    let (response_tx, mut response_rx) = tokio::sync::mpsc::channel::<UiRequestResponse>(32);
+
+    CommandRouter::dispatch_ui_request(
+        UiRequest::RefreshSessionPicker,
+        &mut runtime,
+        &None,
+        response_tx,
+    )
+    .await;
+
+    let response = response_rx.recv().await.expect("response should be sent");
+    match response {
+        UiRequestResponse::SessionRefresh(result) => {
+            assert!(result.is_ok(), "default list_sessions returns Ok");
+        }
+        other => panic!("expected SessionRefresh, got {other:?}"),
+    }
 }
