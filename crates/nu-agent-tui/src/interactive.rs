@@ -310,6 +310,19 @@ pub(crate) async fn run_render_loop(
                     && let Some(ui_event) = Option::<UiEvent>::from(event)
                 {
                     coordinator.state.reduce_ui_event(ui_event);
+                    // A turn completion (or failure) clears the active prompt. Drain
+                    // any prompts stacked during the turn into PromptSubmitted events
+                    // now, without waiting for the next terminal input.
+                    let pending = coordinator.state.take_pending_events(cancel_controller);
+                    for ev in pending {
+                        if event_tx.send(ev).await.is_err() {
+                            return;
+                        }
+                    }
+                    let ui_state_events = coordinator.state.take_pending_ui_state_events();
+                    for ev in ui_state_events {
+                        let _ = bus.ui_state().send(ev);
+                    }
                     coordinator.mark_render_needed();
                     let _ = coordinator.render_if_needed(live_terminal);
                 }
