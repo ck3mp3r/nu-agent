@@ -3804,18 +3804,6 @@ fn hydration_compaction_creates_block_structure() {
         has_compaction_header,
         "expected compaction block header in transcript"
     );
-
-    // The compaction block should have Done status
-    let compaction_header_idx = coordinator
-        .state()
-        .transcript_preview
-        .iter()
-        .position(|line| line.text() == "Compaction")
-        .expect("compaction header must exist");
-    assert_eq!(
-        coordinator.state().transcript_preview[compaction_header_idx].status,
-        Some(ItemStatus::Done)
-    );
 }
 
 #[test]
@@ -3889,18 +3877,6 @@ fn hydration_compaction_empty_summary_shows_block_only() {
     assert!(
         compaction_lines.is_empty(),
         "empty summary should produce no Compaction-role body lines: {compaction_lines:?}"
-    );
-
-    // Header should have Done status
-    let header_idx = coordinator
-        .state()
-        .transcript_preview
-        .iter()
-        .position(|line| line.text() == "Compaction")
-        .expect("header must exist");
-    assert_eq!(
-        coordinator.state().transcript_preview[header_idx].status,
-        Some(ItemStatus::Done)
     );
 }
 

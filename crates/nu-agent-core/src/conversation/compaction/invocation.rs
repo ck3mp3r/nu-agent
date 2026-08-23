@@ -187,6 +187,12 @@ where
     let history = format_messages_for_summary(old_messages);
     let prompt_text = COMPACTION_SUMMARY_PROMPT.replace("{history}", &history);
 
+    // Announce start before the slow summarizer LLM call so the status
+    // spinner turns on immediately (not after the call completes).
+    let _ = bus.compaction().send(CompactionEvent::Started {
+        source: Some(source.to_string()),
+    });
+
     // Use the model's raw completion_request API (no agent, no hooks needed for compaction)
     let stream = model
         .completion_request(&prompt_text)

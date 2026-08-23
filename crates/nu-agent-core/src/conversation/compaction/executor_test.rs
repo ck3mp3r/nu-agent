@@ -138,7 +138,7 @@ async fn execute_ok_none_sends_no_started_event() {
 }
 
 #[tokio::test]
-async fn err_sends_only_failed_no_started() {
+async fn err_sends_started_before_failed() {
     let temp_dir = tempfile::tempdir().unwrap();
     let store = Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
     let memory = CachedMemory::<FsSessionStore>::new(Arc::clone(&store));
@@ -168,16 +168,17 @@ async fn err_sends_only_failed_no_started() {
         .await;
     assert!(result.is_err());
 
-    // First event should be Failed, not Started.
-    let event = rx.recv().await.expect("Failed event");
+    // Started fires before the summarizer LLM call; Failed closes the block.
+    let started = rx.recv().await.expect("Started event");
     assert!(
-        matches!(event, CompactionEvent::Failed { .. }),
-        "expected Failed, got {event:?}"
+        matches!(started, CompactionEvent::Started { .. }),
+        "expected Started first, got {started:?}"
     );
-    // No Started should follow.
-    tokio::time::timeout(std::time::Duration::from_millis(50), rx.recv())
-        .await
-        .expect_err("no Started should follow Failed");
+    let failed = rx.recv().await.expect("Failed event");
+    assert!(
+        matches!(failed, CompactionEvent::Failed { .. }),
+        "expected Failed after Started, got {failed:?}"
+    );
 }
 
 #[tokio::test]
@@ -210,21 +211,20 @@ async fn ok_some_sends_started_before_triggered() {
         .await;
     assert!(result.unwrap().is_some());
 
-    // Started must precede Triggered. Streaming SummaryChunk events arrive
-    // first (before Started), so skip them and only check Started/Triggered.
+    // Started must be the first event, preceding the streaming SummaryChunk
+    // and the final Triggered.
     let first = rx.recv().await.expect("compact event");
-    let first = match first {
-        CompactionEvent::Started { .. } | CompactionEvent::Triggered { .. } => first,
-        CompactionEvent::SummaryChunk { .. } => rx.recv().await.expect("compact event"),
-        _ => first,
-    };
     assert!(
         matches!(first, CompactionEvent::Started { .. }),
         "expected Started first, got {first:?}"
     );
-    let second = rx.recv().await.expect("compact event");
-    assert!(
-        matches!(second, CompactionEvent::Triggered { .. }),
-        "expected Triggered second, got {second:?}"
-    );
+    // Drain SummaryChunk events until Triggered arrives.
+    loop {
+        let event = rx.recv().await.expect("compact event");
+        match event {
+            CompactionEvent::SummaryChunk { .. } => continue,
+            CompactionEvent::Triggered { .. } => break,
+            other => panic!("unexpected event before Triggered: {other:?}"),
+        }
+    }
 }

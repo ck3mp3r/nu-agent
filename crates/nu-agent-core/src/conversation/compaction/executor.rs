@@ -125,9 +125,9 @@ impl<'a, S: SessionStore + Clone + Send + Sync> CompactionExecutor<'a, S> {
 
         match result {
             Ok(Some((info, summary_total_tokens))) => {
-                let _ = self.bus.compaction().send(CompactionEvent::Started {
-                    source: Some(source_label.clone()),
-                });
+                // CompactionEvent::Started is emitted in summarize_messages,
+                // before the summarizer LLM call, so the status spinner turns
+                // on immediately. Only Triggered is sent here on completion.
                 let _ = self.bus.compaction().send(CompactionEvent::Triggered {
                     source: info.source,
                     summarized_count: info.summarized_count,

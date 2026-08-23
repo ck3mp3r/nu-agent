@@ -26,6 +26,12 @@ impl AppState {
         self.pending_prompt_ids.len()
     }
 
+    pub fn compaction_in_progress(&self) -> bool {
+        self.compaction_items
+            .iter()
+            .any(|item| item.status == CompactionStatus::InProgress)
+    }
+
     pub fn start_compaction_block(&mut self, source: &str) {
         if self
             .compaction_items
@@ -46,6 +52,7 @@ impl AppState {
         }
         self.push_transcript_line(TranscriptRole::System, "Compaction".to_string());
         let entry_id = self.transcript_preview.last().map(|e| e.id);
+        self.push_spacer(); // gap between header and summary body
         self.compaction_items.push(CompactionLine {
             source: source.to_string(),
             status: CompactionStatus::InProgress,
@@ -73,19 +80,6 @@ impl AppState {
         if let Some(idx) = found_idx {
             let item = &mut self.compaction_items[idx];
             item.status = status;
-            if let Some(entry_id) = item.entry_id
-                && let Some(entry) = self
-                    .transcript_preview
-                    .iter_mut()
-                    .rev()
-                    .find(|e| e.id == entry_id)
-            {
-                entry.status = Some(match status {
-                    CompactionStatus::InProgress => ItemStatus::InProgress,
-                    CompactionStatus::Done => ItemStatus::Done,
-                    CompactionStatus::Failed => ItemStatus::Failed,
-                });
-            }
         }
     }
 
@@ -262,7 +256,6 @@ impl AppState {
     }
 
     pub fn complete_active_prompt(&mut self) {
-        let completed_id = self.active_prompt_id;
         prompt_queue::PromptQueueLifecycle::new(
             &mut self.prompt_items,
             &mut self.pending_prompt_ids,
@@ -270,18 +263,6 @@ impl AppState {
             &mut self.next_prompt_id,
         )
         .complete_active_prompt();
-
-        if let Some(id) = completed_id
-            && let Some(prompt) = self.prompt_items.iter().find(|p| p.id == id)
-            && let Some(entry_id) = prompt.entry_id
-            && let Some(entry) = self
-                .transcript_preview
-                .iter_mut()
-                .rev()
-                .find(|e| e.id == entry_id)
-        {
-            entry.status = Some(ItemStatus::Done);
-        }
 
         self.phase = UiPhase::Idle;
         self.input_locked = false;
@@ -291,12 +272,6 @@ impl AppState {
     }
 
     pub fn cancel_active_and_pending_prompts(&mut self) {
-        let cancelled_ids: Vec<u64> = self
-            .prompt_items
-            .iter()
-            .filter(|p| p.status == PromptStatus::InProgress || p.status == PromptStatus::Queued)
-            .map(|p| p.id)
-            .collect();
         prompt_queue::PromptQueueLifecycle::new(
             &mut self.prompt_items,
             &mut self.pending_prompt_ids,
@@ -304,19 +279,6 @@ impl AppState {
             &mut self.next_prompt_id,
         )
         .cancel_active_and_pending_prompts();
-
-        for id in cancelled_ids {
-            if let Some(prompt) = self.prompt_items.iter().find(|p| p.id == id)
-                && let Some(entry_id) = prompt.entry_id
-                && let Some(entry) = self
-                    .transcript_preview
-                    .iter_mut()
-                    .rev()
-                    .find(|e| e.id == entry_id)
-            {
-                entry.status = Some(ItemStatus::Cancelled);
-            }
-        }
 
         self.phase = UiPhase::Idle;
         self.input_locked = false;
