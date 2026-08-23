@@ -225,21 +225,21 @@ fn enqueue_external_prompt_not_returned_by_take_submitted_prompt() {
 }
 
 #[test]
-fn enqueue_external_prompt_has_spinner_status_on_transcript_line() {
+fn enqueue_external_prompt_has_no_spinner_status_on_transcript_line() {
     let mut state = AppState::new();
 
-    state.enqueue_external_prompt("spinner check".to_string());
+    state.enqueue_external_prompt("no spinner check".to_string());
 
-    // The user entry should carry InProgress status directly on the entry.
+    // The user entry must NOT carry InProgress status: the user-message
+    // spinner scrolls off screen, so it is not rendered.
     let user_entry = state
         .transcript_preview
         .iter()
         .find(|e| matches!(e.kind, TranscriptEntryKind::User(_)))
         .expect("user entry");
     assert_eq!(
-        user_entry.status,
-        Some(nu_agent_core::transcript::renderer::ItemStatus::InProgress),
-        "transcript line should show InProgress for spinner"
+        user_entry.status, None,
+        "transcript line must not show InProgress spinner for user message"
     );
 }
 

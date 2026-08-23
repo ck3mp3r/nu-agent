@@ -971,8 +971,8 @@ fn compaction_block_running_state_has_no_source_or_status_metadata_line() {
         .position(|line| line.text() == "Compaction")
         .expect("compaction line");
     assert_eq!(
-        state.transcript_preview[idx].status,
-        Some(ItemStatus::InProgress)
+        state.transcript_preview[idx].status, None,
+        "compaction header must not show InProgress spinner"
     );
 
     let lines = state

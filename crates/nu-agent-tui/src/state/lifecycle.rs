@@ -46,9 +46,6 @@ impl AppState {
         }
         self.push_transcript_line(TranscriptRole::System, "Compaction".to_string());
         let entry_id = self.transcript_preview.last().map(|e| e.id);
-        if let Some(entry) = self.transcript_preview.last_mut() {
-            entry.status = Some(ItemStatus::InProgress);
-        }
         self.compaction_items.push(CompactionLine {
             source: source.to_string(),
             status: CompactionStatus::InProgress,
@@ -144,9 +141,6 @@ impl AppState {
         self.push_user_block_start_spacers();
         self.push_transcript_line(TranscriptRole::User, text.clone());
         let entry_id = self.transcript_preview.last().map(|e| e.id);
-        if let Some(entry) = self.transcript_preview.last_mut() {
-            entry.status = Some(ItemStatus::InProgress);
-        }
         self.push_spacer(); // closing spacer for user block
         let id = self.next_prompt_id;
         self.next_prompt_id = self.next_prompt_id.saturating_add(1);
@@ -218,9 +212,6 @@ impl AppState {
         self.push_user_block_start_spacers();
         self.push_transcript_line(TranscriptRole::User, prompt_text);
         let entry_id = self.transcript_preview.last().map(|e| e.id);
-        if let Some(entry) = self.transcript_preview.last_mut() {
-            entry.status = Some(ItemStatus::InProgress);
-        }
         self.push_spacer(); // closing spacer for user block
         if let Some(prompt) = self.prompt_items.iter_mut().find(|p| p.id == active_id) {
             prompt.entry_id = entry_id;
@@ -256,9 +247,6 @@ impl AppState {
         self.push_user_block_start_spacers();
         self.push_transcript_line(TranscriptRole::User, combined.clone());
         let entry_id = self.transcript_preview.last().map(|e| e.id);
-        if let Some(entry) = self.transcript_preview.last_mut() {
-            entry.status = Some(ItemStatus::InProgress);
-        }
         self.push_spacer(); // closing spacer for user block
         if let Some(active_id) = self.active_prompt_id
             && let Some(prompt) = self.prompt_items.iter_mut().find(|p| p.id == active_id)
