@@ -29,8 +29,8 @@ nu-protocol = "0.115.1"
 nu-parser = "0.115.1"
 
 # LLM / AI
-rig = { version = "0.41", default-features = false, features = ["derive", "rmcp", "test-utils"] }
-rmcp = { version = "2.2", default-features = false, features = [
+rig = { version = "0.42", default-features = false, features = ["derive", "rmcp", "test-utils"] }
+rmcp = { version = "3.1", default-features = false, features = [
   "client",
   "transport-child-process",
   "transport-streamable-http-client",
@@ -81,7 +81,7 @@ unicodeit = "0.2.1"
 htmd = "0.5"
 arboard = "3.6"
 syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "default-themes", "parsing", "regex-fancy", "yaml-load"] }
-noyalib = "0.0.17"
+noyalib = "0.0.26"
 oauth2 = "5.0"
 rand = "0.10.1"
 fs2 = "0.4"
