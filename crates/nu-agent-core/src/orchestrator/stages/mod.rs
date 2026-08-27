@@ -4,13 +4,9 @@ use nu_protocol::Span;
 
 use crate::bus::Bus;
 use crate::conversation::runtime::PendingPermissions;
-use crate::orchestrator::{
-    PendingCompactionTrigger, UiRequest, UiRequestResponse, WorkerCommand,
-    turn_outcome::TurnOutcome,
-};
+use crate::orchestrator::{UiRequest, UiRequestResponse, WorkerCommand, turn_outcome::TurnOutcome};
 use crate::protocol::event::PermissionDecisionSubmission;
 
-pub mod compaction;
 pub mod permission;
 pub mod session;
 pub mod slash;
@@ -28,8 +24,6 @@ pub(crate) struct OrchestrationContext<'a> {
     pub pending: &'a Option<PendingPermissions>,
     /// Whether the worker thread is currently executing a turn.
     pub worker_active: &'a mut bool,
-    /// Re-arm flag: set to `true` after a turn completes so compaction is re-evaluated.
-    pub should_evaluate_compaction: &'a mut bool,
     /// Span used for `ExecuteTurn` commands.
     pub span: Span,
     /// External prompt that triggered the current turn (if any).
@@ -50,7 +44,6 @@ pub(crate) struct OrchestrationContext<'a> {
 /// Stage trait for slash command and prompt handling.
 pub(crate) trait SlashHandler {
     async fn handle(&mut self, prompt: String, ctx: &mut OrchestrationContext);
-    fn take_pending_compaction_trigger(&mut self) -> Option<PendingCompactionTrigger>;
 }
 
 /// Stage trait for permission decision handling.
@@ -79,12 +72,4 @@ pub(crate) trait UiRequestHandler {
 /// Stage trait for session outcome handling.
 pub(crate) trait SessionHandler {
     fn handle_outcome(&mut self, outcome: TurnOutcome, ctx: &mut OrchestrationContext);
-}
-
-/// Stage trait for compaction result handling.
-pub(crate) trait CompactionHandler {
-    fn handle_result(&mut self, message: Option<String>, ctx: &mut OrchestrationContext);
-    fn set_pending_auto_compaction(&mut self);
-    fn has_pending_auto_compaction(&self) -> bool;
-    fn has_pending(&self) -> bool;
 }

@@ -271,6 +271,38 @@ impl CachedProviderClient {
             CachedProviderClient::Mock(m) => visitor.visit(m.clone()).await,
         }
     }
+
+    /// Erase the cached provider's completion model into a `ModelHandle`.
+    ///
+    /// The agent is built from this handle (via `AgentBuilder::from_model_handle`)
+    /// and the hook routes per-turn selection to it, so `switch_model()` can
+    /// replace the model without rebuilding the agent.
+    pub fn build_model_handle(
+        &self,
+        model_name: &str,
+    ) -> Result<rig::agent::ModelHandle, nu_protocol::LabeledError> {
+        log::debug!("build_model_handle: model={model_name}");
+        use rig::client::CompletionClient;
+        let handle = match self {
+            CachedProviderClient::Copilot(c) => {
+                rig::agent::ModelHandle::new(c.completion_model(model_name))
+            }
+            CachedProviderClient::OpenAi(c) => {
+                rig::agent::ModelHandle::new(c.completion_model(model_name))
+            }
+            CachedProviderClient::OpenAiCompletions(c) => {
+                rig::agent::ModelHandle::new(c.completion_model(model_name))
+            }
+            CachedProviderClient::Anthropic(c) => {
+                rig::agent::ModelHandle::new(c.completion_model(model_name))
+            }
+            CachedProviderClient::Ollama(c) => {
+                rig::agent::ModelHandle::new(c.completion_model(model_name))
+            }
+            CachedProviderClient::Mock(m) => rig::agent::ModelHandle::new(m.clone()),
+        };
+        Ok(handle)
+    }
 }
 
 pub type ClientCacheKey = (String, Option<String>, Option<String>, Option<u64>);

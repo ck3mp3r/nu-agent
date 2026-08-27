@@ -25,7 +25,7 @@ use crate::tools::handler::{
     AuthorizationFlowContext, McpToolRegistry, ToolSource, builtin_kinds::BuiltinKind,
     enforce_authorization_for_tool_call,
 };
-use crate::types::{ToolCall, ToolFunction};
+use crate::types::{ToolCall, ToolCallId, ToolFunction};
 
 pub(crate) fn resolve_tool_source(
     name: &str,
@@ -168,7 +168,10 @@ impl AsyncPermissionResolver for PolicyPermissionResolver {
             let args_json: JsonValue = serde_json::from_str(&arguments)
                 .unwrap_or(JsonValue::Object(serde_json::Map::new()));
             let call_id = tool_call_id.unwrap_or_else(|| "synthetic".to_string());
-            let tool_call = ToolCall::new(call_id, ToolFunction::new(tool_name.clone(), args_json));
+            let tool_call = ToolCall::new(
+                ToolCallId::new_or_mint(call_id),
+                ToolFunction::new(tool_name.clone(), args_json),
+            );
 
             let source = resolve_tool_source(&tool_name, &closure_registry, &mcp_registry);
             let flow_context = AuthorizationFlowContext {
@@ -323,7 +326,10 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
             let args_json: JsonValue = serde_json::from_str(&arguments)
                 .unwrap_or(JsonValue::Object(serde_json::Map::new()));
             let call_id = tool_call_id.unwrap_or_else(|| "synthetic".to_string());
-            let tool_call = ToolCall::new(call_id, ToolFunction::new(tool_name.clone(), args_json));
+            let tool_call = ToolCall::new(
+                ToolCallId::new_or_mint(call_id),
+                ToolFunction::new(tool_name.clone(), args_json),
+            );
 
             let source = resolve_tool_source(&tool_name, &closure_registry, &mcp_registry);
             let flow_context = AuthorizationFlowContext {

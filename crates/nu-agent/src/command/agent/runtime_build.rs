@@ -12,8 +12,9 @@ use nu_agent_core::conversation::runtime::AgentConversationRuntime;
 use nu_agent_core::protocol::preamble::{
     PreambleDefaults, UserPreambleInput, classify_model_family, resolve_preamble,
 };
-use nu_agent_core::session::SessionStoreImpl;
+use nu_agent_core::session::SessionStoreBackend;
 use nu_agent_core::tools::mcp::circuit_breaker::McpCircuitBreaker;
+use rig::agent::ModelHandle;
 
 fn get_string_flag(call: &EvaluatedCall, name: &str) -> Option<String> {
     call.get_flag(name)
@@ -350,12 +351,10 @@ pub(crate) struct RuntimeBuildParams {
     pub(crate) mcp_caller_cwd: Option<std::path::PathBuf>,
     pub(crate) mcp_registry: nu_agent_core::tools::handler::McpToolRegistry,
     pub(crate) engine: nu_plugin::EngineInterface,
-    pub(crate) store: Arc<SessionStoreImpl>,
+    pub(crate) store: Arc<SessionStoreBackend>,
     pub(crate) final_session_id: Option<String>,
-    pub(crate) context_window_max_tokens: u64,
-    pub(crate) compaction_threshold_pct: f64,
-    pub(crate) compaction_strategy: nu_agent_core::compaction::CompactionStrategy,
     pub(crate) compaction_params: nu_agent_core::compaction::CompactionParams,
+    pub(crate) proactive_threshold_pct: Option<f64>,
     pub(crate) base_permissions: nu_agent_core::tools::authz::PermissionsConfig,
     pub(crate) effective_permissions: nu_agent_core::tools::authz::PermissionsConfig,
     pub(crate) cli_permissions_overlay: Option<nu_agent_core::tools::authz::PermissionsOverlay>,
@@ -373,11 +372,14 @@ pub(crate) struct RuntimeBuildParams {
     pub(crate) bus: nu_agent_core::bus::Bus,
 }
 
-pub(crate) fn build_runtime(params: RuntimeBuildParams) -> AgentConversationRuntime {
+pub(crate) fn build_runtime(
+    params: RuntimeBuildParams,
+) -> Result<AgentConversationRuntime, LabeledError> {
+    use nu_agent_core::conversation::compaction::compactor::{NoopProgressUi, NuCompactor};
     use nu_agent_core::conversation::{
-        compaction::state::CompactionState, state::mcp::McpState, state::memory::MemoryState,
-        state::multi_agent::MultiAgentState, state::permission::PermissionState,
-        state::persona::PersonaState, state::provider::ProviderState, state::tool::ToolState,
+        state::mcp::McpState, state::memory::MemoryState, state::multi_agent::MultiAgentState,
+        state::permission::PermissionState, state::persona::PersonaState,
+        state::provider::ProviderState, state::tool::ToolState,
     };
 
     // CRITICAL: clone store BEFORE moving params.store into the struct literal
@@ -388,11 +390,62 @@ pub(crate) fn build_runtime(params: RuntimeBuildParams) -> AgentConversationRunt
         .config
         .max_tool_result_bytes
         .unwrap_or(defaults::MAX_TOOL_RESULT_BYTES);
+    // Resolve the context-window limit before params.config is moved. Used to
+    // compute the hook's compaction threshold.
+    let max_context_tokens = params
+        .config
+        .model_context_tokens
+        .or_else(|| params.config.max_context_tokens.map(|t| t as usize))
+        .unwrap_or(defaults::MAX_CONTEXT_TOKENS as usize);
 
-    AgentConversationRuntime {
+    // The shared model handle is the single point of model identity: the agent
+    // is built from it, the hook's `on_model_select` routes each turn to it,
+    // and the compactor summarizes with it. It is constructed eagerly at startup
+    // so it is ready for any operation (including `/compact` before the first
+    // turn), and rewritten by every `switch_model()`.
+    let mut provider = ProviderState::new(params.config, params.plugin_config);
+    provider
+        .ensure_client_cached()
+        .map_err(|e| LabeledError::new(format!("Failed to initialize model client: {e}")))?;
+    let handle = provider
+        .client()
+        .ok_or_else(|| LabeledError::new("client must be cached after ensure_client_cached"))?
+        .build_model_handle(&provider.config().model)
+        .map_err(|e| LabeledError::new(format!("Failed to build model handle: {e}")))?;
+    let shared_model: Arc<Mutex<ModelHandle>> = Arc::new(Mutex::new(handle));
+
+    // Compactor summarizes evicted messages with the shared model handle, so a
+    // `switch_model()` swap is visible to the next `compact()` call. It is a
+    // standalone service invoked directly by the hook's compaction logic.
+    let compactor = NuCompactor::from_shared_model(
+        Arc::clone(&shared_model),
+        NoopProgressUi,
+        params.bus.clone(),
+        None,
+    )
+    .with_store(Arc::clone(&store_for_session));
+
+    // The memory state holds the `CachedMemory` backend directly; all compaction
+    // logic lives in the hook.
+    let session = MemoryState::new(store_for_session);
+
+    // Threshold used by the hook to decide when to compact: proactive_threshold_pct
+    // (default 0.8) of model_context_tokens (falling back to max_context_tokens).
+    let threshold_pct = params
+        .proactive_threshold_pct
+        .unwrap_or(defaults::PROACTIVE_THRESHOLD_PCT);
+    let threshold_tokens = Some((max_context_tokens as f64 * threshold_pct) as usize);
+
+    let compaction = nu_agent_core::conversation::compaction::CompactionConfig {
+        compactor,
+        params: params.compaction_params,
+        threshold_tokens,
+    };
+
+    Ok(AgentConversationRuntime {
         runtime: params.runtime,
         tool_server_handle: params.tool_server_handle,
-        provider: ProviderState::new(params.config, params.plugin_config),
+        provider,
         tools: ToolState::new(
             params.tool_definitions,
             params.baseline_tool_definitions,
@@ -409,11 +462,6 @@ pub(crate) fn build_runtime(params: RuntimeBuildParams) -> AgentConversationRunt
         engine: params.engine,
         store: params.store,
         final_session_id: params.final_session_id,
-        compaction: CompactionState::new(
-            params.context_window_max_tokens,
-            params.compaction_threshold_pct,
-            params.compaction_strategy,
-        ),
         permission_state: PermissionState::new(
             params.base_permissions,
             params.effective_permissions,
@@ -421,7 +469,7 @@ pub(crate) fn build_runtime(params: RuntimeBuildParams) -> AgentConversationRunt
             nu_agent_core::tools::authz::SessionGrantCache::default(),
             params.permissions_startup_summary,
         ),
-        session: MemoryState::new(store_for_session),
+        session,
         persona: PersonaState::new(
             params.persona_body,
             params.agent_identity,
@@ -432,13 +480,15 @@ pub(crate) fn build_runtime(params: RuntimeBuildParams) -> AgentConversationRunt
             params.cached_sub_agent_instruction,
         ),
         multi_agent: MultiAgentState::new(params.available_agents, params.agents_config),
-        compaction_params: params.compaction_params,
         cwd: params.cwd,
         interactive_pending: None,
         circuit_breaker: Arc::new(Mutex::new(McpCircuitBreaker::default())),
         doom_state: Arc::new(Mutex::new(nu_agent_core::hook::DoomLoopState::default())),
+        last_total_tokens: Arc::new(Mutex::new(None)),
         bus: params.bus,
-    }
+        shared_model,
+        compaction,
+    })
 }
 
 #[cfg(test)]

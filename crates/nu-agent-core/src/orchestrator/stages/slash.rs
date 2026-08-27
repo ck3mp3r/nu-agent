@@ -1,23 +1,17 @@
-use crate::bus::{TurnEvent, WarningEvent};
+use crate::bus::{CompactionEvent, TurnEvent, WarningEvent};
 use crate::orchestrator::stages::{OrchestrationContext, SlashHandler};
-use crate::orchestrator::{PendingCompactionTrigger, UiStateEvent, WorkerCommand};
-use crate::protocol::compaction::CompactionTriggerSource;
+use crate::orchestrator::{UiStateEvent, WorkerCommand};
 use crate::protocol::contracts::SharedUiAction;
 use crate::protocol::slash::{SlashCommand, SlashParseResult, parse_slash_command};
 
 /// Processes slash commands and regular prompt submissions from the UI.
 ///
 /// Only processes prompts when the worker is idle.
-pub(crate) struct SlashStage {
-    /// Set when a `/compact` is dispatched; picked up by `CompactionStage`.
-    pending_compaction_trigger: Option<PendingCompactionTrigger>,
-}
+pub(crate) struct SlashStage;
 
 impl SlashStage {
     pub fn new() -> Self {
-        Self {
-            pending_compaction_trigger: None,
-        }
+        Self
     }
 }
 
@@ -29,22 +23,12 @@ impl SlashHandler for SlashStage {
 
         match parse_slash_command(&prompt) {
             SlashParseResult::Command(SlashCommand::Compact) => {
-                let (response_tx, response_rx) = tokio::sync::mpsc::channel(1);
-                if ctx
-                    .worker_tx
-                    .send(WorkerCommand::ExecuteCompactionTrigger {
-                        source: CompactionTriggerSource::SlashCompact,
-                        response_tx,
-                    })
-                    .await
-                    .is_ok()
-                {
-                    self.pending_compaction_trigger = Some(response_rx);
-                } else {
-                    let _ = ctx.bus.warning().send(WarningEvent::Message {
-                        message: "Compaction worker channel closed".to_string(),
-                    });
-                }
+                // Fire a compaction request on the bus. The orchestrator (the
+                // single subscriber) receives it and dispatches compaction to
+                // the worker asynchronously.
+                let _ = ctx.bus.compaction().send(CompactionEvent::Requested {
+                    source: "slash".to_string(),
+                });
             }
             SlashParseResult::Command(SlashCommand::New) => {
                 let _ = ctx.worker_tx.send(WorkerCommand::NewSession).await;
@@ -126,9 +110,5 @@ impl SlashHandler for SlashStage {
                 }
             }
         }
-    }
-
-    fn take_pending_compaction_trigger(&mut self) -> Option<PendingCompactionTrigger> {
-        self.pending_compaction_trigger.take()
     }
 }

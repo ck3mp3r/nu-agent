@@ -288,7 +288,7 @@ pub(crate) async fn run_tui_mode(
                             log::warn!("auto-complete failed for task {task_id}: {e}");
                         }
                     }
-                    Ok(TurnEvent::TurnCompleted { .. }) => {}
+                    Ok(TurnEvent::Completed { .. }) => {}
                     Ok(TurnEvent::Started { .. }) => {}
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,

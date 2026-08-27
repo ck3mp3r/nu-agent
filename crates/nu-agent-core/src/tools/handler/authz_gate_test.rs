@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use crate::types::{ToolCall, ToolFunction};
+use crate::types::{ToolCall, ToolCallId, ToolFunction};
 use serde_json::json;
 
 use super::*;
@@ -36,7 +36,7 @@ impl PermissionEventSink for NoopSink {
 
 fn make_tool_call(name: &str) -> ToolCall {
     ToolCall::new(
-        "test-id".to_string(),
+        ToolCallId::new_or_mint("test-id"),
         ToolFunction::new(name.to_string(), json!({})),
     )
 }

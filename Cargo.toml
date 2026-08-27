@@ -29,7 +29,7 @@ nu-protocol = "0.115.1"
 nu-parser = "0.115.1"
 
 # LLM / AI
-rig = { version = "0.41", default-features = false, features = ["derive", "rmcp", "test-utils"] }
+rig = { version = "0.42", default-features = false, features = ["derive", "rmcp", "test-utils"] }
 rmcp = { version = "2.2", default-features = false, features = [
   "client",
   "transport-child-process",

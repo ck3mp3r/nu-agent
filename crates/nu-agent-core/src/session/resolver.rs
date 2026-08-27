@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use crate::hook::agent_hook::is_tool_failure;
 use crate::protocol::contracts::UiMessageSnapshot;
-use crate::session::{CompactionMarker, Session, SessionStore, StoreEntry, extract_llm_context};
-use crate::types::{AssistantContent, Message, ToolResultContent, UserContent};
+use crate::session::{CompactionMarker, Session, SessionStore, StoreEntry};
+use crate::types::{AssistantContent, Message, ToolCallId, ToolResultContent, UserContent};
 use std::collections::HashMap;
 
 use crate::tools::handler::build_direct_tool_display;
@@ -120,17 +120,9 @@ impl<S: SessionStore + Clone + Send + Sync> SessionResolver for DefaultSessionRe
                         });
 
                     // Convert to UiMessageSnapshots for transcript display.
-                    // Estimate token count from extracted LLM context so that
-                    // compaction evaluation works correctly on re-attach.
-                    let llm_context = extract_llm_context(&entries);
-                    let estimated_tokens: u64 = llm_context
-                        .iter()
-                        .map(|msg| crate::compaction::helpers::estimate_tokens(msg) as u64)
-                        .sum();
-                    (
-                        hydrate_transcript_from_store_entries(&entries),
-                        Some(estimated_tokens),
-                    )
+                    // Token count is not estimated here — rig's CompactingMemory
+                    // tracks the context and last_total_tokens stays None on attach.
+                    (hydrate_transcript_from_store_entries(&entries), None)
                 } else {
                     (Vec::new(), None)
                 };
@@ -210,7 +202,7 @@ pub fn resolve_session_request(use_tui: bool, session_id: Option<String>) -> Ses
 ///
 /// This function maps store entry types to transcript display items:
 /// - `StoreEntry::Message` → delegated to `hydrate_single_message`
-/// - `StoreEntry::Marker` → compaction snapshot with strategy, counts, and summary text
+/// - `StoreEntry::Marker` → compaction snapshot with the summary text
 ///
 /// # Arguments
 /// * `entries` - Slice of StoreEntry from SessionStore::load()
@@ -222,8 +214,8 @@ pub(crate) fn hydrate_transcript_from_store_entries(
 ) -> Vec<UiMessageSnapshot> {
     // Pass 1: collect call_id → tool_name from all ToolCalls and
     //         call_id → success from all ToolResults (failure = is_tool_failure())
-    let mut tool_names: HashMap<String, String> = HashMap::new();
-    let mut tool_success_map: HashMap<String, bool> = HashMap::new();
+    let mut tool_names: HashMap<ToolCallId, String> = HashMap::new();
+    let mut tool_success_map: HashMap<ToolCallId, bool> = HashMap::new();
     for entry in entries {
         match entry {
             StoreEntry::Message(Message::Assistant { content, .. }) => {
@@ -239,7 +231,7 @@ pub(crate) fn hydrate_transcript_from_store_entries(
                         for c in tr.content.iter() {
                             if let ToolResultContent::Text(t) = c {
                                 let success = !is_tool_failure(&t.text);
-                                tool_success_map.insert(tr.id.clone(), success);
+                                tool_success_map.insert(tr.call.clone(), success);
                                 break;
                             }
                         }
@@ -264,37 +256,16 @@ pub(crate) fn hydrate_transcript_from_store_entries(
         .collect()
 }
 
-/// Maximum character length for the summary body in a hydrated compaction entry.
-const COMPACTION_SUMMARY_MAX_CHARS: usize = 500;
-
 /// Format a `CompactionMarker` into display content for the TUI transcript.
 ///
-/// Produces a stats header line followed by the (optionally truncated) summary body:
+/// Produces the full summary body:
 /// ```text
-/// 10 summarized · strategy: sliding_summary
-///
 /// Summary text here...
 /// ```
 ///
-/// If the summary is empty, only the stats header is emitted.
+/// If the summary is empty, an empty string is emitted.
 fn format_compaction_content(marker: &CompactionMarker) -> String {
-    let stats = format!(
-        "{} summarized · strategy: {}",
-        marker.summarized_count, marker.strategy
-    );
-
-    let body = marker.summary.trim();
-    if body.is_empty() {
-        stats
-    } else {
-        let truncated: String = body.chars().take(COMPACTION_SUMMARY_MAX_CHARS).collect();
-        let ellipsis = if body.chars().count() > COMPACTION_SUMMARY_MAX_CHARS {
-            "…"
-        } else {
-            ""
-        };
-        format!("{stats}\n\n{truncated}{ellipsis}")
-    }
+    marker.summary.trim().to_string()
 }
 
 /// Converts a single rig Message into UiMessageSnapshots.
@@ -307,8 +278,8 @@ fn format_compaction_content(marker: &CompactionMarker) -> String {
 /// - `Message::System { content }` → system/compaction summary display
 pub(crate) fn hydrate_single_message(
     msg: &Message,
-    tool_names: &HashMap<String, String>,
-    tool_success_map: &HashMap<String, bool>,
+    tool_names: &HashMap<ToolCallId, String>,
+    tool_success_map: &HashMap<ToolCallId, bool>,
 ) -> Vec<UiMessageSnapshot> {
     let mut snapshots = Vec::new();
 
@@ -320,7 +291,7 @@ pub(crate) fn hydrate_single_message(
                         snapshots.push(UiMessageSnapshot::new("user", text.text.clone()));
                     }
                     UserContent::ToolResult(tr) => {
-                        if let Some(tool_name) = tool_names.get(&tr.id) {
+                        if let Some(tool_name) = tool_names.get(&tr.call) {
                             let result_text: String = tr
                                 .content
                                 .iter()

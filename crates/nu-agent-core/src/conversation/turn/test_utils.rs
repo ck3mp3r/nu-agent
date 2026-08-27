@@ -7,11 +7,71 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::bus::Bus;
+use crate::compaction::CompactionParams;
 use crate::config::Config;
 use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
 use crate::protocol::contracts::ProgressUi;
 use crate::protocol::event::UiEvent;
+use rig::agent::ModelHandle;
+use rig::test_utils::MockCompletionModel;
 use tokio::sync::mpsc;
+
+// ---------------------------------------------------------------------------
+// Compaction test defaults
+// ---------------------------------------------------------------------------
+
+/// A `NuCompactor<FsSessionStore>` (no marker store) with a deterministic
+/// streaming mock model so compaction never invokes a real LLM.
+pub(super) fn test_compactor(
+    bus: Bus,
+) -> crate::conversation::compaction::compactor::NuCompactor<crate::session::FsSessionStore> {
+    use crate::conversation::compaction::compactor::{NoopProgressUi, NuCompactor};
+    let turns: Vec<Vec<rig::test_utils::MockStreamEvent>> = (0..8)
+        .map(|_| {
+            vec![
+                rig::test_utils::MockStreamEvent::Text("summary".to_string()),
+                rig::test_utils::MockStreamEvent::final_response_with_default_usage(),
+            ]
+        })
+        .collect();
+    let model = MockCompletionModel::from_stream_turns(turns);
+    NuCompactor::from_shared_model(
+        Arc::new(std::sync::Mutex::new(ModelHandle::new(model))),
+        NoopProgressUi,
+        bus,
+        None,
+    )
+}
+
+/// A `CompactionConfig<FsSessionStore>` with deterministic defaults (no LLM
+/// invoked) used by tests that are not exercising compaction.
+pub(super) fn test_compaction_config(
+    bus: Bus,
+) -> crate::conversation::compaction::CompactionConfig<crate::session::FsSessionStore> {
+    crate::conversation::compaction::CompactionConfig {
+        compactor: test_compactor(bus.clone()),
+        params: CompactionParams::default(),
+        threshold_tokens: None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Shared model handle helper
+// ---------------------------------------------------------------------------
+
+/// Build a shared `Arc<Mutex<ModelHandle>>` wrapping a deterministic mock model.
+pub(super) fn shared_mock_model_handle() -> Arc<std::sync::Mutex<ModelHandle>> {
+    Arc::new(std::sync::Mutex::new(ModelHandle::new(
+        MockCompletionModel::text("summary"),
+    )))
+}
+
+/// Wrap a specific `MockCompletionModel` in a shared `Arc<Mutex<ModelHandle>>`.
+pub(super) fn shared_model_handle(
+    model: MockCompletionModel,
+) -> Arc<std::sync::Mutex<ModelHandle>> {
+    Arc::new(std::sync::Mutex::new(ModelHandle::new(model)))
+}
 
 // ---------------------------------------------------------------------------
 // MockUi

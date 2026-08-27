@@ -12,11 +12,9 @@ use tokio::sync::mpsc;
 
 use crate::bus::{Bus, LlmEvent, TurnEvent};
 use crate::config::{Config, defaults};
+use crate::conversation::compaction::CompactionConfig;
 use crate::conversation::managers::SessionManager;
-use crate::conversation::providers::{CachedProviderClient, ModelVisitor};
-use crate::conversation::turn::{
-    TurnContext, TurnResult, error, execute_turn, execute_turn_with_channel,
-};
+use crate::conversation::turn::{TurnContext, error, execute_turn, execute_turn_with_channel};
 use crate::hook::agent_hook::DoomLoopState;
 use crate::hook::permission_resolver::AsyncPermissionResolver;
 use crate::protocol::contracts::ProgressUi;
@@ -58,6 +56,7 @@ pub struct TurnResponseData {
 }
 
 /// Groups the tool infrastructure fields always passed through to TurnContext.
+#[derive(Clone)]
 pub struct ToolInfra {
     pub closure_registry: Arc<ClosureRegistry>,
     pub mcp_registry: Arc<McpToolRegistry>,
@@ -65,28 +64,52 @@ pub struct ToolInfra {
     pub visible_tool_definitions: Vec<ToolDefinition>,
     pub circuit_breaker: Arc<Mutex<McpCircuitBreaker>>,
     pub doom_state: Arc<Mutex<DoomLoopState>>,
+    /// Real token count from the last LLM completion, shared across turns. Used by
+    /// the hook's compaction threshold check.
+    pub last_total_tokens: Arc<Mutex<Option<u64>>>,
     /// Shared cancellation bus threaded through the turn pipeline.
     pub bus: Bus,
 }
 
-pub struct TurnExecutor<'a, S: SessionManager> {
+pub struct TurnExecutor<
+    'a,
+    S: SessionManager,
+    ST: SessionStore + Clone + Send + Sync = crate::session::SessionStoreBackend,
+> {
     pub config: &'a Config,
     pub memory_state: &'a mut S,
     pub tool_infra: ToolInfra,
+    /// Shared runtime model handle used to build each turn's agent and route
+    /// model selection. Cloned into every `TurnConversation`. It is constructed
+    /// eagerly at startup.
+    pub shared_model: Arc<Mutex<rig::agent::ModelHandle>>,
+    /// Hook-driven compaction machinery: compactor, policy, force flag, threshold.
+    pub compaction: CompactionConfig<ST>,
     /// Stored after a completed turn so the delegate can extract it for response formatting.
     response_data: Option<TurnResponseData>,
 }
 
-impl<'a, ST, S> TurnExecutor<'a, S>
+impl<'a, ST, S> TurnExecutor<'a, S, ST>
 where
     ST: SessionStore + Clone + Send + Sync + 'static,
-    S: SessionManager<Memory = CachedMemory<ST>>,
+    S: SessionManager<
+            Memory = crate::conversation::state::memory::MemoryOf<ST>,
+            InnerMemory = CachedMemory<ST>,
+        >,
 {
-    pub fn new(config: &'a Config, memory_state: &'a mut S, tool_infra: ToolInfra) -> Self {
+    pub fn new(
+        config: &'a Config,
+        memory_state: &'a mut S,
+        tool_infra: ToolInfra,
+        shared_model: Arc<Mutex<rig::agent::ModelHandle>>,
+        compaction: CompactionConfig<ST>,
+    ) -> Self {
         Self {
             config,
             memory_state,
             tool_infra,
+            shared_model,
+            compaction,
             response_data: None,
         }
     }
@@ -110,7 +133,6 @@ where
         &mut self,
         ui: &mut U,
         input: ExecuteInput,
-        cached_client: &CachedProviderClient,
         permission_resolver: P,
         final_session_id: Option<&str>,
         mut ui_channel: Option<(
@@ -134,8 +156,6 @@ where
             )
         };
 
-        let model_name = self.config.model.clone();
-
         // Save tool definitions for retry (std::mem::take consumes them on each attempt)
         let saved_tool_definitions = self.tool_infra.visible_tool_definitions.clone();
 
@@ -153,36 +173,44 @@ where
                 .expect("doom loop mutex poisoned")
                 .reset();
 
-            let result = cached_client
-                .with_model(
-                    &model_name,
-                    TurnVisitor {
-                        memory: self.memory_state.memory(),
-                        config: self.config,
-                        permission_resolver: permission_resolver.clone(),
-                        closure_registry: self.tool_infra.closure_registry.clone(),
-                        mcp_registry: self.tool_infra.mcp_registry.clone(),
-                        tool_server_handle: &self.tool_infra.tool_server_handle,
-                        ui,
-                        prompt: prompt.clone(),
-                        conversation_id: conversation_id.clone(),
-                        has_session: final_session_id.is_some(),
-                        preamble: preamble.clone(),
-                        visible_tool_definitions: std::mem::take(
-                            &mut self.tool_infra.visible_tool_definitions,
-                        ),
-                        // Only pass the channel on the first attempt; retries create their own internally
-                        ui_channel: if attempt == 0 {
-                            ui_channel.take()
-                        } else {
-                            None
-                        },
-                        circuit_breaker: self.tool_infra.circuit_breaker.clone(),
-                        doom_state: self.tool_infra.doom_state.clone(),
-                        bus: self.tool_infra.bus.clone(),
-                    },
-                )
-                .await;
+            let turn_ctx = TurnContext::new(
+                super::TurnConversation {
+                    memory: Arc::clone(self.memory_state.memory()),
+                    conversation_id: conversation_id.clone(),
+                    has_session: final_session_id.is_some(),
+                    shared_model: self.shared_model.clone(),
+                    compaction: self.compaction.clone(),
+                },
+                super::TurnInput {
+                    prompt: prompt.clone(),
+                    preamble: preamble.as_deref(),
+                    max_turns: self.config.max_tool_turns,
+                },
+                ToolInfra {
+                    closure_registry: self.tool_infra.closure_registry.clone(),
+                    mcp_registry: self.tool_infra.mcp_registry.clone(),
+                    tool_server_handle: self.tool_infra.tool_server_handle.clone(),
+                    visible_tool_definitions: std::mem::take(
+                        &mut self.tool_infra.visible_tool_definitions,
+                    ),
+                    circuit_breaker: self.tool_infra.circuit_breaker.clone(),
+                    doom_state: self.tool_infra.doom_state.clone(),
+                    last_total_tokens: self.tool_infra.last_total_tokens.clone(),
+                    bus: self.tool_infra.bus.clone(),
+                },
+                self.config,
+            );
+
+            // Only pass the pre-built channel on the first attempt; retries create
+            // their own internally.
+            let result = if attempt == 0
+                && let Some((ui_tx, ui_rx)) = ui_channel.take()
+            {
+                execute_turn_with_channel(turn_ctx, ui, permission_resolver.clone(), ui_tx, ui_rx)
+                    .await
+            } else {
+                execute_turn(turn_ctx, ui, permission_resolver.clone()).await
+            };
 
             match &result {
                 Err((
@@ -572,7 +600,7 @@ where
                     }
                 }
             }
-            let _ = self.tool_infra.bus.turn().send(TurnEvent::TurnCompleted {
+            let _ = self.tool_infra.bus.turn().send(TurnEvent::Completed {
                 tool_calls: turn_result.tool_call_count,
             });
             ui.flush();
@@ -616,7 +644,7 @@ where
                 text: turn_result.text.clone(),
             });
         }
-        let _ = self.tool_infra.bus.turn().send(TurnEvent::TurnCompleted {
+        let _ = self.tool_infra.bus.turn().send(TurnEvent::Completed {
             tool_calls: turn_result.tool_call_count,
         });
         ui.flush();
@@ -635,82 +663,6 @@ where
 // ---------------------------------------------------------------------------
 // TurnVisitor — module-level so it can be generic over P: AsyncPermissionResolver
 // ---------------------------------------------------------------------------
-
-struct TurnVisitor<'a, 'b, ST, U, P>
-where
-    ST: SessionStore + Clone + Send + Sync + 'static,
-{
-    memory: &'b CachedMemory<ST>,
-    config: &'a Config,
-    permission_resolver: P,
-    closure_registry: Arc<ClosureRegistry>,
-    mcp_registry: Arc<McpToolRegistry>,
-    tool_server_handle: &'a rig::tool::server::ToolServerHandle,
-    ui: &'a mut U,
-    prompt: String,
-    conversation_id: String,
-    /// Whether this turn belongs to a persistent session.
-    ///
-    /// Threaded into `TurnConversation` so `build_agent_and_stream` can skip
-    /// `.memory()` for transient invocations and avoid writing orphan JSONL files.
-    has_session: bool,
-    preamble: Option<String>,
-    visible_tool_definitions: Vec<ToolDefinition>,
-    /// Pre-built channel for interactive (TUI) mode so the resolver's `ui_tx`
-    /// and the drain loop's `ui_rx` share the same tokio unbounded channel.
-    /// `None` for TTY/policy mode (channel created internally by `execute_turn`).
-    ui_channel: Option<(
-        mpsc::UnboundedSender<UiEvent>,
-        mpsc::UnboundedReceiver<UiEvent>,
-    )>,
-    circuit_breaker: Arc<Mutex<McpCircuitBreaker>>,
-    doom_state: Arc<Mutex<DoomLoopState>>,
-    bus: Bus,
-}
-
-impl<ST, U, P> ModelVisitor for TurnVisitor<'_, '_, ST, U, P>
-where
-    ST: SessionStore + Clone + Send + Sync + 'static,
-    U: ProgressUi + Send,
-    P: AsyncPermissionResolver,
-{
-    type Output = Result<TurnResult, (crate::conversation::turn::TurnError, error::TurnContext)>;
-
-    async fn visit<M>(self, model: M) -> Self::Output
-    where
-        M: rig::completion::CompletionModel + Clone + 'static,
-    {
-        let turn_ctx = TurnContext::new(
-            model,
-            super::TurnConversation {
-                memory: self.memory.clone(),
-                conversation_id: self.conversation_id,
-                has_session: self.has_session,
-            },
-            super::TurnInput {
-                prompt: self.prompt,
-                preamble: self.preamble.as_deref(),
-                max_turns: self.config.max_tool_turns,
-            },
-            ToolInfra {
-                closure_registry: self.closure_registry.clone(),
-                mcp_registry: self.mcp_registry.clone(),
-                tool_server_handle: self.tool_server_handle.clone(),
-                visible_tool_definitions: self.visible_tool_definitions,
-                circuit_breaker: self.circuit_breaker.clone(),
-                doom_state: self.doom_state.clone(),
-                bus: self.bus.clone(),
-            },
-            self.config,
-        );
-        if let Some((ui_tx, ui_rx)) = self.ui_channel {
-            execute_turn_with_channel(turn_ctx, self.ui, self.permission_resolver, ui_tx, ui_rx)
-                .await
-        } else {
-            execute_turn(turn_ctx, self.ui, self.permission_resolver).await
-        }
-    }
-}
 
 /// If the last message in `messages` is a `User` message whose content
 /// consists entirely of `ToolResult` items, appends a synthetic assistant

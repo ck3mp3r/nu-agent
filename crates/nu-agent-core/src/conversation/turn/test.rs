@@ -7,19 +7,20 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use rig::one_or_many::OneOrMany;
 use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
 use super::*;
 use crate::config::Config;
+use crate::conversation::state::memory::MemoryOf;
 use crate::hook::agent_hook::DoomLoopState;
 use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
-use crate::session::{CachedMemory, FsSessionStore};
+use crate::session::FsSessionStore;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
 use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
 use crate::types::{
-    AssistantContent, Message, Text, ToolCall, ToolFunction, ToolResultContent, UserContent,
+    AssistantContent, Message, Text, ToolCall, ToolCallId, ToolFunction, ToolResultContent,
+    UserContent,
 };
 
 pub(crate) fn default_circuit_breaker() -> Arc<std::sync::Mutex<McpCircuitBreaker>> {
@@ -28,6 +29,50 @@ pub(crate) fn default_circuit_breaker() -> Arc<std::sync::Mutex<McpCircuitBreake
 
 pub(crate) fn default_doom_state() -> Arc<std::sync::Mutex<DoomLoopState>> {
     Arc::new(std::sync::Mutex::new(DoomLoopState::default()))
+}
+
+/// A `last_total_tokens` slot starting at `None` (no real token count yet).
+pub(crate) fn default_last_total_tokens() -> Arc<std::sync::Mutex<Option<u64>>> {
+    Arc::new(std::sync::Mutex::new(None))
+}
+
+/// Build a `MemoryOf<FsSessionStore>` over a tempdir store (no compaction —
+/// `CachedMemory` is used directly).
+fn make_compacting_memory() -> (tempfile::TempDir, MemoryOf<FsSessionStore>) {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let store = Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
+    let memory = Arc::new(crate::session::CachedMemory::new(store));
+    (temp_dir, memory)
+}
+
+/// Build a `CompactionConfig<FsSessionStore>` (no marker store) with a
+/// deterministic streaming mock model so compaction never invokes a real LLM.
+fn test_compaction_config(
+    bus: crate::bus::Bus,
+) -> crate::conversation::compaction::CompactionConfig<FsSessionStore> {
+    use crate::conversation::compaction::compactor::{NoopProgressUi, NuCompactor};
+    use rig::agent::ModelHandle;
+    use rig::test_utils::MockCompletionModel;
+
+    let turns: Vec<Vec<rig::test_utils::MockStreamEvent>> = (0..8)
+        .map(|_| {
+            vec![
+                rig::test_utils::MockStreamEvent::Text("summary".to_string()),
+                rig::test_utils::MockStreamEvent::final_response_with_default_usage(),
+            ]
+        })
+        .collect();
+    let model = MockCompletionModel::from_stream_turns(turns);
+    crate::conversation::compaction::CompactionConfig {
+        compactor: NuCompactor::from_shared_model(
+            std::sync::Arc::new(std::sync::Mutex::new(ModelHandle::new(model))),
+            NoopProgressUi,
+            bus.clone(),
+            None,
+        ),
+        params: crate::compaction::CompactionParams::default(),
+        threshold_tokens: None,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -131,17 +176,18 @@ impl ProgressUi for MockUi {
 // ---------------------------------------------------------------------------
 
 fn make_turn_context<'a>(
-    model: MockCompletionModel,
+    shared_model: std::sync::Arc<std::sync::Mutex<rig::agent::ModelHandle>>,
     config: &'a Config,
     bus: crate::bus::Bus,
-) -> TurnContext<'a, FsSessionStore, MockCompletionModel> {
-    let temp_dir = tempfile::tempdir().expect("tempdir");
-    let store = Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
-    let memory = CachedMemory::<FsSessionStore>::new(store);
+) -> TurnContext<'a, FsSessionStore> {
+    let (temp_dir, memory) = make_compacting_memory();
+    let _keep_alive = temp_dir;
     let conversation = TurnConversation {
         memory,
         conversation_id: "test-conv".to_string(),
         has_session: true,
+        shared_model,
+        compaction: test_compaction_config(bus.clone()),
     };
     let input = TurnInput {
         prompt: "Hello".to_string(),
@@ -155,9 +201,18 @@ fn make_turn_context<'a>(
         visible_tool_definitions: vec![],
         circuit_breaker: default_circuit_breaker(),
         doom_state: default_doom_state(),
+        last_total_tokens: default_last_total_tokens(),
         bus,
     };
-    TurnContext::new(model, conversation, input, tool_infra, config)
+    TurnContext::new(conversation, input, tool_infra, config)
+}
+
+/// Wrap a `MockCompletionModel` in the shared `Arc<Mutex<ModelHandle>>` so
+/// the agent (built from the handle) and the hook route to the scripted model.
+fn shared_handle(
+    model: MockCompletionModel,
+) -> std::sync::Arc<std::sync::Mutex<rig::agent::ModelHandle>> {
+    std::sync::Arc::new(std::sync::Mutex::new(rig::agent::ModelHandle::new(model)))
 }
 
 // ---------------------------------------------------------------------------
@@ -169,11 +224,11 @@ fn make_turn_context<'a>(
 async fn execute_turn_text_only_response() {
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("Hello, world!".to_string()),
-        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+        MockStreamEvent::final_response_with_default_usage(),
     ]]);
 
     let config = Config::default();
-    let ctx = make_turn_context(model, &config, crate::bus::create_bus());
+    let ctx = make_turn_context(shared_handle(model), &config, crate::bus::create_bus());
     let mut ui = MockUi::new();
     let resolver = MockResolver(PermissionDecision::Allow);
 
@@ -199,12 +254,12 @@ async fn execute_turn_text_only_response() {
 async fn execute_turn_cancel_returns_cancelled_true() {
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("partial".to_string()),
-        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+        MockStreamEvent::final_response_with_default_usage(),
     ]]);
 
     let config = Config::default();
     let bus = crate::bus::create_bus();
-    let ctx = make_turn_context(model, &config, bus.clone());
+    let ctx = make_turn_context(shared_handle(model), &config, bus.clone());
     let mut ui = MockUi::immediately_cancelled(bus);
     let resolver = MockResolver(PermissionDecision::Allow);
 
@@ -221,14 +276,14 @@ async fn execute_turn_cancel_returns_cancelled_true() {
 async fn execute_turn_with_additional_params_succeeds() {
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("OK".to_string()),
-        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+        MockStreamEvent::final_response_with_default_usage(),
     ]]);
 
     let config = Config {
         additional_params: Some(serde_json::json!({"thinking": {"type": "disabled"}})),
         ..Config::default()
     };
-    let ctx = make_turn_context(model, &config, crate::bus::create_bus());
+    let ctx = make_turn_context(shared_handle(model), &config, crate::bus::create_bus());
     let mut ui = MockUi::new();
     let resolver = MockResolver(PermissionDecision::Allow);
 
@@ -296,10 +351,10 @@ fn turn_error_can_be_constructed() {
 #[test]
 fn prompt_cancelled_error_is_detected_as_cancellation() {
     let user_msg = Message::User {
-        content: OneOrMany::one(UserContent::Text(Text {
+        content: vec![UserContent::Text(Text {
             text: "Hello".to_string(),
             additional_params: None,
-        })),
+        })],
     };
     let err = rig::completion::PromptError::PromptCancelled {
         chat_history: vec![user_msg],
@@ -345,10 +400,10 @@ fn max_turns_error_is_not_cancelled() {
         max_turns: 10,
         chat_history: Box::new(vec![]),
         prompt: Box::new(Message::User {
-            content: OneOrMany::one(UserContent::Text(Text {
+            content: vec![UserContent::Text(Text {
                 text: "test".to_string(),
                 additional_params: None,
-            })),
+            })],
         }),
     };
 
@@ -367,12 +422,10 @@ fn turn_context_always_has_tool_server_handle() {
     let _handle_clone = handle.clone();
 }
 
-/// Test that TurnContext uses CachedMemory<FsSessionStore>.
+/// Test that TurnContext uses CompactingMemoryOf<FsSessionStore>.
 #[test]
-fn turn_context_uses_memory_instead_of_history_vec() {
-    let temp_dir = tempfile::tempdir().expect("tempdir");
-    let store = Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
-    let memory = CachedMemory::<FsSessionStore>::new(store);
+fn turn_context_uses_compacting_memory() {
+    let (_temp_dir, memory) = make_compacting_memory();
     let conversation_id = "test-conversation-123".to_string();
     let _memory_clone = memory.clone();
     let _id_clone = conversation_id.clone();
@@ -382,10 +435,10 @@ fn turn_context_uses_memory_instead_of_history_vec() {
 #[test]
 fn streaming_error_from_prompt_cancelled_captures_messages() {
     let user_msg = Message::User {
-        content: OneOrMany::one(UserContent::Text(Text {
+        content: vec![UserContent::Text(Text {
             text: "Tell me about async".to_string(),
             additional_params: None,
-        })),
+        })],
     };
 
     let inner = rig::completion::PromptError::PromptCancelled {
@@ -473,17 +526,17 @@ async fn filtered_tool_proxy_cancels_during_execution() {
 #[test]
 fn turn_error_from_prompt_cancelled_captures_messages() {
     let user_msg = Message::User {
-        content: OneOrMany::one(UserContent::Text(Text {
+        content: vec![UserContent::Text(Text {
             text: "What is Rust?".to_string(),
             additional_params: None,
-        })),
+        })],
     };
     let assistant_msg = Message::Assistant {
         id: None,
-        content: OneOrMany::one(AssistantContent::Text(Text {
+        content: vec![AssistantContent::Text(Text {
             text: "Rust is a systems programming...".to_string(),
             additional_params: None,
-        })),
+        })],
     };
 
     let err = rig::completion::PromptError::PromptCancelled {
@@ -660,37 +713,38 @@ fn cancel_mid_tool_call_preserves_tool_call_and_tool_result_in_history() {
     let mut chat_history: Vec<Message> = Vec::new();
 
     chat_history.push(Message::User {
-        content: OneOrMany::one(UserContent::Text(Text {
+        content: vec![UserContent::Text(Text {
             text: "What is in /etc/hosts?".to_string(),
             additional_params: None,
-        })),
+        })],
     });
 
     chat_history.push(Message::Assistant {
         id: None,
-        content: OneOrMany::one(AssistantContent::ToolCall(ToolCall {
-            id: "call_abc123".to_string(),
-            call_id: None,
+        content: vec![AssistantContent::ToolCall(ToolCall {
+            id: ToolCallId::new_or_mint("call_abc123"),
+            provider: None,
             signature: None,
             additional_params: None,
             function: ToolFunction {
                 name: "read_file".to_string(),
                 arguments: json!({ "path": "/etc/hosts" }),
             },
-        })),
+        })],
     });
 
     chat_history.push(Message::User {
-        content: OneOrMany::one(UserContent::ToolResult(
+        content: vec![UserContent::ToolResult(
             rig::completion::message::ToolResult {
-                id: "call_abc123".to_string(),
-                call_id: None,
-                content: OneOrMany::one(ToolResultContent::Text(Text {
+                call: ToolCallId::new_or_mint("call_abc123"),
+                provider: None,
+                name: "read_file".into(),
+                content: vec![ToolResultContent::Text(Text {
                     text: "file contents here".to_string(),
                     additional_params: None,
-                })),
+                })],
             },
-        )),
+        )],
     });
 
     let err = rig::completion::PromptError::PromptCancelled {
@@ -739,69 +793,71 @@ fn cancel_preserves_multiple_tool_use_cycles() {
 
     // First tool-use cycle
     chat_history.push(Message::User {
-        content: OneOrMany::one(UserContent::Text(Text {
+        content: vec![UserContent::Text(Text {
             text: "List files".to_string(),
             additional_params: None,
-        })),
+        })],
     });
     chat_history.push(Message::Assistant {
         id: None,
-        content: OneOrMany::one(AssistantContent::ToolCall(ToolCall {
-            id: "call_001".to_string(),
-            call_id: None,
+        content: vec![AssistantContent::ToolCall(ToolCall {
+            id: ToolCallId::new_or_mint("call_001"),
+            provider: None,
             signature: None,
             additional_params: None,
             function: ToolFunction {
                 name: "list_dir".to_string(),
                 arguments: json!({ "path": "/" }),
             },
-        })),
+        })],
     });
     chat_history.push(Message::User {
-        content: OneOrMany::one(UserContent::ToolResult(
+        content: vec![UserContent::ToolResult(
             rig::completion::message::ToolResult {
-                id: "call_001".to_string(),
-                call_id: None,
-                content: OneOrMany::one(ToolResultContent::Text(Text {
+                call: ToolCallId::new_or_mint("call_001"),
+                provider: None,
+                name: "list_dir".into(),
+                content: vec![ToolResultContent::Text(Text {
                     text: "/bin /usr /etc".to_string(),
                     additional_params: None,
-                })),
+                })],
             },
-        )),
+        )],
     });
 
     // Second tool-use cycle
     chat_history.push(Message::Assistant {
         id: None,
-        content: OneOrMany::one(AssistantContent::Text(Text {
+        content: vec![AssistantContent::Text(Text {
             text: "Now read that file".to_string(),
             additional_params: None,
-        })),
+        })],
     });
     chat_history.push(Message::Assistant {
         id: None,
-        content: OneOrMany::one(AssistantContent::ToolCall(ToolCall {
-            id: "call_002".to_string(),
-            call_id: None,
+        content: vec![AssistantContent::ToolCall(ToolCall {
+            id: ToolCallId::new_or_mint("call_002"),
+            provider: None,
             signature: None,
             additional_params: None,
             function: ToolFunction {
                 name: "read_file".to_string(),
                 arguments: json!({ "path": "/etc/passwd" }),
             },
-        })),
+        })],
     });
     chat_history.push(Message::User {
-        content: OneOrMany::one(UserContent::ToolResult(
+        content: vec![UserContent::ToolResult(
             rig::completion::message::ToolResult {
-                id: "call_002".to_string(),
-                call_id: None,
-                content: OneOrMany::one(ToolResultContent::Text(Text {
+                call: ToolCallId::new_or_mint("call_002"),
+                provider: None,
+                name: "read_file".into(),
+                content: vec![ToolResultContent::Text(Text {
                     text: "root:x:0:0:root user".to_string(),
                     additional_params: None,
-                })),
+                })],
             },
-        )),
+        )],
     });
 
     let err = rig::completion::PromptError::PromptCancelled {
@@ -839,11 +895,12 @@ fn cancel_preserves_multiple_tool_use_cycles() {
 /// `has_session = false`, so `memory.append()` is never called.
 #[tokio::test]
 async fn transient_turn_does_not_write_jsonl() {
-    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let (temp_dir, memory) = make_compacting_memory();
     let sessions_path = temp_dir.path().to_path_buf();
-
-    let store = Arc::new(FsSessionStore::new(sessions_path.clone()));
-    let memory = CachedMemory::<FsSessionStore>::new(store);
+    let model = MockCompletionModel::from_stream_turns([[
+        MockStreamEvent::Text("Hello, world!".to_string()),
+        MockStreamEvent::final_response_with_default_usage(),
+    ]]);
     let conversation = TurnConversation {
         memory,
         conversation_id: format!(
@@ -854,6 +911,8 @@ async fn transient_turn_does_not_write_jsonl() {
                 .as_millis()
         ),
         has_session: false,
+        shared_model: shared_handle(model),
+        compaction: test_compaction_config(crate::bus::create_bus()),
     };
     let input = TurnInput {
         prompt: "Hello".to_string(),
@@ -867,14 +926,11 @@ async fn transient_turn_does_not_write_jsonl() {
         visible_tool_definitions: vec![],
         circuit_breaker: default_circuit_breaker(),
         doom_state: default_doom_state(),
+        last_total_tokens: default_last_total_tokens(),
         bus: crate::bus::create_bus(),
     };
-    let model = MockCompletionModel::from_stream_turns([[
-        MockStreamEvent::Text("Hello, world!".to_string()),
-        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
-    ]]);
     let config = Config::default();
-    let ctx = TurnContext::new(model, conversation, input, tool_infra, &config);
+    let ctx = TurnContext::new(conversation, input, tool_infra, &config);
     let mut ui = MockUi::new();
     let resolver = MockResolver(PermissionDecision::Allow);
 
@@ -902,16 +958,20 @@ async fn transient_turn_does_not_write_jsonl() {
 /// sessions — only transient invocations are exempted.
 #[tokio::test]
 async fn persistent_turn_writes_jsonl() {
-    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let (temp_dir, memory) = make_compacting_memory();
     let sessions_path = temp_dir.path().to_path_buf();
     let session_id = "test-persistent-session";
 
-    let store = Arc::new(FsSessionStore::new(sessions_path.clone()));
-    let memory = CachedMemory::<FsSessionStore>::new(store);
+    let model = MockCompletionModel::from_stream_turns([[
+        MockStreamEvent::Text("Hello from LLM!".to_string()),
+        MockStreamEvent::final_response_with_default_usage(),
+    ]]);
     let conversation = TurnConversation {
         memory,
         conversation_id: session_id.to_string(),
         has_session: true,
+        shared_model: shared_handle(model),
+        compaction: test_compaction_config(crate::bus::create_bus()),
     };
     let input = TurnInput {
         prompt: "Hello".to_string(),
@@ -925,14 +985,11 @@ async fn persistent_turn_writes_jsonl() {
         visible_tool_definitions: vec![],
         circuit_breaker: default_circuit_breaker(),
         doom_state: default_doom_state(),
+        last_total_tokens: default_last_total_tokens(),
         bus: crate::bus::create_bus(),
     };
-    let model = MockCompletionModel::from_stream_turns([[
-        MockStreamEvent::Text("Hello from LLM!".to_string()),
-        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
-    ]]);
     let config = Config::default();
-    let ctx = TurnContext::new(model, conversation, input, tool_infra, &config);
+    let ctx = TurnContext::new(conversation, input, tool_infra, &config);
     let mut ui = MockUi::new();
     let resolver = MockResolver(PermissionDecision::Allow);
 

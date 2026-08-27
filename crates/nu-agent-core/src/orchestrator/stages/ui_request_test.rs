@@ -15,7 +15,6 @@ use crate::session::SessionInfo;
 struct CtxState {
     worker_active: bool,
     pending: Option<PendingPermissions>,
-    should_evaluate_compaction: bool,
     active_external_prompt: Option<String>,
     active_external_task_id: Option<String>,
     pending_external_cancel: Option<String>,
@@ -69,7 +68,6 @@ impl Harness {
             ctx_state: CtxState {
                 worker_active: false,
                 pending: None,
-                should_evaluate_compaction: true,
                 active_external_prompt: None,
                 active_external_task_id: None,
                 pending_external_cancel: None,
@@ -109,7 +107,6 @@ fn make_ctx<'a>(
         concurrent_response_tx: concurrent_tx,
         pending: &state.pending,
         worker_active: &mut state.worker_active,
-        should_evaluate_compaction: &mut state.should_evaluate_compaction,
         span: Span::test_data(),
         active_external_prompt: &mut state.active_external_prompt,
         active_external_task_id: &mut state.active_external_task_id,

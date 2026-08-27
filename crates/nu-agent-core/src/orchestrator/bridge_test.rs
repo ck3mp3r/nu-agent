@@ -8,7 +8,7 @@ use crate::protocol::event::{PermissionDecision, PermissionRequestContext, UiEve
 
 #[test]
 fn tool_start_is_ignored() {
-    let event = UiEvent::ToolStart {
+    let event = UiEvent::ToolStarted {
         name: "shell".into(),
         source: "builtin".into(),
         arguments: "{}".into(),
@@ -18,7 +18,7 @@ fn tool_start_is_ignored() {
 
 #[test]
 fn tool_end_is_ignored() {
-    let event = UiEvent::ToolEnd {
+    let event = UiEvent::ToolCompleted {
         name: "shell".into(),
         source: "builtin".into(),
         arguments: "{}".into(),
@@ -34,14 +34,14 @@ fn tool_end_is_ignored() {
 #[test]
 fn llm_start_is_ignored() {
     assert!(matches!(
-        bridge_action(UiEvent::LlmStart),
+        bridge_action(UiEvent::LlmStarted),
         BridgeAction::Ignore
     ));
 }
 
 #[test]
 fn llm_end_is_ignored() {
-    let event = UiEvent::LlmEnd {
+    let event = UiEvent::LlmCompleted {
         response_chars: 10,
         tool_calls: 1,
         input_tokens: 5,
@@ -85,10 +85,8 @@ fn compaction_events_are_ignored() {
         delta: "d".into(),
         aggregated: "a".into(),
     };
-    let triggered = UiEvent::CompactionTriggered {
+    let triggered = UiEvent::CompactionCompleted {
         source: "manual".into(),
-        summarized_count: 1,
-        kept_recent_count: 1,
         summary_preview: "p".into(),
         summary_body: "b".into(),
     };

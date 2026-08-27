@@ -16,7 +16,7 @@ fn normal_mode_streams_text() {
         false,
     );
 
-    renderer.emit(&UiEvent::LlmStart);
+    renderer.emit(&UiEvent::LlmStarted);
     renderer.emit(&UiEvent::AssistantMessage {
         text: "hello world".to_string(),
     });
@@ -39,7 +39,7 @@ fn normal_mode_shows_streaming() {
         false,
     );
 
-    renderer.emit(&UiEvent::LlmStart);
+    renderer.emit(&UiEvent::LlmStarted);
     renderer.emit(&UiEvent::AssistantMessage {
         text: "hello".to_string(),
     });
@@ -65,7 +65,7 @@ fn quiet_mode_suppresses_streaming() {
         false,
     );
 
-    renderer.emit(&UiEvent::LlmStart);
+    renderer.emit(&UiEvent::LlmStarted);
     renderer.emit(&UiEvent::AssistantMessage {
         text: "hello world".to_string(),
     });
@@ -130,14 +130,14 @@ fn streaming_completed_resets_state() {
     );
 
     // First streaming sequence
-    renderer.emit(&UiEvent::LlmStart);
+    renderer.emit(&UiEvent::LlmStarted);
     renderer.emit(&UiEvent::AssistantMessage {
         text: "first".to_string(),
     });
     renderer.emit(&UiEvent::Completed { tool_calls: 0 });
 
     // Second streaming sequence - should start fresh
-    renderer.emit(&UiEvent::LlmStart);
+    renderer.emit(&UiEvent::LlmStarted);
     renderer.emit(&UiEvent::AssistantMessage {
         text: "second".to_string(),
     });
@@ -165,7 +165,7 @@ fn normal_mode_incremental_streaming() {
         false,
     );
 
-    renderer.emit(&UiEvent::LlmStart);
+    renderer.emit(&UiEvent::LlmStarted);
     renderer.emit(&UiEvent::AssistantMessage {
         text: "a".to_string(),
     });
@@ -200,7 +200,7 @@ fn spinner_stops_when_streaming_starts() {
         );
 
         // Start spinner
-        renderer.emit(&UiEvent::LlmStart);
+        renderer.emit(&UiEvent::LlmStarted);
 
         // First message should stop spinner and stream text
         renderer.emit(&UiEvent::AssistantMessage {
@@ -232,7 +232,7 @@ fn streaming_adds_newline_on_completion() {
         false,
     );
 
-    renderer.emit(&UiEvent::LlmStart);
+    renderer.emit(&UiEvent::LlmStarted);
     renderer.emit(&UiEvent::AssistantMessage {
         text: "no newline yet".to_string(),
     });
@@ -256,7 +256,7 @@ fn very_verbose_shows_both_warnings_and_streaming() {
         false,
     );
 
-    renderer.emit(&UiEvent::LlmStart);
+    renderer.emit(&UiEvent::LlmStarted);
     renderer.emit(&UiEvent::AssistantMessage {
         text: "response text".to_string(),
     });
@@ -283,7 +283,7 @@ fn trace_mode_shows_streaming() {
         false,
     );
 
-    renderer.emit(&UiEvent::LlmStart);
+    renderer.emit(&UiEvent::LlmStarted);
     renderer.emit(&UiEvent::AssistantMessage {
         text: "trace output".to_string(),
     });
@@ -319,7 +319,7 @@ fn tool_display_renders_diff_with_stats() {
             }),
         }],
     };
-    renderer.emit(&UiEvent::ToolEnd {
+    renderer.emit(&UiEvent::ToolCompleted {
         name: "edit".to_string(),
         source: "code".to_string(),
         arguments: "{}".to_string(),
@@ -345,11 +345,11 @@ fn llm_end_prints_token_usage() {
         },
         false,
     );
-    renderer.emit(&UiEvent::LlmStart);
+    renderer.emit(&UiEvent::LlmStarted);
     renderer.emit(&UiEvent::AssistantMessage {
         text: "hi".to_string(),
     });
-    renderer.emit(&UiEvent::LlmEnd {
+    renderer.emit(&UiEvent::LlmCompleted {
         response_chars: 2,
         tool_calls: 0,
         input_tokens: 80,
@@ -363,7 +363,7 @@ fn llm_end_prints_token_usage() {
 }
 
 #[test]
-fn compaction_triggered_uses_success_color() {
+fn compaction_completed_uses_success_color() {
     let mut stderr_bytes = Vec::<u8>::new();
     let mut renderer = StderrUiRenderer::new(
         &mut stderr_bytes,
@@ -373,10 +373,8 @@ fn compaction_triggered_uses_success_color() {
         },
         true,
     );
-    renderer.emit(&UiEvent::CompactionTriggered {
+    renderer.emit(&UiEvent::CompactionCompleted {
         source: "auto".to_string(),
-        summarized_count: 1,
-        kept_recent_count: 0,
         summary_preview: "s".to_string(),
         summary_body: "s".to_string(),
     });
@@ -396,10 +394,8 @@ fn no_color_renders_compaction_plain() {
         },
         false,
     );
-    renderer.emit(&UiEvent::CompactionTriggered {
+    renderer.emit(&UiEvent::CompactionCompleted {
         source: "auto".to_string(),
-        summarized_count: 1,
-        kept_recent_count: 0,
         summary_preview: "s".to_string(),
         summary_body: "s".to_string(),
     });

@@ -30,7 +30,7 @@ mod repair_test;
 #[path = "resolver_test.rs"]
 mod resolver_test;
 
-pub use factory::{SessionStoreImpl, StoreError, StoreType, create_store};
+pub use factory::{SessionStoreBackend, StoreError, StoreType, create_store};
 pub use journal::CachedMemory;
 pub use store::{CompactionMarker, FsSessionStore, SessionStore, StoreEntry, extract_llm_context};
 

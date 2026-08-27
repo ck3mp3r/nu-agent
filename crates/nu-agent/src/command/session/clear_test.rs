@@ -1,6 +1,6 @@
 use super::clear::{AgentSessionClear, CwdInterface};
 use nu_agent_core::session::prefix::dir_prefix_legacy;
-use nu_agent_core::session::{FsSessionStore, SessionStore, SessionStoreImpl};
+use nu_agent_core::session::{FsSessionStore, SessionStore, SessionStoreBackend};
 use nu_agent_core::types::Message;
 use nu_plugin::{EvaluatedCall, SimplePluginCommand};
 use nu_protocol::{LabeledError, Span, Value};
@@ -31,7 +31,7 @@ fn make_call(session_id: &str) -> EvaluatedCall {
 #[tokio::test]
 async fn test_agent_session_clear_deletes_existing_session() {
     let temp_dir = TempDir::new().unwrap();
-    let store = Arc::new(SessionStoreImpl::Fs(FsSessionStore::new(
+    let store = Arc::new(SessionStoreBackend::Fs(FsSessionStore::new(
         temp_dir.path().to_path_buf(),
     )));
 
@@ -65,7 +65,7 @@ async fn test_agent_session_clear_deletes_existing_session() {
 async fn test_agent_session_clear_is_idempotent_for_nonexistent_session() {
     // Setup: Create temp directory with no sessions
     let temp_dir = TempDir::new().unwrap();
-    let store = Arc::new(SessionStoreImpl::Fs(FsSessionStore::new(
+    let store = Arc::new(SessionStoreBackend::Fs(FsSessionStore::new(
         temp_dir.path().to_path_buf(),
     )));
 
@@ -99,7 +99,7 @@ fn test_agent_session_clear_command_signature() {
 async fn test_delete_session_removes_only_target_file() {
     // Setup: Create multiple sessions
     let temp_dir = TempDir::new().unwrap();
-    let store = Arc::new(SessionStoreImpl::Fs(FsSessionStore::new(
+    let store = Arc::new(SessionStoreBackend::Fs(FsSessionStore::new(
         temp_dir.path().to_path_buf(),
     )));
 
@@ -139,7 +139,7 @@ async fn test_delete_session_removes_only_target_file() {
 #[tokio::test]
 async fn clear_deletes_legacy_prefixed_session_via_fallback() {
     let temp_dir = TempDir::new().unwrap();
-    let store = Arc::new(SessionStoreImpl::Fs(FsSessionStore::new(
+    let store = Arc::new(SessionStoreBackend::Fs(FsSessionStore::new(
         temp_dir.path().to_path_buf(),
     )));
 

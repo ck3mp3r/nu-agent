@@ -1,6 +1,6 @@
 use super::list::{AgentSessionList, CwdInterface};
 use nu_agent_core::session::prefix::{dir_prefix, dir_prefix_legacy};
-use nu_agent_core::session::{FsSessionStore, SessionStore, SessionStoreImpl};
+use nu_agent_core::session::{FsSessionStore, SessionStore, SessionStoreBackend};
 use nu_agent_core::types::Message;
 use nu_plugin::{EvaluatedCall, SimplePluginCommand};
 use nu_protocol::{LabeledError, Span, Value};
@@ -31,7 +31,7 @@ fn make_call() -> EvaluatedCall {
 #[tokio::test]
 async fn test_agent_session_list_returns_table_with_session_stats() {
     let temp_dir = TempDir::new().unwrap();
-    let store = Arc::new(SessionStoreImpl::Fs(FsSessionStore::new(
+    let store = Arc::new(SessionStoreBackend::Fs(FsSessionStore::new(
         temp_dir.path().to_path_buf(),
     )));
 
@@ -80,7 +80,7 @@ async fn test_agent_session_list_returns_table_with_session_stats() {
 async fn test_agent_session_list_returns_empty_list_when_no_sessions() {
     // Setup: Create temp directory for sessions (but don't create any)
     let temp_dir = TempDir::new().unwrap();
-    let store = Arc::new(SessionStoreImpl::Fs(FsSessionStore::new(
+    let store = Arc::new(SessionStoreBackend::Fs(FsSessionStore::new(
         temp_dir.path().to_path_buf(),
     )));
 
@@ -106,7 +106,7 @@ fn test_agent_session_list_command_signature() {
 #[tokio::test]
 async fn list_returns_both_new_and_legacy_prefixed_sessions() {
     let temp_dir = TempDir::new().unwrap();
-    let store = Arc::new(SessionStoreImpl::Fs(FsSessionStore::new(
+    let store = Arc::new(SessionStoreBackend::Fs(FsSessionStore::new(
         temp_dir.path().to_path_buf(),
     )));
 

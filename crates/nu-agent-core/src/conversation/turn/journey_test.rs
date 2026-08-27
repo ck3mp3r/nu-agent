@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use nu_protocol::LabeledError;
 use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
-use super::super::test::{default_circuit_breaker, default_doom_state};
+use super::super::test::{default_circuit_breaker, default_doom_state, default_last_total_tokens};
 use super::test_utils::{MockResolver, MockUi, test_config};
 use super::*;
 use crate::conversation::providers::CachedProviderClient;
@@ -20,7 +20,6 @@ use crate::session::{FsSessionStore, StoreEntry};
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
 use crate::types::Message;
-
 fn default_tool_infra(
     handle: rig::tool::server::ToolServerHandle,
     definitions: Vec<rig::completion::ToolDefinition>,
@@ -32,6 +31,7 @@ fn default_tool_infra(
         visible_tool_definitions: definitions,
         circuit_breaker: default_circuit_breaker(),
         doom_state: default_doom_state(),
+        last_total_tokens: default_last_total_tokens(),
         bus: crate::bus::create_bus(),
     }
 }
@@ -72,6 +72,8 @@ fn sse_tool_call_response(id: &str, name: &str, args: &str) -> String {
 struct JourneyHarness {
     _temp_dir: tempfile::TempDir, // leading underscore keeps TempDir alive
     memory_state: MemoryState<FsSessionStore>,
+    shared_model: std::sync::Arc<std::sync::Mutex<rig::agent::ModelHandle>>,
+    compaction_config: crate::conversation::compaction::CompactionConfig<FsSessionStore>,
     session_id: &'static str,
     config: crate::config::Config,
 }
@@ -85,10 +87,23 @@ impl JourneyHarness {
     fn new_with_config(session_id: &'static str, config: crate::config::Config) -> Self {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let store = Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
+        let bus = crate::bus::create_bus();
+        let compaction_config = crate::conversation::compaction::CompactionConfig {
+            compactor: crate::conversation::compaction::compactor::NuCompactor::from_shared_model(
+                test_utils::shared_mock_model_handle(),
+                crate::conversation::compaction::compactor::NoopProgressUi,
+                bus.clone(),
+                None,
+            ),
+            params: crate::compaction::CompactionParams::default(),
+            threshold_tokens: None,
+        };
         let memory_state = MemoryState::new(store);
         Self {
             _temp_dir: temp_dir,
             memory_state,
+            shared_model: test_utils::shared_mock_model_handle(),
+            compaction_config,
             session_id,
             config,
         }
@@ -119,10 +134,17 @@ impl JourneyHarness {
         Result<TurnOutcome, LabeledError>,
         Vec<crate::protocol::event::UiEvent>,
     ) {
-        let cached_client = CachedProviderClient::Mock(model);
-        // Fresh TurnExecutor per call — REQUIRED: execute() calls std::mem::take()
-        // on visible_tool_definitions, consuming them. Production code does the same.
-        let mut executor = TurnExecutor::new(&self.config, &mut self.memory_state, tool_infra);
+        // Wrap the scripted mock model in the shared handle so the agent (built
+        // from the handle) routes to this model.
+        *self.shared_model.lock().expect("model mutex poisoned") =
+            rig::agent::ModelHandle::new(model);
+        let mut executor = TurnExecutor::new(
+            &self.config,
+            &mut self.memory_state,
+            tool_infra,
+            Arc::clone(&self.shared_model),
+            self.compaction_config.clone(),
+        );
         let outcome = executor
             .execute(
                 &mut ui,
@@ -131,7 +153,6 @@ impl JourneyHarness {
                     preamble: None,
                     span: nu_protocol::Span::test_data(),
                 },
-                &cached_client,
                 MockResolver,
                 Some(self.session_id),
                 None,
@@ -145,7 +166,7 @@ impl JourneyHarness {
     async fn raw_messages(&self) -> Vec<Message> {
         let entries = self
             .memory_state
-            .memory()
+            .inner_memory()
             .load_all(self.session_id)
             .await
             .expect("store load");
@@ -202,7 +223,18 @@ impl JourneyHarness {
         Result<TurnOutcome, LabeledError>,
         Vec<crate::protocol::event::UiEvent>,
     ) {
-        let mut executor = TurnExecutor::new(&self.config, &mut self.memory_state, tool_infra);
+        // Wrap the wiremock client's model in the shared handle so the agent
+        // (built from the handle) routes to this client's model.
+        *self.shared_model.lock().expect("model mutex poisoned") = client
+            .build_model_handle(&self.config.model)
+            .expect("build model handle from cached client");
+        let mut executor = TurnExecutor::new(
+            &self.config,
+            &mut self.memory_state,
+            tool_infra,
+            Arc::clone(&self.shared_model),
+            self.compaction_config.clone(),
+        );
         let outcome = executor
             .execute(
                 &mut ui,
@@ -211,7 +243,6 @@ impl JourneyHarness {
                     preamble: None,
                     span: nu_protocol::Span::test_data(),
                 },
-                client,
                 MockResolver,
                 Some(self.session_id),
                 None,
@@ -229,6 +260,12 @@ impl JourneyHarness {
 fn no_tools() -> ToolInfra {
     let handle = rig::tool::server::ToolServer::new().run();
     default_tool_infra(handle, vec![])
+}
+
+/// Build a `MemoryState<FsSessionStore>` over a specific session-store path.
+fn memory_state_at(path: std::path::PathBuf) -> MemoryState<FsSessionStore> {
+    let store = Arc::new(FsSessionStore::new(path));
+    MemoryState::new(store)
 }
 
 // ---------------------------------------------------------------------------
@@ -489,7 +526,7 @@ fn assert_tool_call_in_msg(msg: &Message, expected_id: &str, expected_name: &str
         }
     });
     let tc = tc.expect("no ToolCall content in Assistant message");
-    assert_eq!(tc.id, expected_id, "tool call id mismatch");
+    assert_eq!(tc.id.as_str(), expected_id, "tool call id mismatch");
     assert_eq!(tc.function.name, expected_name, "tool call name mismatch");
 }
 
@@ -505,7 +542,7 @@ fn assert_tool_result_in_msg(msg: &Message, expected_id: &str, content_contains:
         }
     });
     let tr = tr.expect("no ToolResult content in User message");
-    assert_eq!(tr.id, expected_id, "tool result id mismatch");
+    assert_eq!(tr.call.as_str(), expected_id, "tool result id mismatch");
     let content_str = format!("{:?}", tr.content);
     assert!(
         content_str.contains(content_contains),
@@ -538,7 +575,7 @@ async fn journey_harness_smoke() {
     let mut h = JourneyHarness::new("journey-smoke");
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("hi".into()),
-        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+        MockStreamEvent::final_response_with_default_usage(),
     ]]);
     let (r, _) = h.turn("hello", model, no_tools()).await;
     assert!(r.is_ok(), "smoke turn must succeed: {r:?}");
@@ -568,7 +605,7 @@ async fn journey_three_text_turns_accumulate_correctly() {
     // Turn 1
     let model1 = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("hello back".into()),
-        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+        MockStreamEvent::final_response_with_default_usage(),
     ]]);
     let (r1, _) = h.turn("hello", model1, no_tools()).await;
     assert!(r1.is_ok(), "turn 1 must succeed: {r1:?}");
@@ -580,7 +617,7 @@ async fn journey_three_text_turns_accumulate_correctly() {
     // Turn 2
     let model2 = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("world back".into()),
-        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+        MockStreamEvent::final_response_with_default_usage(),
     ]]);
     let (r2, _) = h.turn("world", model2, no_tools()).await;
     assert!(r2.is_ok(), "turn 2 must succeed: {r2:?}");
@@ -593,7 +630,7 @@ async fn journey_three_text_turns_accumulate_correctly() {
     // Clone before moving so we can inspect the shared state after `turn()` consumes it.
     let model3 = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("done".into()),
-        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+        MockStreamEvent::final_response_with_default_usage(),
     ]]);
     let model3_spy = model3.clone();
     let (r3, _) = h.turn("last", model3, no_tools()).await;
@@ -641,15 +678,15 @@ async fn journey_two_sequential_tool_calls_then_text() {
     let model = MockCompletionModel::from_stream_turns([
         vec![
             MockStreamEvent::tool_call("tc1", "test_echo", serde_json::json!({})),
-            MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+            MockStreamEvent::final_response_with_default_usage(),
         ],
         vec![
             MockStreamEvent::tool_call("tc2", "test_echo", serde_json::json!({})),
-            MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+            MockStreamEvent::final_response_with_default_usage(),
         ],
         vec![
             MockStreamEvent::Text("Done, used both".into()),
-            MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+            MockStreamEvent::final_response_with_default_usage(),
         ],
     ]);
     let (r, _) = h.turn("do two things", model, echo_tool("result_42")).await;
@@ -695,11 +732,11 @@ async fn journey_three_batched_tool_calls_in_one_response() {
             MockStreamEvent::tool_call("tc1", "test_echo", serde_json::json!({})),
             MockStreamEvent::tool_call("tc2", "test_echo", serde_json::json!({})),
             MockStreamEvent::tool_call("tc3", "test_echo", serde_json::json!({})),
-            MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+            MockStreamEvent::final_response_with_default_usage(),
         ],
         vec![
             MockStreamEvent::Text("All done".into()),
-            MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+            MockStreamEvent::final_response_with_default_usage(),
         ],
     ]);
     let (r, _) = h
@@ -724,9 +761,9 @@ async fn journey_three_batched_tool_calls_in_one_response() {
     };
     for id in ["tc1", "tc2", "tc3"] {
         assert!(
-            content
-                .iter()
-                .any(|c| matches!(c, rig::message::UserContent::ToolResult(tr) if tr.id == id)),
+            content.iter().any(
+                |c| matches!(c, rig::message::UserContent::ToolResult(tr) if tr.call.as_str() == id)
+            ),
             "ToolResult {id} missing from batched user message; content: {content:?}"
         );
     }
@@ -754,7 +791,7 @@ async fn journey_repeated_errors_grow_linearly() {
             "t1",
             MockCompletionModel::from_stream_turns([[
                 MockStreamEvent::Text("ok".into()),
-                MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+                MockStreamEvent::final_response_with_default_usage(),
             ]]),
             no_tools(),
         )
@@ -836,11 +873,11 @@ async fn journey_error_mid_tool_loop_then_recovery() {
     let model1 = MockCompletionModel::from_stream_turns([
         vec![
             MockStreamEvent::tool_call("tc1", "test_echo", serde_json::json!({})),
-            MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+            MockStreamEvent::final_response_with_default_usage(),
         ],
         vec![
             MockStreamEvent::tool_call("tc2", "test_echo", serde_json::json!({})),
-            MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+            MockStreamEvent::final_response_with_default_usage(),
         ],
         vec![MockStreamEvent::error("connection reset")],
     ]);
@@ -869,7 +906,7 @@ async fn journey_error_mid_tool_loop_then_recovery() {
     // Turn 2: recovery — plain text, sees 6-message prior context
     let model2 = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("recovered".into()),
-        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+        MockStreamEvent::final_response_with_default_usage(),
     ]]);
     let model2_spy = model2.clone();
     let (r2, _) = h.turn("continue", model2, no_tools()).await;
@@ -932,11 +969,11 @@ async fn journey_cancelled_turn_then_continuation() {
                 "nu__shell",
                 serde_json::json!({"command": "git pull"}),
             ),
-            MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+            MockStreamEvent::final_response_with_default_usage(),
         ],
         vec![
             MockStreamEvent::Text("unreachable".into()),
-            MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+            MockStreamEvent::final_response_with_default_usage(),
         ],
     ]);
     let (r1, _) = h
@@ -970,7 +1007,7 @@ async fn journey_cancelled_turn_then_continuation() {
     // Turn 2: continuation sees prior 4-message context
     let model2 = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("I can see the git pull completed. How can I help next?".into()),
-        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+        MockStreamEvent::final_response_with_default_usage(),
     ]]);
     let model2_spy = model2.clone();
     let (r2, _) = h.turn("what happened?", model2, no_tools()).await;
@@ -1006,15 +1043,21 @@ async fn journey_session_reload_from_disk() {
 
     // Turn 1 — MemoryState A: write 2 messages to disk then drop.
     let spy1 = {
-        let store = Arc::new(FsSessionStore::new(path.clone()));
-        let mut ms = crate::conversation::state::memory::MemoryState::new(store);
+        let mut ms = memory_state_at(path.clone());
         let model = MockCompletionModel::from_stream_turns([[
             MockStreamEvent::Text("turn1 response".into()),
-            MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+            MockStreamEvent::final_response_with_default_usage(),
         ]]);
+        let shared_model = test_utils::shared_model_handle(model.clone());
         let spy = model.clone();
         let mut ui = MockUi::new();
-        let mut executor = TurnExecutor::new(&config, &mut ms, no_tools());
+        let mut executor = TurnExecutor::new(
+            &config,
+            &mut ms,
+            no_tools(),
+            shared_model,
+            test_utils::test_compaction_config(crate::bus::create_bus()),
+        );
         let r = executor
             .execute(
                 &mut ui,
@@ -1023,7 +1066,6 @@ async fn journey_session_reload_from_disk() {
                     preamble: None,
                     span: nu_protocol::Span::test_data(),
                 },
-                &CachedProviderClient::Mock(model),
                 MockResolver,
                 Some(session_id),
                 None,
@@ -1039,15 +1081,21 @@ async fn journey_session_reload_from_disk() {
 
     // Turn 2 — fresh MemoryState B: must load 2 prior messages from disk.
     {
-        let store = Arc::new(FsSessionStore::new(path.clone()));
-        let mut ms = crate::conversation::state::memory::MemoryState::new(store);
+        let mut ms = memory_state_at(path.clone());
         let model2 = MockCompletionModel::from_stream_turns([[
             MockStreamEvent::Text("turn2 response".into()),
-            MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+            MockStreamEvent::final_response_with_default_usage(),
         ]]);
+        let shared_model = test_utils::shared_model_handle(model2.clone());
         let spy2 = model2.clone();
         let mut ui = MockUi::new();
-        let mut executor = TurnExecutor::new(&config, &mut ms, no_tools());
+        let mut executor = TurnExecutor::new(
+            &config,
+            &mut ms,
+            no_tools(),
+            shared_model,
+            test_utils::test_compaction_config(crate::bus::create_bus()),
+        );
         let r = executor
             .execute(
                 &mut ui,
@@ -1056,7 +1104,6 @@ async fn journey_session_reload_from_disk() {
                     preamble: None,
                     span: nu_protocol::Span::test_data(),
                 },
-                &CachedProviderClient::Mock(model2),
                 MockResolver,
                 Some(session_id),
                 None,
@@ -1065,7 +1112,11 @@ async fn journey_session_reload_from_disk() {
         assert!(r.is_ok(), "turn 2 must succeed");
 
         // Verify the total JSONL: 2 from turn1 + 2 from turn2
-        let entries = ms.memory().load_all(session_id).await.expect("store load");
+        let entries = ms
+            .inner_memory()
+            .load_all(session_id)
+            .await
+            .expect("store load");
         let msgs: Vec<Message> = entries
             .iter()
             .filter_map(|e| match e {
@@ -1122,10 +1173,9 @@ async fn journey_corrupt_session_healed_by_repair_on_load() {
     // The corrupt pattern: user(ToolResult) immediately followed by user(Text), no asst between.
     {
         use crate::types::{
-            AssistantContent, Message, ToolCall, ToolFunction, ToolResult, ToolResultContent,
-            UserContent,
+            AssistantContent, Message, ToolCall, ToolCallId, ToolFunction, ToolResult,
+            ToolResultContent, UserContent,
         };
-        use rig::one_or_many::OneOrMany;
 
         let session_file = path.join(format!("{}.jsonl", session_id));
         let mut f = std::fs::File::create(&session_file).expect("create session file");
@@ -1146,21 +1196,22 @@ async fn journey_corrupt_session_healed_by_repair_on_load() {
             // assistant(tool_call tc1 nu__shell)
             Message::Assistant {
                 id: None,
-                content: OneOrMany::one(AssistantContent::ToolCall(ToolCall::new(
-                    "tc1".to_string(),
+                content: vec![AssistantContent::ToolCall(ToolCall::new(
+                    ToolCallId::new_or_mint("tc1"),
                     ToolFunction::new(
                         "nu__shell".to_string(),
                         serde_json::json!({"command": "git pull"}),
                     ),
-                ))),
+                ))],
             },
             // user(tool_result tc1) — pure ToolResult message
             Message::User {
-                content: OneOrMany::one(UserContent::ToolResult(ToolResult {
-                    id: "tc1".to_string(),
-                    call_id: None,
-                    content: OneOrMany::one(ToolResultContent::text("Already up to date.")),
-                })),
+                content: vec![UserContent::ToolResult(ToolResult {
+                    call: ToolCallId::new_or_mint("tc1"),
+                    provider: None,
+                    name: "nu__shell".into(),
+                    content: vec![ToolResultContent::text("Already up to date.")],
+                })],
             },
             // user("continue") — immediately after ToolResult, no assistant between them → CORRUPT
             Message::user("continue"),
@@ -1173,16 +1224,22 @@ async fn journey_corrupt_session_healed_by_repair_on_load() {
 
     // Now create a MemoryState pointing to the same directory (simulating a new CLI invocation
     // that loads the corrupt JSONL). Repair fires inside load().
-    let store = Arc::new(FsSessionStore::new(path.clone()));
-    let mut ms = crate::conversation::state::memory::MemoryState::new(store);
+    let mut ms = memory_state_at(path.clone());
 
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("The git pull succeeded.".into()),
-        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+        MockStreamEvent::final_response_with_default_usage(),
     ]]);
+    let shared_model = test_utils::shared_model_handle(model.clone());
 
     let mut ui = MockUi::new();
-    let mut executor = TurnExecutor::new(&config, &mut ms, no_tools());
+    let mut executor = TurnExecutor::new(
+        &config,
+        &mut ms,
+        no_tools(),
+        shared_model,
+        test_utils::test_compaction_config(crate::bus::create_bus()),
+    );
     let outcome = executor
         .execute(
             &mut ui,
@@ -1191,7 +1248,6 @@ async fn journey_corrupt_session_healed_by_repair_on_load() {
                 preamble: None,
                 span: nu_protocol::Span::test_data(),
             },
-            &CachedProviderClient::Mock(model),
             MockResolver,
             Some(session_id),
             None,
@@ -1208,7 +1264,11 @@ async fn journey_corrupt_session_healed_by_repair_on_load() {
     // The corrupt JSONL had 4 messages. Repair is applied in-memory on load (not written
     // back to JSONL). The turn then appends 2 new messages (user prompt + assistant reply).
     // Raw JSONL = 4 original (corrupt) + 2 new = 6 total.
-    let entries = ms.memory().load_all(session_id).await.expect("store load");
+    let entries = ms
+        .inner_memory()
+        .load_all(session_id)
+        .await
+        .expect("store load");
     let raw: Vec<Message> = entries
         .iter()
         .filter_map(|e| match e {
@@ -1772,10 +1832,10 @@ async fn journey_retry_on_server_error_recovers() {
 #[tokio::test]
 async fn journey_empty_tool_result_replaced_with_placeholder() {
     use crate::types::{
-        AssistantContent, ToolCall, ToolFunction, ToolResult, ToolResultContent, UserContent,
+        AssistantContent, ToolCall, ToolCallId, ToolFunction, ToolResult, ToolResultContent,
+        UserContent,
     };
     use rig::memory::ConversationMemory;
-    use rig::one_or_many::OneOrMany;
 
     let mut h = JourneyHarness::new("journey-gap6-empty-tool-result");
 
@@ -1786,18 +1846,19 @@ async fn journey_empty_tool_result_replaced_with_placeholder() {
         crate::types::Message::user("run something"),
         crate::types::Message::Assistant {
             id: None,
-            content: OneOrMany::one(AssistantContent::ToolCall(ToolCall::new(
-                tc_id.to_string(),
+            content: vec![AssistantContent::ToolCall(ToolCall::new(
+                ToolCallId::new_or_mint(tc_id),
                 ToolFunction::new("test_echo".to_string(), serde_json::json!({})),
-            ))),
+            ))],
         },
         // Empty tool result — the key scenario for Gap 6
         crate::types::Message::User {
-            content: OneOrMany::one(UserContent::ToolResult(ToolResult {
-                id: tc_id.to_string(),
-                call_id: None,
-                content: OneOrMany::one(ToolResultContent::text("")),
-            })),
+            content: vec![UserContent::ToolResult(ToolResult {
+                call: ToolCallId::new_or_mint(tc_id),
+                provider: None,
+                name: "test_echo".into(),
+                content: vec![ToolResultContent::text("")],
+            })],
         },
         crate::types::Message::assistant("[ok]"),
     ];
@@ -1811,7 +1872,7 @@ async fn journey_empty_tool_result_replaced_with_placeholder() {
     // Now run a follow-up turn — pre-flight repair must fix the empty ToolResult.
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("follow-up answer".into()),
-        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+        MockStreamEvent::final_response_with_default_usage(),
     ]]);
     let (r, _) = h.turn("what was the result?", model, no_tools()).await;
     assert!(
@@ -1869,10 +1930,9 @@ async fn journey_null_args_tool_call_repaired_on_load() {
     // The corrupt pattern: ToolCall with `arguments: null` and its matching ToolResult.
     {
         use crate::types::{
-            AssistantContent, Message, ToolCall, ToolFunction, ToolResult, ToolResultContent,
-            UserContent,
+            AssistantContent, Message, ToolCall, ToolCallId, ToolFunction, ToolResult,
+            ToolResultContent, UserContent,
         };
-        use rig::one_or_many::OneOrMany;
 
         let session_file = path.join(format!("{session_id}.jsonl"));
         let mut f = std::fs::File::create(&session_file).expect("create session file");
@@ -1896,21 +1956,22 @@ async fn journey_null_args_tool_call_repaired_on_load() {
             // assistant(tool_call tc1 with null arguments) — THE POISON
             Message::Assistant {
                 id: None,
-                content: OneOrMany::one(AssistantContent::ToolCall(ToolCall::new(
-                    "tc_poison".to_string(),
+                content: vec![AssistantContent::ToolCall(ToolCall::new(
+                    ToolCallId::new_or_mint("tc_poison"),
                     ToolFunction::new(
                         "tmux__send_and_capture".to_string(),
                         serde_json::Value::Null,
                     ),
-                ))),
+                ))],
             },
             // user(tool_result tc1 — the Skip reason)
             Message::User {
-                content: OneOrMany::one(UserContent::ToolResult(ToolResult {
-                    id: "tc_poison".to_string(),
-                    call_id: None,
-                    content: OneOrMany::one(ToolResultContent::text("Tool not available")),
-                })),
+                content: vec![UserContent::ToolResult(ToolResult {
+                    call: ToolCallId::new_or_mint("tc_poison"),
+                    provider: None,
+                    name: "tmux__send_and_capture".into(),
+                    content: vec![ToolResultContent::text("Tool not available")],
+                })],
             },
             // assistant closing text
             Message::assistant("I see the tool is unavailable."),
@@ -1923,16 +1984,22 @@ async fn journey_null_args_tool_call_repaired_on_load() {
     }
 
     // Create a fresh MemoryState that loads the corrupt JSONL. Repair fires inside load().
-    let store = Arc::new(FsSessionStore::new(path.clone()));
-    let mut ms = crate::conversation::state::memory::MemoryState::new(store);
+    let mut ms = memory_state_at(path.clone());
 
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("The tool was unavailable but we can continue.".into()),
-        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+        MockStreamEvent::final_response_with_default_usage(),
     ]]);
+    let shared_model = test_utils::shared_model_handle(model.clone());
 
     let mut ui = MockUi::new();
-    let mut executor = TurnExecutor::new(&config, &mut ms, no_tools());
+    let mut executor = TurnExecutor::new(
+        &config,
+        &mut ms,
+        no_tools(),
+        shared_model,
+        test_utils::test_compaction_config(crate::bus::create_bus()),
+    );
     let outcome = executor
         .execute(
             &mut ui,
@@ -1941,7 +2008,6 @@ async fn journey_null_args_tool_call_repaired_on_load() {
                 preamble: None,
                 span: nu_protocol::Span::test_data(),
             },
-            &CachedProviderClient::Mock(model),
             MockResolver,
             Some(session_id),
             None,

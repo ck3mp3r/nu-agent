@@ -1,6 +1,5 @@
 use super::*;
 
-use crate::compaction::CompactionStrategy;
 use crate::conversation::providers::ClientCacheKey;
 use crate::protocol::{contracts::ProgressUi, event::UiEvent};
 use crate::types::ToolDefinition;
@@ -20,6 +19,16 @@ impl ProgressUi for TestProgressUi {
     fn take_cancel_requested(&self) -> bool {
         false
     }
+}
+
+/// Build a `MemoryState<FsSessionStore>` (no compaction — `CachedMemory` used
+/// directly) so tests never invoke a real LLM.
+fn test_memory_state() -> super::super::state::memory::MemoryState<crate::session::FsSessionStore> {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let store = std::sync::Arc::new(crate::session::FsSessionStore::new(
+        temp_dir.path().to_path_buf(),
+    ));
+    super::super::state::memory::MemoryState::new(store)
 }
 
 #[test]
@@ -228,11 +237,13 @@ fn build_system_preamble_sub_agent_instruction_only() {
 
 #[test]
 fn runtime_struct_has_memory_field() {
-    // GREEN: This test now compiles, proving the memory field exists as CachedMemory<SessionStoreImpl>
-    use crate::session::{CachedMemory, SessionStoreImpl};
+    // Compile-time check that the field exists with correct type: the runtime
+    // memory is an `Arc<CachedMemory<SessionStoreBackend>>`.
+    use crate::conversation::state::memory::MemoryOf;
+    use crate::session::SessionStoreBackend;
 
     // Compile-time check that the field exists with correct type
-    fn _assert_field_exists(_: &CachedMemory<SessionStoreImpl>) {}
+    fn _assert_field_exists(_: &MemoryOf<SessionStoreBackend>) {}
 
     let _type_check: fn(&AgentConversationRuntime) = |r| {
         _assert_field_exists(r.session.memory());
@@ -241,7 +252,7 @@ fn runtime_struct_has_memory_field() {
 
 #[test]
 fn runtime_struct_has_session_store() {
-    // Verify MemoryState wraps a store-backed CachedMemory
+    // Verify MemoryState wraps a store-backed CachedMemory (via inner_memory).
     use crate::session::FsSessionStore;
 
     let temp_dir = tempfile::tempdir().unwrap();
@@ -256,7 +267,7 @@ fn evaluate_auto_compaction_uses_token_based_policy() {
     // We can't easily construct a full runtime, but we verify the policy logic directly.
     use crate::protocol::compaction::{CompactionTriggerPolicy, TokenCompactionPolicy};
 
-    let policy = TokenCompactionPolicy::new(200_000, 0.80, CompactionStrategy::SlidingSummary);
+    let policy = TokenCompactionPolicy::new(200_000, 0.80);
 
     // At 80% usage (160k of 200k) — should fire
     let decision = policy.evaluate(Some(160_000));
@@ -324,19 +335,6 @@ fn provider_dispatch_unsupported_provider_returns_error() {
 // ========================================================================
 // Memory hydration guard tests (now: JournalConversationMemory)
 // ========================================================================
-
-#[test]
-fn runtime_struct_has_compacting_field() {
-    // Compile-time check that the compacting field exists with correct type
-    use std::sync::Arc;
-    use std::sync::atomic::AtomicBool;
-
-    fn _assert_field_exists(_flag: &Arc<AtomicBool>) {}
-
-    let _type_check: fn(&AgentConversationRuntime) = |r| {
-        _assert_field_exists(r.compaction.compacting());
-    };
-}
 
 #[test]
 fn runtime_struct_has_memory_state_field() {
@@ -528,7 +526,7 @@ fn compaction_state_evaluate_returns_none_when_no_tokens() {
         CompactionTriggerDecision, CompactionTriggerPolicy, TokenCompactionPolicy,
     };
 
-    let policy = TokenCompactionPolicy::new(100_000, 0.8, CompactionStrategy::SlidingSummary);
+    let policy = TokenCompactionPolicy::new(100_000, 0.8);
     let decision = Some(policy.evaluate(None));
 
     assert!(
@@ -545,7 +543,7 @@ fn compaction_state_evaluate_returns_none_below_threshold() {
         CompactionTriggerDecision, CompactionTriggerPolicy, TokenCompactionPolicy,
     };
 
-    let policy = TokenCompactionPolicy::new(100_000, 0.8, CompactionStrategy::SlidingSummary);
+    let policy = TokenCompactionPolicy::new(100_000, 0.8);
     let decision = Some(policy.evaluate(Some(50_000)));
 
     assert!(
@@ -559,11 +557,7 @@ fn memory_state_hydrated_flag_starts_false() {
     // JournalConversationMemory replaces the old memory_hydrated bool.
     // The load-on-demand pattern means the cache starts empty — verified
     // by checking last_total_tokens is None on a fresh MemoryState.
-    let temp_dir = tempfile::tempdir().unwrap();
-    let store = std::sync::Arc::new(crate::session::FsSessionStore::new(
-        temp_dir.path().to_path_buf(),
-    ));
-    let ms = super::super::state::memory::MemoryState::new(store);
+    let ms = test_memory_state();
     assert!(
         ms.last_total_tokens().is_none(),
         "last_total_tokens must be None in a fresh MemoryState"
@@ -1073,21 +1067,6 @@ fn accessor_available_agent_summaries_delegates_to_multi_agent_state() {
 }
 
 // ========================================================================
-// CompactionState characterisation tests
-// ========================================================================
-
-#[test]
-fn compaction_state_compacting_flag_starts_false() {
-    use std::sync::atomic::Ordering;
-    let state = super::super::compaction::state::CompactionState::new(
-        200_000,
-        0.80,
-        CompactionStrategy::SlidingSummary,
-    );
-    assert!(!state.compacting().load(Ordering::SeqCst));
-}
-
-// ========================================================================
 // Phase J: MemoryState characterisation tests
 // ========================================================================
 
@@ -1095,21 +1074,13 @@ fn compaction_state_compacting_flag_starts_false() {
 fn memory_state_hydrated_false_on_construction() {
     // JournalConversationMemory is load-on-demand (cache starts empty).
     // Verify last_total_tokens is None on construction.
-    let temp_dir = tempfile::tempdir().unwrap();
-    let store = std::sync::Arc::new(crate::session::FsSessionStore::new(
-        temp_dir.path().to_path_buf(),
-    ));
-    let ms = super::super::state::memory::MemoryState::new(store);
+    let ms = test_memory_state();
     assert!(ms.last_total_tokens().is_none());
 }
 
 #[test]
 fn memory_state_last_total_tokens_none_on_construction() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let store = std::sync::Arc::new(crate::session::FsSessionStore::new(
-        temp_dir.path().to_path_buf(),
-    ));
-    let ms = super::super::state::memory::MemoryState::new(store);
+    let ms = test_memory_state();
     assert!(ms.last_total_tokens().is_none());
 }
 
@@ -1137,11 +1108,7 @@ fn persona_state_agent_description_none_by_default() {
 
 #[test]
 fn mcp_state_caller_cwd_none_by_default() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let store = std::sync::Arc::new(crate::session::FsSessionStore::new(
-        temp_dir.path().to_path_buf(),
-    ));
-    let _ms = super::super::state::memory::MemoryState::new(store);
+    let _ms = test_memory_state();
     // Access mcp_state through a compile-time type check
     let _type_check: fn(&AgentConversationRuntime) = |rt| {
         assert!(rt.mcp_state.mcp_caller_cwd().is_none());
@@ -1213,27 +1180,4 @@ fn set_permissions_replaces_config_and_resets_startup() {
         _ => None,
     });
     assert_eq!(warning, Some(summary));
-}
-
-#[test]
-fn only_system_messages_returns_true_for_only_system() {
-    let messages = vec![Message::system("preamble"), Message::system("summary")];
-    assert!(only_system_messages(&messages));
-}
-
-#[test]
-fn only_system_messages_returns_false_for_mixed() {
-    let messages = vec![Message::system("preamble"), Message::user("hello")];
-    assert!(!only_system_messages(&messages));
-}
-
-#[test]
-fn only_system_messages_returns_true_for_empty() {
-    assert!(only_system_messages(&[]));
-}
-
-#[test]
-fn only_system_messages_returns_false_for_only_user() {
-    let messages = vec![Message::user("hello")];
-    assert!(!only_system_messages(&messages));
 }

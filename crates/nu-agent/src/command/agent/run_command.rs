@@ -330,7 +330,7 @@ pub(super) fn run_command(
         let nu_agent_core::conversation::builder::BuildArtifacts {
             parent_name: _,
             merged_compaction,
-            compaction_strategy,
+            compaction_strategy: _,
             compaction_params,
         } = super::setup::register_tools(
             call,
@@ -370,7 +370,6 @@ pub(super) fn run_command(
             super::runtime_build::build_preamble_cache(&cwd, None);
 
         // ── Phase 9: Runtime construction ────────────────────────────────────
-        let context_window_max_tokens = u64::from(config.resolved_max_context_tokens());
         let mut runtime_impl =
             super::runtime_build::build_runtime(super::runtime_build::RuntimeBuildParams {
                 runtime: handle.clone(),
@@ -388,10 +387,8 @@ pub(super) fn run_command(
                 engine: engine.clone(),
                 store: store.clone(),
                 final_session_id: session_resolution.final_session_id,
-                context_window_max_tokens,
-                compaction_threshold_pct: merged_compaction.proactive_threshold_pct.unwrap_or(0.80),
-                compaction_strategy,
                 compaction_params,
+                proactive_threshold_pct: merged_compaction.proactive_threshold_pct,
                 base_permissions,
                 effective_permissions,
                 cli_permissions_overlay,
@@ -407,7 +404,7 @@ pub(super) fn run_command(
                 agents_config,
                 cwd: cwd.clone(),
                 bus: bus.clone(),
-            });
+            })?;
         log::debug!(
             "runtime: agent_persona_body_len={:?}, agent_identity={:?}, agent_description={:?}",
             runtime_impl.persona_body_len(),

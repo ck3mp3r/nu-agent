@@ -10,24 +10,30 @@ use std::sync::Arc;
 
 use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
-use super::super::test::{default_circuit_breaker, default_doom_state};
-use super::test_utils::{MockResolver, MockUi, test_config};
+use super::super::test::{default_circuit_breaker, default_doom_state, default_last_total_tokens};
+use super::test_utils::{MockResolver, MockUi, test_compaction_config, test_config};
 use super::*;
-use crate::conversation::providers::CachedProviderClient;
+use crate::conversation::state::memory::MemoryState;
 use crate::session::{FsSessionStore, StoreEntry};
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
+
+/// Build a `MemoryState<FsSessionStore>` backed by the given tempdir (no
+/// compaction — `CachedMemory` is used directly).
+fn make_memory_state(temp_dir: &tempfile::TempDir) -> MemoryState<FsSessionStore> {
+    let store = Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
+    MemoryState::new(store)
+}
 
 #[test]
 fn turn_executor_new_constructs_without_panic() {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
-        FsSessionStore::new(temp_dir.path().to_path_buf()),
-    ));
+    let mut memory_state = make_memory_state(&temp_dir);
     let closure_registry = ClosureRegistry::new();
     let mcp_registry = McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
+    let shared_model = super::test_utils::shared_mock_model_handle();
 
     let _executor = TurnExecutor::new(
         &config,
@@ -39,8 +45,11 @@ fn turn_executor_new_constructs_without_panic() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
     );
     // Construction succeeded — no panic.
 }
@@ -49,12 +58,11 @@ fn turn_executor_new_constructs_without_panic() {
 fn turn_executor_exposes_memory_state() {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
-        FsSessionStore::new(temp_dir.path().to_path_buf()),
-    ));
+    let mut memory_state = make_memory_state(&temp_dir);
     let closure_registry = ClosureRegistry::new();
     let mcp_registry = McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
+    let shared_model = super::test_utils::shared_mock_model_handle();
 
     let executor = TurnExecutor::new(
         &config,
@@ -66,8 +74,11 @@ fn turn_executor_exposes_memory_state() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
     );
 
     // Verify memory_state is accessible and last_total_tokens starts None
@@ -78,12 +89,11 @@ fn turn_executor_exposes_memory_state() {
 fn turn_executor_take_response_data_returns_none_before_execute() {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
-        FsSessionStore::new(temp_dir.path().to_path_buf()),
-    ));
+    let mut memory_state = make_memory_state(&temp_dir);
     let closure_registry = ClosureRegistry::new();
     let mcp_registry = McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
+    let shared_model = super::test_utils::shared_mock_model_handle();
 
     let mut executor = TurnExecutor::new(
         &config,
@@ -95,8 +105,11 @@ fn turn_executor_take_response_data_returns_none_before_execute() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
     );
 
     assert!(executor.take_response_data().is_none());
@@ -128,16 +141,14 @@ async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_comp
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-cancelled-session";
-    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
-        FsSessionStore::new(temp_dir.path().to_path_buf()),
-    ));
+    let mut memory_state = make_memory_state(&temp_dir);
 
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("partial response".to_string()),
-        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+        MockStreamEvent::final_response_with_default_usage(),
     ]]);
 
-    let cached_client = CachedProviderClient::Mock(model);
+    let shared_model = super::test_utils::shared_model_handle(model);
     let bus = crate::bus::create_bus();
     let mut turn_rx = bus.turn().subscribe();
     let mut ui = MockUi::immediately_cancelled(bus.clone());
@@ -156,8 +167,11 @@ async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_comp
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
             bus,
         },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
     );
 
     let result = executor
@@ -168,7 +182,6 @@ async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_comp
                 preamble: None,
                 span: nu_protocol::Span::test_data(),
             },
-            &cached_client,
             MockResolver,
             Some(session_id),
             None,
@@ -189,7 +202,7 @@ async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_comp
     // 2. Conversation store must have been written with the cancelled messages
     //    (via JournalConversationMemory.append() — single write to both JSONL and cache)
     let persisted_entries = memory_state
-        .memory()
+        .inner_memory()
         .load_all(session_id)
         .await
         .expect("store load should succeed");
@@ -219,14 +232,14 @@ async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_comp
     //     trim a trailing user-only message from an immediately-cancelled turn.
     // The key invariant is JSONL durability (step 2 above), not the repair-filtered view.
 
-    // 3. TurnEvent::TurnCompleted must have been published on the bus turn channel
+    // 3. TurnEvent::Completed must have been published on the bus turn channel
     let completed_received = turn_rx
         .try_recv()
-        .map(|event| matches!(event, crate::bus::TurnEvent::TurnCompleted { .. }))
+        .map(|event| matches!(event, crate::bus::TurnEvent::Completed { .. }))
         .unwrap_or(false);
     assert!(
         completed_received,
-        "TurnEvent::TurnCompleted must be published for a cancelled turn (path C)"
+        "TurnEvent::Completed must be published for a cancelled turn (path C)"
     );
 
     // 4. UiEvent::AssistantMessage must NOT have been emitted
@@ -253,16 +266,14 @@ async fn completed_turn_no_explicit_store_append_needed() {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-completed-session";
-    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
-        FsSessionStore::new(temp_dir.path().to_path_buf()),
-    ));
+    let mut memory_state = make_memory_state(&temp_dir);
 
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("Hello from LLM!".to_string()),
-        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+        MockStreamEvent::final_response_with_default_usage(),
     ]]);
 
-    let cached_client = CachedProviderClient::Mock(model);
+    let shared_model = super::test_utils::shared_model_handle(model);
     let mut ui = MockUi::new();
 
     let closure_registry = crate::tools::closure::ClosureRegistry::new();
@@ -279,8 +290,11 @@ async fn completed_turn_no_explicit_store_append_needed() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
     );
 
     let result = executor
@@ -291,7 +305,6 @@ async fn completed_turn_no_explicit_store_append_needed() {
                 preamble: None,
                 span: nu_protocol::Span::test_data(),
             },
-            &cached_client,
             MockResolver,
             Some(session_id),
             None,
@@ -314,7 +327,7 @@ async fn completed_turn_no_explicit_store_append_needed() {
 
     // rig wrote to JSONL via memory.append() — no explicit store.append() in executor
     let persisted_entries = memory_state
-        .memory()
+        .inner_memory()
         .load_all(session_id)
         .await
         .expect("store load should succeed");
@@ -349,16 +362,14 @@ async fn cancelled_turn_writes_via_single_memory_append() {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-single-write-cancelled";
-    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
-        FsSessionStore::new(temp_dir.path().to_path_buf()),
-    ));
+    let mut memory_state = make_memory_state(&temp_dir);
 
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("partial".to_string()),
-        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+        MockStreamEvent::final_response_with_default_usage(),
     ]]);
 
-    let cached_client = CachedProviderClient::Mock(model);
+    let shared_model = super::test_utils::shared_model_handle(model);
     let bus = crate::bus::create_bus();
     let mut ui = MockUi::immediately_cancelled(bus.clone());
 
@@ -376,8 +387,11 @@ async fn cancelled_turn_writes_via_single_memory_append() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
             bus,
         },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
     );
 
     let result = executor
@@ -388,7 +402,6 @@ async fn cancelled_turn_writes_via_single_memory_append() {
                 preamble: None,
                 span: nu_protocol::Span::test_data(),
             },
-            &cached_client,
             MockResolver,
             Some(session_id),
             None,
@@ -400,7 +413,7 @@ async fn cancelled_turn_writes_via_single_memory_append() {
 
     // Both store (JSONL) and memory cache must have the messages
     let from_store_entries = memory_state
-        .memory()
+        .inner_memory()
         .load_all(session_id)
         .await
         .expect("store load should succeed");
@@ -422,7 +435,7 @@ async fn cancelled_turn_writes_via_single_memory_append() {
     // The key invariant is JSONL durability (from_store above), not the repair-filtered view.
     // Verify that memory.load() succeeds (doesn't panic/error) — content is repair-determined.
     let _ = memory_state
-        .memory()
+        .inner_memory()
         .load(session_id)
         .await
         .expect("memory load should succeed without error");
@@ -442,19 +455,17 @@ async fn last_total_tokens_updated_on_completed_turn() {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-token-tracking";
-    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
-        FsSessionStore::new(temp_dir.path().to_path_buf()),
-    ));
+    let mut memory_state = make_memory_state(&temp_dir);
 
     // Verify initial state
     assert!(memory_state.last_total_tokens().is_none());
 
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("response text".to_string()),
-        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+        MockStreamEvent::final_response_with_default_usage(),
     ]]);
 
-    let cached_client = CachedProviderClient::Mock(model);
+    let shared_model = super::test_utils::shared_model_handle(model);
     let mut ui = MockUi::new();
 
     let closure_registry = crate::tools::closure::ClosureRegistry::new();
@@ -471,8 +482,11 @@ async fn last_total_tokens_updated_on_completed_turn() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
     );
 
     let result = executor
@@ -483,7 +497,6 @@ async fn last_total_tokens_updated_on_completed_turn() {
                 preamble: None,
                 span: nu_protocol::Span::test_data(),
             },
-            &cached_client,
             MockResolver,
             Some(session_id),
             None,
@@ -521,18 +534,16 @@ async fn max_turns_error_persists_full_history() {
     };
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-max-turns";
-    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
-        FsSessionStore::new(temp_dir.path().to_path_buf()),
-    ));
+    let mut memory_state = make_memory_state(&temp_dir);
 
     // Turn 1: model asks for a tool call. With max_turns=0, rig will MaxTurnsError
     // as soon as it tries to schedule the tool-call turn.
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::tool_call("tool_call_1", "some_tool", serde_json::json!({"x": 1})),
-        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+        MockStreamEvent::final_response_with_default_usage(),
     ]]);
 
-    let cached_client = CachedProviderClient::Mock(model);
+    let shared_model = super::test_utils::shared_model_handle(model);
     let mut ui = MockUi::new();
 
     let closure_registry = crate::tools::closure::ClosureRegistry::new();
@@ -549,8 +560,11 @@ async fn max_turns_error_persists_full_history() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
     );
 
     let result = executor
@@ -561,7 +575,6 @@ async fn max_turns_error_persists_full_history() {
                 preamble: None,
                 span: nu_protocol::Span::test_data(),
             },
-            &cached_client,
             MockResolver,
             Some(session_id),
             None,
@@ -576,7 +589,7 @@ async fn max_turns_error_persists_full_history() {
 
     // JSONL must have been written with the partial chat history
     let persisted = memory_state
-        .memory()
+        .inner_memory()
         .load_all(session_id)
         .await
         .expect("store load should succeed");
@@ -603,9 +616,7 @@ async fn unknown_tool_error_persists_full_history() {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-unknown-tool";
-    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
-        FsSessionStore::new(temp_dir.path().to_path_buf()),
-    ));
+    let mut memory_state = make_memory_state(&temp_dir);
 
     // Model calls a tool that is not registered — triggers UnknownToolCall.
     // No visible_tool_definitions → agent has no tools → any tool call is unknown.
@@ -615,10 +626,10 @@ async fn unknown_tool_error_persists_full_history() {
             "nonexistent_tool",
             serde_json::json!({"arg": "value"}),
         ),
-        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+        MockStreamEvent::final_response_with_default_usage(),
     ]]);
 
-    let cached_client = CachedProviderClient::Mock(model);
+    let shared_model = super::test_utils::shared_model_handle(model);
     let mut ui = MockUi::new();
 
     let closure_registry = crate::tools::closure::ClosureRegistry::new();
@@ -635,8 +646,11 @@ async fn unknown_tool_error_persists_full_history() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
     );
 
     let result = executor
@@ -647,7 +661,6 @@ async fn unknown_tool_error_persists_full_history() {
                 preamble: None,
                 span: nu_protocol::Span::test_data(),
             },
-            &cached_client,
             MockResolver,
             Some(session_id),
             None,
@@ -662,7 +675,7 @@ async fn unknown_tool_error_persists_full_history() {
 
     // JSONL must have been written with the partial chat history
     let persisted_entries = memory_state
-        .memory()
+        .inner_memory()
         .load_all(session_id)
         .await
         .expect("store load should succeed");
@@ -692,15 +705,13 @@ async fn network_error_on_fresh_session_persists_user_message() {
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-network-error";
     let prompt_text = "what is the weather today?";
-    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
-        FsSessionStore::new(temp_dir.path().to_path_buf()),
-    ));
+    let mut memory_state = make_memory_state(&temp_dir);
 
     // Streaming error on the first event — simulates network failure.
     let model =
         MockCompletionModel::from_stream_turns([[MockStreamEvent::error("network timeout")]]);
 
-    let cached_client = CachedProviderClient::Mock(model);
+    let shared_model = super::test_utils::shared_model_handle(model);
     let mut ui = MockUi::new();
 
     let closure_registry = crate::tools::closure::ClosureRegistry::new();
@@ -717,8 +728,11 @@ async fn network_error_on_fresh_session_persists_user_message() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
     );
 
     let result = executor
@@ -729,7 +743,6 @@ async fn network_error_on_fresh_session_persists_user_message() {
                 preamble: None,
                 span: nu_protocol::Span::test_data(),
             },
-            &cached_client,
             MockResolver,
             Some(session_id),
             None,
@@ -746,7 +759,7 @@ async fn network_error_on_fresh_session_persists_user_message() {
     // Delta path fires → 1 message persisted (just the user prompt).
     // The placeholder path no longer fires because the delta is non-empty.
     let persisted_entries = memory_state
-        .memory()
+        .inner_memory()
         .load_all(session_id)
         .await
         .expect("store load should succeed");
@@ -788,9 +801,7 @@ async fn hard_error_on_first_llm_call_persists_user_message() {
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-hard-error-no-hook-history";
     let prompt_text = "fresh turn on empty session";
-    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
-        FsSessionStore::new(temp_dir.path().to_path_buf()),
-    ));
+    let mut memory_state = make_memory_state(&temp_dir);
 
     // Fresh session — no prior messages. on_completion_call fires with history=[]
     // and prompt = user_msg. After fix: last_known_history = [user_msg].
@@ -798,7 +809,7 @@ async fn hard_error_on_first_llm_call_persists_user_message() {
     let model =
         MockCompletionModel::from_stream_turns([[MockStreamEvent::error("provider unavailable")]]);
 
-    let cached_client = CachedProviderClient::Mock(model);
+    let shared_model = super::test_utils::shared_model_handle(model);
     let mut ui = MockUi::new();
 
     let closure_registry = crate::tools::closure::ClosureRegistry::new();
@@ -815,8 +826,11 @@ async fn hard_error_on_first_llm_call_persists_user_message() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
     );
 
     let result = executor
@@ -827,7 +841,6 @@ async fn hard_error_on_first_llm_call_persists_user_message() {
                 preamble: None,
                 span: nu_protocol::Span::test_data(),
             },
-            &cached_client,
             MockResolver,
             Some(session_id),
             None,
@@ -842,7 +855,7 @@ async fn hard_error_on_first_llm_call_persists_user_message() {
 
     // After the fix: last_known_history = [user_msg], delta = [user_msg], 1 message persisted.
     let persisted_entries = memory_state
-        .memory()
+        .inner_memory()
         .load_all(session_id)
         .await
         .expect("store load should succeed");
@@ -875,15 +888,13 @@ async fn hard_error_on_first_llm_call_persists_user_message() {
 async fn hard_error_no_session_persists_nothing() {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
-        FsSessionStore::new(temp_dir.path().to_path_buf()),
-    ));
+    let mut memory_state = make_memory_state(&temp_dir);
 
     // Streaming error — hard failure, no history recoverable.
     let model =
         MockCompletionModel::from_stream_turns([[MockStreamEvent::error("provider unavailable")]]);
 
-    let cached_client = CachedProviderClient::Mock(model);
+    let shared_model = super::test_utils::shared_model_handle(model);
     let mut ui = MockUi::new();
 
     let closure_registry = crate::tools::closure::ClosureRegistry::new();
@@ -900,8 +911,11 @@ async fn hard_error_no_session_persists_nothing() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
     );
 
     let result = executor
@@ -912,7 +926,6 @@ async fn hard_error_no_session_persists_nothing() {
                 preamble: None,
                 span: nu_protocol::Span::test_data(),
             },
-            &cached_client,
             MockResolver,
             None, // <-- no session
             None,
@@ -957,19 +970,17 @@ async fn prompt_cancelled_with_unpaired_tool_call_injects_synthetic_result() {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-cancel-inject";
-    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
-        FsSessionStore::new(temp_dir.path().to_path_buf()),
-    ));
+    let mut memory_state = make_memory_state(&temp_dir);
 
     // Model issues a tool call — the cancel fires before the tool result is
     // appended, so chat_history will contain Assistant(ToolCall) with no
     // matching User(ToolResult).
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::tool_call("tc_cancel_1", "some_tool", serde_json::json!({"x": 1})),
-        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+        MockStreamEvent::final_response_with_default_usage(),
     ]]);
 
-    let cached_client = CachedProviderClient::Mock(model);
+    let shared_model = super::test_utils::shared_model_handle(model);
     let bus = crate::bus::create_bus();
     let mut ui = MockUi::immediately_cancelled(bus.clone());
 
@@ -987,8 +998,11 @@ async fn prompt_cancelled_with_unpaired_tool_call_injects_synthetic_result() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
             bus,
         },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
     );
 
     let result = executor
@@ -999,7 +1013,6 @@ async fn prompt_cancelled_with_unpaired_tool_call_injects_synthetic_result() {
                 preamble: None,
                 span: nu_protocol::Span::test_data(),
             },
-            &cached_client,
             MockResolver,
             Some(session_id),
             None,
@@ -1014,7 +1027,7 @@ async fn prompt_cancelled_with_unpaired_tool_call_injects_synthetic_result() {
     // before cancel fired, we may get a completed turn. Either way, if a
     // ToolCall was persisted, its ToolResult must also be persisted.
     let persisted_entries = memory_state
-        .memory()
+        .inner_memory()
         .load_all(session_id)
         .await
         .expect("store load should succeed");
@@ -1043,7 +1056,7 @@ async fn prompt_cancelled_with_unpaired_tool_call_injects_synthetic_result() {
                 if let crate::types::Message::User { content } = next {
                     content.iter().any(|item| {
                         if let UserContent::ToolResult(tr) = item {
-                            &tr.id == call_id
+                            &tr.call == call_id
                         } else {
                             false
                         }
@@ -1068,9 +1081,7 @@ async fn unknown_tool_error_with_unpaired_tool_call_injects_synthetic_result() {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-unknown-inject";
-    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
-        FsSessionStore::new(temp_dir.path().to_path_buf()),
-    ));
+    let mut memory_state = make_memory_state(&temp_dir);
 
     // Model calls a tool that is not registered — triggers UnknownToolCall.
     // The chat_history will contain the user prompt + Assistant(ToolCall) but
@@ -1081,10 +1092,10 @@ async fn unknown_tool_error_with_unpaired_tool_call_injects_synthetic_result() {
             "nonexistent_tool",
             serde_json::json!({"arg": "value"}),
         ),
-        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+        MockStreamEvent::final_response_with_default_usage(),
     ]]);
 
-    let cached_client = CachedProviderClient::Mock(model);
+    let shared_model = super::test_utils::shared_model_handle(model);
     let mut ui = MockUi::new();
 
     let closure_registry = crate::tools::closure::ClosureRegistry::new();
@@ -1101,8 +1112,11 @@ async fn unknown_tool_error_with_unpaired_tool_call_injects_synthetic_result() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
     );
 
     let result = executor
@@ -1113,7 +1127,6 @@ async fn unknown_tool_error_with_unpaired_tool_call_injects_synthetic_result() {
                 preamble: None,
                 span: nu_protocol::Span::test_data(),
             },
-            &cached_client,
             MockResolver,
             Some(session_id),
             None,
@@ -1124,7 +1137,7 @@ async fn unknown_tool_error_with_unpaired_tool_call_injects_synthetic_result() {
     assert!(result.is_err(), "UnknownToolCall must propagate as Err");
 
     let persisted_entries = memory_state
-        .memory()
+        .inner_memory()
         .load_all(session_id)
         .await
         .expect("store load should succeed");
@@ -1151,7 +1164,7 @@ async fn unknown_tool_error_with_unpaired_tool_call_injects_synthetic_result() {
                 if let crate::types::Message::User { content } = next {
                     content.iter().any(|item| {
                         if let UserContent::ToolResult(tr) = item {
-                            &tr.id == call_id
+                            &tr.call == call_id
                         } else {
                             false
                         }
@@ -1441,9 +1454,7 @@ async fn hard_error_after_prior_history_persists_user_message() {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-hard-error-hook-history";
-    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
-        FsSessionStore::new(temp_dir.path().to_path_buf()),
-    ));
+    let mut memory_state = make_memory_state(&temp_dir);
 
     // Pre-populate the session store with a completed exchange so that rig
     // loads it into the agent's context and on_completion_call fires with
@@ -1459,12 +1470,12 @@ async fn hard_error_after_prior_history_persists_user_message() {
         .cloned()
         .map(StoreEntry::Message)
         .collect();
-    memory_state.memory().load_all(session_id).await.ok();
+    memory_state.inner_memory().load_all(session_id).await.ok();
     // Use ConversationMemory append to pre-populate
     {
         use rig::memory::ConversationMemory;
         memory_state
-            .memory()
+            .inner_memory()
             .append(session_id, prior_messages.clone())
             .await
             .unwrap();
@@ -1474,7 +1485,7 @@ async fn hard_error_after_prior_history_persists_user_message() {
     let model =
         MockCompletionModel::from_stream_turns([[MockStreamEvent::error("http decode error")]]);
 
-    let cached_client = CachedProviderClient::Mock(model);
+    let shared_model = super::test_utils::shared_model_handle(model);
     let mut ui = MockUi::new();
 
     let closure_registry = crate::tools::closure::ClosureRegistry::new();
@@ -1491,8 +1502,11 @@ async fn hard_error_after_prior_history_persists_user_message() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
     );
 
     let result = executor
@@ -1503,7 +1517,6 @@ async fn hard_error_after_prior_history_persists_user_message() {
                 preamble: None,
                 span: nu_protocol::Span::test_data(),
             },
-            &cached_client,
             MockResolver,
             Some(session_id),
             None,
@@ -1514,7 +1527,7 @@ async fn hard_error_after_prior_history_persists_user_message() {
     assert!(result.is_err(), "CompletionError must propagate as Err");
 
     let persisted_entries = memory_state
-        .memory()
+        .inner_memory()
         .load_all(session_id)
         .await
         .expect("store load should succeed");
@@ -1614,9 +1627,7 @@ async fn hard_error_after_prior_history_persists_only_delta() {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-delta-hard-error";
-    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
-        FsSessionStore::new(temp_dir.path().to_path_buf()),
-    ));
+    let mut memory_state = make_memory_state(&temp_dir);
 
     // Pre-populate: simulate a prior successful turn using ConversationMemory append
     let prior_msgs = vec![
@@ -1626,7 +1637,7 @@ async fn hard_error_after_prior_history_persists_only_delta() {
     {
         use rig::memory::ConversationMemory;
         memory_state
-            .memory()
+            .inner_memory()
             .append(session_id, prior_msgs)
             .await
             .unwrap();
@@ -1640,7 +1651,7 @@ async fn hard_error_after_prior_history_persists_only_delta() {
     let model =
         MockCompletionModel::from_stream_turns([[MockStreamEvent::error("network timeout")]]);
 
-    let cached_client = CachedProviderClient::Mock(model);
+    let shared_model = super::test_utils::shared_model_handle(model);
     let mut ui = MockUi::new();
     let closure_registry = ClosureRegistry::new();
     let mcp_registry = McpToolRegistry::empty();
@@ -1656,8 +1667,11 @@ async fn hard_error_after_prior_history_persists_only_delta() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
     );
 
     let result = executor
@@ -1668,7 +1682,6 @@ async fn hard_error_after_prior_history_persists_only_delta() {
                 preamble: None,
                 span: nu_protocol::Span::test_data(),
             },
-            &cached_client,
             MockResolver,
             Some(session_id),
             None,
@@ -1678,7 +1691,7 @@ async fn hard_error_after_prior_history_persists_only_delta() {
     assert!(result.is_err(), "hard error must propagate as Err");
 
     let persisted_entries = memory_state
-        .memory()
+        .inner_memory()
         .load_all(session_id)
         .await
         .expect("store load should succeed");
@@ -1724,14 +1737,12 @@ async fn hard_error_twice_does_not_double_history() {
 
     // Turn 1: successful turn — rig appends [user("t1"), assistant("ok")] → store has 2 msgs.
     {
-        let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
-            FsSessionStore::new(temp_dir.path().to_path_buf()),
-        ));
+        let mut memory_state = make_memory_state(&temp_dir);
         let model = MockCompletionModel::from_stream_turns([[
             MockStreamEvent::Text("ok".to_string()),
-            MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+            MockStreamEvent::final_response_with_default_usage(),
         ]]);
-        let cached_client = CachedProviderClient::Mock(model);
+        let shared_model = super::test_utils::shared_model_handle(model);
         let mut ui = MockUi::new();
         let closure_registry = ClosureRegistry::new();
         let mcp_registry = McpToolRegistry::empty();
@@ -1746,8 +1757,11 @@ async fn hard_error_twice_does_not_double_history() {
                 visible_tool_definitions: vec![],
                 circuit_breaker: default_circuit_breaker(),
                 doom_state: default_doom_state(),
+                last_total_tokens: default_last_total_tokens(),
                 bus: crate::bus::create_bus(),
             },
+            shared_model,
+            test_compaction_config(crate::bus::create_bus()),
         );
         let result = executor
             .execute(
@@ -1757,7 +1771,6 @@ async fn hard_error_twice_does_not_double_history() {
                     preamble: None,
                     span: nu_protocol::Span::test_data(),
                 },
-                &cached_client,
                 MockResolver,
                 Some(session_id),
                 None,
@@ -1769,11 +1782,9 @@ async fn hard_error_twice_does_not_double_history() {
     // Turn 2: hard error. pre_turn_count=2. last_known_history = [prior_1, prior_2, user("t2")].
     // delta = skip(2) = [user("t2")] → delta path fires → store has 3.
     {
-        let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
-            FsSessionStore::new(temp_dir.path().to_path_buf()),
-        ));
+        let mut memory_state = make_memory_state(&temp_dir);
         let model = MockCompletionModel::from_stream_turns([[MockStreamEvent::error("timeout")]]);
-        let cached_client = CachedProviderClient::Mock(model);
+        let shared_model = super::test_utils::shared_model_handle(model);
         let mut ui = MockUi::new();
         let closure_registry = ClosureRegistry::new();
         let mcp_registry = McpToolRegistry::empty();
@@ -1788,8 +1799,11 @@ async fn hard_error_twice_does_not_double_history() {
                 visible_tool_definitions: vec![],
                 circuit_breaker: default_circuit_breaker(),
                 doom_state: default_doom_state(),
+                last_total_tokens: default_last_total_tokens(),
                 bus: crate::bus::create_bus(),
             },
+            shared_model,
+            test_compaction_config(crate::bus::create_bus()),
         );
         let _ = executor
             .execute(
@@ -1799,7 +1813,6 @@ async fn hard_error_twice_does_not_double_history() {
                     preamble: None,
                     span: nu_protocol::Span::test_data(),
                 },
-                &cached_client,
                 MockResolver,
                 Some(session_id),
                 None,
@@ -1810,11 +1823,9 @@ async fn hard_error_twice_does_not_double_history() {
     // Turn 3: hard error again. pre_turn_count=3. last_known_history = [prior_1, prior_2, user("t2"), user("t3")].
     // delta = skip(3) = [user("t3")] → delta path fires → store has 4.
     {
-        let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
-            FsSessionStore::new(temp_dir.path().to_path_buf()),
-        ));
+        let mut memory_state = make_memory_state(&temp_dir);
         let model = MockCompletionModel::from_stream_turns([[MockStreamEvent::error("timeout")]]);
-        let cached_client = CachedProviderClient::Mock(model);
+        let shared_model = super::test_utils::shared_model_handle(model);
         let mut ui = MockUi::new();
         let closure_registry = ClosureRegistry::new();
         let mcp_registry = McpToolRegistry::empty();
@@ -1829,8 +1840,11 @@ async fn hard_error_twice_does_not_double_history() {
                 visible_tool_definitions: vec![],
                 circuit_breaker: default_circuit_breaker(),
                 doom_state: default_doom_state(),
+                last_total_tokens: default_last_total_tokens(),
                 bus: crate::bus::create_bus(),
             },
+            shared_model,
+            test_compaction_config(crate::bus::create_bus()),
         );
         let _ = executor
             .execute(
@@ -1840,7 +1854,6 @@ async fn hard_error_twice_does_not_double_history() {
                     preamble: None,
                     span: nu_protocol::Span::test_data(),
                 },
-                &cached_client,
                 MockResolver,
                 Some(session_id),
                 None,
@@ -1851,11 +1864,9 @@ async fn hard_error_twice_does_not_double_history() {
     // Final state: 2 (turn 1 success) + 1 (turn 2 user delta) + 1 (turn 3 user delta) = 4.
     // After the fix: on_completion_call stores history + [prompt], so delta = [user_prompt]
     // for each error turn. Delta path fires → 1 message per error turn, not 2 (no placeholder).
-    let final_memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
-        FsSessionStore::new(temp_dir.path().to_path_buf()),
-    ));
+    let final_memory_state = make_memory_state(&temp_dir);
     let final_entries = final_memory_state
-        .memory()
+        .inner_memory()
         .load_all(session_id)
         .await
         .expect("store load should succeed");
@@ -1898,9 +1909,7 @@ async fn cancelled_turn_after_prior_history_persists_only_delta() {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-cancelled-delta";
-    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
-        FsSessionStore::new(temp_dir.path().to_path_buf()),
-    ));
+    let mut memory_state = make_memory_state(&temp_dir);
 
     // Pre-populate: simulate a prior successful turn using ConversationMemory append
     let prior_msgs = vec![
@@ -1910,7 +1919,7 @@ async fn cancelled_turn_after_prior_history_persists_only_delta() {
     {
         use rig::memory::ConversationMemory;
         memory_state
-            .memory()
+            .inner_memory()
             .append(session_id, prior_msgs)
             .await
             .unwrap();
@@ -1918,9 +1927,9 @@ async fn cancelled_turn_after_prior_history_persists_only_delta() {
 
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("partial".to_string()),
-        MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+        MockStreamEvent::final_response_with_default_usage(),
     ]]);
-    let cached_client = CachedProviderClient::Mock(model);
+    let shared_model = super::test_utils::shared_model_handle(model);
     let bus = crate::bus::create_bus();
     let mut ui = MockUi::immediately_cancelled(bus.clone());
     let closure_registry = ClosureRegistry::new();
@@ -1937,8 +1946,11 @@ async fn cancelled_turn_after_prior_history_persists_only_delta() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
             bus,
         },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
     );
 
     let result = executor
@@ -1949,7 +1961,6 @@ async fn cancelled_turn_after_prior_history_persists_only_delta() {
                 preamble: None,
                 span: nu_protocol::Span::test_data(),
             },
-            &cached_client,
             MockResolver,
             Some(session_id),
             None,
@@ -1960,7 +1971,7 @@ async fn cancelled_turn_after_prior_history_persists_only_delta() {
     assert!(matches!(result.unwrap(), TurnOutcome::EarlyReturn(_)));
 
     let persisted_entries = memory_state
-        .memory()
+        .inner_memory()
         .load_all(session_id)
         .await
         .expect("store load should succeed");
@@ -2001,9 +2012,7 @@ async fn hard_error_on_first_llm_call_no_prior_history_persists_user_message() {
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-hard-error-fresh-session-2";
     let prompt_text = "fresh turn on empty session";
-    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
-        FsSessionStore::new(temp_dir.path().to_path_buf()),
-    ));
+    let mut memory_state = make_memory_state(&temp_dir);
 
     // Fresh session — no prior messages. on_completion_call fires with history=[]
     // and prompt = user_msg. After fix: last_known_history = [user_msg].
@@ -2011,7 +2020,7 @@ async fn hard_error_on_first_llm_call_no_prior_history_persists_user_message() {
     let model =
         MockCompletionModel::from_stream_turns([[MockStreamEvent::error("provider unavailable")]]);
 
-    let cached_client = CachedProviderClient::Mock(model);
+    let shared_model = super::test_utils::shared_model_handle(model);
     let mut ui = MockUi::new();
 
     let closure_registry = crate::tools::closure::ClosureRegistry::new();
@@ -2028,8 +2037,11 @@ async fn hard_error_on_first_llm_call_no_prior_history_persists_user_message() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
     );
 
     let result = executor
@@ -2040,7 +2052,6 @@ async fn hard_error_on_first_llm_call_no_prior_history_persists_user_message() {
                 preamble: None,
                 span: nu_protocol::Span::test_data(),
             },
-            &cached_client,
             MockResolver,
             Some(session_id),
             None,
@@ -2055,7 +2066,7 @@ async fn hard_error_on_first_llm_call_no_prior_history_persists_user_message() {
 
     // After the fix: 1 message persisted (user prompt via delta path, no placeholder).
     let persisted_entries = memory_state
-        .memory()
+        .inner_memory()
         .load_all(session_id)
         .await
         .expect("store load should succeed");
@@ -2148,21 +2159,19 @@ async fn hard_error_mid_tool_loop_preserves_real_tool_results() {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-mid-tool-loop-error";
-    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
-        FsSessionStore::new(temp_dir.path().to_path_buf()),
-    ));
+    let mut memory_state = make_memory_state(&temp_dir);
 
     // Turn 1: LLM emits tool_call + FinalResponse
     // Turn 2: LLM errors (simulates CompletionError after tool result is in history)
     let model = MockCompletionModel::from_stream_turns([
         vec![
             MockStreamEvent::tool_call("tc1", "some_tool", serde_json::json!({"x": 1})),
-            MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+            MockStreamEvent::final_response_with_default_usage(),
         ],
         vec![MockStreamEvent::error("network failure after tool")],
     ]);
 
-    let cached_client = CachedProviderClient::Mock(model);
+    let shared_model = super::test_utils::shared_model_handle(model);
     let mut ui = MockUi::new();
 
     let closure_registry = crate::tools::closure::ClosureRegistry::new();
@@ -2185,8 +2194,11 @@ async fn hard_error_mid_tool_loop_preserves_real_tool_results() {
             }],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
     );
 
     let result = executor
@@ -2197,7 +2209,6 @@ async fn hard_error_mid_tool_loop_preserves_real_tool_results() {
                 preamble: None,
                 span: nu_protocol::Span::test_data(),
             },
-            &cached_client,
             MockResolver,
             Some(session_id),
             None,
@@ -2211,7 +2222,7 @@ async fn hard_error_mid_tool_loop_preserves_real_tool_results() {
     );
 
     let persisted_entries = memory_state
-        .memory()
+        .inner_memory()
         .load_all(session_id)
         .await
         .expect("store load should succeed");
@@ -2265,7 +2276,7 @@ async fn hard_error_mid_tool_loop_preserves_real_tool_results() {
                     .iter()
                     .find_map(|item| {
                         if let UserContent::ToolResult(tr) = item {
-                            if &tr.id == call_id {
+                            if &tr.call == call_id {
                                 // Extract text content
                                 Some(
                                     tr.content
@@ -2325,15 +2336,15 @@ async fn hard_error_mid_tool_loop_preserves_real_tool_results() {
 
 /// Helper: build a User message whose content is a single ToolResult.
 fn user_with_tool_result(id: &str) -> crate::types::Message {
-    use rig::one_or_many::OneOrMany;
     crate::types::Message::User {
-        content: OneOrMany::one(crate::types::UserContent::ToolResult(
+        content: vec![crate::types::UserContent::ToolResult(
             crate::types::ToolResult {
-                id: id.to_string(),
-                call_id: None,
-                content: OneOrMany::one(crate::types::ToolResultContent::text("result")),
+                call: crate::types::ToolCallId::new_or_mint(id),
+                provider: None,
+                name: "do_thing".into(),
+                content: vec![crate::types::ToolResultContent::text("result")],
             },
-        )),
+        )],
     }
 }
 
@@ -2349,17 +2360,16 @@ fn assistant_with_text(text: &str) -> crate::types::Message {
 
 /// Helper: build a User message with mixed content (ToolResult + Text).
 fn user_with_mixed_content(id: &str) -> crate::types::Message {
-    use rig::one_or_many::OneOrMany;
     crate::types::Message::User {
-        content: OneOrMany::many(vec![
+        content: vec![
             crate::types::UserContent::ToolResult(crate::types::ToolResult {
-                id: id.to_string(),
-                call_id: None,
-                content: OneOrMany::one(crate::types::ToolResultContent::text("result")),
+                call: crate::types::ToolCallId::new_or_mint(id),
+                provider: None,
+                name: "do_thing".into(),
+                content: vec![crate::types::ToolResultContent::text("result")],
             }),
             crate::types::UserContent::Text(crate::types::Text::new("some text")),
-        ])
-        .expect("non-empty user content"),
+        ],
     }
 }
 
@@ -2449,20 +2459,18 @@ async fn retry_succeeds_on_second_attempt() {
     };
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-retry-success";
-    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
-        FsSessionStore::new(temp_dir.path().to_path_buf()),
-    ));
+    let mut memory_state = make_memory_state(&temp_dir);
 
     // Turn 1: error (retryable 500). Turn 2: success.
     let model = MockCompletionModel::from_stream_turns([
         vec![MockStreamEvent::error("500 api_error internal server")],
         vec![
             MockStreamEvent::Text("recovered".to_string()),
-            MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+            MockStreamEvent::final_response_with_default_usage(),
         ],
     ]);
 
-    let cached_client = CachedProviderClient::Mock(model);
+    let shared_model = super::test_utils::shared_model_handle(model);
     let mut ui = MockUi::new();
 
     let closure_registry = ClosureRegistry::new();
@@ -2479,8 +2487,11 @@ async fn retry_succeeds_on_second_attempt() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
     );
 
     let result = executor
@@ -2491,7 +2502,6 @@ async fn retry_succeeds_on_second_attempt() {
                 preamble: None,
                 span: nu_protocol::Span::test_data(),
             },
-            &cached_client,
             MockResolver,
             Some(session_id),
             None,
@@ -2506,7 +2516,7 @@ async fn retry_succeeds_on_second_attempt() {
     assert!(matches!(result.unwrap(), TurnOutcome::Completed));
 
     let persisted_entries = memory_state
-        .memory()
+        .inner_memory()
         .load_all(session_id)
         .await
         .expect("store load should succeed");
@@ -2536,9 +2546,7 @@ async fn retry_exhausted_surfaces_attempt_count() {
     };
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-retry-exhausted";
-    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
-        FsSessionStore::new(temp_dir.path().to_path_buf()),
-    ));
+    let mut memory_state = make_memory_state(&temp_dir);
 
     // All 3 attempts (1 initial + 2 retries) fail with retryable error
     let model = MockCompletionModel::from_stream_turns([
@@ -2547,7 +2555,7 @@ async fn retry_exhausted_surfaces_attempt_count() {
         vec![MockStreamEvent::error("500 api_error server down")],
     ]);
 
-    let cached_client = CachedProviderClient::Mock(model);
+    let shared_model = super::test_utils::shared_model_handle(model);
     let mut ui = MockUi::new();
 
     let closure_registry = ClosureRegistry::new();
@@ -2564,8 +2572,11 @@ async fn retry_exhausted_surfaces_attempt_count() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
     );
 
     let result = executor
@@ -2576,7 +2587,6 @@ async fn retry_exhausted_surfaces_attempt_count() {
                 preamble: None,
                 span: nu_protocol::Span::test_data(),
             },
-            &cached_client,
             MockResolver,
             Some(session_id),
             None,
@@ -2602,9 +2612,7 @@ async fn non_retryable_error_not_retried() {
     };
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-non-retryable";
-    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
-        FsSessionStore::new(temp_dir.path().to_path_buf()),
-    ));
+    let mut memory_state = make_memory_state(&temp_dir);
 
     // Only 1 turn — if retried, MockCompletionModel would panic (no more turns).
     // A 400 context_length_exceeded is NOT retryable.
@@ -2612,7 +2620,7 @@ async fn non_retryable_error_not_retried() {
         "context_length_exceeded in prompt",
     )]]);
 
-    let cached_client = CachedProviderClient::Mock(model);
+    let shared_model = super::test_utils::shared_model_handle(model);
     let mut ui = MockUi::new();
 
     let closure_registry = ClosureRegistry::new();
@@ -2629,8 +2637,11 @@ async fn non_retryable_error_not_retried() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
     );
 
     let result = executor
@@ -2641,7 +2652,6 @@ async fn non_retryable_error_not_retried() {
                 preamble: None,
                 span: nu_protocol::Span::test_data(),
             },
-            &cached_client,
             MockResolver,
             Some(session_id),
             None,
@@ -2672,15 +2682,13 @@ async fn retry_disabled_when_max_retries_is_zero() {
     };
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-no-retry-guard";
-    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
-        FsSessionStore::new(temp_dir.path().to_path_buf()),
-    ));
+    let mut memory_state = make_memory_state(&temp_dir);
 
     let model = MockCompletionModel::from_stream_turns([vec![MockStreamEvent::error(
         "500 api_error server error",
     )]]);
 
-    let cached_client = CachedProviderClient::Mock(model);
+    let shared_model = super::test_utils::shared_model_handle(model);
     let mut ui = MockUi::new();
 
     let closure_registry = ClosureRegistry::new();
@@ -2697,8 +2705,11 @@ async fn retry_disabled_when_max_retries_is_zero() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
     );
 
     let result = executor
@@ -2709,7 +2720,6 @@ async fn retry_disabled_when_max_retries_is_zero() {
                 preamble: None,
                 span: nu_protocol::Span::test_data(),
             },
-            &cached_client,
             MockResolver,
             Some(session_id),
             None,
@@ -2851,8 +2861,7 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
 
     use super::test_utils::MockUi;
     use crate::bus::CancelEvent;
-    use crate::conversation::providers::CachedProviderClient;
-    use crate::session::{FsSessionStore, StoreEntry};
+    use crate::session::StoreEntry;
     use crate::tools::closure::ClosureRegistry;
     use crate::tools::handler::McpToolRegistry;
 
@@ -2895,9 +2904,7 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
     let config = test_config();
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let session_id = "test-path-b-lkh";
-    let mut memory_state = super::super::super::state::memory::MemoryState::new(Arc::new(
-        FsSessionStore::new(temp_dir.path().to_path_buf()),
-    ));
+    let mut memory_state = make_memory_state(&temp_dir);
 
     let (ui, bus) = MockUi::with_external_cancel();
 
@@ -2906,11 +2913,11 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
     let model = MockCompletionModel::from_stream_turns([
         vec![
             MockStreamEvent::tool_call("tc1", "test_cancel_tool", serde_json::json!({})),
-            MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+            MockStreamEvent::final_response_with_default_usage(),
         ],
         vec![
             MockStreamEvent::Text("unreachable".into()),
-            MockStreamEvent::FinalResponse(rig::test_utils::MockResponse::new()),
+            MockStreamEvent::final_response_with_default_usage(),
         ],
     ]);
 
@@ -2932,13 +2939,20 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
         }],
         circuit_breaker: default_circuit_breaker(),
         doom_state: default_doom_state(),
+        last_total_tokens: default_last_total_tokens(),
         bus: bus.clone(),
     };
 
-    let cached_client = CachedProviderClient::Mock(model);
+    let shared_model = super::test_utils::shared_model_handle(model);
     let mut ui = ui;
 
-    let mut executor = TurnExecutor::new(&config, &mut memory_state, tool_infra);
+    let mut executor = TurnExecutor::new(
+        &config,
+        &mut memory_state,
+        tool_infra,
+        shared_model,
+        test_compaction_config(bus.clone()),
+    );
 
     let result = executor
         .execute(
@@ -2948,7 +2962,6 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
                 preamble: None,
                 span: nu_protocol::Span::test_data(),
             },
-            &cached_client,
             MockResolver,
             Some(session_id),
             None,
@@ -2968,7 +2981,7 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
 
     // 2. Persisted JSONL must contain the user prompt + tool call + tool result
     let persisted_entries = memory_state
-        .memory()
+        .inner_memory()
         .load_all(session_id)
         .await
         .expect("store load should succeed");
@@ -2995,7 +3008,7 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
     let has_tool_call = persisted.iter().any(|msg| {
         if let crate::types::Message::Assistant { content, .. } = msg {
             content.iter().any(
-                |c| matches!(c, crate::types::AssistantContent::ToolCall(tc) if tc.id == "tc1"),
+                |c| matches!(c, crate::types::AssistantContent::ToolCall(tc) if tc.id.as_str() == "tc1"),
             )
         } else {
             false
@@ -3012,7 +3025,7 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
         if let crate::types::Message::User { content } = msg {
             content.iter().any(|c| {
                 if let crate::types::UserContent::ToolResult(tr) = c {
-                    tr.id == "tc1"
+                    tr.call.as_str() == "tc1"
                         && tr.content.iter().any(|rc| {
                             if let crate::types::ToolResultContent::Text(t) = rc {
                                 !t.text.contains("[interrupted]")
@@ -3094,4 +3107,232 @@ fn jitter_produces_varying_delays() {
             "jittered delay must be in [800, 1200); got {sample}"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Compaction end-to-end test (task 679635b4)
+// ---------------------------------------------------------------------------
+
+/// When the conversation exceeds the sliding window, the hook must fire a
+/// `CompactionEvent::Requested { source: "auto" }` on the bus. The current turn
+/// proceeds with the full history (the orchestrator runs compaction
+/// asynchronously; the summary is applied on the next turn via the marker).
+#[tokio::test]
+async fn compaction_fires_when_conversation_exceeds_window() {
+    use rig::memory::ConversationMemory;
+
+    let config = test_config();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let session_id = "test-compaction-fires";
+
+    let bus = crate::bus::create_bus();
+    let mut compaction_rx = bus.compaction().subscribe();
+
+    // The compactor needs a model that streams a summary (a plain `text()` model
+    // does not serve streaming calls). Script enough streaming turns for the
+    // compaction to succeed.
+    let compactor_turns: Vec<Vec<rig::test_utils::MockStreamEvent>> = (0..8)
+        .map(|_| {
+            vec![
+                rig::test_utils::MockStreamEvent::Text("summary".to_string()),
+                rig::test_utils::MockStreamEvent::final_response_with_default_usage(),
+            ]
+        })
+        .collect();
+    let compactor_model = MockCompletionModel::from_stream_turns(compactor_turns);
+    let compactor_handle = std::sync::Arc::new(std::sync::Mutex::new(
+        rig::agent::ModelHandle::new(compactor_model),
+    ));
+    // Attach a store to the compactor so it can read/write compaction markers.
+    let store_arc = Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
+    let compactor = crate::conversation::compaction::compactor::NuCompactor::from_shared_model(
+        compactor_handle,
+        crate::conversation::compaction::compactor::NoopProgressUi,
+        bus.clone(),
+        None,
+    )
+    .with_store(Arc::clone(&store_arc));
+
+    let mut memory_state = MemoryState::new(Arc::clone(&store_arc));
+
+    // Pre-populate a conversation that far exceeds the token threshold with
+    // distinct user/assistant pairs (10 pairs = 20 messages).
+    for i in 0..10 {
+        memory_state
+            .inner_memory()
+            .append(
+                session_id,
+                vec![crate::types::Message::user(format!("user-{i}"))],
+            )
+            .await
+            .expect("append user");
+        memory_state
+            .inner_memory()
+            .append(
+                session_id,
+                vec![crate::types::Message::assistant(format!("assistant-{i}"))],
+            )
+            .await
+            .expect("append assistant");
+    }
+
+    // The model must be scripted to produce a final text response on the agent
+    // turn. Clone before moving so we can inspect the agent request's
+    // chat_history after the turn.
+    let model = MockCompletionModel::from_stream_turns([
+        // Turn 1: the agent's actual response (text).
+        vec![
+            MockStreamEvent::Text("agent reply".into()),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+    ]);
+    let model_spy = model.clone();
+    let shared_model = super::test_utils::shared_model_handle(model);
+    let mut ui = MockUi::new();
+
+    let closure_registry = crate::tools::closure::ClosureRegistry::new();
+    let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
+    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+
+    let compaction_config = crate::conversation::compaction::CompactionConfig {
+        compactor,
+        params: crate::compaction::CompactionParams::default(),
+        // A tiny threshold so the pre-populated conversation (20 messages) is
+        // over the threshold and auto-compaction fires on the first turn.
+        threshold_tokens: Some(1),
+    };
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(closure_registry),
+            mcp_registry: Arc::new(mcp_registry),
+            tool_server_handle,
+            visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
+            bus: bus.clone(),
+        },
+        shared_model,
+        compaction_config,
+    );
+
+    let result = executor
+        .execute(
+            &mut ui,
+            ExecuteInput {
+                prompt: "hello".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            MockResolver,
+            Some(session_id),
+            None,
+        )
+        .await;
+
+    assert!(
+        result.is_ok(),
+        "turn must complete; got: {:?}",
+        result.err()
+    );
+    assert!(matches!(result.unwrap(), TurnOutcome::Completed));
+
+    // 1. `CompactionEvent::Requested { source: "auto" }` must have been emitted
+    //    on the bus when the conversation exceeds the window.
+    let mut saw_requested = false;
+    while let Ok(ev) = compaction_rx.try_recv() {
+        if matches!(
+            ev,
+            crate::bus::CompactionEvent::Requested { source } if source == "auto"
+        ) {
+            saw_requested = true;
+            break;
+        }
+    }
+    assert!(
+        saw_requested,
+        "CompactionEvent::Requested {{ source: \"auto\" }} must be emitted when the conversation exceeds the window"
+    );
+
+    // 2. The agent must have made exactly 1 request (the current turn proceeds
+    //    with the full history; compaction runs asynchronously on the worker).
+    assert_eq!(
+        model_spy.request_count(),
+        1,
+        "agent must have made exactly 1 request"
+    );
+}
+
+/// `on_stream_response_finish` stores the real API token count so the hook's
+/// compaction threshold uses real usage, not the chars/4 estimate.
+///
+/// The `ToolInfra.last_total_tokens` slot starts `None`. After a completed turn
+/// whose model reports `total_tokens > 0`, the hook must populate the slot with
+/// that real count (verified through the public executor boundary).
+#[tokio::test]
+async fn on_stream_response_finish_stores_total_tokens() {
+    let config = test_config();
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let session_id = "test-hook-total-tokens";
+    let mut memory_state = make_memory_state(&temp_dir);
+
+    let model = MockCompletionModel::from_stream_turns([[
+        MockStreamEvent::Text("response".to_string()),
+        MockStreamEvent::final_response_with_total_tokens(1234),
+    ]]);
+    let shared_model = super::test_utils::shared_model_handle(model);
+    let mut ui = MockUi::new();
+
+    let closure_registry = crate::tools::closure::ClosureRegistry::new();
+    let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
+    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+    let last_total_tokens = default_last_total_tokens();
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(closure_registry),
+            mcp_registry: Arc::new(mcp_registry),
+            tool_server_handle,
+            visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
+            last_total_tokens: last_total_tokens.clone(),
+            bus: crate::bus::create_bus(),
+        },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
+    );
+
+    let result = executor
+        .execute(
+            &mut ui,
+            ExecuteInput {
+                prompt: "hello".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            MockResolver,
+            Some(session_id),
+            None,
+        )
+        .await;
+
+    assert!(
+        result.is_ok(),
+        "turn must complete; got: {:?}",
+        result.err()
+    );
+    assert!(matches!(result.unwrap(), TurnOutcome::Completed));
+    assert_eq!(
+        *last_total_tokens
+            .lock()
+            .expect("last_total_tokens mutex poisoned"),
+        Some(1234),
+        "hook must store the real total_tokens from on_stream_response_finish"
+    );
 }

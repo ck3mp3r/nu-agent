@@ -1,11 +1,9 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 use nu_plugin::EngineInterface;
 use nu_protocol::{LabeledError, Span, Value};
-use rig::memory::ConversationMemory;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 
@@ -13,17 +11,12 @@ use crate::hook::agent_hook::DoomLoopState;
 use crate::protocol::contracts::UiMessageSnapshot;
 use crate::session::SessionInfo;
 use crate::session::SessionStore;
-use crate::session::SessionStoreImpl;
+use crate::session::SessionStoreBackend;
 use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
-use crate::types::Message;
 
-use super::compaction::CompactionGuard;
-use super::compaction::executor::CompactionExecutor;
 use super::managers::{
-    CompactionManager, MultiAgentManager, PersonaManager, ProviderManager, SessionManager,
-    ToolManager,
+    MultiAgentManager, PersonaManager, ProviderManager, SessionManager, ToolManager,
 };
-use crate::compaction::CompactionParams;
 use crate::protocol::event::PermissionDecision as ProtocolPermissionDecision;
 
 /// Shared pending-permission map for TUI mode: maps request IDs to oneshot senders
@@ -31,8 +24,6 @@ use crate::protocol::event::PermissionDecision as ProtocolPermissionDecision;
 pub type PendingPermissions =
     Arc<Mutex<HashMap<String, oneshot::Sender<ProtocolPermissionDecision>>>>;
 use crate::protocol::{
-    compaction::{CompactionTriggerDecision, CompactionTriggerSource},
-    compaction_runtime::Compaction,
     contracts::{CoreRuntime, McpUsabilityState, ProgressUi},
     event::UiEvent,
     mcp_management::McpManagement,
@@ -87,12 +78,6 @@ fn build_system_preamble(
     }
 }
 
-/// Returns `true` when every message in the slice is a `Message::System`.
-/// Returns `true` for an empty slice (no messages = nothing to compact).
-fn only_system_messages(messages: &[Message]) -> bool {
-    messages.iter().all(|m| matches!(m, Message::System { .. }))
-}
-
 /// Generic agent runtime composed of independent domain managers.
 ///
 /// Each generic parameter is a manager type that owns one domain of state.
@@ -100,12 +85,11 @@ fn only_system_messages(messages: &[Message]) -> bool {
 /// session store) remain as named fields because they are not interchangeable.
 ///
 /// Use the `AgentConversationRuntime` type alias for the concrete production type.
-pub struct AgentRuntime<Prov, Tools, Sess, Comp, Persona, Multi>
+pub struct AgentRuntime<Prov, Tools, Sess, Persona, Multi>
 where
     Prov: ProviderManager,
     Tools: ToolManager,
     Sess: SessionManager,
-    Comp: CompactionManager,
     Persona: PersonaManager,
     Multi: MultiAgentManager,
 {
@@ -115,7 +99,7 @@ where
     pub mcp_state: super::state::mcp::McpState,
     pub permission_state: super::state::permission::PermissionState,
     pub engine: EngineInterface,
-    pub store: Arc<SessionStoreImpl>,
+    pub store: Arc<SessionStoreBackend>,
     pub final_session_id: Option<String>,
     pub cwd: PathBuf,
     /// Shared pending-decision map for interactive (TUI) mode.
@@ -133,36 +117,44 @@ where
     /// Doom loop state shared across turns so that repetitive tool call patterns
     /// are detected even when they span multiple consecutive turns.
     pub doom_state: Arc<Mutex<DoomLoopState>>,
+    /// Real token count from the last LLM completion, shared across turns. Used by
+    /// the hook's compaction threshold check.
+    pub last_total_tokens: Arc<Mutex<Option<u64>>>,
     /// Shared cancellation bus threaded through the turn pipeline.
     pub bus: crate::bus::Bus,
     // ── Domain managers ──────────────────────────────────────────────────────
     pub provider: Prov,
     pub tools: Tools,
     pub session: Sess,
-    pub compaction: Comp,
     pub persona: Persona,
     pub multi_agent: Multi,
-    // ── Compaction params ─────────────────────────────────────────────────────
-    pub compaction_params: CompactionParams,
+    /// Shared runtime model handle. The single point of model identity: both the
+    /// agent (built via `AgentBuilder::from_model_handle`) and the hook's
+    /// `on_model_select` route to this handle's current value. It is constructed
+    /// eagerly at startup and updated on every `switch_model()` call.
+    pub shared_model: Arc<Mutex<rig::agent::ModelHandle>>,
+    /// Hook-driven compaction machinery: compactor, policy, force flag, threshold.
+    pub compaction: crate::conversation::compaction::CompactionConfig<SessionStoreBackend>,
 }
 
 /// Concrete production runtime: all managers use their default state types.
 pub type AgentConversationRuntime = AgentRuntime<
     super::state::provider::ProviderState,
     super::state::tool::ToolState,
-    super::state::memory::MemoryState<SessionStoreImpl>,
-    super::compaction::state::CompactionState,
+    super::state::memory::MemoryState<SessionStoreBackend>,
     super::state::persona::PersonaState,
     super::state::multi_agent::MultiAgentState,
 >;
 
-impl<Prov, Tools, Sess, Comp, Persona, Multi> CoreRuntime
-    for AgentRuntime<Prov, Tools, Sess, Comp, Persona, Multi>
+impl<Prov, Tools, Sess, Persona, Multi> CoreRuntime
+    for AgentRuntime<Prov, Tools, Sess, Persona, Multi>
 where
     Prov: ProviderManager + Send,
     Tools: ToolManager + Send,
-    Sess: SessionManager<Memory = crate::session::CachedMemory<SessionStoreImpl>> + Send,
-    Comp: CompactionManager + Send,
+    Sess: SessionManager<
+            InnerMemory = crate::session::CachedMemory<SessionStoreBackend>,
+            Memory = super::state::memory::MemoryOf<SessionStoreBackend>,
+        > + Send,
     Persona: PersonaManager + Send,
     Multi: MultiAgentManager + Send,
 {
@@ -212,11 +204,6 @@ where
         let permissions = Arc::new(self.permission_state.permissions().clone());
         let session_grants = self.permission_state.session_grants_arc();
 
-        let cached_client = self
-            .provider
-            .cached_client()
-            .expect("client must be cached before execute_turn");
-
         // Scope the executor so its borrows are released before compaction.
         let (outcome, response_data) = {
             let mut executor = TurnExecutor::new(
@@ -229,8 +216,11 @@ where
                     visible_tool_definitions,
                     circuit_breaker: Arc::clone(&self.circuit_breaker),
                     doom_state: Arc::clone(&self.doom_state),
+                    last_total_tokens: Arc::clone(&self.last_total_tokens),
                     bus: self.bus.clone(),
                 },
+                Arc::clone(&self.shared_model),
+                self.compaction.clone(),
             );
 
             let outcome = if let Some(pending) = self.interactive_pending.as_ref() {
@@ -258,7 +248,6 @@ where
                             preamble,
                             span,
                         },
-                        cached_client,
                         resolver,
                         self.final_session_id.as_deref(),
                         Some((ui_tx, ui_rx)),
@@ -280,7 +269,6 @@ where
                             preamble,
                             span,
                         },
-                        cached_client,
                         permission_resolver,
                         self.final_session_id.as_deref(),
                         None,
@@ -295,34 +283,22 @@ where
 
         match outcome? {
             TurnOutcome::EarlyReturn(value) => Ok(value),
-            TurnOutcome::Completed => {
-                // Evaluate auto-compaction (runtime method) after turn completes
-                if self.final_session_id.is_some()
-                    && let Some(CompactionTriggerDecision::Fire { source, .. }) =
-                        self.evaluate_auto_compaction()
-                    && let Err(error) = self.execute_compaction_event(ui, source).await
-                {
-                    ui.emit(&UiEvent::Warning { message: error });
-                }
-
-                Ok(build_response(
-                    response_data,
-                    self.provider.provider_config(),
-                    self.final_session_id.as_deref(),
-                    span,
-                ))
-            }
+            TurnOutcome::Completed => Ok(build_response(
+                response_data,
+                self.provider.provider_config(),
+                self.final_session_id.as_deref(),
+                span,
+            )),
         }
     }
 }
 
-impl<Prov, Tools, Sess, Comp, Persona, Multi> McpManagement
-    for AgentRuntime<Prov, Tools, Sess, Comp, Persona, Multi>
+impl<Prov, Tools, Sess, Persona, Multi> McpManagement
+    for AgentRuntime<Prov, Tools, Sess, Persona, Multi>
 where
     Prov: ProviderManager + Send,
     Tools: ToolManager + Send,
     Sess: SessionManager + Send,
-    Comp: CompactionManager + Send,
     Persona: PersonaManager + Send,
     Multi: MultiAgentManager + Send,
 {
@@ -367,19 +343,32 @@ where
     }
 }
 
-impl<Prov, Tools, Sess, Comp, Persona, Multi> ModelSwitching
-    for AgentRuntime<Prov, Tools, Sess, Comp, Persona, Multi>
+impl<Prov, Tools, Sess, Persona, Multi> ModelSwitching
+    for AgentRuntime<Prov, Tools, Sess, Persona, Multi>
 where
     Prov: ProviderManager,
     Tools: ToolManager,
     Sess: SessionManager,
-    Comp: CompactionManager,
     Persona: PersonaManager,
     Multi: MultiAgentManager,
 {
     fn switch_model(&mut self, model_spec: &str) -> Result<(String, Option<u64>), String> {
         let identity = self.provider.switch_model(model_spec)?;
         let max_tokens = self.max_context_tokens();
+        // Erase the newly-cached concrete model into a `ModelHandle` and update
+        // the shared handle. One write updates both the hook (`on_model_select`)
+        // and the compactor (`NuCompactor::from_shared_model`) since they share
+        // this `Arc`.
+        self.provider
+            .ensure_client_cached()
+            .map_err(|e| e.to_string())?;
+        let new_model = self
+            .provider
+            .cached_client()
+            .ok_or_else(|| "client must be cached after model switch".to_string())?
+            .build_model_handle(&identity)
+            .map_err(|e| e.to_string())?;
+        *self.shared_model.lock().expect("model mutex poisoned") = new_model;
         Ok((identity, max_tokens))
     }
 
@@ -469,37 +458,12 @@ where
     }
 }
 
-impl<Prov, Tools, Sess, Comp, Persona, Multi> Compaction
-    for AgentRuntime<Prov, Tools, Sess, Comp, Persona, Multi>
-where
-    Prov: ProviderManager + Send,
-    Tools: ToolManager + Send,
-    Sess: SessionManager<Memory = crate::session::CachedMemory<SessionStoreImpl>> + Send,
-    Comp: CompactionManager + Send,
-    Persona: PersonaManager + Send,
-    Multi: MultiAgentManager + Send,
-{
-    fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
-        self.compaction
-            .evaluate_auto_compaction(self.session.last_total_tokens())
-    }
-
-    async fn execute_compaction_trigger<U: ProgressUi + Send>(
-        &mut self,
-        ui: &mut U,
-        source: CompactionTriggerSource,
-    ) -> Result<(), String> {
-        self.execute_compaction_event(ui, source).await
-    }
-}
-
-impl<Prov, Tools, Sess, Comp, Persona, Multi> SessionState
-    for AgentRuntime<Prov, Tools, Sess, Comp, Persona, Multi>
+impl<Prov, Tools, Sess, Persona, Multi> SessionState
+    for AgentRuntime<Prov, Tools, Sess, Persona, Multi>
 where
     Prov: ProviderManager,
     Tools: ToolManager,
     Sess: SessionManager,
-    Comp: CompactionManager,
     Persona: PersonaManager,
     Multi: MultiAgentManager,
 {
@@ -520,18 +484,65 @@ where
     }
 }
 
-impl<Prov, Tools, Sess, Comp, Persona, Multi> SessionPersistence
-    for AgentRuntime<Prov, Tools, Sess, Comp, Persona, Multi>
+impl<Prov, Tools, Sess, Persona, Multi> SessionPersistence
+    for AgentRuntime<Prov, Tools, Sess, Persona, Multi>
 where
     Prov: ProviderManager + Send + Sync,
     Tools: ToolManager + Send + Sync,
-    Sess: SessionManager + Send + Sync,
-    Comp: CompactionManager + Send + Sync,
+    Sess: SessionManager<InnerMemory = crate::session::CachedMemory<SessionStoreBackend>>
+        + Send
+        + Sync,
     Persona: PersonaManager + Send + Sync,
     Multi: MultiAgentManager + Send + Sync,
 {
     fn cwd(&self) -> &std::path::Path {
         &self.cwd
+    }
+
+    async fn run_compaction(&mut self, source: &str) -> Result<(), String> {
+        let Some(session_id) = self.final_session_id.clone() else {
+            return Ok(());
+        };
+
+        // Load the full history from the store-backed memory. The `CachedMemory`
+        // cache may be stale (the store is the source of truth for compaction),
+        // so read the raw entries directly.
+        let memory = self.session.inner_memory();
+        let entries = memory
+            .load_all(&session_id)
+            .await
+            .map_err(|e| format!("Failed to load session '{session_id}': {e}"))?;
+        let history: Vec<crate::types::Message> = entries
+            .iter()
+            .filter_map(|e| match e {
+                crate::session::StoreEntry::Message(m) => Some(m.clone()),
+                _ => None,
+            })
+            .collect();
+
+        // Run compaction. `source` is `"auto"` or `"slash"`. `run_compaction`
+        // emits `Started`/`SummaryChunk`/`Completed`/`Failed` (via `compact()`)
+        // and writes the marker. It returns the patched history
+        // (`Some([summary_message])`) when compaction actually ran, or `None`
+        // when there was nothing to evict.
+        if let Some(patched) = crate::hook::chain::run_compaction(
+            &history,
+            &session_id,
+            memory,
+            &self.compaction,
+            source,
+            &self.last_total_tokens,
+            &self.bus,
+        )
+        .await
+        {
+            // Update the in-memory cache so the next `CachedMemory::load()`
+            // returns `[summary, ...new_messages]` as the conversation continues.
+            self.session
+                .inner_memory()
+                .reset_context(&session_id, patched);
+        }
+        Ok(())
     }
 
     async fn load_session(&mut self, session_id: &str) -> Result<Vec<UiMessageSnapshot>, String> {
@@ -595,12 +606,14 @@ where
     }
 }
 
-impl<Prov, Tools, Sess, Comp, Persona, Multi> AgentRuntime<Prov, Tools, Sess, Comp, Persona, Multi>
+impl<Prov, Tools, Sess, Persona, Multi> AgentRuntime<Prov, Tools, Sess, Persona, Multi>
 where
     Prov: ProviderManager,
     Tools: ToolManager,
-    Sess: SessionManager<Memory = crate::session::CachedMemory<SessionStoreImpl>>,
-    Comp: CompactionManager,
+    Sess: SessionManager<
+            InnerMemory = crate::session::CachedMemory<SessionStoreBackend>,
+            Memory = super::state::memory::MemoryOf<SessionStoreBackend>,
+        >,
     Persona: PersonaManager,
     Multi: MultiAgentManager,
 {
@@ -674,71 +687,6 @@ where
     }
 
     // ── End Phase I accessor methods ────────────────────────────────
-
-    async fn execute_compaction_event<U: ProgressUi + Send>(
-        &mut self,
-        ui: &mut U,
-        source: CompactionTriggerSource,
-    ) -> Result<(), String> {
-        // Block compaction when the in-memory LLM context has no user or
-        // assistant messages (e.g. just a system preamble, or only a summary
-        // left by a prior SlidingSummary compaction). This prevents an
-        // orphaned CompactionEvent::Started from a no-op compact() early-return.
-        let session_id = self
-            .final_session_id
-            .as_ref()
-            .ok_or_else(|| "session_unavailable".to_string())?;
-        match self.session.memory().load(session_id).await {
-            Ok(messages) => {
-                if only_system_messages(&messages) {
-                    return Ok(());
-                }
-            }
-            Err(e) => {
-                // Fail open: a load error must not block compaction.
-                log::warn!("compaction guard: memory load failed: {e}");
-            }
-        }
-
-        if self
-            .compaction
-            .compacting()
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
-        {
-            return Ok(());
-        }
-        let _guard = CompactionGuard(Arc::clone(self.compaction.compacting()));
-
-        self.provider
-            .ensure_client_cached()
-            .map_err(|e| e.to_string())?;
-
-        let result = CompactionExecutor::<SessionStoreImpl>::new(
-            self.provider.provider_config(),
-            self.session.memory(),
-            session_id,
-            self.compaction_params.clone(),
-            self.bus.clone(),
-        )
-        .execute(
-            ui,
-            source,
-            self.provider
-                .cached_client()
-                .expect("client must be cached during compaction"),
-        )
-        .await?;
-
-        if let Some(summary_total_tokens) = result {
-            // Use the summary token count captured from the streaming Final chunk.
-            // If the provider didn't yield usage, fall back to None so the stale
-            // pre-compaction count doesn't re-trigger compaction on next load.
-            *self.session.last_total_tokens_mut() = summary_total_tokens;
-        }
-
-        Ok(())
-    }
 }
 
 #[cfg(test)]

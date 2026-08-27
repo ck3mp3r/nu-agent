@@ -80,7 +80,7 @@ fn new_subscribes_to_five_channels() {
 fn drains_llm_events() {
     let bus = create_bus();
     let mut forwarder = BusForwarder::new(&bus);
-    bus.llm().send(LlmEvent::Start).unwrap();
+    bus.llm().send(LlmEvent::Started).unwrap();
     bus.llm()
         .send(LlmEvent::AssistantMessage {
             text: "hello".to_string(),
@@ -90,7 +90,7 @@ fn drains_llm_events() {
     let mut ui = SinkUi::new();
     forwarder.drain_to(&mut ui);
 
-    assert!(matches!(ui.events[0], UiEvent::LlmStart));
+    assert!(matches!(ui.events[0], UiEvent::LlmStarted));
     assert!(matches!(
         &ui.events[1],
         UiEvent::AssistantMessage { text } if text == "hello"
@@ -102,7 +102,7 @@ fn drains_tool_events() {
     let bus = create_bus();
     let mut forwarder = BusForwarder::new(&bus);
     bus.tool()
-        .send(ToolEvent::Start {
+        .send(ToolEvent::Started {
             name: "read".to_string(),
             source: "builtin".to_string(),
             arguments: "{}".to_string(),
@@ -112,7 +112,7 @@ fn drains_tool_events() {
     let mut ui = SinkUi::new();
     forwarder.drain_to(&mut ui);
 
-    assert!(matches!(&ui.events[0], UiEvent::ToolStart { name, .. } if name == "read"));
+    assert!(matches!(&ui.events[0], UiEvent::ToolStarted { name, .. } if name == "read"));
 }
 
 #[test]
@@ -120,7 +120,7 @@ fn drains_turn_and_warning_events() {
     let bus = create_bus();
     let mut forwarder = BusForwarder::new(&bus);
     bus.turn()
-        .send(TurnEvent::TurnCompleted { tool_calls: 2 })
+        .send(TurnEvent::Completed { tool_calls: 2 })
         .unwrap();
     bus.warning()
         .send(WarningEvent::Message {
@@ -140,10 +140,8 @@ fn drains_compaction_events() {
     let bus = create_bus();
     let mut forwarder = BusForwarder::new(&bus);
     bus.compaction()
-        .send(CompactionEvent::Triggered {
+        .send(CompactionEvent::Completed {
             source: "auto".to_string(),
-            summarized_count: 3,
-            kept_recent_count: 0,
             summary_preview: "s".to_string(),
             summary_body: "s".to_string(),
         })
@@ -154,7 +152,7 @@ fn drains_compaction_events() {
 
     assert!(matches!(
         &ui.events[0],
-        UiEvent::CompactionTriggered { source, .. } if source == "auto"
+        UiEvent::CompactionCompleted { source, .. } if source == "auto"
     ));
 }
 
@@ -173,7 +171,7 @@ fn tool_event_is_emitted_exactly_once_and_not_republished() {
     let bus = create_bus();
     let mut forwarder = BusForwarder::new(&bus);
     bus.tool()
-        .send(ToolEvent::Start {
+        .send(ToolEvent::Started {
             name: "read".to_string(),
             source: "builtin".to_string(),
             arguments: "{}".to_string(),
@@ -189,7 +187,7 @@ fn tool_event_is_emitted_exactly_once_and_not_republished() {
         1,
         "tool start must be emitted exactly once"
     );
-    assert!(matches!(&ui.emitted[0], UiEvent::ToolStart { name, .. } if name == "read"));
+    assert!(matches!(&ui.emitted[0], UiEvent::ToolStarted { name, .. } if name == "read"));
 }
 
 #[test]
@@ -222,7 +220,7 @@ fn turn_completion_is_emitted_exactly_once_and_not_republished() {
     let bus = create_bus();
     let mut forwarder = BusForwarder::new(&bus);
     bus.turn()
-        .send(TurnEvent::TurnCompleted { tool_calls: 2 })
+        .send(TurnEvent::Completed { tool_calls: 2 })
         .unwrap();
 
     let mut ui = CircuitSink::new(bus.clone());
@@ -263,10 +261,8 @@ fn compaction_event_is_emitted_exactly_once_and_not_republished() {
     let bus = create_bus();
     let mut forwarder = BusForwarder::new(&bus);
     bus.compaction()
-        .send(CompactionEvent::Triggered {
+        .send(CompactionEvent::Completed {
             source: "auto".to_string(),
-            summarized_count: 3,
-            kept_recent_count: 0,
             summary_preview: "s".to_string(),
             summary_body: "s".to_string(),
         })
@@ -283,6 +279,6 @@ fn compaction_event_is_emitted_exactly_once_and_not_republished() {
     );
     assert!(matches!(
         &ui.emitted[0],
-        UiEvent::CompactionTriggered { source, .. } if source == "auto"
+        UiEvent::CompactionCompleted { source, .. } if source == "auto"
     ));
 }

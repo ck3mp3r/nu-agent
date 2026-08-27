@@ -1,27 +1,39 @@
-use super::super::managers::SessionManager;
-use crate::session::{CachedMemory, FsSessionStore, SessionStore};
-use std::path::PathBuf;
+use crate::conversation::managers::SessionManager;
+use crate::session::{CachedMemory, SessionStore};
 use std::sync::Arc;
 
+/// The full memory type held by `MemoryState` and shared with the turn
+/// executor. `CachedMemory` is cheaply cloneable (its caches are `Arc`-backed),
+/// so the `Arc` is what gets handed to each turn's agent.
+pub type MemoryOf<S> = Arc<CachedMemory<S>>;
+
 pub struct MemoryState<S: SessionStore + Clone + Send + Sync> {
-    memory: CachedMemory<S>,
+    memory: MemoryOf<S>,
     last_total_tokens: Option<u64>,
 }
 
 impl<S: SessionStore + Clone + Send + Sync> MemoryState<S> {
     pub fn new(store: Arc<S>) -> Self {
         Self {
-            memory: CachedMemory::new(store),
+            memory: Arc::new(CachedMemory::new(store)),
             last_total_tokens: None,
         }
     }
 
-    pub fn memory(&self) -> &CachedMemory<S> {
+    pub fn memory(&self) -> &MemoryOf<S> {
         &self.memory
     }
 
-    pub fn memory_mut(&mut self) -> &mut CachedMemory<S> {
+    pub fn memory_mut(&mut self) -> &mut MemoryOf<S> {
         &mut self.memory
+    }
+
+    /// Return a reference to the wrapped `CachedMemory` backend.
+    ///
+    /// Used by code that needs the concrete `CachedMemory` API (store
+    /// rewrites, marker writes, raw entry loads).
+    pub fn inner_memory(&self) -> &CachedMemory<S> {
+        &self.memory
     }
 
     pub fn last_total_tokens(&self) -> Option<u64> {
@@ -38,15 +50,9 @@ impl<S: SessionStore + Clone + Send + Sync> MemoryState<S> {
     }
 }
 
-impl MemoryState<FsSessionStore> {
-    /// Convenience constructor that creates an `FsSessionStore` from a path.
-    pub fn with_path(base_path: PathBuf) -> Self {
-        Self::new(Arc::new(FsSessionStore::new(base_path)))
-    }
-}
-
 impl<S: SessionStore + Clone + Send + Sync> SessionManager for MemoryState<S> {
-    type Memory = CachedMemory<S>;
+    type Memory = MemoryOf<S>;
+    type InnerMemory = CachedMemory<S>;
 
     fn memory(&self) -> &Self::Memory {
         &self.memory
@@ -54,6 +60,10 @@ impl<S: SessionStore + Clone + Send + Sync> SessionManager for MemoryState<S> {
 
     fn memory_mut(&mut self) -> &mut Self::Memory {
         &mut self.memory
+    }
+
+    fn inner_memory(&self) -> &Self::InnerMemory {
+        &self.memory
     }
 
     fn clear(&mut self) {
@@ -69,3 +79,7 @@ impl<S: SessionStore + Clone + Send + Sync> SessionManager for MemoryState<S> {
         &mut self.last_total_tokens
     }
 }
+
+#[cfg(test)]
+#[path = "memory_test.rs"]
+mod memory_test;

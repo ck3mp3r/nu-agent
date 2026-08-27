@@ -6,17 +6,20 @@
 //! events to the sync UI.
 
 use futures::StreamExt;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use crate::bus::{Bus, WarningEvent};
 use crate::config::{Config, defaults};
+use crate::conversation::compaction::CompactionConfig;
+use crate::conversation::state::memory::MemoryOf;
 use crate::hook::agent_hook::HookState;
 use crate::hook::chain::HookChain;
 use crate::hook::permission_resolver::AsyncPermissionResolver;
 use crate::protocol::contracts::ProgressUi;
 use crate::protocol::event::UiEvent;
+use crate::session::SessionStore;
 use crate::session::repair::repair_messages;
-use crate::session::{CachedMemory, SessionStore};
 use crate::types::{Message, Text, ToolDefinition, UserContent};
 use rig::memory::ConversationMemory;
 use rig::streaming::StreamingPrompt;
@@ -59,7 +62,7 @@ pub struct TurnResult {
 
 /// Context for executing a conversation turn.
 pub struct TurnConversation<S: SessionStore + Clone + Send + Sync> {
-    pub memory: CachedMemory<S>,
+    pub memory: MemoryOf<S>,
     pub conversation_id: String,
     /// Whether this turn belongs to a persistent session.
     ///
@@ -70,6 +73,12 @@ pub struct TurnConversation<S: SessionStore + Clone + Send + Sync> {
     /// within its own prompt call, which is exactly correct for a stateless
     /// one-shot invocation.
     pub has_session: bool,
+    /// Shared runtime model handle. The agent is built from this handle and the
+    /// hook's `on_model_select` routes each turn to its current value. It is
+    /// constructed eagerly at startup.
+    pub shared_model: std::sync::Arc<std::sync::Mutex<rig::agent::ModelHandle>>,
+    /// Hook-driven compaction machinery: compactor, policy, force flag, threshold.
+    pub compaction: CompactionConfig<S>,
 }
 
 pub struct TurnInput<'a> {
@@ -78,34 +87,27 @@ pub struct TurnInput<'a> {
     pub max_turns: Option<u32>,
 }
 
-pub struct TurnContext<'a, S, M>
+pub struct TurnContext<'a, S>
 where
     S: SessionStore + Clone + Send + Sync,
-    M: rig::completion::CompletionModel + Clone + 'static,
-    M::StreamingResponse: rig::completion::request::GetTokenUsage,
 {
-    model: M,
     conversation: TurnConversation<S>,
     input: TurnInput<'a>,
     tool_infra: executor::ToolInfra,
     config: &'a Config,
 }
 
-impl<'a, S, M> TurnContext<'a, S, M>
+impl<'a, S> TurnContext<'a, S>
 where
     S: SessionStore + Clone + Send + Sync,
-    M: rig::completion::CompletionModel + Clone + 'static,
-    M::StreamingResponse: rig::completion::request::GetTokenUsage,
 {
     pub fn new(
-        model: M,
         conversation: TurnConversation<S>,
         input: TurnInput<'a>,
         tool_infra: executor::ToolInfra,
         config: &'a Config,
     ) -> Self {
         Self {
-            model,
             conversation,
             input,
             tool_infra,
@@ -142,15 +144,13 @@ where
 /// Returns `TurnError` if:
 /// - The agent completion fails (LLM error, network, etc.)
 /// - User cancels via UI
-pub(crate) async fn execute_turn<S, M, U, P>(
-    ctx: TurnContext<'_, S, M>,
+pub(crate) async fn execute_turn<S, U, P>(
+    ctx: TurnContext<'_, S>,
     ui: &mut U,
     permission_resolver: P,
 ) -> Result<TurnResult, (TurnError, error::TurnContext)>
 where
     S: SessionStore + Clone + Send + Sync + 'static,
-    M: rig::completion::CompletionModel + Clone + 'static,
-    M::StreamingResponse: rig::completion::request::GetTokenUsage,
     U: ProgressUi,
     P: AsyncPermissionResolver,
 {
@@ -168,8 +168,8 @@ where
 /// per-call from the `HookChain` (which gets it from this same channel).
 ///
 /// For non-interactive (TTY/policy) mode, use `execute_turn` which creates its own channel.
-pub(crate) async fn execute_turn_with_channel<S, M, U, P>(
-    ctx: TurnContext<'_, S, M>,
+pub(crate) async fn execute_turn_with_channel<S, U, P>(
+    ctx: TurnContext<'_, S>,
     ui: &mut U,
     permission_resolver: P,
     ui_tx: mpsc::UnboundedSender<UiEvent>,
@@ -177,8 +177,6 @@ pub(crate) async fn execute_turn_with_channel<S, M, U, P>(
 ) -> Result<TurnResult, (TurnError, error::TurnContext)>
 where
     S: SessionStore + Clone + Send + Sync + 'static,
-    M: rig::completion::CompletionModel + Clone + 'static,
-    M::StreamingResponse: rig::completion::request::GetTokenUsage,
     U: ProgressUi,
     P: AsyncPermissionResolver,
 {
@@ -224,6 +222,7 @@ where
     // Build the hook using HookChain<P> — no HookDriver needed.
     // Cancellation is driven through the shared bus's cancel channel.
     let bus = ctx.tool_infra.bus.clone();
+    let shared_model = Arc::clone(&ctx.conversation.shared_model);
     let hook = HookChain::new(
         bus.clone(),
         ui_tx,
@@ -234,6 +233,11 @@ where
         HookState {
             circuit_breaker: ctx.tool_infra.circuit_breaker.clone(),
             doom_state: ctx.tool_infra.doom_state.clone(),
+            shared_model,
+            memory: Arc::clone(&ctx.conversation.memory),
+            conversation_id: ctx.conversation.conversation_id.clone(),
+            compaction: ctx.conversation.compaction.clone(),
+            last_total_tokens: ctx.tool_infra.last_total_tokens.clone(),
         },
     );
 
@@ -243,10 +247,10 @@ where
 
     // Build the prompt message
     let user_message = Message::User {
-        content: rig::one_or_many::OneOrMany::one(UserContent::Text(Text {
+        content: vec![UserContent::Text(Text {
             text: ctx.input.prompt,
             additional_params: None,
-        })),
+        })],
     };
 
     // Clone preamble for the 'static future
@@ -260,6 +264,7 @@ where
         memory: ctx.conversation.memory,
         conversation_id: ctx.conversation.conversation_id,
         has_session: ctx.conversation.has_session,
+        shared_model: ctx.conversation.shared_model,
         tool_server_handle: ctx.tool_infra.tool_server_handle,
         visible_tool_definitions: ctx.tool_infra.visible_tool_definitions,
         max_turns: ctx.input.max_turns,
@@ -269,8 +274,7 @@ where
         max_tokens: ctx.config.max_tokens.map(|t| t as u64),
     };
 
-    let model = ctx.model.clone();
-    let prompt_future = Box::pin(build_agent_and_stream(model, config));
+    let prompt_future = Box::pin(build_agent_and_stream(config));
 
     // Subscribe to bus lifecycle channels BEFORE spawning the prompt so
     // broadcast retains events emitted during the turn (broadcast only keeps
@@ -380,16 +384,21 @@ where
 
 /// Configuration for building and prompting an agent.
 struct AgentPromptConfig<S: SessionStore + Clone + Send + Sync, P: AsyncPermissionResolver> {
-    hook: HookChain<P>,
+    hook: HookChain<P, S>,
     preamble: Option<String>,
     prompt: Message,
-    memory: CachedMemory<S>,
+    memory: MemoryOf<S>,
     conversation_id: String,
     /// Whether this turn belongs to a persistent session.
     ///
     /// When `false`, `.memory()` is NOT attached to the rig `AgentBuilder` so
     /// rig never calls `memory.append()` and no JSONL file is written to disk.
     has_session: bool,
+    /// Shared runtime model handle. The agent is built from this handle so the
+    /// hook's `on_model_select` (which routes to the same shared value) stays in
+    /// sync with the model the agent was constructed from. It is constructed
+    /// eagerly at startup.
+    shared_model: std::sync::Arc<std::sync::Mutex<rig::agent::ModelHandle>>,
     tool_server_handle: rig::tool::server::ToolServerHandle,
     visible_tool_definitions: Vec<ToolDefinition>,
     max_turns: Option<u32>,
@@ -466,14 +475,11 @@ impl FilteredToolProxy {
 }
 
 /// Build an agent with a hook and execute a multi-turn streaming prompt loop.
-async fn build_agent_and_stream<S, M, P>(
-    model: M,
+async fn build_agent_and_stream<S, P>(
     config: AgentPromptConfig<S, P>,
 ) -> Result<StreamingTurnResult, rig::agent::StreamingError>
 where
     S: SessionStore + Clone + Send + Sync + 'static,
-    M: rig::completion::CompletionModel + Clone + 'static,
-    M::StreamingResponse: rig::completion::request::GetTokenUsage,
     P: AsyncPermissionResolver,
 {
     let AgentPromptConfig {
@@ -483,6 +489,7 @@ where
         memory,
         conversation_id,
         has_session,
+        shared_model,
         tool_server_handle,
         visible_tool_definitions,
         max_turns,
@@ -506,6 +513,13 @@ where
         })
         .collect();
 
+    // Build the agent from the shared model handle. The agent's model is erased
+    // once into a `ModelHandle`; the hook's `on_model_select` routes each turn to
+    // the same shared handle's current value, so `switch_model()` updates both
+    // the agent's model and the per-turn routing in one place. The handle is
+    // constructed eagerly at startup, so it is always present here.
+    let model_handle = shared_model.lock().expect("model mutex poisoned").clone();
+
     // Only attach memory when this is a persistent session.
     //
     // For transient (no-session) invocations, omitting `.memory()` prevents rig
@@ -515,12 +529,12 @@ where
     // within its own prompt call, which is exactly correct for a stateless
     // one-shot invocation.
     let mut builder = if has_session {
-        rig::agent::AgentBuilder::new(model)
+        rig::agent::AgentBuilder::from_model_handle(model_handle)
             .add_hook(hook)
             .memory(memory)
             .dynamic_tools(proxy_tools)
     } else {
-        rig::agent::AgentBuilder::new(model)
+        rig::agent::AgentBuilder::from_model_handle(model_handle)
             .add_hook(hook)
             .dynamic_tools(proxy_tools)
     };
@@ -580,7 +594,7 @@ where
                         }
                         // TOOL CALL (complete, post-assembly)
                         // Hook's on_tool_call has already resolved. The hook already
-                        // emitted ToolStart + permission events.
+                        // emitted ToolStarted + permission events.
                         rig::streaming::StreamedAssistantContent::ToolCall { .. } => {
                             tool_call_count += 1;
                         }
@@ -588,7 +602,7 @@ where
                         // Hook's on_tool_call_delta already fired — no-op here.
                         rig::streaming::StreamedAssistantContent::ToolCallDelta { .. } => {}
                         // REASONING block — ignore for now
-                        rig::streaming::StreamedAssistantContent::Reasoning(_) => {}
+                        rig::streaming::StreamedAssistantContent::Reasoning { .. } => {}
                         // REASONING DELTA — ignore for now
                         rig::streaming::StreamedAssistantContent::ReasoningDelta { .. } => {}
                         // Raw provider final response object — not needed here
@@ -599,7 +613,7 @@ where
                 }
 
                 // --- TOOL RESULT (user content fed back to model) ---
-                // The hook's on_tool_result already fired and emitted ToolEnd.
+                // The hook's on_tool_result already fired and emitted ToolCompleted.
                 rig::agent::MultiTurnStreamItem::StreamUserItem(
                     rig::streaming::StreamedUserContent::ToolResult { .. },
                 ) => {}

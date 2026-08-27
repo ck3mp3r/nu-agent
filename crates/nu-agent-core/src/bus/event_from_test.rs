@@ -4,7 +4,7 @@ use crate::protocol::event::{PermissionDecision, PermissionRequestContext, UiEve
 
 #[test]
 fn tool_start_converts_to_tool_start() {
-    let event = ToolEvent::Start {
+    let event = ToolEvent::Started {
         name: "read".to_string(),
         source: "user".to_string(),
         arguments: "{}".to_string(),
@@ -12,7 +12,7 @@ fn tool_start_converts_to_tool_start() {
     let ui: Option<UiEvent> = event.into();
     assert_eq!(
         ui,
-        Some(UiEvent::ToolStart {
+        Some(UiEvent::ToolStarted {
             name: "read".to_string(),
             source: "user".to_string(),
             arguments: "{}".to_string(),
@@ -22,7 +22,7 @@ fn tool_start_converts_to_tool_start() {
 
 #[test]
 fn tool_end_converts_to_tool_end() {
-    let event = ToolEvent::End {
+    let event = ToolEvent::Completed {
         name: "read".to_string(),
         source: "user".to_string(),
         arguments: "{}".to_string(),
@@ -35,7 +35,7 @@ fn tool_end_converts_to_tool_end() {
     let ui: Option<UiEvent> = event.into();
     assert_eq!(
         ui,
-        Some(UiEvent::ToolEnd {
+        Some(UiEvent::ToolCompleted {
             name: "read".to_string(),
             source: "user".to_string(),
             arguments: "{}".to_string(),
@@ -50,14 +50,14 @@ fn tool_end_converts_to_tool_end() {
 
 #[test]
 fn llm_start_converts_to_llm_start() {
-    let event = LlmEvent::Start;
+    let event = LlmEvent::Started;
     let ui: Option<UiEvent> = event.into();
-    assert_eq!(ui, Some(UiEvent::LlmStart));
+    assert_eq!(ui, Some(UiEvent::LlmStarted));
 }
 
 #[test]
 fn llm_end_converts_to_llm_end() {
-    let event = LlmEvent::End {
+    let event = LlmEvent::Completed {
         response_chars: 100,
         tool_calls: 2,
         input_tokens: 10,
@@ -67,7 +67,7 @@ fn llm_end_converts_to_llm_end() {
     let ui: Option<UiEvent> = event.into();
     assert_eq!(
         ui,
-        Some(UiEvent::LlmEnd {
+        Some(UiEvent::LlmCompleted {
             response_chars: 100,
             tool_calls: 2,
             input_tokens: 10,
@@ -120,21 +120,21 @@ fn warning_turn_error_converts() {
 }
 
 #[test]
-fn compaction_started_converts_with_default_source() {
-    let event = CompactionEvent::Started { source: None };
+fn compaction_requested_does_not_render_to_ui() {
+    let event = CompactionEvent::Requested {
+        source: "auto".to_string(),
+    };
     let ui: Option<UiEvent> = event.into();
     assert_eq!(
-        ui,
-        Some(UiEvent::CompactionStarted {
-            source: String::new(),
-        })
+        ui, None,
+        "CompactionEvent::Requested must not render to a UiEvent"
     );
 }
 
 #[test]
 fn compaction_started_converts_with_source() {
     let event = CompactionEvent::Started {
-        source: Some("auto".to_string()),
+        source: "auto".to_string(),
     };
     let ui: Option<UiEvent> = event.into();
     assert_eq!(
@@ -164,21 +164,17 @@ fn compaction_summary_chunk_converts() {
 }
 
 #[test]
-fn compaction_triggered_converts() {
-    let event = CompactionEvent::Triggered {
+fn compaction_completed_converts() {
+    let event = CompactionEvent::Completed {
         source: "auto".to_string(),
-        summarized_count: 5,
-        kept_recent_count: 3,
         summary_preview: "p".to_string(),
         summary_body: "b".to_string(),
     };
     let ui: Option<UiEvent> = event.into();
     assert_eq!(
         ui,
-        Some(UiEvent::CompactionTriggered {
+        Some(UiEvent::CompactionCompleted {
             source: "auto".to_string(),
-            summarized_count: 5,
-            kept_recent_count: 3,
             summary_preview: "p".to_string(),
             summary_body: "b".to_string(),
         })
@@ -213,7 +209,7 @@ fn turn_started_dropped() {
 
 #[test]
 fn turn_completed_converts() {
-    let event = TurnEvent::TurnCompleted { tool_calls: 3 };
+    let event = TurnEvent::Completed { tool_calls: 3 };
     let ui: Option<UiEvent> = event.into();
     assert_eq!(ui, Some(UiEvent::Completed { tool_calls: 3 }));
 }

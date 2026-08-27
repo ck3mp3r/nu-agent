@@ -28,8 +28,6 @@ pub fn merge_compaction_configs(
     let base = base.cloned().unwrap_or_default();
     CompactionConfig {
         strategy: override_cfg.strategy.or(base.strategy),
-        keep_recent: override_cfg.keep_recent.or(base.keep_recent),
-        token_budget: override_cfg.token_budget.or(base.token_budget),
         proactive_threshold_pct: override_cfg
             .proactive_threshold_pct
             .or(base.proactive_threshold_pct),
@@ -45,12 +43,6 @@ pub fn build_compaction_params(merged: &CompactionConfig) -> CompactionParams {
 
     if let Some(strategy) = merged.strategy {
         config.compaction_strategy = strategy;
-    }
-    if let Some(keep_recent) = merged.keep_recent {
-        config.keep_recent = keep_recent;
-    }
-    if let Some(token_budget) = merged.token_budget {
-        config.token_budget = Some(token_budget);
     }
 
     config

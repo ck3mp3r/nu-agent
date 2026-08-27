@@ -88,24 +88,24 @@ impl From<serde_json::Error> for StoreError {
 
 /// A unified session store that dispatches to either a JSONL or SQLite backend.
 #[derive(Debug, Clone)]
-pub enum SessionStoreImpl {
+pub enum SessionStoreBackend {
     /// JSONL file-backed session store.
     Fs(FsSessionStore),
     /// SQLite-backed session store.
     Sqlite(SqliteSessionStore),
 }
 
-impl SessionStoreImpl {
+impl SessionStoreBackend {
     /// Returns the `StoreType` of this session store.
     pub fn store_type(&self) -> StoreType {
         match self {
-            SessionStoreImpl::Fs(_) => StoreType::Jsonl,
-            SessionStoreImpl::Sqlite(_) => StoreType::Sqlite,
+            SessionStoreBackend::Fs(_) => StoreType::Jsonl,
+            SessionStoreBackend::Sqlite(_) => StoreType::Sqlite,
         }
     }
 }
 
-impl SessionStore for SessionStoreImpl {
+impl SessionStore for SessionStoreBackend {
     type Error = StoreError;
 
     fn create(
@@ -117,8 +117,10 @@ impl SessionStore for SessionStoreImpl {
         let messages = first_messages.to_vec();
         async move {
             match self {
-                SessionStoreImpl::Fs(s) => s.create(&id, &messages).await.map_err(StoreError::from),
-                SessionStoreImpl::Sqlite(s) => {
+                SessionStoreBackend::Fs(s) => {
+                    s.create(&id, &messages).await.map_err(StoreError::from)
+                }
+                SessionStoreBackend::Sqlite(s) => {
                     s.create(&id, &messages).await.map_err(StoreError::from)
                 }
             }
@@ -134,8 +136,8 @@ impl SessionStore for SessionStoreImpl {
         let id = id.to_string();
         async move {
             match self {
-                SessionStoreImpl::Fs(s) => s.load(&id).await.map_err(StoreError::from),
-                SessionStoreImpl::Sqlite(s) => s.load(&id).await.map_err(StoreError::from),
+                SessionStoreBackend::Fs(s) => s.load(&id).await.map_err(StoreError::from),
+                SessionStoreBackend::Sqlite(s) => s.load(&id).await.map_err(StoreError::from),
             }
         }
     }
@@ -149,8 +151,10 @@ impl SessionStore for SessionStoreImpl {
         let entries = entries.to_vec();
         async move {
             match self {
-                SessionStoreImpl::Fs(s) => s.append(&id, &entries).await.map_err(StoreError::from),
-                SessionStoreImpl::Sqlite(s) => {
+                SessionStoreBackend::Fs(s) => {
+                    s.append(&id, &entries).await.map_err(StoreError::from)
+                }
+                SessionStoreBackend::Sqlite(s) => {
                     s.append(&id, &entries).await.map_err(StoreError::from)
                 }
             }
@@ -166,11 +170,11 @@ impl SessionStore for SessionStoreImpl {
         let entries = entries.to_vec();
         async move {
             match self {
-                SessionStoreImpl::Fs(s) => s
+                SessionStoreBackend::Fs(s) => s
                     .replace_entries(&id, &entries)
                     .await
                     .map_err(StoreError::from),
-                SessionStoreImpl::Sqlite(s) => s
+                SessionStoreBackend::Sqlite(s) => s
                     .replace_entries(&id, &entries)
                     .await
                     .map_err(StoreError::from),
@@ -180,8 +184,8 @@ impl SessionStore for SessionStoreImpl {
 
     async fn list(&self) -> Result<Vec<SessionInfo>, Self::Error> {
         match self {
-            SessionStoreImpl::Fs(s) => s.list().await.map_err(StoreError::from),
-            SessionStoreImpl::Sqlite(s) => s.list().await.map_err(StoreError::from),
+            SessionStoreBackend::Fs(s) => s.list().await.map_err(StoreError::from),
+            SessionStoreBackend::Sqlite(s) => s.list().await.map_err(StoreError::from),
         }
     }
 
@@ -192,8 +196,8 @@ impl SessionStore for SessionStoreImpl {
         let id = id.to_string();
         async move {
             match self {
-                SessionStoreImpl::Fs(s) => s.delete(&id).await.map_err(StoreError::from),
-                SessionStoreImpl::Sqlite(s) => s.delete(&id).await.map_err(StoreError::from),
+                SessionStoreBackend::Fs(s) => s.delete(&id).await.map_err(StoreError::from),
+                SessionStoreBackend::Sqlite(s) => s.delete(&id).await.map_err(StoreError::from),
             }
         }
     }
@@ -203,7 +207,7 @@ impl SessionStore for SessionStoreImpl {
 ///
 /// For `Jsonl`, uses `xdg::cache_dir().join("nu-agent").join("sessions")` as the base path.
 /// For `Sqlite`, uses `xdg::cache_dir().join("nu-agent").join("sessions.db")` as the database path.
-pub async fn create_store(store_type: StoreType) -> Result<SessionStoreImpl, StoreError> {
+pub async fn create_store(store_type: StoreType) -> Result<SessionStoreBackend, StoreError> {
     match store_type {
         StoreType::Jsonl => {
             let path = crate::utils::xdg::cache_dir()
@@ -215,7 +219,7 @@ pub async fn create_store(store_type: StoreType) -> Result<SessionStoreImpl, Sto
                 })?
                 .join("nu-agent")
                 .join("sessions");
-            Ok(SessionStoreImpl::Fs(FsSessionStore::new(path)))
+            Ok(SessionStoreBackend::Fs(FsSessionStore::new(path)))
         }
         StoreType::Sqlite => {
             let path = crate::utils::xdg::cache_dir()
@@ -239,13 +243,13 @@ pub async fn create_store(store_type: StoreType) -> Result<SessionStoreImpl, Sto
             let store = SqliteSessionStore::new(&path_str)
                 .await
                 .map_err(StoreError::from)?;
-            Ok(SessionStoreImpl::Sqlite(store))
+            Ok(SessionStoreBackend::Sqlite(store))
         }
         StoreType::Memory => {
             let store = SqliteSessionStore::new(":memory:")
                 .await
                 .map_err(StoreError::from)?;
-            Ok(SessionStoreImpl::Sqlite(store))
+            Ok(SessionStoreBackend::Sqlite(store))
         }
     }
 }

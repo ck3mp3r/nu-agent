@@ -112,7 +112,7 @@ fn build_tool_call_values(llm_response: &LlmResponse, span: Span) -> Vec<Value> 
             if let AssistantContent::ToolCall(tool_call) = content {
                 Some(Value::record(
                     vec![
-                        ("id".to_string(), Value::string(&tool_call.id, span)),
+                        ("id".to_string(), Value::string(tool_call.id.as_str(), span)),
                         (
                             "name".to_string(),
                             Value::string(&tool_call.function.name, span),

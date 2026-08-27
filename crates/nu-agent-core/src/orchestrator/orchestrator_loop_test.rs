@@ -4,13 +4,11 @@ use tokio::sync::mpsc;
 use crate::bus::{Bus, create_bus};
 use crate::conversation::runtime::PendingPermissions;
 use crate::orchestrator::stages::{
-    CompactionHandler, OrchestrationContext, PermissionHandler, SessionHandler, SlashHandler,
-    UiRequestHandler,
+    OrchestrationContext, PermissionHandler, SessionHandler, SlashHandler, UiRequestHandler,
 };
 use crate::orchestrator::turn_outcome::TurnOutcome;
 use crate::orchestrator::{
-    OrchestratorEvent, PendingCompactionTrigger, Stages, UiRequest, UiRequestResponse,
-    WorkerCommand, run_orchestrator_loop,
+    OrchestratorEvent, Stages, UiRequest, UiRequestResponse, WorkerCommand, run_orchestrator_loop,
 };
 use crate::protocol::event::PermissionDecisionSubmission;
 
@@ -20,14 +18,12 @@ use crate::protocol::event::PermissionDecisionSubmission;
 
 struct MockSlash {
     handle_calls: Vec<String>,
-    pending_trigger: Option<PendingCompactionTrigger>,
 }
 
 impl MockSlash {
     fn new() -> Self {
         Self {
             handle_calls: Vec::new(),
-            pending_trigger: None,
         }
     }
 }
@@ -35,10 +31,6 @@ impl MockSlash {
 impl SlashHandler for MockSlash {
     async fn handle(&mut self, prompt: String, _ctx: &mut OrchestrationContext<'_>) {
         self.handle_calls.push(prompt);
-    }
-
-    fn take_pending_compaction_trigger(&mut self) -> Option<PendingCompactionTrigger> {
-        self.pending_trigger.take()
     }
 }
 
@@ -127,44 +119,6 @@ impl SessionHandler for MockSession {
     }
 }
 
-struct MockCompaction {
-    handle_result_calls: Vec<Option<String>>,
-    set_auto_calls: usize,
-    auto_pending: bool,
-    pending: bool,
-}
-
-impl MockCompaction {
-    fn new() -> Self {
-        Self {
-            handle_result_calls: Vec::new(),
-            set_auto_calls: 0,
-            auto_pending: false,
-            pending: false,
-        }
-    }
-}
-
-impl CompactionHandler for MockCompaction {
-    fn handle_result(&mut self, message: Option<String>, _ctx: &mut OrchestrationContext) {
-        self.handle_result_calls.push(message);
-        self.auto_pending = false;
-    }
-
-    fn set_pending_auto_compaction(&mut self) {
-        self.set_auto_calls += 1;
-        self.auto_pending = true;
-    }
-
-    fn has_pending_auto_compaction(&self) -> bool {
-        self.auto_pending
-    }
-
-    fn has_pending(&self) -> bool {
-        self.pending
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Test harness
 // ---------------------------------------------------------------------------
@@ -175,7 +129,6 @@ impl CompactionHandler for MockCompaction {
 pub(crate) struct CtxState {
     pub(crate) worker_active: bool,
     pub(crate) pending: Option<PendingPermissions>,
-    pub(crate) should_evaluate_compaction: bool,
     pub(crate) active_external_prompt: Option<String>,
     pub(crate) active_external_task_id: Option<String>,
     pub(crate) pending_external_cancel: Option<String>,
@@ -221,7 +174,6 @@ impl Harness {
             ctx_state: CtxState {
                 worker_active: false,
                 pending: None,
-                should_evaluate_compaction: true,
                 active_external_prompt: None,
                 active_external_task_id: None,
                 pending_external_cancel: None,
@@ -256,7 +208,6 @@ pub(crate) fn make_ctx<'a>(
         concurrent_response_tx: concurrent_tx,
         pending: &state.pending,
         worker_active: &mut state.worker_active,
-        should_evaluate_compaction: &mut state.should_evaluate_compaction,
         span: Span::test_data(),
         active_external_prompt: &mut state.active_external_prompt,
         active_external_task_id: &mut state.active_external_task_id,
@@ -296,7 +247,6 @@ async fn prompt_submitted_routes_to_slash() {
     let mut slash = MockSlash::new();
     let mut permission = MockPermission::new();
     let mut ui_request = MockUiRequest::new();
-    let mut compaction = MockCompaction::new();
     let mut session = MockSession::new();
     let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
 
@@ -310,12 +260,10 @@ async fn prompt_submitted_routes_to_slash() {
 
     let result = run_orchestrator_loop(
         take_event_rx(event_rx),
-        event_tx.clone(),
         Stages {
             slash: &mut slash,
             permission: &mut permission,
             ui_request: &mut ui_request,
-            compaction: &mut compaction,
             session: &mut session,
         },
         &mut ctx,
@@ -343,7 +291,6 @@ async fn prompt_submitted_blocked_when_blocking_pending() {
     let mut permission = MockPermission::new();
     let mut ui_request = MockUiRequest::new();
     ui_request.blocking_pending = true;
-    let mut compaction = MockCompaction::new();
     let mut session = MockSession::new();
     let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
 
@@ -357,12 +304,10 @@ async fn prompt_submitted_blocked_when_blocking_pending() {
 
     let result = run_orchestrator_loop(
         take_event_rx(event_rx),
-        event_tx.clone(),
         Stages {
             slash: &mut slash,
             permission: &mut permission,
             ui_request: &mut ui_request,
-            compaction: &mut compaction,
             session: &mut session,
         },
         &mut ctx,
@@ -377,31 +322,27 @@ async fn prompt_submitted_blocked_when_blocking_pending() {
 }
 
 #[tokio::test]
-async fn compaction_handoff_from_slash_to_compaction() {
+async fn run_compaction_dispatches_when_worker_idle() {
     let mut h = Harness::new();
     let HarnessParts {
         event_tx,
         event_rx,
         worker_tx,
-        worker_rx: _,
+        worker_rx,
         blocking_tx,
         concurrent_tx,
         bus,
         state,
     } = h.parts();
     let mut slash = MockSlash::new();
-    let (tx, rx) = mpsc::channel::<Option<String>>(1);
-    let _ = tx.send(Some("compacted".to_string())).await;
-    slash.pending_trigger = Some(rx);
     let mut permission = MockPermission::new();
     let mut ui_request = MockUiRequest::new();
-    let mut compaction = MockCompaction::new();
     let mut session = MockSession::new();
     let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
 
     event_tx
-        .send(OrchestratorEvent::PromptSubmitted {
-            text: "/compact".to_string(),
+        .send(OrchestratorEvent::RunCompaction {
+            source: "auto".to_string(),
         })
         .await
         .unwrap();
@@ -409,12 +350,10 @@ async fn compaction_handoff_from_slash_to_compaction() {
 
     let result = run_orchestrator_loop(
         take_event_rx(event_rx),
-        event_tx.clone(),
         Stages {
             slash: &mut slash,
             permission: &mut permission,
             ui_request: &mut ui_request,
-            compaction: &mut compaction,
             session: &mut session,
         },
         &mut ctx,
@@ -422,11 +361,139 @@ async fn compaction_handoff_from_slash_to_compaction() {
     .await;
 
     assert!(result.is_ok());
-    assert_eq!(
-        compaction.handle_result_calls,
-        vec![Some("compacted".to_string())],
-        "CompactionResult from the bridged receiver should be handled"
+    let cmd = recv_command(worker_rx).expect("RunCompaction should be dispatched");
+    match cmd {
+        WorkerCommand::RunCompaction { source } => {
+            assert_eq!(source, "auto");
+        }
+        _ => panic!("expected RunCompaction"),
+    }
+    assert!(
+        !state.worker_active,
+        "worker_active must NOT be set for a compaction command (the worker emits events on the bus)"
     );
+}
+
+#[tokio::test]
+async fn run_compaction_queued_when_worker_busy_then_dispatched_on_idle() {
+    let mut h = Harness::new();
+    let HarnessParts {
+        event_tx,
+        event_rx,
+        worker_tx,
+        worker_rx,
+        blocking_tx,
+        concurrent_tx,
+        bus,
+        state,
+    } = h.parts();
+    let mut slash = MockSlash::new();
+    let mut permission = MockPermission::new();
+    let mut ui_request = MockUiRequest::new();
+    let mut session = MockSession::new();
+    // Worker is busy running a turn.
+    state.worker_active = true;
+    let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
+
+    event_tx
+        .send(OrchestratorEvent::RunCompaction {
+            source: "auto".to_string(),
+        })
+        .await
+        .unwrap();
+    // Worker finishes; the queued compaction must be dispatched.
+    event_tx
+        .send(OrchestratorEvent::WorkerResult(TurnOutcome::Success(
+            Value::nothing(Span::test_data()),
+        )))
+        .await
+        .unwrap();
+    event_tx.send(OrchestratorEvent::Quit).await.unwrap();
+
+    let result = run_orchestrator_loop(
+        take_event_rx(event_rx),
+        Stages {
+            slash: &mut slash,
+            permission: &mut permission,
+            ui_request: &mut ui_request,
+            session: &mut session,
+        },
+        &mut ctx,
+    )
+    .await;
+
+    assert!(result.is_ok());
+    let cmd = recv_command(worker_rx).expect("queued RunCompaction should be dispatched");
+    match cmd {
+        WorkerCommand::RunCompaction { source } => {
+            assert_eq!(source, "auto");
+        }
+        _ => panic!("expected RunCompaction"),
+    }
+}
+
+#[tokio::test]
+async fn run_compaction_queued_replaces_previous_when_busy() {
+    let mut h = Harness::new();
+    let HarnessParts {
+        event_tx,
+        event_rx,
+        worker_tx,
+        worker_rx,
+        blocking_tx,
+        concurrent_tx,
+        bus,
+        state,
+    } = h.parts();
+    let mut slash = MockSlash::new();
+    let mut permission = MockPermission::new();
+    let mut ui_request = MockUiRequest::new();
+    let mut session = MockSession::new();
+    state.worker_active = true;
+    let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
+
+    // First request queued.
+    event_tx
+        .send(OrchestratorEvent::RunCompaction {
+            source: "auto".to_string(),
+        })
+        .await
+        .unwrap();
+    // Second request replaces the queued one.
+    event_tx
+        .send(OrchestratorEvent::RunCompaction {
+            source: "slash".to_string(),
+        })
+        .await
+        .unwrap();
+    event_tx
+        .send(OrchestratorEvent::WorkerResult(TurnOutcome::Success(
+            Value::nothing(Span::test_data()),
+        )))
+        .await
+        .unwrap();
+    event_tx.send(OrchestratorEvent::Quit).await.unwrap();
+
+    let result = run_orchestrator_loop(
+        take_event_rx(event_rx),
+        Stages {
+            slash: &mut slash,
+            permission: &mut permission,
+            ui_request: &mut ui_request,
+            session: &mut session,
+        },
+        &mut ctx,
+    )
+    .await;
+
+    assert!(result.is_ok());
+    let cmd = recv_command(worker_rx).expect("queued RunCompaction should be dispatched");
+    match cmd {
+        WorkerCommand::RunCompaction { source } => {
+            assert_eq!(source, "slash", "newest queued request must win");
+        }
+        _ => panic!("expected RunCompaction"),
+    }
 }
 
 #[tokio::test]
@@ -445,7 +512,6 @@ async fn worker_result_drains_queued_and_checks_compaction() {
     let mut slash = MockSlash::new();
     let mut permission = MockPermission::new();
     let mut ui_request = MockUiRequest::new();
-    let mut compaction = MockCompaction::new();
     let mut session = MockSession::new();
     let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
 
@@ -459,12 +525,10 @@ async fn worker_result_drains_queued_and_checks_compaction() {
 
     let result = run_orchestrator_loop(
         take_event_rx(event_rx),
-        event_tx.clone(),
         Stages {
             slash: &mut slash,
             permission: &mut permission,
             ui_request: &mut ui_request,
-            compaction: &mut compaction,
             session: &mut session,
         },
         &mut ctx,
@@ -506,18 +570,15 @@ async fn quit_blocked_when_worker_active() {
     let mut slash = MockSlash::new();
     let mut permission = MockPermission::new();
     let mut ui_request = MockUiRequest::new();
-    let mut compaction = MockCompaction::new();
     let mut session = MockSession::new();
     let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
 
     let result = run_orchestrator_loop(
         take_event_rx(event_rx),
-        event_tx.clone(),
         Stages {
             slash: &mut slash,
             permission: &mut permission,
             ui_request: &mut ui_request,
-            compaction: &mut compaction,
             session: &mut session,
         },
         &mut ctx,
@@ -543,7 +604,6 @@ async fn quit_allowed_when_idle_and_no_pending() {
     let mut slash = MockSlash::new();
     let mut permission = MockPermission::new();
     let mut ui_request = MockUiRequest::new();
-    let mut compaction = MockCompaction::new();
     let mut session = MockSession::new();
     let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
 
@@ -551,12 +611,10 @@ async fn quit_allowed_when_idle_and_no_pending() {
 
     let result = run_orchestrator_loop(
         take_event_rx(event_rx),
-        event_tx.clone(),
         Stages {
             slash: &mut slash,
             permission: &mut permission,
             ui_request: &mut ui_request,
-            compaction: &mut compaction,
             session: &mut session,
         },
         &mut ctx,
@@ -582,7 +640,6 @@ async fn external_prompt_dispatches_turn_when_idle() {
     let mut slash = MockSlash::new();
     let mut permission = MockPermission::new();
     let mut ui_request = MockUiRequest::new();
-    let mut compaction = MockCompaction::new();
     let mut session = MockSession::new();
     let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
 
@@ -603,12 +660,10 @@ async fn external_prompt_dispatches_turn_when_idle() {
 
     let result = run_orchestrator_loop(
         take_event_rx(event_rx),
-        event_tx.clone(),
         Stages {
             slash: &mut slash,
             permission: &mut permission,
             ui_request: &mut ui_request,
-            compaction: &mut compaction,
             session: &mut session,
         },
         &mut ctx,
@@ -650,7 +705,6 @@ async fn fatal_error_returns_err() {
     let mut slash = MockSlash::new();
     let mut permission = MockPermission::new();
     let mut ui_request = MockUiRequest::new();
-    let mut compaction = MockCompaction::new();
     let mut session = MockSession::new();
     let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
 
@@ -661,12 +715,10 @@ async fn fatal_error_returns_err() {
 
     let result = run_orchestrator_loop(
         take_event_rx(event_rx),
-        event_tx.clone(),
         Stages {
             slash: &mut slash,
             permission: &mut permission,
             ui_request: &mut ui_request,
-            compaction: &mut compaction,
             session: &mut session,
         },
         &mut ctx,

@@ -4,35 +4,35 @@ use super::repair::{
     merge_consecutive_same_role, remove_empty_messages, repair_messages, trim_trailing_user,
 };
 use super::store_test::assert_msgs_eq;
-use crate::types::{AssistantContent, Message, ToolCall, ToolFunction, ToolResult, UserContent};
-use rig::one_or_many::OneOrMany;
+use crate::types::{
+    AssistantContent, Message, ToolCall, ToolCallId, ToolFunction, ToolResult, UserContent,
+};
 
 fn make_tool_call(id: &str, name: &str) -> AssistantContent {
     AssistantContent::ToolCall(ToolCall::new(
-        id.to_string(),
+        ToolCallId::new_or_mint(id),
         ToolFunction::new(name.to_string(), serde_json::json!({})),
     ))
 }
 
 fn make_tool_result(id: &str, output: &str) -> UserContent {
     UserContent::ToolResult(ToolResult {
-        id: id.to_string(),
-        call_id: None,
-        content: OneOrMany::one(crate::types::ToolResultContent::text(output)),
+        call: ToolCallId::new_or_mint(id),
+        provider: None,
+        name: "read_file".into(),
+        content: vec![crate::types::ToolResultContent::text(output)],
     })
 }
 
 fn assistant_with_content(items: Vec<AssistantContent>) -> Message {
     Message::Assistant {
         id: None,
-        content: OneOrMany::many(items).expect("non-empty assistant content"),
+        content: items,
     }
 }
 
 fn user_with_content(items: Vec<UserContent>) -> Message {
-    Message::User {
-        content: OneOrMany::many(items).expect("non-empty user content"),
-    }
+    Message::User { content: items }
 }
 
 // ================================================================
@@ -41,8 +41,8 @@ fn user_with_content(items: Vec<UserContent>) -> Message {
 
 #[test]
 fn remove_empty_user_message() {
-    // OneOrMany<T> cannot hold zero items, so "structurally empty" is
-    // impossible at the type level. The only user-empty case is all-empty text
+    // Vec<T> can hold zero items, so "structurally empty" is impossible to
+    // distinguish by type alone. The only user-empty case is all-empty text
     // with no ToolResults.
     let msg = user_with_content(vec![UserContent::Text(crate::types::Text::new(""))]);
     let mut issues = Vec::new();
@@ -158,7 +158,7 @@ fn tool_call_with_text_preserves_text() {
     match &result[1] {
         Message::Assistant { content, .. } => {
             assert_eq!(content.len(), 1);
-            assert!(matches!(content.first_ref(), AssistantContent::Text(_)));
+            assert!(matches!(content.first(), Some(AssistantContent::Text(_))));
         }
         _ => panic!("expected assistant message"),
     }
@@ -403,7 +403,7 @@ fn pipeline_complex_corruption() {
     match &result[1] {
         Message::Assistant { content, .. } => {
             assert_eq!(content.len(), 1);
-            assert!(matches!(content.first_ref(), AssistantContent::Text(_)));
+            assert!(matches!(content.first(), Some(AssistantContent::Text(_))));
         }
         _ => panic!("expected assistant message"),
     }
@@ -671,7 +671,7 @@ fn inject_missing_tool_results_inserts_synthetic_result_for_unpaired_call() {
     match &result[2] {
         Message::User { content } => {
             let has_tool_result = content.iter().any(|item| match item {
-                UserContent::ToolResult(tr) => tr.id == "x",
+                UserContent::ToolResult(tr) => tr.call.as_str() == "x",
                 _ => false,
             });
             assert!(
@@ -716,7 +716,7 @@ fn inject_missing_tool_results_groups_two_unpaired_calls_into_one_user_message()
             let result_ids: Vec<&str> = content
                 .iter()
                 .filter_map(|item| match item {
-                    UserContent::ToolResult(tr) => Some(tr.id.as_str()),
+                    UserContent::ToolResult(tr) => Some(tr.call.as_str()),
                     _ => None,
                 })
                 .collect();
@@ -772,7 +772,7 @@ fn pipeline_no_dangling_tool_call_after_trim() {
             Some(Message::User { content }) => content
                 .iter()
                 .filter_map(|item| match item {
-                    UserContent::ToolResult(tr) => Some(tr.id.as_str()),
+                    UserContent::ToolResult(tr) => Some(tr.call.as_str()),
                     _ => None,
                 })
                 .collect(),
@@ -936,7 +936,7 @@ fn repair_messages_pipeline_includes_empty_tool_result_fix() {
 
 fn make_null_args_tool_call(id: &str, name: &str) -> AssistantContent {
     AssistantContent::ToolCall(ToolCall::new(
-        id.to_string(),
+        ToolCallId::new_or_mint(id),
         ToolFunction::new(name.to_string(), serde_json::Value::Null),
     ))
 }
@@ -1035,8 +1035,11 @@ fn repair_messages_heals_null_args_end_to_end() {
 #[test]
 fn inject_missing_tool_results_preserves_call_id() {
     let tc = AssistantContent::ToolCall(ToolCall {
-        id: "id_x".to_string(),
-        call_id: Some("call_abc123".to_string()),
+        id: ToolCallId::new_or_mint("id_x"),
+        provider: Some(crate::types::ProviderCallId {
+            call_id: "call_abc123".to_string(),
+            item_id: None,
+        }),
         signature: None,
         additional_params: None,
         function: ToolFunction::new("do_thing".to_string(), serde_json::json!({})),
@@ -1055,8 +1058,11 @@ fn inject_missing_tool_results_preserves_call_id() {
                 })
                 .expect("injected User message must contain a ToolResult");
             assert_eq!(
-                tr.call_id,
-                Some("call_abc123".to_string()),
+                tr.provider,
+                Some(crate::types::ProviderCallId {
+                    call_id: "call_abc123".to_string(),
+                    item_id: None,
+                }),
                 "synthetic ToolResult must carry call_id from its ToolCall"
             );
         }
@@ -1069,8 +1075,8 @@ fn inject_missing_tool_results_preserves_call_id() {
 #[test]
 fn inject_missing_tool_results_preserves_none_call_id() {
     let tc = AssistantContent::ToolCall(ToolCall {
-        id: "id_y".to_string(),
-        call_id: None,
+        id: ToolCallId::new_or_mint("id_y"),
+        provider: None,
         signature: None,
         additional_params: None,
         function: ToolFunction::new("do_other".to_string(), serde_json::json!({})),
@@ -1089,10 +1095,172 @@ fn inject_missing_tool_results_preserves_none_call_id() {
                 })
                 .expect("injected User message must contain a ToolResult");
             assert_eq!(
-                tr.call_id, None,
+                tr.provider, None,
                 "synthetic ToolResult must have call_id: None when ToolCall has call_id: None"
             );
         }
         _ => panic!("message[2] must be a User message"),
     }
+}
+
+// ================================================================
+// CompactingMemory artifact shape — RED tests
+// ================================================================
+
+/// The compaction summary artifact is spliced as a leading `Message::User`
+/// whose `Text` block carries `additional_params` marking it as a compaction
+/// summary via `COMPACTION_SUMMARY_KEY`.
+fn summary_artifact(summary: &str) -> Message {
+    Message::User {
+        content: vec![UserContent::Text(crate::types::Text {
+            text: format!("What we did thus far:\n\n{summary}"),
+            additional_params: crate::types::AdditionalParams::from_entries([(
+                crate::conversation::compaction::compactor::COMPACTION_SUMMARY_KEY,
+                serde_json::json!(true),
+            )]),
+        })],
+    }
+}
+
+/// True if any `UserContent` block in `content` is marked as a compaction
+/// summary via `COMPACTION_SUMMARY_KEY` in its `additional_params`.
+fn is_summary_content(content: &[UserContent]) -> bool {
+    let key = crate::conversation::compaction::compactor::COMPACTION_SUMMARY_KEY;
+    content.iter().any(|c| match c {
+        UserContent::Text(t) => t
+            .additional_params
+            .as_ref()
+            .and_then(|p| p.get(key))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
+        _ => false,
+    })
+}
+
+/// `trim_trailing_user` must NOT remove a leading `Message::User` artifact
+/// when it is followed by other messages. The pass only pops from the end, so
+/// a leading artifact must survive even when a genuine trailing user is trimmed.
+#[test]
+fn trim_trailing_user_preserves_leading_artifact() {
+    // -- Setup & Fixtures
+    let msgs = vec![
+        summary_artifact("compacted summary"),
+        Message::assistant("kept reply"),
+        Message::user("trailing turn"),
+    ];
+    let mut issues = Vec::new();
+
+    // -- Exec
+    let result = trim_trailing_user(msgs, &mut issues);
+
+    // -- Check
+    // The trailing text-only user is trimmed, but the leading artifact survives.
+    assert_eq!(result.len(), 2, "only the trailing user is trimmed");
+    match &result[0] {
+        Message::User { content } => assert!(
+            is_summary_content(content),
+            "leading artifact must survive trim_trailing_user"
+        ),
+        _ => panic!("expected user message"),
+    }
+    assert!(
+        !issues.is_empty(),
+        "trailing user trim must emit a diagnostic"
+    );
+}
+
+/// `merge_consecutive_same_role` still merges consecutive plain-text `User`
+/// messages (current behavior preserved).
+#[test]
+fn merge_consecutive_same_role_merges_plain_text_users() {
+    // -- Setup & Fixtures
+    let msgs = vec![
+        Message::user("first"),
+        Message::user("second"),
+        Message::assistant("reply"),
+    ];
+    let mut issues = Vec::new();
+
+    // -- Exec
+    let result = merge_consecutive_same_role(msgs, &mut issues);
+
+    // -- Check
+    assert_eq!(
+        result.len(),
+        2,
+        "two text-only user messages must be merged"
+    );
+    match &result[0] {
+        Message::User { content } => assert_eq!(content.len(), 2),
+        _ => panic!("expected user message"),
+    }
+    assert!(!issues.is_empty(), "merge must emit a diagnostic");
+}
+
+/// `merge_consecutive_same_role` must NOT merge a summary `Message::User`
+/// (carrying `additional_params` with `COMPACTION_SUMMARY_KEY`) with the next
+/// `Message::User`. The summary is conversation context, not a user turn —
+/// folding it into the next user message would lose it.
+#[test]
+fn merge_consecutive_same_role_does_not_merge_summary_with_next_user() {
+    // -- Setup & Fixtures
+    let msgs = vec![
+        summary_artifact("compacted summary"),
+        Message::user("kept turn"),
+        Message::assistant("reply"),
+    ];
+    let mut issues = Vec::new();
+
+    // -- Exec
+    let result = merge_consecutive_same_role(msgs, &mut issues);
+
+    // -- Check
+    assert_eq!(
+        result.len(),
+        3,
+        "summary artifact must NOT be merged with the next user message"
+    );
+    match &result[0] {
+        Message::User { content } => {
+            assert_eq!(content.len(), 1, "summary must remain its own message");
+            assert!(
+                is_summary_content(content),
+                "first message must still be the summary artifact"
+            );
+        }
+        _ => panic!("expected user message"),
+    }
+    assert!(
+        issues.is_empty(),
+        "no merge should be recorded for the summary artifact"
+    );
+}
+
+/// `fix_tool_call_integrity` still removes dangling `ToolCall` / orphaned
+/// `ToolResult` pairs after the CompactingMemory artifact shape.
+#[test]
+fn fix_tool_call_integrity_still_removes_dangling_tool_call() {
+    // -- Setup & Fixtures
+    let msgs = vec![
+        summary_artifact("compacted summary"),
+        Message::user("kept turn"),
+        assistant_with_content(vec![make_tool_call("X", "do_thing")]),
+    ];
+    let mut issues = Vec::new();
+
+    // -- Exec
+    let result = fix_tool_call_integrity(msgs, &mut issues);
+
+    // -- Check
+    let has_tool_call = result.iter().any(|msg| match msg {
+        Message::Assistant { content, .. } => content
+            .iter()
+            .any(|i| matches!(i, AssistantContent::ToolCall(_))),
+        _ => false,
+    });
+    assert!(
+        !has_tool_call,
+        "dangling ToolCall must be removed by fix_tool_call_integrity"
+    );
+    assert!(!issues.is_empty(), "integrity pass must emit a diagnostic");
 }

@@ -61,21 +61,21 @@ pub struct PermissionDecisionSubmission {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UiEvent {
-    LlmStart,
+    LlmStarted,
     Tick,
-    LlmEnd {
+    LlmCompleted {
         response_chars: usize,
         tool_calls: usize,
         input_tokens: u64,
         output_tokens: u64,
         total_tokens: u64,
     },
-    ToolStart {
+    ToolStarted {
         name: String,
         source: String,
         arguments: String,
     },
-    ToolEnd {
+    ToolCompleted {
         name: String,
         source: String,
         arguments: String,
@@ -116,10 +116,8 @@ pub enum UiEvent {
         delta: String,
         aggregated: String,
     },
-    CompactionTriggered {
+    CompactionCompleted {
         source: String,
-        summarized_count: usize,
-        kept_recent_count: usize,
         summary_preview: String,
         summary_body: String,
     },

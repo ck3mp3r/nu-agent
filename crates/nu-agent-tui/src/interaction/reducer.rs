@@ -542,12 +542,12 @@ fn handle_escape_confirm(
 
 pub(crate) fn reduce_ui_event_impl(state: &mut AppState, event: UiEvent) -> bool {
     match event {
-        UiEvent::LlmStart => handle_llm_start(state),
+        UiEvent::LlmStarted => handle_llm_start(state),
         UiEvent::Tick => handle_tick(state),
-        UiEvent::ToolStart {
+        UiEvent::ToolStarted {
             name, arguments, ..
         } => handle_tool_start(state, &name, &arguments),
-        UiEvent::ToolEnd {
+        UiEvent::ToolCompleted {
             name,
             arguments,
             success,
@@ -561,7 +561,7 @@ pub(crate) fn reduce_ui_event_impl(state: &mut AppState, event: UiEvent) -> bool
         UiEvent::PermissionDecisionSubmitted { .. }
         | UiEvent::PermissionDecisionTimedOut { .. }
         | UiEvent::PermissionDecisionIgnored { .. } => false,
-        UiEvent::LlmEnd {
+        UiEvent::LlmCompleted {
             response_chars,
             input_tokens,
             output_tokens,
@@ -596,10 +596,8 @@ pub(crate) fn reduce_ui_event_impl(state: &mut AppState, event: UiEvent) -> bool
         UiEvent::CompactionSummaryChunk {
             source, aggregated, ..
         } => handle_compaction_summary_chunk(state, &source, aggregated),
-        UiEvent::CompactionTriggered {
+        UiEvent::CompactionCompleted {
             source,
-            summarized_count: _,
-            kept_recent_count: _,
             summary_preview: _,
             summary_body,
         } => {
@@ -626,7 +624,7 @@ pub(crate) fn reduce_ui_event_impl(state: &mut AppState, event: UiEvent) -> bool
             state.compaction_streaming_start = None;
             state.push_spacer();
             state.status_line.clear();
-            // Reset displayed token % — context was freed; wait for next LlmEnd to update.
+            // Reset displayed token % — context was freed; wait for next LlmCompleted to update.
             state.latest_total_tokens = None;
             true
         }

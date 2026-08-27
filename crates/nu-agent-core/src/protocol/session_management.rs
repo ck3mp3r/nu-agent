@@ -21,12 +21,24 @@ pub trait SessionState {
 
 /// Async session persistence I/O — load and list sessions from a store.
 /// Uses `impl Future + Send` following the same pattern as
-/// `Compaction::execute_compaction_trigger` and
 /// `McpManagement::set_mcp_server_enabled`.
 pub trait SessionPersistence {
     /// Returns the runtime's working directory for CWD-scoped session listing.
     fn cwd(&self) -> &std::path::Path {
         std::path::Path::new("/")
+    }
+
+    /// Run a compaction of the current session with the given `source`
+    /// (`"auto"` or `"slash"`).
+    ///
+    /// Loads the full history from the store-backed memory and runs the shared
+    /// compaction logic, emitting `Started`/`SummaryChunk`/`Completed`/`Failed`
+    /// events on the bus. A no-op for runtimes without a persistent session.
+    fn run_compaction(
+        &mut self,
+        _source: &str,
+    ) -> impl std::future::Future<Output = Result<(), String>> + Send {
+        async move { Ok(()) }
     }
 
     /// Load a session by ID and return its messages as UI snapshots.

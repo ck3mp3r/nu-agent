@@ -27,7 +27,7 @@ async fn publish_tool_reaches_multiple_subscribers() {
     let mut rx2 = bus.tool().subscribe();
 
     bus.tool()
-        .send(ToolEvent::Start {
+        .send(ToolEvent::Started {
             name: "read".into(),
             source: "user".into(),
             arguments: "{}".into(),
@@ -45,11 +45,11 @@ async fn publish_tool_reaches_multiple_subscribers() {
         .expect("second subscriber should receive");
 
     match (received1, received2) {
-        (ToolEvent::Start { name: n1, .. }, ToolEvent::Start { name: n2, .. }) => {
+        (ToolEvent::Started { name: n1, .. }, ToolEvent::Started { name: n2, .. }) => {
             assert_eq!(n1, "read");
             assert_eq!(n2, "read");
         }
-        _ => panic!("expected ToolEvent::Start on both subscribers"),
+        _ => panic!("expected ToolEvent::Started on both subscribers"),
     }
 }
 
@@ -61,7 +61,7 @@ async fn subscriber_only_receives_its_channel() {
     // No subscriber on the tool channel, so the send returns a SendError
     // (broadcast drops the message when there are zero receivers). That is
     // expected — the assertion is that the cancel subscriber never sees it.
-    let _ = bus.tool().send(ToolEvent::Start {
+    let _ = bus.tool().send(ToolEvent::Started {
         name: "write".into(),
         source: "system".into(),
         arguments: "{}".into(),

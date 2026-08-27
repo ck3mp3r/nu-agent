@@ -42,6 +42,14 @@ src/
   - Multi-file module: `foo/mod.rs` with `foo/test.rs`
   - Forbidden: mixed `foo.rs` + `foo/test.rs`
 - Keep test files focused and organized by module
+- When unit tests in a source file become large, split them out:
+  ```rust
+  // region:    --- Tests
+  #[cfg(test)]
+  #[path = "applier_tests.rs"]
+  mod tests;
+  // endregion: --- Tests
+  ```
 
 ### No test-only code in production
 
@@ -89,6 +97,66 @@ Any `.rs` file that is NOT a test file (`*_test.rs`, `test.rs`) is production co
 - Refactor only when tests are green
 - No hidden global mutable state — use explicit state via structs
 
+### Constructor Patterns
+
+Follow the rust10x fluid API conventions:
+
+- `Default` for sync empty constructors — do not use `new() -> Self` with empty arguments
+- `new(...)` for the primary constructor with obvious common arguments
+- `from_...(...)` for secondary constructors
+- `with_...(self, ...) -> Self` for fluent chainable setters (consuming pattern, not `&mut self`)
+- `append_...(self, ...)` for adding single items, `append_...s(self, ...)` for `IntoIterator`
+- `set_...(&mut self, ...)` for property setters taking `&mut self`
+- Use `impl Into<...>` for constructor and setter parameters where appropriate
+- Separate `Builder` struct with `.build()` only when construction is complex, requires validation, or is fallible (returning `Result`)
+
+### Code Structure (rust10x regions)
+
+Organize source files in this order:
+
+1. Primary public types
+2. Supporting public types
+3. Public functions
+4. Public inherent implementations (grouped by purpose: Constructors, Chainable setters, Accessors)
+5. Trait implementations (in separate `impl` blocks)
+6. Private support functions/types (`// region: --- Support`)
+7. Unit tests (`// region: --- Tests`)
+
+Use code regions for meaningful sections:
+
+```rust
+// region:    --- Types
+// endregion: --- Types
+
+// region:    --- Froms
+// endregion: --- Froms
+
+// region:    --- Support
+// endregion: --- Support
+
+// region:    --- Tests
+// endregion: --- Tests
+```
+
+Group `From` implementations together in a `Froms` region. Place private helpers in a `Support` region. Do not create regions merely to label every `impl` block.
+
+### Error Handling
+
+- Use `derive_more::{Display, From}` for error enums (not `thiserror`)
+- Define `pub type Result<T> = core::result::Result<T, Error>` in `error.rs`, re-export from `lib.rs`/`main.rs`
+- `Custom` variant with `#[from(String, &String, &str)]` for easy `.ok_or("message")?`
+- External error types below `// -- Externals` comment
+- Application-specific variants above
+- `Custom` variant always on top
+
+### Modern Rust (Edition 2024)
+
+- Use if-let chains: `if let Some(x) = foo && x > 0 { ... }` — do NOT nest `if` inside `if`
+- Avoid `ref` bindings — use match ergonomics
+- Inline format args: `println!("{name}")` not `println!("{}", name)` for simple variables
+- `async || {}` closures supported (use `AsyncFn`, `AsyncFnMut`, `AsyncFnOnce` traits)
+- Avoid manual pattern match when possible: `line.trim_start_matches([' ', '\t'])` not `|c: char| c == ' ' || c == '\t'`
+
 ### No Parallel Developer Agents
 
 **NEVER run two developer agents concurrently on the same repository.**
@@ -112,12 +180,14 @@ cargo test --workspace
 A reviewer subagent must sign off before committing. Clippy warnings are
 build failures. `#[allow(...)]` is never acceptable — fix the code instead.
 
-### `unwrap()` Policy
+### `unwrap()` / `expect()` Policy
 
-- ❌ NO: `unwrap()` in production code
-- ✅ YES: `unwrap_or`, `unwrap_or_else`, `if let`, `?`, `expect("reason")`
-- ✅ EXCEPTION: `mutex.lock().unwrap()` — mutex poison is a fatal internal
-  inconsistency and panicking is correct
+- ❌ NO: `unwrap()` or `expect("...")` in production code
+- ❌ NO: `unwrap()` or `expect("...")` in test or example code
+- ✅ YES: `unwrap_or`, `unwrap_or_else`, `if let`, `?`, `.ok_or("should have ...")?`
+- ✅ YES: `mutex.lock().unwrap()` — mutex poison is a fatal internal
+  inconsistency and panicking is correct (the ONLY exception)
+- For tests, use `.ok_or("should be ...")?` with `type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>`
 
 ### Nested `if` Statements
 
@@ -143,6 +213,25 @@ if x > 0 {
 }
 ```
 
+### Module Files
+
+Use `mod.rs` primarily for module declarations and intentional reexports. Put those declarations and reexports in a `Modules` region after any module-level documentation:
+
+```rust
+//! Module-level documentation.
+
+// region:    --- Modules
+
+mod event_base;
+mod support;
+
+pub use event_base::*;
+
+// endregion: --- Modules
+```
+
+Implementation details should normally live in dedicated source files rather than in `mod.rs`.
+
 ### Scope Discipline
 
 Do NOT refactor adjacent code "while you're at it." Every change must be
@@ -161,13 +250,23 @@ the dead code.
 
 - ❌ NO: `Box<dyn Trait>`, `&dyn Trait`, trait objects in internal code
 - ✅ YES: Generics with trait bounds `T: Trait`
-- ✅ EXCEPTION: nu-plugin API boundary can use dynamic dispatch (it's required by the framework)
+- ✅ EXCEPTION: nu-plugin API boundary and rig's `ModelHandle`/`ConversationMemory` can use dynamic dispatch (required by the framework)
 - Follow SOLID principles throughout:
   - **S**ingle Responsibility: One reason to change
   - **O**pen/Closed: Open for extension, closed for modification
   - **L**iskov Substitution: Subtypes must be substitutable
   - **I**nterface Segregation: Many specific interfaces over one general
   - **D**ependency Inversion: Depend on abstractions, not concretions
+
+### Event/Channel Design (rust10x 3-level architecture)
+
+When designing event/channel systems, follow the 3-level pattern:
+
+- **Level 1** (Event Base): Channel backend normalization — `MpscTx<M>`/`MpscRx<M>`, etc. Backend-agnostic facade with application-owned errors.
+- **Level 2** (Use-Case Aliases): Type aliases over Level 1 for specific use cases — `type TuiTx = MpscTx<TuiEvent>`. Topology choice lives in one place.
+- **Level 3** (Domain Types): Domain-specific endpoint types with domain operations — `AiJobTx::exec_request()` instead of raw `.send()`. Owns error translation from Level 1.
+
+Domain types should not leak Level 1 error types. Translate at the boundary.
 
 ### Trait Design
 
@@ -255,43 +354,32 @@ Every `Option` field on the runtime `Config` struct must have at least one real 
 6. Update `docs/configuration.md`
 ```
 
-## Examples
+### Test Structure (rust10x conventions)
 
-### Good Test Structure
+Every test function follows this layout:
 
 ```rust
-// src/commands/info_test.rs
-use super::*;
-
 #[test]
-fn returns_plugin_version() {
-    // RED: Write this first, watch it fail
-    // GREEN: Implement minimal code
-    // REFACTOR: Clean up when green
-}
+fn test_module_function_variant() -> Result<()> {
+    // -- Setup & Fixtures
+    // ... code that preps/sets the context for the test
 
-#[test]
-fn handles_empty_input() {
-    // Another focused test
+    // -- Exec
+    // ... code that executes the function to be tested
+
+    // -- Check
+    // ... assertions and verification
+    Ok(())
 }
 ```
 
-### Bad Test Structure (Don't do this)
-
-```rust
-// src/lib.rs
-pub fn some_function() -> String {
-    "result".to_string()
-}
-
-#[cfg(test)]  // ❌ NO inline tests
-mod tests {
-    #[test]
-    fn it_works() {
-        // ...
-    }
-}
-```
+- `type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>` at the top of every test module
+- Test naming: `test_[module_path_name]_[function_name]_[variant]`
+- Section comments in every test: `// -- Setup & Fixtures`, `// -- Exec`, `// -- Check`
+- Use `// -- Exec & Check` when exec and checks are in a `for` loop
+- No `unwrap()` — use `.ok_or("should be ...")?`
+- Test support functions at the end under `// -- Test Support` (inline) or `// region: --- Test Support` (dedicated file)
+- For temp data files, use paths like `tests-data/.tmp/test_function_name/`
 
 ## Docs Guardrails (Tool/Authz/TUI changes)
 

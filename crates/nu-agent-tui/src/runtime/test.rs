@@ -251,10 +251,8 @@ fn compact_result_artifact_is_visible_without_slash_command_echo() {
     });
     coordinator.drain_transport();
 
-    coordinator.enqueue_ui_event(UiEvent::CompactionTriggered {
+    coordinator.enqueue_ui_event(UiEvent::CompactionCompleted {
         source: "slash_compact".to_string(),
-        summarized_count: 3,
-        kept_recent_count: 2,
         summary_preview: "preview".to_string(),
         summary_body: "summary body".to_string(),
     });
@@ -332,7 +330,7 @@ fn runtime_renderer_reuses_eventing_and_preserves_emit_passthrough() {
     let scripted = ScriptedTerminalEvents::from_script("char:h,ctrlc,resize:140x35");
     let mut runtime_renderer = TuiRuntimeRenderer::new(inner, scripted, 120, 30);
 
-    runtime_renderer.emit(&UiEvent::LlmStart);
+    runtime_renderer.emit(&UiEvent::LlmStarted);
     runtime_renderer.emit(&UiEvent::Tick);
     runtime_renderer.emit(&UiEvent::Tick);
     runtime_renderer.flush();
@@ -466,7 +464,7 @@ fn runtime_renderer_in_tui_mode_does_not_forward_spinner_progress_to_inner_rende
     let mut runtime_renderer =
         TuiRuntimeRenderer::new_tui_active_for_test(inner, scripted, 120, 30);
 
-    runtime_renderer.emit(&UiEvent::LlmStart);
+    runtime_renderer.emit(&UiEvent::LlmStarted);
     runtime_renderer.emit(&UiEvent::Tick);
     runtime_renderer.emit(&UiEvent::Completed { tool_calls: 0 });
 
@@ -639,7 +637,7 @@ fn tui_active_mode_does_not_forward_payload_like_events_to_inner_renderer() {
     let mut runtime_renderer =
         TuiRuntimeRenderer::new_tui_active_for_test(inner, scripted, 120, 30);
 
-    runtime_renderer.emit(&UiEvent::ToolEnd {
+    runtime_renderer.emit(&UiEvent::ToolCompleted {
         name: "k8s__list_pods".to_string(),
         source: "mcp".to_string(),
         arguments: r#"{"namespace":"prod"}"#.to_string(),
@@ -3039,7 +3037,7 @@ fn status_lines_include_tokens_line_with_na_before_any_llm_end() {
 fn status_lines_include_latest_and_rolling_tokens_after_llm_end_events() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
 
-    coordinator.enqueue_ui_event(UiEvent::LlmEnd {
+    coordinator.enqueue_ui_event(UiEvent::LlmCompleted {
         response_chars: 10,
         tool_calls: 0,
         input_tokens: 11,
@@ -3048,7 +3046,7 @@ fn status_lines_include_latest_and_rolling_tokens_after_llm_end_events() {
     });
     coordinator.drain_transport();
 
-    coordinator.enqueue_ui_event(UiEvent::LlmEnd {
+    coordinator.enqueue_ui_event(UiEvent::LlmCompleted {
         response_chars: 12,
         tool_calls: 0,
         input_tokens: 3,
@@ -3147,7 +3145,7 @@ fn configured_path_resolves_context_max_without_fallback_format() {
     coordinator
         .state
         .set_context_window_max_tokens(Some(128_000));
-    coordinator.enqueue_ui_event(UiEvent::LlmEnd {
+    coordinator.enqueue_ui_event(UiEvent::LlmCompleted {
         response_chars: 40,
         tool_calls: 0,
         input_tokens: 2_500,
@@ -3168,7 +3166,7 @@ fn lane_2_context_line_updates_after_each_turn_and_does_not_stale() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
     coordinator.state.set_context_window_max_tokens(Some(100));
 
-    coordinator.enqueue_ui_event(UiEvent::LlmEnd {
+    coordinator.enqueue_ui_event(UiEvent::LlmCompleted {
         response_chars: 12,
         tool_calls: 0,
         input_tokens: 2,
@@ -3180,7 +3178,7 @@ fn lane_2_context_line_updates_after_each_turn_and_does_not_stale() {
     let first_text: String = first.spans.iter().map(|s| s.content.as_ref()).collect();
     assert!(first_text.ends_with("10 (10%)"));
 
-    coordinator.enqueue_ui_event(UiEvent::LlmEnd {
+    coordinator.enqueue_ui_event(UiEvent::LlmCompleted {
         response_chars: 20,
         tool_calls: 0,
         input_tokens: 8,
@@ -3301,7 +3299,7 @@ fn lane_2_rehydrate_is_replaced_by_live_turn_usage() {
     let hydrated_text: String = hydrated.spans.iter().map(|s| s.content.as_ref()).collect();
     assert!(hydrated_text.ends_with("7 (7%)"));
 
-    coordinator.enqueue_ui_event(UiEvent::LlmEnd {
+    coordinator.enqueue_ui_event(UiEvent::LlmCompleted {
         response_chars: 20,
         tool_calls: 0,
         input_tokens: 8,
@@ -3884,16 +3882,14 @@ fn hydration_compaction_empty_summary_shows_block_only() {
 fn hydration_compaction_matches_live_rendering() {
     let summary_body = "## Summary\n- alpha\n- beta";
 
-    // Live path: CompactionStarted + CompactionTriggered via reducer
+    // Live path: CompactionStarted + CompactionCompleted via reducer
     let mut live = RuntimeCoordinator::new(120, 30, Some(true));
     live.enqueue_ui_event(UiEvent::CompactionStarted {
         source: "history".to_string(),
     });
     live.drain_transport();
-    live.enqueue_ui_event(UiEvent::CompactionTriggered {
+    live.enqueue_ui_event(UiEvent::CompactionCompleted {
         source: "history".to_string(),
-        summarized_count: 5,
-        kept_recent_count: 2,
         summary_preview: "preview".to_string(),
         summary_body: summary_body.to_string(),
     });

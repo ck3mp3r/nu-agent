@@ -1,7 +1,6 @@
 pub mod agents;
 pub mod cancellation;
 pub mod compaction;
-pub mod compaction_runtime;
 pub mod contracts;
 pub mod event;
 pub mod mcp_management;

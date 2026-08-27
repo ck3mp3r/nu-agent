@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::plugin::AgentPlugin;
 use nu_agent_core::session::SessionStore;
-use nu_agent_core::session::SessionStoreImpl;
+use nu_agent_core::session::SessionStoreBackend;
 use nu_agent_core::session::prefix::{dir_prefix, dir_prefix_legacy};
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, Example, LabeledError, Signature, SyntaxShape, Value};
@@ -41,7 +41,7 @@ impl AgentSessionClear {
         &self,
         engine: &C,
         call: &EvaluatedCall,
-        store: &SessionStoreImpl,
+        store: &SessionStoreBackend,
     ) -> Result<Value, LabeledError> {
         // Get session_id parameter
         let session_id: String = call.req(0)?;

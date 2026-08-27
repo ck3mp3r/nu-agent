@@ -1,10 +1,10 @@
 use crate::protocol::contracts::UiMessageSnapshot;
 use crate::session::{CompactionMarker, SessionStore as _, StoreEntry};
 use crate::types::{
-    AssistantContent, Message, Text, ToolCall, ToolFunction, ToolResult, ToolResultContent,
-    UserContent,
+    AssistantContent, Message, Text, ToolCall, ToolCallId, ToolFunction, ToolResult,
+    ToolResultContent, UserContent,
 };
-use rig::one_or_many::OneOrMany;
+use chrono::Utc;
 use serde_json::json;
 use std::sync::Arc;
 
@@ -22,10 +22,10 @@ fn convert_rig_messages_to_snapshots(messages: &[Message]) -> Vec<UiMessageSnaps
 #[test]
 fn test_convert_user_text() {
     let messages = vec![Message::User {
-        content: OneOrMany::one(UserContent::Text(Text {
+        content: vec![UserContent::Text(Text {
             text: "Hello, world!".to_string(),
             additional_params: None,
-        })),
+        })],
     }];
 
     let snapshots = convert_rig_messages_to_snapshots(&messages);
@@ -39,10 +39,10 @@ fn test_convert_user_text() {
 fn test_convert_assistant_text() {
     let messages = vec![Message::Assistant {
         id: None,
-        content: OneOrMany::one(AssistantContent::Text(Text {
+        content: vec![AssistantContent::Text(Text {
             text: "I can help you with that.".to_string(),
             additional_params: None,
-        })),
+        })],
     }];
 
     let snapshots = convert_rig_messages_to_snapshots(&messages);
@@ -56,16 +56,16 @@ fn test_convert_assistant_text() {
 fn test_convert_assistant_tool_call() {
     let messages = vec![Message::Assistant {
         id: None,
-        content: OneOrMany::one(AssistantContent::ToolCall(ToolCall {
-            id: "call_123".to_string(),
-            call_id: None,
+        content: vec![AssistantContent::ToolCall(ToolCall {
+            id: ToolCallId::new_or_mint("call_123"),
+            provider: None,
             signature: None,
             additional_params: None,
             function: ToolFunction {
                 name: "read_file".to_string(),
                 arguments: json!({"path": "/tmp/test.txt"}),
             },
-        })),
+        })],
     }];
 
     let snapshots = convert_rig_messages_to_snapshots(&messages);
@@ -97,14 +97,15 @@ fn test_convert_system() {
 #[test]
 fn test_tool_result_not_shown_in_hydrated_transcript() {
     let messages = vec![Message::User {
-        content: OneOrMany::one(UserContent::ToolResult(ToolResult {
-            id: "call_123".to_string(),
-            call_id: None,
-            content: OneOrMany::one(ToolResultContent::Text(Text {
+        content: vec![UserContent::ToolResult(ToolResult {
+            call: ToolCallId::new_or_mint("call_123"),
+            provider: None,
+            name: "read_file".into(),
+            content: vec![ToolResultContent::Text(Text {
                 text: "File contents here".to_string(),
                 additional_params: None,
-            })),
-        })),
+            })],
+        })],
     }];
 
     let snapshots = convert_rig_messages_to_snapshots(&messages);
@@ -117,14 +118,14 @@ fn test_tool_result_not_shown_in_hydrated_transcript() {
 fn test_convert_mixed_assistant_content() {
     let messages = vec![Message::Assistant {
         id: None,
-        content: OneOrMany::many(vec![
+        content: vec![
             AssistantContent::Text(Text {
                 text: "Let me help you.".to_string(),
                 additional_params: None,
             }),
             AssistantContent::ToolCall(ToolCall {
-                id: "call_weather".to_string(),
-                call_id: None,
+                id: ToolCallId::new_or_mint("call_weather"),
+                provider: None,
                 signature: None,
                 additional_params: None,
                 function: ToolFunction {
@@ -132,8 +133,7 @@ fn test_convert_mixed_assistant_content() {
                     arguments: json!({"location": "NYC"}),
                 },
             }),
-        ])
-        .unwrap(),
+        ],
     }];
 
     let snapshots = convert_rig_messages_to_snapshots(&messages);
@@ -151,17 +151,17 @@ fn test_convert_mixed_assistant_content() {
 fn test_convert_multiple_messages() {
     let messages = vec![
         Message::User {
-            content: OneOrMany::one(UserContent::Text(Text {
+            content: vec![UserContent::Text(Text {
                 text: "What's the weather?".to_string(),
                 additional_params: None,
-            })),
+            })],
         },
         Message::Assistant {
             id: None,
-            content: OneOrMany::one(AssistantContent::Text(Text {
+            content: vec![AssistantContent::Text(Text {
                 text: "I'll check that for you.".to_string(),
                 additional_params: None,
-            })),
+            })],
         },
         Message::System {
             content: "Compaction summary".to_string(),
@@ -180,10 +180,10 @@ fn test_convert_multiple_messages() {
 fn test_empty_assistant_text_skipped() {
     let messages = vec![Message::Assistant {
         id: None,
-        content: OneOrMany::one(AssistantContent::Text(Text {
+        content: vec![AssistantContent::Text(Text {
             text: "".to_string(),
             additional_params: None,
-        })),
+        })],
     }];
 
     let snapshots = convert_rig_messages_to_snapshots(&messages);
@@ -197,16 +197,16 @@ fn test_tool_call_format_matches_live_rendering() {
     // Test that tool call format matches what start_tool_call produces
     let messages = vec![Message::Assistant {
         id: None,
-        content: OneOrMany::one(AssistantContent::ToolCall(ToolCall {
-            id: "call_abc".to_string(),
-            call_id: None,
+        content: vec![AssistantContent::ToolCall(ToolCall {
+            id: ToolCallId::new_or_mint("call_abc"),
+            provider: None,
             signature: None,
             additional_params: None,
             function: ToolFunction {
                 name: "k8s__list_pods".to_string(),
                 arguments: json!({"namespace": "prod"}),
             },
-        })),
+        })],
     }];
 
     let snapshots = convert_rig_messages_to_snapshots(&messages);
@@ -233,16 +233,16 @@ fn test_tool_call_argument_summarization() {
     let long_content = "x".repeat(150);
     let messages = vec![Message::Assistant {
         id: None,
-        content: OneOrMany::one(AssistantContent::ToolCall(ToolCall {
-            id: "call_long".to_string(),
-            call_id: None,
+        content: vec![AssistantContent::ToolCall(ToolCall {
+            id: ToolCallId::new_or_mint("call_long"),
+            provider: None,
             signature: None,
             additional_params: None,
             function: ToolFunction {
                 name: "write_file".to_string(),
                 arguments: json!({"content": long_content}),
             },
-        })),
+        })],
     }];
 
     let snapshots = convert_rig_messages_to_snapshots(&messages);
@@ -266,17 +266,17 @@ fn test_tool_call_argument_summarization() {
 fn hydrate_store_entries_includes_messages() {
     let entries = vec![
         StoreEntry::Message(Message::User {
-            content: OneOrMany::one(UserContent::Text(Text {
+            content: vec![UserContent::Text(Text {
                 text: "Hello".to_string(),
                 additional_params: None,
-            })),
+            })],
         }),
         StoreEntry::Message(Message::Assistant {
             id: None,
-            content: OneOrMany::one(AssistantContent::Text(Text {
+            content: vec![AssistantContent::Text(Text {
                 text: "Hi there".to_string(),
                 additional_params: None,
-            })),
+            })],
         }),
     ];
 
@@ -293,23 +293,21 @@ fn hydrate_store_entries_includes_messages() {
 fn hydrate_store_entries_includes_markers() {
     let entries = vec![
         StoreEntry::Message(Message::User {
-            content: OneOrMany::one(UserContent::Text(Text {
+            content: vec![UserContent::Text(Text {
                 text: "Hello".to_string(),
                 additional_params: None,
-            })),
+            })],
         }),
         StoreEntry::Marker(CompactionMarker::new(
             "Summary of older messages".to_string(),
-            3,
-            10,
-            "SummarizeOldest",
+            Utc::now(),
         )),
         StoreEntry::Message(Message::Assistant {
             id: None,
-            content: OneOrMany::one(AssistantContent::Text(Text {
+            content: vec![AssistantContent::Text(Text {
                 text: "Response after compaction".to_string(),
                 additional_params: None,
-            })),
+            })],
         }),
     ];
 
@@ -325,9 +323,7 @@ fn hydrate_store_entries_includes_markers() {
 fn hydrate_store_entries_marker_format() {
     let entries = vec![StoreEntry::Marker(CompactionMarker::new(
         "The user asked about weather and got a response.".to_string(),
-        3,
-        10,
-        "SummarizeOldest",
+        Utc::now(),
     ))];
 
     let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
@@ -336,16 +332,7 @@ fn hydrate_store_entries_marker_format() {
     assert_eq!(snapshots[0].role(), "compaction");
 
     let content = snapshots[0].content();
-    // Content must include stats header (summarized_count, strategy)
-    assert!(
-        content.contains("10 summarized"),
-        "Expected summarized_count in content, got: {content}"
-    );
-    assert!(
-        content.contains("SummarizeOldest"),
-        "Expected strategy in content, got: {content}"
-    );
-    // Content must also include the summary body
+    // Content must include the summary body
     assert!(
         content.contains("The user asked about weather and got a response."),
         "Expected summary body in content, got: {content}"
@@ -356,29 +343,27 @@ fn hydrate_store_entries_marker_format() {
 fn hydrate_store_entries_preserves_order() {
     let entries = vec![
         StoreEntry::Message(Message::User {
-            content: OneOrMany::one(UserContent::Text(Text {
+            content: vec![UserContent::Text(Text {
                 text: "First".to_string(),
                 additional_params: None,
-            })),
+            })],
         }),
         StoreEntry::Message(Message::Assistant {
             id: None,
-            content: OneOrMany::one(AssistantContent::Text(Text {
+            content: vec![AssistantContent::Text(Text {
                 text: "Second".to_string(),
                 additional_params: None,
-            })),
+            })],
         }),
         StoreEntry::Marker(CompactionMarker::new(
             "compaction summary".to_string(),
-            2,
-            5,
-            "SummarizeOldest",
+            Utc::now(),
         )),
         StoreEntry::Message(Message::User {
-            content: OneOrMany::one(UserContent::Text(Text {
+            content: vec![UserContent::Text(Text {
                 text: "Third".to_string(),
                 additional_params: None,
-            })),
+            })],
         }),
     ];
 
@@ -398,9 +383,7 @@ fn hydrate_store_entries_preserves_order() {
 fn hydrate_store_entries_empty_summary_marker() {
     let entries = vec![StoreEntry::Marker(CompactionMarker::new(
         String::new(),
-        5,
-        8,
-        "SlidingWindow",
+        Utc::now(),
     ))];
 
     let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
@@ -409,19 +392,10 @@ fn hydrate_store_entries_empty_summary_marker() {
     assert_eq!(snapshots[0].role(), "compaction");
 
     let content = snapshots[0].content();
-    // Even with empty summary, stats header must appear
+    // Empty summary produces empty content
     assert!(
-        content.contains("8 summarized"),
-        "Expected summarized_count in content for empty-summary marker, got: {content}"
-    );
-    assert!(
-        content.contains("SlidingWindow"),
-        "Expected strategy in content for empty-summary marker, got: {content}"
-    );
-    // No body separator when summary is empty
-    assert!(
-        !content.contains("\n\n"),
-        "Empty summary should not produce a body separator, got: {content}"
+        content.is_empty(),
+        "Expected empty content for empty-summary marker, got: {content}"
     );
 }
 
@@ -430,9 +404,9 @@ fn test_tool_result_edit_creates_display_snapshot() {
     let entries = vec![
         StoreEntry::Message(Message::Assistant {
             id: None,
-            content: OneOrMany::one(AssistantContent::ToolCall(ToolCall {
-                id: "call_1".to_string(),
-                call_id: None,
+            content: vec![AssistantContent::ToolCall(ToolCall {
+                id: ToolCallId::new_or_mint("call_1"),
+                provider: None,
                 signature: None,
                 additional_params: None,
                 function: ToolFunction {
@@ -443,13 +417,14 @@ fn test_tool_result_edit_creates_display_snapshot() {
                         "newString": "new code"
                     }),
                 },
-            })),
+            })],
         }),
         StoreEntry::Message(Message::User {
-            content: OneOrMany::one(UserContent::ToolResult(ToolResult {
-                id: "call_1".to_string(),
-                call_id: None,
-                content: OneOrMany::one(ToolResultContent::Text(Text {
+            content: vec![UserContent::ToolResult(ToolResult {
+                call: ToolCallId::new_or_mint("call_1"),
+                provider: None,
+                name: "edit".into(),
+                content: vec![ToolResultContent::Text(Text {
                     text: serde_json::to_string(&json!({
                         "path": "/tmp/test.rs",
                         "diff": "- old code\n+ new code",
@@ -457,8 +432,8 @@ fn test_tool_result_edit_creates_display_snapshot() {
                     }))
                     .unwrap(),
                     additional_params: None,
-                })),
-            })),
+                })],
+            })],
         }),
     ];
 
@@ -483,26 +458,27 @@ fn test_tool_result_non_json_gracefully_skipped() {
     let entries = vec![
         StoreEntry::Message(Message::Assistant {
             id: None,
-            content: OneOrMany::one(AssistantContent::ToolCall(ToolCall {
-                id: "call_2".to_string(),
-                call_id: None,
+            content: vec![AssistantContent::ToolCall(ToolCall {
+                id: ToolCallId::new_or_mint("call_2"),
+                provider: None,
                 signature: None,
                 additional_params: None,
                 function: ToolFunction {
                     name: "read".to_string(),
                     arguments: json!({"path": "/tmp/test.txt"}),
                 },
-            })),
+            })],
         }),
         StoreEntry::Message(Message::User {
-            content: OneOrMany::one(UserContent::ToolResult(ToolResult {
-                id: "call_2".to_string(),
-                call_id: None,
-                content: OneOrMany::one(ToolResultContent::Text(Text {
+            content: vec![UserContent::ToolResult(ToolResult {
+                call: ToolCallId::new_or_mint("call_2"),
+                provider: None,
+                name: "read".into(),
+                content: vec![ToolResultContent::Text(Text {
                     text: "plain text, not JSON".to_string(),
                     additional_params: None,
-                })),
-            })),
+                })],
+            })],
         }),
     ];
 
@@ -518,22 +494,23 @@ fn test_tool_result_with_explicit_display_key() {
     let entries = vec![
         StoreEntry::Message(Message::Assistant {
             id: None,
-            content: OneOrMany::one(AssistantContent::ToolCall(ToolCall {
-                id: "call_3".to_string(),
-                call_id: None,
+            content: vec![AssistantContent::ToolCall(ToolCall {
+                id: ToolCallId::new_or_mint("call_3"),
+                provider: None,
                 signature: None,
                 additional_params: None,
                 function: ToolFunction {
                     name: "custom_tool".to_string(),
                     arguments: json!({}),
                 },
-            })),
+            })],
         }),
         StoreEntry::Message(Message::User {
-            content: OneOrMany::one(UserContent::ToolResult(ToolResult {
-                id: "call_3".to_string(),
-                call_id: None,
-                content: OneOrMany::one(ToolResultContent::Text(Text {
+            content: vec![UserContent::ToolResult(ToolResult {
+                call: ToolCallId::new_or_mint("call_3"),
+                provider: None,
+                name: "custom_tool".into(),
+                content: vec![ToolResultContent::Text(Text {
                     text: serde_json::to_string(&json!({
                         "display": {
                             "title": "custom output",
@@ -546,8 +523,8 @@ fn test_tool_result_with_explicit_display_key() {
                     }))
                     .unwrap(),
                     additional_params: None,
-                })),
-            })),
+                })],
+            })],
         }),
     ];
 
@@ -570,42 +547,39 @@ fn test_tool_result_with_explicit_display_key() {
 /// post-compaction messages produces a transcript where:
 /// - The compaction entry appears at the correct position
 /// - The compaction entry has role "compaction"
-/// - The compaction entry content includes strategy, summarized_count,
-///   and the summary body
+/// - The compaction entry content includes the summary body
 #[test]
-fn hydrate_store_entries_marker_shows_strategy_and_counts() {
+fn hydrate_store_entries_marker_shows_summary_body() {
     let entries = vec![
         StoreEntry::Message(Message::User {
-            content: OneOrMany::one(UserContent::Text(Text {
+            content: vec![UserContent::Text(Text {
                 text: "pre-compaction message 1".to_string(),
                 additional_params: None,
-            })),
+            })],
         }),
         StoreEntry::Message(Message::Assistant {
             id: None,
-            content: OneOrMany::one(AssistantContent::Text(Text {
+            content: vec![AssistantContent::Text(Text {
                 text: "pre-compaction reply".to_string(),
                 additional_params: None,
-            })),
+            })],
         }),
         StoreEntry::Marker(CompactionMarker::new(
             "History summarized: user asked about Rust, assistant explained ownership.".to_string(),
-            2,
-            7,
-            "sliding_summary",
+            Utc::now(),
         )),
         StoreEntry::Message(Message::User {
-            content: OneOrMany::one(UserContent::Text(Text {
+            content: vec![UserContent::Text(Text {
                 text: "post-compaction question".to_string(),
                 additional_params: None,
-            })),
+            })],
         }),
         StoreEntry::Message(Message::Assistant {
             id: None,
-            content: OneOrMany::one(AssistantContent::Text(Text {
+            content: vec![AssistantContent::Text(Text {
                 text: "post-compaction answer".to_string(),
                 additional_params: None,
-            })),
+            })],
         }),
     ];
 
@@ -632,15 +606,6 @@ fn hydrate_store_entries_marker_shows_strategy_and_counts() {
     );
     let compaction_content = snapshots[2].content();
 
-    // Stats must be present
-    assert!(
-        compaction_content.contains("7 summarized"),
-        "expected summarized_count=7 in compaction content, got: {compaction_content}"
-    );
-    assert!(
-        compaction_content.contains("sliding_summary"),
-        "expected strategy in compaction content, got: {compaction_content}"
-    );
     // Summary body must be present
     assert!(
         compaction_content.contains("History summarized"),
@@ -663,26 +628,27 @@ fn hydrate_tool_call_failure_rehydrates_as_false() {
     let entries = vec![
         StoreEntry::Message(Message::Assistant {
             id: None,
-            content: OneOrMany::one(AssistantContent::ToolCall(ToolCall {
-                id: "call_fail_1".to_string(),
-                call_id: None,
+            content: vec![AssistantContent::ToolCall(ToolCall {
+                id: ToolCallId::new_or_mint("call_fail_1"),
+                provider: None,
                 signature: None,
                 additional_params: None,
                 function: ToolFunction {
                     name: "bash".to_string(),
                     arguments: json!({"command": "exit 1"}),
                 },
-            })),
+            })],
         }),
         StoreEntry::Message(Message::User {
-            content: OneOrMany::one(UserContent::ToolResult(ToolResult {
-                id: "call_fail_1".to_string(),
-                call_id: None,
-                content: OneOrMany::one(ToolResultContent::Text(Text {
+            content: vec![UserContent::ToolResult(ToolResult {
+                call: ToolCallId::new_or_mint("call_fail_1"),
+                provider: None,
+                name: "bash".into(),
+                content: vec![ToolResultContent::Text(Text {
                     text: "Toolset error: command exited with code 1".to_string(),
                     additional_params: None,
-                })),
-            })),
+                })],
+            })],
         }),
     ];
 
@@ -705,26 +671,27 @@ fn hydrate_tool_call_success_rehydrates_as_true() {
     let entries = vec![
         StoreEntry::Message(Message::Assistant {
             id: None,
-            content: OneOrMany::one(AssistantContent::ToolCall(ToolCall {
-                id: "call_ok_1".to_string(),
-                call_id: None,
+            content: vec![AssistantContent::ToolCall(ToolCall {
+                id: ToolCallId::new_or_mint("call_ok_1"),
+                provider: None,
                 signature: None,
                 additional_params: None,
                 function: ToolFunction {
                     name: "read_file".to_string(),
                     arguments: json!({"path": "/tmp/test.txt"}),
                 },
-            })),
+            })],
         }),
         StoreEntry::Message(Message::User {
-            content: OneOrMany::one(UserContent::ToolResult(ToolResult {
-                id: "call_ok_1".to_string(),
-                call_id: None,
-                content: OneOrMany::one(ToolResultContent::Text(Text {
+            content: vec![UserContent::ToolResult(ToolResult {
+                call: ToolCallId::new_or_mint("call_ok_1"),
+                provider: None,
+                name: "read_file".into(),
+                content: vec![ToolResultContent::Text(Text {
                     text: "file contents here".to_string(),
                     additional_params: None,
-                })),
-            })),
+                })],
+            })],
         }),
     ];
 
@@ -739,16 +706,14 @@ fn hydrate_tool_call_success_rehydrates_as_true() {
     );
 }
 
-/// Verifies that long summary text is truncated in the compaction content.
+/// Verifies that long summary text is shown in full (no truncation) in the compaction content.
 #[test]
-fn hydrate_store_entries_marker_truncates_long_summary() {
-    // Create a summary longer than COMPACTION_SUMMARY_MAX_CHARS (500)
+fn hydrate_store_entries_marker_shows_full_summary() {
+    // Create a summary longer than the former 500-char truncation limit
     let long_summary = "x".repeat(600);
     let entries = vec![StoreEntry::Marker(CompactionMarker::new(
-        long_summary,
-        1,
-        5,
-        "sliding_summary",
+        long_summary.clone(),
+        Utc::now(),
     ))];
 
     let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
@@ -756,25 +721,31 @@ fn hydrate_store_entries_marker_truncates_long_summary() {
     assert_eq!(snapshots.len(), 1);
     let content = snapshots[0].content();
 
-    // Stats header must be present
-    assert!(
-        content.contains("5 summarized"),
-        "expected summarized_count in truncated content, got len={}",
-        content.len()
+    // Content must contain the full summary — no truncation occurred
+    assert_eq!(
+        content, long_summary,
+        "expected full summary in content, got: {content}"
     );
+}
 
-    // Content must be shorter than 600 + stats overhead — truncation occurred
-    // 500 summary chars + "…" + stats line + "\n\n" separator
-    assert!(
-        content.len() < 600,
-        "expected truncation: content.len()={} should be < 600",
-        content.len()
-    );
+/// A marker must hydrate without error and produce a "compaction" snapshot
+/// whose body contains the marker summary text.
+#[test]
+fn hydrate_store_entries_marker_body_contains_summary() {
+    let summary = "The user asked about weather and got a response about rain.";
+    let entries = vec![StoreEntry::Marker(CompactionMarker::new(
+        summary.to_string(),
+        Utc::now(),
+    ))];
 
-    // Truncation ellipsis must be present
+    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
+
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].role(), "compaction");
     assert!(
-        content.contains('…'),
-        "expected ellipsis in truncated content, got: {content}"
+        snapshots[0].content().contains(summary),
+        "expected summary body in content, got: {}",
+        snapshots[0].content()
     );
 }
 
@@ -784,26 +755,27 @@ fn hydrate_permission_denied_rehydrates_as_false() {
     let entries = vec![
         StoreEntry::Message(Message::Assistant {
             id: None,
-            content: OneOrMany::one(AssistantContent::ToolCall(ToolCall {
-                id: "call_perm_1".to_string(),
-                call_id: None,
+            content: vec![AssistantContent::ToolCall(ToolCall {
+                id: ToolCallId::new_or_mint("call_perm_1"),
+                provider: None,
                 signature: None,
                 additional_params: None,
                 function: ToolFunction {
                     name: "write_file".to_string(),
                     arguments: json!({"path": "/etc/passwd", "content": "evil"}),
                 },
-            })),
+            })],
         }),
         StoreEntry::Message(Message::User {
-            content: OneOrMany::one(UserContent::ToolResult(ToolResult {
-                id: "call_perm_1".to_string(),
-                call_id: None,
-                content: OneOrMany::one(ToolResultContent::Text(Text {
+            content: vec![UserContent::ToolResult(ToolResult {
+                call: ToolCallId::new_or_mint("call_perm_1"),
+                provider: None,
+                name: "write_file".into(),
+                content: vec![ToolResultContent::Text(Text {
                     text: "Permission denied".to_string(),
                     additional_params: None,
-                })),
-            })),
+                })],
+            })],
         }),
     ];
 
@@ -825,27 +797,28 @@ fn hydrate_doom_loop_rehydrates_as_false() {
     let entries = vec![
         StoreEntry::Message(Message::Assistant {
             id: None,
-            content: OneOrMany::one(AssistantContent::ToolCall(ToolCall {
-                id: "call_doom_1".to_string(),
-                call_id: None,
+            content: vec![AssistantContent::ToolCall(ToolCall {
+                id: ToolCallId::new_or_mint("call_doom_1"),
+                provider: None,
                 signature: None,
                 additional_params: None,
                 function: ToolFunction {
                     name: "nu".to_string(),
                     arguments: json!({"command": "ls"}),
                 },
-            })),
+            })],
         }),
         StoreEntry::Message(Message::User {
-            content: OneOrMany::one(UserContent::ToolResult(ToolResult {
-                id: "call_doom_1".to_string(),
-                call_id: None,
-                content: OneOrMany::one(ToolResultContent::Text(Text {
+            content: vec![UserContent::ToolResult(ToolResult {
+                call: ToolCallId::new_or_mint("call_doom_1"),
+                provider: None,
+                name: "nu".into(),
+                content: vec![ToolResultContent::Text(Text {
                     text: "Doom loop detected: 'nu' called 5 times with identical arguments"
                         .to_string(),
                     additional_params: None,
-                })),
-            })),
+                })],
+            })],
         }),
     ];
 
@@ -964,6 +937,46 @@ async fn attach_existing_session_always_returns_initial_messages() {
     assert!(
         !result.initial_messages.is_empty(),
         "initial_messages must be non-empty when session has messages"
+    );
+}
+
+#[tokio::test]
+async fn attach_existing_session_sets_last_total_tokens_none() {
+    use crate::session::FsSessionStore;
+    use crate::session::resolver::{
+        DefaultSessionResolver, SessionResolutionInput, SessionResolver,
+    };
+    use crate::types::Message;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let store = Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
+    let cwd = std::path::PathBuf::from("/home/user/project");
+
+    // Pre-compute the prefixed session ID so we can write messages under it
+    let prefix = crate::session::prefix::dir_prefix(&cwd);
+    let raw_id = "token-count-session";
+    let prefixed_id = format!("{prefix}-{raw_id}");
+
+    // Write messages to the store for that session ID
+    let messages = vec![Message::user("hello"), Message::assistant("world")];
+    store.create(&prefixed_id, &messages).await.unwrap();
+
+    let resolver = DefaultSessionResolver::new(Arc::clone(&store));
+    let result = resolver
+        .resolve(SessionResolutionInput {
+            use_tui: true,
+            session_id: Some(raw_id.to_string()),
+            cwd: cwd.clone(),
+        })
+        .await
+        .unwrap();
+
+    // Token estimation via the removed helpers is gone; last_total_tokens is None
+    assert!(
+        result.last_total_tokens.is_none(),
+        "last_total_tokens must be None for existing sessions, got: {:?}",
+        result.last_total_tokens
     );
 }
 

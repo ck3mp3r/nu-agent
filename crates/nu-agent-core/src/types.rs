@@ -9,7 +9,8 @@
 pub use rig::completion::Message;
 pub use rig::completion::message::ToolResult;
 pub use rig::completion::message::{
-    AssistantContent, Text, ToolCall, ToolFunction, ToolResultContent, UserContent,
+    AdditionalParams, AssistantContent, ProviderCallId, Text, ToolCall, ToolCallId, ToolFunction,
+    ToolResultContent, UserContent,
 };
 
 // Tool definitions (used in runtime and turn execution)

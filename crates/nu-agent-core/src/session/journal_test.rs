@@ -2,6 +2,7 @@ use super::journal::CachedMemory;
 use super::store::{CompactionMarker, FsSessionStore, SessionStore as _, StoreEntry};
 use super::store_test::{assert_msg_eq, assert_msgs_eq};
 use crate::types::Message;
+use chrono::Utc;
 use rig::memory::ConversationMemory;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -65,19 +66,15 @@ async fn load_returns_stored_messages() {
 }
 
 #[tokio::test]
-async fn load_uses_extract_llm_context() {
+async fn load_returns_raw_messages_without_marker_summary() {
     let tmp = TempDir::new().unwrap();
     let mem = TestMemory::new(Arc::new(FsSessionStore::new(tmp.path().to_path_buf())));
 
     let store = FsSessionStore::new(tmp.path().to_path_buf());
-    let old = vec![
-        Message::user("old1"),
-        Message::assistant("old2"),
-        Message::user("old3"),
-    ];
+    let old = vec![Message::user("old1"), Message::assistant("old2")];
     store.create("conv-1", &old).await.unwrap();
 
-    let marker = CompactionMarker::new("Summary of old stuff".to_string(), 2, 3, "sliding_summary");
+    let marker = CompactionMarker::new("Summary of old stuff".to_string(), Utc::now());
     store
         .append("conv-1", &[StoreEntry::Marker(marker)])
         .await
@@ -89,14 +86,19 @@ async fn load_uses_extract_llm_context() {
 
     let loaded = mem.load("conv-1").await.unwrap();
 
-    assert_eq!(loaded.len(), 3); // 1 system + 2 recent
+    // The marker summary must NOT be prepended as a system message.
+    // CachedMemory::load() returns the raw messages so the CompactingMemory
+    // wrapper can apply its own policy.
     assert!(
-        matches!(&loaded[0], Message::System { content } if content == "Summary of old stuff"),
-        "First message should be system summary, got: {:?}",
-        loaded[0]
+        !loaded.iter().any(|m| matches!(m, Message::System { .. })),
+        "load() must not prepend a marker summary as a system message, got: {loaded:?}"
     );
-    assert_msg_eq(&loaded[1], &recent[0]);
-    assert_msg_eq(&loaded[2], &recent[1]);
+    // All raw messages (both pre- and post-marker) are preserved.
+    assert_eq!(loaded.len(), 4);
+    assert_msg_eq(&loaded[0], &old[0]);
+    assert_msg_eq(&loaded[1], &old[1]);
+    assert_msg_eq(&loaded[2], &recent[0]);
+    assert_msg_eq(&loaded[3], &recent[1]);
 }
 
 #[tokio::test]
@@ -212,7 +214,7 @@ async fn append_marker_writes_to_store_only() {
 
     let _ = mem.load("conv-1").await.unwrap();
 
-    let marker = CompactionMarker::new("Summary".to_string(), 2, 5, "sliding_summary");
+    let marker = CompactionMarker::new("Summary".to_string(), Utc::now());
     mem.append_marker("conv-1", &marker).await.unwrap();
 
     let entries = mem.load_all("conv-1").await.unwrap();

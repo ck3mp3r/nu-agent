@@ -155,21 +155,21 @@ fn loads_from_home_dot_agents() {
 
 #[test]
 fn fires_at_threshold_percentage() {
-    let policy = TokenCompactionPolicy::new(200_000, 0.80, CompactionStrategy::SlidingSummary);
+    let policy = TokenCompactionPolicy::new(200_000, 0.80);
     let decision = policy.evaluate(Some(160_000));
     assert!(matches!(decision, CompactionTriggerDecision::Fire { .. }));
 }
 
 #[test]
 fn does_not_fire_below_threshold() {
-    let policy = TokenCompactionPolicy::new(200_000, 0.80, CompactionStrategy::SlidingSummary);
+    let policy = TokenCompactionPolicy::new(200_000, 0.80);
     let decision = policy.evaluate(Some(159_999));
     assert!(matches!(decision, CompactionTriggerDecision::NoFire { .. }));
 }
 
 #[test]
 fn does_not_fire_when_no_token_data() {
-    let policy = TokenCompactionPolicy::new(200_000, 0.80, CompactionStrategy::SlidingSummary);
+    let policy = TokenCompactionPolicy::new(200_000, 0.80);
     let decision = policy.evaluate(None);
     assert_eq!(
         decision,
@@ -181,7 +181,7 @@ fn does_not_fire_when_no_token_data() {
 
 #[test]
 fn does_not_fire_with_zero_context_window() {
-    let policy = TokenCompactionPolicy::new(0, 0.80, CompactionStrategy::SlidingSummary);
+    let policy = TokenCompactionPolicy::new(0, 0.80);
     let decision = policy.evaluate(Some(100_000));
     assert_eq!(
         decision,
@@ -193,7 +193,7 @@ fn does_not_fire_with_zero_context_window() {
 
 #[test]
 fn does_not_fire_with_zero_tokens() {
-    let policy = TokenCompactionPolicy::new(200_000, 0.80, CompactionStrategy::SlidingSummary);
+    let policy = TokenCompactionPolicy::new(200_000, 0.80);
     let decision = policy.evaluate(Some(0));
     assert_eq!(
         decision,
@@ -206,7 +206,7 @@ fn does_not_fire_with_zero_tokens() {
 #[test]
 fn fires_at_threshold_with_nonzero_tokens() {
     // Regression: Some(1) with a large context window stays below threshold.
-    let policy = TokenCompactionPolicy::new(200_000, 0.80, CompactionStrategy::SlidingSummary);
+    let policy = TokenCompactionPolicy::new(200_000, 0.80);
     let decision = policy.evaluate(Some(1));
     assert!(matches!(
         decision,
@@ -218,7 +218,7 @@ fn fires_at_threshold_with_nonzero_tokens() {
 
 #[test]
 fn respects_custom_threshold_percentage() {
-    let policy = TokenCompactionPolicy::new(128_000, 0.90, CompactionStrategy::SlidingSummary);
+    let policy = TokenCompactionPolicy::new(128_000, 0.90);
     // 90% of 128k = 115,200
     let below = policy.evaluate(Some(115_199));
     let at = policy.evaluate(Some(115_200));
@@ -228,14 +228,14 @@ fn respects_custom_threshold_percentage() {
 
 #[test]
 fn fire_includes_configured_strategy() {
-    let policy = TokenCompactionPolicy::new(100_000, 0.80, CompactionStrategy::SlidingWindow);
+    let policy = TokenCompactionPolicy::new(100_000, 0.80);
     let decision = policy.evaluate(Some(80_000));
     assert_eq!(
         decision,
         CompactionTriggerDecision::Fire {
             source: CompactionTriggerSource::AutoThreshold,
             reason: "token_usage_80pct_of_80pct_threshold".to_string(),
-            strategy: CompactionStrategy::SlidingWindow,
+            strategy: CompactionStrategy::SlidingSummary,
         }
     );
 }
@@ -243,7 +243,7 @@ fn fire_includes_configured_strategy() {
 #[test]
 fn no_state_needed_between_evaluations() {
     // Token-based policy is stateless — calling evaluate twice with same input gives same result
-    let policy = TokenCompactionPolicy::new(200_000, 0.80, CompactionStrategy::SlidingSummary);
+    let policy = TokenCompactionPolicy::new(200_000, 0.80);
     let first = policy.evaluate(Some(160_000));
     let second = policy.evaluate(Some(160_000));
     assert_eq!(first, second);
@@ -254,21 +254,21 @@ fn no_state_needed_between_evaluations() {
 #[test]
 fn ui_event_contract_exposes_required_variants() {
     let events = [
-        UiEvent::LlmStart,
+        UiEvent::LlmStarted,
         UiEvent::Tick,
-        UiEvent::LlmEnd {
+        UiEvent::LlmCompleted {
             response_chars: 12,
             tool_calls: 1,
             input_tokens: 7,
             output_tokens: 5,
             total_tokens: 12,
         },
-        UiEvent::ToolStart {
+        UiEvent::ToolStarted {
             name: "k8s__list_pods".to_string(),
             source: "mcp".to_string(),
             arguments: "{}".to_string(),
         },
-        UiEvent::ToolEnd {
+        UiEvent::ToolCompleted {
             name: "k8s__list_pods".to_string(),
             source: "mcp".to_string(),
             arguments: "{}".to_string(),
@@ -315,10 +315,8 @@ fn ui_event_contract_exposes_required_variants() {
             delta: "chunk".to_string(),
             aggregated: "chunk".to_string(),
         },
-        UiEvent::CompactionTriggered {
+        UiEvent::CompactionCompleted {
             source: "auto_threshold".to_string(),
-            summarized_count: 3,
-            kept_recent_count: 2,
             summary_preview: "summary preview".to_string(),
             summary_body: "summary body".to_string(),
         },

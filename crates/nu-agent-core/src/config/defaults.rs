@@ -22,5 +22,9 @@ pub const RETRY_BASE_DELAY_MS: u64 = 1000;
 /// Default context warning threshold (fraction of model_context_tokens).
 pub const CONTEXT_WARNING_THRESHOLD: f32 = 0.6;
 
+/// Default proactive compaction threshold (fraction of the context window at
+/// which the hook triggers compaction).
+pub const PROACTIVE_THRESHOLD_PCT: f64 = 0.8;
+
 /// Default MCP HTTP read timeout in seconds.
 pub const MCP_READ_TIMEOUT_SECS: u64 = 120;

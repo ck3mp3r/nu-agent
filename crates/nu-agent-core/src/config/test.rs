@@ -1560,8 +1560,6 @@ fn test_from_env_copilot_case_insensitive() {
 fn compaction_config_defaults_all_none() {
     let config = CompactionConfig::default();
     assert_eq!(config.strategy, None);
-    assert_eq!(config.keep_recent, None);
-    assert_eq!(config.token_budget, None);
     assert_eq!(config.proactive_threshold_pct, None);
 }
 
@@ -1569,8 +1567,6 @@ fn compaction_config_defaults_all_none() {
 fn compaction_config_serde_roundtrip() {
     let config = CompactionConfig {
         strategy: Some(CompactionStrategy::SlidingSummary),
-        keep_recent: Some(5),
-        token_budget: Some(8000),
         proactive_threshold_pct: Some(0.75),
     };
 
@@ -1584,8 +1580,6 @@ fn compaction_config_serde_roundtrip() {
 fn compaction_config_validate_valid() {
     let config = CompactionConfig {
         strategy: Some(CompactionStrategy::SlidingSummary),
-        keep_recent: Some(5),
-        token_budget: Some(8000),
         proactive_threshold_pct: Some(0.75),
     };
 
@@ -1609,37 +1603,6 @@ fn compaction_config_validate_pct_out_of_range() {
     };
     let err = config.validate().unwrap_err();
     assert!(err.contains("proactive_threshold_pct"));
-}
-
-#[test]
-fn compaction_config_validate_zero_keep_recent() {
-    let config = CompactionConfig {
-        keep_recent: Some(0),
-        ..CompactionConfig::default()
-    };
-    let err = config.validate().unwrap_err();
-    assert!(err.contains("keep_recent"));
-}
-
-#[test]
-fn validate_rejects_token_truncate_without_token_budget() {
-    let config = CompactionConfig {
-        strategy: Some(CompactionStrategy::TokenTruncate),
-        token_budget: None,
-        ..CompactionConfig::default()
-    };
-    let err = config.validate().unwrap_err();
-    assert!(err.contains("token_budget"));
-}
-
-#[test]
-fn validate_accepts_token_truncate_with_token_budget() {
-    let config = CompactionConfig {
-        strategy: Some(CompactionStrategy::TokenTruncate),
-        token_budget: Some(8000),
-        ..CompactionConfig::default()
-    };
-    assert!(config.validate().is_ok());
 }
 
 // ============================================================================

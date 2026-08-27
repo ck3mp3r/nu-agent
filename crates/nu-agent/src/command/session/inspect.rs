@@ -1,7 +1,7 @@
 use crate::plugin::AgentPlugin;
 use nu_agent_core::compaction::CompactionParams;
 use nu_agent_core::session::prefix::{dir_prefix, dir_prefix_legacy};
-use nu_agent_core::session::{SessionStore, SessionStoreImpl, StoreEntry};
+use nu_agent_core::session::{SessionStore, SessionStoreBackend, StoreEntry};
 use nu_agent_core::types::{AssistantContent, Message, UserContent};
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, Example, LabeledError, Record, Signature, SyntaxShape, Value};
@@ -40,7 +40,7 @@ impl AgentSessionInspect {
         &self,
         engine: &C,
         call: &EvaluatedCall,
-        store: &SessionStoreImpl,
+        store: &SessionStoreBackend,
     ) -> Result<Value, LabeledError> {
         let session_id: String = call.req(0)?;
 
@@ -142,10 +142,6 @@ impl AgentSessionInspect {
         config_record.push(
             "compaction_strategy",
             Value::string(config.compaction_strategy.as_str(), call.head),
-        );
-        config_record.push(
-            "keep_recent",
-            Value::int(config.keep_recent as i64, call.head),
         );
 
         // Build the final session record

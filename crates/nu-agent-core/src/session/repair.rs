@@ -1,4 +1,7 @@
-use crate::types::{AssistantContent, Message, ToolResult, ToolResultContent, UserContent};
+use crate::types::{
+    AssistantContent, Message, ProviderCallId, ToolCallId, ToolResult, ToolResultContent,
+    UserContent,
+};
 
 /// For each `Assistant(ToolCall)` in `messages` that has no matching `User(ToolResult)`
 /// anywhere in `messages`, inserts a synthetic `User` message containing `ToolResult`
@@ -9,13 +12,13 @@ pub fn inject_missing_tool_results(messages: Vec<Message>) -> Vec<Message> {
     use std::collections::HashSet;
 
     // Collect all ToolResult IDs that already exist in the history.
-    let existing_result_ids: HashSet<String> = messages
+    let existing_result_ids: HashSet<ToolCallId> = messages
         .iter()
         .flat_map(|msg| match msg {
             Message::User { content } => content
                 .iter()
                 .filter_map(|item| match item {
-                    UserContent::ToolResult(tr) => Some(tr.id.clone()),
+                    UserContent::ToolResult(tr) => Some(tr.call.clone()),
                     _ => None,
                 })
                 .collect::<Vec<_>>(),
@@ -29,13 +32,13 @@ pub fn inject_missing_tool_results(messages: Vec<Message>) -> Vec<Message> {
     for msg in messages {
         match &msg {
             Message::Assistant { content, .. } => {
-                // Collect unpaired ToolCall (id, call_id) pairs from this Assistant message.
-                let unpaired_calls: Vec<(String, Option<String>)> = content
+                // Collect unpaired ToolCall (id, provider, name) triples from this Assistant message.
+                let unpaired_calls: Vec<(ToolCallId, Option<ProviderCallId>, String)> = content
                     .iter()
                     .filter_map(|item| match item {
                         AssistantContent::ToolCall(tc) => {
                             if !existing_result_ids.contains(&tc.id) {
-                                Some((tc.id.clone(), tc.call_id.clone()))
+                                Some((tc.id.clone(), tc.provider.clone(), tc.function.name.clone()))
                             } else {
                                 None
                             }
@@ -50,20 +53,21 @@ pub fn inject_missing_tool_results(messages: Vec<Message>) -> Vec<Message> {
                     // Build a single User message with one ToolResult per unpaired call.
                     let tool_results: Vec<UserContent> = unpaired_calls
                         .into_iter()
-                        .map(|(id, call_id)| {
+                        .map(|(call, provider, name)| {
                             patch_count += 1;
                             UserContent::ToolResult(ToolResult {
-                                id,
-                                call_id,
-                                content: rig::one_or_many::OneOrMany::one(ToolResultContent::text(
-                                    "[interrupted]",
-                                )),
+                                call,
+                                provider,
+                                name,
+                                content: vec![ToolResultContent::text("[interrupted]")],
                             })
                         })
                         .collect();
 
-                    if let Ok(content) = rig::one_or_many::OneOrMany::many(tool_results) {
-                        result.push(Message::User { content });
+                    if !tool_results.is_empty() {
+                        result.push(Message::User {
+                            content: tool_results,
+                        });
                     }
                 }
             }
@@ -113,6 +117,38 @@ pub(crate) fn inject_assistant_after_dangling_tool_results(
 ///
 /// Returns the repaired messages and a list of diagnostic strings describing
 /// what was changed (empty if no repairs were needed).
+///
+/// # Pass evaluation against the `CompactingMemory` flow
+///
+/// With `CompactingMemory`, `CachedMemory::load()` returns raw store messages
+/// and the wrapper splices the compaction summary artifact as a leading
+/// `Message::User` (carrying `additional_params` with `COMPACTION_SUMMARY_KEY`)
+/// followed by the kept messages. Each pass below is evaluated against that shape:
+///
+/// - `inject_assistant_after_dangling_tool_results` — **kept**. `CompactingMemory`'s
+///   `split_window` drops orphan tool-result messages at the window boundary, but
+///   this pass is a cheap safety net for sessions persisted in a structurally
+///   invalid state (a pure-ToolResult `User` directly before another `User`).
+/// - `remove_empty_messages` — **kept**. Safety net that drops empty text messages
+///   that would otherwise reach the provider.
+/// - `merge_consecutive_same_role` — **kept**. The policy may still produce
+///   consecutive same-role messages after splicing. It now skips merging a
+///   summary artifact (a `User` whose `Text` `additional_params` marks it as a
+///   compaction summary) into the next `User` turn, so the summary survives as
+///   conversation context.
+/// - `trim_trailing_user` — **kept**. The artifact is spliced at the front, not
+///   trailing, so this pass no longer strips it; it still removes genuine
+///   trailing orphan `User(Text)` messages.
+/// - `fix_tool_call_integrity` — **kept**. Enforces ToolCall/ToolResult adjacency
+///   and removes dangling/orphaned pairs, which the policy window can expose.
+/// - `fix_null_tool_arguments` — **kept**. Heals null-args ToolCalls from
+///   sessions poisoned before the `on_invalid_tool_call` → Retry migration.
+/// - `trim_trailing_user` (second) — **kept**. Cleans up any trailing `User(Text)`
+///   exposed by integrity removal or argument fixing.
+/// - `ensure_valid` — **kept**. Safety net; an empty history is valid.
+/// - `fix_empty_tool_results` — **kept**. Replaces empty tool-result text that
+///   triggers provider validation errors; runs last so earlier passes can
+///   synthesise non-empty results.
 pub fn repair_messages(messages: Vec<Message>) -> (Vec<Message>, Vec<String>) {
     let mut issues = Vec::new();
     // Pass ordering: each pass may expose issues for later passes.
@@ -204,8 +240,7 @@ pub(crate) fn fix_null_tool_arguments(
                 }
                 Message::Assistant {
                     id,
-                    content: rig::one_or_many::OneOrMany::many(new_content)
-                        .expect("non-empty assistant content"),
+                    content: new_content,
                 }
             }
             other => other,
@@ -225,7 +260,7 @@ pub(crate) fn fix_tool_call_integrity(
         // --- Step 1: orphan removal (global ID matching) ---
 
         // Collect all ToolCall ids from assistant messages.
-        let all_call_ids: HashSet<String> = messages
+        let all_call_ids: HashSet<ToolCallId> = messages
             .iter()
             .flat_map(|msg| match msg {
                 Message::Assistant { content, .. } => content
@@ -240,13 +275,13 @@ pub(crate) fn fix_tool_call_integrity(
             .collect();
 
         // Collect all ToolResult ids from user messages.
-        let all_result_ids: HashSet<String> = messages
+        let all_result_ids: HashSet<ToolCallId> = messages
             .iter()
             .flat_map(|msg| match msg {
                 Message::User { content } => content
                     .iter()
                     .filter_map(|item| match item {
-                        UserContent::ToolResult(tr) => Some(tr.id.clone()),
+                        UserContent::ToolResult(tr) => Some(tr.call.clone()),
                         _ => None,
                     })
                     .collect::<Vec<_>>(),
@@ -275,15 +310,14 @@ pub(crate) fn fix_tool_call_integrity(
                         })
                         .collect();
 
-                    match rig::one_or_many::OneOrMany::many(items) {
-                        Ok(content) => Some(Message::Assistant { id, content }),
-                        Err(_) => {
-                            issues.push(
-                                "removed assistant message emptied by ToolCall integrity pass"
-                                    .to_string(),
-                            );
-                            None
-                        }
+                    if items.is_empty() {
+                        issues.push(
+                            "removed assistant message emptied by ToolCall integrity pass"
+                                .to_string(),
+                        );
+                        None
+                    } else {
+                        Some(Message::Assistant { id, content: items })
                     }
                 }
                 Message::User { content } => {
@@ -291,11 +325,11 @@ pub(crate) fn fix_tool_call_integrity(
                         .into_iter()
                         .filter(|item| match item {
                             UserContent::ToolResult(tr) => {
-                                let matched = all_call_ids.contains(&tr.id);
+                                let matched = all_call_ids.contains(&tr.call);
                                 if !matched {
                                     issues.push(format!(
                                         "removed orphaned ToolResult id={} (no matching ToolCall)",
-                                        tr.id
+                                        tr.call
                                     ));
                                 }
                                 matched
@@ -304,15 +338,13 @@ pub(crate) fn fix_tool_call_integrity(
                         })
                         .collect();
 
-                    match rig::one_or_many::OneOrMany::many(items) {
-                        Ok(content) => Some(Message::User { content }),
-                        Err(_) => {
-                            issues.push(
-                                "removed user message emptied by ToolResult integrity pass"
-                                    .to_string(),
-                            );
-                            None
-                        }
+                    if items.is_empty() {
+                        issues.push(
+                            "removed user message emptied by ToolResult integrity pass".to_string(),
+                        );
+                        None
+                    } else {
+                        Some(Message::User { content: items })
                     }
                 }
                 system @ Message::System { .. } => Some(system),
@@ -322,12 +354,12 @@ pub(crate) fn fix_tool_call_integrity(
         // --- Step 2: adjacency enforcement ---
         // Find the first Assistant message whose ToolCall IDs are not all
         // covered by the immediately following User message.
-        let violation_ids: Option<HashSet<String>> =
+        let violation_ids: Option<HashSet<ToolCallId>> =
             after_orphan.iter().enumerate().find_map(|(i, msg)| {
                 let Message::Assistant { content, .. } = msg else {
                     return None;
                 };
-                let call_ids: HashSet<String> = content
+                let call_ids: HashSet<ToolCallId> = content
                     .iter()
                     .filter_map(|item| match item {
                         AssistantContent::ToolCall(tc) => Some(tc.id.clone()),
@@ -337,11 +369,11 @@ pub(crate) fn fix_tool_call_integrity(
                 if call_ids.is_empty() {
                     return None;
                 }
-                let next_result_ids: HashSet<String> = match after_orphan.get(i + 1) {
+                let next_result_ids: HashSet<ToolCallId> = match after_orphan.get(i + 1) {
                     Some(Message::User { content }) => content
                         .iter()
                         .filter_map(|item| match item {
-                            UserContent::ToolResult(tr) => Some(tr.id.clone()),
+                            UserContent::ToolResult(tr) => Some(tr.call.clone()),
                             _ => None,
                         })
                         .collect(),
@@ -380,22 +412,24 @@ pub(crate) fn fix_tool_call_integrity(
                                     _ => true,
                                 })
                                 .collect();
-                            match rig::one_or_many::OneOrMany::many(items) {
-                                Ok(content) => Some(Message::Assistant { id, content }),
-                                Err(_) => None,
+                            if items.is_empty() {
+                                None
+                            } else {
+                                Some(Message::Assistant { id, content: items })
                             }
                         }
                         Message::User { content } => {
                             let items: Vec<UserContent> = content
                                 .into_iter()
                                 .filter(|item| match item {
-                                    UserContent::ToolResult(tr) => !bad_ids.contains(&tr.id),
+                                    UserContent::ToolResult(tr) => !bad_ids.contains(&tr.call),
                                     _ => true,
                                 })
                                 .collect();
-                            match rig::one_or_many::OneOrMany::many(items) {
-                                Ok(content) => Some(Message::User { content }),
-                                Err(_) => None,
+                            if items.is_empty() {
+                                None
+                            } else {
+                                Some(Message::User { content: items })
                             }
                         }
                         system @ Message::System { .. } => Some(system),
@@ -417,7 +451,8 @@ pub(crate) fn merge_consecutive_same_role(
     for msg in messages {
         match (result.last_mut(), msg) {
             (Some(Message::User { content: prev }), Message::User { content: next })
-                if !prev.iter().any(|i| matches!(i, UserContent::ToolResult(_)))
+                if !is_compaction_summary(prev)
+                    && !prev.iter().any(|i| matches!(i, UserContent::ToolResult(_)))
                     && !next.iter().any(|i| matches!(i, UserContent::ToolResult(_))) =>
             {
                 issues.push("merged consecutive user messages".to_string());
@@ -447,6 +482,22 @@ pub(crate) fn merge_consecutive_same_role(
     }
 
     result
+}
+
+/// Returns true if `content` is a compaction summary artifact: a
+/// `UserContent::Text` whose `additional_params` marks it as a compaction
+/// summary via `COMPACTION_SUMMARY_KEY`.
+fn is_compaction_summary(content: &[UserContent]) -> bool {
+    let key = crate::conversation::compaction::compactor::COMPACTION_SUMMARY_KEY;
+    content.iter().any(|item| match item {
+        UserContent::Text(t) => t
+            .additional_params
+            .as_ref()
+            .and_then(|p| p.get(key))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
+        _ => false,
+    })
 }
 
 pub(crate) fn trim_trailing_user(
@@ -500,11 +551,10 @@ pub(crate) fn fix_empty_tool_results(
                             if has_empty {
                                 issues.push(format!(
                                     "replaced empty tool_result content id={}",
-                                    tr.id
+                                    tr.call
                                 ));
-                                tr.content = rig::one_or_many::OneOrMany::one(
-                                    crate::types::ToolResultContent::text("(empty result)"),
-                                );
+                                tr.content =
+                                    vec![crate::types::ToolResultContent::text("(empty result)")];
                             }
                             UserContent::ToolResult(tr)
                         }
@@ -512,12 +562,14 @@ pub(crate) fn fix_empty_tool_results(
                     })
                     .collect();
                 Message::User {
-                    content: rig::one_or_many::OneOrMany::many(fixed).unwrap_or_else(|_| {
-                        rig::one_or_many::OneOrMany::one(UserContent::Text(crate::types::Text {
+                    content: if fixed.is_empty() {
+                        vec![UserContent::Text(crate::types::Text {
                             text: "(empty result)".to_string(),
                             additional_params: None,
-                        }))
-                    }),
+                        })]
+                    } else {
+                        fixed
+                    },
                 }
             }
             other => other,

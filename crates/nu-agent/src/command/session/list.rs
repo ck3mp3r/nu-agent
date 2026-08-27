@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::plugin::AgentPlugin;
 use nu_agent_core::session::SessionStore;
-use nu_agent_core::session::SessionStoreImpl;
+use nu_agent_core::session::SessionStoreBackend;
 use nu_agent_core::session::prefix::{
     dir_prefix, dir_prefix_legacy, filter_sessions_by_cwd, match_prefixs,
 };
@@ -43,7 +43,7 @@ impl AgentSessionList {
         &self,
         engine: &C,
         call: &EvaluatedCall,
-        store: &SessionStoreImpl,
+        store: &SessionStoreBackend,
     ) -> Result<Value, LabeledError> {
         let cwd = PathBuf::from(engine.get_current_dir()?);
         let new_prefix = dir_prefix(&cwd);

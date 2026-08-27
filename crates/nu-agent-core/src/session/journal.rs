@@ -1,4 +1,4 @@
-use super::store::{CompactionMarker, SessionStore, StoreEntry, extract_llm_context};
+use super::store::{CompactionMarker, SessionStore, StoreEntry};
 use crate::types::Message;
 use rig::memory::{ConversationMemory, MemoryError};
 use rig::wasm_compat::WasmBoxedFuture;
@@ -86,6 +86,20 @@ impl<S: SessionStore + Clone + Send + Sync> CachedMemory<S> {
         cache.insert(conversation_id.to_string(), messages);
     }
 
+    /// Clone the in-memory cache entry for `conversation_id`, if present.
+    ///
+    /// Read-only peek used by the trimming wrapper to distinguish a summary
+    /// that came from the cache (seeded via `seed_from_store`) from one that
+    /// the `CompactingMemory` just spliced from its in-process state after a
+    /// real compaction. `None` when the conversation is not yet cached.
+    pub fn cached_messages(&self, conversation_id: &str) -> Option<Vec<Message>> {
+        self.cache
+            .lock()
+            .map(|c| c.get(conversation_id).cloned())
+            .ok()
+            .flatten()
+    }
+
     /// Load all raw store entries (messages + markers).
     ///
     /// For session resolver / transcript hydration — bypasses the in-memory cache.
@@ -159,8 +173,19 @@ impl<S: SessionStore + Clone + Send + Sync> ConversationMemory for CachedMemory<
                 }
             };
 
-            // Extract LLM context (handles compaction markers)
-            let messages = extract_llm_context(&entries);
+            // Extract raw messages from store entries (markers are left in place;
+            // the CompactingMemory wrapper applies its policy on load).
+            let messages = entries
+                .iter()
+                .filter_map(|e| match e {
+                    StoreEntry::Message(m) => Some(m.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<Message>>();
+            let (messages, issues) = crate::session::repair::repair_messages(messages);
+            for issue in &issues {
+                log::warn!("conversation repair: {}", issue);
+            }
             log::debug!(
                 "CachedMemory.load: session={conversation_id} messages={}",
                 messages.len()

@@ -165,9 +165,9 @@ impl<W: Write> StderrUiRenderer<W> {
 
     fn render_event_line(&self, event: &UiEvent) -> Option<String> {
         match event {
-            UiEvent::LlmStart => None,
+            UiEvent::LlmStarted => None,
             UiEvent::Tick => None,
-            UiEvent::LlmEnd {
+            UiEvent::LlmCompleted {
                 response_chars,
                 tool_calls,
                 ..
@@ -175,7 +175,7 @@ impl<W: Write> StderrUiRenderer<W> {
                 let _ = (response_chars, tool_calls);
                 None
             }
-            UiEvent::ToolStart {
+            UiEvent::ToolStarted {
                 name,
                 source,
                 arguments,
@@ -191,7 +191,7 @@ impl<W: Write> StderrUiRenderer<W> {
                     ))
                 }
             }
-            UiEvent::ToolEnd {
+            UiEvent::ToolCompleted {
                 name,
                 source,
                 arguments,
@@ -287,9 +287,8 @@ impl<W: Write> StderrUiRenderer<W> {
                 }
             }
             UiEvent::CompactionSummaryChunk { .. } => None,
-            UiEvent::CompactionTriggered {
+            UiEvent::CompactionCompleted {
                 source,
-                summarized_count,
                 summary_preview,
                 ..
             } => {
@@ -297,9 +296,7 @@ impl<W: Write> StderrUiRenderer<W> {
                     None
                 } else {
                     Some(style_text(
-                        &format!(
-                            "compaction: source={source} summarized={summarized_count} preview={summary_preview}"
-                        ),
+                        &format!("compaction: source={source} preview={summary_preview}"),
                         &StyleHint::Success,
                         self.use_color,
                     ))
@@ -331,7 +328,7 @@ impl<W: Write> StderrUiRenderer<W> {
 impl<W: Write> UiRenderer for StderrUiRenderer<W> {
     fn emit(&mut self, event: &UiEvent) {
         match event {
-            UiEvent::LlmStart if self.spinner.is_enabled() => {
+            UiEvent::LlmStarted if self.spinner.is_enabled() => {
                 self.active_tool_name = None;
                 self.streaming_started = false;
                 self.streaming_printed_len = 0;
@@ -339,9 +336,11 @@ impl<W: Write> UiRenderer for StderrUiRenderer<W> {
                 self.spinner.start();
                 self.draw_spinner();
             }
-            UiEvent::ToolStart { name, .. } if self.spinner.is_enabled() && !self.policy.quiet => {
+            UiEvent::ToolStarted { name, .. }
+                if self.spinner.is_enabled() && !self.policy.quiet =>
+            {
                 self.active_tool_name = Some(name.clone());
-                if let UiEvent::ToolStart { arguments, .. } = event {
+                if let UiEvent::ToolStarted { arguments, .. } = event {
                     self.active_tool_args = Some(arguments.clone());
                 }
                 self.spinner.start();
@@ -375,19 +374,21 @@ impl<W: Write> UiRenderer for StderrUiRenderer<W> {
                 self.draw_spinner();
                 return;
             }
-            UiEvent::LlmEnd { .. } | UiEvent::ToolEnd { .. } if self.spinner.is_active() => {
+            UiEvent::LlmCompleted { .. } | UiEvent::ToolCompleted { .. }
+                if self.spinner.is_active() =>
+            {
                 self.clear_spinner_line();
                 self.spinner.stop();
                 self.active_tool_name = None;
                 self.active_tool_args = None;
             }
-            UiEvent::ToolEnd {
+            UiEvent::ToolCompleted {
                 display: Some(display),
                 ..
             } if !self.policy.quiet => {
                 self.render_tool_display(display);
             }
-            UiEvent::LlmEnd {
+            UiEvent::LlmCompleted {
                 input_tokens,
                 output_tokens,
                 total_tokens,

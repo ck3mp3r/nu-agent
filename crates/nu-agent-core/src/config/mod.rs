@@ -148,12 +148,8 @@ pub struct PluginConfig {
 /// All fields are `Option` — `None` means "use default".
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CompactionConfig {
-    /// Primary compaction strategy: "sliding_summary", "sliding_window", "token_truncate"
+    /// Primary compaction strategy: "sliding_summary"
     pub strategy: Option<CompactionStrategy>,
-    /// Number of recent messages to keep during compaction (default: 10)
-    pub keep_recent: Option<usize>,
-    /// Token budget for TokenTruncate strategy (chars/4 estimation)
-    pub token_budget: Option<usize>,
     /// Proactive compaction threshold percentage 0.0-1.0 (default: 0.80)
     pub proactive_threshold_pct: Option<f64>,
 }
@@ -206,7 +202,6 @@ impl CompactionConfig {
     ///
     /// Rules:
     /// - `proactive_threshold_pct` must be in 0.0..=1.0 if set
-    /// - `keep_recent` must be > 0 if set
     pub fn validate(&self) -> Result<(), String> {
         if let Some(pct) = self.proactive_threshold_pct
             && !(0.0..=1.0).contains(&pct)
@@ -215,18 +210,6 @@ impl CompactionConfig {
                 "proactive_threshold_pct must be between 0.0 and 1.0, got {}",
                 pct
             ));
-        }
-
-        if let Some(keep_recent) = self.keep_recent
-            && keep_recent == 0
-        {
-            return Err("keep_recent must be greater than 0".to_string());
-        }
-
-        if let Some(CompactionStrategy::TokenTruncate) = self.strategy
-            && self.token_budget.is_none()
-        {
-            return Err("token_budget must be set when using token_truncate strategy".to_string());
         }
 
         Ok(())

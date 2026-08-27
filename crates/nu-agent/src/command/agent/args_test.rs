@@ -86,13 +86,13 @@ fn parse_strategy_sliding_summary() {
 #[test]
 fn parse_strategy_sliding_window() {
     let result = parse_strategy_from_str("sliding_window").unwrap();
-    assert_eq!(result, CompactionStrategy::SlidingWindow);
+    assert_eq!(result, CompactionStrategy::SlidingSummary);
 }
 
 #[test]
 fn parse_strategy_token_truncate() {
     let result = parse_strategy_from_str("token_truncate").unwrap();
-    assert_eq!(result, CompactionStrategy::TokenTruncate);
+    assert_eq!(result, CompactionStrategy::SlidingSummary);
 }
 
 #[test]
@@ -113,8 +113,6 @@ fn parse_strategy_invalid_rejected() {
 
 fn mock_call_with_compaction_flags(
     strategy: Option<&str>,
-    keep_recent: Option<i64>,
-    token_budget: Option<i64>,
     proactive_pct: Option<f64>,
 ) -> EvaluatedCall {
     let span = Span::test_data();
@@ -127,24 +125,6 @@ fn mock_call_with_compaction_flags(
                 span,
             },
             Some(Value::string(s, span)),
-        ));
-    }
-    if let Some(k) = keep_recent {
-        named.push((
-            Spanned {
-                item: "keep-recent".to_string(),
-                span,
-            },
-            Some(Value::int(k, span)),
-        ));
-    }
-    if let Some(b) = token_budget {
-        named.push((
-            Spanned {
-                item: "token-budget".to_string(),
-                span,
-            },
-            Some(Value::int(b, span)),
         ));
     }
     if let Some(p) = proactive_pct {
@@ -166,28 +146,23 @@ fn mock_call_with_compaction_flags(
 
 #[test]
 fn extract_compaction_flags_all_provided() {
-    let call =
-        mock_call_with_compaction_flags(Some("sliding_window"), Some(5), Some(10000), Some(0.75));
+    let call = mock_call_with_compaction_flags(Some("sliding_summary"), Some(0.75));
     let result = extract_compaction_flags(&call).unwrap();
-    assert_eq!(result.strategy, Some(CompactionStrategy::SlidingWindow));
-    assert_eq!(result.keep_recent, Some(5));
-    assert_eq!(result.token_budget, Some(10000));
+    assert_eq!(result.strategy, Some(CompactionStrategy::SlidingSummary));
     assert_eq!(result.proactive_threshold_pct, Some(0.75));
 }
 
 #[test]
 fn extract_compaction_flags_none_provided() {
-    let call = mock_call_with_compaction_flags(None, None, None, None);
+    let call = mock_call_with_compaction_flags(None, None);
     let result = extract_compaction_flags(&call).unwrap();
     assert!(result.strategy.is_none());
-    assert!(result.keep_recent.is_none());
-    assert!(result.token_budget.is_none());
     assert!(result.proactive_threshold_pct.is_none());
 }
 
 #[test]
 fn extract_compaction_flags_invalid_strategy_error() {
-    let call = mock_call_with_compaction_flags(Some("bogus"), None, None, None);
+    let call = mock_call_with_compaction_flags(Some("bogus"), None);
     let result = extract_compaction_flags(&call);
     assert!(result.is_err());
 }

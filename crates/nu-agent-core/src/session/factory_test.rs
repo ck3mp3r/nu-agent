@@ -1,4 +1,4 @@
-use super::factory::{SessionStoreImpl, StoreType, create_store};
+use super::factory::{SessionStoreBackend, StoreType, create_store};
 use crate::session::SessionStore;
 use crate::types::Message;
 use serial_test::serial;
@@ -32,7 +32,7 @@ async fn create_store_memory_returns_sqlite_impl() {
     let store = create_store(StoreType::Memory)
         .await
         .expect("create memory store");
-    assert!(matches!(store, SessionStoreImpl::Sqlite(_)));
+    assert!(matches!(store, SessionStoreBackend::Sqlite(_)));
 }
 
 #[tokio::test]

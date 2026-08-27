@@ -82,7 +82,7 @@ tool_call = true
 
 [compaction]
 strategy = "sliding_summary"
-keep_recent = 10
+proactive_threshold_pct = 0.75
 
 [agents]
 planner_enabled = true
@@ -118,7 +118,7 @@ default = "planner"
             compaction.strategy,
             Some(CompactionStrategy::SlidingSummary)
         );
-        assert_eq!(compaction.keep_recent, Some(10));
+        assert_eq!(compaction.proactive_threshold_pct, Some(0.75));
 
         // Agents
         assert!(config.agents.planner_enabled);

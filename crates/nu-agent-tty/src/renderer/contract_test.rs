@@ -25,11 +25,11 @@ impl FakeRenderer {
 impl UiRenderer for FakeRenderer {
     fn emit(&mut self, event: &UiEvent) {
         let label = match event {
-            UiEvent::LlmStart => "llm_start",
+            UiEvent::LlmStarted => "llm_start",
             UiEvent::Tick => "tick",
-            UiEvent::LlmEnd { .. } => "llm_end",
-            UiEvent::ToolStart { .. } => "tool_start",
-            UiEvent::ToolEnd { .. } => "tool_end",
+            UiEvent::LlmCompleted { .. } => "llm_end",
+            UiEvent::ToolStarted { .. } => "tool_start",
+            UiEvent::ToolCompleted { .. } => "tool_end",
             UiEvent::PermissionRequested { .. } => "permission_requested",
             UiEvent::PermissionDecisionSubmitted { .. } => "permission_decision_submitted",
             UiEvent::PermissionDecisionTimedOut { .. } => "permission_decision_timed_out",
@@ -38,7 +38,7 @@ impl UiRenderer for FakeRenderer {
             UiEvent::TurnError { .. } => "turn_error",
             UiEvent::CompactionStarted { .. } => "compaction_started",
             UiEvent::CompactionSummaryChunk { .. } => "compaction_summary_chunk",
-            UiEvent::CompactionTriggered { .. } => "compaction_triggered",
+            UiEvent::CompactionCompleted { .. } => "compaction_completed",
             UiEvent::CompactionFailed { .. } => "compaction_failed",
             UiEvent::AssistantMessage { .. } => "assistant_message",
             UiEvent::Completed { .. } => "completed",
@@ -50,21 +50,21 @@ impl UiRenderer for FakeRenderer {
 }
 
 fn run_mock_flow<R: UiRenderer>(renderer: &mut R) {
-    renderer.emit(&UiEvent::LlmStart);
+    renderer.emit(&UiEvent::LlmStarted);
     renderer.emit(&UiEvent::Tick);
-    renderer.emit(&UiEvent::LlmEnd {
+    renderer.emit(&UiEvent::LlmCompleted {
         response_chars: 3,
         tool_calls: 1,
         input_tokens: 2,
         output_tokens: 1,
         total_tokens: 3,
     });
-    renderer.emit(&UiEvent::ToolStart {
+    renderer.emit(&UiEvent::ToolStarted {
         name: "t".to_string(),
         source: "closure".to_string(),
         arguments: "{}".to_string(),
     });
-    renderer.emit(&UiEvent::ToolEnd {
+    renderer.emit(&UiEvent::ToolCompleted {
         name: "t".to_string(),
         source: "closure".to_string(),
         arguments: "{}".to_string(),
@@ -110,9 +110,9 @@ fn stderr_renderer_writes_only_to_stderr_sink() {
         false,
     );
 
-    renderer.emit(&UiEvent::LlmStart);
+    renderer.emit(&UiEvent::LlmStarted);
     renderer.emit(&UiEvent::Tick);
-    renderer.emit(&UiEvent::LlmEnd {
+    renderer.emit(&UiEvent::LlmCompleted {
         response_chars: 5,
         tool_calls: 0,
         input_tokens: 3,
@@ -137,7 +137,7 @@ fn quiet_mode_suppresses_non_essential_progress_and_warnings() {
         true,
     );
 
-    renderer.emit(&UiEvent::LlmStart);
+    renderer.emit(&UiEvent::LlmStarted);
     renderer.emit(&UiEvent::Tick);
     renderer.emit(&UiEvent::Completed { tool_calls: 0 });
     renderer.emit(&UiEvent::Warning {
@@ -184,9 +184,9 @@ fn default_busy_flow_uses_spinner_without_redundant_persistent_busy_lines() {
         true,
     );
 
-    renderer.emit(&UiEvent::LlmStart);
+    renderer.emit(&UiEvent::LlmStarted);
     renderer.emit(&UiEvent::Tick);
-    renderer.emit(&UiEvent::LlmEnd {
+    renderer.emit(&UiEvent::LlmCompleted {
         response_chars: 42,
         tool_calls: 0,
         input_tokens: 30,
@@ -213,7 +213,7 @@ fn spinner_is_disabled_on_non_tty_or_quiet_and_enabled_on_interactive_tty() {
             },
             false,
         );
-        renderer_non_tty.emit(&UiEvent::LlmStart);
+        renderer_non_tty.emit(&UiEvent::LlmStarted);
         renderer_non_tty.flush();
     }
     assert!(
@@ -231,7 +231,7 @@ fn spinner_is_disabled_on_non_tty_or_quiet_and_enabled_on_interactive_tty() {
             },
             true,
         );
-        renderer_quiet.emit(&UiEvent::LlmStart);
+        renderer_quiet.emit(&UiEvent::LlmStarted);
         renderer_quiet.flush();
     }
     assert!(quiet_bytes.is_empty(), "quiet should not render spinner");
@@ -246,7 +246,7 @@ fn spinner_is_disabled_on_non_tty_or_quiet_and_enabled_on_interactive_tty() {
             },
             true,
         );
-        renderer_tty.emit(&UiEvent::LlmStart);
+        renderer_tty.emit(&UiEvent::LlmStarted);
         renderer_tty.flush();
     }
     assert!(!tty_bytes.is_empty(), "tty should render spinner");
@@ -265,11 +265,11 @@ fn spinner_pauses_for_persistent_lines_and_stops_on_completion() {
             true,
         );
 
-        renderer.emit(&UiEvent::LlmStart);
+        renderer.emit(&UiEvent::LlmStarted);
 
         renderer.emit(&UiEvent::Tick);
 
-        renderer.emit(&UiEvent::ToolStart {
+        renderer.emit(&UiEvent::ToolStarted {
             name: "t".to_string(),
             source: "closure".to_string(),
             arguments: "{}".to_string(),
@@ -296,13 +296,13 @@ fn default_tool_lifecycle_is_single_completion_line_with_result_block() {
         true,
     );
 
-    renderer.emit(&UiEvent::LlmStart);
-    renderer.emit(&UiEvent::ToolStart {
+    renderer.emit(&UiEvent::LlmStarted);
+    renderer.emit(&UiEvent::ToolStarted {
         name: "gh__list_prs".to_string(),
         source: "mcp".to_string(),
         arguments: "{}".to_string(),
     });
-    renderer.emit(&UiEvent::ToolEnd {
+    renderer.emit(&UiEvent::ToolCompleted {
         name: "gh__list_prs".to_string(),
         source: "mcp".to_string(),
         arguments: "{}".to_string(),
@@ -333,12 +333,12 @@ fn default_tool_lifecycle_prints_non_empty_payloads() {
             true,
         );
 
-        renderer.emit(&UiEvent::ToolStart {
+        renderer.emit(&UiEvent::ToolStarted {
             name: "gh__list_prs".to_string(),
             source: "mcp".to_string(),
             arguments: "{}".to_string(),
         });
-        renderer.emit(&UiEvent::ToolEnd {
+        renderer.emit(&UiEvent::ToolCompleted {
             name: "gh__list_prs".to_string(),
             source: "mcp".to_string(),
             arguments: "{}".to_string(),
@@ -375,7 +375,7 @@ fn spinner_tick_advances_frame_on_tty_only() {
             },
             true,
         );
-        renderer.emit(&UiEvent::LlmStart);
+        renderer.emit(&UiEvent::LlmStarted);
         renderer.flush();
     }
 
@@ -390,7 +390,7 @@ fn spinner_tick_advances_frame_on_tty_only() {
             },
             true,
         );
-        renderer.emit(&UiEvent::LlmStart);
+        renderer.emit(&UiEvent::LlmStarted);
         renderer.emit(&UiEvent::Tick);
         renderer.flush();
     }
@@ -410,7 +410,7 @@ fn spinner_tick_advances_frame_on_tty_only() {
             },
             false,
         );
-        non_tty_renderer.emit(&UiEvent::LlmStart);
+        non_tty_renderer.emit(&UiEvent::LlmStarted);
         non_tty_renderer.emit(&UiEvent::Tick);
         non_tty_renderer.flush();
     }
@@ -433,7 +433,7 @@ fn turn_error_visible_at_default_verbosity_and_stops_spinner() {
     );
 
     // Start spinner
-    renderer.emit(&UiEvent::LlmStart);
+    renderer.emit(&UiEvent::LlmStarted);
     renderer.emit(&UiEvent::Tick);
 
     // Emit TurnError

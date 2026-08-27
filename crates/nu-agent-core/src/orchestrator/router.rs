@@ -2,8 +2,6 @@ use crate::orchestrator::{
     OnAgentSwitch, UiRequest, UiRequestResponse, WorkerCommand, turn_outcome::TurnOutcome,
 };
 use crate::protocol::{
-    compaction::CompactionTriggerDecision,
-    compaction_runtime::Compaction,
     contracts::{CoreRuntime, ProgressUi},
     mcp_management::McpManagement,
     model_switching::ModelSwitching,
@@ -11,9 +9,6 @@ use crate::protocol::{
 };
 
 use tokio::sync::mpsc;
-
-const COMPACTION_FAILURE_WARNING: &str =
-    "Session compaction failed: sliding_summary summarization unavailable";
 
 /// Dispatches [`WorkerCommand`] variants to a runtime that implements all
 /// focused capability traits.
@@ -37,15 +32,10 @@ impl CommandRouter {
         ui: &mut U,
         result_tx: &mpsc::Sender<TurnOutcome>,
         on_agent_switch: Option<OnAgentSwitch>,
+        bus: &crate::bus::Bus,
     ) -> bool
     where
-        R: CoreRuntime
-            + McpManagement
-            + ModelSwitching
-            + SessionState
-            + SessionPersistence
-            + Compaction
-            + Send,
+        R: CoreRuntime + McpManagement + ModelSwitching + SessionState + SessionPersistence + Send,
         U: ProgressUi + Send,
     {
         match cmd {
@@ -65,33 +55,13 @@ impl CommandRouter {
                 let _ = result_tx.send(outcome).await;
                 true
             }
-            WorkerCommand::EvaluateAutoCompaction { response_tx } => {
-                log::trace!("Router: EvaluateAutoCompaction");
-                let warning = match runtime.evaluate_auto_compaction() {
-                    Some(CompactionTriggerDecision::Fire { source, .. }) => {
-                        log::trace!("Auto-compaction firing: source={source:?}");
-                        runtime
-                            .execute_compaction_trigger(ui, source)
-                            .await
-                            .err()
-                            .map(|_error| COMPACTION_FAILURE_WARNING.to_string())
-                    }
-                    _ => None,
-                };
-                let _ = response_tx.send(warning).await;
-                true
-            }
-            WorkerCommand::ExecuteCompactionTrigger {
-                source,
-                response_tx,
-            } => {
-                log::trace!("Router: ExecuteCompactionTrigger source={source:?}");
-                let warning = runtime
-                    .execute_compaction_trigger(ui, source)
-                    .await
-                    .err()
-                    .map(|_error| COMPACTION_FAILURE_WARNING.to_string());
-                let _ = response_tx.send(warning).await;
+            WorkerCommand::RunCompaction { source } => {
+                log::trace!("Router: RunCompaction source={source}");
+                if let Err(e) = runtime.run_compaction(&source).await {
+                    let _ = bus
+                        .compaction()
+                        .send(crate::bus::CompactionEvent::Failed { source, message: e });
+                }
                 true
             }
             WorkerCommand::HandleUiRequest {

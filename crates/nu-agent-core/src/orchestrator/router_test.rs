@@ -18,8 +18,6 @@ use crate::orchestrator::{
     UiRequestResponse, WorkerCommand, run_interactive_loop_impl,
 };
 use crate::protocol::{
-    compaction::{CompactionTriggerDecision, CompactionTriggerSource},
-    compaction_runtime::Compaction,
     contracts::{CoreRuntime, McpUsabilityState, ProgressUi, UiMessageSnapshot, UserInputUi},
     event::UiEvent,
     mcp_management::McpManagement,
@@ -60,7 +58,7 @@ impl CoreRuntime for AgentSwitchRuntime {
         let _ = self
             .bus
             .turn()
-            .send(crate::bus::TurnEvent::TurnCompleted { tool_calls: 0 });
+            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 });
         Ok(Value::nothing(span))
     }
 }
@@ -116,20 +114,6 @@ impl SessionState for AgentSwitchRuntime {
 }
 impl SessionPersistence for AgentSwitchRuntime {}
 
-impl Compaction for AgentSwitchRuntime {
-    fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
-        None
-    }
-
-    async fn execute_compaction_trigger<U: ProgressUi>(
-        &mut self,
-        _ui: &mut U,
-        _source: CompactionTriggerSource,
-    ) -> Result<(), String> {
-        Ok(())
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Simple fake interactive UI with agent switch request support
 // ---------------------------------------------------------------------------
@@ -175,7 +159,7 @@ impl AgentSwitchUi {
             loop {
                 tokio::select! {
                     Ok(event) = turn_rx.recv() => {
-                        if let crate::bus::TurnEvent::TurnCompleted { .. } = event
+                        if let crate::bus::TurnEvent::Completed { .. } = event
                             && agent_switch_requests
                                 .lock()
                                 .expect("agent switch requests lock")
@@ -307,7 +291,7 @@ impl CoreRuntime for LongRunningAgentRuntime {
         let _ = self
             .bus
             .turn()
-            .send(crate::bus::TurnEvent::TurnCompleted { tool_calls: 0 });
+            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 });
         self.active.store(false, Ordering::SeqCst);
         Ok(Value::nothing(Span::test_data()))
     }
@@ -364,20 +348,6 @@ impl SessionState for LongRunningAgentRuntime {
 }
 impl SessionPersistence for LongRunningAgentRuntime {}
 
-impl Compaction for LongRunningAgentRuntime {
-    fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
-        None
-    }
-
-    async fn execute_compaction_trigger<U: ProgressUi>(
-        &mut self,
-        _ui: &mut U,
-        _source: CompactionTriggerSource,
-    ) -> Result<(), String> {
-        Ok(())
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Responsive interactive UI that injects agent switch requests while busy
 // ---------------------------------------------------------------------------
@@ -432,7 +402,7 @@ impl ResponsiveAgentSwitchUi {
             loop {
                 tokio::select! {
                     Ok(event) = turn_rx.recv() => {
-                        if let crate::bus::TurnEvent::TurnCompleted { .. } = event {
+                        if let crate::bus::TurnEvent::Completed { .. } = event {
                             let count = {
                                 let mut count = completed_count.lock().expect("completed count lock");
                                 *count += 1;
@@ -726,7 +696,6 @@ impl SessionPersistence for SwitchSessionRuntime {
 }
 
 crate::default_mcp!(SwitchSessionRuntime);
-crate::default_compaction!(SwitchSessionRuntime);
 
 // ---------------------------------------------------------------------------
 // Test: SwitchSession dispatches async load_session without panic
@@ -769,7 +738,7 @@ async fn switch_session_dispatches_async_load_without_panic() {
     // that was panicking with "Cannot start a runtime from within a runtime"
     // when load_session used Handle::current().block_on(...)
     let should_continue =
-        CommandRouter::dispatch(cmd, &mut runtime, &mut ui, &result_tx, None).await;
+        CommandRouter::dispatch(cmd, &mut runtime, &mut ui, &result_tx, None, &create_bus()).await;
 
     // 1. No panic occurred (reaching here proves it)
     assert!(should_continue, "SwitchSession should not trigger shutdown");

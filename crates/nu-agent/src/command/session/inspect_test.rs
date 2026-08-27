@@ -1,6 +1,6 @@
 use super::inspect::{AgentSessionInspect, CwdInterface};
 use nu_agent_core::session::prefix::{dir_prefix, dir_prefix_legacy};
-use nu_agent_core::session::{FsSessionStore, SessionStore, SessionStoreImpl};
+use nu_agent_core::session::{FsSessionStore, SessionStore, SessionStoreBackend};
 use nu_agent_core::types::Message;
 use nu_plugin::{EvaluatedCall, SimplePluginCommand};
 use nu_protocol::{LabeledError, Span, Value};
@@ -31,7 +31,7 @@ fn make_call(session_id: &str) -> EvaluatedCall {
 #[tokio::test]
 async fn test_agent_session_inspect_displays_full_session_details() {
     let temp_dir = TempDir::new().unwrap();
-    let store = Arc::new(SessionStoreImpl::Fs(FsSessionStore::new(
+    let store = Arc::new(SessionStoreBackend::Fs(FsSessionStore::new(
         temp_dir.path().to_path_buf(),
     )));
 
@@ -69,7 +69,7 @@ async fn test_agent_session_inspect_displays_full_session_details() {
 #[tokio::test]
 async fn test_agent_session_inspect_returns_error_for_nonexistent_session() {
     let temp_dir = TempDir::new().unwrap();
-    let store = Arc::new(SessionStoreImpl::Fs(FsSessionStore::new(
+    let store = Arc::new(SessionStoreBackend::Fs(FsSessionStore::new(
         temp_dir.path().to_path_buf(),
     )));
 
@@ -107,7 +107,7 @@ async fn run_prepends_cwd_prefix_to_session_id() {
     // so store.load receives "<prefix>-my-session" rather than the raw "my-session".
 
     let temp_dir = TempDir::new().expect("tempdir");
-    let store = Arc::new(SessionStoreImpl::Fs(FsSessionStore::new(
+    let store = Arc::new(SessionStoreBackend::Fs(FsSessionStore::new(
         temp_dir.path().to_path_buf(),
     )));
 
@@ -148,7 +148,7 @@ async fn run_prepends_cwd_prefix_to_session_id() {
 #[tokio::test]
 async fn inspect_finds_legacy_prefixed_session_via_fallback() {
     let temp_dir = TempDir::new().unwrap();
-    let store = Arc::new(SessionStoreImpl::Fs(FsSessionStore::new(
+    let store = Arc::new(SessionStoreBackend::Fs(FsSessionStore::new(
         temp_dir.path().to_path_buf(),
     )));
 

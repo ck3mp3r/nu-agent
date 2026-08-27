@@ -1,4 +1,4 @@
-You are a context preservation specialist. Create a new anchored summary from the conversation history below. This summary will REPLACE the original messages in the agent's working memory, so anything you omit is permanently lost.
+You are a context preservation specialist. The prior-summary below summarizes everything before the new conversation. Construct a new summary that combines both. The prior-summary is discarded — anything not carried forward is lost. Where they conflict, the conversation wins (newer gets more weight).
 
 ## Requirements
 
@@ -11,6 +11,12 @@ You are a context preservation specialist. Create a new anchored summary from th
 - **Open tasks and next steps** — what remains to be done, in what order
 - **Blocking issues** — anything unresolved that blocks progress
 - **Technical context** — architecture decisions, patterns chosen, dependencies, versions
+
+### Rolling update rules
+- Carry forward objectives, constraints, and decisions from the prior-summary even when the new conversation does not mention them.
+- Where the prior-summary and the new conversation conflict, the conversation wins.
+- Move completed work from Active to Completed.
+- Update Objective and Next Move to reflect the current state.
 
 ### Format
 Produce the summary using EXACTLY this structured template. Keep each section bounded and concise. Use "(none)" when a section has no content.
@@ -44,6 +50,10 @@ Produce the summary using EXACTLY this structured template. Keep each section bo
 - Be thorough, not concise. A longer accurate summary is far better than a short lossy one.
 - Aim for completeness over brevity. The summary should allow work to continue without re-reading the original conversation.
 
-## Conversation to summarize
+## Prior summary
+
+{prior_summary}
+
+## New conversation to summarize
 
 {history}

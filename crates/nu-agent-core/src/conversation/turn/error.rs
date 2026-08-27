@@ -388,6 +388,20 @@ impl From<rig::agent::StreamingError> for TurnError {
                         kind: classify_from_display(&s.to_string()),
                         msg: completion_err.to_string(),
                     },
+                    // rig 0.42.0 surfaces a failed streaming handshake (connect-time
+                    // non-success, e.g. a 500) as `ProviderResponse` carrying the
+                    // status and body, instead of `HttpError(InvalidStatusCodeWithMessage)`.
+                    // Classify by status when present so a 500/503/429 stays retryable.
+                    CompletionError::ProviderResponse(ref e) => {
+                        let kind = match e.status {
+                            Some(status) => classify_by_status(status.as_u16()),
+                            None => classify_from_display(&e.body),
+                        };
+                        Self::CompletionFailed {
+                            msg: completion_err.to_string(),
+                            kind,
+                        }
+                    }
                     _ => Self::CompletionFailed {
                         msg: completion_err.to_string(),
                         kind: CompletionErrorKind::Unknown,

@@ -11,9 +11,8 @@
 //! pass them through PromptCancelled -> TurnError::from, and verify all messages are preserved.
 
 use super::*;
-use crate::types::{AssistantContent, ToolCall, ToolFunction, ToolResultContent};
+use crate::types::{AssistantContent, ToolCall, ToolCallId, ToolFunction, ToolResultContent};
 use crate::types::{Message, Text, UserContent};
-use rig::one_or_many::OneOrMany;
 use serde_json::json;
 
 /// Regression test for rig-core v0.39.0 PR #1899: PromptCancelled::chat_history is NOT empty
@@ -30,40 +29,41 @@ fn prompt_cancelled_preserves_tool_call_history() {
 
     // 1) User message (the initial prompt)
     chat_history.push(Message::User {
-        content: OneOrMany::one(UserContent::Text(Text {
+        content: vec![UserContent::Text(Text {
             text: "What is in /etc/hosts?".to_string(),
             additional_params: None,
-        })),
+        })],
     });
 
     // 2) Assistant message with a ToolCall (the LLM decided to invoke read_file)
     chat_history.push(Message::Assistant {
         id: None,
-        content: OneOrMany::one(AssistantContent::ToolCall(ToolCall {
-            id: "call_abc123".to_string(),
-            call_id: None,
+        content: vec![AssistantContent::ToolCall(ToolCall {
+            id: ToolCallId::new_or_mint("call_abc123"),
+            provider: None,
             signature: None,
             additional_params: None,
             function: ToolFunction {
                 name: "read_file".to_string(),
                 arguments: json!({ "path": "/etc/hosts" }),
             },
-        })),
+        })],
     });
 
     // 3) User message with a ToolResult (LLM's prior tool_call result, completed before next
     //    iteration got cancelled mid-stream)
     chat_history.push(Message::User {
-        content: OneOrMany::one(UserContent::ToolResult(
+        content: vec![UserContent::ToolResult(
             rig::completion::message::ToolResult {
-                id: "call_abc123".to_string(),
-                call_id: None,
-                content: OneOrMany::one(ToolResultContent::Text(Text {
+                call: ToolCallId::new_or_mint("call_abc123"),
+                provider: None,
+                name: "read_file".into(),
+                content: vec![ToolResultContent::Text(Text {
                     text: "127.0.0.1 localhost\n::1 localhost".to_string(),
                     additional_params: None,
-                })),
+                })],
             },
-        )),
+        )],
     });
 
     // Simulate the AgentSession being cancelled (e.g., user pressed Esc) while another tool
@@ -119,8 +119,8 @@ fn prompt_cancelled_preserves_tool_call_history() {
     match &messages[1] {
         Message::Assistant { content, .. } => {
             assert_eq!(content.len(), 1);
-            let tc = match content.first_ref() {
-                AssistantContent::ToolCall(tc) => tc,
+            let tc = match content.first() {
+                Some(AssistantContent::ToolCall(tc)) => tc,
                 _ => panic!("msg[1] should contain a ToolCall"),
             };
             assert_eq!(tc.function.name, "read_file");
@@ -132,11 +132,11 @@ fn prompt_cancelled_preserves_tool_call_history() {
     match &messages[2] {
         Message::User { content, .. } => {
             assert_eq!(content.len(), 1);
-            let tr = match content.first_ref() {
-                UserContent::ToolResult(tr) => tr,
+            let tr = match content.first() {
+                Some(UserContent::ToolResult(tr)) => tr,
                 _ => panic!("msg[2] should contain a ToolResult"),
             };
-            assert_eq!(tr.id, "call_abc123");
+            assert_eq!(tr.call.as_str(), "call_abc123");
         }
         _ => panic!("msg[2] must be User with ToolResult"),
     }
@@ -154,17 +154,17 @@ fn prompt_cancelled_with_tool_calls_earlier_has_non_empty_history() {
     // user(prompt) + partial assistant text (no tool calls yet, or they were lost).
     let chat_history: Vec<Message> = vec![
         Message::User {
-            content: OneOrMany::one(UserContent::Text(Text {
+            content: vec![UserContent::Text(Text {
                 text: "Tell me about Rust".to_string(),
                 additional_params: None,
-            })),
+            })],
         },
         Message::Assistant {
             id: None,
-            content: OneOrMany::one(AssistantContent::Text(Text {
+            content: vec![AssistantContent::Text(Text {
                 text: "Rust is a systems programming language".to_string(),
                 additional_params: None,
-            })),
+            })],
         },
     ];
 

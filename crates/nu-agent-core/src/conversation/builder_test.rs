@@ -12,42 +12,33 @@ use crate::protocol::persona::PersonaSummary;
 fn merge_cli_overrides_plugin_config() {
     let plugin = CompactionConfig {
         strategy: Some(CompactionStrategy::SlidingSummary),
-        keep_recent: Some(20),
-        token_budget: None,
         proactive_threshold_pct: Some(0.85),
     };
 
     let cli = CompactionConfig {
-        strategy: Some(CompactionStrategy::SlidingWindow),
-        keep_recent: None,
-        token_budget: Some(5000),
+        strategy: None,
         proactive_threshold_pct: None,
     };
 
     let merged = merge_compaction_configs(Some(&plugin), &cli);
 
-    assert_eq!(merged.strategy, Some(CompactionStrategy::SlidingWindow));
-    assert_eq!(merged.keep_recent, Some(20));
-    assert_eq!(merged.token_budget, Some(5000));
+    assert_eq!(merged.strategy, Some(CompactionStrategy::SlidingSummary));
     assert_eq!(merged.proactive_threshold_pct, Some(0.85));
 }
 
 #[test]
 fn merge_plugin_config_overrides_default() {
     let plugin = CompactionConfig {
-        strategy: Some(CompactionStrategy::TokenTruncate),
-        keep_recent: None,
-        token_budget: Some(8000),
-        proactive_threshold_pct: None,
+        strategy: Some(CompactionStrategy::SlidingSummary),
+        proactive_threshold_pct: Some(0.9),
     };
 
     let cli = CompactionConfig::default();
 
     let merged = merge_compaction_configs(Some(&plugin), &cli);
 
-    assert_eq!(merged.strategy, Some(CompactionStrategy::TokenTruncate));
-    assert!(merged.keep_recent.is_none());
-    assert_eq!(merged.token_budget, Some(8000));
+    assert_eq!(merged.strategy, Some(CompactionStrategy::SlidingSummary));
+    assert_eq!(merged.proactive_threshold_pct, Some(0.9));
 }
 
 #[test]
@@ -56,8 +47,6 @@ fn merge_default_used_when_no_config() {
     let merged = merge_compaction_configs(None, &cli);
 
     assert!(merged.strategy.is_none());
-    assert!(merged.keep_recent.is_none());
-    assert!(merged.token_budget.is_none());
     assert!(merged.proactive_threshold_pct.is_none());
 }
 
@@ -66,9 +55,7 @@ fn merge_default_used_when_no_config() {
 #[test]
 fn build_compaction_params_applies_merged_values() {
     let merged = CompactionConfig {
-        strategy: Some(CompactionStrategy::SlidingWindow),
-        keep_recent: Some(5),
-        token_budget: Some(8000),
+        strategy: Some(CompactionStrategy::SlidingSummary),
         proactive_threshold_pct: Some(0.9),
     };
 
@@ -76,10 +63,8 @@ fn build_compaction_params_applies_merged_values() {
 
     assert_eq!(
         config.compaction_strategy,
-        CompactionStrategy::SlidingWindow
+        CompactionStrategy::SlidingSummary
     );
-    assert_eq!(config.keep_recent, 5);
-    assert_eq!(config.token_budget, Some(8000));
 }
 
 #[test]
@@ -89,16 +74,12 @@ fn build_compaction_params_uses_defaults_when_none() {
     let defaults = CompactionParams::default();
 
     assert_eq!(config.compaction_strategy, defaults.compaction_strategy);
-    assert_eq!(config.keep_recent, defaults.keep_recent);
-    assert_eq!(config.token_budget, defaults.token_budget);
 }
 
 #[test]
 fn build_compaction_params_partial_override() {
     let merged = CompactionConfig {
-        strategy: Some(CompactionStrategy::TokenTruncate),
-        keep_recent: None,
-        token_budget: None,
+        strategy: Some(CompactionStrategy::SlidingSummary),
         proactive_threshold_pct: None,
     };
 
@@ -107,24 +88,20 @@ fn build_compaction_params_partial_override() {
 
     assert_eq!(
         config.compaction_strategy,
-        CompactionStrategy::TokenTruncate
+        CompactionStrategy::SlidingSummary
     );
-    assert_eq!(config.keep_recent, defaults.keep_recent);
+    assert_eq!(config.compaction_strategy, defaults.compaction_strategy);
 }
 
 #[test]
 fn full_precedence_default_then_plugin_then_cli() {
     let plugin = CompactionConfig {
         strategy: Some(CompactionStrategy::SlidingSummary),
-        keep_recent: Some(15),
-        token_budget: None,
         proactive_threshold_pct: Some(0.70),
     };
 
     let cli = CompactionConfig {
-        strategy: Some(CompactionStrategy::TokenTruncate),
-        keep_recent: None,
-        token_budget: Some(12000),
+        strategy: None,
         proactive_threshold_pct: None,
     };
 
@@ -133,10 +110,8 @@ fn full_precedence_default_then_plugin_then_cli() {
 
     assert_eq!(
         config.compaction_strategy,
-        CompactionStrategy::TokenTruncate
+        CompactionStrategy::SlidingSummary
     );
-    assert_eq!(config.keep_recent, 15);
-    assert_eq!(config.token_budget, Some(12000));
     assert_eq!(merged.proactive_threshold_pct, Some(0.70));
 }
 

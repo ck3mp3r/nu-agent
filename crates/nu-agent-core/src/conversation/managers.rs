@@ -9,7 +9,6 @@ use nu_protocol::LabeledError;
 
 use crate::config::{Config, PluginConfig};
 use crate::conversation::providers::CachedProviderClient;
-use crate::protocol::compaction::CompactionTriggerDecision;
 use crate::tools::authz::PermissionsConfig;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
@@ -69,13 +68,21 @@ pub trait ToolManager {
 /// Manages conversation memory and session IDs.
 pub trait SessionManager {
     /// The concrete memory type backed by this manager.
-    type Memory: rig::memory::ConversationMemory + Clone;
+    type Memory: rig::memory::ConversationMemory;
+
+    /// The inner concrete memory backend wrapped by the compacting facade.
+    type InnerMemory: rig::memory::ConversationMemory;
 
     /// Return a shared reference to the underlying memory.
     fn memory(&self) -> &Self::Memory;
 
     /// Return a mutable reference to the underlying memory.
     fn memory_mut(&mut self) -> &mut Self::Memory;
+
+    /// Return a reference to the inner concrete memory backend (the `CachedMemory`
+    /// held by the memory state). Used by callers that need the concrete
+    /// `CachedMemory` API (store rewrites, marker writes, raw loads).
+    fn inner_memory(&self) -> &Self::InnerMemory;
 
     /// Clear all messages from conversation memory and reset token tracking.
     fn clear(&mut self);
@@ -85,21 +92,6 @@ pub trait SessionManager {
 
     /// Return a mutable reference to the last total token counter.
     fn last_total_tokens_mut(&mut self) -> &mut Option<u64>;
-}
-
-// ── CompactionManager ────────────────────────────────────────────────────────
-
-/// Manages context compaction threshold evaluation and the in-flight guard flag.
-pub trait CompactionManager {
-    /// Evaluate whether auto-compaction should fire given the last token count.
-    fn evaluate_auto_compaction(
-        &mut self,
-        last_total_tokens: Option<u64>,
-    ) -> Option<CompactionTriggerDecision>;
-
-    /// Return a reference to the in-flight compaction guard.
-    /// Used by `AgentRuntime` to prevent concurrent compaction runs.
-    fn compacting(&self) -> &std::sync::Arc<std::sync::atomic::AtomicBool>;
 }
 
 // ── PersonaManager ───────────────────────────────────────────────────────────

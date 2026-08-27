@@ -18,21 +18,19 @@ use tokio::sync::{broadcast, mpsc};
 
 use nu_protocol::{LabeledError, Span, Value};
 
-use crate::bus::{Bus, CancelEvent, ExternalEvent, SessionEvent, TurnEvent};
+use crate::bus::{Bus, CancelEvent, CompactionEvent, ExternalEvent, SessionEvent, TurnEvent};
 use crate::conversation::runtime::PendingPermissions;
 
 use crate::orchestrator::{
     router::CommandRouter,
     stages::{
-        CompactionHandler, OrchestrationContext, PermissionHandler, SessionHandler, SlashHandler,
-        UiRequestHandler, compaction::CompactionStage, permission::PermissionStage,
-        session::SessionStage, slash::SlashStage, ui_request::UiRequestStage,
+        OrchestrationContext, PermissionHandler, SessionHandler, SlashHandler, UiRequestHandler,
+        permission::PermissionStage, session::SessionStage, slash::SlashStage,
+        ui_request::UiRequestStage,
     },
     turn_outcome::TurnOutcome,
 };
 use crate::protocol::{
-    compaction::CompactionTriggerSource,
-    compaction_runtime::Compaction,
     contracts::{CoreRuntime, McpUsabilityState, ProgressUi, SharedUiAction, UiMessageSnapshot},
     event::{PermissionDecisionSubmission, UiEvent},
     mcp_management::McpManagement,
@@ -166,7 +164,6 @@ pub type ModelSwitchResult = Result<(String, Option<u64>), String>;
 pub type AgentSwitchResult = Result<(String, String, Option<u64>, Option<String>), String>;
 pub type SessionSwitchResult = Result<Vec<UiMessageSnapshot>, String>;
 pub type RefreshSessionPickerResult = Result<Vec<SessionInfo>, String>;
-pub(crate) type PendingCompactionTrigger = mpsc::Receiver<Option<String>>;
 
 /// Events flowing into the orchestrator loop from all components (TUI, worker,
 /// bus pump). The orchestrator drains this single channel with `while let Some`.
@@ -184,8 +181,10 @@ pub enum OrchestratorEvent {
     WorkerResult(TurnOutcome),
     BlockingResponse(UiRequestResponse),
     ConcurrentResponse(UiRequestResponse),
-    CompactionResult {
-        message: Option<String>,
+
+    // ── From the bus pump (compaction requests) ──
+    RunCompaction {
+        source: String,
     },
 
     // ── Signals ──
@@ -275,12 +274,8 @@ pub enum WorkerCommand {
         request: UiRequest,
         response_tx: mpsc::Sender<UiRequestResponse>,
     },
-    EvaluateAutoCompaction {
-        response_tx: mpsc::Sender<Option<String>>,
-    },
-    ExecuteCompactionTrigger {
-        source: CompactionTriggerSource,
-        response_tx: mpsc::Sender<Option<String>>,
+    RunCompaction {
+        source: String,
     },
     ClearSession,
     NewSession,
@@ -318,7 +313,6 @@ where
         + ModelSwitching
         + SessionState
         + SessionPersistence
-        + Compaction
         + Send
         + 'static,
     F: FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static,
@@ -373,7 +367,6 @@ where
     let (worker_result_tx, mut worker_result_rx) = mpsc::channel::<TurnOutcome>(256);
 
     let mut worker_active = false;
-    let mut should_evaluate_compaction = true;
     let mut active_external_prompt: Option<String> = None;
     let mut active_external_task_id: Option<String> = None;
     let mut pending_external_cancel: Option<String> = None;
@@ -388,6 +381,7 @@ where
     // independently, allowing the main loop to pump the UI and run stages
     // concurrently. The runtime is returned when the worker completes.
     let on_agent_switch = on_agent_switch.clone();
+    let worker_bus = bus.clone();
     let worker_handle = tokio::spawn(async move {
         loop {
             let command = worker_cmd_rx.recv().await;
@@ -398,6 +392,7 @@ where
                 &mut worker_ui,
                 &worker_result_tx,
                 on_agent_switch.clone(),
+                &worker_bus,
             )
             .await;
             if !should_continue {
@@ -453,7 +448,6 @@ where
     let mut slash = SlashStage::new();
     let mut permission = PermissionStage::new();
     let mut session = SessionStage::new();
-    let mut compaction = CompactionStage::new();
     let mut ui_request = UiRequestStage::new(initial_visible_count);
 
     // Context
@@ -463,7 +457,6 @@ where
         concurrent_response_tx: &concurrent_response_tx,
         pending: &interactive_pending,
         worker_active: &mut worker_active,
-        should_evaluate_compaction: &mut should_evaluate_compaction,
         span,
         active_external_prompt: &mut active_external_prompt,
         active_external_task_id: &mut active_external_task_id,
@@ -475,11 +468,10 @@ where
         slash: &mut slash,
         permission: &mut permission,
         ui_request: &mut ui_request,
-        compaction: &mut compaction,
         session: &mut session,
     };
 
-    let result = run_orchestrator_loop(event_rx, event_tx.clone(), stages, &mut ctx).await;
+    let result = run_orchestrator_loop(event_rx, stages, &mut ctx).await;
 
     let _ = worker_cmd_tx.send(WorkerCommand::Shutdown).await;
     let runtime = worker_handle
@@ -507,7 +499,6 @@ where
         + ModelSwitching
         + SessionState
         + SessionPersistence
-        + Compaction
         + Send
         + 'static,
     F: FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static,
@@ -528,7 +519,6 @@ where
         + ModelSwitching
         + SessionState
         + SessionPersistence
-        + Compaction
         + Send
         + 'static,
     F: FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static,
@@ -554,82 +544,65 @@ where
 /// The orchestrator event loop. Drains a single `OrchestratorEvent` channel and
 /// dispatches each event to the appropriate stage handler.
 ///
-/// Generic over the five stage traits (DIP + ISP). The loop owns no stage state;
+/// Generic over the four stage traits (DIP + ISP). The loop owns no stage state;
 /// stages are passed in as `&mut` and mutated in place.
-pub(crate) struct Stages<'a, S, P, U, C, Se> {
+pub(crate) struct Stages<'a, S, P, U, Se> {
     pub slash: &'a mut S,
     pub permission: &'a mut P,
     pub ui_request: &'a mut U,
-    pub compaction: &'a mut C,
     pub session: &'a mut Se,
 }
 
-pub(crate) async fn run_orchestrator_loop<S, P, U, C, Se>(
+pub(crate) async fn run_orchestrator_loop<S, P, U, Se>(
     mut event_rx: mpsc::Receiver<OrchestratorEvent>,
-    event_tx: mpsc::Sender<OrchestratorEvent>,
-    stages: Stages<'_, S, P, U, C, Se>,
+    stages: Stages<'_, S, P, U, Se>,
     ctx: &mut OrchestrationContext<'_>,
 ) -> Result<(), LabeledError>
 where
     S: SlashHandler,
     P: PermissionHandler,
     U: UiRequestHandler,
-    C: CompactionHandler,
     Se: SessionHandler,
 {
     let Stages {
         slash,
         permission,
         ui_request,
-        compaction,
         session,
     } = stages;
-    let mut pending_compaction_rx: Option<mpsc::Receiver<Option<String>>> = None;
+    let mut pending_compaction: Option<String> = None;
     let mut quit_pending = false;
     loop {
-        let ev = tokio::select! {
-            biased;
-            message = async {
-                if let Some(rx) = pending_compaction_rx.as_mut() {
-                    rx.recv().await.unwrap_or(None)
-                } else {
-                    std::future::pending::<Option<String>>().await
-                }
-            } => OrchestratorEvent::CompactionResult { message },
-            ev = event_rx.recv() => {
-                let Some(ev) = ev else { break; };
-                ev
-            }
+        let ev = event_rx.recv().await;
+        let Some(ev) = ev else {
+            break;
         };
         match ev {
             OrchestratorEvent::PromptSubmitted { text } => {
                 if !ui_request.has_blocking_pending() {
                     slash.handle(text, ctx).await;
-                    if let Some(rx) = slash.take_pending_compaction_trigger() {
-                        pending_compaction_rx = Some(rx);
-                    }
                 }
             }
-            OrchestratorEvent::CompactionResult { message } => {
-                compaction.handle_result(message, ctx);
-                *ctx.should_evaluate_compaction = false;
-                pending_compaction_rx = None;
-                if quit_pending && !*ctx.worker_active {
-                    break;
-                }
-                // Re-arm compaction evaluation after a slash compaction result, mirroring
-                // the auto-compaction path after WorkerResult.
-                if *ctx.should_evaluate_compaction
-                    && !*ctx.worker_active
-                    && !compaction.has_pending_auto_compaction()
-                {
-                    let (response_tx, response_rx) = mpsc::channel::<Option<String>>(1);
-                    let _ = ctx
+            OrchestratorEvent::RunCompaction { source } => {
+                if !*ctx.worker_active {
+                    // Worker is idle — dispatch compaction immediately. The worker
+                    // runs it synchronously and emits events on the bus; it does
+                    // not send a `WorkerResult`, so `worker_active` is not set.
+                    if ctx
                         .worker_tx
-                        .send(WorkerCommand::EvaluateAutoCompaction { response_tx })
-                        .await;
-                    compaction.set_pending_auto_compaction();
-                    spawn_compaction_bridge(response_rx, event_tx.clone());
+                        .send(WorkerCommand::RunCompaction { source })
+                        .await
+                        .is_err()
+                    {
+                        let _ = ctx.bus.compaction().send(CompactionEvent::Failed {
+                            source: "auto".to_string(),
+                            message: "Worker channel closed".to_string(),
+                        });
+                    }
+                } else {
+                    // Worker is busy running a turn — queue one pending
+                    // compaction. A newer request replaces the queued one.
+                    pending_compaction = Some(source);
                 }
             }
             OrchestratorEvent::PermissionDecision { decision } => {
@@ -654,18 +627,20 @@ where
                 session.handle_outcome(outcome, ctx);
                 // Worker is now idle — drain queued blocking requests.
                 ui_request.drain_queued(ctx).await;
-                // Re-arm compaction evaluation after turn completion.
-                if *ctx.should_evaluate_compaction
-                    && !*ctx.worker_active
-                    && !compaction.has_pending_auto_compaction()
-                {
-                    let (response_tx, response_rx) = mpsc::channel::<Option<String>>(1);
-                    let _ = ctx
+                // If a compaction was queued while the worker was busy, run it now.
+                // The worker runs it synchronously and emits events on the bus; it
+                // does not send a `WorkerResult`, so `worker_active` is not set.
+                if let Some(source) = pending_compaction.take()
+                    && ctx
                         .worker_tx
-                        .send(WorkerCommand::EvaluateAutoCompaction { response_tx })
-                        .await;
-                    compaction.set_pending_auto_compaction();
-                    spawn_compaction_bridge(response_rx, event_tx.clone());
+                        .send(WorkerCommand::RunCompaction { source })
+                        .await
+                        .is_err()
+                {
+                    let _ = ctx.bus.compaction().send(CompactionEvent::Failed {
+                        source: "auto".to_string(),
+                        message: "Worker channel closed".to_string(),
+                    });
                 }
                 // If a quit was requested while the worker was active and the
                 // worker is now idle, exit the loop.
@@ -715,11 +690,11 @@ where
                     let _ = ctx.bus.cancel().send(CancelEvent::Requested);
                     continue;
                 }
-                if ui_request.has_pending() || compaction.has_pending() {
+                if ui_request.has_pending() {
                     quit_pending = true;
                     continue;
                 }
-                if pending_compaction_rx.is_some() {
+                if pending_compaction.is_some() {
                     quit_pending = true;
                     continue;
                 }
@@ -757,31 +732,40 @@ fn spawn_concurrent_bridge(
     });
 }
 
-/// Bridge task: forwards compaction results to the event channel.
-fn spawn_compaction_bridge(
-    mut rx: mpsc::Receiver<Option<String>>,
-    tx: mpsc::Sender<OrchestratorEvent>,
-) {
-    tokio::spawn(async move {
-        while let Some(message) = rx.recv().await {
-            let _ = tx
-                .send(OrchestratorEvent::CompactionResult { message })
-                .await;
-        }
-    });
-}
-
-/// Bus pump task: subscribes to the external bus channel and forwards
-/// `ExternalEvent::PromptReceived` as `OrchestratorEvent::ExternalPrompt`.
+/// Bus pump task: subscribes to the external and compaction bus channels and
+/// forwards `ExternalEvent::PromptReceived` as `OrchestratorEvent::ExternalPrompt`
+/// and `CompactionEvent::Requested` as `OrchestratorEvent::RunCompaction`.
 fn spawn_bus_pump(bus: &Bus, tx: mpsc::Sender<OrchestratorEvent>) {
     let mut external_rx = bus.external().subscribe();
+    let mut compaction_rx = bus.compaction().subscribe();
     tokio::spawn(async move {
-        while let Ok(event) = external_rx.recv().await {
-            match event {
-                ExternalEvent::PromptReceived { prompt, task_id } => {
-                    let _ = tx
-                        .send(OrchestratorEvent::ExternalPrompt { prompt, task_id })
-                        .await;
+        loop {
+            tokio::select! {
+                recv = external_rx.recv() => {
+                    match recv {
+                        Ok(event) => {
+                            match event {
+                                ExternalEvent::PromptReceived { prompt, task_id } => {
+                                    let _ = tx
+                                        .send(OrchestratorEvent::ExternalPrompt { prompt, task_id })
+                                        .await;
+                                }
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Closed) => break,
+                        Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    }
+                }
+                recv = compaction_rx.recv() => {
+                    match recv {
+                        Ok(event) => {
+                            if let CompactionEvent::Requested { source } = event {
+                                let _ = tx.send(OrchestratorEvent::RunCompaction { source }).await;
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Closed) => break,
+                        Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    }
                 }
             }
         }

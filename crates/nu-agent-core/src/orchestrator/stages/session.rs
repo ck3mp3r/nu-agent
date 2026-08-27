@@ -15,7 +15,6 @@ impl SessionStage {
 impl SessionHandler for SessionStage {
     fn handle_outcome(&mut self, outcome: TurnOutcome, ctx: &mut OrchestrationContext) {
         *ctx.worker_active = false;
-        *ctx.should_evaluate_compaction = true;
         match outcome {
             TurnOutcome::Success(ref value) => {
                 log::info!("Turn outcome: Success");

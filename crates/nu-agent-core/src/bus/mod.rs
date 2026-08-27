@@ -12,12 +12,12 @@ pub enum CancelEvent {
 /// A tool invocation lifecycle event.
 #[derive(Debug, Clone)]
 pub enum ToolEvent {
-    Start {
+    Started {
         name: String,
         source: String,
         arguments: String,
     },
-    End {
+    Completed {
         name: String,
         source: String,
         arguments: String,
@@ -32,8 +32,8 @@ pub enum ToolEvent {
 /// An LLM request lifecycle event.
 #[derive(Debug, Clone)]
 pub enum LlmEvent {
-    Start,
-    End {
+    Started,
+    Completed {
         response_chars: usize,
         tool_calls: usize,
         input_tokens: u64,
@@ -54,7 +54,7 @@ pub enum TurnEvent {
         task_id: Option<String>,
     },
     /// A turn finished with a tool-call count for the TUI renderer.
-    TurnCompleted { tool_calls: usize },
+    Completed { tool_calls: usize },
     /// An external (A2A) task completed with its output.
     TaskCompleted { output: String, task_id: String },
 }
@@ -84,18 +84,22 @@ pub enum ExternalEvent {
 /// A compaction lifecycle event.
 #[derive(Debug, Clone)]
 pub enum CompactionEvent {
+    /// A compaction has been requested (auto-threshold or `/compact`). The
+    /// orchestrator is the single subscriber that acts on this; the TUI does
+    /// not render it.
+    Requested {
+        source: String,
+    },
     Started {
-        source: Option<String>,
+        source: String,
     },
     SummaryChunk {
         source: String,
         delta: String,
         aggregated: String,
     },
-    Triggered {
+    Completed {
         source: String,
-        summarized_count: usize,
-        kept_recent_count: usize,
         summary_preview: String,
         summary_body: String,
     },
@@ -136,16 +140,16 @@ pub enum PermissionEvent {
 impl From<ToolEvent> for Option<UiEvent> {
     fn from(event: ToolEvent) -> Self {
         match event {
-            ToolEvent::Start {
+            ToolEvent::Started {
                 name,
                 source,
                 arguments,
-            } => Some(UiEvent::ToolStart {
+            } => Some(UiEvent::ToolStarted {
                 name,
                 source,
                 arguments,
             }),
-            ToolEvent::End {
+            ToolEvent::Completed {
                 name,
                 source,
                 arguments,
@@ -154,7 +158,7 @@ impl From<ToolEvent> for Option<UiEvent> {
                 display,
                 error_kind,
                 message,
-            } => Some(UiEvent::ToolEnd {
+            } => Some(UiEvent::ToolCompleted {
                 name,
                 source,
                 arguments,
@@ -171,14 +175,14 @@ impl From<ToolEvent> for Option<UiEvent> {
 impl From<LlmEvent> for Option<UiEvent> {
     fn from(event: LlmEvent) -> Self {
         match event {
-            LlmEvent::Start => Some(UiEvent::LlmStart),
-            LlmEvent::End {
+            LlmEvent::Started => Some(UiEvent::LlmStarted),
+            LlmEvent::Completed {
                 response_chars,
                 tool_calls,
                 input_tokens,
                 output_tokens,
                 total_tokens,
-            } => Some(UiEvent::LlmEnd {
+            } => Some(UiEvent::LlmCompleted {
                 response_chars,
                 tool_calls,
                 input_tokens,
@@ -202,9 +206,8 @@ impl From<WarningEvent> for Option<UiEvent> {
 impl From<CompactionEvent> for Option<UiEvent> {
     fn from(event: CompactionEvent) -> Self {
         match event {
-            CompactionEvent::Started { source } => Some(UiEvent::CompactionStarted {
-                source: source.unwrap_or_default(),
-            }),
+            CompactionEvent::Requested { .. } => None,
+            CompactionEvent::Started { source } => Some(UiEvent::CompactionStarted { source }),
             CompactionEvent::SummaryChunk {
                 source,
                 delta,
@@ -214,16 +217,12 @@ impl From<CompactionEvent> for Option<UiEvent> {
                 delta,
                 aggregated,
             }),
-            CompactionEvent::Triggered {
+            CompactionEvent::Completed {
                 source,
-                summarized_count,
-                kept_recent_count,
                 summary_preview,
                 summary_body,
-            } => Some(UiEvent::CompactionTriggered {
+            } => Some(UiEvent::CompactionCompleted {
                 source,
-                summarized_count,
-                kept_recent_count,
                 summary_preview,
                 summary_body,
             }),
@@ -239,7 +238,7 @@ impl From<TurnEvent> for Option<UiEvent> {
         match event {
             // Turn started is not rendered in the TUI.
             TurnEvent::Started { .. } => None,
-            TurnEvent::TurnCompleted { tool_calls } => Some(UiEvent::Completed { tool_calls }),
+            TurnEvent::Completed { tool_calls } => Some(UiEvent::Completed { tool_calls }),
             // A2A-only completion — not for the TUI.
             TurnEvent::TaskCompleted { .. } => None,
         }

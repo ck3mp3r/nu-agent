@@ -35,15 +35,13 @@ pub trait CompactionTriggerPolicy {
 pub struct TokenCompactionPolicy {
     context_window_max: u64,
     threshold_pct: f64,
-    strategy: CompactionStrategy,
 }
 
 impl TokenCompactionPolicy {
-    pub fn new(context_window_max: u64, threshold_pct: f64, strategy: CompactionStrategy) -> Self {
+    pub fn new(context_window_max: u64, threshold_pct: f64) -> Self {
         Self {
             context_window_max,
             threshold_pct,
-            strategy,
         }
     }
 }
@@ -77,7 +75,7 @@ impl CompactionTriggerPolicy for TokenCompactionPolicy {
                     usage_pct * 100.0,
                     self.threshold_pct * 100.0
                 ),
-                strategy: self.strategy,
+                strategy: CompactionStrategy::SlidingSummary,
             }
         } else {
             CompactionTriggerDecision::NoFire {

@@ -3,7 +3,14 @@ use super::store::{
 };
 use crate::session::{SessionStore, extract_title};
 use crate::types::Message;
+use chrono::Utc;
 use tempfile::TempDir;
+
+/// Test result alias. NOTE: this module has a pre-existing test
+/// (`assistant_content_rejects_tagless_block`) that uses the 2-arg
+/// `Result<T, E>` form, so we cannot define a 1-arg `Result<T>` alias here.
+/// New tests use the fully-qualified form instead.
+type TestResult<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 /// Compare two messages via their serialized JSON form.
 ///
@@ -203,22 +210,33 @@ async fn jsonl_store_append_creates_session_if_missing() {
 
 #[test]
 fn compaction_marker_serde_roundtrip() {
-    let marker = CompactionMarker::new(
-        "Summary of old messages".to_string(),
-        5,
-        20,
-        "sliding_summary",
-    );
+    let marker = CompactionMarker::new("Summary of old messages".to_string(), Utc::now());
 
     let json = serde_json::to_string(&marker).unwrap();
     let deserialized: CompactionMarker = serde_json::from_str(&json).unwrap();
 
     assert_eq!(deserialized.entry_type, "compaction_marker");
     assert_eq!(deserialized.summary, "Summary of old messages");
-    assert_eq!(deserialized.kept_recent_count, 5);
-    assert_eq!(deserialized.summarized_count, 20);
-    assert_eq!(deserialized.strategy, "sliding_summary");
     assert_eq!(deserialized.created_at, marker.created_at);
+}
+
+/// A marker JSON without `created_at` deserializes with the default (epoch)
+/// via `#[serde(default)]`.
+#[test]
+fn compaction_marker_old_json_without_created_at_defaults() -> TestResult<()> {
+    // -- Setup & Fixtures
+    let old_json = r#"{
+        "type": "compaction_marker",
+        "summary": "old summary"
+    }"#;
+
+    // -- Exec
+    let marker: CompactionMarker = serde_json::from_str(old_json)?;
+
+    // -- Check
+    assert_eq!(marker.summary, "old summary");
+    assert_eq!(marker.created_at, chrono::DateTime::<Utc>::UNIX_EPOCH);
+    Ok(())
 }
 
 #[tokio::test]
@@ -233,7 +251,7 @@ async fn append_marker_writes_type_field_to_raw_jsonl() {
         .unwrap();
 
     // Append the marker
-    let marker = CompactionMarker::new("Summary".to_string(), 1, 3, "sliding_summary");
+    let marker = CompactionMarker::new("Summary".to_string(), Utc::now());
     store
         .append("test-session", &[StoreEntry::Marker(marker)])
         .await
@@ -264,7 +282,7 @@ async fn append_marker_writes_to_store() {
     store.create("test-session", &messages).await.unwrap();
 
     // Append a marker
-    let marker = CompactionMarker::new("Summary".to_string(), 2, 5, "sliding_summary");
+    let marker = CompactionMarker::new("Summary".to_string(), Utc::now());
     store
         .append("test-session", &[StoreEntry::Marker(marker)])
         .await
@@ -276,9 +294,6 @@ async fn append_marker_writes_to_store() {
     match &entries[2] {
         StoreEntry::Marker(m) => {
             assert_eq!(m.summary, "Summary");
-            assert_eq!(m.kept_recent_count, 2);
-            assert_eq!(m.summarized_count, 5);
-            assert_eq!(m.strategy, "sliding_summary");
         }
         _ => panic!("Expected marker as third entry"),
     }
@@ -293,7 +308,7 @@ async fn load_returns_messages_and_markers_in_order() {
     store.create("test-session", &initial).await.unwrap();
 
     // Append a marker
-    let marker = CompactionMarker::new("S1".to_string(), 2, 3, "sliding_summary");
+    let marker = CompactionMarker::new("S1".to_string(), Utc::now());
     store
         .append("test-session", &[StoreEntry::Marker(marker)])
         .await
@@ -325,7 +340,7 @@ async fn load_returns_all_entries_including_markers() {
     store.create("test-session", &messages).await.unwrap();
 
     // Append a marker
-    let marker = CompactionMarker::new("S".to_string(), 1, 2, "sliding_summary");
+    let marker = CompactionMarker::new("S".to_string(), Utc::now());
     store
         .append("test-session", &[StoreEntry::Marker(marker)])
         .await
@@ -371,7 +386,7 @@ fn extract_llm_context_single_marker() {
         })
         .collect();
 
-    let marker = CompactionMarker::new("Summary of first 6".to_string(), 4, 6, "sliding_summary");
+    let marker = CompactionMarker::new("Summary of first 6".to_string(), Utc::now());
     entries.push(StoreEntry::Marker(marker));
 
     // 4 kept messages re-appended after marker (2 user/assistant pairs)
@@ -408,7 +423,7 @@ fn extract_llm_context_multiple_markers() {
         ))));
     }
 
-    let marker1 = CompactionMarker::new("Summary1".to_string(), 3, 5, "sliding_summary");
+    let marker1 = CompactionMarker::new("Summary1".to_string(), Utc::now());
     entries.push(StoreEntry::Marker(marker1));
 
     // 4 messages between markers (2 user/assistant pairs)
@@ -420,7 +435,7 @@ fn extract_llm_context_multiple_markers() {
         ))));
     }
 
-    let marker2 = CompactionMarker::new("Summary2".to_string(), 2, 8, "sliding_summary");
+    let marker2 = CompactionMarker::new("Summary2".to_string(), Utc::now());
     entries.push(StoreEntry::Marker(marker2));
 
     // 2 kept messages re-appended after marker2 (1 user/assistant pair)
@@ -441,7 +456,7 @@ fn extract_llm_context_multiple_markers() {
 }
 
 #[test]
-fn extract_llm_context_kept_recent_count_correct() {
+fn extract_llm_context_kept_messages_after_marker_correct() {
     // Verify exactly k messages after marker are included
     let mut entries = Vec::new();
 
@@ -455,7 +470,7 @@ fn extract_llm_context_kept_recent_count_correct() {
     }
 
     // marker with kept=4
-    let marker = CompactionMarker::new("S".to_string(), 4, 4, "sliding_summary");
+    let marker = CompactionMarker::new("S".to_string(), Utc::now());
     entries.push(StoreEntry::Marker(marker));
 
     // 4 kept messages re-appended after marker — 2 user/assistant pairs
@@ -492,7 +507,7 @@ fn extract_llm_context_skips_older_markers_in_kept_range() {
     ];
 
     // marker1 at index 4
-    let marker1 = CompactionMarker::new("OldSummary".to_string(), 2, 3, "sliding_summary");
+    let marker1 = CompactionMarker::new("OldSummary".to_string(), Utc::now());
     entries.push(StoreEntry::Marker(marker1));
 
     // 2 messages between markers (1 user/assistant pair)
@@ -500,7 +515,7 @@ fn extract_llm_context_skips_older_markers_in_kept_range() {
     entries.push(StoreEntry::Message(Message::assistant("br0".to_string())));
 
     // marker2, kept=4
-    let marker2 = CompactionMarker::new("NewSummary".to_string(), 4, 6, "sliding_summary");
+    let marker2 = CompactionMarker::new("NewSummary".to_string(), Utc::now());
     entries.push(StoreEntry::Marker(marker2));
 
     // 4 kept messages re-appended after marker2 (2 user/assistant pairs)
@@ -540,7 +555,7 @@ fn extract_llm_context_empty_summary() {
     }
 
     // Marker with empty summary (SlidingWindow style)
-    let marker = CompactionMarker::new(String::new(), 4, 6, "sliding_window");
+    let marker = CompactionMarker::new(String::new(), Utc::now());
     entries.push(StoreEntry::Marker(marker));
 
     // 4 kept messages re-appended after marker (2 user/assistant pairs)
@@ -559,6 +574,49 @@ fn extract_llm_context_empty_summary() {
         matches!(&context[0], Message::User { .. }),
         "Expected user message, not system message when summary is empty"
     );
+}
+
+// --- AssistantContent tagged serialization (rig 0.42.0) ---
+
+/// rig 0.42.0 serializes `AssistantContent` with a `"type"` tag
+/// (`#[serde(tag = "type", rename_all = "lowercase")]`). Verify a
+/// `Message::Assistant` round-trips through serde with the tag intact.
+#[test]
+fn assistant_content_round_trips_with_type_tag() {
+    use crate::types::{AssistantContent, ToolCall, ToolCallId, ToolFunction};
+
+    let msg = crate::types::Message::Assistant {
+        id: None,
+        content: vec![
+            AssistantContent::Text(crate::types::Text::new("hello")),
+            AssistantContent::ToolCall(ToolCall::new(
+                ToolCallId::new_or_mint("call_1"),
+                ToolFunction::new("some_tool".to_string(), serde_json::json!({"a": 1})),
+            )),
+        ],
+    };
+
+    // Serialize and verify the "type" tags are present on each content block.
+    let value = serde_json::to_value(&msg).unwrap();
+    let content = value["content"].as_array().unwrap();
+    assert_eq!(content[0]["type"], "text");
+    // `rename_all = "lowercase"` lowercases the variant name without inserting
+    // separators, so `ToolCall` serializes as `"toolcall"`.
+    assert_eq!(content[1]["type"], "toolcall");
+    assert_eq!(content[1]["function"]["name"], "some_tool");
+
+    // Deserialize back and verify exact equality.
+    let round_tripped: crate::types::Message = serde_json::from_value(value).unwrap();
+    assert_msg_eq(&round_tripped, &msg);
+}
+
+/// A bare tagless `{"text": ...}` block must NOT deserialize as
+/// `AssistantContent` — 0.42.0 requires the `"type"` tag (no fallback).
+#[test]
+fn assistant_content_rejects_tagless_block() {
+    let tagless = serde_json::json!({"text": "hello"});
+    let result: Result<crate::types::AssistantContent, _> = serde_json::from_value(tagless);
+    assert!(result.is_err(), "tagless block must be rejected");
 }
 
 // --- StoreEntry serialization tests ---
@@ -584,7 +642,7 @@ async fn append_marker_writes_marker_to_jsonl() {
     let temp_dir = TempDir::new().unwrap();
     let store = FsSessionStore::new(temp_dir.path().to_path_buf());
     store.create("s1", &[Message::user("hi")]).await.unwrap();
-    let marker = CompactionMarker::new("summary".to_string(), 5, 3, "sliding_summary");
+    let marker = CompactionMarker::new("summary".to_string(), Utc::now());
     store
         .append("s1", &[StoreEntry::Marker(marker)])
         .await
@@ -696,7 +754,7 @@ async fn load_preserves_marker_and_post_marker_entries() {
         .unwrap();
 
     // Compaction marker
-    let marker = CompactionMarker::new("summary".to_string(), 1, 1, "sliding_summary");
+    let marker = CompactionMarker::new("summary".to_string(), Utc::now());
     store
         .append(session_id, &[StoreEntry::Marker(marker)])
         .await
@@ -730,7 +788,7 @@ async fn load_preserves_multiple_post_compaction_entries() {
         .await
         .unwrap();
 
-    let marker = CompactionMarker::new("summary".to_string(), 1, 1, "sliding_summary");
+    let marker = CompactionMarker::new("summary".to_string(), Utc::now());
     store
         .append(session_id, &[StoreEntry::Marker(marker)])
         .await
@@ -766,24 +824,25 @@ async fn load_preserves_multiple_post_compaction_entries() {
 // ================================================================
 
 fn make_tool_call_msg(id: &str) -> crate::types::Message {
-    use crate::types::{AssistantContent, ToolCall, ToolFunction};
+    use crate::types::{AssistantContent, ToolCall, ToolCallId, ToolFunction};
     crate::types::Message::Assistant {
         id: None,
-        content: rig::one_or_many::OneOrMany::one(AssistantContent::ToolCall(ToolCall::new(
-            id.to_string(),
+        content: vec![AssistantContent::ToolCall(ToolCall::new(
+            ToolCallId::new_or_mint(id),
             ToolFunction::new("some_tool".to_string(), serde_json::json!({})),
-        ))),
+        ))],
     }
 }
 
 fn make_tool_result_msg(id: &str) -> crate::types::Message {
-    use crate::types::{ToolResult, ToolResultContent, UserContent};
+    use crate::types::{ToolCallId, ToolResult, ToolResultContent, UserContent};
     crate::types::Message::User {
-        content: rig::one_or_many::OneOrMany::one(UserContent::ToolResult(ToolResult {
-            id: id.to_string(),
-            call_id: None,
-            content: rig::one_or_many::OneOrMany::one(ToolResultContent::text("ok")),
-        })),
+        content: vec![UserContent::ToolResult(ToolResult {
+            call: ToolCallId::new_or_mint(id),
+            provider: None,
+            name: "some_tool".into(),
+            content: vec![ToolResultContent::text("ok")],
+        })],
     }
 }
 

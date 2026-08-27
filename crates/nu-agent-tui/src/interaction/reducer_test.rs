@@ -91,14 +91,14 @@ fn table_driven_ui_event_mapping_keeps_completed_as_finalize_boundary() {
     let _ = state.activate_next_prompt();
 
     let cases = vec![
-        UiEvent::LlmStart,
+        UiEvent::LlmStarted,
         UiEvent::Tick,
-        UiEvent::ToolStart {
+        UiEvent::ToolStarted {
             name: "k8s__list_pods".to_string(),
             source: "mcp".to_string(),
             arguments: "{}".to_string(),
         },
-        UiEvent::ToolEnd {
+        UiEvent::ToolCompleted {
             name: "k8s__list_pods".to_string(),
             source: "mcp".to_string(),
             arguments: "{}".to_string(),
@@ -108,7 +108,7 @@ fn table_driven_ui_event_mapping_keeps_completed_as_finalize_boundary() {
             error_kind: None,
             message: None,
         },
-        UiEvent::LlmEnd {
+        UiEvent::LlmCompleted {
             response_chars: 12,
             tool_calls: 1,
             input_tokens: 4,
@@ -345,7 +345,7 @@ fn tool_end_transcript_line_shows_args_summary_without_result_payload_dump() {
     let mut state = AppState::new();
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStarted {
             name: "k8s__list_pods".to_string(),
             source: "mcp".to_string(),
             arguments: r#"{"namespace":"prod"}"#.to_string(),
@@ -354,7 +354,7 @@ fn tool_end_transcript_line_shows_args_summary_without_result_payload_dump() {
     );
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::ToolEnd {
+        event_input(UiEvent::ToolCompleted {
             name: "k8s__list_pods".to_string(),
             source: "mcp".to_string(),
             arguments: r#"{"namespace":"prod"}"#.to_string(),
@@ -367,7 +367,7 @@ fn tool_end_transcript_line_shows_args_summary_without_result_payload_dump() {
         None,
     );
 
-    // [Spacer, Tool] — ToolStart pushed a starting spacer, ToolEnd pushed no display
+    // [Spacer, Tool] — ToolStarted pushed a starting spacer, ToolCompleted pushed no display
     assert_eq!(state.transcript_preview.len(), 2);
     assert!(matches!(
         state.transcript_preview[0].kind,
@@ -392,7 +392,7 @@ fn tool_row_materializes_immediately_on_tool_start_with_args_and_running_status(
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStarted {
             name: "k8s__list_pods".to_string(),
             source: "mcp".to_string(),
             arguments: r#"{"namespace":"prod"}"#.to_string(),
@@ -426,7 +426,7 @@ fn tool_end_transitions_same_row_to_done_or_failed_status() {
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStarted {
             name: "gh__get_pr".to_string(),
             source: "mcp".to_string(),
             arguments: r#"{"number":1}"#.to_string(),
@@ -435,7 +435,7 @@ fn tool_end_transitions_same_row_to_done_or_failed_status() {
     );
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::ToolEnd {
+        event_input(UiEvent::ToolCompleted {
             name: "gh__get_pr".to_string(),
             source: "mcp".to_string(),
             arguments: r#"{"number":1}"#.to_string(),
@@ -460,7 +460,7 @@ fn tool_end_transitions_same_row_to_done_or_failed_status() {
     let mut failed = AppState::new();
     reduce_with_cancel_controller(
         &mut failed,
-        event_input(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStarted {
             name: "gh__get_pr".to_string(),
             source: "mcp".to_string(),
             arguments: r#"{"number":2}"#.to_string(),
@@ -469,7 +469,7 @@ fn tool_end_transitions_same_row_to_done_or_failed_status() {
     );
     reduce_with_cancel_controller(
         &mut failed,
-        event_input(UiEvent::ToolEnd {
+        event_input(UiEvent::ToolCompleted {
             name: "gh__get_pr".to_string(),
             source: "mcp".to_string(),
             arguments: r#"{"number":2}"#.to_string(),
@@ -498,7 +498,7 @@ fn llm_end_event_updates_latest_and_rolling_token_usage() {
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::LlmEnd {
+        event_input(UiEvent::LlmCompleted {
             response_chars: 6,
             tool_calls: 0,
             input_tokens: 20,
@@ -515,7 +515,7 @@ fn llm_end_event_updates_latest_and_rolling_token_usage() {
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::LlmEnd {
+        event_input(UiEvent::LlmCompleted {
             response_chars: 4,
             tool_calls: 0,
             input_tokens: 5,
@@ -559,7 +559,7 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
         let mut state = busy_state_with_clean_transcript();
         reduce_with_cancel_controller(
             &mut state,
-            event_input(UiEvent::ToolStart {
+            event_input(UiEvent::ToolStarted {
                 name: "k8s__list_pods".to_string(),
                 source: "mcp".to_string(),
                 arguments: r#"{"namespace":"prod"}"#.to_string(),
@@ -572,12 +572,12 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
     let cases = vec![
         Case {
             name: "llm_start_from_idle_moves_busy",
-            event: UiEvent::LlmStart,
+            event: UiEvent::LlmStarted,
             pre: idle,
         },
         Case {
             name: "llm_start_when_busy_is_noop",
-            event: UiEvent::LlmStart,
+            event: UiEvent::LlmStarted,
             pre: busy_with_status,
         },
         Case {
@@ -592,7 +592,7 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
         },
         Case {
             name: "tool_start_sets_status",
-            event: UiEvent::ToolStart {
+            event: UiEvent::ToolStarted {
                 name: "k8s__list_pods".to_string(),
                 source: "mcp".to_string(),
                 arguments: "{}".to_string(),
@@ -601,7 +601,7 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
         },
         Case {
             name: "tool_end_updates_existing_tool_line_and_thinking",
-            event: UiEvent::ToolEnd {
+            event: UiEvent::ToolCompleted {
                 name: "k8s__list_pods".to_string(),
                 source: "mcp".to_string(),
                 arguments: r#"{"namespace":"prod"}"#.to_string(),
@@ -615,7 +615,7 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
         },
         Case {
             name: "llm_end_records_tokens_and_sets_ready_status",
-            event: UiEvent::LlmEnd {
+            event: UiEvent::LlmCompleted {
                 response_chars: 12,
                 tool_calls: 0,
                 input_tokens: 4,
@@ -723,10 +723,8 @@ fn compaction_summary_is_rendered_in_transcript() {
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::CompactionTriggered {
+        event_input(UiEvent::CompactionCompleted {
             source: "slash_compact".to_string(),
-            summarized_count: 5,
-            kept_recent_count: 2,
             summary_preview: "short summary preview".to_string(),
             summary_body: "full summary body".to_string(),
         }),
@@ -776,10 +774,8 @@ fn compaction_artifact_renders_as_single_markdown_block() {
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::CompactionTriggered {
+        event_input(UiEvent::CompactionCompleted {
             source: "slash_compact".to_string(),
-            summarized_count: 3,
-            kept_recent_count: 2,
             summary_preview: "preview".to_string(),
             summary_body: "## Summary\n- one\n- two".to_string(),
         }),
@@ -818,10 +814,8 @@ fn compaction_artifact_does_not_double_wrap_summary_heading() {
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::CompactionTriggered {
+        event_input(UiEvent::CompactionCompleted {
             source: "slash_compact".to_string(),
-            summarized_count: 1,
-            kept_recent_count: 1,
             summary_preview: "## Summary".to_string(),
             summary_body: "## Summary\n- single".to_string(),
         }),
@@ -845,10 +839,8 @@ fn compaction_artifact_preserves_bullets_without_duplication() {
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::CompactionTriggered {
+        event_input(UiEvent::CompactionCompleted {
             source: "auto_threshold".to_string(),
-            summarized_count: 8,
-            kept_recent_count: 4,
             summary_preview: "preview".to_string(),
             summary_body: "- alpha\n- beta".to_string(),
         }),
@@ -887,10 +879,8 @@ fn compaction_block_completion_hides_source_and_explanatory_copy() {
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::CompactionTriggered {
+        event_input(UiEvent::CompactionCompleted {
             source: "auto_threshold".to_string(),
-            summarized_count: 9,
-            kept_recent_count: 3,
             summary_preview: "preview".to_string(),
             summary_body: "## Summary\ncontent line".to_string(),
         }),
@@ -966,10 +956,8 @@ fn compaction_block_summary_rendering_remains_clean_after_copy_removal() {
     );
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::CompactionTriggered {
+        event_input(UiEvent::CompactionCompleted {
             source: "slash_compact".to_string(),
-            summarized_count: 1,
-            kept_recent_count: 1,
             summary_preview: "preview".to_string(),
             summary_body: "## Summary\n- alpha\n- beta".to_string(),
         }),
@@ -1022,10 +1010,8 @@ fn compaction_metadata_not_included_in_future_prompt_history() {
     );
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::CompactionTriggered {
+        event_input(UiEvent::CompactionCompleted {
             source: "slash_compact".to_string(),
-            summarized_count: 4,
-            kept_recent_count: 2,
             summary_preview: "preview".to_string(),
             summary_body: "persisted summary body".to_string(),
         }),
@@ -1058,10 +1044,8 @@ fn compaction_noop_does_not_claim_persisted_summary() {
     );
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::CompactionTriggered {
+        event_input(UiEvent::CompactionCompleted {
             source: "auto_threshold".to_string(),
-            summarized_count: 0,
-            kept_recent_count: 6,
             summary_preview: "preview".to_string(),
             summary_body: "(empty summary)".to_string(),
         }),
@@ -1098,10 +1082,8 @@ fn compaction_block_renders_for_slash_and_auto_triggers() {
         );
         reduce_with_cancel_controller(
             &mut state,
-            event_input(UiEvent::CompactionTriggered {
+            event_input(UiEvent::CompactionCompleted {
                 source: source.to_string(),
-                summarized_count: 2,
-                kept_recent_count: 1,
                 summary_preview: "preview".to_string(),
                 summary_body: format!("summary from {source}"),
             }),
@@ -1264,7 +1246,7 @@ fn tool_start_truncates_long_args_summary_with_ellipsis() {
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStarted {
             name: "k8s__describe".to_string(),
             source: "mcp".to_string(),
             arguments: long_args,
@@ -1294,7 +1276,7 @@ fn tool_display_renders_diff_sections_as_dedicated_code_blocks() {
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStarted {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"path":"sample.txt"}"#.to_string(),
@@ -1304,7 +1286,7 @@ fn tool_display_renders_diff_sections_as_dedicated_code_blocks() {
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::ToolEnd {
+        event_input(UiEvent::ToolCompleted {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"path":"sample.txt"}"#.to_string(),
@@ -1345,7 +1327,7 @@ fn tool_display_body_lines_are_unprefixed_while_tool_call_line_remains_prefixed(
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStarted {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"path":"sample.txt"}"#.to_string(),
@@ -1355,7 +1337,7 @@ fn tool_display_body_lines_are_unprefixed_while_tool_call_line_remains_prefixed(
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::ToolEnd {
+        event_input(UiEvent::ToolCompleted {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"path":"sample.txt"}"#.to_string(),
@@ -1411,7 +1393,7 @@ fn tool_display_diff_block_highlighting_remains_after_prefix_hygiene_fix() {
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStarted {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"path":"sample.txt"}"#.to_string(),
@@ -1421,7 +1403,7 @@ fn tool_display_diff_block_highlighting_remains_after_prefix_hygiene_fix() {
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::ToolEnd {
+        event_input(UiEvent::ToolCompleted {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"path":"sample.txt"}"#.to_string(),
@@ -1466,7 +1448,7 @@ fn edit_preview_display_omits_redundant_edit_path_header() {
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStarted {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"path":"sample.txt"}"#.to_string(),
@@ -1476,7 +1458,7 @@ fn edit_preview_display_omits_redundant_edit_path_header() {
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::ToolEnd {
+        event_input(UiEvent::ToolCompleted {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"path":"sample.txt"}"#.to_string(),
@@ -1513,7 +1495,7 @@ fn edit_preview_display_omits_redundant_single_file_stats_line() {
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStarted {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"path":"sample.txt"}"#.to_string(),
@@ -1523,7 +1505,7 @@ fn edit_preview_display_omits_redundant_single_file_stats_line() {
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::ToolEnd {
+        event_input(UiEvent::ToolCompleted {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"path":"sample.txt"}"#.to_string(),
@@ -1567,7 +1549,7 @@ fn assistant_dry_run_diff_regurgitation_is_suppressed_when_direct_display_presen
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStarted {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"path":"sample.txt"}"#.to_string(),
@@ -1577,7 +1559,7 @@ fn assistant_dry_run_diff_regurgitation_is_suppressed_when_direct_display_presen
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::ToolEnd {
+        event_input(UiEvent::ToolCompleted {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"path":"sample.txt"}"#.to_string(),
@@ -1647,7 +1629,7 @@ fn diff_display_preserves_hunk_line_range_context() {
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStarted {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"path":"sample.txt"}"#.to_string(),
@@ -1657,7 +1639,7 @@ fn diff_display_preserves_hunk_line_range_context() {
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::ToolEnd {
+        event_input(UiEvent::ToolCompleted {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"path":"sample.txt"}"#.to_string(),
@@ -1696,7 +1678,7 @@ fn diff_display_supports_line_number_readability_without_breaking_highlighting()
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStarted {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"path":"sample.txt"}"#.to_string(),
@@ -1706,7 +1688,7 @@ fn diff_display_supports_line_number_readability_without_breaking_highlighting()
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::ToolEnd {
+        event_input(UiEvent::ToolCompleted {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"path":"sample.txt"}"#.to_string(),
@@ -1751,7 +1733,7 @@ fn permission_requested_with_display_pushes_to_transcript() {
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStarted {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"file":"foo.rs"}"#.to_string(),
@@ -1812,7 +1794,7 @@ fn tool_end_after_permission_does_not_duplicate_display() {
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStarted {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"file":"foo.rs"}"#.to_string(),
@@ -1851,7 +1833,7 @@ fn tool_end_after_permission_does_not_duplicate_display() {
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::ToolEnd {
+        event_input(UiEvent::ToolCompleted {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"file":"foo.rs"}"#.to_string(),
@@ -1883,7 +1865,7 @@ fn tool_end_without_prior_permission_pushes_display_normally() {
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStarted {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"file":"bar.rs"}"#.to_string(),
@@ -1893,7 +1875,7 @@ fn tool_end_without_prior_permission_pushes_display_normally() {
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::ToolEnd {
+        event_input(UiEvent::ToolCompleted {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"file":"bar.rs"}"#.to_string(),
@@ -1936,7 +1918,7 @@ fn permission_requested_without_display_does_not_add_transcript_entries() {
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStarted {
             name: "nu".to_string(),
             source: "mcp".to_string(),
             arguments: r#"{"command":"ls"}"#.to_string(),
@@ -2053,13 +2035,13 @@ fn streaming_message_start_reset_on_llm_start() {
     // Still should be set
     assert!(state.streaming_message_start.is_some());
 
-    // Emit LlmStart (new LLM response begins)
-    reduce_with_cancel_controller(&mut state, event_input(UiEvent::LlmStart), None);
+    // Emit LlmStarted (new LLM response begins)
+    reduce_with_cancel_controller(&mut state, event_input(UiEvent::LlmStarted), None);
 
     // Verify streaming_message_start is reset to None
     assert!(
         state.streaming_message_start.is_none(),
-        "LlmStart should reset streaming_message_start to None"
+        "LlmStarted should reset streaming_message_start to None"
     );
 }
 
@@ -2159,16 +2141,14 @@ fn turn_error_leaves_ui_in_recoverable_state() {
 }
 
 #[test]
-fn compaction_triggered_clears_status_line() {
+fn compaction_completed_clears_status_line() {
     let mut state = busy_state_with_clean_transcript();
     state.status_line = "Thinking...".to_string();
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::CompactionTriggered {
+        event_input(UiEvent::CompactionCompleted {
             source: "test".into(),
-            summarized_count: 5,
-            kept_recent_count: 3,
             summary_preview: "...".into(),
             summary_body: "summary".into(),
         }),
@@ -2177,23 +2157,21 @@ fn compaction_triggered_clears_status_line() {
 
     assert!(
         state.status_line.is_empty(),
-        "status_line should be cleared after CompactionTriggered, got: {:?}",
+        "status_line should be cleared after CompactionCompleted, got: {:?}",
         state.status_line
     );
 }
 
 #[test]
-fn compaction_triggered_resets_latest_total_tokens() {
+fn compaction_completed_resets_latest_total_tokens() {
     let mut state = busy_state_with_clean_transcript();
     // Simulate pre-compaction state: token usage is known
     state.latest_total_tokens = Some(50_000);
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::CompactionTriggered {
+        event_input(UiEvent::CompactionCompleted {
             source: "test".into(),
-            summarized_count: 5,
-            kept_recent_count: 3,
             summary_preview: "...".into(),
             summary_body: "summary".into(),
         }),
@@ -2202,7 +2180,7 @@ fn compaction_triggered_resets_latest_total_tokens() {
 
     assert_eq!(
         state.latest_total_tokens, None,
-        "latest_total_tokens should be reset to None after CompactionTriggered"
+        "latest_total_tokens should be reset to None after CompactionCompleted"
     );
 }
 
@@ -2276,10 +2254,8 @@ fn compaction_streaming_renders_progressively() {
     // Finalize
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::CompactionTriggered {
+        event_input(UiEvent::CompactionCompleted {
             source: "auto".to_string(),
-            summarized_count: 5,
-            kept_recent_count: 2,
             summary_preview: "Hello world done".to_string(),
             summary_body: "Hello world done".to_string(),
         }),
@@ -2373,7 +2349,7 @@ fn compaction_streaming_empty_chunks_ignored() {
 }
 
 #[test]
-fn compaction_triggered_clears_streaming_state() {
+fn compaction_completed_clears_streaming_state() {
     let mut state = AppState::default();
 
     reduce_with_cancel_controller(
@@ -2396,10 +2372,8 @@ fn compaction_triggered_clears_streaming_state() {
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::CompactionTriggered {
+        event_input(UiEvent::CompactionCompleted {
             source: "auto".to_string(),
-            summarized_count: 5,
-            kept_recent_count: 2,
             summary_preview: "text".to_string(),
             summary_body: "text".to_string(),
         }),
@@ -2408,7 +2382,7 @@ fn compaction_triggered_clears_streaming_state() {
 
     assert!(
         state.compaction_streaming_start.is_none(),
-        "streaming state must be cleared after CompactionTriggered"
+        "streaming state must be cleared after CompactionCompleted"
     );
 }
 
@@ -3120,7 +3094,7 @@ fn handle_tool_start_pushes_starting_spacer() {
     let mut state = AppState::new();
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::ToolStart {
+        event_input(UiEvent::ToolStarted {
             name: "read".to_string(),
             source: "builtin".to_string(),
             arguments: "{}".to_string(),
@@ -3164,7 +3138,7 @@ fn handle_tool_end_does_not_push_spacer_between_tool_calls() {
     for name in ["read", "write"] {
         reduce_with_cancel_controller(
             &mut state,
-            event_input(UiEvent::ToolStart {
+            event_input(UiEvent::ToolStarted {
                 name: name.to_string(),
                 source: "builtin".to_string(),
                 arguments: "{}".to_string(),
@@ -3173,7 +3147,7 @@ fn handle_tool_end_does_not_push_spacer_between_tool_calls() {
         );
         reduce_with_cancel_controller(
             &mut state,
-            event_input(UiEvent::ToolEnd {
+            event_input(UiEvent::ToolCompleted {
                 name: name.to_string(),
                 source: "builtin".to_string(),
                 arguments: "{}".to_string(),

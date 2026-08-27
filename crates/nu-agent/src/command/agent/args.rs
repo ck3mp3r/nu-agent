@@ -118,10 +118,9 @@ pub(crate) fn extract_agent_flags(call: &EvaluatedCall) -> (Option<String>, Opti
 
 /// Parse a compaction strategy string into a `CompactionStrategy` enum.
 ///
-/// Uses serde deserialization which supports the canonical names and aliases:
-/// - `"sliding_summary"` / `"truncate"` / `"sliding"` / `"summarize"` → `SlidingSummary`
-/// - `"sliding_window"` → `SlidingWindow`
-/// - `"token_truncate"` → `TokenTruncate`
+/// Uses serde deserialization which supports the canonical name and aliases:
+/// - `"sliding_summary"` / `"truncate"` / `"sliding"` / `"summarize"` /
+///   `"sliding_window"` / `"token_truncate"` → `SlidingSummary`
 ///
 /// # Arguments
 /// * `s` - The strategy string to parse
@@ -133,7 +132,7 @@ pub(crate) fn parse_strategy_from_str(
 ) -> Result<nu_agent_core::compaction::CompactionStrategy, String> {
     serde_json::from_value(serde_json::Value::String(s.to_string())).map_err(|_| {
         format!(
-            "Unknown compaction strategy '{}'. Valid values: sliding_summary, sliding_window, token_truncate",
+            "Unknown compaction strategy '{}'. Valid values: sliding_summary",
             s
         )
     })
@@ -155,15 +154,6 @@ pub(crate) fn parse_strategy_from_str(
 pub(crate) fn extract_compaction_flags(
     call: &EvaluatedCall,
 ) -> Result<nu_agent_core::config::CompactionConfig, LabeledError> {
-    // Helper to safely extract usize flag (from i64, rejecting negatives)
-    fn get_usize_flag(call: &EvaluatedCall, name: &str) -> Option<usize> {
-        call.get_flag(name)
-            .ok()
-            .flatten()
-            .and_then(|v: Value| v.as_int().ok())
-            .and_then(|i| if i >= 0 { Some(i as usize) } else { None })
-    }
-
     // Parse --compaction-strategy
     let strategy = if let Some(strategy_str) = call
         .get_flag::<Value>("compaction-strategy")
@@ -178,9 +168,6 @@ pub(crate) fn extract_compaction_flags(
         None
     };
 
-    let keep_recent = get_usize_flag(call, "keep-recent");
-    let token_budget = get_usize_flag(call, "token-budget");
-
     // Parse --proactive-threshold-pct
     let proactive_threshold_pct = call
         .get_flag::<Value>("proactive-threshold-pct")
@@ -190,8 +177,6 @@ pub(crate) fn extract_compaction_flags(
 
     Ok(nu_agent_core::config::CompactionConfig {
         strategy,
-        keep_recent,
-        token_budget,
         proactive_threshold_pct,
     })
 }

@@ -10,7 +10,7 @@ use crate::command::provider::{
     AgentProviderAuthLogin, AgentProviderAuthLogout, AgentProviderAuthStatus,
 };
 use crate::command::session::{AgentSessionClear, AgentSessionInspect, AgentSessionList};
-use nu_agent_core::session::{SessionStoreImpl, StoreError, StoreType, create_store};
+use nu_agent_core::session::{SessionStoreBackend, StoreError, StoreType, create_store};
 
 pub struct AgentPlugin {
     pub(crate) runtime: tokio::runtime::Runtime,
@@ -18,7 +18,7 @@ pub struct AgentPlugin {
     /// Cached in-memory session store, created once and reused for the agent's
     /// entire runtime. A fresh `:memory:` SQLite database is empty each time,
     /// so it must be created exactly once and shared across all commands.
-    cached_memory_store: Mutex<Option<SessionStoreImpl>>,
+    cached_memory_store: Mutex<Option<SessionStoreBackend>>,
 }
 
 impl AgentPlugin {
@@ -39,13 +39,16 @@ impl AgentPlugin {
 
     /// Creates the session store on first use. Called by each command's `run()`
     /// method to obtain the store lazily rather than at plugin construction.
-    pub fn create_store(&self) -> Result<SessionStoreImpl, StoreError> {
+    pub fn create_store(&self) -> Result<SessionStoreBackend, StoreError> {
         self.create_store_with(self.store_type)
     }
 
     /// Creates the session store with a specific store type.
     /// Used when the CLI `--store` flag overrides the default.
-    pub fn create_store_with(&self, store_type: StoreType) -> Result<SessionStoreImpl, StoreError> {
+    pub fn create_store_with(
+        &self,
+        store_type: StoreType,
+    ) -> Result<SessionStoreBackend, StoreError> {
         if store_type == StoreType::Memory {
             let mut cache = self
                 .cached_memory_store

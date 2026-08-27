@@ -1,6 +1,7 @@
 use super::SqliteSessionStore;
 use crate::session::store::{CompactionMarker, SessionStore, StoreEntry};
 use crate::types::Message;
+use chrono::Utc;
 
 // ================================================================
 // Basic CRUD
@@ -55,12 +56,7 @@ async fn create_and_load_with_markers() {
         .expect("create");
 
     // Append a compaction marker
-    let marker = CompactionMarker::new(
-        "Summary of old messages".to_string(),
-        2,
-        5,
-        "sliding_summary",
-    );
+    let marker = CompactionMarker::new("Summary of old messages".to_string(), Utc::now());
     store
         .append(session_id, &[StoreEntry::Marker(marker)])
         .await
@@ -290,9 +286,7 @@ async fn replace_entries_cleans_and_rewrites() {
         StoreEntry::Message(Message::assistant("compacted_assistant")),
         StoreEntry::Marker(CompactionMarker::new(
             "Compacted summary".to_string(),
-            2,
-            10,
-            "sliding_summary",
+            Utc::now(),
         )),
     ];
     store
@@ -341,12 +335,7 @@ async fn replace_entries_preserves_order() {
     // Replace with entries in specific order
     let new_entries = vec![
         StoreEntry::Message(Message::user("first")),
-        StoreEntry::Marker(CompactionMarker::new(
-            "Marker".to_string(),
-            1,
-            1,
-            "sliding_summary",
-        )),
+        StoreEntry::Marker(CompactionMarker::new("Marker".to_string(), Utc::now())),
         StoreEntry::Message(Message::assistant("second")),
     ];
     store

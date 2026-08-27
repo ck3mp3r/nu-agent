@@ -2,196 +2,6 @@ use super::test_shared::*;
 use crate::protocol::event::PermissionDecisionSubmission;
 
 #[tokio::test]
-async fn interactive_loop_emits_auto_compaction_when_policy_fires() {
-    let bus = create_bus();
-    let runtime = FakeRuntime {
-        auto_decisions: [CompactionTriggerDecision::Fire {
-            source: CompactionTriggerSource::AutoThreshold,
-            reason: "threshold_reached".to_string(),
-            strategy: CompactionStrategy::SlidingSummary,
-        }]
-        .into_iter()
-        .collect(),
-        bus: bus.clone(),
-        ..Default::default()
-    };
-    let ui = FakeInteractiveUi::with_prompts(&["hello"])
-        .with_min_bus_events(3)
-        .with_expected_compaction_events(1)
-        .with_bus(bus.clone());
-
-    let spawner = ui.make_event_spawner();
-    let (runtime, result) = run_interactive_loop_impl(
-        runtime,
-        InteractiveLoopConfig::new(Span::test_data())
-            .with_bus(bus)
-            .with_spawn_render_loop(spawner),
-    )
-    .await;
-    let value = result.expect("interactive loop");
-
-    assert!(value.is_nothing());
-    assert_eq!(
-        runtime.executed_compaction_sources,
-        vec![CompactionTriggerSource::AutoThreshold]
-    );
-}
-
-#[tokio::test]
-async fn interactive_loop_skips_auto_compaction_when_policy_no_fire() {
-    let bus = create_bus();
-    let runtime = FakeRuntime {
-        auto_decisions: [CompactionTriggerDecision::NoFire {
-            reason: "below_lower_bound".to_string(),
-        }]
-        .into_iter()
-        .collect(),
-        bus: bus.clone(),
-        ..Default::default()
-    };
-    let ui = FakeInteractiveUi::with_prompts(&[]).with_bus(bus.clone());
-    let spawner = ui.make_event_spawner();
-    let (runtime, result) = run_interactive_loop_impl(
-        runtime,
-        InteractiveLoopConfig::new(Span::test_data())
-            .with_bus(bus)
-            .with_spawn_render_loop(spawner),
-    )
-    .await;
-    let value = result.expect("interactive loop");
-
-    assert!(value.is_nothing());
-    assert!(runtime.executed_compaction_sources.is_empty());
-}
-
-#[tokio::test]
-async fn interactive_loop_does_not_duplicate_auto_compaction_while_disarmed() {
-    let bus = create_bus();
-    let runtime = FakeRuntime {
-        auto_decisions: [CompactionTriggerDecision::Fire {
-            source: CompactionTriggerSource::AutoThreshold,
-            reason: "threshold_reached".to_string(),
-            strategy: CompactionStrategy::SlidingSummary,
-        }]
-        .into_iter()
-        .collect(),
-        bus: bus.clone(),
-        ..Default::default()
-    };
-    let ui = FakeInteractiveUi::with_prompts(&["hello"])
-        .with_min_bus_events(3)
-        .with_expected_compaction_events(1)
-        .with_bus(bus.clone());
-
-    let spawner = ui.make_event_spawner();
-    let (runtime, result) = run_interactive_loop_impl(
-        runtime,
-        InteractiveLoopConfig::new(Span::test_data())
-            .with_bus(bus)
-            .with_spawn_render_loop(spawner),
-    )
-    .await;
-    let value = result.expect("interactive loop");
-
-    assert!(value.is_nothing());
-    assert_eq!(runtime.executed_compaction_sources.len(), 1);
-    assert_eq!(
-        runtime.executed_compaction_sources[0],
-        CompactionTriggerSource::AutoThreshold
-    );
-}
-
-#[tokio::test]
-async fn auto_compaction_rearms_after_turn_completion() {
-    let bus = create_bus();
-    let runtime = FakeRuntime {
-        auto_decisions: [
-            CompactionTriggerDecision::Fire {
-                source: CompactionTriggerSource::AutoThreshold,
-                reason: "threshold_reached".to_string(),
-                strategy: CompactionStrategy::SlidingSummary,
-            },
-            CompactionTriggerDecision::Fire {
-                source: CompactionTriggerSource::AutoThreshold,
-                reason: "threshold_reached_again".to_string(),
-                strategy: CompactionStrategy::SlidingSummary,
-            },
-        ]
-        .into_iter()
-        .collect(),
-        bus: bus.clone(),
-        ..Default::default()
-    };
-    let ui = FakeInteractiveUi::with_prompts(&["first", "second"])
-        .with_min_bus_events(8)
-        .with_expected_compaction_events(2)
-        .with_bus(bus.clone());
-
-    let spawner = ui.make_event_spawner();
-    let (runtime, result) = run_interactive_loop_impl(
-        runtime,
-        InteractiveLoopConfig::new(Span::test_data())
-            .with_bus(bus)
-            .with_spawn_render_loop(spawner),
-    )
-    .await;
-    let value = result.expect("interactive loop");
-
-    assert!(value.is_nothing());
-    assert_eq!(
-        runtime.prompts,
-        vec!["first".to_string(), "second".to_string()],
-        "prompts must be processed"
-    );
-    assert_eq!(
-        runtime.auto_decisions.len(),
-        0,
-        "all decisions must be consumed"
-    );
-    assert_eq!(
-        runtime.executed_compaction_sources,
-        vec![
-            CompactionTriggerSource::AutoThreshold,
-            CompactionTriggerSource::AutoThreshold,
-        ]
-    );
-}
-
-#[tokio::test]
-async fn interactive_loop_continues_turn_processing_with_auto_compaction_enabled() {
-    let bus = create_bus();
-    let runtime = FakeRuntime {
-        auto_decisions: [CompactionTriggerDecision::Fire {
-            source: CompactionTriggerSource::AutoThreshold,
-            reason: "threshold_reached".to_string(),
-            strategy: CompactionStrategy::SlidingSummary,
-        }]
-        .into_iter()
-        .collect(),
-        bus: bus.clone(),
-        ..Default::default()
-    };
-    let ui = FakeInteractiveUi::with_prompts(&["hello"]).with_bus(bus.clone());
-
-    let spawner = ui.make_event_spawner();
-    let (runtime, result) = run_interactive_loop_impl(
-        runtime,
-        InteractiveLoopConfig::new(Span::test_data())
-            .with_bus(bus)
-            .with_spawn_render_loop(spawner),
-    )
-    .await;
-    let value = result.expect("interactive loop");
-
-    assert!(value.is_nothing());
-    assert_eq!(runtime.prompts, vec!["hello".to_string()]);
-    assert_eq!(
-        runtime.executed_compaction_sources,
-        vec![CompactionTriggerSource::AutoThreshold]
-    );
-}
-
-#[tokio::test]
 async fn recognized_slash_commands_never_sent_to_llm() {
     let bus = create_bus();
     let runtime = FakeRuntime {
@@ -214,10 +24,7 @@ async fn recognized_slash_commands_never_sent_to_llm() {
     let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
-    assert_eq!(
-        runtime.executed_compaction_sources,
-        vec![CompactionTriggerSource::SlashCompact]
-    );
+    assert_eq!(runtime.run_compaction_calls, 1);
     assert!(runtime.prompts.is_empty());
 }
 
@@ -303,7 +110,7 @@ async fn interactive_loop_routes_compact_slash_to_compaction_executor() {
         ..Default::default()
     };
     let ui = FakeInteractiveUi::with_prompts(&["/compact", "hello"])
-        .with_min_bus_events(5)
+        .with_min_bus_events(2)
         .with_expected_compaction_events(1)
         .with_bus(bus.clone());
 
@@ -318,10 +125,7 @@ async fn interactive_loop_routes_compact_slash_to_compaction_executor() {
     let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
-    assert_eq!(
-        runtime.executed_compaction_sources,
-        vec![CompactionTriggerSource::SlashCompact]
-    );
+    assert_eq!(runtime.run_compaction_calls, 1);
     assert_eq!(runtime.prompts, vec!["hello".to_string()]);
 }
 
@@ -345,10 +149,7 @@ async fn typed_compact_submit_triggers_compaction_path() {
     let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
-    assert_eq!(
-        runtime.executed_compaction_sources,
-        vec![CompactionTriggerSource::SlashCompact]
-    );
+    assert_eq!(runtime.run_compaction_calls, 1);
     assert!(runtime.prompts.is_empty());
 }
 
@@ -404,31 +205,23 @@ async fn recognized_slash_commands_not_persisted_as_session_turn_messages() {
     let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
-    assert!(
-        runtime.executed_compaction_sources == vec![CompactionTriggerSource::SlashCompact],
-        "only /compact should route to compaction trigger"
+    assert_eq!(
+        runtime.run_compaction_calls, 1,
+        "only /compact should route to session compaction"
     );
     assert!(runtime.prompts.is_empty());
 }
 
 #[tokio::test]
-async fn manual_and_auto_compaction_failure_surface_is_consistent() {
+async fn manual_compaction_failure_is_not_surfaced_as_warning() {
     let bus = create_bus();
     let runtime = FakeRuntime {
-        fail_compaction: true,
-        auto_decisions: [CompactionTriggerDecision::Fire {
-            source: CompactionTriggerSource::AutoThreshold,
-            reason: "threshold_reached".to_string(),
-            strategy: CompactionStrategy::SlidingSummary,
-        }]
-        .into_iter()
-        .collect(),
+        run_compaction_fail: true,
         bus: bus.clone(),
         ..Default::default()
     };
-    let ui = FakeInteractiveUi::with_prompts(&["hello"])
-        .with_min_bus_events(3)
-        .with_expected_compaction_events(1)
+    let ui = FakeInteractiveUi::with_prompts(&["/compact"])
+        .with_expected_compaction_events(0)
         .with_bus(bus.clone());
 
     let spawner = ui.make_event_spawner();
@@ -442,14 +235,23 @@ async fn manual_and_auto_compaction_failure_surface_is_consistent() {
     let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
-    assert!(
-        runtime.compaction_call_count >= 1,
-        "expected compaction executor to be invoked at least once"
+    assert_eq!(
+        runtime.run_compaction_calls, 1,
+        "expected run_compaction to be invoked"
     );
-    assert!(ui.warnings.lock().unwrap().iter().all(|w| {
-        !w.starts_with("Session compaction failed:")
-            || w.as_str() == "Session compaction failed: sliding_summary summarization unavailable"
-    }));
+    assert_eq!(
+        runtime.run_compaction_sources,
+        vec!["slash".to_string()],
+        "expected /compact to dispatch RunCompaction with source 'slash'"
+    );
+    assert!(
+        ui.warnings
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|w| { w != "auto compaction failed" }),
+        "a failed compaction must not surface as a warning (it is fire-and-forget via the bus)"
+    );
 }
 
 #[tokio::test]
@@ -518,22 +320,15 @@ async fn command_palette_models_action_opens_inline_model_picker() {
 }
 
 #[tokio::test]
-async fn manual_and_auto_compaction_share_single_execution_path() {
+async fn manual_compaction_slash_works_with_turn_processing() {
     let bus = create_bus();
     let runtime = FakeRuntime {
-        auto_decisions: [CompactionTriggerDecision::Fire {
-            source: CompactionTriggerSource::AutoThreshold,
-            reason: "threshold_reached".to_string(),
-            strategy: CompactionStrategy::SlidingSummary,
-        }]
-        .into_iter()
-        .collect(),
         bus: bus.clone(),
         ..Default::default()
     };
     let ui = FakeInteractiveUi::with_prompts(&["hello", "/compact"])
-        .with_min_bus_events(5)
-        .with_expected_compaction_events(2)
+        .with_min_bus_events(2)
+        .with_expected_compaction_events(1)
         .with_bus(bus.clone());
 
     let spawner = ui.make_event_spawner();
@@ -547,15 +342,8 @@ async fn manual_and_auto_compaction_share_single_execution_path() {
     let value = result.expect("interactive loop");
 
     assert!(value.is_nothing());
-    assert_eq!(runtime.compaction_call_count, 2);
+    assert_eq!(runtime.run_compaction_calls, 1);
     assert_eq!(runtime.prompts, vec!["hello".to_string()]);
-    assert_eq!(
-        runtime.executed_compaction_sources,
-        vec![
-            CompactionTriggerSource::AutoThreshold,
-            CompactionTriggerSource::SlashCompact
-        ]
-    );
 }
 
 // ── ContextWindowRuntime ────────────────────────────────────────────────
@@ -587,7 +375,7 @@ impl CoreRuntime for ContextWindowRuntime {
         let _ = self
             .bus
             .turn()
-            .send(crate::bus::TurnEvent::TurnCompleted { tool_calls: 0 });
+            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 });
         Ok(Value::nothing(span))
     }
 }
@@ -634,7 +422,6 @@ impl ModelSwitching for ContextWindowRuntime {
 }
 
 crate::default_session!(ContextWindowRuntime);
-crate::default_compaction!(ContextWindowRuntime);
 
 // ── ContextWindowUi ─────────────────────────────────────────────────────
 
@@ -766,7 +553,7 @@ impl CoreRuntime for TokenSeedingRuntime {
         let _ = self
             .bus
             .turn()
-            .send(crate::bus::TurnEvent::TurnCompleted { tool_calls: 0 });
+            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 });
         Ok(Value::nothing(span))
     }
 }
@@ -801,7 +588,6 @@ impl SessionState for TokenSeedingRuntime {
 impl SessionPersistence for TokenSeedingRuntime {}
 
 crate::default_mcp!(TokenSeedingRuntime);
-crate::default_compaction!(TokenSeedingRuntime);
 
 #[tokio::test]
 async fn context_window_max_tokens_set_on_ui_at_startup() {
@@ -976,12 +762,12 @@ impl CoreRuntime for ToolDisplayOnlyRuntime {
         _context: Option<String>,
         span: Span,
     ) -> Result<Value, LabeledError> {
-        ui.emit(&UiEvent::ToolStart {
+        ui.emit(&UiEvent::ToolStarted {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: "{}".to_string(),
         });
-        ui.emit(&UiEvent::ToolEnd {
+        ui.emit(&UiEvent::ToolCompleted {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: "{}".to_string(),
@@ -1042,7 +828,7 @@ impl CoreRuntime for CancelFirstRuntime {
         let _ = self
             .bus
             .turn()
-            .send(crate::bus::TurnEvent::TurnCompleted { tool_calls: 0 });
+            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 });
         if self.prompts.len() == 1 {
             return Err(LabeledError::new("LLM call cancelled"));
         }
@@ -1070,7 +856,6 @@ impl ModelSwitching for CancelFirstRuntime {
 
 crate::default_session!(CancelFirstRuntime);
 crate::default_mcp!(CancelFirstRuntime);
-crate::default_compaction!(CancelFirstRuntime);
 
 // ── ErrorFirstRuntime ───────────────────────────────────────────────────
 
@@ -1092,7 +877,7 @@ impl CoreRuntime for ErrorFirstRuntime {
         let _ = self
             .bus
             .turn()
-            .send(crate::bus::TurnEvent::TurnCompleted { tool_calls: 0 });
+            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 });
         if self.prompts.len() == 1 {
             return Err(LabeledError::new("API rate limit exceeded"));
         }
@@ -1120,7 +905,6 @@ impl ModelSwitching for ErrorFirstRuntime {
 
 crate::default_session!(ErrorFirstRuntime);
 crate::default_mcp!(ErrorFirstRuntime);
-crate::default_compaction!(ErrorFirstRuntime);
 
 // ── PermissionGateRuntime ───────────────────────────────────────────────
 
@@ -1201,10 +985,10 @@ impl CoreRuntime for PermissionGateRuntime {
         {
             self.side_effects.fetch_add(1, Ordering::SeqCst);
             // Publish the tool-start to the bus tool channel directly, matching
-            // production where the hook publishes ToolEvent::Start. The worker
-            // bridge no longer forwards a worker-emitted UiEvent::ToolStart to
+            // production where the hook publishes ToolEvent::Started. The worker
+            // bridge no longer forwards a worker-emitted UiEvent::ToolStarted to
             // the bus.
-            let _ = self.bus.tool().send(crate::bus::ToolEvent::Start {
+            let _ = self.bus.tool().send(crate::bus::ToolEvent::Started {
                 name: "nu".to_string(),
                 source: "closure".to_string(),
                 arguments: r#"{"command":"echo hi"}"#.to_string(),
@@ -1216,7 +1000,7 @@ impl CoreRuntime for PermissionGateRuntime {
         let _ = self
             .bus
             .turn()
-            .send(crate::bus::TurnEvent::TurnCompleted { tool_calls: 0 });
+            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 });
         self.finished.store(true, Ordering::SeqCst);
         self.active.store(false, Ordering::SeqCst);
         Ok(Value::nothing(span))
@@ -1246,7 +1030,6 @@ impl McpManagement for PermissionGateRuntime {
 }
 
 crate::default_session!(PermissionGateRuntime);
-crate::default_compaction!(PermissionGateRuntime);
 
 impl ModelSwitching for PermissionGateRuntime {
     fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
@@ -1354,7 +1137,7 @@ impl PermissionOrderingUi {
                             });
                             // Flush buffered tool starts now that the decision is recorded,
                             // preserving the deterministic PermissionRequested <
-                            // PermissionDecisionSubmitted < ToolStart ordering.
+                            // PermissionDecisionSubmitted < ToolStarted ordering.
                             if !pending_tool_starts.is_empty() {
                                 events.lock().expect("events lock").append(&mut pending_tool_starts);
                             }
@@ -1367,13 +1150,13 @@ impl PermissionOrderingUi {
                         }
                     }
                     Ok(event) = turn_rx.recv() => {
-                        if let crate::bus::TurnEvent::TurnCompleted { .. } = event {
+                        if let crate::bus::TurnEvent::Completed { .. } = event {
                             quit.store(true, Ordering::SeqCst);
                         }
                     }
                     Ok(event) = tool_rx.recv() => {
-                        if let crate::bus::ToolEvent::Start { name, source, arguments } = event {
-                            let tool_start = UiEvent::ToolStart {
+                        if let crate::bus::ToolEvent::Started { name, source, arguments } = event {
+                            let tool_start = UiEvent::ToolStarted {
                                 name,
                                 source,
                                 arguments,
@@ -1477,7 +1260,7 @@ impl ModelPickerLaunchWhileActiveUi {
             loop {
                 tokio::select! {
                     Ok(event) = turn_rx.recv() => {
-                        if let crate::bus::TurnEvent::TurnCompleted { .. } = event {
+                        if let crate::bus::TurnEvent::Completed { .. } = event {
                             let count = completed_count.fetch_add(1, Ordering::SeqCst) + 1;
                             if count >= expected_completions {
                                 quit.store(true, Ordering::SeqCst);
@@ -1553,7 +1336,7 @@ impl CoreRuntime for StartupHydrationRuntime {
         let _ = self
             .bus
             .turn()
-            .send(crate::bus::TurnEvent::TurnCompleted { tool_calls: 0 });
+            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 });
         Ok(Value::nothing(span))
     }
 }
@@ -1602,7 +1385,6 @@ impl ModelSwitching for StartupHydrationRuntime {
 }
 
 crate::default_session!(StartupHydrationRuntime);
-crate::default_compaction!(StartupHydrationRuntime);
 
 #[tokio::test]
 async fn tool_display_path_does_not_require_assistant_synthesis_round_trip() {
@@ -1622,7 +1404,7 @@ async fn tool_display_path_does_not_require_assistant_synthesis_round_trip() {
     assert!(value.is_nothing());
     assert!(ui.events.iter().any(|event| matches!(
         event,
-        UiEvent::ToolEnd {
+        UiEvent::ToolCompleted {
             display: Some(_),
             ..
         }
@@ -1948,8 +1730,8 @@ async fn permission_requested_emits_before_execution_and_waits_for_decision_befo
         .expect("PermissionDecisionSubmitted must be emitted");
     let tool_start_idx = events
         .iter()
-        .position(|event| matches!(event, UiEvent::ToolStart { .. }))
-        .expect("ToolStart should happen after allow decision");
+        .position(|event| matches!(event, UiEvent::ToolStarted { .. }))
+        .expect("ToolStarted should happen after allow decision");
 
     assert!(requested_idx < submitted_idx);
     assert!(submitted_idx < tool_start_idx);
@@ -1992,7 +1774,7 @@ async fn deny_decision_resumes_deterministically_without_pre_decision_handler_si
     assert!(
         !events
             .iter()
-            .any(|event| matches!(event, UiEvent::ToolStart { .. }))
+            .any(|event| matches!(event, UiEvent::ToolStarted { .. }))
     );
 }
 
@@ -2047,7 +1829,7 @@ impl PermissionBridgeUi {
                         }
                     }
                     Ok(event) = turn_rx.recv() => {
-                        if let crate::bus::TurnEvent::TurnCompleted { .. } = event {
+                        if let crate::bus::TurnEvent::Completed { .. } = event {
                             quit.store(true, Ordering::SeqCst);
                         }
                     }
@@ -2176,7 +1958,7 @@ impl CoreRuntime for PermissionTimeoutIgnoredRuntime {
         let _ = self
             .bus
             .turn()
-            .send(crate::bus::TurnEvent::TurnCompleted { tool_calls: 0 });
+            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 });
         Ok(Value::nothing(span))
     }
 }
@@ -2204,7 +1986,6 @@ impl McpManagement for PermissionTimeoutIgnoredRuntime {
 }
 
 crate::default_session!(PermissionTimeoutIgnoredRuntime);
-crate::default_compaction!(PermissionTimeoutIgnoredRuntime);
 
 impl ModelSwitching for PermissionTimeoutIgnoredRuntime {
     fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
@@ -2448,7 +2229,7 @@ fn emit_batch_delivers_all_events() {
     // Create 5 test events
     let events = vec![
         UiEvent::Tick,
-        UiEvent::LlmStart,
+        UiEvent::LlmStarted,
         UiEvent::AssistantMessage {
             text: "hello".to_string(),
         },
@@ -2491,7 +2272,7 @@ impl CoreRuntime for McpToggleRuntime {
         let _ = self
             .bus
             .turn()
-            .send(crate::bus::TurnEvent::TurnCompleted { tool_calls: 0 });
+            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 });
         Ok(Value::nothing(span))
     }
 }
@@ -2538,7 +2319,6 @@ impl ModelSwitching for McpToggleRuntime {
 }
 
 crate::default_session!(McpToggleRuntime);
-crate::default_compaction!(McpToggleRuntime);
 
 // ── FailingMcpToggleRuntime ─────────────────────────────────────────────
 
@@ -2559,7 +2339,7 @@ impl CoreRuntime for FailingMcpToggleRuntime {
         let _ = self
             .bus
             .turn()
-            .send(crate::bus::TurnEvent::TurnCompleted { tool_calls: 0 });
+            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 });
         Ok(Value::nothing(span))
     }
 }
@@ -2606,7 +2386,6 @@ impl ModelSwitching for FailingMcpToggleRuntime {
 }
 
 crate::default_session!(FailingMcpToggleRuntime);
-crate::default_compaction!(FailingMcpToggleRuntime);
 
 // ── SequencedMcpToggleRuntime ───────────────────────────────────────────
 
@@ -2631,7 +2410,7 @@ impl CoreRuntime for SequencedMcpToggleRuntime {
         let _ = self
             .bus
             .turn()
-            .send(crate::bus::TurnEvent::TurnCompleted { tool_calls: 0 });
+            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 });
         Ok(Value::nothing(span))
     }
 }
@@ -2686,7 +2465,6 @@ impl ModelSwitching for SequencedMcpToggleRuntime {
 }
 
 crate::default_session!(SequencedMcpToggleRuntime);
-crate::default_compaction!(SequencedMcpToggleRuntime);
 
 // ── StagedToggleUi ──────────────────────────────────────────────────────
 
@@ -3460,7 +3238,7 @@ impl CoreRuntime for CancellableBlockingRuntime {
                 let _ = self
                     .bus
                     .turn()
-                    .send(crate::bus::TurnEvent::TurnCompleted { tool_calls: 0 });
+                    .send(crate::bus::TurnEvent::Completed { tool_calls: 0 });
                 return Err(LabeledError::new("LLM call cancelled"));
             }
             ui.emit(&UiEvent::Tick);
@@ -3469,7 +3247,7 @@ impl CoreRuntime for CancellableBlockingRuntime {
         let _ = self
             .bus
             .turn()
-            .send(crate::bus::TurnEvent::TurnCompleted { tool_calls: 0 });
+            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 });
         Ok(Value::nothing(Span::test_data()))
     }
 }
@@ -3494,7 +3272,6 @@ impl ModelSwitching for CancellableBlockingRuntime {
 
 crate::default_session!(CancellableBlockingRuntime);
 crate::default_mcp!(CancellableBlockingRuntime);
-crate::default_compaction!(CancellableBlockingRuntime);
 
 #[tokio::test]
 async fn matching_a2a_task_cancel_sets_cancel_requested() {

@@ -6,14 +6,11 @@ pub(crate) use std::sync::{
 pub(crate) use std::time::Duration;
 
 pub(crate) use crate::bus::{CompactionEvent, ExternalEvent, TurnEvent, WarningEvent, create_bus};
-pub(crate) use crate::compaction::CompactionStrategy;
 pub(crate) use crate::orchestrator::{
     InteractiveLoopConfig, OrchestratorEvent, UiRequest, UiStateEvent, run_interactive_loop_impl,
     run_single_turn,
 };
 pub(crate) use crate::protocol::{
-    compaction::{CompactionTriggerDecision, CompactionTriggerSource},
-    compaction_runtime::Compaction,
     contracts::{
         CoreRuntime, McpToggleRequest, McpUsabilityState, ProgressUi, SharedUiAction,
         UiMessageSnapshot, UiMessageUsageSnapshot, UserInputUi,
@@ -42,12 +39,6 @@ macro_rules! default_session {
 macro_rules! default_mcp {
     ($t:ty) => {
         impl McpManagement for $t {}
-    };
-}
-#[macro_export]
-macro_rules! default_compaction {
-    ($t:ty) => {
-        impl Compaction for $t {}
     };
 }
 
@@ -330,7 +321,7 @@ impl FakeInteractiveUi {
                     }
                     if turn_pending {
                         while let Ok(event) = turn_rx.recv().await {
-                            if matches!(event, TurnEvent::TurnCompleted { .. }) {
+                            if matches!(event, TurnEvent::Completed { .. }) {
                                 turn_pending = false;
                                 break;
                             }
@@ -352,10 +343,9 @@ impl UserInputUi for FakeInteractiveUi {
 #[derive(Default)]
 pub(crate) struct FakeRuntime {
     pub(crate) prompts: Vec<String>,
-    pub(crate) auto_decisions: std::collections::VecDeque<CompactionTriggerDecision>,
-    pub(crate) executed_compaction_sources: Vec<CompactionTriggerSource>,
-    pub(crate) fail_compaction: bool,
-    pub(crate) compaction_call_count: usize,
+    pub(crate) run_compaction_calls: usize,
+    pub(crate) run_compaction_sources: Vec<String>,
+    pub(crate) run_compaction_fail: bool,
     pub(crate) switched_models: Vec<String>,
     pub(crate) switch_model_result: Option<Result<String, String>>,
     pub(crate) bus: crate::bus::Bus,
@@ -371,12 +361,9 @@ impl CoreRuntime for FakeRuntime {
     ) -> Result<Value, LabeledError> {
         self.prompts.push(prompt);
         // The worker bridge no longer converts `UiEvent::Completed` to a
-        // `TurnEvent::TurnCompleted` on the bus. Publish it directly, matching
+        // `TurnEvent::Completed` on the bus. Publish it directly, matching
         // production (see executor.rs).
-        let _ = self
-            .bus
-            .turn()
-            .send(TurnEvent::TurnCompleted { tool_calls: 0 });
+        let _ = self.bus.turn().send(TurnEvent::Completed { tool_calls: 0 });
         Ok(Value::nothing(Span::test_data()))
     }
 }
@@ -429,60 +416,26 @@ impl ModelSwitching for FakeRuntime {
     }
 }
 
-impl Compaction for FakeRuntime {
-    fn evaluate_auto_compaction(&mut self) -> Option<CompactionTriggerDecision> {
-        self.auto_decisions.pop_front()
-    }
+impl SessionState for FakeRuntime {}
 
-    async fn execute_compaction_trigger<U: ProgressUi>(
-        &mut self,
-        ui: &mut U,
-        source: CompactionTriggerSource,
-    ) -> Result<(), String> {
-        self.compaction_call_count = self.compaction_call_count.saturating_add(1);
-        self.executed_compaction_sources.push(source);
-        ui.emit(&UiEvent::CompactionStarted {
-            source: source.as_str().to_string(),
-        });
-        // Publish lifecycle events directly to the bus — the worker bridge no
-        // longer converts worker-emitted UiEvents into bus events, so the test
-        // harness quit-gates that subscribe to bus.compaction() would never
-        // fire otherwise (matching production, where the executor publishes
-        // CompactionEvent to the bus directly).
-        let _ = self.bus.compaction().send(CompactionEvent::Started {
-            source: Some(source.as_str().to_string()),
-        });
-        if self.fail_compaction {
-            ui.emit(&UiEvent::CompactionFailed {
-                source: source.as_str().to_string(),
-                message: "auto compaction failed".to_string(),
-            });
-            let _ = self.bus.compaction().send(CompactionEvent::Failed {
-                source: source.as_str().to_string(),
-                message: "auto compaction failed".to_string(),
-            });
+impl SessionPersistence for FakeRuntime {
+    async fn run_compaction(&mut self, source: &str) -> Result<(), String> {
+        self.run_compaction_calls = self.run_compaction_calls.saturating_add(1);
+        self.run_compaction_sources.push(source.to_string());
+        if self.run_compaction_fail {
             return Err("auto compaction failed".to_string());
         }
-        ui.emit(&UiEvent::CompactionTriggered {
-            source: source.as_str().to_string(),
-            summarized_count: 1,
-            kept_recent_count: 0,
-            summary_preview: "summary".to_string(),
-            summary_body: "summary".to_string(),
-        });
-        let _ = self.bus.compaction().send(CompactionEvent::Triggered {
-            source: source.as_str().to_string(),
-            summarized_count: 1,
-            kept_recent_count: 0,
+        // Publish lifecycle events directly to the bus so test-harness quit-gates
+        // that subscribe to bus.compaction() fire (matching production, where the
+        // compactor publishes CompactionEvent to the bus directly).
+        let _ = self.bus.compaction().send(CompactionEvent::Completed {
+            source: source.to_string(),
             summary_preview: "summary".to_string(),
             summary_body: "summary".to_string(),
         });
         Ok(())
     }
 }
-
-impl SessionState for FakeRuntime {}
-impl SessionPersistence for FakeRuntime {}
 
 #[derive(Default)]
 pub(crate) struct FakeValueRuntime {
@@ -501,10 +454,7 @@ impl CoreRuntime for FakeValueRuntime {
         self.prompts.push(prompt);
         // Publish TurnCompleted directly to the bus (worker bridge no longer
         // converts UiEvent::Completed), matching production.
-        let _ = self
-            .bus
-            .turn()
-            .send(TurnEvent::TurnCompleted { tool_calls: 0 });
+        let _ = self.bus.turn().send(TurnEvent::Completed { tool_calls: 0 });
         Ok(Value::record(nu_protocol::Record::new(), span))
     }
 }
@@ -529,7 +479,6 @@ impl ModelSwitching for FakeValueRuntime {
 
 crate::default_session!(FakeValueRuntime);
 crate::default_mcp!(FakeValueRuntime);
-crate::default_compaction!(FakeValueRuntime);
 
 #[derive(Default)]
 pub(crate) struct LongRunningRuntime {
@@ -599,10 +548,7 @@ impl CoreRuntime for LongRunningRuntime {
 
         // Publish TurnCompleted directly to the bus (worker bridge no longer
         // converts UiEvent::Completed), matching production.
-        let _ = self
-            .bus
-            .turn()
-            .send(TurnEvent::TurnCompleted { tool_calls: 0 });
+        let _ = self.bus.turn().send(TurnEvent::Completed { tool_calls: 0 });
         self.active.store(false, Ordering::SeqCst);
         Ok(Value::nothing(Span::test_data()))
     }
@@ -643,7 +589,6 @@ impl ModelSwitching for LongRunningRuntime {
 
 crate::default_session!(LongRunningRuntime);
 crate::default_mcp!(LongRunningRuntime);
-crate::default_compaction!(LongRunningRuntime);
 
 pub(crate) struct ResponsiveInteractiveUi {
     pub(crate) event_tx: mpsc::Sender<OrchestratorEvent>,
@@ -709,7 +654,7 @@ impl ResponsiveInteractiveUi {
                         if active.load(Ordering::SeqCst) {
                             active_pump_count.fetch_add(1, Ordering::SeqCst);
                         }
-                        if let TurnEvent::TurnCompleted { .. } = event {
+                        if let TurnEvent::Completed { .. } = event {
                             let count = completed_count.fetch_add(1, Ordering::SeqCst) + 1;
                             if count >= expected_completions {
                                 quit.store(true, Ordering::SeqCst);
@@ -794,13 +739,7 @@ pub(crate) fn _assert_single_turn_accepts_core_runtime<R: CoreRuntime + Send, U:
 
 // Compile-time check: the interactive loop must accept anything that impls the focused capability traits
 pub(crate) fn _assert_interactive_loop_accepts_extended_runtime<
-    R: CoreRuntime
-        + McpManagement
-        + ModelSwitching
-        + SessionState
-        + SessionPersistence
-        + Compaction
-        + Send,
+    R: CoreRuntime + McpManagement + ModelSwitching + SessionState + SessionPersistence + Send,
     U: UserInputUi,
 >(
     _r: R,

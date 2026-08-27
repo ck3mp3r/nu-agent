@@ -13,30 +13,17 @@ pub struct CompactionMarker {
     pub entry_type: String,
     /// LLM-generated summary of older messages
     pub summary: String,
-    /// Number of messages immediately before this marker that are "kept recent"
-    pub kept_recent_count: usize,
-    /// Number of messages that were summarized
-    pub summarized_count: usize,
-    /// Strategy used
-    pub strategy: String,
     /// When compaction occurred
+    #[serde(default)]
     pub created_at: DateTime<Utc>,
 }
 
 impl CompactionMarker {
-    pub fn new(
-        summary: String,
-        kept_recent_count: usize,
-        summarized_count: usize,
-        strategy: &str,
-    ) -> Self {
+    pub fn new(summary: String, created_at: DateTime<Utc>) -> Self {
         Self {
             entry_type: "compaction_marker".to_string(),
             summary,
-            kept_recent_count,
-            summarized_count,
-            strategy: strategy.to_string(),
-            created_at: Utc::now(),
+            created_at,
         }
     }
 }
@@ -399,7 +386,7 @@ impl SessionStore for FsSessionStore {
 /// matching ToolResults for ALL its IDs. Logs a warn! for each violation found.
 /// Does NOT inject synthetic results — only strips and warns.
 pub(crate) fn validate_tool_call_adjacency(messages: Vec<Message>) -> Vec<Message> {
-    use crate::types::{AssistantContent, UserContent};
+    use crate::types::{AssistantContent, ToolCallId, UserContent};
     use std::collections::HashSet;
 
     // We loop until no violations remain; stripping one pair may expose another.
@@ -407,12 +394,12 @@ pub(crate) fn validate_tool_call_adjacency(messages: Vec<Message>) -> Vec<Messag
     loop {
         // Find the first Assistant message whose ToolCall IDs are not all
         // covered by the immediately following User message.
-        let violation_ids: Option<HashSet<String>> =
+        let violation_ids: Option<HashSet<ToolCallId>> =
             messages.iter().enumerate().find_map(|(i, msg)| {
                 let Message::Assistant { content, .. } = msg else {
                     return None;
                 };
-                let call_ids: HashSet<String> = content
+                let call_ids: HashSet<ToolCallId> = content
                     .iter()
                     .filter_map(|item| match item {
                         AssistantContent::ToolCall(tc) => Some(tc.id.clone()),
@@ -422,11 +409,11 @@ pub(crate) fn validate_tool_call_adjacency(messages: Vec<Message>) -> Vec<Messag
                 if call_ids.is_empty() {
                     return None;
                 }
-                let next_result_ids: HashSet<String> = match messages.get(i + 1) {
+                let next_result_ids: HashSet<ToolCallId> = match messages.get(i + 1) {
                     Some(Message::User { content }) => content
                         .iter()
                         .filter_map(|item| match item {
-                            UserContent::ToolResult(tr) => Some(tr.id.clone()),
+                            UserContent::ToolResult(tr) => Some(tr.call.clone()),
                             _ => None,
                         })
                         .collect(),
@@ -463,22 +450,24 @@ pub(crate) fn validate_tool_call_adjacency(messages: Vec<Message>) -> Vec<Messag
                             _ => true,
                         })
                         .collect();
-                    match rig::one_or_many::OneOrMany::many(items) {
-                        Ok(content) => Some(Message::Assistant { id, content }),
-                        Err(_) => None,
+                    if items.is_empty() {
+                        None
+                    } else {
+                        Some(Message::Assistant { id, content: items })
                     }
                 }
                 Message::User { content } => {
                     let items: Vec<crate::types::UserContent> = content
                         .into_iter()
                         .filter(|item| match item {
-                            UserContent::ToolResult(tr) => !bad_ids.contains(&tr.id),
+                            UserContent::ToolResult(tr) => !bad_ids.contains(&tr.call),
                             _ => true,
                         })
                         .collect();
-                    match rig::one_or_many::OneOrMany::many(items) {
-                        Ok(content) => Some(Message::User { content }),
-                        Err(_) => None,
+                    if items.is_empty() {
+                        None
+                    } else {
+                        Some(Message::User { content: items })
                     }
                 }
                 system @ Message::System { .. } => Some(system),
